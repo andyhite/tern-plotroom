@@ -158,7 +158,7 @@ local function firstLines(text: string, n: number): string
 	return table.concat(out, "\n")
 end
 
-local function classify(result: ProcessResult): Problem
+function M.classify(result: ProcessResult): Problem
 	if result.timed_out then
 		return { kind = "failed", message = "gh did not answer within 30 seconds." }
 	end
@@ -176,6 +176,10 @@ local function classify(result: ProcessResult): Problem
 	if string.find(err, "HTTP 403", 1, true) then
 		-- Not a rate limit (checked above): permissions, or SAML SSO authorization.
 		return { kind = "auth", message = "This GitHub account may not access the repository (permissions or SSO authorization): " .. firstLines(err, 3) }
+	end
+	if string.find(err, "HTTP 422", 1, true) then
+		-- Validation Failed: bad query, or the account cannot search the repository. Retrying unchanged cannot help.
+		return { kind = "invalid", message = "GitHub rejected the search: " .. firstLines(err, 3) }
 	end
 	if string.find(err, "HTTP 404", 1, true) then
 		return { kind = "not-found", message = "The repository or pull request is not visible to this GitHub account: " .. firstLines(err, 3) }
@@ -200,7 +204,7 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 				return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
 			end
 			if result.status ~= 0 or result.timed_out then
-				return done(nil, classify(result), cx, result.stdout)
+				return done(nil, M.classify(result), cx, result.stdout)
 			end
 			done(result.stdout, nil, cx, nil)
 		end)

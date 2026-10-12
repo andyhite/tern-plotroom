@@ -59,6 +59,8 @@ function M.run()
 	for _, bad in { "is:open repo:x/y", "is:open -org:x", "(user:x OR is:open)", "is:open Repo:x/y", "is:open a OR b" } do
 		assert(github.scopeProblem(bad) ~= nil, "scope-widening filter is rejected: " .. bad)
 	end
+	local p422 = github.classify({ status = 1, stderr = "gh: Validation Failed (HTTP 422)\n", stdout = "", timed_out = false })
+	assert(p422.kind == "invalid" and string.find(p422.message, "Validation Failed", 1, true), "HTTP 422 is terminal and keeps gh's text")
 
 	-- rate-limit headers (shape of real `gh api --include` output) and pacing
 	local now = 1000

@@ -215,7 +215,7 @@ local refresh: (State) -> ()
 
 -- Problems that retrying cannot fix by itself: no automatic refresh until an
 -- explicit Retry. ("not-found" is reserved for the GitHub layer's classifier.)
-local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true }
+local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true, invalid = true }
 
 -- Panes of this runtime that still exist; they share one search quota.
 local function openPanes(): number
@@ -707,6 +707,7 @@ end
 local function problemCard(state: State, problem: github.Problem): Node
 	local heads = {
 		missing = "GitHub CLI not found",
+		invalid = "GitHub rejected the search",
 		auth = "GitHub CLI not signed in",
 		["rate-limit"] = "GitHub rate limit",
 		failed = "Could not load pull requests",
@@ -714,6 +715,7 @@ local function problemCard(state: State, problem: github.Problem): Node
 	local help = {
 		missing = "Install the GitHub CLI (https://cli.github.com) so it is on the PATH of your shell, then Retry.",
 		auth = "Run `gh auth login` in a terminal, then Retry.",
+		invalid = "Check the filter query and this repository's Account, then Retry.",
 		["rate-limit"] = "Searches resume automatically at the time shown above.",
 		failed = "",
 	}
@@ -1016,7 +1018,7 @@ tern.block.define("prs", {
 		local sp = nil
 		if type(saved) == "table" and type(saved.pause) == "table" and saved.launchCwd == cwd then
 			local k, m, r = saved.pause.kind, saved.pause.message, saved.pause.repo
-			if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found") and type(r) == "string")) then
+			if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found" or k == "invalid") and type(r) == "string")) then
 				sp = { kind = k, message = m, repo = if type(r) == "string" then r else nil }
 			end
 		end
