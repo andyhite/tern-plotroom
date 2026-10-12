@@ -13,8 +13,14 @@ A Tern plugin. First tool: a live GitHub PR queue.
 - **Account**: the toolbar's `Account` button sets a `gh` login for this repo (stored in the plugin's `kv.json`; empty means the active `gh` account). It never switches `gh`'s global account and stores no tokens. Saving clears cached results and does one refresh. An SSH key or alias selects only the git transport, not the API account: PR searches use `gh`'s login for github.com, so a repo under another account needs its login set here.
 - Uses your existing `gh` login. `gh`/`git` are found on Tern's PATH, else on your login shell's PATH.
 
-Dev: `tern plugin types .` (writes the ignored `tern.d.luau`; editor types only). With `PLOTROOM_SELFTEST=1` in Tern's environment the palette gains `Plotroom: Self-test` (runs `tests/check.luau`).
+The package lives in `plugin/` (manifest, runtime modules, CSS, self-test); the repo root holds only docs and tooling, so linking `plugin/` never watches `.git`.
 
-Install: `tern plugin install . --force` copies the source (excluding `.git`); a plain reload does not re-copy it, so re-run this after edits. See the [CLI reference](https://docs.stencil.so/tern/reference/cli.md).
+Dev: `tern plugin link ./plugin` (live reload: Tern watches the linked tree recursively and reloads on any change, [lifecycle](https://docs.stencil.so/tern/concepts/lifecycle.md)). `tern plugin types ./plugin` writes the ignored `plugin/tern.d.luau` (editor types only). With `PLOTROOM_SELFTEST=1` in Tern's environment the palette gains `Plotroom: Self-test` (runs `plugin/tests/check.luau`).
 
-Live dev with `tern plugin link`: Tern watches a linked tree recursively and reloads the plugin on any change ([lifecycle](https://docs.stencil.so/tern/concepts/lifecycle.md)). Linking a repo root also watches `.git`, whose metadata (e.g. the `fsmonitor` cookie) changes about once a second and reloads the plugin every 1-2 s. Link only a package-only subdirectory that holds no Git metadata.
+Clean install: `tern plugin install ./plugin --force` copies the package; a plain reload does not re-copy it, so re-run this after edits. See the [CLI reference](https://docs.stencil.so/tern/reference/cli.md).
+
+Switching modes: `link` refuses while an installed copy exists, and `install --force` never replaces a link.
+- Installed copy → live dev: `tern plugin remove plotroom && tern plugin link ./plugin`
+- Live dev → clean install: `tern plugin unlink plotroom && tern plugin install ./plugin --force` (`unlink` leaves `./plugin` untouched)
+
+Never link the repo root: it would also watch `.git`, whose metadata (e.g. the `fsmonitor` cookie) changes about once a second and reloads the plugin every 1-2 s.
