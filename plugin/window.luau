@@ -2,12 +2,13 @@
 -- The window half: opening Plotroom, validated PR links (Browser block,
 -- worktree tab) and their keyboard-accessible palette commands.
 
-local github = require("./github")
 local process = require("./process")
 local worktree = require("./worktree")
 
 local BLOCK = "plotroom.prs"
 local SCHEME = "plotroom://"
+local OPEN_NODE = "layer.queue.buttons.open"
+local WORKTREE_NODE = "layer.queue.buttons.worktree"
 
 -- Worktree requests in flight, so repeated clicks create it once.
 local inflight: { [string]: boolean } = {}
@@ -78,8 +79,6 @@ end
 
 local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
 	local url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
-	-- Keep the dock's selection on the row that was clicked.
-	cx.session:event(pane, { ev = "select", id = "main.prs", item = "main.prs." .. github.identity(owner, repo, n) })
 	cx.browser:call({ op = "open", owner = pane, url = url }):next(function(result, err, cx2)
 		if not cx2 then
 			return
@@ -184,13 +183,8 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		return true
 	end
-	local present = false
-	if kind == "open" then
-		present = nodeProp(readNode(cx, pane, "main.prs." .. github.identity(owner, repo, n)), "href") == url
-			or nodeProp(readNode(cx, pane, "dock.open-pr"), "href") == url
-	else
-		present = nodeProp(readNode(cx, pane, "dock.worktree"), "href") == url
-	end
+	local node = if kind == "open" then OPEN_NODE else WORKTREE_NODE
+	local present = nodeProp(readNode(cx, pane, node), "href") == url
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
 		return true
@@ -255,7 +249,7 @@ tern.command({
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
-		selected(cx, "dock.open-pr")
+		selected(cx, OPEN_NODE)
 	end,
 })
 
@@ -265,7 +259,7 @@ tern.command({
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
-		selected(cx, "dock.worktree")
+		selected(cx, WORKTREE_NODE)
 	end,
 })
 

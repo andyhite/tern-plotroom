@@ -10,22 +10,18 @@ local ui = tern.ui
 
 local POLL_MS = 60 * 1000
 local COST_GUESS = 10
-local PAGE_SIZE = 100
-local LIST_ID = "main.prs."
-local FILTERS_ID = "main.filters."
-local FIELD_IDS = { name = "main.f-name", query = "main.f-query", path = "main.f-path" }
 
 type Filter = { id: string, name: string, query: string }
 type Store = { version: number, nextId: number, items: { Filter } }
 type Snap = { prs: { github.Pr }, total: number, complete: boolean, fetched: number }
-type Form = {
-	id: string?,
-	name: input.Model,
-	query: input.Model,
-	focus: string,
-	error: string?,
+type Settings = {
+	page: string, -- "filters" | "github" | "worktrees"
+	focus: string?, -- focused prefs row id
+	edit: { row: string, model: input.Model }?, -- text row being edited
+	errors: { [string]: string }, -- row id -> warning under the row
+	busy: boolean, -- checkout path being verified
+	confirm: string?, -- filter id awaiting delete confirmation
 }
-type RepoForm = { repo: string, path: input.Model, focus: string, error: string?, busy: boolean, account: boolean? }
 
 type State = {
 	cx: BlockCx,
@@ -37,8 +33,7 @@ type State = {
 	snaps: { [string]: Snap },
 	snap: Snap?,
 	cursor: string?,
-	page: number,
-	focus: string,
+	focus: string, -- the picker part the keys drive: "list" | "scopes"
 	loading: boolean,
 	gen: number,
 	repo: string?,
@@ -48,10 +43,8 @@ type State = {
 	resolving: boolean,
 	problem: github.Problem?,
 	timer: TimerHandle?,
-	form: Form?,
-	confirmDelete: boolean,
-	repoForm: RepoForm?,
-	notice: string?,
+	query: input.Model?, -- nil: the search is hidden
+	settings: Settings?,
 }
 
 local running: { [number]: State } = {}
@@ -181,19 +174,52 @@ local function selectedPr(state: State): github.Pr?
 	return nil
 end
 
--- Keep the cursor on a result (the first when it vanished) and its page in range.
-local function ensureCursor(state: State)
+local function trim(s: string): string
+	return string.match(s, "^%s*(.-)%s*$") or ""
+end
+
+-- Picker ids hold no `/` or `#`; search is scoped to one repo, so numbers are unique.
+local function itemId(pr: github.Pr): string
+	return "n" .. pr.number
+end
+
+local function prOfItem(state: State, id: string): github.Pr?
 	local snap = state.snap
-	if not snap or #snap.prs == 0 then
-		state.cursor, state.page = nil, 1
-		return
+	if snap then
+		for _, pr in snap.prs do
+			if itemId(pr) == id then
+				return pr
+			end
+		end
 	end
-	local i = indexOf(snap.prs, state.cursor)
-	if i == 0 then
-		i = 1
-		state.cursor = snap.prs[1].key
+	return nil
+end
+
+-- The PRs the local search lets through, in snapshot order.
+local function visible(state: State): { github.Pr }
+	local snap = state.snap
+	if not snap then
+		return {}
 	end
-	state.page = (i - 1) // PAGE_SIZE + 1
+	local q = state.query
+	if not q or trim(q.text) == "" then
+		return snap.prs
+	end
+	local out: { github.Pr } = {}
+	for _, pr in snap.prs do
+		if github.match(pr, q.text) then
+			table.insert(out, pr)
+		end
+	end
+	return out
+end
+
+-- Keep the cursor on a visible result (the first when it vanished).
+local function ensureCursor(state: State)
+	local vis = visible(state)
+	if indexOf(vis, state.cursor) == 0 then
+		state.cursor = if vis[1] then vis[1].key else nil
+	end
 end
 
 -- The saved gh login of the launch repo (nil: the active gh account); part of every quota and cache identity.
@@ -310,7 +336,7 @@ refresh = function(state: State)
 	local wait = github.wait(os.time(), acct(state))
 	if wait > 0 then
 		-- Nothing is loading: say why, so an uncached filter does not show a spinner until the reset.
-		state.problem = { kind = "rate-limit", message = "GitHub's search rate limit is reached; searches resume automatically (see the time above)." }
+		state.problem = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }
 		return schedule(state, wait * 1000)
 	end
 	state.loading = true
@@ -318,7 +344,7 @@ refresh = function(state: State)
 	local key = snapKey(state, query)
 	github.search(repo, query, function()
 		return running[state.cx.pane] == state and state.gen == gen
-	end, function(result, problem, requests)
+	end, function(result, problem, spent)
 		if not alive(state) then
 			return
 		end
@@ -336,9 +362,9 @@ refresh = function(state: State)
 		else
 			state.problem = problem
 		end
-		if requests > 0 then
-			-- A finished snapshot shows the real page count; a failed one keeps the larger known cost.
-			state.cost = if result then requests else math.max(requests, state.cost)
+		if spent > 0 then
+			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.
+			state.cost = if result then spent else math.max(spent, state.cost)
 			state.interval = github.interval(github.quota(acct(state)), os.time(), state.cost, openPanes(), POLL_MS)
 		else
 			state.interval = nil -- nothing was sent (invalid query): no quota to pace
@@ -371,8 +397,6 @@ local function retry(state: State)
 end
 
 local function switchFilter(state: State, id: string?)
-	state.form = nil
-	state.confirmDelete = false
 	state.activeId = id
 	local f = activeFilter(state)
 	local s = if f and state.repo then state.snaps[snapKey(state, f.query)] else nil
@@ -407,179 +431,16 @@ local function propagate(origin: State)
 	end
 end
 
--- ---------------------------------------------------------------- editing
-
-local function focusField(state: State, field: string?)
-	state.cx:render()
-	state.cx:frame({ { "focus", if field and FIELD_IDS[field] then FIELD_IDS[field] else tern.json.null } })
-end
-
-local function openForm(state: State, edit: boolean)
-	local f = if edit then activeFilter(state) else nil
-	if edit and not f then
-		return
-	end
-	state.confirmDelete = false
-	state.repoForm = nil
-	state.form = {
-		id = if f then f.id else nil,
-		name = input.new(if f then f.name else ""),
-		query = input.new(if f then f.query else ""),
-		focus = "name",
-		error = nil,
-	}
-	focusField(state, "name")
-end
-
-local function trim(s: string): string
-	return string.match(s, "^%s*(.-)%s*$") or ""
-end
-
-local function saveForm(state: State)
-	local form = state.form
-	if not form then
-		return
-	end
-	local name, query = trim(form.name.text), trim(form.query.text)
-	if name == "" or query == "" then
-		form.error = "Name and query are both required."
-		return
-	end
-	-- Reread so another window's edits are not clobbered.
-	local store, writable, err = loadStore()
-	if not writable then
-		state.store, state.writable, state.storeError = store, false, err
-		form.error = err or "Filters cannot be saved."
-		return
-	end
-	local id = form.id
-	local appliedChanged = true
-	if id then
-		local found = false
-		for _, f in store.items do
-			if f.id == id then
-				appliedChanged = f.query ~= query or state.activeId ~= id
-				f.name, f.query = name, query
-				found = true
-			end
-		end
-		if not found then
-			form.error = "That filter was deleted elsewhere."
-			return
-		end
-	else
-		id = "f" .. store.nextId
-		store.nextId += 1
-		table.insert(store.items, { id = id, name = name, query = query })
-	end
-	local werr = writeStore(store)
-	if werr then
-		form.error = "Could not save: " .. werr
-		return
-	end
-	state.store, state.writable, state.storeError = store, true, nil
-	state.form = nil
-	state.activeId = id
-	if appliedChanged then
-		changed(state)
-	end
-	propagate(state)
-	focusField(state, nil)
-end
-
-local function deleteActive(state: State)
-	state.confirmDelete = false
-	local store, writable, err = loadStore()
-	if not writable then
-		state.notice = err
-		return
-	end
-	local at = 0
-	for i, f in store.items do
-		if f.id == state.activeId then
-			at = i
-		end
-	end
-	if at == 0 then
-		return
-	end
-	table.remove(store.items, at)
-	local werr = writeStore(store)
-	if werr then
-		state.notice = "Could not delete: " .. werr
-		return
-	end
-	state.store = store
-	local nextF = store.items[math.min(at, #store.items)]
-	switchFilter(state, if nextF then nextF.id else nil)
-	propagate(state)
-end
-
--- ---------------------------------------------------------------- repository mapping
-
-local function saveRepo(state: State)
-	local rf = state.repoForm
-	if not rf or rf.busy then
-		return
-	end
-	if rf.account then
-		local err = github.setAccount(rf.repo, string.match(rf.path.text, "^%s*(.-)%s*$") or "")
-		if err then
-			rf.error = err
-			return
-		end
-		-- New account: old snapshots, problem and quota belong to the old identity; one authorized refresh.
-		state.repoForm = nil
-		state.gen += 1
-		state.snaps, state.snap, state.problem = {}, nil, nil
-		state.notice = "Account saved; refreshing"
-		focusField(state, nil)
-		return retry(state)
-	end
-	local path, why = worktree.expandPath(rf.path.text, tern.getenv("HOME"))
-	if not path then
-		rf.error = why
-		return
-	end
-	rf.busy, rf.error = true, nil
-	local repo = rf.repo
-	worktree.resolveRepository(path, repo, function(info, problem)
-		if not alive(state) then
-			return
-		end
-		local cur = state.repoForm
-		if cur ~= rf then
-			return
-		end
-		rf.busy = false
-		if not info then
-			rf.error = problem
-		else
-			local repos = readRepos()
-			repos["github.com/" .. string.lower(repo)] = info.root
-			local ok, err = pcall(tern.kv.set, "repos", repos)
-			if not ok then
-				rf.error = "Could not save: " .. tostring(err)
-			else
-				state.repoForm = nil
-				state.notice = "Repository saved; choose Worktree again"
-				focusField(state, nil)
-			end
-		end
-		state.cx:render()
-	end)
-end
-
 -- ---------------------------------------------------------------- navigation
 
-local function moveCursor(state: State, to: number)
-	local snap = state.snap
-	if not snap or #snap.prs == 0 then
+-- Moves the cursor `delta` rows through the visible PRs, clamped to the list.
+local function moveCursor(state: State, delta: number)
+	local vis = visible(state)
+	if #vis == 0 then
 		return
 	end
-	local pr = snap.prs[math.clamp(to, 1, #snap.prs)]
-	state.cursor = pr.key
-	ensureCursor(state)
+	local i = indexOf(vis, state.cursor)
+	state.cursor = vis[math.clamp(i + delta, 1, #vis)].key
 end
 
 local function moveFilter(state: State, delta: number)
@@ -596,196 +457,10 @@ local function moveFilter(state: State, delta: number)
 	end
 end
 
-local function goPage(state: State, page: number)
-	local snap = state.snap
-	if not snap then
-		return
-	end
-	local pages = math.max(1, (#snap.prs + PAGE_SIZE - 1) // PAGE_SIZE)
-	page = math.clamp(page, 1, pages)
-	local pr = snap.prs[(page - 1) * PAGE_SIZE + 1]
-	if pr then
-		state.cursor = pr.key
-		ensureCursor(state)
-	end
-end
-
-local function formFields(state: State): { string }
-	if state.form then
-		return { "name", "query", "save", "cancel" }
-	elseif state.repoForm then
-		return { "path", "save", "cancel" }
-	end
-	return {}
-end
-
-local function cycle(state: State, back: boolean)
-	local fields = formFields(state)
-	local cur = if state.form then state.form.focus elseif state.repoForm then state.repoForm.focus else ""
-	if #fields == 0 then
-		state.focus = if state.focus == "filters" then "prs" else "filters"
-		return
-	end
-	local at = table.find(fields, cur) or 1
-	local nextAt = ((at - 1 + (if back then -1 else 1)) % #fields) + 1
-	local nf = fields[nextAt]
-	if state.form then
-		state.form.focus = nf
-	elseif state.repoForm then
-		state.repoForm.focus = nf
-	end
-	focusField(state, nf)
-end
-
-local function cancelForms(state: State)
-	state.form = nil
-	state.repoForm = nil
-	state.confirmDelete = false
-	focusField(state, nil)
-end
-
-local function activate(state: State, act: string)
-	if act == "save" then
-		if state.form then
-			saveForm(state)
-		elseif state.repoForm then
-			saveRepo(state)
-		end
-	elseif act == "cancel" then
-		cancelForms(state)
-	end
-end
-
 -- ---------------------------------------------------------------- view
-
-local function badge(label: string, act: string, tone: string, key: string?): Node
-	local node = ui.badge(label, tone)
-	local p: { [string]: any } = node.p or {}
-	p.actions = { click = act }
-	if key then
-		p.key = key
-	end
-	node.p = p
-	return node
-end
-
-local function button(state: State, label: string, act: string, focusName: string): Node
-	local focused = (state.form and state.form.focus == focusName) or (state.repoForm and state.repoForm.focus == focusName)
-	return badge(if focused then "▸ " .. label else label, act, if focused then "accent" else "neutral", nil)
-end
-
-local function field(label: string, key: string, model: input.Model, focused: boolean, placeholder: string): { Node }
-	local props = input.props(model)
-	props.key = key
-	props.placeholder = placeholder
-	props.aria = label
-	return {
-		ui.text({ ui.span(label, if focused then "strong" else "muted") }),
-		ui.node("input", props),
-	}
-end
-
-local function stateWord(pr: github.Pr): string
-	if pr.state == "merged" then
-		return "merged"
-	elseif pr.state == "closed" then
-		return "closed"
-	elseif pr.draft then
-		return "draft"
-	end
-	return "open"
-end
-
-local function stateTone(word: string): string
-	return if word == "merged" then "accent" elseif word == "closed" then "error" elseif word == "draft" then "warning" else "success"
-end
 
 local function prHref(kind: string, pr: github.Pr): string
 	return "plotroom://github/" .. kind .. "/" .. pr.repo .. "/" .. pr.number
-end
-
-local function problemCard(state: State, problem: github.Problem): Node
-	local heads = {
-		missing = "GitHub CLI not found",
-		invalid = "GitHub rejected the search",
-		auth = "GitHub CLI not signed in",
-		["rate-limit"] = "GitHub rate limit",
-		failed = "Could not load pull requests",
-	}
-	local help = {
-		missing = "Install the GitHub CLI (https://cli.github.com) so it is on the PATH of your shell, then Retry.",
-		auth = "Run `gh auth login` in a terminal, then Retry.",
-		invalid = "Check the filter query and this repository's Account, then Retry.",
-		["rate-limit"] = "Searches resume automatically at the time shown above.",
-		failed = "",
-	}
-	local kids: { Node } = { ui.md(problem.message .. "\n\n" .. (help[problem.kind] or "")) }
-	table.insert(kids, ui.row({ badge("Retry", "retry", "accent", nil) }))
-	local card = ui.card({ ui.span(heads[problem.kind] or "Plotroom", "strong") }, kids)
-	local p: { [string]: any } = card.p or {}
-	p.tone = "error"
-	card.p = p
-	return card
-end
-
-local function filtersList(state: State): Node
-	local items: { Item } = {}
-	for _, f in state.store.items do
-		table.insert(items, { label = { ui.span(f.name) }, value = { ui.span(f.query, "muted") }, icon = "filter" })
-	end
-	local list = ui.list(items)
-	local kids = list.c or {}
-	for i, f in state.store.items do
-		local p: { [string]: any } = kids[i].p or {}
-		p.key = f.id
-		kids[i].p = p
-	end
-	local p: { [string]: any } = list.p or {}
-	p.key = "filters"
-	p.selected = if state.focus == "filters" and state.activeId then FILTERS_ID .. state.activeId else nil
-	p.max = { lines = 3 }
-	p.empty = { ui.span("Add a filter", "muted") }
-	list.p = p
-	return list
-end
-
-local function prList(state: State, snap: Snap): Node
-	local items: { Item } = {}
-	local first = (state.page - 1) * PAGE_SIZE + 1
-	local last = math.min(#snap.prs, first + PAGE_SIZE - 1)
-	for i = first, last do
-		local pr = snap.prs[i]
-		local word = stateWord(pr)
-		table.insert(items, {
-			label = {
-				ui.span(word, stateTone(word)),
-				ui.span("#" .. pr.number, "muted num"),
-				ui.span(pr.title),
-			},
-			value = { ui.span("@" .. pr.author, "muted"), ui.span(github.age(pr.updated), "muted num") },
-			icon = "merge",
-			tone = if pr.draft then "muted" else nil,
-		})
-	end
-	local list = ui.list(items)
-	local kids = list.c or {}
-	for i = first, last do
-		local pr = snap.prs[i]
-		local p: { [string]: any } = kids[i - first + 1].p or {}
-		p.key = pr.key
-		p.href = prHref("open", pr)
-		p.actions = { click = "open" }
-		kids[i - first + 1].p = p
-	end
-	local p: { [string]: any } = list.p or {}
-	p.key = "prs"
-	p.role = "pr-list"
-	p.selected = if state.focus == "prs" and state.cursor then LIST_ID .. state.cursor else nil
-	-- List rows are ~1.5 cells tall; ~22 cells go to the header, filters, toolbar, pager and dock.
-	p.max = { lines = math.max(3, math.floor((state.cx.rows - 22) / 1.55)) }
-	p.empty = { ui.span("No pull requests match this filter.", "muted") }
-	list.p = p
-	return list
 end
 
 -- "45s", "3m 20s", "1h 5m" for a whole number of seconds.
@@ -806,13 +481,13 @@ local function paceLine(state: State): string?
 	if not state.repo then
 		local p = state.problem
 		if p and p.kind == "no-repo" then
-			return "Auto-refresh unavailable: no GitHub repository. Retry to look again."
+			return "Auto-refresh unavailable: no GitHub repository. Refresh to look again."
 		end
 		return nil
 	end
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
-		return "Auto-refresh paused: " .. halted.kind .. " error. Fix it, then Retry."
+		return "Auto-refresh paused: " .. halted.kind .. " error. Fix it, then Refresh."
 	end
 	local now = os.time()
 	local q = github.quota(acct(state))
@@ -826,174 +501,787 @@ local function paceLine(state: State): string?
 		return nil
 	end
 	if q and q.remaining and q.limit and q.reset and q.reset > now then
-		line ..= " · search quota " .. q.remaining .. "/" .. q.limit .. ", resets " .. os.date("%H:%M:%S", q.reset)
+		line ..= " · GraphQL quota " .. q.remaining .. "/" .. q.limit .. ", resets " .. os.date("%H:%M:%S", q.reset)
 	end
 	return line
 end
 
-local function mainView(state: State): Node
-	local kids: { Node } = {}
-	local snap = state.snap
-	local status: { Span | string } = { ui.span("GitHub PRs", "strong") }
-	if snap then
-		table.insert(status, ui.span("  " .. #snap.prs .. " shown", "muted"))
-	end
-	if state.loading then
-		table.insert(status, ui.span("  refreshing…", "muted"))
-	elseif snap then
-		table.insert(status, ui.span("  updated " .. os.date("%H:%M", snap.fetched), "muted"))
-	end
-	table.insert(kids, ui.text(status))
-	local pace = paceLine(state)
-	if pace then
-		table.insert(kids, ui.text({ ui.span(pace, "muted") }))
-	end
-	table.insert(kids, ui.node("text", { key = "context", text = state.launchCwd or "", role = "repo-context", tone = "muted" }))
-	if not state.launchCwd then
-		table.insert(kids, ui.text({ ui.span("No launch directory: worktrees need a local repository path.", "muted") }))
-	end
-	if state.storeError then
-		table.insert(kids, ui.text({ ui.span(state.storeError, "error") }))
-	end
-	table.insert(kids, filtersList(state))
-	local f = activeFilter(state)
-	if f then
-		table.insert(kids, ui.text({ ui.span("query ", "muted"), ui.span(f.query, "strong") }))
-	end
-	table.insert(kids, ui.row({
-		badge("New", "new", "neutral", nil),
-		badge("Edit", "edit", "neutral", nil),
-		badge("Delete", "delete", "neutral", nil),
-		badge("Refresh", "refresh", "accent", nil),
-		if state.repo then badge("Account", "account", "neutral", nil) else nil,
-	}))
+-- ---------------------------------------------------------------- settings and queue views
 
-	local form = state.form
-	if form then
-		local fk: { Node } = { ui.rule(if form.id then "Edit filter" else "New filter") }
-		for _, n in field("Name", "f-name", form.name, form.focus == "name", "My PRs") do
-			table.insert(fk, n)
-		end
-		for _, n in field("Query", "f-query", form.query, form.focus == "query", "is:open author:@me") do
-			table.insert(fk, n)
-		end
-		if form.error then
-			table.insert(fk, ui.text({ ui.span(form.error, "error") }))
-		end
-		table.insert(fk, ui.row({ button(state, "Save", "save", "save"), button(state, "Cancel", "cancel", "cancel") }))
-		for _, n in fk do
-			table.insert(kids, n)
-		end
-	end
-	if state.confirmDelete and f then
-		table.insert(kids, ui.text({ ui.span("Delete filter “" .. f.name .. "”?  ", "warning") }))
-		table.insert(kids, ui.row({ badge("Delete", "confirm-delete", "error", nil), badge("Keep", "cancel-delete", "neutral", nil) }))
-	end
-	local rf = state.repoForm
-	if rf then
-		local acc = rf.account
-		table.insert(kids, ui.rule(if acc then "GitHub account" else "Local checkout"))
-		table.insert(kids, ui.md(if acc
-			then "`gh` login used for **" .. rf.repo .. "** (empty: the active `gh` account)."
-			else "No local checkout of **" .. rf.repo .. "** was found. Enter the path of one."))
-		for _, n in field(if acc then "Login" else "Path", "f-path", rf.path, rf.focus == "path", if acc then "octocat" else "~/Code/" .. (string.match(rf.repo, "/(.+)$") or "repo")) do
-			table.insert(kids, n)
-		end
-		if rf.error then
-			table.insert(kids, ui.text({ ui.span(rf.error, "error") }))
-		end
-		table.insert(kids, ui.row({ button(state, if rf.busy then "Checking…" else "Save", "save", "save"), button(state, "Cancel", "cancel", "cancel") }))
-	end
-	if state.notice then
-		table.insert(kids, ui.text({ ui.span(state.notice, "success") }))
-	end
+local QUEUE_ID = "layer.queue"
+local SETTINGS_ID = "main.settings"
+local PAGES = { "filters", "github", "worktrees" }
+local PAGE_DEFS = {
+	{ id = "filters", label = "Filters", group = "Queue", icon = "funnel" },
+	{ id = "github", label = "GitHub", group = "Connection", icon = "globe" },
+	{ id = "worktrees", label = "Worktrees", group = "Connection", icon = "tree" },
+}
+local NO_REPO = "No GitHub repository for the launch directory."
 
-	local problem = state.problem
-	if problem and not snap then
-		table.insert(kids, problemCard(state, problem))
-	elseif problem then
-		table.insert(kids, ui.row({
-			ui.badge("stale", "warning"),
-			ui.text({ ui.span(problem.message .. "  showing the last complete list", "warning") }),
-			badge("Retry", "retry", "accent", nil),
-		}))
+local STATE_BADGE: { [string]: { text: string, tone: string } } = {
+	open = { text = "Open", tone = "success" },
+	draft = { text = "Draft", tone = "muted" },
+	merged = { text = "Merged", tone = "accent" },
+	closed = { text = "Closed", tone = "error" },
+}
+local REVIEW_BADGE: { [string]: { text: string, tone: string } } = {
+	approved = { text = "Approved", tone = "success" },
+	changes = { text = "Changes requested", tone = "error" },
+	required = { text = "Review required", tone = "warning" },
+}
+local CHECK: { [string]: { text: string, tone: string, dot: string } } = {
+	success = { text = "Passing", tone = "success", dot = "success" },
+	failure = { text = "Failing", tone = "error", dot = "error" },
+	pending = { text = "Pending", tone = "warning", dot = "pending" },
+}
+local HEADS: { [string]: string } = {
+	missing = "GitHub CLI not found",
+	auth = "GitHub CLI not signed in",
+	["rate-limit"] = "GitHub rate limit",
+	["not-found"] = "Repository not visible",
+	invalid = "GitHub rejected the search",
+	["no-repo"] = "No GitHub repository",
+	failed = "Could not load pull requests",
+}
+local HELP: { [string]: string } = {
+	missing = "Install the GitHub CLI (cli.github.com) so it is on your shell's PATH, then Refresh.",
+	auth = "Run gh auth login in a terminal, then Refresh.",
+	["rate-limit"] = "Searches resume automatically when GitHub's limit resets.",
+	["not-found"] = "Check this repository's account in Settings › GitHub, then Refresh.",
+	invalid = "Check the filter query and this repository's account in Settings, then Refresh.",
+	["no-repo"] = "Open Plotroom from a checkout of a GitHub repository.",
+}
+
+local function stateKind(pr: github.Pr): string
+	if pr.state == "merged" or pr.state == "closed" then
+		return pr.state
 	end
-	if snap then
-		if not snap.complete then
-			table.insert(kids, ui.text({
-				ui.span("Partial results: " .. #snap.prs .. " loaded of " .. snap.total .. " matches. Narrow this filter.", "warning"),
-			}))
-		end
-		table.insert(kids, prList(state, snap))
-		if #snap.prs > PAGE_SIZE then
-			local first = (state.page - 1) * PAGE_SIZE + 1
-			local last = math.min(#snap.prs, first + PAGE_SIZE - 1)
-			table.insert(kids, ui.row({
-				badge("◀ Previous", "prev", "neutral", nil),
-				ui.text({ ui.span(first .. "–" .. last .. " of " .. #snap.prs, "muted num") }),
-				badge("Next ▶", "next", "neutral", nil),
-			}))
-		end
-	elseif not problem and f then
-		table.insert(kids, ui.progress(nil, "Loading pull requests…"))
-	end
-	return ui.col(kids)
+	return if pr.draft then "draft" else "open"
 end
 
-local function dockView(state: State): Node
-	local kids: { Node } = {}
+-- Hidden node that carries the launch directory for window.luau (`main.context`).
+local function contextNode(state: State): Node
+	return ui.node("text", { key = "context", text = state.launchCwd or "", hidden = true })
+end
+
+type Row = {
+	id: string,
+	label: string,
+	hint: string?,
+	control: { [string]: any },
+	changed: boolean?,
+	defaultLabel: string?,
+	warning: string?,
+	disabled: string?,
+}
+
+-- sections, lead and extra children of the open settings page.
+local function pageContent(state: State): ({ any }, string, { Node })
+	local s = state.settings :: Settings
+	local where = state.repo or "the launch repository"
+	local sections: { any } = {}
+	local extra: { Node } = {}
+	local lead = ""
+	if s.page == "filters" then
+		lead = "Saved GitHub searches, listed in the queue's filter column. Each runs inside "
+			.. where
+			.. ", so repo:, org:, user: and OR are not allowed."
+		local locked = if state.writable then nil else (state.storeError or "Saved filters are read-only.")
+		for _, f in state.store.items do
+			local active = f.id == state.activeId
+			table.insert(sections, {
+				id = "filter:" .. f.id,
+				title = f.name .. (if active then " · showing" else ""),
+				rows = {
+					{ id = "name:" .. f.id, label = "Name", disabled = locked, control = { k = "text", value = f.name, placeholder = "My PRs" } },
+					{
+						id = "query:" .. f.id,
+						label = "Query",
+						hint = "GitHub search syntax, run inside " .. where .. ".",
+						disabled = locked,
+						control = { k = "text", value = f.query, placeholder = "is:open author:@me", mono = true },
+					},
+					{ id = "delete:" .. f.id, label = "Delete filter", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } },
+				},
+			})
+		end
+		table.insert(sections, {
+			id = "new",
+			rows = {
+				{
+					id = "add",
+					label = "New filter",
+					hint = "Adds a filter for open pull requests; name it and edit its query.",
+					disabled = locked,
+					control = { k = "action", act = "add", label = "Add filter" },
+				},
+			},
+		})
+	elseif s.page == "github" then
+		lead = "Plotroom reads pull requests through GitHub's GraphQL API with your gh login."
+		local account = if state.repo then github.account(state.repo) else nil
+		local now = os.time()
+		local wait = github.wait(now, acct(state))
+		table.insert(sections, {
+			id = "sec-account",
+			title = "Account",
+			rows = {
+				{
+					id = "account",
+					label = "gh account",
+					hint = "Login used for " .. where .. ". Empty: the active gh account.",
+					control = { k = "text", value = account or "", placeholder = "Active gh account" },
+					changed = account ~= nil,
+					defaultLabel = "Active gh account",
+					disabled = if state.repo then nil else NO_REPO,
+				},
+			},
+		})
+		table.insert(sections, {
+			id = "sec-refresh",
+			title = "Refresh",
+			rows = {
+				{
+					id = "refresh",
+					label = "Refresh now",
+					hint = paceLine(state) or "Refreshes every minute while quota allows.",
+					control = { k = "action", act = "refresh", label = "Refresh" },
+					disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", now + wait) elseif state.repo then nil else NO_REPO,
+				},
+			},
+		})
+		local q = github.quota(acct(state))
+		if q and q.limit and q.remaining then
+			local kids: { Node } = {
+				ui.node("meter", {
+					key = "used",
+					value = 1 - q.remaining / q.limit,
+					thresholds = { warn = 0.8, bad = 0.95 },
+					label = { ui.span(q.remaining .. " of " .. q.limit .. " points left", "num") },
+					total = if q.reset then "resets " .. os.date("%H:%M", q.reset) else nil,
+				}),
+			}
+			local nextAt = state.nextAt
+			if state.timer and nextAt and nextAt > now then
+				table.insert(
+					kids,
+					ui.node("row", { key = "next" }, {
+						ui.text({ ui.span("Next refresh in", "muted") }),
+						ui.node("elapsed", { age = (now - nextAt) * 1000, format = "clock" }),
+					})
+				)
+			end
+			table.insert(extra, ui.node("card", { key = "quota", head = { ui.span("GitHub API quota", "strong") } }, kids))
+		end
+	else
+		lead = "Worktree checks a pull request out in <checkout>.plotroom/<owner>/<repo>/pr-N on branch plotroom/<owner>/<repo>/pr-N and opens it in a new tab."
+		local mapped = if state.repo then readRepos()["github.com/" .. string.lower(state.repo)] else nil
+		table.insert(sections, {
+			id = "sec-checkout",
+			title = "Local checkout",
+			rows = {
+				{
+					id = "checkout",
+					label = if state.repo then "Checkout of " .. state.repo else "Local checkout",
+					hint = "Used when the launch directory (" .. (state.launchCwd or "none") .. ") is not a checkout of " .. where .. ".",
+					control = {
+						k = "text",
+						value = if type(mapped) == "string" then mapped else "",
+						placeholder = state.launchCwd or "~/Code/repo",
+						mono = true,
+					},
+					changed = type(mapped) == "string",
+					defaultLabel = "Launch directory",
+					disabled = if s.busy then "Checking the checkout…" elseif state.repo then nil else NO_REPO,
+				},
+			},
+		})
+	end
+	for _, sec in sections do
+		for _, row in sec.rows do
+			row.warning = s.errors[row.id]
+		end
+	end
+	return sections, lead, extra
+end
+
+-- Ids of the page's rows the keys can reach, in order.
+local function focusRows(state: State): { string }
+	local out: { string } = {}
+	local sections = pageContent(state)
+	for _, sec in sections do
+		for _, row in sec.rows do
+			if not row.disabled then
+				table.insert(out, row.id)
+			end
+		end
+	end
+	return out
+end
+
+local function rowById(state: State, id: string): Row?
+	local sections = pageContent(state)
+	for _, sec in sections do
+		for _, row in sec.rows do
+			if row.id == id then
+				return row
+			end
+		end
+	end
+	return nil
+end
+
+local function beginEdit(state: State, row: string, initial: string?)
+	local s = state.settings
+	local def = if s then rowById(state, row) else nil
+	if not s or not def or def.disabled or def.control.k ~= "text" then
+		return
+	end
+	s.focus = row
+	s.errors[row] = nil
+	s.edit = { row = row, model = input.new(initial or def.control.value) }
+end
+
+-- Saves (nil clears) the local checkout of the launch repo. Fails closed when the saved map cannot be read.
+local function setCheckout(state: State, root: string?): string?
+	local repo = state.repo
+	if not repo then
+		return NO_REPO
+	end
+	local ok, v = pcall(tern.kv.get, "repos")
+	if not ok or (v ~= nil and type(v) ~= "table") then
+		return "Saved checkouts could not be read"
+	end
+	local repos: { [string]: string } = if type(v) == "table" then v else {}
+	repos["github.com/" .. string.lower(repo)] = root
+	local ok2, err = pcall(tern.kv.set, "repos", repos)
+	if not ok2 then
+		return "Could not save: " .. tostring(err)
+	end
+	return nil
+end
+
+local function clearCheckout(state: State): string?
+	local err = setCheckout(state, nil)
+	if not err then
+		state.cx:toast("success", "Checkout cleared", state.repo or "")
+	end
+	return err
+end
+
+-- New account: old snapshots, problem and quota belong to the old identity; one authorized refresh.
+local function accountChanged(state: State)
+	state.gen += 1
+	state.snaps, state.snap, state.problem = {}, nil, nil
+	state.cx:toast("success", "GitHub account saved", "Refreshing " .. (state.repo or ""))
+	retry(state)
+end
+
+-- Rereads the store, applies `fn` to filter `id` and writes it back; an error message or nil.
+local function updateFilter(state: State, id: string, fn: (Filter) -> ()): string?
+	local store, writable, err = loadStore()
+	if not writable then
+		state.store, state.writable, state.storeError = store, false, err
+		return err or "Filters cannot be saved."
+	end
+	local target: Filter? = nil
+	for _, f in store.items do
+		if f.id == id then
+			target = f
+		end
+	end
+	if not target then
+		return "That filter was deleted elsewhere."
+	end
+	local before = target.query
+	fn(target)
+	local werr = writeStore(store)
+	if werr then
+		return "Could not save: " .. werr
+	end
+	state.store, state.writable, state.storeError = store, true, nil
+	if id == state.activeId and target.query ~= before then
+		changed(state)
+	end
+	propagate(state)
+	return nil
+end
+
+local function addFilter(state: State)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local store, writable, err = loadStore()
+	if not writable then
+		state.store, state.writable, state.storeError = store, false, err
+		s.errors.add = err or "Filters cannot be saved."
+		return
+	end
+	local id = "f" .. store.nextId
+	store.nextId += 1
+	table.insert(store.items, { id = id, name = "New filter", query = "is:open" })
+	local werr = writeStore(store)
+	if werr then
+		s.errors.add = "Could not save: " .. werr
+		return
+	end
+	state.store, state.writable, state.storeError = store, true, nil
+	switchFilter(state, id)
+	propagate(state)
+	beginEdit(state, "name:" .. id, "")
+end
+
+local function deleteFilter(state: State, id: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	s.confirm = nil
+	local rowId = "delete:" .. id
+	local store, writable, err = loadStore()
+	if not writable then
+		state.store, state.writable, state.storeError = store, false, err
+		s.errors[rowId] = err or "Filters cannot be saved."
+		return
+	end
+	local at = 0
+	for i, f in store.items do
+		if f.id == id then
+			at = i
+		end
+	end
+	if at == 0 then
+		return
+	end
+	table.remove(store.items, at)
+	local werr = writeStore(store)
+	if werr then
+		s.errors[rowId] = "Could not delete: " .. werr
+		return
+	end
+	state.store, state.writable, state.storeError = store, true, nil
+	if id == state.activeId then
+		local nextF = store.items[math.min(at, #store.items)]
+		switchFilter(state, if nextF then nextF.id else nil)
+	end
+	s.focus = "add"
+	propagate(state)
+end
+
+local function runAction(state: State, act: string, row: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	if act == "add" then
+		addFilter(state)
+	elseif act == "delete" then
+		s.confirm = string.match(row, "^delete:(.+)$")
+	elseif act == "refresh" then
+		retry(state)
+	end
+end
+
+local function runRow(state: State, row: string?)
+	if not row then
+		return
+	end
+	local def = rowById(state, row)
+	if not def or def.disabled then
+		return
+	end
+	if def.control.k == "text" then
+		beginEdit(state, row)
+	elseif def.control.k == "action" then
+		runAction(state, def.control.act, row)
+	end
+end
+
+local function commitEdit(state: State)
+	local s = state.settings
+	local e = if s then s.edit else nil
+	if not s or not e then
+		return
+	end
+	local text = trim(e.model.text)
+	local row = e.row
+	local kind, id = string.match(row, "^(%a+):(.+)$")
+	if (kind == "name" or kind == "query") and id then
+		local err: string? = nil
+		if text == "" then
+			err = if kind == "name" then "A name is required." else "A query is required."
+		elseif kind == "query" then
+			err = github.scopeProblem(text)
+		end
+		if not err then
+			err = updateFilter(state, id, function(f: Filter)
+				if kind == "name" then
+					f.name = text
+				else
+					f.query = text
+				end
+			end)
+		end
+		if err then
+			s.errors[row] = err
+		else
+			s.edit = nil
+		end
+	elseif row == "account" then
+		local repo = state.repo
+		if not repo then
+			s.errors.account = NO_REPO
+			return
+		end
+		local err = github.setAccount(repo, text)
+		if err then
+			s.errors.account = err
+		else
+			s.edit = nil
+			accountChanged(state)
+		end
+	elseif row == "checkout" then
+		if text == "" then
+			local err = clearCheckout(state)
+			if err then
+				s.errors.checkout = err
+			else
+				s.edit = nil
+			end
+			return
+		end
+		local repo = state.repo
+		if not repo then
+			s.errors.checkout = NO_REPO
+			return
+		end
+		local path, why = worktree.expandPath(text, tern.getenv("HOME"))
+		if not path then
+			s.errors.checkout = why
+			return
+		end
+		s.busy, s.edit = true, nil
+		worktree.resolveRepository(path, repo, function(info, problem)
+			if not alive(state) or state.settings ~= s then
+				return
+			end
+			s.busy = false
+			if not info then
+				beginEdit(state, "checkout", text) -- clears the row's error, so set it after
+				s.errors.checkout = problem
+			else
+				local err = setCheckout(state, info.root)
+				if err then
+					s.errors.checkout = err
+				else
+					state.cx:toast("success", "Checkout saved", info.root)
+				end
+			end
+			state.cx:render()
+		end)
+	end
+end
+
+-- Leaving a text row saves a changed value; a second Escape after a rejected save discards it.
+local function endEdit(state: State)
+	local s = state.settings
+	local e = if s then s.edit else nil
+	if not s or not e then
+		return
+	end
+	local def = rowById(state, e.row)
+	if s.errors[e.row] or not def or trim(e.model.text) == def.control.value then
+		s.edit = nil
+	else
+		commitEdit(state)
+	end
+end
+
+local function resetRow(state: State, row: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local err: string? = nil
+	if row == "account" and state.repo then
+		err = github.setAccount(state.repo, nil)
+		if not err then
+			accountChanged(state)
+		end
+	elseif row == "checkout" then
+		err = clearCheckout(state)
+	end
+	if err then
+		s.errors[row] = err
+	end
+end
+
+local function openSettings(state: State, page: string, row: string?, edit: boolean?)
+	state.settings = { page = page, focus = row, errors = {}, busy = false }
+	if edit and row then
+		beginEdit(state, row)
+	end
+end
+
+local function openSelected(state: State, kind: string, rerender: boolean)
 	local pr = selectedPr(state)
 	if pr then
-		local word = stateWord(pr)
-		table.insert(kids, ui.text({
-			ui.span(word .. "  ", stateTone(word)),
-			ui.span(pr.repo .. "#" .. pr.number .. "  ", "muted"),
-			ui.span(pr.title, "strong"),
-		}))
-		local open = badge("Open PR", "open", "accent", "open-pr")
-		local wt = badge("Worktree", "open", "neutral", "worktree")
-		local po: { [string]: any } = open.p or {}
-		po.href = prHref("open", pr)
-		open.p = po
-		local pw: { [string]: any } = wt.p or {}
-		pw.href = prHref("worktree", pr)
-		wt.p = pw
-		table.insert(kids, open)
-		table.insert(kids, wt)
-	else
-		table.insert(kids, ui.text({ ui.span("No pull request selected", "muted") }))
+		if rerender then
+			state.cx:render() -- sends the new preview before the open request
+		end
+		state.cx:open(prHref(kind, pr))
 	end
-	table.insert(kids, ui.text({ ui.span("tab switch list  ↑↓ move  r refresh", "dim") }))
-	return ui.col(kids)
+end
+
+local function pickerItem(pr: github.Pr): { [string]: any }
+	local check = if pr.checks then CHECK[pr.checks] else nil
+	local kind = stateKind(pr)
+	local badges: { any } = {}
+	if kind ~= "open" then
+		table.insert(badges, STATE_BADGE[kind])
+	end
+	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
+	if review then
+		table.insert(badges, review)
+	end
+	for _, l in pr.labels do
+		table.insert(badges, { text = l })
+	end
+	return {
+		id = itemId(pr),
+		label = pr.title,
+		title = pr.title,
+		detail = "#" .. pr.number .. " · " .. pr.author .. " · " .. pr.head,
+		mark = { text = pr.author, seed = pr.author },
+		dot = if check then check.dot else nil,
+		badges = if #badges > 0 then badges else nil,
+		facts = {
+			changes = { ui.span("+" .. pr.additions, "ins"), " ", ui.span("−" .. pr.deletions, "error") },
+			updated = github.age(pr.updated),
+		},
+	}
+end
+
+local function previewNodes(state: State): { Node }
+	local pr = selectedPr(state)
+	if not pr then
+		return {}
+	end
+	local check = if pr.checks then CHECK[pr.checks] else nil
+	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
+	local sb = STATE_BADGE[stateKind(pr)]
+	local chips: { Node } = { ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }) }
+	for i, l in pr.labels do
+		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
+	end
+	local facts = {
+		{ k = "Number", v = "#" .. pr.number },
+		{ k = "Author", v = "@" .. pr.author },
+		{ k = "Branch", v = pr.head .. " → " .. pr.base },
+		{ k = "Checks", v = { if check then ui.span(check.text, check.tone) else ui.span("None", "muted") } },
+		{ k = "Review", v = { if review then ui.span(review.text, review.tone) else ui.span("None", "muted") } },
+		{ k = "Comments", v = { ui.span(tostring(pr.comments), "num") } },
+		{ k = "Opened", v = github.age(pr.created) .. " ago" },
+		{ k = "Updated", v = github.age(pr.updated) .. " ago" },
+	}
+	-- Buttons sit above the facts so a short pane never clips them.
+	local buttons = ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
+		ui.el("button", {
+			key = "open",
+			class = "plotroom-btn primary",
+			text = "Open",
+			href = prHref("open", pr),
+			actions = { click = "open" },
+			title = "Open in a Browser block",
+		}, { ui.node("kbd", { keys = { "enter" } }) }),
+		ui.el("button", {
+			key = "worktree",
+			class = "plotroom-btn",
+			text = "Worktree",
+			href = prHref("worktree", pr),
+			actions = { click = "open" },
+			title = "Check out in a worktree tab",
+		}, { ui.node("kbd", { keys = { "w" } }) }),
+		ui.el("button", { key = "copy", class = "plotroom-btn", text = "Copy link", href = pr.url, actions = { click = "copy" } }),
+	})
+	local out: { Node } = {
+		ui.node("text", { key = "title", role = "plotroom.title", spans = { ui.span(pr.title, "strong") } }),
+		ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips),
+		buttons,
+		ui.node("kv", { key = "facts", items = facts }),
+	}
+	local a, d = pr.additions, pr.deletions
+	if a + d > 0 then
+		table.insert(
+			out,
+			ui.node("meter", {
+				key = "diff",
+				parts = {
+					{ value = a / (a + d), token = "ins", label = "+" .. a },
+					{ value = d / (a + d), token = "error", label = "−" .. d },
+				},
+				label = { ui.span("+" .. a, "ins"), " ", ui.span("−" .. d, "error") },
+				total = pr.files .. (if pr.files == 1 then " file" else " files"),
+			})
+		)
+	end
+	return out
+end
+
+local function queueView(state: State): BlockView
+	local snap, problem, f, pr = state.snap, state.problem, activeFilter(state), selectedPr(state)
+	local items: { any } = {}
+	local order: { string } = {}
+	local hits: { [string]: any } = {}
+	local needle = if state.query then state.query.text else ""
+	if snap then
+		for _, p in snap.prs do
+			table.insert(items, pickerItem(p))
+		end
+		for _, p in visible(state) do
+			table.insert(order, itemId(p))
+			local _, range = github.match(p, needle)
+			if range then
+				hits[itemId(p)] = { range }
+			end
+		end
+	end
+
+	local title: { any } = { ui.span(if f then f.name else "Pull requests") }
+	if snap and problem then
+		table.insert(title, ui.span("  stale", "warning"))
+	elseif snap and not snap.complete then
+		table.insert(title, ui.span("  partial", "warning"))
+	end
+	local subtitle: { any } = { ui.span(state.repo or "No repository", "muted") }
+	if state.loading then
+		local busy: any = ui.span("Refreshing…", "muted")
+		busy.fx = "shimmer"
+		table.insert(subtitle, ui.span(" · ", "muted"))
+		table.insert(subtitle, busy)
+	elseif snap then
+		table.insert(subtitle, ui.span(" · updated " .. os.date("%H:%M", snap.fetched), "muted"))
+	end
+	if problem and snap then
+		table.insert(subtitle, ui.span(" · " .. (HEADS[problem.kind] or "Plotroom") .. ", showing the last results", "warning"))
+	end
+	if snap and not snap.complete then
+		table.insert(subtitle, ui.span(" · Partial results: narrow this filter", "warning"))
+	end
+	if state.storeError then
+		table.insert(subtitle, ui.span(" · " .. state.storeError, "error"))
+	end
+
+	local scopes: { any } = {}
+	for _, fl in state.store.items do
+		local cached = if state.repo then state.snaps[snapKey(state, fl.query)] else nil
+		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", group = "Filters", count = if cached then #cached.prs else nil })
+	end
+
+	local wait = github.wait(os.time(), acct(state))
+	local noPr = if pr then nil else "Select a pull request"
+	local actions: { any } = {}
+	if state.query then
+		table.insert(actions, { id = "clear", label = "Clear search", keys = { "esc" } })
+	end
+	table.insert(actions, { id = "search", label = "Search", keys = { "/" } })
+	if #state.store.items > 0 then
+		table.insert(actions, { id = "filters", label = "Filters", keys = { "tab" } })
+	end
+	table.insert(actions, { id = "settings", label = "Settings", keys = { "s" } })
+	table.insert(actions, {
+		id = "retry",
+		label = "Refresh",
+		keys = { "r" },
+		disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
+	})
+	table.insert(actions, { id = "worktree", label = "Worktree", keys = { "w" }, ["end"] = true, disabled = noPr })
+	table.insert(actions, { id = "open", label = "Open", keys = { "enter" }, primary = true, disabled = noPr })
+
+	local props: { [string]: any } = {
+		key = "queue",
+		size = "screen",
+		layout = "cards",
+		preview = "side",
+		icon = "merge",
+		title = title,
+		subtitle = subtitle,
+		noun = "pull requests",
+		placeholder = "Filter the loaded pull requests",
+		state = if not snap and problem then "error" elseif not snap and f then "loading" else "ready",
+		empty = {
+			ui.span(if f then "No pull requests match " .. f.name .. "." else "No saved filters yet. Press s to add one.", "muted"),
+		},
+		total = if snap then snap.total else nil,
+		items = tern.json.array(items),
+		order = tern.json.array(order),
+		hits = if next(hits) then hits else nil,
+		selected = if pr then itemId(pr) else nil,
+		focus = state.focus,
+		scopes = tern.json.array(scopes),
+		scope = state.activeId,
+		columns = {
+			{ id = "changes", head = "Changes", format = "text", priority = 50 },
+			{ id = "updated", head = "Updated", format = "time", priority = 90 },
+		},
+		actions = actions,
+	}
+	if state.query then
+		local qp = input.props(state.query)
+		props.query, props.cursor = qp.text, qp.cursor
+	end
+	if not snap and problem then
+		props.message = { ui.span(HEADS[problem.kind] or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted") }
+	end
+	return { main = ui.col({ contextNode(state) }), layer = ui.col({ ui.node("picker", props, previewNodes(state)) }) }
+end
+
+local function confirmOverlay(state: State, id: string): Node
+	local name = "this filter"
+	for _, f in state.store.items do
+		if f.id == id then
+			name = f.name
+		end
+	end
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = "Delete filter “" .. name .. "”?" }, {
+		ui.node("text", { key = "body", spans = { ui.span("Every Plotroom pane loses this saved search.", "muted") } }),
+		ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
+			ui.el("button", { key = "delete", class = "plotroom-btn danger", text = "Delete", actions = { click = "confirm-delete" } }, {
+				ui.node("kbd", { keys = { "enter" } }),
+			}),
+			ui.el("button", { key = "keep", class = "plotroom-btn", text = "Keep", actions = { click = "cancel-delete" } }, {
+				ui.node("kbd", { keys = { "esc" } }),
+			}),
+		}),
+	})
+end
+
+local function settingsView(state: State): BlockView
+	local s = state.settings :: Settings
+	local sections, lead, extra = pageContent(state)
+	local props: { [string]: any } = {
+		key = "settings",
+		title = "Plotroom",
+		pages = PAGE_DEFS,
+		page = s.page,
+		lead = lead,
+		sections = sections,
+		focus = s.focus,
+	}
+	if s.edit then
+		local p = input.props(s.edit.model)
+		props.editing = { row = s.edit.row, draft = p.text, cursor = p.cursor }
+	end
+	return {
+		main = ui.col({ contextNode(state), ui.node("prefs", props, extra) }),
+		layer = if s.confirm then ui.col({ confirmOverlay(state, s.confirm) }) else nil,
+	}
 end
 
 -- ---------------------------------------------------------------- block
 
-local function modelFor(state: State, id: string): input.Model?
-	if state.form then
-		if id == FIELD_IDS.name then
-			return state.form.name
-		elseif id == FIELD_IDS.query then
-			return state.form.query
-		end
-	end
-	if state.repoForm and id == FIELD_IDS.path then
-		return state.repoForm.path
-	end
-	return nil
-end
-
-local function focusedModel(state: State): input.Model?
-	local name = if state.form then state.form.focus elseif state.repoForm then state.repoForm.focus else nil
-	if name and FIELD_IDS[name] then
-		return modelFor(state, FIELD_IDS[name])
-	end
-	return nil
-end
-
 tern.block.define("prs", {
-	features = { "edit", "undo" },
-
 	init = function(cx: BlockCx, args: { string }, saved: any): State
 		local cwd: string? = nil
 		for _, c in { if type(saved) == "table" then saved.launchCwd else nil, args[1], cx.cwd } do
@@ -1032,8 +1320,7 @@ tern.block.define("prs", {
 			snaps = {},
 			snap = nil,
 			cursor = nil,
-			page = 1,
-			focus = "prs",
+			focus = "list",
 			loading = false,
 			gen = 0,
 			repo = if sp then sp.repo else nil,
@@ -1043,10 +1330,8 @@ tern.block.define("prs", {
 			nextAt = nil,
 			problem = if sp then { kind = sp.kind, message = sp.message } else nil,
 			timer = nil,
-			form = nil,
-			confirmDelete = false,
-			repoForm = nil,
-			notice = nil,
+			query = nil,
+			settings = nil,
 		}
 		if not activeFilter(state) then
 			state.activeId = if store.items[1] then store.items[1].id else nil
@@ -1058,161 +1343,206 @@ tern.block.define("prs", {
 
 	title = function(state: State): string?
 		local snap = state.snap
-		if snap then
-			return "Plotroom · GitHub PRs (" .. #snap.prs .. ")"
-		end
-		return "Plotroom · GitHub PRs"
+		local f = activeFilter(state)
+		return "Plotroom · " .. (if f then f.name else "GitHub PRs") .. (if snap then " (" .. #snap.prs .. ")" else "")
 	end,
 
 	view = function(state: State, _cx: BlockCx): BlockView
-		return { main = mainView(state), dock = dockView(state) }
+		return if state.settings then settingsView(state) else queueView(state)
 	end,
 
 	key = function(state: State, key: Key, cx: BlockCx): boolean?
-		if key.name == "tab" and not key.ctrl and not key.alt and not key.meta then
-			cycle(state, key.shift)
-			return true
-		end
-		if state.form or state.repoForm then
-			local focus = if state.form then state.form.focus else (state.repoForm :: RepoForm).focus
-			if key.name == "escape" then
-				cancelForms(state)
-			elseif key.name == "enter" then
-				activate(state, if focus == "cancel" then "cancel" else "save")
-			else
-				local m = focusedModel(state)
-				if not m or not input.key(m, key, function(t)
+		local plain = not (key.ctrl or key.alt or key.meta)
+		local name = key.name
+		local s = state.settings
+		if s then
+			if s.confirm then
+				if name == "enter" then
+					deleteFilter(state, s.confirm)
+				elseif name == "escape" then
+					s.confirm = nil
+				else
+					return false
+				end
+				return true
+			end
+			local e = s.edit
+			if e then
+				if name == "escape" then
+					endEdit(state)
+				elseif name == "enter" then
+					commitEdit(state)
+				elseif not input.key(e.model, key, function(t)
 					cx:copy(t)
 				end) then
 					return false
 				end
+				return true
 			end
-			return true
-		end
-		if state.confirmDelete then
-			if key.name == "enter" then
-				deleteActive(state)
-			elseif key.name == "escape" then
-				state.confirmDelete = false
+			if name == "escape" then
+				state.settings = nil
+			elseif name == "tab" and plain then
+				local at = table.find(PAGES, s.page) or 1
+				s.page = PAGES[((at - 1 + (if key.shift then -1 else 1)) % #PAGES) + 1]
+				s.focus, s.edit, s.errors = nil, nil, {}
+			elseif name == "up" or name == "down" then
+				local rows = focusRows(state)
+				if #rows == 0 then
+					return false
+				end
+				local at = if s.focus then table.find(rows, s.focus) else nil
+				local down = name == "down"
+				s.focus = rows[if at then math.clamp(at + (if down then 1 else -1), 1, #rows) elseif down then 1 else #rows]
+			elseif name == "enter" or name == "space" then
+				runRow(state, s.focus)
 			else
 				return false
 			end
 			return true
 		end
-		if key.ctrl or key.alt or key.meta then
-			return false
-		end
-		local k = key.text or key.name
-		if state.focus == "filters" then
-			if key.name == "up" then
+
+		local searching = state.query ~= nil
+		local scopes = state.focus == "scopes"
+		local k = key.text or name
+		if name == "tab" and plain then
+			state.focus = if scopes then "list" else "scopes"
+		elseif name == "escape" then
+			local q = state.query
+			if q then
+				state.query = if q.text ~= "" then input.new("") else nil
+				ensureCursor(state)
+			elseif scopes then
+				state.focus = "list"
+			else
+				return false
+			end
+		elseif name == "up" or (not searching and plain and k == "k") then
+			if scopes then
 				moveFilter(state, -1)
-			elseif key.name == "down" then
+			else
+				moveCursor(state, -1)
+			end
+		elseif name == "down" or (not searching and plain and k == "j") then
+			if scopes then
 				moveFilter(state, 1)
-			elseif key.name == "home" then
-				moveFilter(state, -1000)
-			elseif key.name == "end" then
-				moveFilter(state, 1000)
-			elseif k ~= "r" then
-				return false
-			end
-		else
-			local i = indexOf(if state.snap then state.snap.prs else {}, state.cursor)
-			local n = if state.snap then #state.snap.prs else 0
-			if key.name == "up" or k == "k" then
-				moveCursor(state, i - 1)
-			elseif key.name == "down" or k == "j" then
-				moveCursor(state, i + 1)
-			elseif key.name == "page_up" then
-				moveCursor(state, i - PAGE_SIZE)
-			elseif key.name == "page_down" then
-				moveCursor(state, i + PAGE_SIZE)
-			elseif key.name == "home" then
+			else
 				moveCursor(state, 1)
-			elseif key.name == "end" then
-				moveCursor(state, n)
-			elseif k ~= "r" then
+			end
+		elseif name == "page_up" or name == "page_down" then
+			moveCursor(state, if name == "page_up" then -10 else 10)
+		elseif not searching and (name == "home" or name == "end") then
+			local d = if name == "home" then -100000 else 100000
+			if scopes then
+				moveFilter(state, d)
+			else
+				moveCursor(state, d)
+			end
+		elseif name == "enter" then
+			if scopes then
+				state.focus = "list"
+			else
+				openSelected(state, "open", false)
+			end
+		elseif state.query then
+			local q = state.query
+			local before = q.text
+			if not input.key(q, key, function(t)
+				cx:copy(t)
+			end) then
 				return false
 			end
-		end
-		if k == "r" then
+			if q.text ~= before then
+				ensureCursor(state)
+			end
+		elseif plain and k == "/" then
+			state.query = input.new("")
+		elseif plain and k == "r" then
 			retry(state)
+		elseif plain and k == "s" then
+			openSettings(state, "filters")
+		elseif plain and k == "w" then
+			openSelected(state, "worktree", false)
+		else
+			return false
 		end
 		return true
 	end,
 
-	event = function(state: State, ev: UiEvent, cx: BlockCx)
+	event = function(state: State, ev: UiEvent, _cx: BlockCx)
 		if not alive(state) then
 			return
 		end
-		if ev.ev == "select" and ev.id == "main.filters" and type(ev.item) == "string" then
-			state.focus = "filters"
-			local id = string.sub(ev.item, #FILTERS_ID + 1)
-			if id ~= state.activeId then
-				switchFilter(state, id)
+		local s = state.settings
+		local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
+		local item = if type(ev.item) == "string" then ev.item else nil
+		if act == "choose-repo" then
+			openSettings(state, "worktrees", "checkout", true)
+		elseif act == "confirm-delete" then
+			if s and s.confirm then
+				deleteFilter(state, s.confirm)
 			end
-		elseif ev.ev == "select" and ev.id == "main.prs" and type(ev.item) == "string" then
-			state.focus = "prs"
-			state.cursor = string.sub(ev.item, #LIST_ID + 1)
-			ensureCursor(state)
-		elseif ev.ev == "focus" and type(ev.id) == "string" then
-			for name, id in FIELD_IDS do
-				if id == ev.id then
-					if state.form and name ~= "path" then
-						state.form.focus = name
-					elseif state.repoForm and name == "path" then
-						state.repoForm.focus = name
+		elseif act == "cancel-delete" then
+			if s then
+				s.confirm = nil
+			end
+		elseif s then
+			if ev.id ~= SETTINGS_ID then
+				return
+			end
+			if act == "page" then
+				if type(ev.value) == "string" and table.find(PAGES, ev.value) then
+					s.page, s.focus, s.edit, s.errors = ev.value, nil, nil, {}
+				end
+			elseif act == "close" then
+				if ev.value == nil then
+					state.settings = nil
+				else
+					endEdit(state)
+				end
+			elseif act == "add" or act == "delete" or act == "refresh" then
+				if type(ev.value) == "string" then
+					s.focus = ev.value
+					runAction(state, act, ev.value)
+				end
+			elseif ev.ev == "activate" and item then
+				beginEdit(state, item)
+			elseif ev.ev == "select" and item then
+				s.focus = item
+			elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
+				resetRow(state, item)
+			end
+		elseif ev.id == QUEUE_ID then
+			if ev.ev == "select" or ev.ev == "activate" then
+				local pr = if item then prOfItem(state, item) else nil
+				if not pr then
+					return -- a refresh replaced the snapshot
+				end
+				state.cursor, state.focus = pr.key, "list"
+				if ev.ev == "activate" then
+					openSelected(state, "open", true)
+				end
+			elseif act == "scope" then
+				state.focus = "list"
+				if type(ev.value) == "string" and ev.value ~= state.activeId then
+					for _, f in state.store.items do
+						if f.id == ev.value then
+							switchFilter(state, f.id)
+						end
 					end
-					focusField(state, name)
 				end
-			end
-		elseif ev.ev == "edit" and type(ev.id) == "string" then
-			local m = modelFor(state, ev.id)
-			if m then
-				input.edit(m, ev)
-			end
-		elseif ev.ev == "undo" and type(ev.id) == "string" then
-			local m = modelFor(state, ev.id)
-			if m then
-				input.undo(m)
-			end
-		elseif ev.ev == "action" and type(ev.act) == "string" then
-			local act = ev.act
-			if act == "new" then
-				openForm(state, false)
-			elseif act == "edit" then
-				openForm(state, true)
-			elseif act == "delete" then
-				if activeFilter(state) then
-					state.form = nil
-					state.confirmDelete = true
-				end
-			elseif act == "confirm-delete" then
-				deleteActive(state)
-			elseif act == "cancel-delete" then
-				state.confirmDelete = false
-			elseif act == "refresh" then
-				state.notice = nil
-				retry(state)
+			elseif act == "clear" or act == "close" then
+				state.query = nil
+				ensureCursor(state)
+			elseif act == "search" then
+				state.query = state.query or input.new("")
+			elseif act == "filters" then
+				state.focus = if state.focus == "list" then "scopes" else "list"
+			elseif act == "settings" then
+				openSettings(state, "filters")
 			elseif act == "retry" then
 				retry(state)
-			elseif act == "prev" then
-				goPage(state, state.page - 1)
-			elseif act == "next" then
-				goPage(state, state.page + 1)
-			elseif act == "save" or act == "cancel" then
-				activate(state, act)
-			elseif act == "choose-repo" and type(ev.value) == "string" then
-				state.form = nil
-				state.confirmDelete = false
-				state.notice = nil
-				state.repoForm = { repo = ev.value, path = input.new(""), focus = "path", error = nil, busy = false }
-				focusField(state, "path")
-			elseif act == "account" and state.repo then
-				state.form = nil
-				state.confirmDelete = false
-				state.notice = nil
-				state.repoForm = { repo = state.repo, path = input.new(github.account(state.repo) or ""), focus = "path", error = nil, busy = false, account = true }
-				focusField(state, "path")
+			elseif act == "open" or act == "worktree" then
+				openSelected(state, act, false)
 			end
 		end
 	end,

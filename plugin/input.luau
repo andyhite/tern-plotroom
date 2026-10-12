@@ -1,7 +1,7 @@
 --!strict
--- A single-line text model for `input` nodes. Offsets (`cur`, `anchor`) are
--- byte offsets at UTF-8 codepoint boundaries; the SDK wants UTF-16 units, so
--- `props` and `edit` convert at the edge.
+-- A single-line text model for the picker search and settings rows. Offsets
+-- (`cur`, `anchor`) are byte offsets at UTF-8 codepoint boundaries; the SDK
+-- wants UTF-16 units for drawn fields, so `props` converts at the edge.
 
 local M = {}
 
@@ -39,23 +39,6 @@ function M.u16(text: string, bytes: number): number
 		n += if c > 0xFFFF then 2 else 1
 	end
 	return n
-end
-
--- Byte offset at UTF-16 unit `units`; an offset inside a pair rounds down, past the end clamps.
-function M.fromU16(text: string, units: number): number
-	local n = 0
-	for p, c in utf8.codes(text) do
-		local w = if c > 0xFFFF then 2 else 1
-		if n + w > units then
-			return p - 1
-		end
-		n += w
-	end
-	return #text
-end
-
-function M.len16(text: string): number
-	return M.u16(text, #text)
 end
 
 local function prev(text: string, off: number): number
@@ -124,31 +107,7 @@ function M.undo(m: Model): boolean
 	return true
 end
 
--- A native `edit` event: replace UTF-16 [from, to) with `text`, caret at `cursor`.
--- Stale events (the text changed since Tern measured `len`) are ignored.
-function M.edit(m: Model, ev: { [string]: any }): boolean
-	if type(ev.from) ~= "number" or type(ev.to) ~= "number" or type(ev.cursor) ~= "number" then
-		return false
-	end
-	if type(ev.len) == "number" and ev.len ~= M.len16(m.text) then
-		return false
-	end
-	local text = M.clean(if type(ev.text) == "string" then ev.text else "")
-	local lo, hi = M.fromU16(m.text, ev.from), M.fromU16(m.text, ev.to)
-	if hi < lo then
-		lo, hi = hi, lo
-	end
-	if lo ~= hi or text ~= "" then
-		push(m)
-		m.text = string.sub(m.text, 1, lo) .. text .. string.sub(m.text, hi + 1)
-	end
-	local joined = M.fromU16(m.text, ev.cursor)
-	m.cur = joined
-	m.anchor = nil
-	return true
-end
-
--- SDK props for an `input` node.
+-- SDK props for a drawn text field (picker search, settings row): text, UTF-16 cursor and anchor.
 function M.props(m: Model): { [string]: any }
 	local anchor = m.anchor
 	return {

@@ -3,6 +3,7 @@
 -- search snapshots and single-PR metadata. Shared by host and window.
 
 local process = require("./process")
+local input = require("./input")
 
 local M = {}
 
@@ -17,17 +18,29 @@ export type Pr = {
 	state: string,
 	draft: boolean,
 	updated: number,
+	created: number,
+	head: string,
+	base: string,
+	additions: number,
+	deletions: number,
+	files: number,
+	comments: number,
+	review: string?,
+	checks: string?,
+	labels: { string },
 }
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean }
 
 local GH_TIMEOUT_MS = 30 * 1000
-local PAGE = 100
 local CAP = 1000
 local RATE_S = 300
 local ENV = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1", NO_COLOR = "1" }
 
-local SEARCH_JQ =
-	"{total_count,incomplete_results,items:[.items[]|{id,number,title,html_url,repository_url,user:{login:.user.login},state,draft,updated_at,pull_request}]}"
+local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }"
+local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,labels:[.labels.nodes[]?.name]}]}"
+local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
+local CHECKS: { [string]: string } =
+	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
 local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,state:.state}"
 
 -- Seconds since the epoch of `2026-09-30T14:03:11Z` (days-from-civil; `os.time`
@@ -81,40 +94,63 @@ end
 
 -- One search item as a Pr, or nil and why. Issues and malformed URLs are rejected.
 function M.normalize(item: any): (Pr?, string?)
-	if type(item) ~= "table" or type(item.pull_request) ~= "table" then
+	if type(item) ~= "table" or type(item.number) ~= "number" then
 		return nil, "the search returned an item that is not a pull request"
 	end
-	local o, r, n = M.parsePrUrl(item.html_url)
-	if not o or not r or not n or tonumber(item.number) ~= n then
+	local o, r, n = M.parsePrUrl(item.url)
+	if not o or not r or not n or item.number ~= n then
 		return nil, "the search returned a pull request with an unexpected URL"
 	end
 	if type(item.title) ~= "string" then
 		return nil, "the search returned a pull request without a title"
 	end
-	local user = item.user
 	local state = "open"
-	if type(item.pull_request.merged_at) == "string" then
+	if item.state == "MERGED" then
 		state = "merged"
-	elseif item.state == "closed" then
+	elseif item.state == "closed" or item.state == "CLOSED" then
 		state = "closed"
+	end
+	local function count(v: any): number
+		return if type(v) == "number" and v >= 0 then v else 0
+	end
+	local function str(v: any): string
+		return if type(v) == "string" then v else ""
+	end
+	local labels: { string } = {}
+	if type(item.labels) == "table" then
+		for _, l in item.labels do
+			if type(l) == "string" then
+				table.insert(labels, l)
+			end
+		end
 	end
 	return {
 		key = M.identity(o, r, n),
 		repo = o .. "/" .. r,
 		number = n,
 		title = item.title,
-		url = item.html_url,
-		author = if type(user) == "table" and type(user.login) == "string" then user.login else "ghost",
+		url = item.url,
+		author = if type(item.author) == "string" then item.author else "ghost",
 		state = state,
-		draft = item.draft == true,
-		updated = M.epoch(if type(item.updated_at) == "string" then item.updated_at else "") or 0,
+		draft = item.isDraft == true,
+		updated = M.epoch(str(item.updatedAt)) or 0,
+		created = M.epoch(str(item.createdAt)) or 0,
+		head = str(item.head),
+		base = str(item.base),
+		additions = count(item.additions),
+		deletions = count(item.deletions),
+		files = count(item.changedFiles),
+		comments = count(item.comments),
+		review = if type(item.review) == "string" then REVIEW[item.review] else nil,
+		checks = if type(item.checks) == "string" then CHECKS[item.checks] else nil,
+		labels = labels,
 	}, nil
 end
 
--- One page of the search JSON: total, incomplete flag, raw item count, PRs.
-function M.parsePage(stdout: string): ({ total: number, incomplete: boolean, raw: number, prs: { Pr } }?, string?)
+-- One page of the search JSON: total, next cursor, points cost, raw item count, PRs.
+function M.parsePage(stdout: string): ({ total: number, next: string?, cost: number, raw: number, prs: { Pr } }?, string?)
 	local ok, data = pcall(tern.json.decode, stdout)
-	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total_count) ~= "number" then
+	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total) ~= "number" then
 		return nil, "gh printed something other than a search result"
 	end
 	local prs: { Pr } = {}
@@ -125,7 +161,27 @@ function M.parsePage(stdout: string): ({ total: number, incomplete: boolean, raw
 		end
 		table.insert(prs, pr)
 	end
-	return { total = data.total_count, incomplete = data.incomplete_results == true, raw = #data.items, prs = prs }, nil
+	return {
+		total = data.total,
+		next = if type(data.next) == "string" and data.next ~= "" then data.next else nil,
+		cost = if type(data.cost) == "number" and data.cost > 0 then data.cost else 1,
+		raw = #data.items,
+		prs = prs,
+	}, nil
+end
+
+-- Local search over loaded PRs: whether `pr` matches, and the matched UTF-16
+-- range in its title (nil when the match is elsewhere or the needle is blank).
+function M.match(pr: Pr, needle: string): (boolean, { number }?)
+	local q = string.lower(string.match(needle, "^%s*(.-)%s*$") or "")
+	if q == "" then
+		return true, nil
+	end
+	local at = string.find(string.lower(pr.title), q, 1, true)
+	if at then
+		return true, { input.u16(pr.title, at - 1), input.u16(pr.title, at - 1 + #q) }
+	end
+	return string.find(string.lower("#" .. pr.number .. " " .. pr.author .. " " .. pr.head), q, 1, true) ~= nil, nil
 end
 
 -- Deduplicated by identity, newest update first, identity as the tie-break.
@@ -164,10 +220,7 @@ function M.classify(result: ProcessResult): Problem
 	end
 	local err = result.stderr
 	local low = string.lower(err)
-	if
-		string.find(err, "HTTP 429", 1, true)
-		or (string.find(err, "HTTP 403", 1, true) and string.find(low, "rate limit", 1, true))
-	then
+	if string.find(err, "HTTP 429", 1, true) or string.find(low, "rate limit", 1, true) then
 		return { kind = "rate-limit", message = "GitHub rate limit reached: " .. firstLines(err, 2) }
 	end
 	if result.status == 4 or string.find(err, "gh auth login", 1, true) or string.find(err, "HTTP 401", 1, true) then
@@ -177,7 +230,7 @@ function M.classify(result: ProcessResult): Problem
 		-- Not a rate limit (checked above): permissions, or SAML SSO authorization.
 		return { kind = "auth", message = "This GitHub account may not access the repository (permissions or SSO authorization): " .. firstLines(err, 3) }
 	end
-	if string.find(err, "HTTP 422", 1, true) then
+	if string.find(err, "HTTP 422", 1, true) or string.find(low, "cannot be searched", 1, true) then
 		-- Validation Failed: bad query, or the account cannot search the repository. Retrying unchanged cannot help.
 		return { kind = "invalid", message = "GitHub rejected the search: " .. firstLines(err, 3) }
 	end
@@ -252,7 +305,7 @@ end
 -- Quota and body of `gh api --include` output: one or more blocks of status
 -- line, headers and a blank line (a `100 Continue` precedes the real one), then
 -- the body. Lines end in LF or CRLF; header names are case-insensitive; text
--- without a header block is all body. Other rate-limit resources than search
+-- without a header block is all body. Other rate-limit resources than graphql
 -- are ignored.
 function M.parseResponse(text: string, now: number): (Quota?, string)
 	local q: Quota = {}
@@ -267,7 +320,7 @@ function M.parseResponse(text: string, now: number): (Quota?, string)
 			if k and v then
 				k = string.lower(k)
 				local n = tonumber(v)
-				if k == "x-ratelimit-resource" and string.lower(v) ~= "search" then
+				if k == "x-ratelimit-resource" and string.lower(v) ~= "graphql" then
 					return nil, rest
 				elseif k == "x-ratelimit-limit" and n then
 					q.limit, found = n, true
@@ -434,31 +487,29 @@ function M.search(
 		end)
 		return
 	end
-	query = "repo:" .. repo .. " " .. query
+	query = "repo:" .. repo .. " " .. query .. " is:pr sort:updated-desc"
 	local account = M.account(repo)
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local all: { Pr } = {}
 	local total = 0
-	local incomplete = false
 	local loaded = 0
-	local requests = 0
+	local spent = 0
 	local function finish(cut: boolean)
-		done({ prs = M.reconcile(all), total = total, complete = not cut and not incomplete and total <= CAP }, nil, requests)
+		done({ prs = M.reconcile(all), total = total, complete = not cut and total <= CAP }, nil, spent)
 	end
-	local function fetch(page: number)
+	local function fetch(after: string?)
 		if not shouldContinue() then
-			return done(nil, superseded, requests)
+			return done(nil, superseded, spent)
 		end
-		requests += 1
-		M.gh({
-			"api", "--hostname", "github.com", "--include", "--method", "GET", "search/issues",
-			"-f", "q=" .. query .. " is:pr",
-			"-f", "per_page=" .. PAGE,
-			"-f", "page=" .. page,
-			"-f", "sort=updated",
-			"-f", "order=desc",
-			"--jq", SEARCH_JQ,
-		}, function(out, problem, _, raw)
+		spent += 1
+		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. SEARCH_GQL, "-f", "q=" .. query }
+		if after then
+			table.insert(args, "-f")
+			table.insert(args, "after=" .. after)
+		end
+		table.insert(args, "--jq")
+		table.insert(args, SEARCH_JQ)
+		M.gh(args, function(out, problem, _, raw)
 			local now = os.time()
 			local q, body = M.parseResponse(out or raw or "", now)
 			M.record(q, now, account)
@@ -467,33 +518,33 @@ function M.search(
 				M.record({ retryUntil = now + RATE_S }, now, account)
 			end
 			if not shouldContinue() then
-				return done(nil, superseded, requests)
+				return done(nil, superseded, spent)
 			end
 			if not out then
-				return done(nil, problem, requests)
+				return done(nil, problem, spent)
 			end
 			local pg, why = M.parsePage(body)
 			if not pg then
-				return done(nil, { kind = "failed", message = why or "malformed response" }, requests)
+				return done(nil, { kind = "failed", message = why or "malformed response" }, spent)
 			end
-			if page == 1 then
+			spent += pg.cost - 1
+			if after == nil then
 				total = pg.total
 			end
-			incomplete = incomplete or pg.incomplete
 			loaded += pg.raw
 			for _, pr in pg.prs do
 				table.insert(all, pr)
 			end
-			if pg.raw < PAGE or loaded >= math.min(total, CAP) or page * PAGE >= CAP then
+			if pg.next == nil or loaded >= math.min(total, CAP) then
 				return finish(false)
 			end
 			if M.wait(now, account) > 0 then
 				return finish(true) -- quota exhausted mid-snapshot: keep what arrived, flagged partial
 			end
-			fetch(page + 1)
+			fetch(pg.next)
 		end, account)
 	end
-	fetch(1)
+	fetch(nil)
 end
 
 export type PrMeta = { base: string, sha: string, ref: string, state: string }

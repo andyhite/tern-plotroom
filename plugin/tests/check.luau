@@ -14,11 +14,19 @@ local function item(n: number, repo: string, updated: string, extra: { [string]:
 	local t: { [string]: any } = {
 		number = n,
 		title = "T" .. n,
-		html_url = "https://github.com/" .. repo .. "/pull/" .. n,
-		user = { login = "u" },
-		state = "open",
-		updated_at = updated,
-		pull_request = { url = "x" },
+		url = "https://github.com/" .. repo .. "/pull/" .. n,
+		author = "u",
+		state = "OPEN",
+		isDraft = false,
+		updatedAt = updated,
+		createdAt = updated,
+		head = "b" .. n,
+		base = "main",
+		additions = 1,
+		deletions = 2,
+		changedFiles = 3,
+		comments = 4,
+		labels = tern.json.array({}),
 	}
 	for k, v in extra or {} do
 		t[k] = v
@@ -26,26 +34,24 @@ local function item(n: number, repo: string, updated: string, extra: { [string]:
 	return t
 end
 
-local function page(items: { any }, total: number?): string
-	return tern.json.encode({ total_count = total or #items, incomplete_results = false, items = tern.json.array(items) })
+local function page(items: { any }, total: number?, next: string?): string
+	return tern.json.encode({ total = total or #items, cost = 1, next = next, items = tern.json.array(items) })
 end
 
 function M.run()
 	-- search pages: rejection, empty, dedupe, order
 	assert(github.parsePage("not json") == nil, "malformed JSON is rejected")
 	assert(github.parsePage("{}") == nil, "missing items are rejected")
-	local issue = item(1, "a/b", "2026-01-01T00:00:00Z")
-	issue.pull_request = nil
-	assert(github.parsePage(page({ issue })) == nil, "issues are rejected")
-	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { html_url = "https://evil.example/a/b/pull/1" }) })) == nil, "foreign URLs are rejected")
+	assert(github.parsePage(page({ {} })) == nil, "non-PR nodes are rejected")
+	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { url = "https://evil.example/a/b/pull/1" }) })) == nil, "foreign URLs are rejected")
 	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { number = 2 }) })) == nil, "mismatched numbers are rejected")
 	local empty = github.parsePage(page({}))
 	assert(empty and #empty.prs == 0 and empty.total == 0, "empty results parse")
 	local pg = github.parsePage(page({
 		item(1, "A/B", "2026-01-01T00:00:00Z"),
-		item(2, "a/b", "2026-03-01T00:00:00Z", { draft = true }),
+		item(2, "a/b", "2026-03-01T00:00:00Z", { isDraft = true }),
 		item(1, "a/b", "2026-01-01T00:00:00Z"),
-		item(3, "a/b", "2026-03-01T00:00:00Z", { state = "closed", pull_request = { merged_at = "2026-03-02T00:00:00Z" } }),
+		item(3, "a/b", "2026-03-01T00:00:00Z", { state = "MERGED" }),
 	}))
 	assert(pg and #pg.prs == 4, "four items parsed")
 	local rec = github.reconcile(pg.prs)
@@ -53,6 +59,18 @@ function M.run()
 	assert(rec[1].key == "a/b#2" and rec[2].key == "a/b#3" and rec[3].key == "a/b#1", "updated desc, key tie-break")
 	assert(rec[1].draft and rec[2].state == "merged", "draft and merged states")
 	assert(rec[3].repo == "A/B", "display spelling preserved")
+	local rich = github.parsePage(page({ item(5, "a/b", "2026-01-01T00:00:00Z", { review = "CHANGES_REQUESTED", checks = "ERROR", labels = tern.json.array({ "bug" }) }) }))
+	local rp = rich and rich.prs[1]
+	assert(rp and rp.review == "changes" and rp.checks == "failure" and rp.labels[1] == "bug", "review, checks, labels")
+	assert(rp and rp.additions == 1 and rp.files == 3 and rp.comments == 4 and rp.head == "b5" and rp.base == "main", "counts and branches")
+	local ghost = item(6, "a/b", "2026-01-01T00:00:00Z")
+	ghost.author = nil
+	local gp = github.normalize(ghost)
+	assert(gp and gp.author == "ghost", "missing author is ghost")
+	local paged = github.parsePage(page({}, 250, "Y3Vy"))
+	assert(paged and paged.next == "Y3Vy", "cursor parses")
+	local bare = github.parsePage(tern.json.encode({ total = 0, items = tern.json.array({}) }))
+	assert(bare and bare.cost == 1 and bare.next == nil, "cost and next default")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
 	assert(github.scopeProblem("is:open author:@me") == nil and github.scopeProblem("is:open review-requested:@me label:\"a b\"") == nil, "ordinary filters run")
 	assert(github.scopeProblem("is:open label:\"bug or regression\"") == nil and github.scopeProblem("is:open a or b") == nil, "lowercase or is plain text")
@@ -61,10 +79,20 @@ function M.run()
 	end
 	local p422 = github.classify({ status = 1, stderr = "gh: Validation Failed (HTTP 422)\n", stdout = "", timed_out = false })
 	assert(p422.kind == "invalid" and string.find(p422.message, "Validation Failed", 1, true), "HTTP 422 is terminal and keeps gh's text")
+	assert(github.classify({ status = 1, stderr = "gh: API rate limit exceeded for user ID 1.", stdout = "", timed_out = false }).kind == "rate-limit", "graphql rate limit")
+	assert(github.classify({ status = 1, stderr = "gh: The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.", stdout = "", timed_out = false }).kind == "invalid", "unsearchable repo is terminal")
+	local mp = github.normalize(item(12, "a/b", "2026-01-01T00:00:00Z", { title = "Fix 😀 parser", author = "octo", head = "fix/lexer" }))
+	assert(mp, "match fixture normalizes")
+	local hit, range = github.match(mp, " PARSER ")
+	assert(hit and range and range[1] == 7 and range[2] == 13, "title match gives a UTF-16 range")
+	hit, range = github.match(mp, "#12")
+	assert(hit and range == nil, "number matches without a range")
+	assert((github.match(mp, "lexer")), "branch matches")
+	assert(not (github.match(mp, "zzz")), "no match")
 
 	-- rate-limit headers (shape of real `gh api --include` output) and pacing
 	local now = 1000
-	local real = "HTTP/2.0 200 OK\nX-Ratelimit-Limit: 30\r\nx-ratelimit-remaining: 25\r\nX-Ratelimit-Reset: 1060\r\nX-Ratelimit-Resource: search\r\nRetry-After: 120\r\n\r\n{\"a\":1}"
+	local real = "HTTP/2.0 200 OK\nX-Ratelimit-Limit: 30\r\nx-ratelimit-remaining: 25\r\nX-Ratelimit-Reset: 1060\r\nX-Ratelimit-Resource: graphql\r\nRetry-After: 120\r\n\r\n{\"a\":1}"
 	local q, body = github.parseResponse(real, now)
 	assert(q and q.limit == 30 and q.remaining == 25 and q.reset == 1060 and q.retryUntil == 1120 and body == "{\"a\":1}", "headers parse case-insensitively, body is split off")
 	q, body = github.parseResponse("HTTP/1.1 100 Continue\r\n\r\n" .. real, now)
@@ -96,9 +124,8 @@ function M.run()
 
 	-- UTF-8 / UTF-16 editing
 	local m = input.new("a😀b")
-	assert(input.len16(m.text) == 4, "emoji is two UTF-16 units")
+	assert(input.u16(m.text, #m.text) == 4, "emoji is two UTF-16 units")
 	assert(input.u16(m.text, #"a😀") == 3, "byte offset converts to units")
-	assert(input.fromU16(m.text, 2) == 1, "offset inside a pair rounds down")
 	m.anchor, m.cur = 1, #"a😀"
 	local props = input.props(m)
 	assert(props.cursor == 3 and props.anchor == 1, "selection offsets are UTF-16")
@@ -114,9 +141,6 @@ function M.run()
 	input.key(m, key("left", nil, true), noop)
 	assert(input.selected(m) == "y", "shift-left selects one codepoint")
 	assert(input.undo(m) and m.text == "ab", "undo restores the earlier text")
-	local m2 = input.new("héllo")
-	assert(input.edit(m2, { from = 1, to = 2, text = "e", cursor = 2, len = 5 }) and m2.text == "hello", "native edit replaces a UTF-16 range")
-	assert(not input.edit(m2, { from = 0, to = 0, text = "z", cursor = 1, len = 99 }) and m2.text == "hello", "stale edit is ignored")
 
 	-- remotes and worktree records
 	assert(worktree.normalizeRemote("https://github.com/cli/cli.git") == "cli/cli", "https remote")

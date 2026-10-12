@@ -1,70 +1,79 @@
-/* Spacing only; colors and type come from Tern's tokens. */
-[data-surface="plugin.plotroom.prs"] .sf-row {
-  flex-wrap: wrap;
-  row-gap: 4px;
+/* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. */
+
+/* The block has no dock; its empty strip would show the pane color under the settings page. */
+[data-surface='plugin.plotroom.prs'] .sf-region.sf-dock {
+	display: none;
 }
 
-[data-surface="plugin.plotroom.prs"] .sf-input {
-  min-width: 0;
+/* The page is drawn on the pane's own color, like the queue picker, not as a darker sheet. */
+[data-surface='plugin.plotroom.prs'] .sf-prefs {
+	background: transparent;
 }
 
-[data-surface="plugin.plotroom.prs"] .sf-list [data-act] {
-  cursor: pointer;
+/* With no search open, Esc has nothing to close. */
+[data-surface='plugin.plotroom.prs'] .sf-picker.no-query .pk-esc {
+	display: none;
 }
 
-/* PR rows: fixed columns sized in em (monospace list, glyph ~0.6em) so every row lines up.
-   label = state, #number, title; value = @author, age. The label is one nowrap line with
-   inline-block columns, so the title (a span or bare text) ellipsizes at the label's edge. */
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Too few settings to need search. */
+[data-surface='plugin.plotroom.prs'] .sf-prefs .pf-search {
+	display: none;
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(1),
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(2) {
-  display: inline-block;
-  margin-right: 0.6em;
-  vertical-align: top;
+[data-surface='plugin.plotroom.prs'] [data-role='plotroom.title'] {
+	font-size: 15px;
+	line-height: 1.35;
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(1) {
-  width: 3.8em;
+[data-surface='plugin.plotroom.prs'] .plotroom-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(2) {
-  text-align: left;
-  width: 4.4em;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 10px;
+	border-radius: var(--r-ctl);
+	background: var(--raise);
+	box-shadow: inset 0 0 0 1px var(--l3);
+	color: var(--t1);
+	font-family: var(--sans);
+	font-size: 12px;
+	transition: background-color 120ms var(--ease), transform 120ms var(--out);
 }
 
-/* The empty detail slot would share the spare width with the label; the title takes it all. */
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-detail {
-  display: none;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn:hover {
+	background: var(--l2);
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value {
-  display: flex;
-  flex: none;
-  gap: 0.6em;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn:active {
+	transform: scale(0.97);
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(1) {
-  flex: none;
-  width: 12.5em;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary {
+	background: var(--accent-fill);
+	box-shadow: none;
+	color: #fff;
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(2) {
-  flex: none;
-  text-align: right;
-  width: 2.6em;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn.danger {
+	background: var(--bad-fill);
+	box-shadow: none;
+	color: #fff;
 }
 
-[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(1) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary .kbd,
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn.danger .kbd {
+	background: rgba(255, 255, 255, 0.18);
+	box-shadow: none;
+	color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
+		transition: none;
+	}
 }
