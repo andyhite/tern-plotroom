@@ -8,6 +8,7 @@ local input = require("./input")
 local M = {}
 
 export type Problem = { kind: string, message: string }
+export type Run = { name: string, status: string, detail: string, required: boolean, url: string? } -- status: failure | pending | success | neutral
 export type Pr = {
 	key: string,
 	repo: string,
@@ -27,6 +28,8 @@ export type Pr = {
 	comments: number,
 	review: string?,
 	checks: string?,
+	runs: { Run },
+	runTotal: number,
 	labels: { string },
 }
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean }
@@ -36,8 +39,8 @@ local CAP = 1000
 local RATE_S = 300
 local ENV = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1", NO_COLOR = "1" }
 
-local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }"
-local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,labels:[.labels.nodes[]?.name]}]}"
+local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt completedAt detailsUrl } ... on StatusContext { context state targetUrl } } } } } } } } } } }"
+local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}]}"
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
@@ -92,6 +95,106 @@ function M.identity(owner: string, repo: string, number: number): string
 	return string.lower(owner) .. "/" .. string.lower(repo) .. "#" .. number
 end
 
+local CONCLUSION: { [string]: { string } } = {
+	SUCCESS = { "success", "Passed" },
+	FAILURE = { "failure", "Failed" },
+	TIMED_OUT = { "failure", "Timed out" },
+	ACTION_REQUIRED = { "failure", "Action required" },
+	STARTUP_FAILURE = { "failure", "Startup failure" },
+	CANCELLED = { "neutral", "Cancelled" },
+	SKIPPED = { "neutral", "Skipped" },
+	NEUTRAL = { "neutral", "Neutral" },
+	STALE = { "neutral", "Stale" },
+}
+local CONTEXT_STATE: { [string]: { string } } = {
+	SUCCESS = { "success", "Passed" },
+	FAILURE = { "failure", "Failed" },
+	ERROR = { "failure", "Error" },
+	PENDING = { "pending", "Pending" },
+	EXPECTED = { "pending", "Expected" },
+}
+local RUN_RANK: { [string]: number } = { failure = 1, pending = 2, success = 3, neutral = 4 }
+
+-- `2m 31s` for a duration in seconds.
+local function took(s: number): string
+	if s >= 3600 then
+		return string.format("%dh %dm", s // 3600, s % 3600 // 60)
+	elseif s >= 60 then
+		return string.format("%dm %ds", s // 60, s % 60)
+	end
+	return s .. "s"
+end
+
+-- Check runs and commit statuses from the search JSON: worst first, original order within a status.
+function M.runs(raw: any): { Run }
+	local out: { Run } = {}
+	local seen: { [string]: { at: number, run: Run } } = {}
+	if type(raw) ~= "table" then
+		return out
+	end
+	for _, n in raw do
+		if type(n) == "table" then
+			local at = 0
+			local name: string? = nil
+			local status: string? = nil
+			local detail: string? = nil
+			if type(n.name) == "string" then
+				local c = if n.status == "COMPLETED" and type(n.conclusion) == "string" then CONCLUSION[n.conclusion] else nil
+				if c then
+					status, detail = c[1], c[2]
+					local a, b = M.epoch(tostring(n.startedAt)), M.epoch(tostring(n.completedAt))
+					if a and b and b > a and status ~= "neutral" then
+						detail = detail .. " · " .. took(b - a)
+					end
+				else
+					status, detail = "pending", if n.status == "IN_PROGRESS" then "In progress" else "Queued"
+				end
+				name = n.name
+				at = M.epoch(tostring(n.startedAt)) or 0
+			elseif type(n.context) == "string" then
+				local c = if type(n.state) == "string" then CONTEXT_STATE[n.state] else nil
+				if c then
+					name, status, detail = n.context, c[1], c[2]
+				end
+			end
+			if name and status and detail then
+				local link = if type(n.detailsUrl) == "string" then n.detailsUrl elseif type(n.targetUrl) == "string" then n.targetUrl else nil
+				local run: Run = {
+					name = name,
+					status = status,
+					detail = detail,
+					required = n.isRequired == true,
+					url = if link and string.sub(link, 1, 8) == "https://" and not string.find(link, "[%c%s]") then link else nil,
+				}
+				-- A re-run repeats the check's name: the newest start wins (later entry on a tie), in the first copy's place.
+				local prev = seen[name]
+				if not prev then
+					table.insert(out, run)
+					seen[name] = { at = at, run = run }
+				elseif at >= prev.at then
+					run.required = run.required or prev.run.required
+					out[table.find(out, prev.run) :: number] = run
+					seen[name] = { at = at, run = run }
+				end
+			end
+		end
+	end
+	local idx: { [Run]: number } = {}
+	for i, r in out do
+		idx[r] = i
+	end
+	table.sort(out, function(a, b)
+		if a.required ~= b.required then
+			return a.required
+		end
+		if a.status ~= b.status then
+			return RUN_RANK[a.status] < RUN_RANK[b.status]
+		end
+		return idx[a] < idx[b]
+	end)
+	return out
+end
+
 -- One search item as a Pr, or nil and why. Issues and malformed URLs are rejected.
 function M.normalize(item: any): (Pr?, string?)
 	if type(item) ~= "table" or type(item.number) ~= "number" then
@@ -124,6 +227,7 @@ function M.normalize(item: any): (Pr?, string?)
 			end
 		end
 	end
+	local runs = M.runs(item.runs)
 	return {
 		key = M.identity(o, r, n),
 		repo = o .. "/" .. r,
@@ -143,6 +247,8 @@ function M.normalize(item: any): (Pr?, string?)
 		comments = count(item.comments),
 		review = if type(item.review) == "string" then REVIEW[item.review] else nil,
 		checks = if type(item.checks) == "string" then CHECKS[item.checks] else nil,
+		runs = runs,
+		runTotal = #runs + math.max(0, count(item.runTotal) - (if type(item.runs) == "table" then #item.runs else 0)),
 		labels = labels,
 	}, nil
 end
@@ -545,6 +651,50 @@ function M.search(
 		end, account)
 	end
 	fetch(nil)
+end
+
+local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { rateLimit { cost } repository(owner: $o, name: $r) { pullRequest(number: $n) { commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } nodes { __typename ... on CheckRun { name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber: $n) } ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $n) } } } } } } } } } }"
+local CHECKS_JQ = "(.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // [])}"
+local CHECK_PAGES = 3
+
+-- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged; done(runs, total, problem).
+function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem?) -> ())
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if not owner or not name then
+		return done(nil, 0, { kind = "failed", message = "Unexpected repository name." })
+	end
+	local account = M.account(repo)
+	local nodes: { any } = {}
+	local function fetch(after: string?, page: number)
+		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. CHECKS_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number }
+		if after then
+			table.insert(args, "-f")
+			table.insert(args, "after=" .. after)
+		end
+		table.insert(args, "--jq")
+		table.insert(args, CHECKS_JQ)
+		M.gh(args, function(out, problem, _, raw)
+			local now = os.time()
+			local q, body = M.parseResponse(out or raw or "", now)
+			M.record(q, now, account)
+			if not out then
+				return done(nil, 0, problem)
+			end
+			local ok, data = pcall(tern.json.decode, body)
+			if not ok or type(data) ~= "table" or type(data.nodes) ~= "table" or type(data.total) ~= "number" then
+				return done(nil, 0, { kind = "failed", message = "gh printed unexpected check data." })
+			end
+			for _, n in data.nodes do
+				table.insert(nodes, n)
+			end
+			if type(data.next) == "string" and data.next ~= "" and page < CHECK_PAGES and M.wait(now, account) == 0 then
+				return fetch(data.next, page + 1)
+			end
+			local runs = M.runs(nodes)
+			done(runs, #runs + math.max(0, data.total - #nodes), nil)
+		end, account)
+	end
+	fetch(nil, 1)
 end
 
 export type PrMeta = { base: string, sha: string, ref: string, state: string }

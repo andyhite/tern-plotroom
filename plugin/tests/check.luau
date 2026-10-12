@@ -72,6 +72,27 @@ function M.run()
 	local bare = github.parsePage(tern.json.encode({ total = 0, items = tern.json.array({}) }))
 	assert(bare and bare.cost == 1 and bare.next == nil, "cost and next default")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
+	local runs = github.runs(tern.json.array({
+		{ name = "ok", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:02:31Z" },
+		{ name = "skip", status = "COMPLETED", conclusion = "SKIPPED" },
+		{ name = "run", status = "IN_PROGRESS" },
+		{ context = "ci/x", state = "FAILURE" },
+		{ __typename = "Other" },
+	}))
+	assert(#runs == 4 and runs[1].name == "ci/x" and runs[1].status == "failure", "failures sort first, unknown nodes dropped")
+	assert(runs[2].status == "pending" and runs[2].detail == "In progress", "unfinished runs are pending")
+	assert(runs[3].detail == "Passed · 2m 31s" and runs[4].detail == "Skipped", "durations on finished runs only")
+	local req = github.runs(tern.json.array({
+		{ name = "bad", status = "COMPLETED", conclusion = "FAILURE" },
+		{ name = "must", status = "COMPLETED", conclusion = "SUCCESS", isRequired = true },
+	}))
+	assert(req[1].name == "must" and req[1].required and not req[2].required, "required checks sort above failing optional ones")
+	local rerun = github.runs(tern.json.array({
+		{ name = "build", status = "COMPLETED", conclusion = "FAILURE", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:01:00Z" },
+		{ name = "build", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T01:00:00Z", completedAt = "2026-01-01T01:01:00Z" },
+		{ name = "build", status = "COMPLETED", conclusion = "CANCELLED", startedAt = "2025-12-31T00:00:00Z" },
+	}))
+	assert(#rerun == 1 and rerun[1].status == "success", "one row per check name: the newest run wins")
 	assert(github.scopeProblem("is:open author:@me") == nil and github.scopeProblem("is:open review-requested:@me label:\"a b\"") == nil, "ordinary filters run")
 	assert(github.scopeProblem("is:open label:\"bug or regression\"") == nil and github.scopeProblem("is:open a or b") == nil, "lowercase or is plain text")
 	for _, bad in { "is:open repo:x/y", "is:open -org:x", "(user:x OR is:open)", "is:open Repo:x/y", "is:open a OR b" } do

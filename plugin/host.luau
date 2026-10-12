@@ -44,6 +44,9 @@ type State = {
 	problem: github.Problem?,
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
+	details: { [string]: { runs: { github.Run }, total: number } }, -- all checks per PR (key .. "@" .. updated)
+	detailAsk: string?, -- the details key being loaded
+	expanded: { [string]: boolean }, -- PR keys whose check list is unfolded
 	settings: Settings?,
 }
 
@@ -529,6 +532,7 @@ local REVIEW_BADGE: { [string]: { text: string, tone: string } } = {
 	changes = { text = "Changes requested", tone = "error" },
 	required = { text = "Review required", tone = "warning" },
 }
+local RUN_TONE: { [string]: string } = { success = "success", failure = "error", pending = "warning", neutral = "muted" }
 local CHECK: { [string]: { text: string, tone: string, dot: string } } = {
 	success = { text = "Passing", tone = "success", dot = "success" },
 	failure = { text = "Failing", tone = "error", dot = "error" },
@@ -1063,11 +1067,60 @@ local function pickerItem(pr: github.Pr): { [string]: any }
 	}
 end
 
+local CHECK_LIMIT = 8
+
+-- Link to a check's page: its row index (the window reads the live row to validate) and the percent-encoded URL.
+local function checkHref(i: number, url: string): string
+	local enc = string.gsub(url, "[^%w%-_%.~]", function(c)
+		return string.format("%%%02X", string.byte(c))
+	end)
+	return "plotroom://github/check/" .. i .. "/" .. enc
+end
+
+local function detailKey(pr: github.Pr): string
+	return pr.key .. "@" .. pr.updated
+end
+
+-- Once the cursor rests on a PR, loads all of its checks with required flags (the search carries only the first 25,
+-- unflagged, and shows meanwhile). A failed load keeps the search's checks. Idempotent: the view calls it every render.
+local function wantDetails(state: State, pr: github.Pr)
+	local key = detailKey(pr)
+	if state.details[key] or state.detailAsk == key then
+		return
+	end
+	state.detailAsk = key
+	tern.timer(300, function()
+		if not alive(state) then
+			return
+		end
+		local cur = selectedPr(state)
+		if not cur or detailKey(cur) ~= key then
+			return -- the cursor moved on; its own render asks again
+		end
+		github.checks(pr.repo, pr.number, function(runs, total)
+			if not alive(state) then
+				return
+			end
+			if state.detailAsk == key then
+				state.detailAsk = nil
+			end
+			state.details[key] = if runs then { runs = runs, total = total } else { runs = pr.runs, total = pr.runTotal }
+			state.cx:render()
+		end)
+	end)
+end
+
 local function previewNodes(state: State): { Node }
 	local pr = selectedPr(state)
 	if not pr then
 		return {}
 	end
+	if pr.checks then
+		wantDetails(state, pr)
+	end
+	local d = state.details[detailKey(pr)]
+	local runs = if d then d.runs else pr.runs
+	local total = if d then d.total else pr.runTotal
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	local sb = STATE_BADGE[stateKind(pr)]
@@ -1075,10 +1128,15 @@ local function previewNodes(state: State): { Node }
 	for i, l in pr.labels do
 		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
 	end
+	local function ref(key: string, label: string, value: string): Node
+		return ui.el("div", { key = key, class = "plotroom-fact", title = value }, {
+			ui.el("span", { class = "k", text = label }),
+			ui.el("span", { class = "v", text = value }),
+		})
+	end
 	local facts = {
 		{ k = "Number", v = "#" .. pr.number },
 		{ k = "Author", v = "@" .. pr.author },
-		{ k = "Branch", v = pr.head .. " → " .. pr.base },
 		{ k = "Checks", v = { if check then ui.span(check.text, check.tone) else ui.span("None", "muted") } },
 		{ k = "Review", v = { if review then ui.span(review.text, review.tone) else ui.span("None", "muted") } },
 		{ k = "Comments", v = { ui.span(tostring(pr.comments), "num") } },
@@ -1110,6 +1168,8 @@ local function previewNodes(state: State): { Node }
 		ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips),
 		buttons,
 		ui.node("kv", { key = "facts", items = facts }),
+		ref("head", "Branch", pr.head),
+		ref("base", "Base", pr.base),
 	}
 	local a, d = pr.additions, pr.deletions
 	if a + d > 0 then
@@ -1125,6 +1185,76 @@ local function previewNodes(state: State): { Node }
 				total = pr.files .. (if pr.files == 1 then " file" else " files"),
 			})
 		)
+	end
+	if #runs > 0 then
+		local tally: { [string]: number } = {}
+		local required = 0
+		for _, r in runs do
+			tally[r.status] = (tally[r.status] or 0) + 1
+			if r.required then
+				required += 1
+			end
+		end
+		local parts: { string } = {}
+		for _, p in { { "failure", "failing" }, { "pending", "pending" }, { "success", "passed" }, { "neutral", "skipped" } } do
+			if tally[p[1]] then
+				table.insert(parts, tally[p[1]] .. " " .. p[2])
+			end
+		end
+		table.insert(
+			out,
+			ui.node("text", {
+				key = "runs-head",
+				spans = { ui.span("Checks", "strong"), ui.span("  " .. table.concat(parts, " · "), "muted") },
+			})
+		)
+		local fold = math.max(CHECK_LIMIT, required) -- required checks never fold away
+		local expanded = state.expanded[pr.key] == true
+		local shown = if expanded then #runs else math.min(#runs, fold)
+		local list: { Node } = {}
+		local function sub(key: string, text: string)
+			table.insert(list, ui.node("text", { key = key, spans = { ui.span(text, "muted") } }))
+		end
+		for i = 1, shown do
+			local r = runs[i]
+			if required > 0 and i == 1 then
+				sub("req-head", "Required · " .. required)
+			elseif required > 0 and i == required + 1 then
+				sub("other-head", "Other · " .. (#runs - required))
+			end
+			local props: { [string]: any } = {
+				key = "run" .. i,
+				class = "plotroom-run",
+				title = r.name .. " — " .. r.detail .. (if r.required then " (required)" else ""),
+			}
+			if r.url then
+				props.href = checkHref(i, r.url)
+				props.actions = { click = "open" }
+			end
+			table.insert(
+				list,
+				ui.el(if r.url then "button" else "div", props, {
+					ui.el("span", { class = "dot" }, { ui.text({ ui.span("●", RUN_TONE[r.status]) }) }),
+					ui.el("span", { class = "name", text = r.name }),
+					ui.el("span", { class = "detail", text = r.detail }),
+				})
+			)
+		end
+		table.insert(out, ui.el("div", { key = "runs", class = "plotroom-runs" }, list))
+		if #runs > fold then
+			table.insert(
+				out,
+				ui.el("button", {
+					key = "runs-toggle",
+					class = "plotroom-more",
+					text = if expanded then "Show fewer" else "Show " .. (#runs - shown) .. " more",
+					actions = { click = "more-checks" },
+				})
+			)
+		end
+		if total > #runs then
+			table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
+		end
 	end
 	return out
 end
@@ -1176,19 +1306,11 @@ local function queueView(state: State): BlockView
 	local scopes: { any } = {}
 	for _, fl in state.store.items do
 		local cached = if state.repo then state.snaps[snapKey(state, fl.query)] else nil
-		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", group = "Filters", count = if cached then #cached.prs else nil })
+		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", count = if cached then #cached.prs else nil })
 	end
 
 	local wait = github.wait(os.time(), acct(state))
-	local noPr = if pr then nil else "Select a pull request"
 	local actions: { any } = {}
-	if state.query then
-		table.insert(actions, { id = "clear", label = "Clear search", keys = { "esc" } })
-	end
-	table.insert(actions, { id = "search", label = "Search", keys = { "/" } })
-	if #state.store.items > 0 then
-		table.insert(actions, { id = "filters", label = "Filters", keys = { "tab" } })
-	end
 	table.insert(actions, { id = "settings", label = "Settings", keys = { "s" } })
 	table.insert(actions, {
 		id = "retry",
@@ -1196,8 +1318,6 @@ local function queueView(state: State): BlockView
 		keys = { "r" },
 		disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
 	})
-	table.insert(actions, { id = "worktree", label = "Worktree", keys = { "w" }, ["end"] = true, disabled = noPr })
-	table.insert(actions, { id = "open", label = "Open", keys = { "enter" }, primary = true, disabled = noPr })
 
 	local props: { [string]: any } = {
 		key = "queue",
@@ -1213,7 +1333,6 @@ local function queueView(state: State): BlockView
 		empty = {
 			ui.span(if f then "No pull requests match " .. f.name .. "." else "No saved filters yet. Press s to add one.", "muted"),
 		},
-		total = if snap then snap.total else nil,
 		items = tern.json.array(items),
 		order = tern.json.array(order),
 		hits = if next(hits) then hits else nil,
@@ -1222,8 +1341,8 @@ local function queueView(state: State): BlockView
 		scopes = tern.json.array(scopes),
 		scope = state.activeId,
 		columns = {
-			{ id = "changes", head = "Changes", format = "text", priority = 50 },
-			{ id = "updated", head = "Updated", format = "time", priority = 90 },
+			{ id = "changes", format = "text", priority = 50 },
+			{ id = "updated", format = "time", priority = 90 },
 		},
 		actions = actions,
 	}
@@ -1331,6 +1450,9 @@ tern.block.define("prs", {
 			problem = if sp then { kind = sp.kind, message = sp.message } else nil,
 			timer = nil,
 			query = nil,
+			details = {},
+			detailAsk = nil,
+			expanded = {},
 			settings = nil,
 		}
 		if not activeFilter(state) then
@@ -1475,7 +1597,12 @@ tern.block.define("prs", {
 		local s = state.settings
 		local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
 		local item = if type(ev.item) == "string" then ev.item else nil
-		if act == "choose-repo" then
+		if act == "more-checks" then
+			local pr = selectedPr(state)
+			if pr then
+				state.expanded[pr.key] = if state.expanded[pr.key] then nil else true
+			end
+		elseif act == "choose-repo" then
 			openSettings(state, "worktrees", "checkout", true)
 		elseif act == "confirm-delete" then
 			if s and s.confirm then
@@ -1533,16 +1660,10 @@ tern.block.define("prs", {
 			elseif act == "clear" or act == "close" then
 				state.query = nil
 				ensureCursor(state)
-			elseif act == "search" then
-				state.query = state.query or input.new("")
-			elseif act == "filters" then
-				state.focus = if state.focus == "list" then "scopes" else "list"
 			elseif act == "settings" then
 				openSettings(state, "filters")
 			elseif act == "retry" then
 				retry(state)
-			elseif act == "open" or act == "worktree" then
-				openSelected(state, act, false)
 			end
 		end
 	end,

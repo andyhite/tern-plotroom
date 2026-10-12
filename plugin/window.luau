@@ -9,6 +9,7 @@ local BLOCK = "plotroom.prs"
 local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
+local CHECK_NODE = "layer.queue.runs.run"
 
 -- Worktree requests in flight, so repeated clicks create it once.
 local inflight: { [string]: boolean } = {}
@@ -77,15 +78,31 @@ local function parseLink(url: string): (string?, string?, string?, number?)
 	return kind, owner, repo, num
 end
 
-local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
-	local url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
+-- `plotroom://github/check/<row>/<percent-encoded https URL>`: the row index and the page it links to.
+local function parseCheck(url: string): (number?, string?)
+	local i, enc = string.match(url, "^plotroom://github/check/(%d+)/(.+)$")
+	local index = tonumber(i)
+	if not index or not enc or index < 1 or index > 100000 then
+		return nil, nil
+	end
+	local target = string.gsub(enc, "%%(%x%x)", function(h)
+		return string.char(tonumber(h, 16) :: number)
+	end)
+	if string.sub(target, 1, 8) ~= "https://" or string.find(target, "[%c%s]") then
+		return nil, nil
+	end
+	return index, target
+end
+
+-- Opens `url` in a Browser block docked right of `pane`.
+local function openUrl(cx: WindowCx, pane: number, url: string, what: string)
 	cx.browser:call({ op = "open", owner = pane, url = url }):next(function(result, err, cx2)
 		if not cx2 then
 			return
 		end
 		if err or not result or result.error or not result.ok then
 			local why = err or (if result and result.error then result.error.message else "no result")
-			return cx2:toast("error", "Could not open the pull request", why)
+			return cx2:toast("error", "Could not open " .. what, why)
 		end
 		local browserPane = result.ok.block
 		if type(browserPane) ~= "number" then
@@ -96,6 +113,10 @@ local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n
 			cx2:toast("error", "Could not dock the Browser block", why)
 		end
 	end)
+end
+
+local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
+	openUrl(cx, pane, "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n, "the pull request")
 end
 
 local function mappedPath(repo: string): string?
@@ -174,6 +195,17 @@ end
 
 -- Validates a plotroom:// link against the pane's live surface and runs it.
 local function handle(cx: WindowCx, url: string, pane: number): boolean
+	local index, target = parseCheck(url)
+	if index and target then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif nodeProp(readNode(cx, pane, CHECK_NODE .. index), "href") ~= url then
+			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
+		else
+			openUrl(cx, pane, target, "the check")
+		end
+		return true
+	end
 	local kind, owner, repo, n = parseLink(url)
 	if not kind or not owner or not repo or not n then
 		cx:toast("error", "Plotroom: malformed link")

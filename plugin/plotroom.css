@@ -10,8 +10,104 @@
 	background: transparent;
 }
 
-/* With no search open, Esc has nothing to close. */
-[data-surface='plugin.plotroom.prs'] .sf-picker.no-query .pk-esc {
+/* The PR count is already in the title and the preview. */
+[data-surface='plugin.plotroom.prs'] .pk-count {
+	display: none;
+}
+
+/* Branch names and check names are cut with an ellipsis; the full text is the row's tooltip. */
+[data-surface='plugin.plotroom.prs'] .plotroom-fact,
+[data-surface='plugin.plotroom.prs'] .plotroom-run {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: 12px;
+}
+
+/* The checks sit in one tight column; the preview's own gap would spread them out. */
+[data-surface='plugin.plotroom.prs'] .plotroom-runs {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-runs > .sf-text {
+	margin: 8px 0 2px;
+	font-size: 11px;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-runs > .sf-text:first-child {
+	margin-top: 2px;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-runs .plotroom-run {
+	padding-block: 1px;
+	line-height: 1.3;
+}
+
+/* A check with a page is a button drawn as a plain row. */
+[data-surface='plugin.plotroom.prs'] button.plotroom-run {
+	width: 100%;
+	padding: 2px 4px;
+	margin: 0 -4px;
+	border-radius: var(--r-ctl);
+	background: none;
+	box-shadow: none;
+	color: inherit;
+	font-family: inherit;
+	text-align: left;
+}
+
+[data-surface='plugin.plotroom.prs'] button.plotroom-run:hover {
+	background: var(--l2);
+}
+
+/* "Show more/fewer" reads as a quiet text link, not a button. */
+[data-surface='plugin.plotroom.prs'] button.plotroom-more {
+	background: none;
+	box-shadow: none;
+	padding: 2px 0;
+	color: var(--t3);
+	font-family: var(--sans);
+	font-size: 12px;
+	text-align: left;
+}
+
+[data-surface='plugin.plotroom.prs'] button.plotroom-more:hover {
+	color: var(--t1);
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-fact .k {
+	flex: none;
+	color: var(--t3);
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-fact .v,
+[data-surface='plugin.plotroom.prs'] .plotroom-run .name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-fact .v {
+	font-family: var(--mono);
+	text-align: right;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-run .dot {
+	flex: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-run .detail {
+	flex: none;
+	color: var(--t3);
+}
+
+/* Esc still clears the search; its head keycap would sit under Settings and Refresh. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
 	display: none;
 }
 
@@ -76,4 +172,59 @@
 	[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
 		transition: none;
 	}
+}
+
+/* The picker has no head actions, so Settings and Refresh leave the bar and sit top-right, where the count was. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-sheet {
+	position: relative;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'],
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
+	position: absolute;
+	top: 10px;
+	z-index: 2;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
+	right: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'] {
+	right: 73px;
+}
+
+/* The bar holds only the two moved buttons: collapse it so it leaves no empty strip. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
+	height: 0;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	overflow: visible;
+}
+
+/* The pane already pads the sheet by 10px, so the head is trimmed to keep the top gap in line with the sides. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-head {
+	height: 48px;
+	min-height: 48px;
+	padding-top: 0;
+	padding-left: 0;
+	padding-right: 0;
+	padding-bottom: 0;
+}
+
+/* Column tops share one line, 8px under the head: filters, list and preview start level. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopes {
+	padding-top: 10px;
+	padding-left: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-list {
+	padding-top: 8px;
+	box-sizing: border-box;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-pv-slot {
+	margin-top: -16px;
+	padding-top: 10px;
 }
