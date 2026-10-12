@@ -1,0 +1,13 @@
+/* Spacing only; colors and type come from Tern's tokens. */
+[data-surface="plugin.plotroom.prs"] .sf-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+[data-surface="plugin.plotroom.prs"] .sf-input {
+  min-width: 0;
+}
+
+[data-surface="plugin.plotroom.prs"] .sf-list [data-act] {
+  cursor: pointer;
+}
