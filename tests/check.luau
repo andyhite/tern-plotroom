@@ -54,6 +54,42 @@ function M.run()
 	assert(rec[1].draft and rec[2].state == "merged", "draft and merged states")
 	assert(rec[3].repo == "A/B", "display spelling preserved")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
+	assert(github.scopeProblem("is:open author:@me") == nil and github.scopeProblem("is:open review-requested:@me label:\"a b\"") == nil, "ordinary filters run")
+	assert(github.scopeProblem("is:open label:\"bug or regression\"") == nil and github.scopeProblem("is:open a or b") == nil, "lowercase or is plain text")
+	for _, bad in { "is:open repo:x/y", "is:open -org:x", "(user:x OR is:open)", "is:open Repo:x/y", "is:open a OR b" } do
+		assert(github.scopeProblem(bad) ~= nil, "scope-widening filter is rejected: " .. bad)
+	end
+
+	-- rate-limit headers (shape of real `gh api --include` output) and pacing
+	local now = 1000
+	local real = "HTTP/2.0 200 OK\nX-Ratelimit-Limit: 30\r\nx-ratelimit-remaining: 25\r\nX-Ratelimit-Reset: 1060\r\nX-Ratelimit-Resource: search\r\nRetry-After: 120\r\n\r\n{\"a\":1}"
+	local q, body = github.parseResponse(real, now)
+	assert(q and q.limit == 30 and q.remaining == 25 and q.reset == 1060 and q.retryUntil == 1120 and body == "{\"a\":1}", "headers parse case-insensitively, body is split off")
+	q, body = github.parseResponse("HTTP/1.1 100 Continue\r\n\r\n" .. real, now)
+	assert(q and q.remaining == 25 and body == "{\"a\":1}", "a 100 Continue block precedes the real one")
+	q, body = github.parseResponse("{\"a\":1}", now)
+	assert(q == nil and body == "{\"a\":1}", "no headers: all body, no quota")
+	assert(github.parseResponse("HTTP/2.0 200 OK\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Remaining: 1\r\n\r\n{}", now) == nil, "other rate-limit resources are ignored")
+	q = github.parseResponse("HTTP/2.0 403 Forbidden\r\nRetry-After: Thu, 01 Jan 1970 00:17:40 GMT\r\n\r\n{}", now)
+	assert(q and q.retryUntil == 1060, "Retry-After accepts an HTTP-date")
+	assert(github.cooldown({ remaining = 0, reset = 1060 }, now) == 61, "exhausted quota waits for the reset")
+	assert(github.cooldown({ remaining = 0, reset = 900 }, now) == 0, "a passed reset ends the wait")
+	assert(github.cooldown({ remaining = 5, reset = 1060, retryUntil = 1120 }, now) == 120, "Retry-After wins over remaining quota")
+	assert(github.cooldown(nil, now) == 0, "unknown quota never waits")
+	assert(github.interval(nil, now, 1, 1, 60000) == 60000, "no headers: base interval")
+	assert(github.interval({ remaining = 30, reset = 1060 }, now, 1, 1, 60000) == 60000, "ample quota: base interval")
+	assert(github.interval({ remaining = 5, reset = 1600 }, now, 2, 1, 60000) == 300000, "scarce quota spreads refreshes over the window")
+	assert(github.interval({ remaining = 5, reset = 1600 }, now, 2, 2, 60000) == 600000, "panes divide the budget")
+	assert(github.interval({ remaining = 1, reset = 1600 }, now, 2, 1, 60000) == 601000, "less than one refresh left waits for the reset")
+	assert(github.interval({ remaining = 9, reset = 1060, retryUntil = 1120 }, now, 1, 1, 60000) == 120000, "cooldown sets the interval")
+	assert(github.interval({ remaining = 1, reset = 1001 }, now, 1, 1, 60000) == 60000, "scarce quota never polls faster than the base")
+	assert(github.interval({ remaining = 0, reset = 1005 }, now, 1, 1, 60000) == 60000, "a short cooldown never polls faster than the base")
+	local merged = github.merge({ remaining = 0, reset = 1060, limit = 30 }, { remaining = 20, reset = 1060, limit = 30 }, now)
+	assert(merged.remaining == 0, "a stale response cannot raise the remaining quota")
+	merged = github.merge(merged, { remaining = 29, reset = 1120, limit = 30 }, now)
+	assert(merged.remaining == 29 and merged.reset == 1120, "a newer window replaces the old one")
+	merged = github.merge({ remaining = 5, reset = 1060, retryUntil = 1200 }, { retryUntil = 1100 }, now)
+	assert(merged.retryUntil == 1200 and merged.remaining == 5, "an earlier Retry-After or missing quota never shortens the wait")
 
 	-- UTF-8 / UTF-16 editing
 	local m = input.new("a😀b")

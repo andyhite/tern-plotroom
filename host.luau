@@ -9,7 +9,7 @@ local worktree = require("./worktree")
 local ui = tern.ui
 
 local POLL_MS = 60 * 1000
-local RATE_MS = 5 * 60 * 1000
+local COST_GUESS = 10
 local PAGE_SIZE = 100
 local LIST_ID = "main.prs."
 local FILTERS_ID = "main.filters."
@@ -40,9 +40,12 @@ type State = {
 	page: number,
 	focus: string,
 	loading: boolean,
-	loadGen: number,
 	gen: number,
-	queued: boolean,
+	repo: string?,
+	cost: number,
+	interval: number?,
+	nextAt: number?,
+	resolving: boolean,
 	problem: github.Problem?,
 	timer: TimerHandle?,
 	form: Form?,
@@ -193,24 +196,74 @@ local function ensureCursor(state: State)
 	state.page = (i - 1) // PAGE_SIZE + 1
 end
 
+local function snapKey(state: State, query: string): string
+	return (state.repo or "") .. "\0" .. query
+end
+
 local function showSnapshot(state: State)
 	local f = activeFilter(state)
-	state.snap = if f then state.snaps[f.query] else nil
+	state.snap = if f and state.repo then state.snaps[snapKey(state, f.query)] else nil
 	ensureCursor(state)
 end
 
 local refresh: (State) -> ()
 
+-- Panes of this runtime that still exist; they share one search quota.
+local function openPanes(): number
+	local open: { [number]: boolean } = {}
+	for _, p in tern.pane.list() do
+		open[p.pane] = true
+	end
+	local n = 0
+	for pane in running do
+		if open[pane] then
+			n += 1
+		end
+	end
+	return math.max(1, n)
+end
+
+-- Arms the next automatic refresh, never earlier than the server's cooldown allows.
 local function schedule(state: State, ms: number)
 	if state.timer then
 		state.timer:cancel()
 	end
+	ms = math.max(ms, github.wait(os.time()) * 1000)
+	state.nextAt = os.time() + math.ceil(ms / 1000)
 	state.timer = tern.timer(ms, function()
 		if not alive(state) then
 			return
 		end
 		state.timer = nil
 		refresh(state)
+		state.cx:render()
+	end)
+end
+
+-- The repository of the launch directory, from local git only. Fails closed:
+-- without one no search runs.
+local function resolveRepo(state: State)
+	if state.resolving then
+		return
+	end
+	local cwd = state.launchCwd
+	if not cwd then
+		state.problem = { kind = "no-repo", message = "No launch directory, so there is no repository to show pull requests for." }
+		return
+	end
+	state.resolving = true
+	worktree.currentRepository(cwd, function(repo, why)
+		if not alive(state) then
+			return
+		end
+		state.resolving = false
+		if repo then
+			state.repo, state.problem = repo, nil
+			showSnapshot(state)
+			refresh(state)
+		else
+			state.problem = { kind = "no-repo", message = "No GitHub repository for " .. cwd .. ": " .. (why or "unknown") }
+		end
 		state.cx:render()
 	end)
 end
@@ -223,10 +276,11 @@ refresh = function(state: State)
 		state.timer:cancel()
 		state.timer = nil
 	end
+	local repo = state.repo
+	if not repo then
+		return resolveRepo(state)
+	end
 	if state.loading then
-		if state.loadGen ~= state.gen then
-			state.queued = true
-		end
 		return
 	end
 	local f = activeFilter(state)
@@ -234,13 +288,19 @@ refresh = function(state: State)
 		state.problem = nil
 		return
 	end
+	-- The server's cooldown holds for every trigger, manual refresh included.
+	local wait = github.wait(os.time())
+	if wait > 0 then
+		-- Nothing is loading: say why, so an uncached filter does not show a spinner until the reset.
+		state.problem = { kind = "rate-limit", message = "GitHub's search rate limit is reached; searches resume automatically (see the time above)." }
+		return schedule(state, wait * 1000)
+	end
 	state.loading = true
-	state.queued = false
 	local gen, query = state.gen, f.query
-	state.loadGen = gen
-	github.search(query, function()
+	local key = snapKey(state, query)
+	github.search(repo, query, function()
 		return running[state.cx.pane] == state and state.gen == gen
-	end, function(result, problem)
+	end, function(result, problem, requests)
 		if not alive(state) then
 			return
 		end
@@ -251,14 +311,21 @@ refresh = function(state: State)
 			return
 		end
 		if result then
-			state.snaps[query] = { prs = result.prs, total = result.total, complete = result.complete, fetched = os.time() }
-			state.snap = state.snaps[query]
+			state.snaps[key] = { prs = result.prs, total = result.total, complete = result.complete, fetched = os.time() }
+			state.snap = state.snaps[key]
 			state.problem = nil
 			ensureCursor(state)
 		else
 			state.problem = problem
 		end
-		schedule(state, if problem and problem.kind == "rate-limit" then RATE_MS else POLL_MS)
+		if requests > 0 then
+			-- A finished snapshot shows the real page count; a failed one keeps the larger known cost.
+			state.cost = if result then requests else math.max(requests, state.cost)
+			state.interval = github.interval(github.quota(), os.time(), state.cost, openPanes(), POLL_MS)
+		else
+			state.interval = nil -- nothing was sent (invalid query): no quota to pace
+		end
+		schedule(state, state.interval or POLL_MS)
 		state.cx:render()
 	end)
 end
@@ -275,7 +342,18 @@ local function switchFilter(state: State, id: string?)
 	state.form = nil
 	state.confirmDelete = false
 	state.activeId = id
-	changed(state)
+	local f = activeFilter(state)
+	local s = if f and state.repo then state.snaps[snapKey(state, f.query)] else nil
+	local age = if s then os.time() - s.fetched else 0
+	local fresh = math.floor((state.interval or POLL_MS) / 1000)
+	if s and not state.loading and age < fresh then
+		-- A snapshot younger than the refresh interval: show it and keep polling on its schedule.
+		state.problem = nil
+		showSnapshot(state)
+		schedule(state, (fresh - age) * 1000)
+	else
+		changed(state)
+	end
 end
 
 -- After another block wrote the filters, or on restore: reread storage.
@@ -589,7 +667,7 @@ local function problemCard(state: State, problem: github.Problem): Node
 	local help = {
 		missing = "Install the GitHub CLI (https://cli.github.com) so it is on the PATH of your shell, then Retry.",
 		auth = "Run `gh auth login` in a terminal, then Retry.",
-		["rate-limit"] = "Retrying automatically in five minutes; Retry tries now.",
+		["rate-limit"] = "Searches resume automatically at the time shown above.",
 		failed = "",
 	}
 	local kids: { Node } = { ui.md(problem.message .. "\n\n" .. (help[problem.kind] or "")) }
@@ -615,7 +693,7 @@ local function filtersList(state: State): Node
 	end
 	local p: { [string]: any } = list.p or {}
 	p.key = "filters"
-	p.selected = if state.activeId then FILTERS_ID .. state.activeId else nil
+	p.selected = if state.focus == "filters" and state.activeId then FILTERS_ID .. state.activeId else nil
 	p.max = { lines = 3 }
 	p.empty = { ui.span("Add a filter", "muted") }
 	list.p = p
@@ -631,11 +709,11 @@ local function prList(state: State, snap: Snap): Node
 		local word = stateWord(pr)
 		table.insert(items, {
 			label = {
-				ui.span(word .. "  ", stateTone(word)),
-				ui.span(pr.repo .. "#" .. pr.number .. "  ", "muted"),
+				ui.span(word, stateTone(word)),
+				ui.span("#" .. pr.number, "muted num"),
 				ui.span(pr.title),
 			},
-			value = { ui.span("@" .. pr.author .. "  ", "muted"), ui.span(github.age(pr.updated), "muted num") },
+			value = { ui.span("@" .. pr.author, "muted"), ui.span(github.age(pr.updated), "muted num") },
 			icon = "merge",
 			tone = if pr.draft then "muted" else nil,
 		})
@@ -652,12 +730,48 @@ local function prList(state: State, snap: Snap): Node
 	end
 	local p: { [string]: any } = list.p or {}
 	p.key = "prs"
-	p.selected = if state.cursor then LIST_ID .. state.cursor else nil
+	p.role = "pr-list"
+	p.selected = if state.focus == "prs" and state.cursor then LIST_ID .. state.cursor else nil
 	-- List rows are ~1.5 cells tall; ~22 cells go to the header, filters, toolbar, pager and dock.
 	p.max = { lines = math.max(3, math.floor((state.cx.rows - 22) / 1.55)) }
 	p.empty = { ui.span("No pull requests match this filter.", "muted") }
 	list.p = p
 	return list
+end
+
+-- "45s", "3m 20s", "1h 5m" for a whole number of seconds.
+local function duration(s: number): string
+	s = math.max(0, math.ceil(s))
+	if s < 60 then
+		return s .. "s"
+	elseif s < 3600 then
+		return (s // 60) .. "m" .. (if s % 60 > 0 then " " .. s % 60 .. "s" else "")
+	end
+	return (s // 3600) .. "h" .. (if s % 3600 >= 60 then " " .. (s % 3600) // 60 .. "m" else "")
+end
+
+-- The adaptive refresh pace: cooldown while the server holds us back, else the
+-- interval and quota behind the next automatic refresh. Nothing without a repo
+-- or when no request was sent (invalid query).
+local function paceLine(state: State): string?
+	if not state.repo then
+		return nil
+	end
+	local now = os.time()
+	local q = github.quota()
+	local wait = github.wait(now)
+	local line: string
+	if wait > 0 then
+		line = "Paused by GitHub rate limit until " .. os.date("%H:%M:%S", now + wait)
+	elseif state.interval and state.nextAt and state.timer then
+		line = "Auto-refresh: every " .. duration(state.interval / 1000) .. ", next " .. os.date("%H:%M:%S", state.nextAt)
+	else
+		return nil
+	end
+	if q and q.remaining and q.limit and q.reset and q.reset > now then
+		line ..= " · search quota " .. q.remaining .. "/" .. q.limit .. ", resets " .. os.date("%H:%M:%S", q.reset)
+	end
+	return line
 end
 
 local function mainView(state: State): Node
@@ -673,6 +787,10 @@ local function mainView(state: State): Node
 		table.insert(status, ui.span("  updated " .. os.date("%H:%M", snap.fetched), "muted"))
 	end
 	table.insert(kids, ui.text(status))
+	local pace = paceLine(state)
+	if pace then
+		table.insert(kids, ui.text({ ui.span(pace, "muted") }))
+	end
 	table.insert(kids, ui.node("text", { key = "context", text = state.launchCwd or "", role = "repo-context", tone = "muted" }))
 	if not state.launchCwd then
 		table.insert(kids, ui.text({ ui.span("No launch directory: worktrees need a local repository path.", "muted") }))
@@ -842,9 +960,12 @@ tern.block.define("prs", {
 			page = 1,
 			focus = "prs",
 			loading = false,
-			loadGen = 0,
 			gen = 0,
-			queued = false,
+			repo = nil,
+			resolving = false,
+			cost = COST_GUESS,
+			interval = nil,
+			nextAt = nil,
 			problem = nil,
 			timer = nil,
 			form = nil,
@@ -951,7 +1072,10 @@ tern.block.define("prs", {
 		end
 		if ev.ev == "select" and ev.id == "main.filters" and type(ev.item) == "string" then
 			state.focus = "filters"
-			switchFilter(state, string.sub(ev.item, #FILTERS_ID + 1))
+			local id = string.sub(ev.item, #FILTERS_ID + 1)
+			if id ~= state.activeId then
+				switchFilter(state, id)
+			end
 		elseif ev.ev == "select" and ev.id == "main.prs" and type(ev.item) == "string" then
 			state.focus = "prs"
 			state.cursor = string.sub(ev.item, #LIST_ID + 1)

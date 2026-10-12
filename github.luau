@@ -23,6 +23,7 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean }
 local GH_TIMEOUT_MS = 30 * 1000
 local PAGE = 100
 local CAP = 1000
+local RATE_S = 300
 local ENV = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1", NO_COLOR = "1" }
 
 local SEARCH_JQ =
@@ -183,65 +184,231 @@ local function classify(result: ProcessResult): Problem
 	}
 end
 
--- Runs `gh <args>`; done(stdout, problem, cx).
-function M.gh(args: { string }, done: (string?, Problem?, WindowCx?) -> ())
+-- Runs `gh <args>`; done(stdout, problem, cx, failedStdout). A failed run still
+-- passes its stdout (with `--include`, the response headers) as the 4th value.
+function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> ())
 	local argv: { string } = { "gh" }
 	for _, a in args do
 		table.insert(argv, a)
 	end
 	process.run(argv, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(result, perr, cx)
 		if not result then
-			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx)
+			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
 		end
 		if result.status ~= 0 or result.timed_out then
-			return done(nil, classify(result), cx)
+			return done(nil, classify(result), cx, result.stdout)
 		end
-		done(result.stdout, nil, cx)
+		done(result.stdout, nil, cx, nil)
 	end)
+end
+
+-- ---------------------------------------------------------------- search quota
+
+export type Quota = { limit: number?, remaining: number?, reset: number?, retryUntil: number? }
+
+local MONTHS = { Jan = 1, Feb = 2, Mar = 3, Apr = 4, May = 5, Jun = 6, Jul = 7, Aug = 8, Sep = 9, Oct = 10, Nov = 11, Dec = 12 }
+
+-- Epoch second a Retry-After value points at: delay seconds, or an HTTP-date.
+local function retryAt(v: string, now: number): number?
+	local n = tonumber(v)
+	if n then
+		return now + n
+	end
+	local d, mon, y, hh, mm, ss = string.match(v, "^%a+, (%d+) (%a+) (%d+) (%d+):(%d+):(%d+) GMT$")
+	local m = if mon then MONTHS[mon] else nil
+	if d and m and y and hh and mm and ss then
+		return M.epoch(string.format("%04d-%02d-%02dT%02d:%02d:%02d", y, m, d, hh, mm, ss))
+	end
+	return nil
+end
+
+-- Quota and body of `gh api --include` output: one or more blocks of status
+-- line, headers and a blank line (a `100 Continue` precedes the real one), then
+-- the body. Lines end in LF or CRLF; header names are case-insensitive; text
+-- without a header block is all body. Other rate-limit resources than search
+-- are ignored.
+function M.parseResponse(text: string, now: number): (Quota?, string)
+	local q: Quota = {}
+	local found = false
+	local rest = string.gsub(text, "\r\n", "\n")
+	while string.sub(rest, 1, 5) == "HTTP/" do
+		local cut = string.find(rest, "\n\n", 1, true)
+		local head = if cut then string.sub(rest, 1, cut - 1) else rest
+		rest = if cut then string.sub(rest, cut + 2) else ""
+		for line in string.gmatch(head, "[^\n]+") do
+			local k, v = string.match(line, "^([%w%-]+):%s*(.-)%s*$")
+			if k and v then
+				k = string.lower(k)
+				local n = tonumber(v)
+				if k == "x-ratelimit-resource" and string.lower(v) ~= "search" then
+					return nil, rest
+				elseif k == "x-ratelimit-limit" and n then
+					q.limit, found = n, true
+				elseif k == "x-ratelimit-remaining" and n then
+					q.remaining, found = n, true
+				elseif k == "x-ratelimit-reset" and n then
+					q.reset, found = n, true
+				elseif k == "retry-after" then
+					local at = retryAt(v, now)
+					if at then
+						q.retryUntil, found = at, true
+					end
+				end
+			end
+		end
+	end
+	return if found then q else nil, rest
+end
+
+-- Seconds until the quota allows a request: Retry-After, or the reset time once remaining hits 0.
+function M.cooldown(q: Quota?, now: number): number
+	local s = 0
+	if q then
+		if q.retryUntil then
+			s = math.max(s, q.retryUntil - now)
+		end
+		if q.remaining and q.remaining <= 0 and q.reset then
+			s = math.max(s, q.reset - now + 1)
+		end
+	end
+	return math.max(0, s)
+end
+
+-- Milliseconds until the next automatic refresh: `base` when quota is unknown or
+-- ample; otherwise the time to reset spread over the refreshes that fit in 80% of
+-- what remains, shared by `users` panes, each costing `cost` requests.
+function M.interval(q: Quota?, now: number, cost: number, users: number, base: number): number
+	local cd = M.cooldown(q, now)
+	if cd > 0 then
+		return math.max(base, cd * 1000)
+	end
+	if not q or not q.remaining or not q.reset then
+		return base
+	end
+	local toReset = math.max(1, q.reset - now)
+	local affordable = math.floor(q.remaining * 0.8) / math.max(1, cost) / math.max(1, users)
+	if affordable < 1 then
+		return math.max(base, (toReset + 1) * 1000)
+	end
+	return math.max(base, math.ceil(toReset / affordable) * 1000)
+end
+
+-- `cur` updated with the response quota `q` (a new table): a response from an
+-- older window, or one that saw more quota left in the same window, is stale;
+-- a retry deadline only moves later.
+function M.merge(cur: Quota?, q: Quota, now: number): Quota
+	local out: Quota = { limit = cur and cur.limit, remaining = cur and cur.remaining, reset = cur and cur.reset, retryUntil = cur and cur.retryUntil }
+	if q.remaining and q.reset then
+		local fresher = not out.remaining
+			or not out.reset
+			or out.reset <= now
+			or q.reset > out.reset
+			or (q.reset == out.reset and q.remaining <= out.remaining)
+		if fresher then
+			out.limit, out.remaining, out.reset = q.limit or out.limit, q.remaining, q.reset
+		end
+	end
+	if q.retryUntil and q.retryUntil > now then
+		out.retryUntil = math.max(out.retryUntil or 0, q.retryUntil)
+	end
+	return out
+end
+
+-- One quota per runtime: every pane's search spends the same budget.
+local shared: Quota? = nil
+
+function M.record(q: Quota?, now: number)
+	if q then
+		shared = M.merge(shared, q, now)
+	end
+end
+
+function M.quota(): Quota?
+	return shared
+end
+
+-- Seconds every pane must still wait before any search request.
+function M.wait(now: number): number
+	return M.cooldown(shared, now)
+end
+
+-- Why `query` may not run inside one repository, or nil. Another repo:/org:/user:
+-- or an OR would widen the request beyond the selected repository.
+function M.scopeProblem(query: string): string?
+	for word in string.gmatch(query, "%S+") do
+		word = string.gsub(word, "^[%-%(\"]+", "")
+		word = string.gsub(word, "[%)\"]+$", "")
+		local low = string.lower(word)
+		if string.match(low, "^repo:") or string.match(low, "^org:") or string.match(low, "^user:") or word == "OR" then
+			return "Filters run inside the launch repository: remove `" .. word .. "` (repo:, org:, user: and OR are not allowed)."
+		end
+	end
+	return nil
 end
 
 -- All pages of the search, sequentially; one swap-ready SearchResult at the end.
 -- `shouldContinue` is checked before every page and after every response; a
 -- false answer ends with kind="superseded" and no further page runs.
 function M.search(
+	repo: string,
 	query: string,
 	shouldContinue: () -> boolean,
-	done: (SearchResult?, Problem?) -> ()
+	done: (SearchResult?, Problem?, number) -> ()
 )
 	query = string.match(query, "^%s*(.-)%s*$") or ""
 	if query == "" then
 		tern.timer(0, function()
-			done(nil, { kind = "failed", message = "The filter query is empty." })
+			done(nil, { kind = "failed", message = "The filter query is empty." }, 0)
 		end)
 		return
 	end
+	local widened = M.scopeProblem(query)
+	if widened then
+		tern.timer(0, function()
+			done(nil, { kind = "failed", message = widened }, 0)
+		end)
+		return
+	end
+	query = "repo:" .. repo .. " " .. query
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local all: { Pr } = {}
 	local total = 0
 	local incomplete = false
 	local loaded = 0
+	local requests = 0
+	local function finish(cut: boolean)
+		done({ prs = M.reconcile(all), total = total, complete = not cut and not incomplete and total <= CAP }, nil, requests)
+	end
 	local function fetch(page: number)
 		if not shouldContinue() then
-			return done(nil, superseded)
+			return done(nil, superseded, requests)
 		end
+		requests += 1
 		M.gh({
-			"api", "--hostname", "github.com", "--method", "GET", "search/issues",
+			"api", "--hostname", "github.com", "--include", "--method", "GET", "search/issues",
 			"-f", "q=" .. query .. " is:pr",
 			"-f", "per_page=" .. PAGE,
 			"-f", "page=" .. page,
 			"-f", "sort=updated",
 			"-f", "order=desc",
 			"--jq", SEARCH_JQ,
-		}, function(out, problem)
+		}, function(out, problem, _, raw)
+			local now = os.time()
+			local q, body = M.parseResponse(out or raw or "", now)
+			M.record(q, now)
+			if not out and problem and problem.kind == "rate-limit" and M.wait(now) == 0 then
+				-- A rate limit without usable headers (secondary limit): back off.
+				M.record({ retryUntil = now + RATE_S }, now)
+			end
 			if not shouldContinue() then
-				return done(nil, superseded)
+				return done(nil, superseded, requests)
 			end
 			if not out then
-				return done(nil, problem)
+				return done(nil, problem, requests)
 			end
-			local pg, why = M.parsePage(out)
+			local pg, why = M.parsePage(body)
 			if not pg then
-				return done(nil, { kind = "failed", message = why or "malformed response" })
+				return done(nil, { kind = "failed", message = why or "malformed response" }, requests)
 			end
 			if page == 1 then
 				total = pg.total
@@ -252,7 +419,10 @@ function M.search(
 				table.insert(all, pr)
 			end
 			if pg.raw < PAGE or loaded >= math.min(total, CAP) or page * PAGE >= CAP then
-				return done({ prs = M.reconcile(all), total = total, complete = not incomplete and total <= CAP }, nil)
+				return finish(false)
+			end
+			if M.wait(now) > 0 then
+				return finish(true) -- quota exhausted mid-snapshot: keep what arrived, flagged partial
 			end
 			fetch(page + 1)
 		end)

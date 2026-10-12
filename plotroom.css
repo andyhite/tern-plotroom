@@ -11,3 +11,60 @@
 [data-surface="plugin.plotroom.prs"] .sf-list [data-act] {
   cursor: pointer;
 }
+
+/* PR rows: fixed columns sized in em (monospace list, glyph ~0.6em) so every row lines up.
+   label = state, #number, title; value = @author, age. The label is one nowrap line with
+   inline-block columns, so the title (a span or bare text) ellipsizes at the label's edge. */
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(1),
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(2) {
+  display: inline-block;
+  margin-right: 0.6em;
+  vertical-align: top;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(1) {
+  width: 3.8em;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-label > :nth-child(2) {
+  text-align: left;
+  width: 4.4em;
+}
+
+/* The empty detail slot would share the spare width with the label; the title takes it all. */
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-detail {
+  display: none;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value {
+  display: flex;
+  flex: none;
+  gap: 0.6em;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(1) {
+  flex: none;
+  width: 12.5em;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(2) {
+  flex: none;
+  text-align: right;
+  width: 2.6em;
+}
+
+[data-surface="plugin.plotroom.prs"] [data-role="pr-list"] .sf-item-value > :nth-child(1) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

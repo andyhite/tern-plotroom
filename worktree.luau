@@ -158,10 +158,32 @@ function M.expandPath(p: string, home: string?): (string?, string?)
 	return p, nil
 end
 
--- The checkout at `path` (any subdirectory or linked worktree) whose remotes
--- include `repo`; done(info, problem, cx). cx is nil in the host.
-function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
-	local want = string.lower(repo)
+-- Remote names of the checkout at `root`, origin first, then upstream, then lexical.
+local function rankedRemotes(root: string, done: (({ string }?, string?, WindowCx?) -> ()))
+	git(root, { "remote" }, LOCAL_MS, function(rem, err, cx)
+		if not rem then
+			return done(nil, err, cx)
+		end
+		local names: { string } = {}
+		for _, n in lines(rem) do
+			if string.sub(n, 1, 1) ~= "-" then
+				table.insert(names, n)
+			end
+		end
+		local function rank(n: string): number
+			return if n == "origin" then 0 elseif n == "upstream" then 1 else 2
+		end
+		table.sort(names, function(a, b)
+			if rank(a) ~= rank(b) then
+				return rank(a) < rank(b)
+			end
+			return a < b
+		end)
+		done(names, nil, cx)
+	end)
+end
+
+local function topLevel(path: string, done: Cb<string>)
 	git(path, { "rev-parse", "--show-toplevel" }, LOCAL_MS, function(top, err, cx)
 		if not top then
 			return done(nil, err, cx)
@@ -170,30 +192,27 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 		if root == "" then
 			return done(nil, "That path is not inside a Git work tree.", cx)
 		end
+		done(root, nil, cx)
+	end)
+end
+
+-- The checkout at `path` (any subdirectory or linked worktree) whose remotes
+-- include `repo`; done(info, problem, cx). cx is nil in the host.
+function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
+	local want = string.lower(repo)
+	topLevel(path, function(root, err, cx)
+		if not root then
+			return done(nil, err, cx)
+		end
 		git(root, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, LOCAL_MS, function(cd, err2, cx2)
 			if not cd then
 				return done(nil, err2, cx2)
 			end
 			local common = trim(cd)
-			git(root, { "remote" }, LOCAL_MS, function(rem, err3, cx3)
-				if not rem then
+			rankedRemotes(root, function(names, err3, cx3)
+				if not names then
 					return done(nil, err3, cx3)
 				end
-				local names: { string } = {}
-				for _, n in lines(rem) do
-					if string.sub(n, 1, 1) ~= "-" then
-						table.insert(names, n)
-					end
-				end
-				local function rank(n: string): number
-					return if n == "origin" then 0 elseif n == "upstream" then 1 else 2
-				end
-				table.sort(names, function(a, b)
-					if rank(a) ~= rank(b) then
-						return rank(a) < rank(b)
-					end
-					return a < b
-				end)
 				local function try(i: number, cxi: WindowCx?)
 					if i > #names then
 						return done(nil, "No remote of " .. root .. " points at github.com/" .. repo .. ".", cxi)
@@ -210,6 +229,36 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 				end
 				try(1, cx3)
 			end)
+		end)
+	end)
+end
+
+-- "owner/repo" of the checkout at `path`: the first github.com remote in
+-- origin/upstream/lexical order; local git only, no network.
+function M.currentRepository(path: string, done: Cb<string>)
+	topLevel(path, function(root, err, cx)
+		if not root then
+			return done(nil, err, cx)
+		end
+		rankedRemotes(root, function(names, err2, cx2)
+			if not names then
+				return done(nil, err2, cx2)
+			end
+			local function try(i: number, cxi: WindowCx?)
+				if i > #names then
+					return done(nil, root .. " has no github.com remote.", cxi)
+				end
+				git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
+					for _, u in lines(urls or "") do
+						local id = M.normalizeRemote(u)
+						if id then
+							return done(id, nil, cxu)
+						end
+					end
+					try(i + 1, cxu)
+				end)
+			end
+			try(1, cx2)
 		end)
 	end)
 end
