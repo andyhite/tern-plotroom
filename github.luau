@@ -170,13 +170,15 @@ local function classify(result: ProcessResult): Problem
 	then
 		return { kind = "rate-limit", message = "GitHub rate limit reached: " .. firstLines(err, 2) }
 	end
-	if
-		result.status == 4
-		or string.find(err, "gh auth login", 1, true)
-		or string.find(err, "GH_TOKEN", 1, true)
-		or string.find(err, "HTTP 401", 1, true)
-	then
-		return { kind = "auth", message = "The GitHub CLI is not signed in: " .. firstLines(err, 3) }
+	if result.status == 4 or string.find(err, "gh auth login", 1, true) or string.find(err, "HTTP 401", 1, true) then
+		return { kind = "auth", message = "GitHub rejected the sign-in: " .. firstLines(err, 3) }
+	end
+	if string.find(err, "HTTP 403", 1, true) then
+		-- Not a rate limit (checked above): permissions, or SAML SSO authorization.
+		return { kind = "auth", message = "This GitHub account may not access the repository (permissions or SSO authorization): " .. firstLines(err, 3) }
+	end
+	if string.find(err, "HTTP 404", 1, true) then
+		return { kind = "not-found", message = "The repository or pull request is not visible to this GitHub account: " .. firstLines(err, 3) }
 	end
 	return {
 		kind = "failed",
@@ -184,21 +186,42 @@ local function classify(result: ProcessResult): Problem
 	}
 end
 
--- Runs `gh <args>`; done(stdout, problem, cx, failedStdout). A failed run still
--- passes its stdout (with `--include`, the response headers) as the 4th value.
-function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> ())
+-- Runs `gh <args>` as `account` (nil = active account); done(stdout, problem, cx,
+-- failedStdout). A failed run still passes its stdout (with `--include`, the
+-- response headers) as the 4th value.
+function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> (), account: string?)
 	local argv: { string } = { "gh" }
 	for _, a in args do
 		table.insert(argv, a)
 	end
-	process.run(argv, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(result, perr, cx)
-		if not result then
+	local function run(env: { [string]: string })
+		process.run(argv, { timeout_ms = GH_TIMEOUT_MS, env = env }, function(result, perr, cx)
+			if not result then
+				return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
+			end
+			if result.status ~= 0 or result.timed_out then
+				return done(nil, classify(result), cx, result.stdout)
+			end
+			done(result.stdout, nil, cx, nil)
+		end)
+	end
+	if not account then
+		return run(ENV)
+	end
+	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
+		if not r then
 			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
 		end
-		if result.status ~= 0 or result.timed_out then
-			return done(nil, classify(result), cx, result.stdout)
+		local token = string.match(r.stdout, "^%s*(%S+)%s*$")
+		if r.status ~= 0 or not token then
+			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or choose another account for this repository." }, cx, nil)
 		end
-		done(result.stdout, nil, cx, nil)
+		local env: { [string]: string } = {}
+		for k, v in ENV do
+			env[k] = v
+		end
+		env.GH_TOKEN = token
+		run(env)
 	end)
 end
 
@@ -314,22 +337,60 @@ function M.merge(cur: Quota?, q: Quota, now: number): Quota
 	return out
 end
 
--- One quota per runtime: every pane's search spends the same budget.
-local shared: Quota? = nil
+-- One quota per runtime and gh account (key "" = the active account): accounts
+-- do not share a budget.
+local shared: { [string]: Quota } = {}
 
-function M.record(q: Quota?, now: number)
+function M.record(q: Quota?, now: number, account: string?)
 	if q then
-		shared = M.merge(shared, q, now)
+		shared[account or ""] = M.merge(shared[account or ""], q, now)
 	end
 end
 
-function M.quota(): Quota?
-	return shared
+function M.quota(account: string?): Quota?
+	return shared[account or ""]
 end
 
 -- Seconds every pane must still wait before any search request.
-function M.wait(now: number): number
-	return M.cooldown(shared, now)
+function M.wait(now: number, account: string?): number
+	return M.cooldown(shared[account or ""], now)
+end
+
+-- ------------------------------------------------------------- repo accounts
+
+-- Which gh account a repository uses is saved explicitly (kv "accounts",
+-- key "github.com/<lowercase owner/repo>"): an SSH alias does not identify a gh
+-- login. nil = the active gh account. Never `gh auth switch`: the account is
+-- applied per command through GH_TOKEN.
+local function accountKey(repo: string): string
+	return "github.com/" .. string.lower(repo)
+end
+
+function M.account(repo: string): string?
+	local ok, v = pcall(tern.kv.get, "accounts")
+	local a = if ok and type(v) == "table" then v[accountKey(repo)] else nil
+	if type(a) == "string" and string.match(a, "^[%w%-]+$") then
+		return a
+	end
+	return nil
+end
+
+-- Saves (or with nil/"" clears) the account; returns an error message or nil.
+function M.setAccount(repo: string, login: string?): string?
+	if login == "" then
+		login = nil
+	end
+	if login and not string.match(login, "^[%w%-]+$") then
+		return "A GitHub login has letters, digits and hyphens only."
+	end
+	local ok, v = pcall(tern.kv.get, "accounts")
+	local map: { [string]: string } = if ok and type(v) == "table" then v else {}
+	map[accountKey(repo)] = login
+	local ok2, err = pcall(tern.kv.set, "accounts", map)
+	if not ok2 then
+		return "Could not save: " .. tostring(err)
+	end
+	return nil
 end
 
 -- Why `query` may not run inside one repository, or nil. Another repo:/org:/user:
@@ -370,6 +431,7 @@ function M.search(
 		return
 	end
 	query = "repo:" .. repo .. " " .. query
+	local account = M.account(repo)
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local all: { Pr } = {}
 	local total = 0
@@ -395,10 +457,10 @@ function M.search(
 		}, function(out, problem, _, raw)
 			local now = os.time()
 			local q, body = M.parseResponse(out or raw or "", now)
-			M.record(q, now)
-			if not out and problem and problem.kind == "rate-limit" and M.wait(now) == 0 then
+			M.record(q, now, account)
+			if not out and problem and problem.kind == "rate-limit" and M.wait(now, account) == 0 then
 				-- A rate limit without usable headers (secondary limit): back off.
-				M.record({ retryUntil = now + RATE_S }, now)
+				M.record({ retryUntil = now + RATE_S }, now, account)
 			end
 			if not shouldContinue() then
 				return done(nil, superseded, requests)
@@ -421,11 +483,11 @@ function M.search(
 			if pg.raw < PAGE or loaded >= math.min(total, CAP) or page * PAGE >= CAP then
 				return finish(false)
 			end
-			if M.wait(now) > 0 then
+			if M.wait(now, account) > 0 then
 				return finish(true) -- quota exhausted mid-snapshot: keep what arrived, flagged partial
 			end
 			fetch(page + 1)
-		end)
+		end, account)
 	end
 	fetch(1)
 end
@@ -434,6 +496,7 @@ export type PrMeta = { base: string, sha: string, ref: string, state: string }
 
 -- Base repository and head of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?) -> ())
+	local account = M.account(repo)
 	M.gh({ "api", "--hostname", "github.com", "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
 		if not out then
 			return done(nil, problem, cx)
@@ -451,7 +514,7 @@ function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?)
 			return done(nil, { kind = "failed", message = "gh printed unexpected pull request metadata." }, cx)
 		end
 		done({ base = data.base, sha = string.lower(data.sha), ref = data.ref, state = tostring(data.state) }, nil, cx)
-	end)
+	end, account)
 end
 
 return M

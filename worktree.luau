@@ -76,25 +76,99 @@ local function validSegment(s: string): boolean
 	return s ~= "" and s ~= "." and s ~= ".." and string.match(s, "^[%w%-_%.]+$") ~= nil
 end
 
--- "owner/repo" of a github.com remote URL (https, ssh://git@ or scp-like); nil otherwise.
-function M.normalizeRemote(url: string): string?
+-- Transport host (lowercase), "owner/repo" and whether it is an SSH form of a
+-- remote URL (https, ssh://git@host[:port]/ or scp-like git@host:); nils when unparsable.
+function M.parseRemote(url: string): (string?, string?, boolean, string?)
 	url = trim(url)
-	local o, r = string.match(url, "^https://[^/]*github%.com/([^/]+)/([^/]+)$")
-	if not o then
-		o, r = string.match(url, "^ssh://git@github%.com/([^/]+)/([^/]+)$")
+	local host, path
+	local ssh = false
+	local port: string? = nil
+	local bad: boolean? = nil
+	local auth, p = string.match(url, "^https://([^/]+)/(.+)$")
+	if auth then
+		host, path = string.match(auth, "([^@]+)$"), p
+	else
+		local a, p2 = string.match(url, "^ssh://git@([^/]+)/(.+)$")
+		if a then
+			local h, pt = string.match(a, "^([^:]+):?(%d*)$")
+			if not h then
+				bad = true
+			end
+			host, path = h, p2
+			if pt and pt ~= "" then
+				port = pt
+			end
+		else
+			host, path = string.match(url, "^git@([^:/]+):(.+)$")
+		end
+		ssh = true
 	end
-	if not o then
-		o, r = string.match(url, "^git@github%.com:([^/]+)/([^/]+)$")
+	if not host or not path or string.match(host, "^%w[%w%.%-_]*$") == nil or (bad ~= nil) then
+		return nil, nil, false
 	end
+	local o, r = string.match(path, "^([^/]+)/([^/]+)$")
 	if not o or not r then
-		return nil
+		return nil, nil, false
 	end
-	r = string.gsub(r, "/$", "")
 	r = string.gsub(r, "%.git$", "")
 	if not validSegment(o) or not validSegment(r) then
-		return nil
+		return nil, nil, false
 	end
-	return o .. "/" .. r
+	return string.lower(host), o .. "/" .. r, ssh, port
+end
+
+-- "owner/repo" of a remote URL whose host is literally github.com; nil otherwise.
+function M.normalizeRemote(url: string): string?
+	local host, id = M.parseRemote(url)
+	return if host == "github.com" then id else nil
+end
+
+-- The `hostname` ssh would connect to, from `ssh -G` output.
+function M.sshHostname(out: string): string?
+	local h = string.match(out, "^hostname (%S+)") or string.match(out, "\nhostname (%S+)")
+	return if h then string.lower(h) else nil
+end
+
+-- Like normalizeRemote, but an SSH host alias counts when `ssh -G` (reads the
+-- user's ssh config, opens no connection) resolves it to github.com. The
+-- remote itself is never rewritten, so git keeps using the alias for transport.
+function M.identify(url: string, cx: WindowCx?, done: (string?, WindowCx?) -> ())
+	local host, id, ssh, port = M.parseRemote(url)
+	if not id or host == "github.com" then
+		return done(if host == "github.com" then id else nil, cx)
+	end
+	if not ssh then
+		return done(nil, cx)
+	end
+	local argv = { "ssh", "-G" }
+	if port then
+		table.insert(argv, "-p")
+		table.insert(argv, port)
+	end
+	table.insert(argv, "--")
+	table.insert(argv, "git@" .. (host :: string))
+	process.run(argv, { timeout_ms = LOCAL_MS }, function(res, _, cx2)
+		if res and res.status == 0 and not res.timed_out and M.sshHostname(res.stdout) == "github.com" then
+			return done(id, cx2 or cx)
+		end
+		done(nil, cx2 or cx)
+	end)
+end
+
+-- First URL of `urls` that identifies as a github.com repository (and equals `want`, lowercase, when given).
+local function scan(urls: { string }, want: string?, cx: WindowCx?, done: (string?, WindowCx?) -> ())
+	local function step(i: number, cxi: WindowCx?)
+		if i > #urls then
+			return done(nil, cxi)
+		end
+		M.identify(urls[i], cxi, function(id, cx2)
+			if id and (not want or string.lower(id) == want) then
+				return done(id, cx2)
+			end
+			step(i + 1, cx2)
+		end)
+	end
+	step(1, cx)
 end
 
 -- Records of `git worktree list --porcelain -z`: NUL-terminated fields, an
@@ -218,13 +292,12 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 						return done(nil, "No remote of " .. root .. " points at github.com/" .. repo .. ".", cxi)
 					end
 					git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
-						for _, u in lines(urls or "") do
-							local id = M.normalizeRemote(u)
-							if id and string.lower(id) == want then
-								return done({ root = root, commonDir = common, remote = names[i] }, nil, cxu)
+						scan(lines(urls or ""), want, cxu, function(id, cx2)
+							if id then
+								return done({ root = root, commonDir = common, remote = names[i] }, nil, cx2)
 							end
-						end
-						try(i + 1, cxu)
+							try(i + 1, cx2)
+						end)
 					end)
 				end
 				try(1, cx3)
@@ -249,13 +322,12 @@ function M.currentRepository(path: string, done: Cb<string>)
 					return done(nil, root .. " has no github.com remote.", cxi)
 				end
 				git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
-					for _, u in lines(urls or "") do
-						local id = M.normalizeRemote(u)
+					scan(lines(urls or ""), nil, cxu, function(id, cx2)
 						if id then
-							return done(id, nil, cxu)
+							return done(id, nil, cx2)
 						end
-					end
-					try(i + 1, cxu)
+						try(i + 1, cx2)
+					end)
 				end)
 			end
 			try(1, cx2)

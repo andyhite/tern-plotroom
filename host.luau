@@ -25,7 +25,7 @@ type Form = {
 	focus: string,
 	error: string?,
 }
-type RepoForm = { repo: string, path: input.Model, focus: string, error: string?, busy: boolean }
+type RepoForm = { repo: string, path: input.Model, focus: string, error: string?, busy: boolean, account: boolean? }
 
 type State = {
 	cx: BlockCx,
@@ -196,8 +196,13 @@ local function ensureCursor(state: State)
 	state.page = (i - 1) // PAGE_SIZE + 1
 end
 
+-- The saved gh login of the launch repo (nil: the active gh account); part of every quota and cache identity.
+local function acct(state: State): string?
+	return if state.repo then github.account(state.repo) else nil
+end
+
 local function snapKey(state: State, query: string): string
-	return (state.repo or "") .. "\0" .. query
+	return (state.repo or "") .. "\0" .. (acct(state) or "") .. "\0" .. query
 end
 
 local function showSnapshot(state: State)
@@ -207,6 +212,10 @@ local function showSnapshot(state: State)
 end
 
 local refresh: (State) -> ()
+
+-- Problems that retrying cannot fix by itself: no automatic refresh until an
+-- explicit Retry. ("not-found" is reserved for the GitHub layer's classifier.)
+local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true }
 
 -- Panes of this runtime that still exist; they share one search quota.
 local function openPanes(): number
@@ -228,7 +237,7 @@ local function schedule(state: State, ms: number)
 	if state.timer then
 		state.timer:cancel()
 	end
-	ms = math.max(ms, github.wait(os.time()) * 1000)
+	ms = math.max(ms, github.wait(os.time(), acct(state)) * 1000)
 	state.nextAt = os.time() + math.ceil(ms / 1000)
 	state.timer = tern.timer(ms, function()
 		if not alive(state) then
@@ -278,7 +287,16 @@ refresh = function(state: State)
 	end
 	local repo = state.repo
 	if not repo then
+		-- A failed lookup stays failed until an explicit Retry: nothing else may respawn git.
+		local p = state.problem
+		if p and p.kind == "no-repo" then
+			return
+		end
 		return resolveRepo(state)
+	end
+	local halted = state.problem
+	if halted and TERMINAL[halted.kind] then
+		return
 	end
 	if state.loading then
 		return
@@ -289,7 +307,7 @@ refresh = function(state: State)
 		return
 	end
 	-- The server's cooldown holds for every trigger, manual refresh included.
-	local wait = github.wait(os.time())
+	local wait = github.wait(os.time(), acct(state))
 	if wait > 0 then
 		-- Nothing is loading: say why, so an uncached filter does not show a spinner until the reset.
 		state.problem = { kind = "rate-limit", message = "GitHub's search rate limit is reached; searches resume automatically (see the time above)." }
@@ -321,11 +339,13 @@ refresh = function(state: State)
 		if requests > 0 then
 			-- A finished snapshot shows the real page count; a failed one keeps the larger known cost.
 			state.cost = if result then requests else math.max(requests, state.cost)
-			state.interval = github.interval(github.quota(), os.time(), state.cost, openPanes(), POLL_MS)
+			state.interval = github.interval(github.quota(acct(state)), os.time(), state.cost, openPanes(), POLL_MS)
 		else
 			state.interval = nil -- nothing was sent (invalid query): no quota to pace
 		end
-		schedule(state, state.interval or POLL_MS)
+		if not (problem and TERMINAL[problem.kind]) then
+			schedule(state, state.interval or POLL_MS)
+		end
 		state.cx:render()
 	end)
 end
@@ -333,8 +353,20 @@ end
 -- A different applied query: invalidate whatever is in flight and reload now.
 local function changed(state: State)
 	state.gen += 1
-	state.problem = nil
+	if state.repo and not (state.problem and TERMINAL[state.problem.kind]) then
+		state.problem = nil
+	end
 	showSnapshot(state)
+	refresh(state)
+end
+
+-- Explicit user retry (`r`, Refresh, Retry): also looks for a repository again.
+local function retry(state: State)
+	process.reset()
+	local p = state.problem
+	if p and (TERMINAL[p.kind] or (not state.repo and p.kind == "no-repo")) then
+		state.problem = nil
+	end
 	refresh(state)
 end
 
@@ -346,7 +378,8 @@ local function switchFilter(state: State, id: string?)
 	local s = if f and state.repo then state.snaps[snapKey(state, f.query)] else nil
 	local age = if s then os.time() - s.fetched else 0
 	local fresh = math.floor((state.interval or POLL_MS) / 1000)
-	if s and not state.loading and age < fresh then
+	local halted = state.problem
+	if s and not state.loading and age < fresh and not (halted and TERMINAL[halted.kind]) then
 		-- A snapshot younger than the refresh interval: show it and keep polling on its schedule.
 		state.problem = nil
 		showSnapshot(state)
@@ -488,6 +521,20 @@ local function saveRepo(state: State)
 	local rf = state.repoForm
 	if not rf or rf.busy then
 		return
+	end
+	if rf.account then
+		local err = github.setAccount(rf.repo, string.match(rf.path.text, "^%s*(.-)%s*$") or "")
+		if err then
+			rf.error = err
+			return
+		end
+		-- New account: old snapshots, problem and quota belong to the old identity; one authorized refresh.
+		state.repoForm = nil
+		state.gen += 1
+		state.snaps, state.snap, state.problem = {}, nil, nil
+		state.notice = "Account saved; refreshing"
+		focusField(state, nil)
+		return retry(state)
 	end
 	local path, why = worktree.expandPath(rf.path.text, tern.getenv("HOME"))
 	if not path then
@@ -755,11 +802,19 @@ end
 -- or when no request was sent (invalid query).
 local function paceLine(state: State): string?
 	if not state.repo then
+		local p = state.problem
+		if p and p.kind == "no-repo" then
+			return "Auto-refresh unavailable: no GitHub repository. Retry to look again."
+		end
 		return nil
 	end
+	local halted = state.problem
+	if halted and TERMINAL[halted.kind] then
+		return "Auto-refresh paused: " .. halted.kind .. " error. Fix it, then Retry."
+	end
 	local now = os.time()
-	local q = github.quota()
-	local wait = github.wait(now)
+	local q = github.quota(acct(state))
+	local wait = github.wait(now, acct(state))
 	local line: string
 	if wait > 0 then
 		line = "Paused by GitHub rate limit until " .. os.date("%H:%M:%S", now + wait)
@@ -808,6 +863,7 @@ local function mainView(state: State): Node
 		badge("Edit", "edit", "neutral", nil),
 		badge("Delete", "delete", "neutral", nil),
 		badge("Refresh", "refresh", "accent", nil),
+		if state.repo then badge("Account", "account", "neutral", nil) else nil,
 	}))
 
 	local form = state.form
@@ -833,9 +889,12 @@ local function mainView(state: State): Node
 	end
 	local rf = state.repoForm
 	if rf then
-		table.insert(kids, ui.rule("Local checkout"))
-		table.insert(kids, ui.md("No local checkout of **" .. rf.repo .. "** was found. Enter the path of one."))
-		for _, n in field("Path", "f-path", rf.path, rf.focus == "path", "~/Code/" .. (string.match(rf.repo, "/(.+)$") or "repo")) do
+		local acc = rf.account
+		table.insert(kids, ui.rule(if acc then "GitHub account" else "Local checkout"))
+		table.insert(kids, ui.md(if acc
+			then "`gh` login used for **" .. rf.repo .. "** (empty: the active `gh` account)."
+			else "No local checkout of **" .. rf.repo .. "** was found. Enter the path of one."))
+		for _, n in field(if acc then "Login" else "Path", "f-path", rf.path, rf.focus == "path", if acc then "octocat" else "~/Code/" .. (string.match(rf.repo, "/(.+)$") or "repo")) do
 			table.insert(kids, n)
 		end
 		if rf.error then
@@ -934,10 +993,6 @@ tern.block.define("prs", {
 	features = { "edit", "undo" },
 
 	init = function(cx: BlockCx, args: { string }, saved: any): State
-		local previous = running[cx.pane]
-		if previous then
-			retire(previous)
-		end
 		local cwd: string? = nil
 		for _, c in { if type(saved) == "table" then saved.launchCwd else nil, args[1], cx.cwd } do
 			if type(c) == "string" and c ~= "" and tern.fs.exists(c) then
@@ -945,8 +1000,26 @@ tern.block.define("prs", {
 				break
 			end
 		end
+		local previous = running[cx.pane]
+		if previous and previous.launchCwd == cwd and alive(previous) then
+			-- The runtime re-runs init on every settings reload (observed every 7-15 s).
+			-- Keep the live state: a fresh one would restart the repo lookup and the
+			-- GitHub search each time, flashing the spinner/card.
+			previous.cx = cx
+			return previous
+		end
+		if previous then
+			retire(previous)
+		end
 		local store, writable, err = loadStore()
 		local active = if type(saved) == "table" and type(saved.activeFilterId) == "string" then saved.activeFilterId else nil
+		local sp = nil
+		if type(saved) == "table" and type(saved.pause) == "table" and saved.launchCwd == cwd then
+			local k, m, r = saved.pause.kind, saved.pause.message, saved.pause.repo
+			if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found") and type(r) == "string")) then
+				sp = { kind = k, message = m, repo = if type(r) == "string" then r else nil }
+			end
+		end
 		local state: State = {
 			cx = cx,
 			launchCwd = cwd,
@@ -961,12 +1034,12 @@ tern.block.define("prs", {
 			focus = "prs",
 			loading = false,
 			gen = 0,
-			repo = nil,
+			repo = if sp then sp.repo else nil,
 			resolving = false,
 			cost = COST_GUESS,
 			interval = nil,
 			nextAt = nil,
-			problem = nil,
+			problem = if sp then { kind = sp.kind, message = sp.message } else nil,
 			timer = nil,
 			form = nil,
 			confirmDelete = false,
@@ -1060,8 +1133,7 @@ tern.block.define("prs", {
 			end
 		end
 		if k == "r" then
-			process.reset()
-			refresh(state)
+			retry(state)
 		end
 		return true
 	end,
@@ -1118,10 +1190,9 @@ tern.block.define("prs", {
 				state.confirmDelete = false
 			elseif act == "refresh" then
 				state.notice = nil
-				refresh(state)
+				retry(state)
 			elseif act == "retry" then
-				process.reset()
-				refresh(state)
+				retry(state)
 			elseif act == "prev" then
 				goPage(state, state.page - 1)
 			elseif act == "next" then
@@ -1134,11 +1205,22 @@ tern.block.define("prs", {
 				state.notice = nil
 				state.repoForm = { repo = ev.value, path = input.new(""), focus = "path", error = nil, busy = false }
 				focusField(state, "path")
+			elseif act == "account" and state.repo then
+				state.form = nil
+				state.confirmDelete = false
+				state.notice = nil
+				state.repoForm = { repo = state.repo, path = input.new(github.account(state.repo) or ""), focus = "path", error = nil, busy = false, account = true }
+				focusField(state, "path")
 			end
 		end
 	end,
 
 	save = function(state: State): any
-		return { version = 1, launchCwd = state.launchCwd, activeFilterId = state.activeId }
+		local p = state.problem
+		local pause = nil
+		if p and (TERMINAL[p.kind] or p.kind == "no-repo") then
+			pause = { kind = p.kind, message = p.message, repo = state.repo }
+		end
+		return { version = 1, launchCwd = state.launchCwd, activeFilterId = state.activeId, pause = pause }
 	end,
 })
