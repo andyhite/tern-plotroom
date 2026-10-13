@@ -30,7 +30,8 @@ type Snap = {
 }
 -- What the local search lets through: computed once per snapshot and search text.
 type Visible = { snap: Snap, needle: string, prs: { github.Pr }, order: { string }, hits: { [string]: any }? }
-type Detail = { runs: { github.Run }, total: number }
+-- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
+type Detail = { runs: { github.Run }, total: number, round: number }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
@@ -88,6 +89,7 @@ type State = {
 	detailFail: { [string]: DetailFail },
 	detailBusy: { [string]: boolean }, -- checks loads running
 	detailAttempt: Attempt?,
+	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
 	expanded: { [string]: boolean }, -- PR keys whose check list is unfolded
 	notes: { [string]: Note }, -- worktree reports by PR key
 	noteSeq: number,
@@ -616,6 +618,7 @@ refresh = function(state: State)
 			local snap: Snap = { prs = result.prs, total = result.total, complete = result.complete, fetched = os.time() }
 			state.snaps[key] = snap
 			state.snap = snap
+			state.round += 1 -- every loaded checks list is older than this result now
 			state.problem = nil
 			ensureCursor(state)
 			prune(state)
@@ -648,7 +651,8 @@ local function changed(state: State)
 	refresh(state)
 end
 
--- Explicit user retry (`r`, Refresh, Retry): also looks for a repository again and retries failed checks loads.
+-- Explicit user retry (`r`, Refresh, Retry): also looks for a repository again and retries failed checks loads. The search it
+-- starts makes the loaded checks stale (State.round): the selected PR's load again once it lands.
 local function retry(state: State)
 	process.reset()
 	local p = state.problem
@@ -1392,11 +1396,11 @@ local function commitEdit(state: State)
 			if not err then
 				s.errors.checkout = nil
 				state.cx:toast("success", "Checkout saved", root)
-			elseif state.settings == s then
+			elseif state.settings == s and s.page == "worktrees" then
 				beginEdit(state, "checkout", text) -- the draft stays for a correction; this clears the row's warning, so set it after
 				s.errors.checkout = err
 			else
-				state.cx:toast("error", "Checkout not saved", err)
+				state.cx:toast("error", "Checkout not saved", err) -- Settings closed, or the Worktrees page that shows the row was left
 			end
 			state.cx:render()
 		end)
@@ -1570,12 +1574,21 @@ local function failDetails(state: State, key: string, problem: github.Problem)
 	state.detailFail[key] = { problem = problem, tries = tries, retryAt = retryAt }
 end
 
+-- Whether the checks of `key` were loaded after the latest search (an older list is shown, but loads again).
+local function upToDate(state: State, key: string): boolean
+	local d = state.details[key]
+	return d ~= nil and d.round == state.round
+end
+
 loadDetails = function(state: State, key: string)
 	local pr = selectedPr(state)
-	if not pr or detailKey(state, pr) ~= key or state.details[key] or state.detailBusy[key] then
+	if not pr or detailKey(state, pr) ~= key or upToDate(state, key) or state.detailBusy[key] then
 		return -- the cursor moved on, or it is loaded or loading already: a render asks again if it still matters
 	end
-	local account = state.account
+	local account, round = state.account, state.round
+	local function current(): boolean
+		return state.account == account and state.round == round
+	end
 	state.detailBusy[key] = true
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
 	github.checks(pr.repo, pr.number, function(runs, total, problem)
@@ -1583,25 +1596,26 @@ loadDetails = function(state: State, key: string)
 		if not alive(state) then
 			return
 		end
-		if state.account ~= account or (problem and problem.kind == "superseded") then
-			state.cx:render() -- another identity owns the preview now: its own render asks for its own checks
+		if not current() or (problem and problem.kind == "superseded") then
+			state.cx:render() -- another identity or a newer search owns the preview now: its own render asks for fresh checks
 			return
 		end
 		if runs then
-			state.details[key] = { runs = runs, total = total }
+			state.details[key] = { runs = runs, total = total, round = round }
 			state.detailFail[key] = nil
 		else
 			failDetails(state, key, problem or { kind = "failed", message = "The checks could not be read." })
 		end
 		state.cx:render()
 	end, function()
-		return running[state.cx.pane] == state and state.account == account
+		return running[state.cx.pane] == state and current()
 	end)
 end
 
 -- Once the cursor rests on a PR with checks, loads all of them with their required flags (the search carries the first
--- 25, unflagged, and shows them meanwhile). Idempotent: every render calls it. A load waits out a debounce and a failed
--- one its retry delay; moving to another PR cancels the wait.
+-- 25, unflagged, and shows them meanwhile; checks loaded before the latest search show meanwhile too, and load again).
+-- Idempotent: every render calls it. A load waits out a debounce and a failed one its retry delay; moving to another PR
+-- cancels the wait.
 local function wantDetails(state: State, pr: github.Pr)
 	local key = detailKey(state, pr)
 	local waiting = state.detailAttempt
@@ -1609,7 +1623,7 @@ local function wantDetails(state: State, pr: github.Pr)
 		cancelDetails(state)
 		waiting = nil
 	end
-	if not key or waiting or state.details[key] or state.detailBusy[key] then
+	if not key or waiting or upToDate(state, key) or state.detailBusy[key] then
 		return
 	end
 	local fail = state.detailFail[key]
@@ -2246,6 +2260,7 @@ tern.block.define("prs", {
 			detailFail = {},
 			detailBusy = {},
 			detailAttempt = nil,
+			round = 0,
 			expanded = {},
 			notes = {},
 			noteSeq = 0,
