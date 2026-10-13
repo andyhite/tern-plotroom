@@ -13,7 +13,7 @@ test    plugin/tests/regression.luau (which also runs the plugin/tests/check.lua
         Luau CLI from a temporary bundle: every plugin/*.luau module wrapped as function(tern, require, os),
         so each case gets a fresh fake SDK (virtual clock, process, kv, fs, json, ui, blocks) and fresh
         module state. No network, no git, no files outside a temporary directory.
-types   luau-lsp analyze --platform standard against scripts/tern-0.8.2.d.luau (a copy of the SDK that
+types   luau-lsp analyze --platform standard against scripts/tern-0.8.3.d.luau (a copy of the SDK that
         `tern plugin types` writes), over plugin/*.luau and plugin/tests/*.luau. Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
@@ -22,8 +22,8 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau) with a fake gh on PATH.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
-Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.2 (44c7f76). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
-Smoke prerequisites: Tern 0.8.2 (TERN=/path or PATH), git >= 2.31, omp on PATH, Python 3.9+. No network; every repository,
+Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
+Smoke prerequisites: Tern 0.8.3 (TERN=/path or PATH), git >= 2.36, omp on PATH, Python 3.9+. No network; every repository,
 fake gh/ssh, Tern directory and log lives under one temporary directory that is deleted afterwards.
 """
 
@@ -48,11 +48,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"
-SDK = ROOT / "scripts" / "tern-0.8.2.d.luau"
+SDK = ROOT / "scripts" / "tern-0.8.3.d.luau"
 SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
 LUAU_VERSION = "0.742"
 LSP_VERSION = "1.70.1"
-TERN_VERSION = "0.8.2"
+TERN_VERSION = "0.8.3"
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
 
 # sha256 of the release assets, as GitHub publishes them.
@@ -368,7 +368,7 @@ def check_bench() -> str:
 # plugin.plotroom.smoke (plugin/tests/runtime.luau) runs worktree.open for each scenario; git is the oracle.
 
 SMOKE_TOAST = "Plotroom self-test passed"
-GIT_MIN = (2, 31)
+GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
@@ -421,7 +421,7 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     done = run([tern, "--version"], timeout=30)
     banner = (done.stdout + done.stderr).strip()
     if TERN_VERSION not in banner:
-        raise GateError("smoke needs Tern %s; %s reports %r. Install 0.8.2 or set TERN=/path/to/tern." % (TERN_VERSION, tern, banner))
+        raise GateError("smoke needs Tern %s; %s reports %r. Install %s or set TERN=/path/to/tern." % (TERN_VERSION, tern, banner, TERN_VERSION))
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
@@ -494,7 +494,7 @@ class Smoke:
             PLOTROOM_SMOKE_DIR=str(self.smoke),
             OMP_WORKTREE_DIR=str(tmp / "omp-wt"),
         )
-        # git 2.31 predates GIT_CONFIG_GLOBAL: a private HOME keeps the user's ~/.gitconfig out of fixtures too.
+        # A private HOME keeps the user's ~/.gitconfig out of fixtures too.
         self.genv = dict(base, **iso)
         self.genv.update(
             HOME=str(tmp / "home"),
