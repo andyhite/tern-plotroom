@@ -1,5 +1,7 @@
 # Plotroom native UI: picker queue, prefs settings, GraphQL PR data
 
+> **Historical plan, partly superseded.** `README.md` documents the current keys, settings, accounts, worktrees and the single verification command. Blockquotes starting **Superseded** mark decisions below that later work changed; the original text stays for history.
+
 ## Context
 
 The Plotroom block (`plotroom.prs`) is a plain one-line list. Its config is a pile of badge buttons and inline forms (New/Edit/Delete filter, Account, checkout path). The user wants a polished tool that uses the Tern SDK's own UI kinds, styled like the PR Guide / Tern-Me-On / rmon examples, with every setting moved into Tern's settings layout if the SDK allows it.
@@ -30,6 +32,8 @@ Three steps, in order. After each step, the self-test passes and the block loads
 The concurrent fix agent has landed (`cb6dc0e`, `11794d6`, `88eb298`; clean tree). Build on it as is.
 - Anchors confirmed at `88eb298`: `invalid` in `M.classify` (`github.luau`), `TERMINAL.invalid` and pause persistence in `save`/`init` (`host.luau`), `github.account`/`setAccount`, and `worktree.identify` (SSH host aliases, resolved with `ssh -G`).
 - Keep every behavior those commits added: per-repo `gh` accounts, `TERMINAL` problem kinds, pause persistence, `classify` kinds and SSH-alias remote detection.
+
+> **Superseded (accounts):** `github.account(repo)` now returns `(string?, Problem?)`. `nil, nil` alone means the active `gh` identity; an unreadable saved-accounts store or an invalid saved login is a terminal `account` problem with no fallback to the active account, and `setAccount` writes nothing if the store cannot be read (README, "Accounts"). Per-repo accounts read a token with `gh auth token --user` per call, in memory only.
 - If `git log --oneline 88eb298..HEAD -- plugin` lists commits, re-read the symbols they touch before editing.
 - Symbol names below are the anchors. Re-read each one before editing it.
 
@@ -351,6 +355,7 @@ Badge order, at most three shown (the picker adds "+N" for the rest):
   - `{ id = "retry", label = "Refresh", keys = { "r" }, disabled = <"Paused by GitHub until HH:MM:SS" while github.wait > 0> }`. The id `retry` is what the picker's error card offers as its button.
   - `{ id = "worktree", label = "Worktree", keys = { "w" }, ["end"] = true, disabled = <"Select a pull request" without one> }`
   - `{ id = "open", label = "Open", keys = { "enter" }, primary = true, disabled = <same> }`
+  - **Superseded:** the bar now shows `Search` only while no search is open and `Clear search` while one is; it adds `{ id = "help", label = "Help", keys = { "?" } }` before `Worktree`.
 
 **Return value:** `{ main = ui.col({ contextNode(state) }), layer = ui.col({ ui.node("picker", props, previewNodes(state)) }) }`.
 
@@ -482,6 +487,8 @@ Badge order, at most three shown (the picker adds "+N" for the rest):
    - Enter/Space → `runRow(state, s.focus)`.
    - Anything else → `false`.
 
+> **Superseded (settings keys):** Escape while editing discards the edit and saves nothing; Enter is the only commit. In the delete confirmation, Enter and Escape keep the filter, and `d` (or clicking Delete) deletes it. `?` opens a key list.
+
 **Queue mode** (`plain` = no ctrl/alt/meta):
 - **Tab** (plain) toggles `state.focus` between `"list"` and `"scopes"`.
 - **Movement:**
@@ -500,6 +507,8 @@ Badge order, at most three shown (the picker adds "+N" for the rest):
   - `s` → `openSettings(state, "filters")`
   - `w` → `openSelected(state, "worktree", false)`
   - else → `false`
+
+> **Superseded (queue keys):** `?` shows or hides a key list (Esc, Enter or `?` closes it). Search text also edits by word with Ctrl/Alt+arrows and Ctrl/Alt+Backspace/Delete. Refresh while a request runs toasts "Already refreshing".
 
 #### 2g. Events (`event` handler)
 
@@ -569,6 +578,8 @@ Delete every current rule; they style the removed list. New sheet: every selecto
 
 ## Verification
 
+> **Superseded (verification procedure):** the scripted gate is `python3 scripts/check.py` (portable CI subset `--ci`; the real-Tern smoke is local only), described in README, "Verify". The interactive walkthrough below remains a manual UI check on a linked dev window; where a step disagrees with README, README wins.
+
 **Prerequisites**
 - Run commands from the repo root, `/Users/user/Code/andyhite/tern-plotroom`.
 - The plugin is linked from `plugin/`: `tern plugin list` shows `plotroom 0.1.0 … ready`, and `~/Library/Application Support/Tern/plugins/plotroom.path` contains `/Users/user/Code/andyhite/tern-plotroom/plugin`. Saving any file under `plugin/` reloads the plugin.
@@ -602,7 +613,7 @@ tern plugin list                            # plotroom … ready
      - Merged/Draft/Approved/Changes-requested badges and labels
      - a "+N −M" Changes column and an Updated column
      - a preview with title, kv facts, a green/red diff meter and Open/Worktree/Copy link buttons with keycaps
-     - an action bar reading Search / · Filters ⇥ · Settings S · Refresh R · Worktree W · Open ⏎
+     - an action bar reading Search / · Filters ⇥ · Settings S · Refresh R · Help ? · Worktree W · Open ⏎ (Clear search Esc replaces Search while a search is open)
 3. **Search.**
    - Run `$C key /`, `$C type "fix"`.
    - Expect the count to read "N of M" and "fix" marked in titles (`$C shot plotroom-search`).
@@ -624,7 +635,7 @@ tern plugin list                            # plotroom … ready
 8. **Delete filter.**
    - Run `$C key Tab` (to Filters), `$C key ArrowUp` twice (New filter, then "Delete filter" under "Open PRs"), `$C key Enter`.
    - Expect a modal "Delete filter “Open PRs”?".
-   - Then `$C key Enter` deletes it and `$C key Escape` closes settings. The queue falls back to a remaining filter.
+   - Then `$C key d` deletes it (`Enter` or `Escape` would keep it) and `$C key Escape` closes settings. The queue falls back to a remaining filter.
 9. **Error state.**
    - Run `$C focus left` (the shell), `$C run "cd /tmp"`, then `$C plugins run plugin.plotroom.open`.
    - Expect the picker error card "No GitHub repository" with a Refresh button.
