@@ -16,8 +16,7 @@
 	display: none;
 }
 
-/* Branch names and check names are cut with an ellipsis; the full text is the row's tooltip and accessible name. */
-[data-surface='plugin.plotroom.prs'] .plotroom-fact,
+/* Check names are cut with an ellipsis; the full text is the row's tooltip and accessible name. */
 [data-surface='plugin.plotroom.prs'] .plotroom-run {
 	display: flex;
 	align-items: baseline;
@@ -80,23 +79,12 @@
 	color: var(--t1);
 }
 
-[data-surface='plugin.plotroom.prs'] .plotroom-fact .k {
-	flex: none;
-	color: var(--t3);
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-fact .v,
 [data-surface='plugin.plotroom.prs'] .plotroom-run .name {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-fact .v {
-	font-family: var(--mono);
-	text-align: right;
 }
 
 [data-surface='plugin.plotroom.prs'] .plotroom-run .dot {
@@ -163,6 +151,66 @@
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
+}
+
+[data-surface='plugin.plotroom.prs'] button.plotroom-num {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	align-self: flex-start;
+	color: var(--t2);
+	font-family: var(--mono);
+	font-size: 12px;
+}
+
+[data-surface='plugin.plotroom.prs'] button.plotroom-num:hover {
+	color: var(--t1);
+}
+
+[data-surface='plugin.plotroom.prs'] button.plotroom-num:focus-visible {
+	outline: 2px solid var(--accent);
+}
+
+/* The PR number, then branch → base as chips; a long name is cut with an ellipsis and shown whole in its tooltip. */
+[data-surface='plugin.plotroom.prs'] .plotroom-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-head button.plotroom-num {
+	flex: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-ref {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 180px;
+	height: 18px;
+	padding: 0 7px;
+	border-radius: 9px;
+	background: var(--chip-bg);
+	box-shadow: inset 0 0 0 1px var(--l2);
+	color: var(--t2);
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 18px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+[data-surface='plugin.plotroom.prs'] .plotroom-into {
+	flex: none;
+	color: var(--t3);
+	font-size: 11px;
+}
+
+/* The base is usually short (main): the branch gives up its width first. */
+[data-surface='plugin.plotroom.prs'] .plotroom-ref.base {
+	flex-shrink: 0;
+	max-width: 120px;
 }
 
 [data-surface='plugin.plotroom.prs'] button.plotroom-btn {
@@ -245,4 +293,13 @@
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-pv-slot {
 	margin-top: -16px;
 	padding-top: 10px;
+}
+
+/* A bit wider than Tern's fixed 340px side preview, growing with the sheet; below the list (narrow sheets) it stays full width. */
+[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side .pk-pv {
+	width: clamp(340px, 26%, 440px);
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker.pv-below-auto .pk-pv {
+	width: auto;
 }

@@ -45,7 +45,7 @@ Press `?` in the queue or Settings for the same list in the block. Settings and 
 | `Enter` | Open the selected PR in a Browser block docked beside the queue. With the filter list focused: move to the PR list. |
 | `w` | Create or reuse the PR's worktree and open it in a new tab |
 | `g` | Go to the tab working in the selected PR's worktree (only when the PR shows "In tab") |
-| `1`–`9` | Run that agent command on the selected PR (see "Agent commands") |
+| `a` | Pick an omp prompt template or skill and run it on the selected PR (see "Agents") |
 | `/` | Search the loaded PRs (title match; the picker marks hits) |
 | `Esc` | In search: clear the text, then close the search. With the filter list focused: back to the PR list. |
 | `r` | Refresh now |
@@ -54,25 +54,24 @@ Press `?` in the queue or Settings for the same list in the block. Settings and 
 
 While searching, every other key edits the search text: `Ctrl`/`Alt`+`←` `→` move by word (add `Shift` to select), `Ctrl`/`Alt`+`Backspace`/`Delete` delete a word, plus select-all, copy, cut and undo. Pasted line breaks become spaces; malformed bytes and control characters are dropped.
 
-PR rows and preview buttons (Open, Worktree, Go to tab, Copy link, agent commands) also work by mouse, as do the header's Settings and Refresh. Palette commands `Open selected PR in Browser`, `Open selected PR in a worktree` and `Go to the selected PR's tab` act on the focused Plotroom block.
+PR rows and preview buttons (Open, Worktree, Agent, Go to tab) also work by mouse, as does the PR number in the preview (click it to copy the link), and the header's Settings and Refresh. Palette commands `Open selected PR in Browser`, `Open selected PR in a worktree`, `Run an agent on the selected PR` and `Go to the selected PR's tab` act on the focused Plotroom block.
 
-**Settings** (`s`; four pages: Filters, Commands, GitHub, Worktrees)
+**Settings** (`s`; three pages: Filters, GitHub, Worktrees)
 
 | Key | Does |
 | --- | --- |
 | `↑` `↓` | Move between rows |
-| `←` `→` | On a Filters chip row (Commands page): move the highlight; `Enter` turns the highlighted filter on or off |
 | `Enter` / `Space` | Edit a text row, or press a row's button. While editing, `Enter` is the only save (unchanged text just closes), and `?` is typed as text. |
 | `Esc` | While editing: discard the edit, nothing is saved. A rejected value stays in the field with its warning until you fix or discard it. Otherwise close Settings. |
 | `Tab` / `Shift+Tab` | Next / previous page |
-| Delete confirmation (filter or command) | `Enter` or `Esc` keeps it; `d` (or a click on Delete) deletes it |
+| Delete filter confirmation | `Enter` or `Esc` keeps the filter; `d` (or a click on Delete) deletes it |
 
 Rows with an override (account, checkout) show a Reset control that clears it.
 
 ## Settings pages
 
 - **Filters**: saved GitHub search queries (name, query, delete, new). Stored in the plugin's `kv.json`. Every filter runs inside the launch directory's repository: the repo is the first github.com remote of that checkout (origin, then upstream, then alphabetical), read with local `git`. SSH aliases also run `ssh -G` (below). No repo means no search and a Retry card. `repo:`, `org:`, `user:` and a bare uppercase `OR` are rejected with a message, since they would widen the search; `OR` inside a matched pair of double quotes is plain text and allowed.
-- **Commands**: agent commands (name, prompt, filters, "Only this repository", delete, new), stored next to the filters in `kv.json`. See "Agent commands".
+- **Filters** also has "Create or edit a prompt template" at the bottom. See "Agents".
 - **GitHub**: the repository's `gh` account, "Refresh now", and the API quota card.
 - **Worktrees**: the local checkout path for this repository, used when the launch directory is not a checkout of it (see "Worktrees").
 
@@ -100,13 +99,20 @@ Rows with an override (account, checkout) show a Reset control that clears it.
 - **Token lookup.** For a repository with a saved login, every `gh` call first runs `gh auth token --hostname github.com --user <login>` and hands the result to that one child as `GH_TOKEN`. The token lives only in memory for that call: never stored, logged, shown or put in argv. No answer within 30 s is a retryable failure; a non-zero exit or empty token is "not signed in" (terminal).
 - Sign in and manage logins with `gh auth login` / `gh auth switch`; Plotroom has no login flow.
 
-## Agent commands
+## Agents
 
-A command is a named prompt, plain text or an omp slash command such as `/review`. It shows as a button under "Agent commands" in a PR's preview (keys `1`–`9` for the first nine). Running it creates or reuses the PR's worktree (as `w` does), starts an agent there with your agent settings and sends the prompt. If a tab already works in that worktree, the agent joins it; otherwise it opens in a new tab named `PR #N · <repo>`.
+`a` (or the Agent button) opens a picker of what omp can run on the selected PR:
 
-`{number}`, `{url}`, `{title}`, `{repo}`, `{branch}`, `{base}` and `{author}` become the PR's values; other braces stay as typed. The worktree's branch is `plotroom/<owner>/<repo>/pr-N`, not the PR's head, so pass `{url}` or `{number}` when the agent needs to find the PR. Prompts are limited to 1000 bytes.
+- **Recent:** your last five picks.
+- **Type a prompt…:** your own text, sent as it is.
+- **Templates:** omp prompt templates, from the nearest `.omp/prompts` above the launch directory, then `~/.omp/agent/prompts`. A repository template hides your own of the same name, as in omp. The detail is the frontmatter `description`.
+- **Skills and commands:** what `omp --mode rpc` lists as skills and file commands (Plotroom runs it in the launch directory, 10 s timeout). Built-ins and extension commands are left out. If omp cannot be run, the picker still opens without them.
 
-A command shows on every filter unless you pick filters for it, and in every repository unless "Only this repository" is on.
+A pick creates or reuses the PR's worktree (as `w` does), starts an agent there with your agent settings and sends `/<name> <PR URL>`; omp hands the URL to the template as `$ARGUMENTS`. If a tab already works in that worktree, the agent joins it; otherwise it opens in a new tab named `PR #N · <repo>`.
+
+The worktree's branch (`plotroom/<owner>/<repo>/pr-N`) tracks `refs/pull/N/head` on the PR's remote, so `gh pr view`, `gh pr diff` and the like inside the worktree find the PR without arguments. `git pull` there fetches the PR's latest head.
+
+**Create or edit a template:** Settings › Filters › "Create or edit a prompt template". Type a name (letters, digits, `-`, `_`): Plotroom writes a starter file in `~/.omp/agent/prompts` if there is none (never overwriting one) and opens it in `$VISUAL`, else `$EDITOR`, else `vi`, in a pane beside the block.
 
 **In tab.** A PR whose worktree holds some pane's directory on this host gets an "In tab" badge in the list and preview, plus a "Go to tab" button (`g`). Go to tab only finds tabs in the current window.
 
@@ -157,12 +163,12 @@ A remote such as `git@github.com-personal:owner/repo.git` or `ssh://git@alias:22
 ## Trust and data
 
 - **No secrets in the repo or in storage.** Tokens are memory-only (see "Accounts"); the plugin does not log.
-- **Plaintext storage.** The plugin's `kv.json` holds saved filters (names and queries), agent commands (names and prompts), checkout paths, and gh logins, readable by anyone with access to your Tern config. The block state saves the launch directory, active filter and pause state; fetched PR data is never saved.
-- **External processes.** Plotroom runs `gh`, `git` and `ssh -G` as argv arrays, never through a shell, and trusts whatever those names resolve to on PATH. If they are not on Tern's PATH it runs `$SHELL -l -i -c` once (5 s timeout, fixed script, result cached in memory, repeated after Retry or a Worktree click) to read your login shell's PATH; that executes your normal shell startup files.
+- **Plaintext storage.** The plugin's `kv.json` holds saved filters (names and queries), checkout paths, gh logins and your last five agent picks, readable by anyone with access to your Tern config. The block state saves the launch directory, active filter and pause state; fetched PR data is never saved.
+- **External processes.** Plotroom runs `gh`, `git`, `ssh -G` and `omp --mode rpc` (to list skills) as argv arrays, never through a shell, and trusts whatever those names resolve to on PATH. If they are not on Tern's PATH it runs `$SHELL -l -i -c` once (5 s timeout, fixed script, result cached in memory, repeated after Retry or a Worktree click) to read your login shell's PATH; that executes your normal shell startup files.
 - **PR code is never executed by Plotroom.** `git worktree add` does not initialize submodules; repository hooks run only if your git config points `core.hooksPath` at them. The new tab's shell runs your rc files in that folder.
 - **Git network use.** Fetch and worktree commands run with git's own prompts disabled (`GIT_TERMINAL_PROMPT=0`) and a 120 s timeout, using your configured credentials.
-- **Links.** `plotroom://` links are accepted only from Plotroom blocks and only if they equal a link on screen. PR URLs are rebuilt from validated owner/repo/number; check links may open any https page a check app provides (the click is bound to the displayed row). Command links carry the filled-in prompt and are bound to the displayed button the same way.
-- **Agent prompts hold PR text.** `{title}`, `{branch}` and `{author}` are written by whoever opened the PR. In a command, they reach your agent as part of its instructions, so leave them out of commands you run on untrusted PRs.
+- **Links.** `plotroom://` links are accepted only from Plotroom blocks and only if they equal a link on screen. PR URLs are rebuilt from validated owner/repo/number; check links may open any https page a check app provides (the click is bound to the displayed row). The agent link only opens the picker; what runs is what you pick or type. The editor link only opens an existing file under `~/.omp/agent/prompts` whose name is letters, digits, `-` and `_`.
+- **Agents read PR text.** A template or skill that reads the PR (title, body, diff) hands text written by whoever opened it to your agent. Be careful running agents that can act on untrusted PRs.
 
 ## Verify
 

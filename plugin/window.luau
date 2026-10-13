@@ -1,6 +1,6 @@
 --!strict
--- The window half: opening Plotroom, validated PR links (Browser block,
--- worktree tab, the PR's open tab, agent commands) and their keyboard-accessible palette commands.
+-- The window half: opening Plotroom, validated PR links (Browser block, worktree tab, the PR's open tab, an agent
+-- running a picked omp prompt template or skill) and their keyboard-accessible palette commands.
 
 local process = require("./process")
 local worktree = require("./worktree")
@@ -11,10 +11,27 @@ local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local CHECK_NODE = "layer.queue.runs.run"
 local GOTO_NODE = "layer.queue.buttons.goto"
-local COMMAND_NODE = "layer.queue.commands.cmd"
+local AGENT_NODE = "layer.queue.buttons.agent"
+local RPC_MS = 10000
+local RECENT_CAP = 5
 
 -- Worktree requests in flight, so repeated clicks create it once.
 local inflight: { [string]: boolean } = {}
+-- Picker labels chosen last, newest first. Kept in tern.kv: Tern reboots plugin VMs now and then, losing module state.
+local RECENT_KEY = "agent-recent"
+
+local function readRecent(): { string }
+	local out: { string } = {}
+	local ok, v = pcall(tern.kv.get, RECENT_KEY)
+	if ok and type(v) == "table" then
+		for _, label in v do
+			if type(label) == "string" then
+				table.insert(out, label)
+			end
+		end
+	end
+	return out
+end
 
 local function isPlotroom(cx: WindowCx, pane: number): boolean
 	local info = cx.session:pane(pane)
@@ -67,7 +84,7 @@ end
 local function parseLink(url: string): (string?, string?, string?, number?)
 	local kind, owner, repo, n = string.match(url, "^plotroom://github/(%a+)/([^/]+)/([^/]+)/(%d+)$")
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -94,23 +111,6 @@ local function parseCheck(url: string): (number?, string?)
 		return nil, nil
 	end
 	return index, target
-end
-
--- `plotroom://github/command/<owner>/<repo>/<number>/<button index>/<percent-encoded prompt>`.
-local function parseCommand(url: string): (string?, string?, number?, number?, string?)
-	local owner, repo, n, i, enc = string.match(url, "^plotroom://github/command/([^/]+)/([^/]+)/(%d+)/(%d+)/([^/]+)$")
-	local num, index = tonumber(n), tonumber(i)
-	if not owner or not repo or not enc or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
-		return nil, nil, nil, nil, nil
-	end
-	if not num or num < 1 or num > 2147483647 or not index or index < 1 or index > 100000 then
-		return nil, nil, nil, nil, nil
-	end
-	local prompt = unpct(enc)
-	if not string.find(prompt, "%S") then
-		return nil, nil, nil, nil, nil
-	end
-	return owner, repo, num, index, prompt
 end
 
 -- A pane in a tab of this window working in PR `repo`#`n`'s Plotroom worktree: pane, tab and session ids.
@@ -170,6 +170,12 @@ local function mappedPath(repo: string): string?
 		end
 	end
 	return nil
+end
+
+-- The directory the Plotroom block in `pane` was opened in, as its context line shows it; nil when unknown.
+local function launchDir(cx: WindowCx, pane: number): string?
+	local text = nodeProp(readNode(cx, pane, "main.context"), "text")
+	return if type(text) == "string" and text ~= "" then text else nil
 end
 
 -- One persistent status per worktree attempt for the queue preview: an action event to the source pane, which
@@ -284,10 +290,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 	if inflight[flight] then
 		return cx:toast("info", "A worktree for " .. full .. "#" .. n .. " is already being prepared")
 	end
-	local launch = nodeProp(readNode(cx, pane, "main.context"), "text")
-	if type(launch) ~= "string" or launch == "" then
-		launch = nil
-	end
+	local launch = launchDir(cx, pane)
 	inflight[flight] = true
 	local function done(result: worktree.Result?, problem: string?, cx2: WindowCx?)
 		inflight[flight] = nil
@@ -329,6 +332,132 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 	end
 end
 
+-- omp prompt templates in `dir` (`<name>.md`, frontmatter description as the detail), skipping names in `seen`.
+local function templatesIn(dir: string, group: string, seen: { [string]: boolean }, out: { PickItem })
+	local ok, files = pcall(function(): { string }
+		return if tern.fs.exists(dir) then tern.fs.list(dir) else {}
+	end)
+	if not ok then
+		return
+	end
+	table.sort(files)
+	for _, file in files do
+		local name = string.match(file, "^([^%.%s][^%s]*)%.md$")
+		if name and not seen[name] then
+			seen[name] = true
+			local okr, text = pcall(tern.fs.read, dir .. "/" .. file, 65536)
+			local front = if okr and type(text) == "string" then string.match(text, "^%-%-%-\r?\n(.-)\r?\n%-%-%-") else nil
+			local desc = if front then string.match("\n" .. front .. "\n", "\ndescription:[ \t]*([^\r\n]-)[ \t]*\r?\n") else nil
+			table.insert(out, { label = "/" .. name, detail = if desc ~= "" then desc else nil, group = group, send = "/" .. name })
+		end
+	end
+end
+
+-- Prompt templates omp would expand: the nearest `.omp/prompts` above `cwd`, then `~/.omp/agent/prompts`.
+local function templates(cwd: string?): { PickItem }
+	local out: { PickItem } = {}
+	local seen: { [string]: boolean } = {}
+	local dir = cwd
+	while dir and dir ~= "" and dir ~= "/" do
+		if tern.fs.exists(dir .. "/.omp/prompts") then
+			templatesIn(dir .. "/.omp/prompts", "This repository's templates", seen, out)
+			break
+		end
+		dir = string.match(dir, "^(.*)/[^/]*$")
+	end
+	local home = tern.getenv("HOME")
+	if home and home ~= "" then
+		templatesIn(home .. "/.omp/agent/prompts", "Your templates", seen, out)
+	end
+	return out
+end
+
+-- omp's skills and file commands, asked over its RPC mode (prompt templates are not in that list); done(items, problem, cx).
+local function ompCommands(cwd: string, done: ({ PickItem }, string?, WindowCx?) -> ())
+	local ask = tern.json.encode({ id = "plotroom", type = "get_available_commands" }) .. "\n"
+	process.run({ "omp", "--mode", "rpc", "--no-session" }, { cwd = cwd, stdin = ask, timeout_ms = RPC_MS }, function(result, problem, cx)
+		local out: { PickItem } = {}
+		if not result then
+			return done(out, problem, cx)
+		end
+		for line in string.gmatch(result.stdout, "[^\n]+") do
+			local ok, msg = pcall(tern.json.decode, line)
+			if ok and type(msg) == "table" and msg.id == "plotroom" then
+				local cmds = if msg.success == true and type(msg.data) == "table" then msg.data.commands else nil
+				if type(cmds) ~= "table" then
+					return done(out, "omp answered without a command list", cx)
+				end
+				for _, c in cmds do
+					if type(c) == "table" and type(c.name) == "string" and (c.source == "skill" or c.source == "file") and not string.find(c.name, "%s") then
+						local desc = if type(c.description) == "string" then string.match(c.description, "^[^\r\n]*") else nil
+						table.insert(out, {
+							label = "/" .. c.name,
+							detail = if desc ~= "" then desc else nil,
+							group = if c.source == "skill" then "Skills" else "Commands",
+							send = "/" .. c.name,
+						})
+					end
+				end
+				return done(out, nil, cx)
+			end
+		end
+		done(out, if result.timed_out then "omp did not answer within 10 seconds" else "omp did not list its commands (exit " .. result.status .. ")", cx)
+	end)
+end
+
+-- Asks which prompt template or skill to run on PR `owner/repo#n`, then runs it as `/<name> <PR URL>` in an agent
+-- in the PR's worktree. "Type a prompt…" sends the typed text as it is.
+local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
+	local full = owner .. "/" .. repo
+	local cwd = launchDir(cx, pane)
+	ompCommands(cwd or tern.getenv("HOME") or ".", function(cmds, problem, cx2)
+		if not cx2 then
+			return
+		end
+		if problem then
+			cx2:toast("info", "Skills are not listed", problem)
+		end
+		local all = templates(cwd)
+		for _, c in cmds do
+			table.insert(all, c)
+		end
+		local items: { PickItem } = {}
+		for _, label in readRecent() do
+			for _, c in all do
+				if c.label == label then
+					table.insert(items, { label = c.label, detail = c.detail, group = "Recent", send = c.send })
+					break
+				end
+			end
+		end
+		table.insert(items, { label = "Type a prompt…", detail = "Send your own text", typed = true })
+		for _, c in all do
+			table.insert(items, c)
+		end
+		cx2:pick({ items = items, placeholder = "Run on " .. full .. "#" .. n, icon = "merge", action = "run" }):next(function(item, _, cx3)
+			if not item or not cx3 then
+				return
+			end
+			if item.typed then
+				return cx3:prompt({ placeholder = "Prompt for an agent on " .. full .. "#" .. n, icon = "merge", action = "send" }):next(function(text, _, cx4)
+					if cx4 and text and string.find(text, "%S") then
+						worktreePr(cx4, pane, owner, repo, n, text)
+					end
+				end)
+			end
+			local recent = readRecent()
+			local at = table.find(recent, item.label)
+			if at then
+				table.remove(recent, at)
+			end
+			table.insert(recent, 1, item.label)
+			recent[RECENT_CAP + 1] = nil
+			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
+			worktreePr(cx3, pane, owner, repo, n, item.send .. " https://github.com/" .. full .. "/pull/" .. n)
+		end)
+	end)
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it.
 local function handle(cx: WindowCx, url: string, pane: number): boolean
 	local index, target = parseCheck(url)
@@ -342,14 +471,21 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		end
 		return true
 	end
-	local cowner, crepo, cn, cindex, prompt = parseCommand(url)
-	if cowner and crepo and cn and cindex and prompt then
+	-- `plotroom://github/edit-template/<name>`: the host just created or found ~/.omp/agent/prompts/<name>.md.
+	local tname = string.match(url, "^plotroom://github/edit%-template/([%w][%w%-_]*)$")
+	if tname then
+		local home = tern.getenv("HOME")
+		local dir = if home and home ~= "" then home .. "/.omp/agent/prompts" else nil
+		local path = if dir then dir .. "/" .. tname .. ".md" else nil
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif nodeProp(readNode(cx, pane, COMMAND_NODE .. cindex), "href") ~= url then
-			cx:toast("error", "Plotroom: that command is no longer listed", "Refresh and try again.")
+		elseif not dir or not path or not tern.fs.exists(path) then
+			cx:toast("error", "Plotroom: there is no prompt template " .. tname)
 		else
-			worktreePr(cx, pane, cowner, crepo, cn, prompt)
+			local quoted = "'" .. string.gsub(path, "'", "'\\''") .. "'"
+			if not cx.layout:split(pane, "right", { cwd = dir, command = "${VISUAL:-${EDITOR:-vi}} " .. quoted }) then
+				cx:toast("error", "Plotroom: could not open an editor for " .. path)
+			end
 		end
 		return true
 	end
@@ -362,7 +498,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		return true
 	end
-	local node = if kind == "open" then OPEN_NODE elseif kind == "goto" then GOTO_NODE else WORKTREE_NODE
+	local node = if kind == "open" then OPEN_NODE elseif kind == "goto" then GOTO_NODE elseif kind == "agent" then AGENT_NODE else WORKTREE_NODE
 	local present = nodeProp(readNode(cx, pane, node), "href") == url
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
@@ -372,6 +508,8 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		openPr(cx, pane, owner, repo, n)
 	elseif kind == "goto" then
 		gotoPr(cx, owner .. "/" .. repo, n)
+	elseif kind == "agent" then
+		pickAgent(cx, pane, owner, repo, n)
 	else
 		worktreePr(cx, pane, owner, repo, n, nil)
 	end
@@ -463,6 +601,16 @@ tern.command({
 	available = available,
 	run = function(cx: WindowCx)
 		selected(cx, GOTO_NODE, "The selected pull request has no open tab")
+	end,
+})
+
+tern.command({
+	id = "agent-selected",
+	title = "Plotroom: Run an agent on the selected PR",
+	icon = "merge",
+	available = available,
+	run = function(cx: WindowCx)
+		selected(cx, AGENT_NODE)
 	end,
 })
 

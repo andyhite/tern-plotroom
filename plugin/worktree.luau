@@ -572,6 +572,18 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 		end)
 	end
 
+	-- Best effort, before the worktree is reported: an upstream of refs/pull/N/head lets `gh pr view` (and so
+	-- /review and the like) inside the worktree find the PR, although the branch is not the PR's head branch.
+	local function ready(plan: Plan, path: string, created: boolean)
+		git(plan.info.root, { "config", "branch." .. branch .. ".remote", plan.info.remote }, LOCAL_MS, function(_, _, cx)
+			git(plan.info.root, { "config", "branch." .. branch .. ".merge", "refs/pull/" .. number .. "/head" }, LOCAL_MS, function(_, _, cx2)
+				attempt(cx2 or cx, function()
+					inspect(plan, path, created)
+				end)
+			end)
+		end)
+	end
+
 	-- Adds the worktree: on a new branch at `sha`, or on the branch that already sits there.
 	local function add(plan: Plan, sha: string, attach: boolean, cx: WindowCx?)
 		local parent = dirname(plan.target)
@@ -588,14 +600,14 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 		git(plan.info.root, args, NET_MS, function(_, addErr, cx5)
 			attempt(cx5, function()
 				if not addErr then
-					return inspect(plan, plan.target, true)
+					return ready(plan, plan.target, true)
 				end
 				-- Another window may have won the race: accept only a full match.
 				git(plan.info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, _, cx6)
 					attempt(cx6 or cx5, function()
 						local verdict, what = M.reconcile(if out then M.parseWorktrees(out) else {}, branch, plan.target)
 						if verdict == "reuse" then
-							return inspect(plan, (what :: Record).path, false)
+							return ready(plan, (what :: Record).path, false)
 						end
 						finish(nil, addErr .. " (left as is: " .. plan.target .. ")", cx6 or cx5)
 					end)
@@ -679,7 +691,7 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 				if verdict == "error" then
 					return finish(nil, what :: string, cx2)
 				elseif verdict == "reuse" then
-					return inspect(plan, (what :: Record).path, false)
+					return ready(plan, (what :: Record).path, false)
 				end
 				fetch(plan)
 			end)

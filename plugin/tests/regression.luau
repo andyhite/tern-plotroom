@@ -343,6 +343,10 @@ type Win = {
 	browser: { any },
 	remoteHost: boolean,
 	newTab: string, -- "ok" | "nil" | "raise"
+	picks: { any }, -- every cx:pick request
+	choose: string?, -- the label cx:pick answers with; nil dismisses it
+	typed: string?, -- what cx:prompt answers with; nil dismisses it
+	agents: { any }, -- every cx.agents:start request
 }
 
 type Kv = {
@@ -498,6 +502,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		browser = {},
 		remoteHost = false,
 		newTab = "ok",
+		picks = {},
+		agents = {},
 	}
 	local nextId = 10
 
@@ -547,6 +553,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			focused = function(_self: any): number?
 				return win.focused
+			end,
+			panes = function(_self: any): any
+				local rows: { any } = {}
+				for id, p in win.panes do
+					table.insert(rows, { pane = id, cwd = p.cwd, tab = p.tab })
+				end
+				return rows
 			end,
 			event = function(_self: any, id: number, ev: { [string]: any })
 				table.insert(win.events, { pane = id, ev = ev })
@@ -599,6 +612,38 @@ local function newWorld(instantiate: Loader, context: string): World
 						end)
 					end,
 				}
+			end,
+		},
+		pick = function(_self: any, opts: any): any
+			table.insert(win.picks, opts)
+			return {
+				next = function(_self2: any, fn: (any, any, any) -> ())
+					schedule(0, function()
+						local chosen: any = nil
+						for _, item in opts.items do
+							if item.label == win.choose then
+								chosen = item
+								break
+							end
+						end
+						fn(chosen, nil, windowCx)
+					end)
+				end,
+			}
+		end,
+		prompt = function(_self: any, _opts: any): any
+			return {
+				next = function(_self2: any, fn: (any, any, any) -> ())
+					schedule(0, function()
+						fn(win.typed, nil, windowCx)
+					end)
+				end,
+			}
+		end,
+		agents = {
+			start = function(_self: any, opts: any): number
+				table.insert(win.agents, opts)
+				return addPane({ cwd = opts.cwd }, nil)
 			end,
 		},
 	}
@@ -2235,6 +2280,7 @@ local function listPr(w: World, repo: string, n: number, cwd: string)
 					c = {
 						{ id = "layer.queue.buttons.open", p = { href = prLink("open", repo, n) } },
 						{ id = "layer.queue.buttons.worktree", p = { href = prLink("worktree", repo, n) } },
+						{ id = "layer.queue.buttons.agent", p = { href = prLink("agent", repo, n) } },
 					},
 				},
 			},
@@ -2289,6 +2335,59 @@ windowCase("window: clicking Worktree coalesces repeats, publishes the status fi
 	has(w.toasts[5].sub, "Reused", "the second run reuses")
 	has(w.toasts[5].sub, "Current", "and is current")
 	has(w.toasts[5].sub, "Clean", "and clean")
+end)
+
+windowCase("window: Agent lists templates and omp's skills, runs the pick with the PR URL in the worktree, recent first next time", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	w.env.HOME = "/home/u"
+	w.fs.dirs["/home/u/.omp/agent/prompts"] = true
+	w.fs.files["/home/u/.omp/agent/prompts/review.md"] = "---\ndescription: Mine\n---\nReview $ARGUMENTS\n"
+	w.fs.files["/home/u/.omp/agent/prompts/triage.md"] = "Triage $ARGUMENTS\n"
+	w.fs.files["/home/u/.omp/agent/prompts/.draft.md"] = "not a template"
+	w.fs.dirs[s.launch .. "/.omp/prompts"] = true
+	w.fs.files[s.launch .. "/.omp/prompts/review.md"] = "---\ndescription: The repo's\n---\nReview\n"
+	local listed = jsonEncode({
+		id = "plotroom",
+		type = "response",
+		success = true,
+		data = { commands = array({
+			{ name = "skill:code-review", description = "Reviews PRs\nwith gh", source = "skill" },
+			{ name = "model", description = "Switch model", source = "builtin" },
+		}) },
+	})
+	w.respond(function(call: Call): Reply?
+		return if call.argv[1] == "omp" then { stdout = '{"type":"ready"}\n' .. listed .. "\n" } else nil
+	end)
+	listPr(w, "o/r", 5, s.launch)
+	w.window.choose = "/skill:code-review"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	local items = w.window.picks[1].items
+	local labels: { string } = {}
+	for _, item in items do
+		table.insert(labels, item.label)
+	end
+	same(labels, { "Type a prompt…", "/review", "/triage", "/skill:code-review" }, "templates then skills; builtins and dotfiles left out")
+	eq(items[2].detail, "The repo's", "the repository's template wins over the user's of the same name")
+	eq(items[3].detail, nil, "a template without a description has no detail")
+	eq(items[4].detail, "Reviews PRs", "a description's first line")
+	eq(#w.window.agents, 1, "one agent")
+	eq(w.window.agents[1].prompt, "/skill:code-review https://github.com/o/r/pull/5", "the pick runs with the PR URL")
+	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
+	eq(countLog(s.git, "config branch.plotroom/o/r/pr-5.merge refs/pull/5/head"), 1, "its branch tracks the PR's ref, so gh there finds the PR")
+	same(w.kv.get("agent-recent"), { "/skill:code-review" }, "the pick is kept in kv, which outlives a plugin VM reboot")
+	w.window.choose = nil
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(w.window.picks[2].items[1].label, "/skill:code-review", "the last pick comes first")
+	eq(w.window.picks[2].items[1].group, "Recent", "under Recent")
+	eq(#w.window.agents, 1, "a dismissed picker runs nothing")
+	w.window.choose, w.window.typed = "Type a prompt…", "Fix the flaky test"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(w.window.agents[2].prompt, "Fix the flaky test", "typed text is sent as it is")
 end)
 
 windowCase("window: a failing mkdir reports the failure, releases the PR, and the next click works", function(w: World)
@@ -3102,7 +3201,7 @@ end
 -- Opens Settings on `page` with its first row focused.
 local function goToSettings(b: Block, page: string)
 	b.typeText("s")
-	local turns = (table.find({ "filters", "commands", "github", "worktrees" }, page) or 1) - 1
+	local turns = (table.find({ "filters", "github", "worktrees" }, page) or 1) - 1
 	for _ = 1, turns do
 		b.press("tab")
 	end
@@ -3373,6 +3472,36 @@ case("host: a filter that cannot be written keeps its draft and says why; an unc
 	b.press("enter")
 	eq(rowIn(b, "name:f1").warning, nil, "the retry saved it and cleared the warning")
 	eq(w.kv.get("filters").items[1].name, "My PRs2", "the draft was saved")
+end)
+
+case("host: a opens the selected PR's agent link; a named template is created once and opened", function(w: World)
+	hostScene(w, 3)
+	w.env.HOME = "/home/u"
+	local dir = "/home/u/.omp/agent/prompts"
+	local b = openQueue(w)
+	local n = string.match(pickerOf(b).selected, "%d+") :: string
+	eq(findKey(pickerNode(b), "agent").p.href, "plotroom://github/agent/o/r/" .. n, "the Agent button links the selected PR")
+	b.typeText("a")
+	eq(w.opened[#w.opened], "plotroom://github/agent/o/r/" .. n, "a opens it")
+	b.typeText("s")
+	b.event({ ev = "select", id = "main.settings", item = "newtpl" })
+	b.press("enter")
+	b.typeText("bad name")
+	b.press("enter")
+	yes(type(rowIn(b, "newtpl").warning) == "string", "a name with a space is refused")
+	for _ = 1, 8 do
+		b.press("backspace")
+	end
+	b.typeText("triage")
+	b.press("enter")
+	has(w.fs.files[dir .. "/triage.md"], "$ARGUMENTS", "the template is created from the skeleton")
+	eq(w.opened[#w.opened], "plotroom://github/edit-template/triage", "and opened in the editor")
+	w.fs.files[dir .. "/triage.md"] = "mine"
+	b.press("enter")
+	b.typeText("triage")
+	b.press("enter")
+	eq(w.fs.files[dir .. "/triage.md"], "mine", "an existing template is opened, never overwritten")
+	eq(#w.opened, 3, "it is opened again")
 end)
 
 case("host: unreadable or malformed saved filters are shown as defaults and never overwritten", function(w: World)

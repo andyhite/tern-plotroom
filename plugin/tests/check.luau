@@ -117,9 +117,6 @@ function M.run()
 	assert(hit and range == nil, "number matches without a range")
 	assert((github.match(mp, "lexer")), "branch matches")
 	assert(not (github.match(mp, "zzz")), "no match")
-	assert(github.fill("/review {url} #{number} on {branch} {nope}", mp) == "/review https://github.com/a/b/pull/12 #12 on fix/lexer {nope}", "placeholders fill, unknown braces stay")
-	local fp = github.normalize(item(13, "a/b", "2026-01-01T00:00:00Z", { title = "100% {url}" }))
-	assert(fp and github.fill("{title}", fp) == "100% {url}", "filled values are literal and not re-scanned")
 
 	-- rate-limit headers (shape of real `gh api --include` output) and pacing
 	local now = 1000
