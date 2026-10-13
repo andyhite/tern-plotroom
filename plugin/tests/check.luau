@@ -28,14 +28,20 @@ local function item(n: number, repo: string, updated: string, extra: { [string]:
 		comments = 4,
 		labels = tern.json.array({}),
 	}
-	for k, v in extra or {} do
-		t[k] = v
+	if extra then
+		for k, v in extra do
+			t[k] = v
+		end
 	end
 	return t
 end
 
 local function page(items: { any }, total: number?, next: string?): string
 	return tern.json.encode({ total = total or #items, cost = 1, next = next, items = tern.json.array(items) })
+end
+
+local function ghRuns(nodes: { any })
+	return github.runs(tern.json.array(nodes))
 end
 
 function M.run()
@@ -72,27 +78,28 @@ function M.run()
 	local bare = github.parsePage(tern.json.encode({ total = 0, items = tern.json.array({}) }))
 	assert(bare and bare.cost == 1 and bare.next == nil, "cost and next default")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
-	local runs = github.runs(tern.json.array({
+	local runs = ghRuns({
 		{ name = "ok", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:02:31Z" },
 		{ name = "skip", status = "COMPLETED", conclusion = "SKIPPED" },
 		{ name = "run", status = "IN_PROGRESS" },
 		{ context = "ci/x", state = "FAILURE" },
 		{ __typename = "Other" },
-	}))
+	})
 	assert(#runs == 4 and runs[1].name == "ci/x" and runs[1].status == "failure", "failures sort first, unknown nodes dropped")
 	assert(runs[2].status == "pending" and runs[2].detail == "In progress", "unfinished runs are pending")
 	assert(runs[3].detail == "Passed · 2m 31s" and runs[4].detail == "Skipped", "durations on finished runs only")
-	local req = github.runs(tern.json.array({
+	local req = ghRuns({
 		{ name = "bad", status = "COMPLETED", conclusion = "FAILURE" },
 		{ name = "must", status = "COMPLETED", conclusion = "SUCCESS", isRequired = true },
-	}))
+	})
 	assert(req[1].name == "must" and req[1].required and not req[2].required, "required checks sort above failing optional ones")
-	local rerun = github.runs(tern.json.array({
-		{ name = "build", status = "COMPLETED", conclusion = "FAILURE", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:01:00Z" },
-		{ name = "build", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T01:00:00Z", completedAt = "2026-01-01T01:01:00Z" },
-		{ name = "build", status = "COMPLETED", conclusion = "CANCELLED", startedAt = "2025-12-31T00:00:00Z" },
-	}))
-	assert(#rerun == 1 and rerun[1].status == "success", "one row per check name: the newest run wins")
+	local rerun = ghRuns({
+		{ name = "build", status = "COMPLETED", conclusion = "FAILURE", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:01:00Z", checkSuite = { id = "S1" } },
+		{ name = "build", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T01:00:00Z", completedAt = "2026-01-01T01:01:00Z", checkSuite = { id = "S1" } },
+		{ name = "build", status = "COMPLETED", conclusion = "CANCELLED", startedAt = "2025-12-31T00:00:00Z", checkSuite = { id = "S1" } },
+		{ name = "build", status = "COMPLETED", conclusion = "FAILURE", startedAt = "2026-01-01T00:00:00Z", checkSuite = { id = "S2" } },
+	})
+	assert(#rerun == 2 and rerun[1].status == "failure" and rerun[2].status == "success", "re-runs inside one check suite list the newest; the same name in another suite is its own row")
 	assert(github.scopeProblem("is:open author:@me") == nil and github.scopeProblem("is:open review-requested:@me label:\"a b\"") == nil, "ordinary filters run")
 	assert(github.scopeProblem("is:open label:\"bug or regression\"") == nil and github.scopeProblem("is:open a or b") == nil, "lowercase or is plain text")
 	for _, bad in { "is:open repo:x/y", "is:open -org:x", "(user:x OR is:open)", "is:open Repo:x/y", "is:open a OR b" } do
@@ -150,6 +157,9 @@ function M.run()
 	m.anchor, m.cur = 1, #"a😀"
 	local props = input.props(m)
 	assert(props.cursor == 3 and props.anchor == 1, "selection offsets are UTF-16")
+	local function curText(): string
+		return m.text
+	end
 	local noop = function(_: string) end
 	local function key(name: string, text: string?, shift: boolean?): Key
 		return { name = name, text = text, ctrl = false, alt = false, shift = shift == true, meta = false }
@@ -157,11 +167,11 @@ function M.run()
 	input.key(m, key("backspace"), noop)
 	assert(m.text == "ab" and m.cur == 1, "deleting a selection removes the whole emoji")
 	input.key(m, { name = "paste", text = "x\r\ny😀", ctrl = false, alt = false, shift = false, meta = false }, noop)
-	assert(m.text == "ax y😀b", "paste turns line breaks into spaces")
+	assert(curText() == "ax y😀b", "paste turns line breaks into spaces")
 	input.key(m, key("left"), noop)
 	input.key(m, key("left", nil, true), noop)
 	assert(input.selected(m) == "y", "shift-left selects one codepoint")
-	assert(input.undo(m) and m.text == "ab", "undo restores the earlier text")
+	assert(input.undo(m) and curText() == "ab", "undo restores the earlier text")
 
 	-- remotes and worktree records
 	assert(worktree.normalizeRemote("https://github.com/cli/cli.git") == "cli/cli", "https remote")
@@ -174,8 +184,8 @@ function M.run()
 	assert(worktree.normalizeRemote("git@github.com-personal:cli/cli.git") == nil, "an alias is not github.com until ssh config says so")
 	local ah, aid, assh = worktree.parseRemote("git@github.com-personal:cli/cli.git")
 	assert(ah == "github.com-personal" and aid == "cli/cli" and assh, "scp alias parses to its transport host")
-	ah, aid, assh = worktree.parseRemote("ssh://git@work-gh:22/cli/cli")
-	assert(ah == "work-gh" and aid == "cli/cli" and assh, "ssh:// alias with port")
+	local h2, id2, ssh2 = worktree.parseRemote("ssh://git@work-gh:22/cli/cli")
+	assert(h2 == "work-gh" and id2 == "cli/cli" and ssh2, "ssh:// alias with port")
 	assert(worktree.parseRemote("git@-oProxyCommand=x:a/b") == nil, "option-like host is rejected")
 	assert(worktree.sshHostname("user git\nhostname GitHub.com\nport 22\n") == "github.com", "ssh -G hostname")
 	assert(worktree.sshHostname("user git\nport 22\n") == nil, "no hostname line")
