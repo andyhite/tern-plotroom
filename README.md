@@ -33,6 +33,8 @@ Then, in a pane inside any github.com checkout: palette → **Plotroom: Open Git
 
 Update later with the same command plus `--force`.
 
+**Remote hosts.** A Plotroom pane on a remote host works like a local one: the queue, worktrees and agents run on that host, with its `gh`, `git`, `omp`, checkouts and saved settings. Install the same Plotroom version on both machines (the command above, run on each). With a different version on the remote, the Worktree and Agent actions say so instead of running.
+
 ## What it does
 
 | | |
@@ -119,9 +121,9 @@ python3 scripts/check.py           # test · types · bench · smoke
 
 | | |
 | --- | --- |
-| `plugin/host.luau` | the `prs` block: queue, filters, refresh, state |
-| `plugin/window.luau` | links, palette commands, worktree and agent flows |
-| `plugin/github.luau` · `worktree.luau` · `process.luau` · `input.luau` | `gh` search, worktrees, argv process runner, text input |
+| `plugin/host.luau` | the `prs` block: queue, filters, refresh, state; worktrees and agent menus for the window, run where the block runs |
+| `plugin/window.luau` | links, palette commands, the pickers and tabs of the worktree and agent flows |
+| `plugin/github.luau` · `worktree.luau` · `agent.luau` · `process.luau` · `input.luau` | `gh` search, worktrees, omp templates and skills, argv process runner, text input |
 | `plugin/tests/` | `regression.luau` (fake SDK), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
 | `scripts/check.py` | the gate; CI runs `--ci` (no smoke, Tern is not available there) |
 

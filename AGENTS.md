@@ -8,14 +8,16 @@ Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, tha
 
 Two Luau runtimes talk through Tern:
 
-- **Host** (`plugin/host.luau`): owns per-pane `State` (module table `running`, keyed by pane), polls GitHub, persists prefs in `tern.kv`, and returns a declarative `ui.el`/`ui.node` tree from `view`. Registered via `tern.block.define("prs", {init, title, view, key, event, save})` (~L2200).
-- **Window** (`plugin/window.luau`): registers `tern.route.link` for `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>` links, `tern.command` ids (`open`, `open-selected`, `worktree-selected`, `goto-selected`, `agent-selected`), and reads host nodes by dotted key (`layer.queue.buttons.open`) via `cx.session:surface`. Sends `{ev="action", act=...}` events back; host `event` (~L2424) handles them.
-- **Shared helpers** (no cycles): `host → github, input, process, worktree`; `window → process, worktree`; `worktree → process, github`; `github → process, input`; `process`, `input` have no requires.
+- **Host** (`plugin/host.luau`): runs where the block runs (the remote host's daemon for a remote pane). Owns per-pane `State` (module table `running`, keyed by pane), polls GitHub, persists prefs in `tern.kv`, returns a declarative `ui.el`/`ui.node` tree from `view`, and does all checkout work (git, gh, omp, template files) for the window. Registered via `tern.block.define("prs", {init, title, view, key, event, save})`.
+- **Window** (`plugin/window.luau`): runs on the machine showing the window, so it never touches a checkout. Registers `tern.route.link` for `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>` links, `tern.command` ids (`open`, `open-selected`, `worktree-selected`, `goto-selected`, `agent-selected`), reads host nodes by dotted key (`layer.queue.buttons.open`) via `cx.session:surface`, and asks the user (pickers, consent) and arranges tabs/agents.
+- **Window → host requests** (host section "requests from window.luau", window `ask`/`answered`): window sends `{ev="action", act="rpc", value=JSON{id, op, ...}}` with ops `menu`, `worktree`, `verify`; the host answers in hidden node `main.r<id>` (JSON), renders, then opens `plotroom://rpc/<id>`, which only the asking window acts on. Hidden `main.rpc` holds the protocol version (`RPC_PROTOCOL` in host, `PROTOCOL` in window); bump both together when the request/answer shapes change, since a remote host may run another Plotroom version.
+- **Shared helpers** (no cycles): `host → agent, github, input, process, worktree`; `window → worktree`; `agent → process`; `worktree → process, github`; `github → process, input`; `process`, `input` have no requires.
+  - `agent.luau`: omp prompt templates and skills for the agent picker (`menu`), and the template binding checks (`unbound`, `verify`); host-side only.
   - `github.luau`: `gh` runner, paged GraphQL `search`, `parsePage`/`normalize`/`classify`, account switching, rate-limit quota.
   - `worktree.luau`: repo resolution, worktree create/reuse (`M.open`), `prOfPath`, ref validation.
   - `process.luau`: the single process runner `M.run(argv, opts, done)`; recovers PATH via login shell, always calls `done`, never throws.
   - `input.luau`: pure single-line text model (UTF-16 offsets for the SDK).
-- Persistence: `tern.kv` keys `filters`, `repos`, `setup`, `accounts`, `agent-recent`. Store changes fan out to other live blocks via `propagate` (host ~L721).
+- Persistence: `tern.kv` keys `filters`, `repos`, `setup`, `accounts` (host, per machine), `agent-recent` (window). Store changes fan out to other live blocks via `propagate`.
 
 ## Key Directories
 
@@ -40,7 +42,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Code Conventions & Common Patterns
 
 - `--!strict` at the top of every module. Modules are `local M = {}` + `function M.x`; `host`/`window` expose only registrations.
-- Naming: files lowercase single word; functions/locals camelCase (`loadStore`, `kvSet`); constants SCREAMING_SNAKE (`POLL_MS`, `GH_TIMEOUT_MS`); types PascalCase, `export type` when shared; action/check ids kebab-case (`worktree-status`, `copy-wt`); kv keys lowercase words.
+- Naming: files lowercase single word; functions/locals camelCase (`loadStore`, `kvSet`); constants SCREAMING_SNAKE (`POLL_MS`, `GH_TIMEOUT_MS`); types PascalCase, `export type` when shared; action/check ids kebab-case (`copy-wt`, `more-checks`); kv keys lowercase words.
 - Async is callbacks only, no coroutines. Shape: `done(value?, problem?, cx?)`. `process.run` is the only way to spawn anything.
 - Errors are values: `Problem = {kind, message}`, kinds `auth|missing|rate-limit|invalid|not-found|failed|account|superseded` (`github.luau` L10-12). Wrap `tern.kv`/`tern.json` calls in `pcall`; never overwrite unreadable or malformed storage; validate untrusted input at the boundary (`validStore`, `parsePage`, size caps).
 - Stale-callback guards are mandatory: check `alive(state)` and `state.gen` in host callbacks; window uses `defer` to fetch a fresh `cx`.
@@ -53,8 +55,8 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Important Files
 
 - `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, block `prs`.
-- `plugin/host.luau` (~2530 lines) — state type ~L63, storage ~L107-203, lifecycle `retire`/`alive` ~L225-241, views ~L752-2183, block define ~L2200, event handler ~L2424.
-- `plugin/window.luau` — link routing, palette commands, worktree/agent flows (`publishResult`, `finishWorktree`, `finishAgent`, `confirm`, `startAgent`, `worktreePr`, template guard `verify`/`listedAs`, `pickAgent`). `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
+- `plugin/host.luau` (~2650 lines) — state type ~L64, storage ~L107-203, lifecycle `retire`/`alive`, window requests (`reply`, `menu`, `prepare`, `rpc`), views, block define, event handler.
+- `plugin/window.luau` — link routing, palette commands, requests to the host (`ask`, `answered`), worktree/agent flows (`finishWorktree`, `finishAgent`, `confirm`, `startAgent`, `worktreePr`, `pickAgent`). `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
 - `scripts/check.py` — pins at L51-56 (SDK sha256, Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3); bundle builder `build_bundle`; stages `check_test`/`check_types`/`check_bench`/`check_smoke`.
 - `scripts/tern-0.8.3.d.luau` — tracked SDK snapshot used by `types`; changing it requires updating the sha in `check.py`.
 
@@ -79,5 +81,6 @@ end)
 
 - Prefer behavioral assertions (rendered text, argv, kv contents, toasts). Case names are prefixed by module (`github.search:`, `worktree:`, `host:`).
 - Pure helpers with no SDK dependency go in `plugin/tests/check.luau` (bare `assert`), which runs both in the bundle and in-app via the `selftest` palette command.
-- No coverage tool or threshold. Bench rows (`BENCH <name> ms=…`, 1000 PRs) must stay under budget; smoke covers 8 real-git worktree scenarios (create, reuse, dirty reuse, advanced head, post-checkout hook, branch elsewhere, `.github`, recovery).
+- No coverage tool or threshold. Bench rows (`BENCH <name> ms=…`, 1000 PRs) must stay under budget; smoke covers 8 real-git worktree scenarios (create, reuse, dirty reuse, advanced head, post-checkout hook, branch elsewhere, `.github`, recovery) plus a block on an attached loopback host (`remote loopback`) making its worktree through the real window → host → window link flow.
+- Fake-SDK window cases that need the host's answers use `linkQueue`/`agentScene`, which `w.link` a real host block to the window's pane.
 - Before finishing any change: `python3 scripts/check.py` (or `--ci` without Tern) must pass clean.
