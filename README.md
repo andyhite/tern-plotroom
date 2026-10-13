@@ -41,9 +41,9 @@ Update later with the same command plus `--force`.
 | --- | --- |
 | 🔍 **Saved filters** | Any GitHub search query, scoped to the repo you launched from. |
 | ⚡ **Polite refresh** | Every 60 s while quota is ample; backs off from GitHub's rate-limit headers instead of hammering. |
-| ✅ **Checks** | The selected PR's full check list, re-runs collapsed to the newest. Reloaded on every successful refresh, so check status changes show up even when the PR itself is unchanged. |
+| ✅ **Checks and details** | The selected PR's full check list, re-runs collapsed to the newest, with its merge state (conflicts, behind base, blocked, ready), each reviewer's latest verdict and who is still requested, and its description folded above the facts. Reloaded on every successful refresh, so check status changes show up even when the PR itself is unchanged. |
 | 🌳 **Worktrees** | `w` checks the PR out with `omp worktree add` into omp's worktree directory (default `~/.omp/wt`) as `plotroom-<owner>_<repo>-pr-N`, and opens a tab there. Never resets, cleans or deletes anything of yours. |
-| 🤖 **Agents** | The PR card has one button per saved prompt (Settings › Prompts) offered under the current filter; each runs that prompt on the PR with [omp](https://github.com/can1357/oh-my-pi), inside its worktree. Give a prompt a shortcut key to run it straight from the queue. `a` picks one, or lets you type one. |
+| 🤖 **Agents** | The queue's action bar has one button per saved prompt (Settings › Prompts) offered under the current filter; each runs that prompt on the PR with [omp](https://github.com/can1357/oh-my-pi), inside its worktree. Give a prompt a shortcut key to run it straight from the queue. `a` picks one, or lets you type one. |
 | 👤 **Per-repo accounts** | Work and personal `gh` logins on one machine. Tokens stay in memory, never on disk. |
 
 ## Keys
@@ -77,7 +77,7 @@ flowchart LR
 - Reused worktrees are never updated. The preview shows `Created|Reused · Current|Different · Clean|Modified` and offers the `fetch` + `merge --ff-only` and cleanup commands for you to run.
 - Plotroom never runs `reset`, `clean`, `stash`, `worktree remove`, `prune`, `branch -d`, or `update-ref -d`.
 - **Setup commands** (Settings › Worktrees) run in the new tab's shell when a worktree is *created*. They execute the PR's code (`pnpm install` runs its scripts), so leave them empty for repos that take untrusted PRs.
-- **Prompts** (Settings › Prompts) become buttons on the PR card and rows in the `a` picker. Each has a name, multi-line text (Edit… opens an editor; Enter is a new line, ⌘↵ saves, Esc cancels), an optional one-key shortcut (not one the queue uses: `j k w g a r s / ?`) and the filters it is offered under; with none turned on it is offered under every filter. `{url}` in a prompt, or in a typed one, becomes the PR's link. Prompts are saved per machine, like filters.
+- **Prompts** (Settings › Prompts) become buttons in the queue's action bar and rows in the `a` picker. Each has a name, multi-line text (Edit… opens an editor; Enter is a new line, ⌘↵ saves, Esc cancels), an optional one-key shortcut (not one the queue uses: `j k w g a r s / ?`) and the filters it is offered under; with none turned on it is offered under every filter. `{url}` in a prompt, or in a typed one, becomes the PR's link. Prompts are saved per machine, like filters.
 
 ## Trust
 

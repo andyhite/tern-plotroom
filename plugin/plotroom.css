@@ -1,5 +1,7 @@
 /* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. Only syntax Tern's engine accepts
-   (docs.stencil.so/tern/styles/css.md): no logical properties such as padding-block, no rem/ch units, no :has(). */
+   (docs.stencil.so/tern/styles/css.md): no logical properties such as padding-block, no rem/ch units, no :has().
+   Everything else is drawn by Tern's own kinds (picker, prefs, list, overlay, md…): add a rule only where no kind or
+   prop covers it. */
 
 /* The block has no dock; its empty strip would show the pane color under the settings page. */
 [data-surface='plugin.plotroom.prs'] .sf-region.sf-dock {
@@ -11,130 +13,74 @@
 	background: transparent;
 }
 
-/* The PR count is already in the title and the preview. */
-[data-surface='plugin.plotroom.prs'] .pk-count {
-	display: none;
-}
-
-/* Check names are cut with an ellipsis; the full text is the row's tooltip and accessible name. */
-[data-surface='plugin.plotroom.prs'] .plotroom-run {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	min-width: 0;
-	font-size: 12px;
-}
-
-/* The checks sit in one tight column; the preview's own gap would spread them out. */
-[data-surface='plugin.plotroom.prs'] .plotroom-runs {
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-runs > .sf-text {
-	margin: 8px 0 2px;
-	font-size: 11px;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-runs > .sf-text:first-child {
-	margin-top: 2px;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-runs .plotroom-run {
-	padding-top: 3px;
-	padding-bottom: 3px;
-	line-height: 1.3;
-}
-
-/* A check with a page is a button drawn as a plain row. */
-[data-surface='plugin.plotroom.prs'] button.plotroom-run {
-	width: 100%;
-	padding: 2px 4px;
-	margin: 0 -4px;
-	border-radius: var(--r-ctl);
-	background: none;
-	box-shadow: none;
-	color: inherit;
-	font-family: inherit;
-	text-align: left;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-run:hover {
-	background: var(--l2);
-}
-
-/* "Show more/fewer" reads as a quiet text link, not a button. */
-[data-surface='plugin.plotroom.prs'] button.plotroom-more {
-	background: none;
-	box-shadow: none;
-	padding: 3px 0;
-	color: var(--t3);
-	font-family: var(--sans);
-	font-size: 12px;
-	text-align: left;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-more:hover {
-	color: var(--t1);
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-run .name {
-	flex: 1 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-run .dot {
-	flex: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-run .detail {
-	flex: none;
-	color: var(--t3);
-}
-
-/* A command the user may run: it wraps anywhere, so a long path never widens a narrow pane. */
-[data-surface='plugin.plotroom.prs'] .plotroom-cmd {
-	font-size: 11px;
-	overflow-wrap: anywhere;
-	white-space: pre-wrap;
-}
-
-/* The picker has no head actions, so Settings and Refresh leave the bar and sit top-right, where the count was. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-sheet {
-	position: relative;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'],
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
-	position: absolute;
-	top: 10px;
-	z-index: 2;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
-	right: 0;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'] {
-	right: 73px;
-}
-
-/* The bar holds only the two moved buttons: collapse it so it leaves no empty strip. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
-	height: 0;
-	min-height: 0;
-	padding: 0;
-	border: 0;
-	overflow: visible;
-}
-
-/* Esc still clears the search; its head keycap would sit under Settings and Refresh. */
+/* Tern draws a Close (esc) button on every picker, but the queue is the block itself: there is nothing to close, and
+   its close only clears the search, which the search field's own clear button does. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
 	display: none;
+}
+
+/* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds {
+	display: inline-flex;
+	gap: 2px;
+}
+
+/* Tern's keycap is 20px, nearly the 28px button's height; 16px sits inside it like a label. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbd {
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 4px;
+	font-size: 10px;
+}
+
+/* The PR description is a folded card only for its native clamp and "N more lines" button: no head row, no indent. */
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-head {
+	display: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-body {
+	padding-left: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-more {
+	margin-left: 0;
+}
+
+/* Identifiers (author, branch) are set like Tern's preview kv values, 12px --mono, wherever they show: Branch and Base
+   sit outside the kv (for their copy icons) so they miss that rule, and a picker row's detail is --sans. Tern's own
+   strip does the same for its code and mono spans (.pk-strip-l). */
+[data-surface='plugin.plotroom.prs'] [data-role='plotroom.ref'] .sf-t-code,
+[data-surface='plugin.plotroom.prs'] .pk-detail .sf-t-code,
+[data-surface='plugin.plotroom.prs'] .pk-detail .sf-t-mono {
+	font-family: var(--mono);
+	font-size: 12px;
+}
+
+/* A comment bubble before a row's comment count (spans carry no icons, and Tern drops url() from plugin CSS): a
+   rounded box, then (order) a triangle tail pulled back under its left side. c0 is the queue's only column. */
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty) {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+}
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::before {
+	content: "";
+	order: -2;
+	box-sizing: border-box;
+	width: 12px;
+	height: 10px;
+	border: 1.5px solid currentColor;
+	border-radius: 3px;
+}
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::after {
+	content: "";
+	order: -1;
+	position: relative;
+	top: 6px;
+	margin: 0 11px 0 -10px;
+	border-top: 4px solid currentColor;
+	border-right: 4px solid transparent;
 }
 
 /* Too few settings to need search. */
@@ -148,171 +94,4 @@
 	max-width: 640px;
 	box-sizing: border-box;
 	padding: 16px;
-	gap: 10px;
-}
-
-[data-surface='plugin.plotroom.prs'] .pf-editor .sf-editor {
-	min-height: 120px;
-}
-
-[data-surface='plugin.plotroom.prs'] [data-role='plotroom.title'] {
-	font-size: 15px;
-	line-height: 1.35;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-num {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	align-self: flex-start;
-	color: var(--t2);
-	font-family: var(--mono);
-	font-size: 12px;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-num:hover {
-	color: var(--t1);
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-num:focus-visible {
-	outline: 2px solid var(--accent);
-}
-
-/* The PR number, then branch → base as chips; a long name is cut with an ellipsis and shown whole in its tooltip. */
-[data-surface='plugin.plotroom.prs'] .plotroom-head {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	min-width: 0;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-head button.plotroom-num {
-	flex: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-ref {
-	flex: 0 1 auto;
-	min-width: 0;
-	max-width: 180px;
-	height: 18px;
-	padding: 0 7px;
-	border-radius: 9px;
-	background: var(--chip-bg);
-	box-shadow: inset 0 0 0 1px var(--l2);
-	color: var(--t2);
-	font-family: var(--mono);
-	font-size: 11px;
-	line-height: 18px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-[data-surface='plugin.plotroom.prs'] .plotroom-into {
-	flex: none;
-	color: var(--t3);
-	font-size: 11px;
-}
-
-/* The base is usually short (main): the branch gives up its width first. */
-[data-surface='plugin.plotroom.prs'] .plotroom-ref.base {
-	flex-shrink: 0;
-	max-width: 120px;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	padding: 4px 10px;
-	border-radius: var(--r-ctl);
-	background: var(--raise);
-	box-shadow: inset 0 0 0 1px var(--l3);
-	color: var(--t1);
-	font-family: var(--sans);
-	font-size: 12px;
-	transition: background-color 120ms var(--ease), transform 120ms var(--out);
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn:hover {
-	background: var(--l2);
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn:active {
-	transform: scale(0.97);
-}
-
-/* White text on the *-fill tokens is their documented pairing (at least 4.5:1 in both appearances). */
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary {
-	background: var(--accent-fill);
-	box-shadow: none;
-	color: #fff;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn.danger {
-	background: var(--bad-fill);
-	box-shadow: none;
-	color: #fff;
-}
-
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary .kbd,
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn.danger .kbd {
-	background: rgb(255 255 255 / 18%);
-	box-shadow: none;
-	color: #fff;
-}
-
-/* Keyboard focus stays visible on every button the block draws, whatever its fill or shadow. */
-[data-surface='plugin.plotroom.prs'] button.plotroom-btn:focus-visible,
-[data-surface='plugin.plotroom.prs'] button.plotroom-run:focus-visible,
-[data-surface='plugin.plotroom.prs'] button.plotroom-more:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 1px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
-		transition: none;
-	}
-}
-
-/* The pane already pads the sheet by 10px, so the head is trimmed to keep the top gap in line with the sides. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-head {
-	height: 48px;
-	min-height: 48px;
-	padding-top: 0;
-	padding-left: 0;
-	padding-right: 0;
-	padding-bottom: 0;
-}
-
-/* Column tops share one line, 8px under the head: filters, list and preview start level. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopes {
-	padding-top: 10px;
-	padding-left: 0;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-list {
-	padding-top: 8px;
-	box-sizing: border-box;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-pv-slot {
-	margin-top: -16px;
-	padding-top: 10px;
-}
-
-/* A bit wider than Tern's fixed 340px side preview, growing with the sheet; below the list (narrow sheets) it stays full width. */
-[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side .pk-pv {
-	width: clamp(340px, 26%, 440px);
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker.pv-below-auto .pk-pv {
-	width: auto;
 }

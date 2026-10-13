@@ -10,7 +10,9 @@ local M = {}
 -- Problem kinds: auth | missing | rate-limit | invalid | not-found | failed (gh, the API or a timeout), account (the
 -- saved gh login of the repository cannot be used; nothing was sent) and superseded (the caller cancelled the request).
 export type Problem = { kind: string, message: string }
-export type Run = { name: string, status: string, detail: string, required: boolean, url: string? } -- status: failure | pending | success | neutral
+-- status: failure | pending | success | neutral; detail spells it out ("Passed · 3s"); took is the bare duration of a
+-- finished check run, when GitHub gives one.
+export type Run = { name: string, status: string, detail: string, required: boolean, url: string?, took: string? }
 export type Pr = {
 	key: string,
 	repo: string,
@@ -36,6 +38,10 @@ export type Pr = {
 }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean }
+-- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
+-- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
+export type Review = { login: string, state: string }
+export type About = { merge: string, reviews: { Review }, body: string }
 
 local GH_TIMEOUT_MS = 30 * 1000
 local CAP = 1000
@@ -58,6 +64,11 @@ local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED 
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
 local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,state:.state}"
+local MERGE: { [string]: string } =
+	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
+local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
+local REVIEWERS = 20 -- latestReviews and reviewRequests are read up to this many each
+local BODY_CHARS = 20000
 
 -- Seconds since the epoch of a UTC date and time (days-from-civil; `os.time` with a table would read local time).
 local function utc(year: number, month: number, day: number, hh: number, mm: number, ss: number): number
@@ -179,6 +190,7 @@ function M.runs(raw: any): { Run }
 			local name: string? = nil
 			local status: string? = nil
 			local detail: string? = nil
+			local spent: string? = nil
 			local at = 0
 			local suite: string? = nil
 			local label: string? = nil
@@ -191,7 +203,9 @@ function M.runs(raw: any): { Run }
 				if c then
 					local word = c[2]
 					if started and finished and finished > started and c[1] ~= "neutral" then
-						word = word .. " · " .. took(finished - started)
+						local d = took(finished - started)
+						spent = d
+						word = word .. " · " .. d
 					end
 					status, detail = c[1], word
 					at = started or finished or 0
@@ -218,6 +232,7 @@ function M.runs(raw: any): { Run }
 					detail = detail,
 					required = field(n, "isRequired") == true,
 					url = if link and string.sub(link, 1, 8) == "https://" and not string.find(link, "[%c%s]") then link else nil,
+					took = spent,
 				}
 				local id = nonEmpty(field(n, "id"))
 				local key = if suite then "suite\0" .. suite .. "\0" .. name elseif id then "id\0" .. id else nil
@@ -819,23 +834,69 @@ function M.search(
 	fetch(nil, 1)
 end
 
-local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { rateLimit { cost } repository(owner: $o, name: $r) { pullRequest(number: $n) { commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } " .. checkNodes(" isRequired(pullRequestNumber: $n)") .. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // [])}"
+local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
+	.. REVIEWERS
+	.. ") { nodes { author { login } state } } reviewRequests(first: "
+	.. REVIEWERS
+	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } }"
+local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { rateLimit { cost } repository(owner: $o, name: $r) { pullRequest(number: $n) { "
+	.. ABOUT_FIELDS
+	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
+	.. checkNodes(" isRequired(pullRequestNumber: $n)")
+	.. " } } } } } } } }"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)]})}"
 local CHECK_PAGES = 3
 
--- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged; done(runs, total, problem).
--- Nothing is sent while the saved login is unusable (kind "account") or the account's quota is paused (kind
--- "rate-limit"). `shouldContinue` (optional) is checked before every page and after every response; a false
--- answer ends with kind="superseded". done never runs before this call returns, and nothing is cached here:
--- what a failure is worth is the caller's call.
-function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem?) -> (), shouldContinue: (() -> boolean)?)
+local function login(v: any): string?
+	return if type(v) == "string" and #v <= 64 and string.match(v, "^[%w][%w%-_%.%[%]]*$") then v else nil
+end
+
+-- The `about` part of a checks page as CHECKS_JQ prints it; whatever is missing or malformed reads as unknown/empty.
+-- A reviewer asked again shows as requested: their earlier verdict is what they were asked to revisit.
+function M.about(raw: any): About
+	local t = if type(raw) == "table" then raw else {}
+	local merge = if t.mergeable == "CONFLICTING" then "conflicts" elseif type(t.merge) == "string" then MERGE[t.merge] or "unknown" else "unknown"
+	local reviews: { Review } = {}
+	local at: { [string]: number } = {}
+	local function add(who: string?, state: string?)
+		if who and state then
+			if at[who] then
+				reviews[at[who]].state = state
+			elseif #reviews < REVIEWERS * 2 then
+				table.insert(reviews, { login = who, state = state })
+				at[who] = #reviews
+			end
+		end
+	end
+	for _, r in (if type(t.reviews) == "table" then t.reviews else {}) :: { any } do
+		add(login(field(r, "login")), VERDICT[if type(field(r, "state")) == "string" then field(r, "state") else ""])
+	end
+	for _, who in (if type(t.requested) == "table" then t.requested else {}) :: { any } do
+		add(login(who), "requested")
+	end
+	local body = if type(t.body) == "string" then t.body else ""
+	-- Cursor's bot appends a generated summary between these markers; it repeats the diff, not the author.
+	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
+	local cut = utf8.offset(body, BODY_CHARS + 1)
+	if cut and cut <= #body then
+		body = string.sub(body, 1, cut - 1) .. "\n\n…"
+	end
+	return { merge = merge, reviews = reviews, body = body }
+end
+
+-- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
+-- says `about` the PR; done(runs, total, problem, about). Nothing is sent while the saved login is unusable (kind
+-- "account") or the account's quota is paused (kind "rate-limit"). `shouldContinue` (optional) is checked before every
+-- page and after every response; a false answer ends with kind="superseded". done never runs before this call
+-- returns, and nothing is cached here: what a failure is worth is the caller's call.
+function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem?, About?) -> (), shouldContinue: (() -> boolean)?)
 	local superseded: Problem = { kind = "superseded", message = "" }
 	-- Every result passes here: a cancelled request reports "superseded" whatever it found.
-	local function finish(runs: { Run }?, total: number, problem: Problem?)
+	local function finish(runs: { Run }?, total: number, problem: Problem?, about: About?)
 		if shouldContinue and not shouldContinue() then
 			return done(nil, 0, superseded)
 		end
-		done(runs, total, problem)
+		done(runs, total, problem, about)
 	end
 	local function fail(problem: Problem)
 		tern.timer(0, function()
@@ -859,6 +920,7 @@ function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem
 	end
 	local first = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. CHECKS_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number }
 	local nodes: { any } = {}
+	local about: About? = nil
 	local function fetch(after: string?, page: number)
 		if shouldContinue and not shouldContinue() then
 			return done(nil, 0, superseded)
@@ -882,12 +944,15 @@ function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem
 			for _, n in data.nodes do
 				table.insert(nodes, n)
 			end
+			if page == 1 and type(data.about) == "table" then
+				about = M.about(data.about)
+			end
 			local cursor = if type(data.next) == "string" and data.next ~= "" then data.next else nil
 			if cursor and cursor ~= after and page < CHECK_PAGES and M.wait(os.time(), account) == 0 then
 				return fetch(cursor, page + 1)
 			end
 			local runs = M.runs(nodes)
-			finish(runs, #runs + math.max(0, data.total - #nodes), nil)
+			finish(runs, #runs + math.max(0, data.total - #nodes), nil, about)
 		end, account)
 	end
 	fetch(nil, 1)

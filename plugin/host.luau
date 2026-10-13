@@ -35,7 +35,8 @@ type Snap = {
 -- What the local search lets through: computed once per snapshot and search text.
 type Visible = { snap: Snap, needle: string, prs: { github.Pr }, order: { string }, hits: { [string]: any }? }
 -- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
-type Detail = { runs: { github.Run }, total: number, round: number }
+-- `about` is the PR's merge state, reviewers and description, nil when gh did not print them.
+type Detail = { runs: { github.Run }, total: number, round: number, about: github.About? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
@@ -95,8 +96,8 @@ type State = {
 	detailBusy: { [string]: boolean }, -- checks loads running
 	detailAttempt: Attempt?,
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
-	expanded: { [string]: boolean }, -- PR keys whose check list is unfolded
 	notes: { [string]: Note }, -- worktree reports by PR key
+	descOpen: string?, -- key of the PR whose description is unfolded; the view mirrors it so Show less can fold it again
 	noteSeq: number,
 	settings: Settings?,
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
@@ -623,11 +624,6 @@ local function prune(state: State)
 			state.detailFail[key] = nil
 		end
 	end
-	for key in state.expanded do
-		if not live[key] then
-			state.expanded[key] = nil
-		end
-	end
 end
 
 refresh = function(state: State)
@@ -850,7 +846,7 @@ local function prHref(kind: string, pr: github.Pr): string
 	return "plotroom://github/" .. kind .. "/" .. pr.repo .. "/" .. pr.number
 end
 
--- The link of a card button that runs saved prompt `id` (letters and digits) on `pr`.
+-- The link of an action-bar button that runs saved prompt `id` (letters and digits) on `pr`.
 local function runHref(pr: github.Pr, id: string): string
 	return "plotroom://github/run/" .. pr.repo .. "/" .. pr.number .. "/" .. id
 end
@@ -944,10 +940,27 @@ local REVIEW_BADGE: { [string]: { text: string, tone: string } } = {
 	required = { text = "Review required", tone = "warning" },
 }
 local RUN_TONE: { [string]: string } = { success = "success", failure = "error", pending = "warning", neutral = "muted" }
-local CHECK: { [string]: { text: string, tone: string, dot: string } } = {
-	success = { text = "Passing", tone = "success", dot = "success" },
-	failure = { text = "Failing", tone = "error", dot = "error" },
-	pending = { text = "Pending", tone = "warning", dot = "pending" },
+local RUN_ICON: { [string]: string } = { success = "check", failure = "x", pending = "clock", neutral = "minus" }
+local MERGE_STATE: { [string]: { text: string, tone: string } } = {
+	conflicts = { text = "Conflicts", tone = "error" },
+	behind = { text = "Behind base", tone = "warning" },
+	blocked = { text = "Blocked", tone = "warning" },
+	unstable = { text = "Checks failing", tone = "warning" },
+	ready = { text = "Ready", tone = "success" },
+	draft = { text = "Draft", tone = "muted" },
+	unknown = { text = "Checking…", tone = "muted" },
+}
+local VERDICT_ROW: { [string]: { text: string, tone: string, icon: string } } = {
+	approved = { text = "Approved", tone = "success", icon = "check" },
+	changes = { text = "Changes requested", tone = "error", icon = "x" },
+	commented = { text = "Commented", tone = "muted", icon = "message" },
+	dismissed = { text = "Dismissed", tone = "muted", icon = "slash" },
+	requested = { text = "Requested", tone = "warning", icon = "clock" },
+}
+local CHECK: { [string]: { text: string, tone: string, mark: string } } = {
+	success = { text = "Passing", tone = "success", mark = "✓" },
+	failure = { text = "Failing", tone = "error", mark = "✗" },
+	pending = { text = "Pending", tone = "warning", mark = "●" },
 }
 
 type KeyHelp = { keys: { string }, text: string }
@@ -1037,7 +1050,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			},
 		})
 	elseif s.page == "prompts" then
-		lead = "What the Agent button (a) offers to run on a pull request, in its worktree. {url} in a prompt becomes the pull request's link. A prompt with no filter turned on is offered under every filter."
+		lead = "What the queue's action bar and the agent picker (a) offer to run on a pull request, in its worktree. {url} in a prompt becomes the pull request's link. A prompt with no filter turned on is offered under every filter."
 		local prompts, unreadable = loadPrompts()
 		local options: { any } = {}
 		for _, f in state.store.items do
@@ -1786,26 +1799,36 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]
 	if kind ~= "open" then
 		table.insert(badges, STATE_BADGE[kind])
 	end
-	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
-	if review then
-		table.insert(badges, review)
-	end
 	for _, l in pr.labels do
 		table.insert(badges, { text = l })
+	end
+	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
+	-- they don't read as the state and label badges.
+	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
+	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
+	if review then
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span(review.text, review.tone))
+	end
+	if check and pr.runTotal > 0 then
+		-- ponytail: passes among the search's first 25 checks (the total is exact); read the detail runs if that misleads.
+		local ok = 0
+		for _, r in pr.runs do
+			if r.status == "success" or r.status == "neutral" then
+				ok += 1
+			end
+		end
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
 	end
 	return {
 		id = itemId(pr),
 		label = pr.title,
 		title = pr.title,
-		-- The check state is spelled out: the corner dot alone is color.
-		detail = "#" .. pr.number .. " · " .. pr.author .. (if check then " · " .. check.text else "") .. " · " .. pr.head,
+		detail = detail,
 		mark = { text = pr.author, seed = pr.author },
-		dot = if check then check.dot else nil,
 		badges = if #badges > 0 then badges else nil,
-		facts = {
-			changes = spans(ui.span("+" .. pr.additions, "ins"), " ", ui.span("−" .. pr.deletions, "error")),
-			updated = github.age(pr.updated),
-		},
+		facts = { comments = if pr.comments > 0 then tostring(pr.comments) else nil }, -- the icon is CSS (plotroom.css)
 	}
 end
 
@@ -1831,8 +1854,6 @@ local function rowsOf(state: State, snap: Snap, open: { [number]: boolean }): { 
 	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
 	return rows
 end
-
-local CHECK_LIMIT = 8
 
 -- Percent-encodes everything but unreserved URL characters.
 local function pct(s: string): string
@@ -1897,7 +1918,7 @@ loadDetails = function(state: State, key: string)
 	end
 	state.detailBusy[key] = true
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
-	github.checks(pr.repo, pr.number, function(runs, total, problem)
+	github.checks(pr.repo, pr.number, function(runs, total, problem, about)
 		state.detailBusy[key] = nil
 		if not alive(state) then
 			return
@@ -1907,7 +1928,7 @@ loadDetails = function(state: State, key: string)
 			return
 		end
 		if runs then
-			state.details[key] = { runs = runs, total = total, round = round }
+			state.details[key] = { runs = runs, total = total, round = round, about = about }
 			state.detailFail[key] = nil
 		else
 			failDetails(state, key, problem or { kind = "failed", message = "The checks could not be read." })
@@ -1969,22 +1990,6 @@ local function noteWorktree(state: State, repo: string, number: number, r: workt
 	end
 	if count > NOTE_CAP and oldest then
 		state.notes[oldest] = nil
-	end
-end
-
--- Copies the selected PR's update or cleanup commands. They are only shown and copied, never run.
-local function copyCommands(state: State, which: any)
-	local pr = selectedPr(state)
-	local note = if pr then state.notes[pr.key] else nil
-	local list: { string }? = nil
-	if note and which == "update" then
-		list = note.update
-	elseif note and which == "cleanup" then
-		list = note.cleanup
-	end
-	if list and #list > 0 then
-		state.cx:copy(table.concat(list, "\n"))
-		state.cx:toast("success", "Copied the " .. tostring(which) .. " commands", "Run them yourself; Plotroom never does")
 	end
 end
 
@@ -2062,8 +2067,8 @@ local function offered(state: State): ({ { prompt: Prompt, here: boolean } }, st
 	return mine, problem
 end
 
--- The agent picker's rows: `offered`, each with its id so a card button's link can name it. With `only`, just that
--- prompt, so a card button never misses its prompt to the picker's size budget.
+-- The agent picker's rows: `offered`, each with its id so an action-bar button's link can name it. With `only`, just
+-- that prompt, so a button never misses its prompt to the picker's size budget.
 local function menu(state: State, id: string, only: string?)
 	local list, problem = offered(state)
 	local active = activeFilter(state)
@@ -2182,20 +2187,13 @@ local function worktreeNodes(state: State, pr: github.Pr): { Node }
 			if #list == 0 then
 				return
 			end
-			local kids: { Node } = {}
-			for i, line in list do
-				table.insert(kids, ui.el("div", { key = "c" .. i, class = "plotroom-cmd", text = line }))
+			-- A shell fence: Tern draws it with its own Copy button. The fence outgrows any backtick run in a path.
+			local text = table.concat(list, "\n")
+			local fence = "```"
+			while string.find(text, fence, 1, true) do
+				fence ..= "`"
 			end
-			table.insert(
-				kids,
-				ui.el("button", {
-					key = "copy",
-					class = "plotroom-btn",
-					text = "Copy",
-					aria = "Copy the " .. id .. " commands",
-					actions = { click = "copy-wt=" .. id },
-				})
-			)
+			local kids = { ui.node("md", { key = "commands", text = fence .. "sh\n" .. text .. "\n" .. fence }) }
 			table.insert(body, ui.node("section", { key = id, head = { ui.span(title, "muted") }, collapsible = true, collapsed = true }, kids))
 		end
 		commands("update", "Take the pull request's newer commits", note.update)
@@ -2208,8 +2206,8 @@ local function worktreeNodes(state: State, pr: github.Pr): { Node }
 	return { ui.node("card", { key = "worktree", tone = tone, head = head }, body) }
 end
 
--- The checks of the selected PR: all of them once loaded (the search's first ones meanwhile), with the load's state:
--- pending, or an error with its retry time and a Retry button.
+-- The checks of the selected PR once loaded (Tern's shimmer meanwhile), with an error, its retry time and a Retry
+-- button when the load failed.
 local function checksNodes(state: State, pr: github.Pr): { Node }
 	local out: { Node } = {}
 	local key = detailKey(state, pr)
@@ -2221,29 +2219,10 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	if #runs == 0 and not loading and not fail then
 		return out
 	end
-	local tally: { [string]: number } = {}
-	local required = 0
-	for _, r in runs do
-		tally[r.status] = (tally[r.status] or 0) + 1
-		if r.required then
-			required += 1
-		end
-	end
-	local parts: { string } = {}
-	for _, p in { { "failure", "failing" }, { "pending", "pending" }, { "success", "passed" }, { "neutral", "skipped" } } do
-		if tally[p[1]] then
-			table.insert(parts, tally[p[1]] .. " " .. p[2])
-		end
-	end
-	table.insert(
-		out,
-		ui.node("text", {
-			key = "runs-head",
-			spans = { ui.span("Checks", "strong"), ui.span("  " .. table.concat(parts, " · "), "muted") },
-		})
-	)
+	table.insert(out, ui.node("text", { key = "runs-head", spans = { ui.span("Checks", "strong") } }))
 	if loading then
-		table.insert(out, ui.node("text", { key = "runs-state", spans = { ui.span("Loading all checks…", "muted") } }))
+		table.insert(out, ui.node("shimmer", { key = "runs-loading", text = "Loading checks…" }))
+		return out
 	elseif fail then
 		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
 		table.insert(
@@ -2255,27 +2234,23 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		)
 		table.insert(
 			out,
-			ui.el("button", { key = "runs-retry", class = "plotroom-btn", text = "Retry", aria = "Retry loading all checks", actions = { click = "retry-checks" } })
+			ui.node("item", { key = "runs-retry", label = "Retry", icon = "redo", aria = "Retry loading all checks", actions = { click = "retry-checks" } })
 		)
 	end
-	local fold = math.max(CHECK_LIMIT, required) -- required checks never fold away
-	local expanded = state.expanded[pr.key] == true
-	local shown = if expanded then #runs else math.min(#runs, fold)
-	local list: { Node } = {}
-	local function sub(id: string, text: string)
-		table.insert(list, ui.node("text", { key = id, spans = { ui.span(text, "muted") } }))
-	end
-	for i = 1, shown do
-		local r = runs[i]
-		if required > 0 and i == 1 then
-			sub("req-head", "Required · " .. required)
-		elseif required > 0 and i == required + 1 then
-			sub("other-head", "Other · " .. (#runs - required))
-		end
+	-- Every check, required ones apart, each group worst first (github.runs' order). The icon and its tone are the
+	-- status (the tooltip spells it out), so the value is only how long it took. A `workflow / job` name shows the job,
+	-- with the workflow dim after it and cut first. Only `item` rows go in a list: other kinds get no row behaviour.
+	local groups: { [string]: { Node } } = { required = {}, runs = {} }
+	for i, r in runs do
+		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
 		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "")
 		local props: { [string]: any } = {
 			key = "run" .. i,
-			class = "plotroom-run",
+			label = job or r.name,
+			detail = workflow,
+			value = r.took,
+			icon = RUN_ICON[r.status],
+			tone = RUN_TONE[r.status],
 			title = what,
 			aria = what,
 		}
@@ -2283,26 +2258,20 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 			props.href = checkHref(i, r.url)
 			props.actions = { click = "open" }
 		end
-		table.insert(
-			list,
-			ui.el(if r.url then "button" else "div", props, {
-				ui.el("span", { class = "dot", attrs = { ["aria-hidden"] = true } }, { ui.text({ ui.span("●", RUN_TONE[r.status]) }) }),
-				ui.el("span", { class = "name", text = r.name }),
-				ui.el("span", { class = "detail", text = r.detail }),
-			})
-		)
+		table.insert(groups[if r.required then "required" else "runs"], ui.node("item", props))
 	end
-	table.insert(out, ui.el("div", { key = "runs", class = "plotroom-runs" }, list))
-	if #runs > fold then
-		table.insert(
-			out,
-			ui.el("button", {
-				key = "runs-toggle",
-				class = "plotroom-more",
-				text = if expanded then "Show fewer" else "Show " .. (#runs - shown) .. " more",
-				actions = { click = "more-checks" },
-			})
-		)
+	local function head(key: string, text: string)
+		table.insert(out, ui.node("text", { key = key, spans = { ui.span(text, "muted") } }))
+	end
+	if #groups.required > 0 then
+		head("required-head", "Required · " .. #groups.required)
+		table.insert(out, ui.node("list", { key = "required" }, groups.required))
+	end
+	if #groups.runs > 0 then
+		if #groups.required > 0 then
+			head("optional-head", "Optional · " .. #groups.runs)
+		end
+		table.insert(out, ui.node("list", { key = "runs" }, groups.runs))
 	end
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
@@ -2310,31 +2279,50 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	return out
 end
 
-local function previewNodes(state: State, open: { [number]: boolean }): { Node }
-	local pr = selectedPr(state)
+-- The selected PR's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
+-- it, and one per saved prompt offered under this filter (it runs that prompt in the PR's worktree).
+type PrAction = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
+local function prActions(state: State, pr: github.Pr, open: { [number]: boolean }): { PrAction }
+	local out: { PrAction } = {
+		-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
+		{ id = "open", label = "GitHub ↗", href = prHref("open", pr), primary = true },
+		{ id = "worktree", label = "Worktree", keys = { "w" }, href = prHref("worktree", pr) },
+	}
+	if open[pr.number] then
+		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = prHref("goto", pr) })
+	end
+	for _, o in offered(state) do
+		local p = o.prompt
+		if string.match(p.id, "^%w+$") then
+			local keys = if p.key then { p.key } else nil
+			table.insert(out, { id = "prompt-" .. p.id, label = clip(printable(p.name), 40), keys = keys, href = runHref(pr, p.id) })
+		end
+	end
+	return out
+end
+
+-- pr: selectedPr(state); acts: prActions(state, pr, open).
+local function previewNodes(state: State, pr: github.Pr?, open: { [number]: boolean }, acts: { PrAction }): { Node }
 	if not pr then
 		cancelDetails(state)
 		return {}
 	end
-	if pr.checks then
-		wantDetails(state, pr)
-	else
-		cancelDetails(state)
-	end
+	-- The detail load also brings the merge state, reviewers and description, so a PR without checks needs it too.
+	wantDetails(state, pr)
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
-	local chips: { Node } = { ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }) }
+	local chips: { Node } = {}
 	if open[pr.number] then
 		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
 	end
 	for i, l in pr.labels do
 		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
 	end
-	-- Branch chips: CSS cuts long names with an ellipsis; the full name is the tooltip and accessible name.
-	local function ref(key: string, label: string, value: string): Node
-		return ui.el("span", { key = key, class = "plotroom-ref " .. key, text = value, title = value, aria = label .. " " .. value })
-	end
+	local dkey = detailKey(state, pr)
+	local detail = if dkey then state.details[dkey] else nil
+	local about = if detail then detail.about else nil
+	local loading = dkey ~= nil and detail == nil and state.detailFail[dkey] == nil
 	local facts: { { [string]: any } } = {
 		{ k = "Author", v = "@" .. pr.author },
 		{ k = "Checks", v = { if check then ui.span(check.text, check.tone) else ui.span("None", "muted") } },
@@ -2343,94 +2331,95 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 		{ k = "Opened", v = github.age(pr.created) .. " ago" },
 		{ k = "Updated", v = github.age(pr.updated) .. " ago" },
 	}
-	-- Buttons sit above the facts so a short pane never clips them.
-	local btns: { Node } = {
-		ui.el("button", {
-			key = "open",
-			class = "plotroom-btn primary",
-			text = "Open",
-			href = prHref("open", pr),
-			actions = { click = "open" },
-			title = "Open in a Browser block",
-			aria = "Open pull request #" .. pr.number .. " in a Browser block",
-		}, { ui.node("kbd", { keys = { "enter" } }) }),
-		ui.el("button", {
-			key = "worktree",
-			class = "plotroom-btn",
-			text = "Worktree",
-			href = prHref("worktree", pr),
-			actions = { click = "open" },
-			title = "Check out in a worktree tab",
-			aria = "Check out pull request #" .. pr.number .. " in a worktree tab",
-		}, { ui.node("kbd", { keys = { "w" } }) }),
-	}
-	if open[pr.number] then
-		table.insert(
-			btns,
-			ui.el("button", {
-				key = "goto",
-				class = "plotroom-btn",
-				text = "Go to tab",
-				href = prHref("goto", pr),
-				actions = { click = "open" },
-				title = "Show the tab working in this pull request's worktree",
-			}, { ui.node("kbd", { keys = { "g" } }) })
-		)
+	if about then
+		local m = MERGE_STATE[about.merge] or MERGE_STATE.unknown
+		table.insert(facts, 2, { k = "Merge", v = { ui.span(m.text, m.tone) } })
 	end
-	-- The `a` picker's link stays on the card, unseen, for the key and the palette command to follow.
-	table.insert(btns, ui.node("text", { key = "agent", href = prHref("agent", pr), hidden = true }))
-	-- The saved prompts offered under this filter, one button each beside Open and Worktree: it runs that prompt in the
-	-- pull request's worktree.
-	local runs = 0
-	for _, o in offered(state) do
-		local p = o.prompt
-		if string.match(p.id, "^%w+$") then
-			table.insert(
-				btns,
-				ui.el("button", {
-					key = "prompt-" .. p.id,
-					class = "plotroom-btn",
-					text = clip(printable(p.name), 40),
-					href = runHref(pr, p.id),
-					actions = { click = "open" },
-					title = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
-					aria = "Run the prompt " .. printable(p.name) .. " on pull request #" .. pr.number,
-				}, if p.key then { ui.node("kbd", { keys = { p.key } }) } else nil)
-			)
-			runs += 1
-		end
+	-- The buttons are the picker's action bar; the window honours only links the block shows, so each button's link,
+	-- and the `a` picker's, also sits here unseen for the window (and the palette commands) to read.
+	local links: { Node } = { ui.node("text", { key = "agent", href = prHref("agent", pr) }) }
+	for _, a in acts do
+		table.insert(links, ui.node("text", { key = a.id, href = a.href }))
 	end
-	local buttons = ui.el("div", { key = "buttons", class = "plotroom-actions" }, btns)
 	local out: { Node } = {
-		ui.el("div", { key = "head", class = "plotroom-head" }, {
-			ui.el("button", {
+		ui.node("col", { key = "buttons", hidden = true }, links),
+		-- The PR's state sits at the head row's right end; an empty growing column pushes it there.
+		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
+			ui.text({ ui.span("#" .. pr.number, "num") }),
+			ui.node("icon", {
 				key = "copy",
-				class = "plotroom-num",
-				text = "#" .. pr.number,
+				name = "copy",
 				href = pr.url,
 				actions = { click = "copy" },
 				title = "Copy link",
 				aria = "Copy link to pull request #" .. pr.number,
-			}, { ui.el("span", { class = "icon", text = "⧉", attrs = { ["aria-hidden"] = true } }) }),
-			ref("branch", "Branch", pr.head),
-			ui.el("span", { key = "into", class = "plotroom-into", text = "→", attrs = { ["aria-hidden"] = true } }),
-			ref("base", "Base", pr.base),
+			}),
+			ui.node("col", { key = "fill", grow = 1 }),
+			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
 		}),
-		ui.node("text", { key = "title", role = "plotroom.title", spans = { ui.span(pr.title, "strong") } }),
-		ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips),
-		buttons,
+		ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
 	}
-	if runs == 0 then
-		table.insert(out, ui.node("text", { key = "prompts", spans = { ui.span("No agent prompts for this filter · Settings (s) › Prompts", "muted") } }))
+	if #chips > 0 then
+		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
-	for _, n in worktreeNodes(state, pr) do
-		table.insert(out, n)
+	-- Each part below the head sits under a hairline rule; a part with nothing to show brings none.
+	local function part(key: string, nodes: { Node })
+		if #nodes > 0 then
+			table.insert(out, ui.node("rule", { key = "rule-" .. key }))
+			table.move(nodes, 1, #nodes, #out + 1, out)
+		end
 	end
-	table.insert(out, ui.node("kv", { key = "facts", items = facts }))
+	part("worktree", worktreeNodes(state, pr))
+	-- A kv value is spans only, so a copy icon cannot sit in one: Branch and Base are rows of their own, spaced like
+	-- the kv's rows they head.
+	local function ref(key: string, label: string, name: string): Node
+		return ui.node("row", { key = key, role = "plotroom.ref", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
+			-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
+			ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, spans = { ui.span(name, "code") } }),
+			ui.node("icon", {
+				key = "copy",
+				name = "copy",
+				href = name,
+				actions = { click = "copy" },
+				title = "Copy " .. string.lower(label),
+				aria = "Copy the " .. string.lower(label) .. " " .. name,
+			}),
+		})
+	end
+	if about and string.find(about.body, "%S") then
+		-- A folded bare card shows its first lines under a fade and Tern's own "N more lines" button; its head row is
+		-- hidden by plotroom.css, so the text stands alone. `collapsed` mirrors state.descOpen (set by the card's
+		-- toggle event), so Show less, a value the card has not been sent yet, folds it again.
+		local unfolded = state.descOpen == pr.key
+		local nodes: { Node } = {
+			ui.node("card", {
+				key = "description",
+				role = "plotroom.description",
+				variant = "bare",
+				collapsible = true,
+				collapsed = not unfolded,
+				preview = { lines = 6 },
+			}, {
+				ui.node("md", { key = "body", text = about.body }),
+			}),
+		}
+		if unfolded then
+			table.insert(nodes, ui.node("item", { key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
+		end
+		table.move(nodes, 1, #nodes, #out + 1, out) -- no rule: the description reads as part of the head
+	end
+	local properties: { Node } = {
+		ui.node("col", { key = "about", gap = "sm" }, {
+			ref("branch", "Branch", pr.head),
+			ref("base", "Base", pr.base),
+			ui.node("kv", { key = "facts", items = facts }),
+		}),
+	}
 	local added, removed = pr.additions, pr.deletions
 	if added + removed > 0 then
 		table.insert(
-			out,
+			properties,
 			ui.node("meter", {
 				key = "diff",
 				parts = {
@@ -2442,9 +2431,27 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 			})
 		)
 	end
-	for _, n in checksNodes(state, pr) do
-		table.insert(out, n)
+	part("properties", properties)
+	if about and #about.reviews > 0 then
+		local rows: { Node } = {}
+		for i, r in about.reviews do
+			local v = VERDICT_ROW[r.state]
+			if v then
+				local what = "@" .. r.login .. " — " .. v.text
+				table.insert(rows, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
+			end
+		end
+		part("reviewers", {
+			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
+			ui.node("list", { key = "reviewers" }, rows),
+		})
+	elseif loading then
+		part("reviewers", {
+			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
+			ui.node("shimmer", { key = "reviewers-loading", text = "Loading reviewers…" }),
+		})
 	end
+	part("checks", checksNodes(state, pr))
 	return out
 end
 
@@ -2469,14 +2476,8 @@ local function helpOverlay(state: State): Node
 	end
 	return ui.node("overlay", { key = "help", modal = true, size = "md", head = "Keyboard shortcuts" }, {
 		ui.node("kv", { key = "keys", items = items }),
-		ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
-			ui.el("button", {
-				key = "close",
-				class = "plotroom-btn",
-				text = "Close",
-				aria = "Close the shortcut list",
-				actions = { click = "close-help" },
-			}, { ui.node("kbd", { keys = { "esc" } }) }),
+		ui.node("list", { key = "buttons" }, {
+			ui.node("item", { key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
 		}),
 	})
 end
@@ -2537,6 +2538,8 @@ local function queueView(state: State): BlockView
 	end
 
 	local wait = if state.account then github.wait(os.time(), login(state)) else 0
+	local acts: { PrAction } = if pr then prActions(state, pr, open) else {}
+	-- Settings and Refresh (the queue's) on the left; the PR's buttons on the right, Open last in the corner.
 	local actions: { any } = {
 		{ id = "settings", label = "Settings", keys = { "s" } },
 		{
@@ -2546,6 +2549,16 @@ local function queueView(state: State): BlockView
 			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
 		},
 	}
+	for _, a in acts do
+		if not a.primary then
+			table.insert(actions, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
+		end
+	end
+	for _, a in acts do
+		if a.primary then
+			table.insert(actions, { id = a.id, label = a.label, keys = a.keys, primary = true })
+		end
+	end
 
 	local props: { [string]: any } = {
 		key = "queue",
@@ -2569,8 +2582,7 @@ local function queueView(state: State): BlockView
 		scopes = tern.json.array(scopes),
 		scope = state.activeId,
 		columns = {
-			{ id = "changes", format = "text", priority = 50 },
-			{ id = "updated", format = "time", priority = 90 },
+			{ id = "comments", format = "text", priority = 50 },
 		},
 		actions = actions,
 	}
@@ -2581,7 +2593,7 @@ local function queueView(state: State): BlockView
 	if not snap and problem then
 		props.message = spans(ui.span(HEADS[problem.kind] or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted"))
 	end
-	local layer: { Node } = { ui.node("picker", props, previewNodes(state, open)) }
+	local layer: { Node } = { ui.node("picker", props, previewNodes(state, pr, open, acts)) }
 	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
@@ -2595,7 +2607,7 @@ local function confirmOverlay(state: State, row: string): Node
 		local prompts = loadPrompts()
 		local p = if prompts and id then promptById(prompts, id) else nil
 		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
-		body = "The Agent button stops offering it, in every Plotroom pane on this machine."
+		body = "The action bar and the agent picker stop offering it, in every Plotroom pane on this machine."
 	else
 		local name = "this filter"
 		for _, f in state.store.items do
@@ -2611,13 +2623,9 @@ local function confirmOverlay(state: State, row: string): Node
 			key = "body",
 			spans = { ui.span(body .. " Press d to delete it; Enter or Esc keeps it.", "muted") },
 		}),
-		ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
-			ui.el("button", { key = "keep", class = "plotroom-btn", text = "Keep", actions = { click = "cancel-delete" } }, {
-				ui.node("kbd", { keys = { "enter" } }),
-			}),
-			ui.el("button", { key = "delete", class = "plotroom-btn danger", text = "Delete", actions = { click = "confirm-delete" } }, {
-				ui.node("kbd", { keys = { "d" } }),
-			}),
+		ui.node("list", { key = "buttons" }, {
+			ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = "cancel-delete" } }),
+			ui.node("item", { key = "delete", label = "Delete", icon = "trash", tone = "error", hint = { "d" }, actions = { click = "confirm-delete" } }),
 		}),
 	})
 end
@@ -2645,7 +2653,7 @@ local function settingsView(state: State): BlockView
 		local kids: { Node } = {
 			ui.node("text", {
 				key = "head",
-				spans = { ui.span("Prompt · " .. (if prompt then prompt.name else ""), "strong"), ui.span("   ⌘↵ saves · Esc cancels", "muted") },
+				spans = { ui.span("Prompt · " .. (if prompt then prompt.name else ""), "strong") },
 			}),
 			ui.node("editor", {
 				key = "draft",
@@ -2654,6 +2662,7 @@ local function settingsView(state: State): BlockView
 				anchor = p.anchor,
 				placeholder = "Review {url}: …",
 				maxLines = 16,
+				min = { h = "6lines" },
 				aria = "Prompt text",
 			}),
 		}
@@ -2662,12 +2671,12 @@ local function settingsView(state: State): BlockView
 		end
 		table.insert(
 			kids,
-			ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
-				ui.el("button", { key = "save", class = "plotroom-btn primary", text = "Save", actions = { click = "save-prompt" } }),
-				ui.el("button", { key = "cancel", class = "plotroom-btn", text = "Cancel", actions = { click = "cancel-prompt" } }),
+			ui.node("list", { key = "buttons" }, {
+				ui.node("item", { key = "save", label = "Save", icon = "save", tone = "accent", hint = { "cmd", "enter" }, actions = { click = "save-prompt" } }),
+				ui.node("item", { key = "cancel", label = "Cancel", icon = "x", hint = { "esc" }, actions = { click = "cancel-prompt" } }),
 			})
 		)
-		table.insert(extra, ui.node("col", { key = "prompt", role = "omp.prefs.editor" }, kids))
+		table.insert(extra, ui.node("col", { key = "prompt", role = "omp.prefs.editor", gap = "md" }, kids))
 	elseif e then
 		local p = input.props(e.model)
 		props.editing = { row = e.row, draft = p.text, cursor = p.cursor }
@@ -2769,8 +2778,8 @@ tern.block.define("prs", {
 			detailBusy = {},
 			detailAttempt = nil,
 			round = 0,
-			expanded = {},
 			notes = {},
+			descOpen = nil,
 			noteSeq = 0,
 			settings = nil,
 			replies = {},
@@ -2949,7 +2958,7 @@ tern.block.define("prs", {
 		elseif plain and k == "a" then
 			openSelected(state, "agent", false)
 		else
-			-- A saved prompt's own key runs it, through its card button's link (the window honours only links shown).
+			-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
 			local pr = selectedPr(state)
 			local hit: Prompt? = nil
 			local list: { { prompt: Prompt, here: boolean } } = if plain and pr then offered(state) else {}
@@ -2973,26 +2982,20 @@ tern.block.define("prs", {
 		local s = state.settings
 		local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
 		local item = if type(ev.item) == "string" then ev.item else nil
-		if act == "more-checks" then
-			local pr = selectedPr(state)
-			if pr then
-				if state.expanded[pr.key] then
-					state.expanded[pr.key] = nil
-				else
-					state.expanded[pr.key] = true
-				end
-			end
-		elseif act == "retry-checks" then
+		if act == "retry-checks" then
 			local pr = selectedPr(state)
 			local key = if pr then detailKey(state, pr) else nil
 			if key then
 				state.detailFail[key] = nil
 				cancelDetails(state)
 			end
-		elseif act == "copy-wt" then
-			copyCommands(state, ev.value)
 		elseif act == "rpc" then
 			rpc(state, ev.value)
+		elseif act == "fold-description" then
+			state.descOpen = nil
+		elseif ev.ev == "toggle" and ev.key == "description" then
+			local pr = selectedPr(state)
+			state.descOpen = if pr and ev.collapsed == false then pr.key else nil
 		elseif act == "close-help" then
 			state.help = false
 		elseif act == "confirm-delete" then
@@ -3070,8 +3073,15 @@ tern.block.define("prs", {
 				openSettings(state, "filters")
 			elseif act == "retry" then
 				retry(state)
-			elseif act == "open" or act == "worktree" then
-				openSelected(state, act, false)
+			elseif act then
+				-- A PR button in the action bar: open its link, as its key does.
+				local pr = selectedPr(state)
+				local acts: { PrAction } = if pr then prActions(state, pr, openPrs(state)) else {}
+				for _, a in acts do
+					if a.id == act then
+						state.cx:open(a.href)
+					end
+				end
 			end
 		end
 	end,

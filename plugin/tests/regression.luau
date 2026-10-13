@@ -1526,6 +1526,7 @@ type Gh = {
 	meta: { [string]: { base: string, sha: string, ref: string, state: string } }, -- "owner/repo#N" -> pulls/N
 	checks: { [string]: { any } }, -- "owner/repo#N" -> check nodes of its latest commit
 	checkTotal: { [string]: number },
+	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
 	pageSize: number,
 	override: ((GhReq) -> Reply?)?, -- answers first: a failure, a malformed page
@@ -1541,6 +1542,7 @@ local function newGh(w: World): Gh
 		meta = {},
 		checks = {},
 		checkTotal = {},
+		about = {},
 		limits = {},
 		pageSize = 100,
 		override = nil,
@@ -1651,7 +1653,7 @@ local function newGh(w: World): Gh
 			local id = (fields.o or "") .. "/" .. (fields.r or "") .. "#" .. (fields.n or "")
 			local nodes = gh.checks[id] or {}
 			local slice, cursor = page(nodes, fields.after)
-			local body = jsonEncode({ total = gh.checkTotal[id] or #nodes, next = cursor, nodes = slice })
+			local body = jsonEncode({ total = gh.checkTotal[id] or #nodes, next = cursor, nodes = slice, about = gh.about[id] })
 			return { stdout = headers(lim) .. body }
 		elseif kind == "pr" then
 			local repo, n = string.match(path or "", "^repos/(.+)/pulls/(%d+)$")
@@ -2491,6 +2493,13 @@ local function cardText(b: Block): string
 	return table.concat(out, "\n")
 end
 
+-- The shell commands the worktree card offers under `which` ("update" or "cleanup"), one per line; nil when none.
+local function commandsOf(b: Block, which: string): string?
+	local section = findKey(cardOf(b), which, "section")
+	local md: any = if section then findKey(section, "commands", "md") else nil
+	return if md then string.match(md.p.text, "^```sh\n(.-)\n```$") else nil
+end
+
 -- The Worktree badge of queue row `row` (the first by default); nil when it has none.
 local function badgeOf(b: Block, row: number?): any
 	local item: any = pickerOf(b).items[row or 1]
@@ -2641,10 +2650,8 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 	has(w.toasts[6].sub, "Reused", "the second run reuses")
 	has(w.toasts[6].sub, "Current", "and is current")
 	has(w.toasts[6].sub, "Clean", "and clean")
-	b.event({ ev = "action", act = "copy-wt", value = "cleanup" })
-	has(w.copied[1], "worktree remove " .. s.target, "the block offers the cleanup commands")
-	b.event({ ev = "action", act = "copy-wt", value = "update" })
-	eq(#w.copied, 1, "and no update commands: the worktree is current")
+	has(commandsOf(b, "cleanup") or "", "worktree remove " .. s.target, "the block offers the cleanup commands")
+	eq(commandsOf(b, "update"), nil, "and no update commands: the worktree is current")
 end)
 
 windowCase("window: Agent lists the saved prompts of the active filter first, runs the pick with {url} replaced in the PR's worktree once allowed, recent first next time", function(w: World)
@@ -3347,6 +3354,29 @@ case("github.runs: attempts of one check in one suite collapse to the newest, a 
 	eq(merged[1].required, true, "required when any attempt was")
 end)
 
+case("github.about: merge state, reviewers (asked again wins) and a capped description from untrusted JSON", function(w: World)
+	local github = w.load("github") :: Github
+	local a = github.about({
+		mergeable = "MERGEABLE",
+		merge = "BEHIND",
+		body = "Fixes #1",
+		reviews = array({ { login = "ann", state = "APPROVED" }, { login = "bob", state = "CHANGES_REQUESTED" }, { login = "x y", state = "APPROVED" }, { login = "pat", state = "PENDING" } }),
+		requested = array({ "bob", "core-team", NULL, 5 }),
+	})
+	eq(a.merge, "behind", "mergeStateStatus reads as its word")
+	same(a.reviews, {
+		{ login = "ann", state = "approved" },
+		{ login = "bob", state = "requested" },
+		{ login = "core-team", state = "requested" },
+	}, "verdicts by login; a reviewer asked again is requested; a malformed login, a pending review and non-logins are dropped")
+	eq(a.body, "Fixes #1", "the description")
+	eq(github.about({ mergeable = "CONFLICTING", merge = "BLOCKED" }).merge, "conflicts", "a conflict wins over the merge state")
+	eq(github.about({ merge = "SOMETHING_NEW" }).merge, "unknown", "an unknown state is unknown")
+	eq(github.about(nil).merge, "unknown", "and so is nothing at all")
+	local long = github.about({ body = string.rep("é", 20005) }).body
+	eq(utf8.len(long), 20003, "a long description is cut at 20000 characters, on a character boundary, and marked")
+end)
+
 case("github.runs: entries without a suite are independent unless they are the same node", function(w: World)
 	local github = w.load("github") :: Github
 	local plain = checkRun("build", "COMPLETED", "SUCCESS", "2026-01-01T00:00:00Z")
@@ -3997,6 +4027,17 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	eq(b.view().main.c[2].k, "prefs", "s opens Settings")
 end)
 
+case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local refs: { [string]: string } = { branch = "branch-1", base = "main" }
+	for key, name in refs do
+		local icon: any = findKey(findKey(pickerNode(b), key), "copy", "icon")
+		eq(icon.p.href, name, key .. ": Tern's copy action copies the href")
+		eq(icon.p.actions.click, "copy", key .. ": on click")
+	end
+end)
+
 case("host: the bar's Settings and Refresh events do what their keys do", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
@@ -4088,7 +4129,7 @@ case("host: a opens the selected PR's agent link", function(w: World)
 	local n = string.match(pickerOf(b).selected, "%d+") :: string
 	local link: any = findKey(pickerNode(b), "agent")
 	eq(link.p.href, "plotroom://github/agent/o/r/" .. n, "the card keeps the selected PR's Agent link")
-	eq(link.p.hidden, true, "unseen: the prompt buttons took the Agent button's place")
+	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "unseen: the action bar has no Agent button")
 	b.typeText("a")
 	eq(w.opened[#w.opened], "plotroom://github/agent/o/r/" .. n, "a opens it")
 end)
@@ -4598,7 +4639,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 	eq(#only("p9"), 0, "none that is not saved")
 end)
 
-case("host: the card's buttons row ends with a button for each prompt offered under the filter, after Open, Worktree and Go to tab, and keeps the Agent link unseen", function(w: World)
+case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
 		promptOf("p1", "Mine", "Review {url}", { "f1" }, "m"),
@@ -4608,54 +4649,55 @@ case("host: the card's buttons row ends with a button for each prompt offered un
 		promptOf("p-5", "Dashed", "Its id cannot be part of a link", {}, "d"),
 	})
 	local b = openQueue(w)
-	-- The keys of what the card's element `key` shows: a node marked hidden is not shown.
-	local function keysIn(key: string): { string }
+	-- The ids of the action bar's buttons, in order.
+	local function bar(): { string }
 		local out: { string } = {}
-		local node: any = findKey(pickerNode(b), key)
-		local kids: { any } = if node ~= nil and node.c ~= nil then node.c else {}
-		for _, kid in kids do
-			if kid.p.hidden ~= true then
-				table.insert(out, kid.p.key)
-			end
+		for _, a in pickerOf(b).actions do
+			table.insert(out, a.id)
 		end
 		return out
 	end
-	same(keysIn("buttons"), { "open", "worktree", "prompt-p1", "prompt-p2" }, "under My PRs the row ends with its own prompt, then the one of every filter; none for another filter's prompt, a blank one or one whose id is no link")
-	local mine: any = findKey(pickerNode(b), "prompt-p1")
-	eq(mine.p.text, "Mine", "a button is named for its prompt")
-	eq(mine.p.href, "plotroom://github/run/o/r/1/p1", "and links to its run on the selected pull request")
-	eq(mine.c[1].k, "kbd", "its shortcut is shown on it")
-	same(mine.c[1].p.keys, { "m" }, "as that key")
-	eq(findKey(pickerNode(b), "prompt-p2").c, nil, "a prompt with no shortcut shows none")
-	local agent: any = findKey(findKey(pickerNode(b), "buttons"), "agent")
-	eq(agent.k, "text", "the Agent link is no button")
-	eq(agent.p.hidden, true, "but an unseen node of the same row")
-	eq(agent.p.href, "plotroom://github/agent/o/r/1", "for the a key and the palette command to follow")
-	eq(findKey(pickerNode(b), "prompts"), nil, "no note while prompts are offered")
+	local function action(id: string): any
+		for _, a in pickerOf(b).actions do
+			if a.id == id then
+				return a
+			end
+		end
+		return nil
+	end
+	local function link(id: string): string?
+		local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
+		return if node then node.p.href else nil
+	end
+	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs its own prompt, then the one of every filter; none for another filter's prompt, a blank one or one whose id is no link; Open last")
+	eq(action("open").primary, true, "Open is the primary button")
+	eq(action("open").keys, nil, "with no keycap")
+	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
+	eq(action("retry")["end"], nil, "both of them")
+	eq(action("worktree")["end"], true, "the PR's buttons sit on the right, by Open")
+	eq(action("prompt-p1")["end"], true, "prompts too")
+	eq(action("prompt-p1").label, "Mine", "a button is named for its prompt")
+	same(action("prompt-p1").keys, { "m" }, "and shows its shortcut")
+	eq(action("prompt-p2").keys, nil, "a prompt with no shortcut shows none")
+	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "the links sit in an unseen node")
+	eq(link("prompt-p1"), "plotroom://github/run/o/r/1/p1", "each button's link runs its prompt on the selected pull request")
+	eq(link("agent"), "plotroom://github/agent/o/r/1", "with the Agent link for the a key and the palette command")
+	b.event({ ev = "action", id = "layer.queue", act = "prompt-p1" })
+	eq(w.opened[#w.opened], "plotroom://github/run/o/r/1/p1", "a click opens the button's link")
+	b.event({ ev = "action", id = "layer.queue", act = "worktree" })
+	eq(w.opened[#w.opened], "plotroom://github/worktree/o/r/1", "Worktree's too")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
 	b.render()
-	same(keysIn("buttons"), { "open", "worktree", "goto", "prompt-p1", "prompt-p2" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
+	eq(link("goto"), "plotroom://github/goto/o/r/1", "with its link")
 	table.remove(w.panes)
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(keysIn("buttons"), { "open", "worktree", "prompt-p3", "prompt-p2" }, "under Review requested the prompt buttons swap")
-	local none = "No agent prompts for this filter · Settings (s) › Prompts"
+	same(bar(), { "settings", "retry", "worktree", "prompt-p3", "prompt-p2", "open" }, "under Review requested the prompt buttons swap")
 	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", { "f1" }, "m") })
 	b.render()
-	same(keysIn("buttons"), { "open", "worktree" }, "with none offered the row has no prompt button")
-	local hint: any = findKey(pickerNode(b), "prompts")
-	eq(hint.k, "text", "but a note")
-	eq(hint.p.spans[1].t, none, "that says where to write some")
-	eq(hint.p.spans[1].s, "muted", "in a muted tone")
-	local top: { any } = {}
-	for _, kid in pickerNode(b).c do
-		table.insert(top, if kid.p ~= nil then kid.p.key else "")
-	end
-	eq(top[(table.find(top, "buttons") :: number) + 1], "prompts", "right after the buttons row")
-	savePrompts(w, {})
-	b.render()
-	eq(findKey(pickerNode(b), "prompts").p.spans[1].t, none, "so is a card with no prompts saved at all")
+	same(bar(), { "settings", "retry", "worktree", "open" }, "with none offered the bar has no prompt button")
 end)
 
 case("host: a prompt's key opens its run link for the selected pull request, but not while searching, under a filter that does not offer it, or with ctrl, alt or meta", function(w: World)
@@ -5178,13 +5220,15 @@ local function serveChecks(s: HostScene, rollup: string, list: { any })
 	s.gh.checks["o/r#1"] = list
 end
 
--- The preview's check rows as "name — detail", in the order shown.
+-- The preview's check rows as "name — detail", in the order shown: required, then the others.
 local function runRows(b: Block): { string }
 	local out: { string } = {}
-	local list: any = findKey(pickerNode(b), "runs")
-	if list ~= nil then
-		for _, row in list.c do
-			table.insert(out, row.p.title)
+	for _, key in { "required", "runs" } do
+		local list: any = findKey(pickerNode(b), key)
+		if list then
+			for _, row in list.c do
+				table.insert(out, row.p.title)
+			end
 		end
 	end
 	return out
@@ -5251,6 +5295,92 @@ case("host: jobs that move on while the rollup stays pending replace the list th
 	w.advance(62000)
 	has(b.text(), "Pending", "the rollup did not change")
 	same(runRows(b), { "lint — In progress", "build — Passed", "test — Passed" }, "the third job's progress is only in the full list, and it is shown")
+end)
+
+case("host: a check row is its job, its workflow dim, the time it took and a toned icon; required ones apart, every check listed", function(w: World)
+	local s = hostScene(w, 0)
+	local build = job("ci / build", "failed")
+	build.completedAt = "2026-01-01T00:00:03Z"
+	build.isRequired = true
+	local gate = job("gate", "passed")
+	gate.isRequired = true
+	serveChecks(s, "FAILURE", { build, gate, job("test", "running"), job("lint", "passed"), job("docs", "passed") })
+	local b = openQueue(w)
+	w.advance(300)
+	local function rows(list: any): { string }
+		local out: { string } = {}
+		for _, row in list.c do
+			eq(row.k, "item", "only rows in a list: other kinds get no row behaviour")
+			table.insert(out, table.concat({ row.p.label, row.p.detail or "-", row.p.value or "-", row.p.icon, row.p.tone }, " "))
+		end
+		return out
+	end
+	local preview = pickerNode(b)
+	eq(findKey(preview, "required-head").p.spans[1].t, "Required · 2", "required checks under their own heading")
+	same(rows(findKey(preview, "required", "list")), { "build ci 3s x error", "gate - - check success" }, "the job, its workflow, its time and its status as an icon, worst first")
+	eq(findKey(preview, "optional-head").p.spans[1].t, "Optional · 3", "the rest under theirs")
+	same(rows(findKey(preview, "runs", "list")), { "test - - clock warning", "lint - - check success", "docs - - check success" }, "passed ones are listed too; a running check has no time and no status word")
+	local many: { any } = {}
+	for i = 1, 30 do
+		table.insert(many, job("job" .. i, "passed"))
+	end
+	serveChecks(s, "SUCCESS", many)
+	w.advance(62000)
+	preview = pickerNode(b)
+	local all: any = findKey(preview, "runs", "list")
+	eq(#all.c, 30, "thirty: every one is a row")
+	eq(all.p.max, nil, "in the preview's own scroll, not a list of its own")
+	eq(findKey(preview, "optional-head"), nil, "with no required checks there are no headings")
+end)
+
+case("host: the preview shimmers while the detail loads, then shows the merge state, each reviewer's verdict and the description, folded and foldable again", function(w: World)
+	local s = hostScene(w, 0)
+	serveChecks(s, "SUCCESS", { job("build", "passed") })
+	s.gh.about["o/r#1"] = {
+		mergeable = "CONFLICTING",
+		merge = "DIRTY",
+		body = "## Why\nBecause.<!-- CURSOR_SUMMARY -->\nGenerated recap.\n<!-- /CURSOR_SUMMARY -->",
+		reviews = array({ { login = "ann", state = "APPROVED" } }),
+		requested = array({ "bob" }),
+	}
+	local b = openQueue(w)
+	local function merge(): any
+		for _, item in findKey(pickerNode(b), "facts", "kv").p.items do
+			if item.k == "Merge" then
+				return item.v[1]
+			end
+		end
+		return nil
+	end
+	eq(merge(), nil, "no merge state before the detail loads")
+	eq(findKey(pickerNode(b), "reviewers"), nil, "nor reviewers")
+	eq(findKey(pickerNode(b), "reviewers-loading", "shimmer").p.text, "Loading reviewers…", "but Tern's shimmer under the heading")
+	eq(findKey(pickerNode(b), "runs-loading", "shimmer").p.text, "Loading checks…", "and under the checks'")
+	w.advance(300)
+	eq(merge().t, "Conflicts", "a conflicting PR says so")
+	eq(merge().s, "error", "in red")
+	local rows: { string } = {}
+	for _, item in findKey(pickerNode(b), "reviewers", "list").c do
+		eq(item.p.value, nil, "no status word: the icon is the verdict")
+		table.insert(rows, item.p.title .. " " .. item.p.icon .. " " .. item.p.tone)
+	end
+	same(rows, { "@ann — Approved check success", "@bob — Requested clock warning" }, "each reviewer with a verdict, then those still asked; the tooltip spells it out")
+	eq(findKey(pickerNode(b), "reviewers-loading"), nil, "the shimmer is gone")
+	eq(findKey(pickerNode(b), "runs-loading"), nil, "from the checks too")
+	local function card(): any
+		return findKey(pickerNode(b), "description", "card")
+	end
+	eq(card().p.head, nil, "no heading: just the text")
+	eq(card().p.collapsed, true, "the description starts folded")
+	same(card().p.preview, { lines = 6 }, "to its first lines, with Tern's button for the rest")
+	eq(findKey(card(), "body", "md").p.text, "## Why\nBecause.", "as Markdown, without Cursor's generated summary")
+	eq(findKey(pickerNode(b), "less"), nil, "nothing to fold back yet")
+	b.event({ ev = "toggle", id = "layer.queue.description", key = "description", collapsed = false })
+	eq(card().p.collapsed, false, "the more-lines button's unfolding is kept")
+	local less: any = findKey(pickerNode(b), "less", "item")
+	b.event({ ev = "action", id = "layer.queue.less", act = less.p.actions.click })
+	eq(card().p.collapsed, true, "Show less folds it again")
+	eq(findKey(pickerNode(b), "less"), nil, "and goes")
 end)
 
 case("host: Refresh reloads the checks the preview already showed, without waiting for the timer", function(w: World)
@@ -5441,7 +5571,7 @@ case("host: selecting and activating rows follows the picker, and a row that is 
 	eq(pickerOf(b).selected, "n3", "and so is an event for another surface")
 end)
 
-case("host: a worktree request becomes a badge and a card, its commands are copied, and nothing is ever run", function(w: World)
+case("host: a worktree request becomes a badge and a card that shows its commands, and nothing is ever run", function(w: World)
 	local s = hostScene(w, 2)
 	for n = 1, 2 do
 		s.git.served["refs/pull/" .. n .. "/head"] = sha("b")
@@ -5483,23 +5613,18 @@ case("host: a worktree request becomes a badge and a card, its commands are copi
 	ask(1)
 	eq(badgeOf(b).tone, "warning", "so does a worktree behind its PR")
 	local ran = #w.calls
-	b.event({ ev = "action", act = "copy-wt", value = "cleanup" })
-	eq(w.copied[1], "git -C /work/r worktree remove " .. target .. "\ngit -C /work/r branch -d plotroom/o/r/pr-1\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-1", "the cleanup commands are copied, one per line")
-	eq(w.toasts[#w.toasts].level, "success", "and acknowledged")
-	b.event({ ev = "action", act = "copy-wt", value = "update" })
-	eq(w.copied[2], "git -C " .. target .. " fetch origin refs/pull/1/head\ngit -C " .. target .. " merge --ff-only FETCH_HEAD", "the update commands are copied one per line")
-	eq(#w.calls, ran, "copying ran nothing")
+	eq(commandsOf(b, "cleanup"), "git -C /work/r worktree remove " .. target .. "\ngit -C /work/r branch -d plotroom/o/r/pr-1\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-1", "the cleanup commands, one per line, in a shell block Tern copies")
+	eq(commandsOf(b, "update"), "git -C " .. target .. " fetch origin refs/pull/1/head\ngit -C " .. target .. " merge --ff-only FETCH_HEAD", "the update commands too")
+	eq(#w.calls, ran, "showing them ran nothing")
 	s.gh.meta["o/r#1"].sha = sha("b")
 	ask(1)
 	eq(badgeOf(b).tone, "success", "caught up with its PR, the worktree is a success again")
-	b.event({ ev = "action", act = "copy-wt", value = "update" })
-	eq(#w.copied, 2, "no commands, nothing copied")
+	eq(commandsOf(b, "update"), nil, "no update commands to show")
 	s.gh.meta["o/r#1"] = nil
 	yes(type(ask(1).problem) == "string", "a PR that cannot be read is answered with the reason")
 	eq(badgeOf(b), nil, "a failed attempt shows no badge")
 	eq(cardOf(b).p.tone, "error", "but an error card")
-	b.event({ ev = "action", act = "copy-wt", value = "cleanup" })
-	eq(#w.copied, 2, "with no commands to copy")
+	eq(commandsOf(b, "cleanup"), nil, "with no commands to run")
 	w.fs.denyMkdir["/wt"] = "mkdir denied"
 	showPr(b, 2)
 	ask(2)
@@ -5573,15 +5698,13 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	lacks(cardText(b), "permission denied", "the failure is gone")
 	has(cardText(b), s.target, "and the card shows where the worktree is")
 	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
-	b.event({ ev = "action", act = "copy-wt", value = "cleanup" })
-	eq(w.copied[1], "git -C /work/r worktree remove /wt/plotroom-o_r-pr-5\ngit -C /work/r branch -d plotroom/o/r/pr-5\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5", "the cleanup commands are the real ones, for the user to run")
+	eq(commandsOf(b, "cleanup"), "git -C /work/r worktree remove /wt/plotroom-o_r-pr-5\ngit -C /work/r branch -d plotroom/o/r/pr-5\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5", "the cleanup commands are the real ones, for the user to run")
 	s.gh.meta["o/r#5"].sha = sha("c")
 	s.git.served["refs/pull/5/head"] = sha("c")
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(badgeOf(b).tone, "warning", "a reused worktree behind its pull request is flagged")
-	b.event({ ev = "action", act = "copy-wt", value = "update" })
-	eq(w.copied[2], "git -C /wt/plotroom-o_r-pr-5 fetch origin refs/pull/5/head\ngit -C /wt/plotroom-o_r-pr-5 merge --ff-only FETCH_HEAD", "with the commands that bring it up to date")
+	eq(commandsOf(b, "update"), "git -C /wt/plotroom-o_r-pr-5 fetch origin refs/pull/5/head\ngit -C /wt/plotroom-o_r-pr-5 merge --ff-only FETCH_HEAD", "with the commands that bring it up to date")
 	w.cx.agents.start = function(_self: any, _opts: any): number
 		error("no agent program", 0)
 	end

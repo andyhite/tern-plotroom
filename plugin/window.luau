@@ -12,10 +12,11 @@ local BLOCK = "plotroom.prs"
 local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
-local CHECK_NODE = "layer.queue.runs.run"
+-- The lists a check row can sit in (required, the others); ".run<i>" follows.
+local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
-local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its card button
+local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its action-bar button's hidden link
 -- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
 -- each).
 local MENU_MS = 30 * 1000
@@ -416,7 +417,7 @@ local function runPrompt(cx: WindowCx, pane: number, owner: string, repo: string
 	end)))
 end
 
--- A card button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
+-- An action-bar button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
 local function runSaved(cx: WindowCx, pane: number, owner: string, repo: string, n: number, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
@@ -489,6 +490,16 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 	end)
 end
 
+-- Whether check row `index` of the pane's live surface carries exactly `url`.
+local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
+	for _, list in CHECK_LISTS do
+		if nodeProp(readNode(cx, pane, list .. ".run" .. index), "href") == url then
+			return true
+		end
+	end
+	return false
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it.
 local function handle(cx: WindowCx, url: string, pane: number): boolean
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
@@ -500,7 +511,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	if index and target then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif nodeProp(readNode(cx, pane, CHECK_NODE .. index), "href") ~= url then
+		elseif not checkListed(cx, pane, index, url) then
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, target, "the check")
