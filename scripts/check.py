@@ -18,8 +18,9 @@ types   luau-lsp analyze --platform standard against scripts/tern-0.8.3.d.luau (
         included, fails: luau-lsp exits 0 on lint warnings.
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
 smoke   `tern serve` headless on temporary directories only (never the live daemon or plugin registry):
-        the selftest toast, no stylesheet errors in the log, and real-git worktree scenarios driven
-        through plugin.plotroom.smoke (plugin/tests/runtime.luau) with a fake gh on PATH.
+        the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
+        through plugin.plotroom.smoke (plugin/tests/runtime.luau) with a fake gh on PATH, and a
+        Plotroom block on an attached loopback host making its worktree through the real link flow.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
@@ -372,13 +373,24 @@ GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
-# Fake gh: the canned pull request file, or the 404 gh prints for a pull request it cannot see. Header is prepended.
+# Fake gh: the canned pull request file, or the 404 gh prints for a pull request it cannot see; a search answers with the
+# canned list in search.json (none: empty), a checks load with no checks. Header is prepended.
 FAKE_GH = r'''
-import os, re, sys
+import json, os, re, sys
 a = sys.argv[1:]
 m = None
 if len(a) == 6 and a[:3] == ["api", "--hostname", "github.com"] and a[4] == "--jq":
     m = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls/(\d+)", a[3])
+if a[:2] == ["api", "graphql"]:
+    fields = dict(x.split("=", 1) for x, flag in zip(a[1:], a) if flag in ("-f", "-F") and "=" in x)
+    if "q" in fields:
+        f = os.path.join(SMOKE, "search.json")
+        items = json.load(open(f)) if os.path.exists(f) else []
+        sys.stdout.write(json.dumps({"total": len(items), "next": None, "cost": 1, "items": items}))
+        sys.exit(0)
+    if "o" in fields:
+        sys.stdout.write(json.dumps({"total": 0, "next": None, "nodes": []}))
+        sys.exit(0)
 if m:
     f = os.path.join(SMOKE, "pr", "%s__%s__%s.json" % m.groups())
     if os.path.exists(f):
@@ -606,6 +618,33 @@ class Smoke:
             ok = False
         if not ok:
             self.fail("`tern ctl %s`" % " ".join(args), '{"ok":true}', repr(said.strip()))
+
+    def state(self) -> Dict[str, object]:
+        return json.loads(self.ctl("state"))
+
+    def texts(self) -> List[str]:
+        """Every text, value, label and title in the UI tree."""
+        out: List[str] = []
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                for key in ("text", "value", "label", "title"):
+                    if isinstance(node.get(key), str):
+                        out.append(node[key])
+                walk(node.get("children") or [])
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child)
+
+        walk(json.loads(self.ctl("tree")).get("tree"))
+        return out
+
+    def wait_text(self, what: str, needle: str) -> None:
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        while not any(needle in t for t in self.texts()):
+            if not self.alive() or time.monotonic() > deadline:
+                self.fail(what, "a UI text containing %r within %d s" % (needle, SMOKE_TIMEOUT), [t for t in self.texts() if re.search(r"Plotroom|PR |orktree|rror", t)][-10:])
+            time.sleep(0.2)
 
     def start(self) -> None:
         self.label = "tern serve"
@@ -880,6 +919,34 @@ def sc_recovery(s: Smoke) -> None:
     s.eq("(b, retry) worktree directory exists", True, qwt.is_dir())
 
 
+def sc_remote_host(s: Smoke) -> None:
+    """A Plotroom block on another host (an attached loopback daemon) gets its worktree from its own host half, run
+    where the block runs: the window half only asks, then opens the PR's tab on that host."""
+    root, wt, sha = s.checkout("remote"), s.wt("o/remote", 1), s.shas[("o/remote", 1)]
+    stamp = "2026-01-01T00:00:00Z"
+    pr = {"number": 1, "title": "Remote PR 1", "url": "https://github.com/o/remote/pull/1", "author": "octo", "state": "OPEN",
+          "isDraft": False, "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1,
+          "deletions": 0, "changedFiles": 1, "comments": 0, "labels": [], "runs": [], "runTotal": 0}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    s.ctl_ok("remote", "loopback", "u@devbox")
+    # The shell reports its directory (OSC 7), so Plotroom opens in the checkout.
+    s.ctl_ok("run", json.dumps("cd %s && printf '\\033]7;file://localhost%%s\\033\\\\' \"$PWD\"" % root))
+    deadline = time.monotonic() + SMOKE_TIMEOUT
+    while os.path.realpath(str(s.state()["focused"].get("cwd") or "")) != os.path.realpath(str(root)):  # type: ignore[union-attr]
+        if time.monotonic() > deadline:
+            s.fail("the shell's directory", str(root), s.state()["focused"])
+        time.sleep(0.2)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_text("the remote block lists the PR", "Remote PR 1")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
+    s.wait_text("the worktree toast", "Worktree ready for o/remote#1")
+    st = s.state()
+    s.eq("current host", "devbox", st["hosts"]["current"])  # type: ignore[index]
+    s.eq("worktree HEAD", sha, s.out(wt, "rev-parse", "HEAD"))
+    s.eq("the PR's tab", True, any(t.get("title") == "PR #1 · remote" for t in st["tabs"]))  # type: ignore[union-attr,attr-defined]
+    s.eq("its pane is in the worktree", os.path.realpath(str(wt)), os.path.realpath(str(st["focused"].get("cwd") or "")))  # type: ignore[union-attr]
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -889,6 +956,7 @@ SCENARIOS = [
     ("branch elsewhere", sc_branch_elsewhere),
     (".github", sc_dot_github),
     ("recovery", sc_recovery),
+    ("remote host", sc_remote_host),
 ]
 
 
@@ -901,6 +969,7 @@ def check_smoke() -> str:
         s.repo("o", "r", "r", (1, 2, 3))
         s.repo("github", ".github", "dotgithub", (1,))
         s.repo("p", "q", "q", (1,))
+        s.repo("o", "remote", "remote", (1,))
         s.start()
         s.selftest()
         for number, (name, scenario) in enumerate(SCENARIOS, 1):
