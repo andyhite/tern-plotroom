@@ -63,7 +63,7 @@ local function recover(cb: Waiter)
 	end
 	recovering = { cb }
 	local function finish(path: string?, err: string?, cx: WindowCx?)
-		local waiters = recovering or {}
+		local waiters: { Waiter } = recovering or {}
 		recovering = nil
 		if path then
 			recovered = path
@@ -124,8 +124,11 @@ end
 function M.run(argv: { string }, opts: ProcessOptions, done: (ProcessResult?, string?, WindowCx?) -> ())
 	local function start(path: string?): (boolean, any)
 		local env: { [string]: string } = {}
-		for k, v in opts.env or {} do
-			env[k] = v
+		local base = opts.env
+		if base then
+			for k, v in base do
+				env[k] = v
+			end
 		end
 		if path then
 			env.PATH = path

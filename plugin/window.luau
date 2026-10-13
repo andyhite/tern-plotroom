@@ -62,14 +62,10 @@ local function nodeProp(node: any, prop: string): any?
 	return nil
 end
 
-local function segment(s: string): boolean
-	return s ~= "." and s ~= ".." and string.match(s, "^[%w%-_%.]+$") ~= nil
-end
-
 local function parseLink(url: string): (string?, string?, string?, number?)
 	local kind, owner, repo, n = string.match(url, "^plotroom://github/(%a+)/([^/]+)/([^/]+)/(%d+)$")
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree") or not owner or not repo or not segment(owner) or not segment(repo) then
+	if (kind ~= "open" and kind ~= "worktree") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -130,7 +126,41 @@ local function mappedPath(repo: string): string?
 	return nil
 end
 
-local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, path: string)
+-- One persistent status per worktree attempt for the queue preview: an action event to the source pane, which
+-- host.luau keeps per PR (`worktree-status`, payload JSON in `value`). A toast alone would vanish.
+local function publish(cx: WindowCx, pane: number, status: { [string]: any })
+	pcall(function()
+		if cx.session:pane(pane) then
+			cx.session:event(pane, { ev = "action", act = "worktree-status", value = tern.json.encode(status) })
+		end
+	end)
+end
+
+local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result)
+	local summary = worktree.describe(r)
+	local current = r.head == r.prHead
+	local update = worktree.update(r)
+	-- Published before the tab opens, so the preview still shows where the worktree is if the tab cannot open.
+	publish(cx, pane, {
+		repo = repo,
+		number = n,
+		ok = true,
+		created = r.created,
+		current = current,
+		dirty = r.dirty,
+		path = r.path,
+		root = r.root,
+		branch = r.branch,
+		ref = r.ref,
+		head = r.head,
+		prHead = r.prHead,
+		prRef = r.prRef,
+		summary = summary,
+		update = if #update > 0 then update else nil,
+		cleanup = worktree.cleanup(r),
+	})
+	-- Success only when nothing needs the user's attention.
+	local level: ToastLevel = if current and r.dirty ~= true then "success" else "info"
 	local tab = cx.session:tab_of(pane)
 	local sessionId: number? = nil
 	if tab then
@@ -145,16 +175,19 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 		exists = exists or s.id == sessionId
 	end
 	if not tab or not sessionId or not exists then
-		return cx:toast("success", "Worktree ready", path .. " (the source pane closed, so no tab was opened)")
+		return cx:toast(level, "Worktree ready (the source pane closed, so no tab was opened)", r.path .. " · " .. summary)
 	end
 	cx.sessions:switch(sessionId)
-	local newPane = cx.layout:new_tab({ cwd = path })
-	local newTab = if newPane then cx.session:tab_of(newPane) else nil
+	local newPane = cx.layout:new_tab({ cwd = r.path })
+	if not newPane then
+		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
+	end
+	local newTab = cx.session:tab_of(newPane)
 	if newTab then
 		local name = string.match(repo, "/(.+)$") or repo
 		cx.layout:name_tab(newTab, "PR #" .. n .. " · " .. name)
 	end
-	cx:toast("success", "Worktree ready for " .. repo .. "#" .. n, path)
+	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, summary)
 end
 
 local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
@@ -173,9 +206,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		launch = nil
 	end
 	inflight[flight] = true
-	process.reset()
-	cx:toast("info", "Preparing worktree for " .. full .. "#" .. n)
-	worktree.open(launch, mappedPath(full), full, n, function(path, problem, cx2)
+	local function done(result: worktree.Result?, problem: string?, cx2: WindowCx?)
 		inflight[flight] = nil
 		if not cx2 then
 			return
@@ -186,11 +217,29 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 			end
 			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then choose Worktree again.")
 		end
-		if not path then
-			return cx2:toast("error", "Worktree failed", problem)
+		if not result then
+			local why = problem or "Worktree failed"
+			publish(cx2, pane, { repo = full, number = n, ok = false, message = why })
+			return cx2:toast("error", "Worktree failed", why)
 		end
-		finishWorktree(cx2, pane, full, n, path)
+		-- The worktree exists whatever happens next: a failing tab call must not hide its path.
+		local ok, why = pcall(function()
+			finishWorktree(cx2, pane, full, n, result)
+		end)
+		if not ok then
+			cx2:toast("error", "Worktree ready, but its tab did not open", result.path .. " · " .. tostring(why))
+		end
+	end
+	-- worktree.open always ends in done; if anything raises before it could start, release the PR here.
+	local started, why = pcall(function()
+		process.reset()
+		cx:toast("info", "Preparing worktree for " .. full .. "#" .. n)
+		worktree.open(launch, mappedPath(full), full, n, done)
 	end)
+	if not started then
+		inflight[flight] = nil
+		cx:toast("error", "Worktree failed", tostring(why))
+	end
 end
 
 -- Validates a plotroom:// link against the pane's live surface and runs it.
@@ -302,6 +351,13 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 		run = function(cx: WindowCx)
 			require("./tests/check").run()
 			cx:toast("success", "Plotroom self-test passed")
+		end,
+	})
+	tern.command({
+		id = "smoke",
+		title = "Plotroom: Worktree smoke",
+		run = function(cx: WindowCx)
+			require("./tests/runtime").run(cx)
 		end,
 	})
 end

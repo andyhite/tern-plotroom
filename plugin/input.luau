@@ -15,14 +15,40 @@ export type Model = {
 local UNDO_LIMIT = 50
 
 -- Valid UTF-8 only, line breaks as spaces, other control characters dropped.
+-- A malformed byte is dropped alone; the valid characters around it stay.
 function M.clean(s: string): string
 	s = string.gsub(s, "\r\n", " ")
 	s = string.gsub(s, "[\r\n]", " ")
-	local out = {}
-	for ch in string.gmatch(s, utf8.charpattern) do
-		if utf8.len(ch) ~= nil and string.find(ch, "^[%c]") == nil then
-			table.insert(out, ch)
+	if string.find(s, "[%c\128-\255]") == nil then
+		return s
+	end
+	local out: { string } = {}
+	local from, i, n = 1, 1, #s
+	while i <= n do
+		local b = string.byte(s, i)
+		local step = 1
+		local ok: boolean
+		if b < 0x80 then
+			ok = b >= 0x20 and b ~= 0x7F
+		else
+			step = if b >= 0xF0 then 4 elseif b >= 0xE0 then 3 elseif b >= 0xC0 then 2 else 1
+			ok = step > 1 and utf8.len(s, i, i) ~= nil
+			if not ok then
+				step = 1
+			end
 		end
+		if ok then
+			i += step
+		else
+			if from < i then
+				table.insert(out, string.sub(s, from, i - 1))
+			end
+			i += 1
+			from = i
+		end
+	end
+	if from <= n then
+		table.insert(out, string.sub(s, from))
 	end
 	return table.concat(out)
 end
@@ -86,12 +112,17 @@ local function splice(m: Model, lo: number, hi: number, s: string)
 	m.anchor = nil
 end
 
+local function range(m: Model): (number, number)
+	local lo, hi = M.selection(m)
+	if lo and hi then
+		return lo, hi
+	end
+	return m.cur, m.cur
+end
+
 function M.insert(m: Model, s: string)
 	s = M.clean(s)
-	local lo, hi = M.selection(m)
-	if not lo or not hi then
-		lo, hi = m.cur, m.cur
-	end
+	local lo, hi = range(m)
 	if s == "" and lo == hi then
 		return
 	end
@@ -117,10 +148,39 @@ function M.props(m: Model): { [string]: any }
 	}
 end
 
+-- Word characters: ASCII letters, digits, underscore, and every non-ASCII
+-- byte (so a UTF-8 character is never split). No Unicode tables, by design.
+local function isWord(b: number): boolean
+	return b >= 0x80 or b == 95 or (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+end
+
+-- Byte offset of the start of the word at or before `off`.
+local function wordLeft(text: string, off: number): number
+	while off > 0 and not isWord(string.byte(text, off)) do
+		off -= 1
+	end
+	while off > 0 and isWord(string.byte(text, off)) do
+		off -= 1
+	end
+	return off
+end
+
+-- Byte offset of the end of the word at or after `off`.
+local function wordRight(text: string, off: number): number
+	local n = #text
+	while off < n and not isWord(string.byte(text, off + 1)) do
+		off += 1
+	end
+	while off < n and isWord(string.byte(text, off + 1)) do
+		off += 1
+	end
+	return off
+end
+
 -- Handles one key press; false when the key is not an editing key (so the
 -- caller can route Tab/Enter/Escape). `copy` receives text for copy/cut.
+-- Ctrl or Alt (without Cmd) with left/right/backspace/delete works by word.
 function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
-	local mod = key.ctrl or key.meta
 	local name = key.name
 	if name == "paste" then
 		M.insert(m, key.text or "")
@@ -136,7 +196,9 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 		end
 		m.cur = to
 	end
-	if mod then
+	local word = (key.ctrl or key.alt) and not key.meta
+	local nav = name == "left" or name == "right" or name == "backspace" or name == "delete"
+	if (key.ctrl or key.meta) and not (word and nav) then
 		if name == "a" then
 			m.anchor, m.cur = 0, #m.text
 		elseif name == "c" or name == "x" then
@@ -160,13 +222,13 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 		if lo and not key.shift then
 			m.cur, m.anchor = lo, nil
 		else
-			move(prev(m.text, m.cur))
+			move(if word then wordLeft(m.text, m.cur) else prev(m.text, m.cur))
 		end
 	elseif name == "right" then
 		if hi and not key.shift then
 			m.cur, m.anchor = hi, nil
 		else
-			move(nextOff(m.text, m.cur))
+			move(if word then wordRight(m.text, m.cur) else nextOff(m.text, m.cur))
 		end
 	elseif name == "home" then
 		move(0)
@@ -176,16 +238,16 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 		if lo and hi then
 			splice(m, lo, hi, "")
 		elseif m.cur > 0 then
-			splice(m, prev(m.text, m.cur), m.cur, "")
+			splice(m, if word then wordLeft(m.text, m.cur) else prev(m.text, m.cur), m.cur, "")
 		end
 	elseif name == "delete" then
 		if lo and hi then
 			splice(m, lo, hi, "")
 		elseif m.cur < #m.text then
-			splice(m, m.cur, nextOff(m.text, m.cur), "")
+			splice(m, m.cur, if word then wordRight(m.text, m.cur) else nextOff(m.text, m.cur), "")
 		end
 	elseif key.text and key.text ~= "" and string.find(key.text, "^%c") == nil then
-		M.insert(m, key.text or "")
+		M.insert(m, key.text)
 	else
 		return false
 	end

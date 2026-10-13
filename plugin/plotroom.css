@@ -1,4 +1,5 @@
-/* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. */
+/* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. Only syntax Tern's engine accepts
+   (docs.stencil.so/tern/styles/css.md): no logical properties such as padding-block, no rem/ch units, no :has(). */
 
 /* The block has no dock; its empty strip would show the pane color under the settings page. */
 [data-surface='plugin.plotroom.prs'] .sf-region.sf-dock {
@@ -15,7 +16,7 @@
 	display: none;
 }
 
-/* Branch names and check names are cut with an ellipsis; the full text is the row's tooltip. */
+/* Branch names and check names are cut with an ellipsis; the full text is the row's tooltip and accessible name. */
 [data-surface='plugin.plotroom.prs'] .plotroom-fact,
 [data-surface='plugin.plotroom.prs'] .plotroom-run {
 	display: flex;
@@ -42,7 +43,8 @@
 }
 
 [data-surface='plugin.plotroom.prs'] .plotroom-runs .plotroom-run {
-	padding-block: 1px;
+	padding-top: 3px;
+	padding-bottom: 3px;
 	line-height: 1.3;
 }
 
@@ -67,7 +69,7 @@
 [data-surface='plugin.plotroom.prs'] button.plotroom-more {
 	background: none;
 	box-shadow: none;
-	padding: 2px 0;
+	padding: 3px 0;
 	color: var(--t3);
 	font-family: var(--sans);
 	font-size: 12px;
@@ -106,8 +108,25 @@
 	color: var(--t3);
 }
 
-/* Esc still clears the search; its head keycap would sit under Settings and Refresh. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
+/* A command the user may run: it wraps anywhere, so a long path never widens a narrow pane. */
+[data-surface='plugin.plotroom.prs'] .plotroom-cmd {
+	font-size: 11px;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+
+/* Narrow panes: the action bar wraps onto more rows instead of pushing Worktree/Open past the edge. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 48px;
+	padding-top: 6px;
+	padding-bottom: 6px;
+	gap: 6px;
+}
+
+/* With no search open, Esc has nothing to close: its head keycap shows only while searching (the Clear search action carries it). */
+[data-surface='plugin.plotroom.prs'] .sf-picker.no-query .pk-esc {
 	display: none;
 }
 
@@ -149,6 +168,7 @@
 	transform: scale(0.97);
 }
 
+/* White text on the *-fill tokens is their documented pairing (at least 4.5:1 in both appearances). */
 [data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary {
 	background: var(--accent-fill);
 	box-shadow: none;
@@ -163,44 +183,23 @@
 
 [data-surface='plugin.plotroom.prs'] button.plotroom-btn.primary .kbd,
 [data-surface='plugin.plotroom.prs'] button.plotroom-btn.danger .kbd {
-	background: rgba(255, 255, 255, 0.18);
+	background: rgb(255 255 255 / 18%);
 	box-shadow: none;
 	color: #fff;
+}
+
+/* Keyboard focus stays visible on every button the block draws, whatever its fill or shadow. */
+[data-surface='plugin.plotroom.prs'] button.plotroom-btn:focus-visible,
+[data-surface='plugin.plotroom.prs'] button.plotroom-run:focus-visible,
+[data-surface='plugin.plotroom.prs'] button.plotroom-more:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	[data-surface='plugin.plotroom.prs'] button.plotroom-btn {
 		transition: none;
 	}
-}
-
-/* The picker has no head actions, so Settings and Refresh leave the bar and sit top-right, where the count was. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-sheet {
-	position: relative;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'],
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
-	position: absolute;
-	top: 10px;
-	z-index: 2;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
-	right: 0;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'] {
-	right: 73px;
-}
-
-/* The bar holds only the two moved buttons: collapse it so it leaves no empty strip. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
-	height: 0;
-	min-height: 0;
-	padding: 0;
-	border: 0;
-	overflow: visible;
 }
 
 /* The pane already pads the sheet by 10px, so the head is trimmed to keep the top gap in line with the sides. */
