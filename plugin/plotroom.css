@@ -115,18 +115,37 @@
 	white-space: pre-wrap;
 }
 
-/* Narrow panes: the action bar wraps onto more rows instead of pushing Worktree/Open past the edge. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
-	flex-wrap: wrap;
-	height: auto;
-	min-height: 48px;
-	padding-top: 6px;
-	padding-bottom: 6px;
-	gap: 6px;
+/* The picker has no head actions, so Settings and Refresh leave the bar and sit top-right, where the count was. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-sheet {
+	position: relative;
 }
 
-/* With no search open, Esc has nothing to close: its head keycap shows only while searching (the Clear search action carries it). */
-[data-surface='plugin.plotroom.prs'] .sf-picker.no-query .pk-esc {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'],
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
+	position: absolute;
+	top: 10px;
+	z-index: 2;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Refresh'] {
+	right: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn[title^='Settings'] {
+	right: 73px;
+}
+
+/* The bar holds only the two moved buttons: collapse it so it leaves no empty strip. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar {
+	height: 0;
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	overflow: visible;
+}
+
+/* Esc still clears the search; its head keycap would sit under Settings and Refresh. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
 	display: none;
 }
 

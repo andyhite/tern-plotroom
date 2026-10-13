@@ -883,6 +883,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		command = function(def: any)
 			commands[def.id] = def
 		end,
+		on = function(_name: string, _fn: any) end, -- lifecycle events never fire in the fake world
 		route = {
 			link = function(fn: any)
 				routes.link = fn
@@ -3101,7 +3102,7 @@ end
 -- Opens Settings on `page` with its first row focused.
 local function goToSettings(b: Block, page: string)
 	b.typeText("s")
-	local turns = if page == "github" then 1 elseif page == "worktrees" then 2 else 0
+	local turns = (table.find({ "filters", "commands", "github", "worktrees" }, page) or 1) - 1
 	for _ = 1, turns do
 		b.press("tab")
 	end

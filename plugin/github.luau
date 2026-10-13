@@ -361,6 +361,20 @@ function M.match(pr: Pr, needle: string): (boolean, { number }?)
 	return string.find(string.lower("#" .. pr.number .. " " .. pr.author .. " " .. pr.head), q, 1, true) ~= nil, nil
 end
 
+-- `text` with {number}, {url}, {title}, {repo}, {branch}, {base} and {author} replaced by `pr`'s values; other braces stay.
+function M.fill(text: string, pr: Pr): string
+	local vars: { [string]: string } = {
+		number = tostring(pr.number),
+		url = pr.url,
+		title = pr.title,
+		repo = pr.repo,
+		branch = pr.head,
+		base = pr.base,
+		author = pr.author,
+	}
+	return (string.gsub(text, "{(%a+)}", vars))
+end
+
 -- Deduplicated by identity, newest update first, identity as the tie-break.
 function M.reconcile(prs: { Pr }): { Pr }
 	local seen: { [string]: boolean } = {}

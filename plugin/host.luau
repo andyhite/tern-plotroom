@@ -16,7 +16,8 @@ local DETAIL_RETRY_MAX_S = 300
 local NOTE_CAP = 20 -- worktree reports kept per block
 
 type Filter = { id: string, name: string, query: string }
-type Store = { version: number, nextId: number, items: { Filter } }
+type Command = { id: string, name: string, text: string, filters: { string }, repo: string? } -- repo: "github.com/<owner>/<repo>" lowercase; nil = every repository
+type Store = { version: number, nextId: number, items: { Filter }, commands: { Command } }
 -- `rows` caches the picker rows; `rowsRev` (worktree reports) and `rowsMin` (the minute, for the ages) say what built them.
 type Snap = {
 	prs: { github.Pr },
@@ -26,6 +27,7 @@ type Snap = {
 	rows: { any }?,
 	rowsRev: number?,
 	rowsMin: number?,
+	rowsOpen: string?, -- the open-in-a-tab PR numbers, comma-joined
 }
 -- What the local search lets through: computed once per snapshot and search text.
 type Visible = { snap: Snap, needle: string, prs: { github.Pr }, order: { string }, hits: { [string]: any }? }
@@ -50,12 +52,13 @@ type Note = {
 	cleanup: { string },
 }
 type Settings = {
-	page: string, -- "filters" | "github" | "worktrees"
+	page: string, -- "filters" | "commands" | "github" | "worktrees"
 	focus: string?, -- focused prefs row id
 	edit: { row: string, model: input.Model }?, -- text row being edited
 	errors: { [string]: string? }, -- row id -> warning under the row
 	busy: boolean, -- checkout path being verified
-	confirm: string?, -- filter id awaiting delete confirmation
+	confirm: string?, -- row id awaiting delete confirmation: "delete:<filter id>" or "cdelete:<command id>"
+	option: number?, -- 1-based highlighted chip of the focused multi row
 }
 
 type State = {
@@ -110,6 +113,7 @@ local function seeds(): Store
 			{ id = "f1", name = "My PRs", query = "is:open author:@me" },
 			{ id = "f2", name = "Review requested", query = "is:open review-requested:@me" },
 		},
+		commands = {},
 	}
 end
 
@@ -124,7 +128,34 @@ local function validStore(v: any): Store?
 		end
 		table.insert(items, { id = f.id, name = f.name, query = f.query })
 	end
-	return { version = 1, nextId = v.nextId, items = items }
+	local commands: { Command } = {}
+	if v.commands ~= nil then
+		if not isTable(v.commands) then
+			return nil
+		end
+		for _, c in v.commands do
+			if not isTable(c) or type(c.id) ~= "string" or type(c.name) ~= "string" or type(c.text) ~= "string" then
+				return nil
+			end
+			if c.repo ~= nil and type(c.repo) ~= "string" then
+				return nil
+			end
+			local filters: { string } = {}
+			if c.filters ~= nil then
+				if not isTable(c.filters) then
+					return nil
+				end
+				for _, id in c.filters do
+					if type(id) ~= "string" then
+						return nil
+					end
+					table.insert(filters, id)
+				end
+			end
+			table.insert(commands, { id = c.id, name = c.name, text = c.text, filters = filters, repo = c.repo })
+		end
+	end
+	return { version = 1, nextId = v.nextId, items = items, commands = commands }
 end
 
 -- tern.kv.set raises on failure and returns nothing: the error text, or nil when saved.
@@ -140,10 +171,15 @@ local function kvSet(key: string, value: any): string?
 end
 
 local function writeStore(store: Store): string?
+	local commands: { any } = {}
+	for _, c in store.commands do
+		table.insert(commands, { id = c.id, name = c.name, text = c.text, filters = tern.json.array(c.filters), repo = c.repo })
+	end
 	return kvSet("filters", {
 		version = 1,
 		nextId = store.nextId,
 		items = tern.json.array(store.items),
+		commands = tern.json.array(commands),
 	})
 end
 
@@ -234,6 +270,20 @@ local function activeFilter(state: State): Filter?
 	return nil
 end
 
+-- The ids of `c.filters` that still name a saved filter.
+local function liveFilters(state: State, c: Command): { string }
+	local out: { string } = {}
+	for _, id in c.filters do
+		for _, f in state.store.items do
+			if f.id == id then
+				table.insert(out, id)
+				break
+			end
+		end
+	end
+	return out
+end
+
 local function indexOf(prs: { github.Pr }, key: string?): number
 	for i, pr in prs do
 		if pr.key == key then
@@ -249,6 +299,21 @@ local function selectedPr(state: State): github.Pr?
 		return snap.prs[indexOf(snap.prs, state.cursor)]
 	end
 	return nil
+end
+
+-- Numbers of the launch repo's PRs whose Plotroom worktree holds some pane's cwd on this host.
+local function openPrs(state: State): { [number]: boolean }
+	local open: { [number]: boolean } = {}
+	local repo = state.repo
+	if repo then
+		for _, p in tern.pane.list() do
+			local n = if p.cwd then worktree.prOfPath(p.cwd, repo) else nil
+			if n then
+				open[n] = true
+			end
+		end
+	end
+	return open
 end
 
 local function trim(s: string): string
@@ -789,9 +854,10 @@ end
 
 local QUEUE_ID = "layer.queue"
 local SETTINGS_ID = "main.settings"
-local PAGES = { "filters", "github", "worktrees" }
+local PAGES = { "filters", "commands", "github", "worktrees" }
 local PAGE_DEFS = {
 	{ id = "filters", label = "Filters", group = "Queue", icon = "funnel" },
+	{ id = "commands", label = "Commands", group = "Queue", icon = "prompt" },
 	{ id = "github", label = "GitHub", group = "Connection", icon = "globe" },
 	{ id = "worktrees", label = "Worktrees", group = "Connection", icon = "tree" },
 }
@@ -822,6 +888,8 @@ local QUEUE_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
 	{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
 	{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab" },
+	{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
+	{ keys = { "1", "9" }, text = "Run the agent command with that number on the selected pull request (1 through 9)" },
 	{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
 	{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
 	{ keys = { "r" }, text = "Refresh now" },
@@ -830,6 +898,7 @@ local QUEUE_KEYS: { KeyHelp } = {
 }
 local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
+	{ keys = { "←", "→" }, text = "Move between the chips of a Filters row; Enter turns the highlighted one on or off" },
 	{ keys = { "Enter" }, text = "Edit a text row or press its button; while editing, Enter saves" },
 	{ keys = { "Esc" }, text = "Cancel the edit without saving; with nothing being edited, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
@@ -899,6 +968,58 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					hint = "Adds a filter for open pull requests; name it and edit its query.",
 					disabled = locked,
 					control = { k = "action", act = "add", label = "Add filter" },
+				},
+			},
+		})
+	elseif s.page == "commands" then
+		lead = "Each command is a prompt for a coding agent. Clicking it on a pull request opens the pull request's worktree in a tab, starts an agent there and sends the prompt. {url}, {number}, {title}, {branch}, {base}, {author} and {repo} become the pull request's values."
+		local locked = if state.writable then nil else (state.storeError or "Saved commands are read-only.")
+		local key = if state.repo then "github.com/" .. string.lower(state.repo) else nil
+		local options: { any } = {}
+		for _, f in state.store.items do
+			table.insert(options, { value = f.id, label = f.name })
+		end
+		local noFilters = if #state.store.items == 0 then "No saved filters yet." else nil
+		for _, c in state.store.commands do
+			if c.repo == nil or c.repo == key then
+				local id = c.id
+				local rows: { Row } = {
+					{ id = "cname:" .. id, label = "Name", disabled = locked, control = { k = "text", value = c.name, placeholder = "Review this PR" } },
+					{
+						id = "ctext:" .. id,
+						label = "Prompt",
+						hint = "Sent as one message after the placeholders are filled in.",
+						disabled = locked,
+						control = { k = "text", value = c.text, placeholder = "Review {url} and list the risks", mono = true },
+					},
+					{
+						id = "cfilters:" .. id,
+						label = "Filters",
+						hint = "Shown on the chosen filters; none chosen: every filter.",
+						disabled = locked or noFilters,
+						control = { k = "multi", values = tern.json.array(liveFilters(state, c)), options = tern.json.array(options) },
+					},
+					{
+						id = "crepo:" .. id,
+						label = "Only this repository",
+						hint = if state.repo then "On: only " .. state.repo .. ". Off: every repository." else nil,
+						disabled = locked or (if state.repo then nil else NO_REPO),
+						control = { k = "switch", on = c.repo ~= nil },
+					},
+					{ id = "cdelete:" .. id, label = "Delete command", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } },
+				}
+				table.insert(sections, { id = "command:" .. id, title = c.name .. (if c.repo then " · this repository" else ""), rows = rows })
+			end
+		end
+		table.insert(sections, {
+			id = "new-command",
+			rows = {
+				{
+					id = "cadd",
+					label = "New command",
+					hint = "Adds a command for every filter and repository; name it, then write its prompt.",
+					disabled = locked,
+					control = { k = "action", act = "add-command", label = "Add command" },
 				},
 			},
 		})
@@ -1186,6 +1307,127 @@ local function deleteFilter(state: State, id: string)
 	propagate(state)
 end
 
+-- Rereads the store, lets `fn` change it (an error string aborts) and writes it back; an error message or nil.
+local function saveStore(state: State, fn: (Store) -> string?): string?
+	local store, writable, err = loadStore()
+	if not writable then
+		state.store, state.writable, state.storeError = store, false, err
+		return err or "Commands cannot be saved."
+	end
+	local ferr = fn(store)
+	if ferr then
+		return ferr
+	end
+	local werr = writeStore(store)
+	if werr then
+		return "Could not save: " .. werr
+	end
+	state.store, state.writable, state.storeError = store, true, nil
+	propagate(state)
+	return nil
+end
+
+local function updateCommand(state: State, id: string, fn: (Command) -> ()): string?
+	return saveStore(state, function(store: Store): string?
+		for _, c in store.commands do
+			if c.id == id then
+				fn(c)
+				return nil
+			end
+		end
+		return "That command was deleted elsewhere."
+	end)
+end
+
+local function addCommand(state: State)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local id = ""
+	local err = saveStore(state, function(store: Store): string?
+		id = "c" .. store.nextId
+		store.nextId += 1
+		table.insert(store.commands, { id = id, name = "New command", text = "", filters = {} })
+		return nil
+	end)
+	s.errors.cadd = err
+	if not err then
+		beginEdit(state, "cname:" .. id, "")
+	end
+end
+
+local function deleteCommand(state: State, id: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	s.confirm = nil
+	local err = saveStore(state, function(store: Store): string?
+		for i, c in store.commands do
+			if c.id == id then
+				table.remove(store.commands, i)
+				break
+			end
+		end
+		return nil
+	end)
+	s.errors["cdelete:" .. id] = err
+	if not err then
+		s.focus = "cadd"
+	end
+end
+
+-- Deletes what `s.confirm` names: a filter ("delete:<id>") or a command ("cdelete:<id>").
+local function confirmDelete(state: State)
+	local s = state.settings
+	local kind, id = string.match(if s and s.confirm then s.confirm else "", "^(%a+):(.+)$")
+	if kind == "cdelete" and id then
+		deleteCommand(state, id)
+	elseif kind == "delete" and id then
+		deleteFilter(state, id)
+	end
+end
+
+-- A switch or chip row changed to `value`.
+local function changeRow(state: State, row: string, value: any)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local kind, id = string.match(row, "^(%a+):(.+)$")
+	local err: string? = nil
+	if kind == "crepo" and id and type(value) == "boolean" then
+		local repo = state.repo
+		if not repo then
+			err = NO_REPO
+		else
+			err = updateCommand(state, id, function(c: Command)
+				c.repo = if value then "github.com/" .. string.lower(repo) else nil
+			end)
+		end
+	elseif kind == "cfilters" and id and isTable(value) then
+		local ids: { string } = {}
+		for _, v in value do
+			if type(v) == "string" then
+				for _, f in state.store.items do
+					if f.id == v then
+						table.insert(ids, v)
+						break
+					end
+				end
+			end
+		end
+		err = updateCommand(state, id, function(c: Command)
+			c.filters = ids
+		end)
+	else
+		return
+	end
+	s.focus = row
+	s.errors[row] = err
+end
+
 local function runAction(state: State, act: string, row: string)
 	local s = state.settings
 	if not s then
@@ -1193,8 +1435,10 @@ local function runAction(state: State, act: string, row: string)
 	end
 	if act == "add" then
 		addFilter(state)
+	elseif act == "add-command" then
+		addCommand(state)
 	elseif act == "delete" then
-		s.confirm = string.match(row, "^delete:(.+)$")
+		s.confirm = row
 	elseif act == "refresh" then
 		retry(state)
 	end
@@ -1212,6 +1456,27 @@ local function runRow(state: State, row: string?)
 		beginEdit(state, row)
 	elseif def.control.k == "action" then
 		runAction(state, def.control.act, row)
+	elseif def.control.k == "switch" then
+		changeRow(state, row, not def.control.on)
+	elseif def.control.k == "multi" then
+		local options = def.control.options
+		local opt = options[math.min(state.settings and state.settings.option or 1, #options)]
+		if not opt then
+			return
+		end
+		local values: { string } = {}
+		local had = false
+		for _, v in def.control.values do
+			if v == opt.value then
+				had = true
+			else
+				table.insert(values, v)
+			end
+		end
+		if not had then
+			table.insert(values, opt.value)
+		end
+		changeRow(state, row, values)
 	end
 end
 
@@ -1243,6 +1508,22 @@ local function commitEdit(state: State)
 					f.name = text
 				else
 					f.query = text
+				end
+			end)
+		end
+		settle(s, row, err)
+	elseif (kind == "cname" or kind == "ctext") and id then
+		local err: string? = nil
+		if text == "" then
+			err = if kind == "cname" then "A name is required." else "A prompt is required."
+		elseif kind == "ctext" and #text > 1000 then
+			err = "Prompts are limited to 1000 bytes."
+		else
+			err = updateCommand(state, id, function(c: Command)
+				if kind == "cname" then
+					c.name = text
+				else
+					c.text = text
 				end
 			end)
 		end
@@ -1351,10 +1632,13 @@ local function noteTone(note: Note): string
 	return if note.current and note.dirty == false then "success" else "warning"
 end
 
-local function pickerItem(pr: github.Pr, note: Note?): { [string]: any }
+local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]: any }
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local kind = stateKind(pr)
 	local badges: { any } = {}
+	if open then
+		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this pull request's worktree (g goes there)" })
+	end
 	if note and note.ok then
 		table.insert(badges, {
 			text = "Worktree",
@@ -1388,30 +1672,46 @@ local function pickerItem(pr: github.Pr, note: Note?): { [string]: any }
 	}
 end
 
--- The picker rows of a snapshot, built once: again only when a worktree report arrives or the minute changes (the ages).
-local function rowsOf(state: State, snap: Snap): { any }
+-- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
+-- ages) or the set of PRs open in a tab changes.
+local function rowsOf(state: State, snap: Snap, open: { [number]: boolean }): { any }
 	local minute = os.time() // 60
+	local nums: { number } = {}
+	for n in open do
+		table.insert(nums, n)
+	end
+	table.sort(nums)
+	local openKey = table.concat(nums, ",")
 	local cached = snap.rows
-	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute then
+	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsOpen == openKey then
 		return cached
 	end
 	local rows: { any } = {}
 	for _, pr in snap.prs do
-		table.insert(rows, pickerItem(pr, state.notes[pr.key]))
+		table.insert(rows, pickerItem(pr, state.notes[pr.key], open[pr.number] == true))
 	end
 	tern.json.array(rows)
-	snap.rows, snap.rowsRev, snap.rowsMin = rows, state.noteSeq, minute
+	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
 	return rows
 end
 
 local CHECK_LIMIT = 8
 
+-- Percent-encodes everything but unreserved URL characters.
+local function pct(s: string): string
+	return (string.gsub(s, "[^%w%-_%.~]", function(c)
+		return string.format("%%%02X", string.byte(c))
+	end))
+end
+
 -- Link to a check's page: its row index (the window reads the live row to validate) and the percent-encoded URL.
 local function checkHref(i: number, url: string): string
-	local enc = string.gsub(url, "[^%w%-_%.~]", function(c)
-		return string.format("%%%02X", string.byte(c))
-	end)
-	return "plotroom://github/check/" .. i .. "/" .. enc
+	return "plotroom://github/check/" .. i .. "/" .. pct(url)
+end
+
+-- Link that runs command button `i` on `pr`: the window checks it against the live button, then sends `prompt`.
+local function commandHref(pr: github.Pr, i: number, prompt: string): string
+	return "plotroom://github/command/" .. pr.repo .. "/" .. pr.number .. "/" .. i .. "/" .. pct(prompt)
 end
 
 local loadDetails: (State, string) -> ()
@@ -1732,7 +2032,20 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	return out
 end
 
-local function previewNodes(state: State): { Node }
+-- Commands shown for `pr` on the active filter, in store order, prompts filled in.
+local function commandsFor(state: State, pr: github.Pr): { { name: string, text: string } }
+	local out: { { name: string, text: string } } = {}
+	local key = "github.com/" .. string.lower(pr.repo)
+	for _, c in state.store.commands do
+		local ids = liveFilters(state, c)
+		if trim(c.text) ~= "" and (c.repo == nil or c.repo == key) and (#ids == 0 or table.find(ids, state.activeId or "")) then
+			table.insert(out, { name = c.name, text = github.fill(c.text, pr) })
+		end
+	end
+	return out
+end
+
+local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 	local pr = selectedPr(state)
 	if not pr then
 		cancelDetails(state)
@@ -1747,6 +2060,9 @@ local function previewNodes(state: State): { Node }
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
 	local chips: { Node } = { ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }) }
+	if open[pr.number] then
+		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
+	end
 	for i, l in pr.labels do
 		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
 	end
@@ -1766,7 +2082,7 @@ local function previewNodes(state: State): { Node }
 		{ k = "Updated", v = github.age(pr.updated) .. " ago" },
 	}
 	-- Buttons sit above the facts so a short pane never clips them.
-	local buttons = ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
+	local btns: { Node } = {
 		ui.el("button", {
 			key = "open",
 			class = "plotroom-btn primary",
@@ -1785,13 +2101,46 @@ local function previewNodes(state: State): { Node }
 			title = "Check out in a worktree tab",
 			aria = "Check out pull request #" .. pr.number .. " in a worktree tab",
 		}, { ui.node("kbd", { keys = { "w" } }) }),
-		ui.el("button", { key = "copy", class = "plotroom-btn", text = "Copy link", href = pr.url, actions = { click = "copy" } }),
-	})
+	}
+	if open[pr.number] then
+		table.insert(
+			btns,
+			ui.el("button", {
+				key = "goto",
+				class = "plotroom-btn",
+				text = "Go to tab",
+				href = prHref("goto", pr),
+				actions = { click = "open" },
+				title = "Show the tab working in this pull request's worktree",
+			}, { ui.node("kbd", { keys = { "g" } }) })
+		)
+	end
+	table.insert(btns, ui.el("button", { key = "copy", class = "plotroom-btn", text = "Copy link", href = pr.url, actions = { click = "copy" } }))
+	local buttons = ui.el("div", { key = "buttons", class = "plotroom-actions" }, btns)
 	local out: { Node } = {
 		ui.node("text", { key = "title", role = "plotroom.title", spans = { ui.span(pr.title, "strong") } }),
 		ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips),
 		buttons,
 	}
+	local cmds = commandsFor(state, pr)
+	if #cmds > 0 then
+		local cbtns: { Node } = {}
+		for i, c in cmds do
+			table.insert(
+				cbtns,
+				ui.el("button", {
+					key = "cmd" .. i,
+					class = "plotroom-btn",
+					text = c.name,
+					title = c.text,
+					href = commandHref(pr, i, c.text),
+					actions = { click = "open" },
+				}, if i <= 9 then { ui.node("kbd", { keys = { tostring(i) } }) } else nil)
+			)
+		end
+		table.insert(out, ui.node("text", { key = "commands-head", spans = { ui.span("Agent commands", "strong") } }))
+		table.insert(out, ui.el("div", { key = "commands", class = "plotroom-actions" }, cbtns))
+	end
 	for _, n in worktreeNodes(state, pr) do
 		table.insert(out, n)
 	end
@@ -1851,8 +2200,9 @@ local function queueView(state: State): BlockView
 	local v = filtered(state)
 	local items: { any } = {}
 	local order: { string } = {}
+	local open = openPrs(state)
 	if snap then
-		items = rowsOf(state, snap)
+		items = rowsOf(state, snap, open)
 	else
 		tern.json.array(items)
 	end
@@ -1895,26 +2245,15 @@ local function queueView(state: State): BlockView
 	end
 
 	local wait = if state.account then github.wait(os.time(), login(state)) else 0
-	local none = if pr then nil else "Select a pull request"
-	local actions: { any } = {}
-	if state.query then
-		table.insert(actions, { id = "clear", label = "Clear search", keys = { "esc" } })
-	else
-		table.insert(actions, { id = "search", label = "Search", keys = { "/" } })
-	end
-	if #state.store.items > 0 then
-		table.insert(actions, { id = "filters", label = "Filters", keys = { "tab" } })
-	end
-	table.insert(actions, { id = "settings", label = "Settings", keys = { "s" } })
-	table.insert(actions, {
-		id = "retry",
-		label = "Refresh",
-		keys = { "r" },
-		disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
-	})
-	table.insert(actions, { id = "help", label = "Help", keys = { "?" } })
-	table.insert(actions, { id = "worktree", label = "Worktree", keys = { "w" }, ["end"] = true, disabled = none })
-	table.insert(actions, { id = "open", label = "Open", keys = { "enter" }, primary = true, disabled = none })
+	local actions: { any } = {
+		{ id = "settings", label = "Settings", keys = { "s" } },
+		{
+			id = "retry",
+			label = "Refresh",
+			keys = { "r" },
+			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
+		},
+	}
 
 	local props: { [string]: any } = {
 		key = "queue",
@@ -1950,24 +2289,35 @@ local function queueView(state: State): BlockView
 	if not snap and problem then
 		props.message = spans(ui.span(HEADS[problem.kind] or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted"))
 	end
-	local layer: { Node } = { ui.node("picker", props, previewNodes(state)) }
+	local layer: { Node } = { ui.node("picker", props, previewNodes(state, open)) }
 	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
 	return { main = ui.col({ contextNode(state) }), layer = ui.col(layer) }
 end
 
-local function confirmOverlay(state: State, id: string): Node
-	local name = "this filter"
-	for _, f in state.store.items do
-		if f.id == id then
-			name = f.name
+local function confirmOverlay(state: State, row: string): Node
+	local kind, id = string.match(row, "^(%a+):(.+)$")
+	local name = if kind == "cdelete" then "this command" else "this filter"
+	if kind == "cdelete" then
+		for _, c in state.store.commands do
+			if c.id == id then
+				name = c.name
+			end
+		end
+	else
+		for _, f in state.store.items do
+			if f.id == id then
+				name = f.name
+			end
 		end
 	end
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = "Delete filter “" .. name .. "”?" }, {
+	local head = if kind == "cdelete" then "Delete command “" .. name .. "”?" else "Delete filter “" .. name .. "”?"
+	local body = if kind == "cdelete" then "Every Plotroom pane loses this command." else "Every Plotroom pane loses this saved search."
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, {
 		ui.node("text", {
 			key = "body",
-			spans = { ui.span("Every Plotroom pane loses this saved search. Press d to delete it; Enter or Esc keeps it.", "muted") },
+			spans = { ui.span(body .. " Press d to delete it; Enter or Esc keeps it.", "muted") },
 		}),
 		ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
 			ui.el("button", { key = "keep", class = "plotroom-btn", text = "Keep", actions = { click = "cancel-delete" } }, {
@@ -1995,6 +2345,12 @@ local function settingsView(state: State): BlockView
 	if s.edit then
 		local p = input.props(s.edit.model)
 		props.editing = { row = s.edit.row, draft = p.text, cursor = p.cursor }
+	elseif s.focus then
+		local def = rowById(state, s.focus)
+		local options = if def and not def.disabled and def.control.k == "multi" then def.control.options else nil
+		if options and #options > 0 then
+			props.editing = { row = s.focus, option = options[math.min(s.option or 1, #options)].value }
+		end
 	end
 	local layer: Node? = nil
 	if s.confirm then
@@ -2007,6 +2363,24 @@ local function settingsView(state: State): BlockView
 		layer = layer,
 	}
 end
+
+-- A pane moved into or out of a PR worktree, or ended: redraw every queue so "In tab" marks follow. Deferred, since
+-- the host's pane list still holds an exiting pane while its event runs (observed: an undeferred redraw kept the mark).
+local function redrawQueues()
+	tern.timer(250, function()
+		for _, s in running do
+			if alive(s) then
+				s.cx:render()
+			end
+		end
+	end)
+end
+tern.on("cwd", function(_ev: any, _cx: any)
+	redrawQueues()
+end)
+tern.on("pane_exited", function(_ev: any, _cx: any)
+	redrawQueues()
+end)
 
 -- ---------------------------------------------------------------- block
 
@@ -2110,11 +2484,11 @@ tern.block.define("prs", {
 		end
 		if s then
 			if s.confirm then
-				-- Enter keeps the filter: deleting takes a deliberate `d` or a click.
+				-- Enter keeps the filter or command: deleting takes a deliberate `d` or a click.
 				if name == "enter" or name == "escape" then
 					s.confirm = nil
 				elseif plain and k == "d" then
-					deleteFilter(state, s.confirm)
+					confirmDelete(state)
 				else
 					return false
 				end
@@ -2138,7 +2512,7 @@ tern.block.define("prs", {
 			elseif name == "tab" and plain then
 				local at = table.find(PAGES, s.page) or 1
 				s.page = PAGES[((at - 1 + (if key.shift then -1 else 1)) % #PAGES) + 1]
-				s.focus, s.edit, s.errors = nil, nil, {}
+				s.focus, s.edit, s.errors, s.option = nil, nil, {}, nil
 			elseif plain and k == "?" then
 				state.help = true
 			elseif name == "up" or name == "down" then
@@ -2149,6 +2523,13 @@ tern.block.define("prs", {
 				local at = if s.focus then table.find(rows, s.focus) else nil
 				local down = name == "down"
 				s.focus = rows[if at then math.clamp(at + (if down then 1 else -1), 1, #rows) elseif down then 1 else #rows]
+				s.option = nil
+			elseif name == "left" or name == "right" then
+				local def = if s.focus then rowById(state, s.focus) else nil
+				if not def or def.disabled or def.control.k ~= "multi" or #def.control.options == 0 then
+					return false
+				end
+				s.option = math.clamp((s.option or 1) + (if name == "right" then 1 else -1), 1, #def.control.options)
 			elseif name == "enter" or name == "space" then
 				runRow(state, s.focus)
 			else
@@ -2219,6 +2600,19 @@ tern.block.define("prs", {
 			openSettings(state, "filters")
 		elseif plain and k == "w" then
 			openSelected(state, "worktree", false)
+		elseif plain and k == "g" then
+			local pr = selectedPr(state)
+			if not pr or not openPrs(state)[pr.number] then
+				return false
+			end
+			openSelected(state, "goto", false)
+		elseif plain and string.match(k, "^[1-9]$") then
+			local pr = selectedPr(state)
+			local c = if pr then commandsFor(state, pr)[tonumber(k) :: number] else nil
+			if not pr or not c then
+				return false
+			end
+			state.cx:open(commandHref(pr, tonumber(k) :: number, c.text))
 		else
 			return false
 		end
@@ -2258,7 +2652,7 @@ tern.block.define("prs", {
 			openSettings(state, "worktrees", "checkout", true)
 		elseif act == "confirm-delete" then
 			if s and s.confirm then
-				deleteFilter(state, s.confirm)
+				confirmDelete(state)
 			end
 		elseif act == "cancel-delete" then
 			if s then
@@ -2270,7 +2664,7 @@ tern.block.define("prs", {
 			end
 			if act == "page" then
 				if type(ev.value) == "string" and table.find(PAGES, ev.value) then
-					s.page, s.focus, s.edit, s.errors = ev.value, nil, nil, {}
+					s.page, s.focus, s.edit, s.errors, s.option = ev.value, nil, nil, {}, nil
 				end
 			elseif act == "close" then
 				if ev.value == nil then
@@ -2278,7 +2672,7 @@ tern.block.define("prs", {
 				else
 					discardEdit(state)
 				end
-			elseif act == "add" or act == "delete" or act == "refresh" then
+			elseif act == "add" or act == "add-command" or act == "delete" or act == "refresh" then
 				if type(ev.value) == "string" then
 					s.focus = ev.value
 					runAction(state, act, ev.value)
@@ -2286,9 +2680,11 @@ tern.block.define("prs", {
 			elseif ev.ev == "activate" and item then
 				beginEdit(state, item)
 			elseif ev.ev == "select" and item then
-				s.focus = item
+				s.focus, s.option = item, nil
 			elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
 				resetRow(state, item)
+			elseif ev.ev == "change" and item then
+				changeRow(state, item, ev.value)
 			end
 		elseif ev.id == QUEUE_ID then
 			if ev.ev == "select" or ev.ev == "activate" then
@@ -2312,16 +2708,10 @@ tern.block.define("prs", {
 			elseif act == "clear" or act == "close" then
 				state.query = nil
 				ensureCursor(state)
-			elseif act == "search" then
-				state.query = state.query or input.new("")
-			elseif act == "filters" then
-				state.focus = if state.focus == "scopes" then "list" else "scopes"
 			elseif act == "settings" then
 				openSettings(state, "filters")
 			elseif act == "retry" then
 				retry(state)
-			elseif act == "help" then
-				state.help = true
 			elseif act == "open" or act == "worktree" then
 				openSelected(state, act, false)
 			end

@@ -1,6 +1,6 @@
 --!strict
 -- The window half: opening Plotroom, validated PR links (Browser block,
--- worktree tab) and their keyboard-accessible palette commands.
+-- worktree tab, the PR's open tab, agent commands) and their keyboard-accessible palette commands.
 
 local process = require("./process")
 local worktree = require("./worktree")
@@ -10,6 +10,8 @@ local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local CHECK_NODE = "layer.queue.runs.run"
+local GOTO_NODE = "layer.queue.buttons.goto"
+local COMMAND_NODE = "layer.queue.commands.cmd"
 
 -- Worktree requests in flight, so repeated clicks create it once.
 local inflight: { [string]: boolean } = {}
@@ -41,7 +43,7 @@ end
 -- One keyed node of a pane's current surface; nil when absent.
 local function readNode(cx: WindowCx, pane: number, id: string): any?
 	local ok, tree = pcall(function()
-		return cx.session:surface(pane, { root = id })
+		return cx.session:surface(pane, { root = id, max_chars = 64000 })
 	end)
 	if not ok or type(tree) ~= "table" then
 		return nil
@@ -65,13 +67,19 @@ end
 local function parseLink(url: string): (string?, string?, string?, number?)
 	local kind, owner, repo, n = string.match(url, "^plotroom://github/(%a+)/([^/]+)/([^/]+)/(%d+)$")
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
 		return nil, nil, nil, nil
 	end
 	return kind, owner, repo, num
+end
+
+local function unpct(s: string): string
+	return (string.gsub(s, "%%(%x%x)", function(h)
+		return string.char(tonumber(h, 16) :: number)
+	end))
 end
 
 -- `plotroom://github/check/<row>/<percent-encoded https URL>`: the row index and the page it links to.
@@ -81,13 +89,51 @@ local function parseCheck(url: string): (number?, string?)
 	if not index or not enc or index < 1 or index > 100000 then
 		return nil, nil
 	end
-	local target = string.gsub(enc, "%%(%x%x)", function(h)
-		return string.char(tonumber(h, 16) :: number)
-	end)
+	local target = unpct(enc)
 	if string.sub(target, 1, 8) ~= "https://" or string.find(target, "[%c%s]") then
 		return nil, nil
 	end
 	return index, target
+end
+
+-- `plotroom://github/command/<owner>/<repo>/<number>/<button index>/<percent-encoded prompt>`.
+local function parseCommand(url: string): (string?, string?, number?, number?, string?)
+	local owner, repo, n, i, enc = string.match(url, "^plotroom://github/command/([^/]+)/([^/]+)/(%d+)/(%d+)/([^/]+)$")
+	local num, index = tonumber(n), tonumber(i)
+	if not owner or not repo or not enc or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+		return nil, nil, nil, nil, nil
+	end
+	if not num or num < 1 or num > 2147483647 or not index or index < 1 or index > 100000 then
+		return nil, nil, nil, nil, nil
+	end
+	local prompt = unpct(enc)
+	if not string.find(prompt, "%S") then
+		return nil, nil, nil, nil, nil
+	end
+	return owner, repo, num, index, prompt
+end
+
+-- A pane in a tab of this window working in PR `repo`#`n`'s Plotroom worktree: pane, tab and session ids.
+local function prPane(cx: WindowCx, repo: string, n: number): (number?, number?, number?)
+	for _, p in cx.session:panes() do
+		if p.tab and worktree.prOfPath(p.cwd or "", repo) == n then
+			for _, t in cx.session:tabs() do
+				if t.id == p.tab then
+					return p.pane, t.id, t.session
+				end
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
+local function gotoPr(cx: WindowCx, repo: string, n: number)
+	local pane, _, session = prPane(cx, repo, n)
+	if not pane or not session then
+		return cx:toast("info", "No tab is open for " .. repo .. "#" .. n)
+	end
+	cx.sessions:switch(session)
+	cx.layout:focus(pane)
 end
 
 -- Opens `url` in a Browser block docked right of `pane`.
@@ -136,6 +182,33 @@ local function publish(cx: WindowCx, pane: number, status: { [string]: any })
 	end)
 end
 
+-- The session holding `pane`'s tab, when it still exists.
+local function sourceSession(cx: WindowCx, pane: number): number?
+	local tab = cx.session:tab_of(pane)
+	local sessionId: number? = nil
+	if tab then
+		for _, t in cx.session:tabs() do
+			if t.id == tab then
+				sessionId = t.session
+			end
+		end
+	end
+	for _, s in cx.session:sessions() do
+		if s.id == sessionId then
+			return sessionId
+		end
+	end
+	return nil
+end
+
+-- Names the tab holding `pane` "PR #n · <repo name>".
+local function namePrTab(cx: WindowCx, pane: number, repo: string, n: number)
+	local tab = cx.session:tab_of(pane)
+	if tab then
+		cx.layout:name_tab(tab, "PR #" .. n .. " · " .. (string.match(repo, "/(.+)$") or repo))
+	end
+end
+
 local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result)
 	local summary = worktree.describe(r)
 	local current = r.head == r.prHead
@@ -161,20 +234,8 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 	})
 	-- Success only when nothing needs the user's attention.
 	local level: ToastLevel = if current and r.dirty ~= true then "success" else "info"
-	local tab = cx.session:tab_of(pane)
-	local sessionId: number? = nil
-	if tab then
-		for _, t in cx.session:tabs() do
-			if t.id == tab then
-				sessionId = t.session
-			end
-		end
-	end
-	local exists = false
-	for _, s in cx.session:sessions() do
-		exists = exists or s.id == sessionId
-	end
-	if not tab or not sessionId or not exists then
+	local sessionId = sourceSession(cx, pane)
+	if not sessionId then
 		return cx:toast(level, "Worktree ready (the source pane closed, so no tab was opened)", r.path .. " · " .. summary)
 	end
 	cx.sessions:switch(sessionId)
@@ -182,15 +243,37 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 	if not newPane then
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
-	local newTab = cx.session:tab_of(newPane)
-	if newTab then
-		local name = string.match(repo, "/(.+)$") or repo
-		cx.layout:name_tab(newTab, "PR #" .. n .. " · " .. name)
-	end
+	namePrTab(cx, newPane, repo, n)
 	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, summary)
 end
 
-local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
+-- Starts an agent in the worktree at `path` with `prompt`: in the PR's open tab when there is one, else in a new tab.
+local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, path: string, prompt: string)
+	local _, tab, found = prPane(cx, repo, n)
+	local session = found or sourceSession(cx, pane)
+	if not session then
+		return cx:toast("success", "Worktree ready", path .. " (the source pane closed, so no agent was started)")
+	end
+	cx.sessions:switch(session)
+	local ok, agent = pcall(function()
+		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab" })
+	end)
+	if not ok or type(agent) ~= "number" then
+		return cx:toast("error", "Could not start an agent for " .. repo .. "#" .. n, tostring(agent))
+	end
+	if tab then
+		local moved, why = cx.layout:move_to_tab(agent, tab)
+		if moved then
+			return cx:toast("success", "Agent started in the tab of " .. repo .. "#" .. n, prompt)
+		end
+		namePrTab(cx, agent, repo, n)
+		return cx:toast("info", "Agent started in a new tab for " .. repo .. "#" .. n, "It could not join the pull request's tab: " .. (why or "unknown reason"))
+	end
+	namePrTab(cx, agent, repo, n)
+	cx:toast("success", "Agent started for " .. repo .. "#" .. n, prompt)
+end
+
+local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?)
 	local full = owner .. "/" .. repo
 	for _, h in cx.hosts:list() do
 		if table.find(h.panes, pane) and h.kind ~= "local" then
@@ -215,7 +298,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 			if cx2.session:pane(pane) then
 				cx2.session:event(pane, { ev = "action", act = "choose-repo", value = full })
 			end
-			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then choose Worktree again.")
+			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then try again.")
 		end
 		if not result then
 			local why = problem or "Worktree failed"
@@ -224,7 +307,11 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		end
 		-- The worktree exists whatever happens next: a failing tab call must not hide its path.
 		local ok, why = pcall(function()
-			finishWorktree(cx2, pane, full, n, result)
+			if prompt then
+				finishAgent(cx2, pane, full, n, result.path, prompt)
+			else
+				finishWorktree(cx2, pane, full, n, result)
+			end
 		end)
 		if not ok then
 			cx2:toast("error", "Worktree ready, but its tab did not open", result.path .. " · " .. tostring(why))
@@ -255,6 +342,17 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		end
 		return true
 	end
+	local cowner, crepo, cn, cindex, prompt = parseCommand(url)
+	if cowner and crepo and cn and cindex and prompt then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif nodeProp(readNode(cx, pane, COMMAND_NODE .. cindex), "href") ~= url then
+			cx:toast("error", "Plotroom: that command is no longer listed", "Refresh and try again.")
+		else
+			worktreePr(cx, pane, cowner, crepo, cn, prompt)
+		end
+		return true
+	end
 	local kind, owner, repo, n = parseLink(url)
 	if not kind or not owner or not repo or not n then
 		cx:toast("error", "Plotroom: malformed link")
@@ -264,7 +362,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		return true
 	end
-	local node = if kind == "open" then OPEN_NODE else WORKTREE_NODE
+	local node = if kind == "open" then OPEN_NODE elseif kind == "goto" then GOTO_NODE else WORKTREE_NODE
 	local present = nodeProp(readNode(cx, pane, node), "href") == url
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
@@ -272,20 +370,22 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	end
 	if kind == "open" then
 		openPr(cx, pane, owner, repo, n)
+	elseif kind == "goto" then
+		gotoPr(cx, owner .. "/" .. repo, n)
 	else
-		worktreePr(cx, pane, owner, repo, n)
+		worktreePr(cx, pane, owner, repo, n, nil)
 	end
 	return true
 end
 
-local function selected(cx: WindowCx, nodeId: string)
+local function selected(cx: WindowCx, nodeId: string, missing: string?)
 	local pane = cx.session:focused()
 	if not pane or not isPlotroom(cx, pane) then
 		return cx:toast("error", "Focus a Plotroom block first")
 	end
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
-		return cx:toast("info", "No pull request is selected")
+		return cx:toast("info", missing or "No pull request is selected")
 	end
 	handle(cx, href, pane)
 end
@@ -296,6 +396,18 @@ tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
 	end
 	handle(cx, link.url, link.pane)
 	return { handled = true }
+end)
+
+-- A closed pane may have held a PR's worktree, and the host hears no event for it: nudge this window's Plotroom
+-- blocks so their "In tab" marks follow (the host renders after any event).
+tern.on("pane_closed", function(_ev: any, cx: WindowCx)
+	for _, p in cx.session:panes() do
+		if isPlotroom(cx, p.pane) then
+			pcall(function()
+				cx.session:event(p.pane, { ev = "action", act = "redraw" })
+			end)
+		end
+	end
 end)
 
 tern.command({
@@ -341,6 +453,16 @@ tern.command({
 	available = available,
 	run = function(cx: WindowCx)
 		selected(cx, WORKTREE_NODE)
+	end,
+})
+
+tern.command({
+	id = "goto-selected",
+	title = "Plotroom: Go to the selected PR's tab",
+	icon = "merge",
+	available = available,
+	run = function(cx: WindowCx)
+		selected(cx, GOTO_NODE, "The selected pull request has no open tab")
 	end,
 })
 

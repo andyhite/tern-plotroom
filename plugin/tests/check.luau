@@ -117,6 +117,9 @@ function M.run()
 	assert(hit and range == nil, "number matches without a range")
 	assert((github.match(mp, "lexer")), "branch matches")
 	assert(not (github.match(mp, "zzz")), "no match")
+	assert(github.fill("/review {url} #{number} on {branch} {nope}", mp) == "/review https://github.com/a/b/pull/12 #12 on fix/lexer {nope}", "placeholders fill, unknown braces stay")
+	local fp = github.normalize(item(13, "a/b", "2026-01-01T00:00:00Z", { title = "100% {url}" }))
+	assert(fp and github.fill("{title}", fp) == "100% {url}", "filled values are literal and not re-scanned")
 
 	-- rate-limit headers (shape of real `gh api --include` output) and pacing
 	local now = 1000
@@ -202,6 +205,11 @@ function M.run()
 	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/r/gone") == "error", "a record on the target path collides")
 	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/nonexistent/plotroom/target") == "create", "unrelated records do not block")
 	assert(worktree.expandPath("~/x", "/home/u") == "/home/u/x" and worktree.expandPath("rel", "/h") == nil, "path expansion")
+	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-12", "A/B") == 12, "worktree root maps to its PR")
+	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-12/src/lib", "a/b") == 12, "a directory inside the worktree maps to its PR")
+	for _, p in { "/r/x.plotroom/a/b/pr-12x", "/r/x.plotroom/a/bc/pr-1", "/r/a/b/pr-1", "" } do
+		assert(worktree.prOfPath(p, "a/b") == nil, "not a PR worktree: " .. p)
+	end
 
 	-- PATH probe output
 	assert(process.extractPath("banner\0PLOTROOM_PATH\0/a b:/c\n\0PLOTROOM_END\0tail") == "/a b:/c", "markers carry the PATH, spaces intact")

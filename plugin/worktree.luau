@@ -394,6 +394,20 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 	return "create", nil
 end
 
+-- The PR number whose Plotroom worktree (`<checkout>.plotroom/<owner>/<repo>/pr-N`, lowercase as `M.open`
+-- creates it) holds `path`, the worktree root or any directory inside it; nil otherwise.
+function M.prOfPath(path: string, repo: string): number?
+	local _, e = string.find(path, ".plotroom/" .. string.lower(repo) .. "/pr-", 1, true)
+	if not e then
+		return nil
+	end
+	local n, rest = string.match(string.sub(path, e + 1), "^(%d+)(.*)$")
+	if not n or not rest or (rest ~= "" and string.sub(rest, 1, 1) ~= "/") then
+		return nil
+	end
+	return tonumber(n)
+end
+
 -- `s` as one shell word on a single line, for the commands shown to the user (Plotroom never runs them): bare when
 -- plain, else single-quoted, else ANSI-C quoted (bash, zsh) when it holds control characters such as a newline.
 local function shellWord(s: string): string
