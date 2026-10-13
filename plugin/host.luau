@@ -1,6 +1,7 @@
 --!strict
 -- The `prs` block: a live GitHub PR queue with saved, editable filters.
 
+local agent = require("./agent")
 local github = require("./github")
 local input = require("./input")
 local process = require("./process")
@@ -36,7 +37,7 @@ type Detail = { runs: { github.Run }, total: number, round: number }
 type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
 type Attempt = { key: string, timer: TimerHandle? }
--- What the window last reported about a PR's worktree (act "worktree-status"); kept in memory only.
+-- The outcome of the last worktree attempt for a PR; kept in memory only.
 type Note = {
 	seq: number,
 	at: number,
@@ -94,6 +95,9 @@ type State = {
 	notes: { [string]: Note }, -- worktree reports by PR key
 	noteSeq: number,
 	settings: Settings?,
+	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
+	sources: { [string]: agent.Source }, -- prompt templates as listed for picker rows, by path
+	ready: { [string]: boolean }, -- worktree paths prepared here: the only ones a template is verified in
 }
 
 local running: { [number]: State } = {}
@@ -888,11 +892,6 @@ local function stateKind(pr: github.Pr): string
 	return if pr.draft then "draft" else "open"
 end
 
--- Hidden node that carries the launch directory for window.luau (`main.context`).
-local function contextNode(state: State): Node
-	return ui.node("text", { key = "context", text = state.launchCwd or "", hidden = true })
-end
-
 type Row = {
 	id: string,
 	label: string,
@@ -1634,57 +1633,22 @@ local function wantDetails(state: State, pr: github.Pr)
 	end
 end
 
--- A worktree attempt reported by the window (act "worktree-status", value: JSON). Untrusted: every field is checked and bounded.
-local function oneLine(v: any, max: number): string?
-	if type(v) == "string" and #v <= max and string.find(v, "%c") == nil and utf8.len(v) ~= nil then
-		return v
-	end
-	return nil
-end
-
--- At most six one-line strings.
-local function commandList(v: any): { string }
-	local out: { string } = {}
-	if isTable(v) then
-		for _, item in v do
-			local line = oneLine(item, 2000)
-			if line and line ~= "" and #out < 6 then
-				table.insert(out, line)
-			end
-		end
-	end
-	return out
-end
-
-local function noteWorktree(state: State, raw: any)
-	if type(raw) ~= "string" or #raw > 16384 then
-		return
-	end
-	local ok, data = pcall(tern.json.decode, raw)
-	if not ok or not isTable(data) then
-		return
-	end
-	local repo, number = data.repo, data.number
-	if type(repo) ~= "string" or type(number) ~= "number" or number < 1 or number ~= math.floor(number) then
-		return
-	end
-	local message: string? = nil
-	if type(data.message) == "string" then
-		message = clip(printable(data.message), 1500)
-	end
+-- Keeps the outcome of a worktree attempt (a result, or why there is none) for the queue preview: persistent, unlike
+-- a toast.
+local function noteWorktree(state: State, repo: string, number: number, r: worktree.Result?, problem: string?)
 	local note: Note = {
 		seq = state.noteSeq + 1,
 		at = os.time(),
-		ok = data.ok == true,
-		created = data.created == true,
-		current = data.current == true,
-		dirty = if type(data.dirty) == "boolean" then data.dirty else nil,
-		path = oneLine(data.path, 4096),
-		branch = oneLine(data.branch, 512),
-		summary = oneLine(data.summary, 600),
-		message = message,
-		update = commandList(data.update),
-		cleanup = commandList(data.cleanup),
+		ok = r ~= nil,
+		created = r ~= nil and r.created,
+		current = r ~= nil and r.head == r.prHead,
+		dirty = if r then r.dirty else nil,
+		path = if r then r.path else nil,
+		branch = if r then r.branch else nil,
+		summary = if r then worktree.describe(r) else nil,
+		message = if problem then clip(printable(problem), 1500) else nil,
+		update = if r then worktree.update(r) else {},
+		cleanup = if r then worktree.cleanup(r) else {},
 	}
 	state.notes[string.lower(repo) .. "#" .. number] = note
 	state.noteSeq = note.seq
@@ -1717,7 +1681,175 @@ local function copyCommands(state: State, which: any)
 	end
 end
 
--- The worktree report of a PR: persistent, with what the window found and the commands the user may run.
+-- ---------------------------------------------------------------- requests from window.luau
+-- window.luau runs on the machine showing the window, which for a pane on a remote host is not the machine holding
+-- the checkout. So whatever reads the checkout or runs git, gh or omp runs here, where the block runs: the window sends
+-- {act = "rpc", value = JSON {id, op, ...}}; the answer is the hidden node `main.r<id>` (JSON text), announced by
+-- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
+-- host speaks, so a window never waits on a host running another Plotroom version.
+
+local RPC_PROTOCOL = "1"
+local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
+-- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
+local MENU_BUDGET = 48000
+
+-- PRs whose worktree is being prepared on this host ("owner/repo#n", lowercase): one at a time, whichever window asks.
+local preparing: { [string]: boolean } = {}
+
+local function reply(state: State, id: string, body: { [string]: any })
+	if not alive(state) then
+		return
+	end
+	for i, r in state.replies do
+		if r.id == id then
+			table.remove(state.replies, i)
+			break
+		end
+	end
+	table.insert(state.replies, { id = id, text = tern.json.encode(body) })
+	if #state.replies > REPLY_CAP then
+		table.remove(state.replies, 1)
+	end
+	state.cx:render() -- the answer is on screen before the window is told to read it
+	state.cx:open("plotroom://rpc/" .. id)
+end
+
+local function rpcNodes(state: State): { Node }
+	local out: { Node } = { ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }) }
+	for _, r in state.replies do
+		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
+	end
+	return out
+end
+
+-- `repo`'s saved setup commands (Settings › Worktrees) as one shell line that stops at the first failure, blank ones
+-- left out; nil if none.
+local function setupLine(repo: string): string?
+	local map = setupMap()
+	local cmds: { string } = {}
+	local saved: { string } = if map then setupOf(map, repo) else {}
+	for _, c in saved do
+		if string.find(c, "%S") then
+			table.insert(cmds, c)
+		end
+	end
+	return if #cmds > 0 then table.concat(cmds, " && ") else nil
+end
+
+local function menu(state: State, id: string, consent: boolean)
+	agent.menu(state.launchCwd, consent, function(m)
+		if m.consent then
+			return reply(state, id, { consent = m.consent })
+		end
+		for path, src in m.sources do
+			state.sources[path] = src
+		end
+		local items: { any } = {}
+		local size = 0
+		for _, it in m.items do
+			local row = {
+				label = clip(printable(it.label), 120),
+				detail = if it.detail then clip(printable(it.detail), 160) else nil,
+				group = it.group,
+				send = it.send,
+				tpl = it.tpl,
+			}
+			size += #tern.json.encode(row)
+			if size > MENU_BUDGET then
+				break
+			end
+			table.insert(items, row)
+		end
+		reply(state, id, { items = tern.json.array(items), problem = m.problem })
+	end)
+end
+
+-- Creates or reuses the worktree of `repo`#`n` and notes the outcome. With `tpl`, the picked template must still read
+-- as listed before anything is created, and the answer says whether `/name` still reaches it in the worktree.
+local function prepare(state: State, id: string, repo: string, n: number, tpl: string?)
+	local key = string.lower(repo) .. "#" .. n
+	if preparing[key] then
+		return reply(state, id, { busy = true })
+	end
+	local src = if tpl then state.sources[tpl] else nil
+	if tpl then
+		local why = if src then agent.unbound(src, nil, nil) else "Plotroom no longer knows that template; pick it again."
+		if why then
+			return reply(state, id, { refused = why })
+		end
+	end
+	local mapped = readRepos()["github.com/" .. string.lower(repo)]
+	preparing[key] = true
+	local started, err = pcall(function()
+		process.reset()
+		worktree.open(state.launchCwd, if type(mapped) == "string" then mapped else nil, repo, n, function(r, problem)
+			preparing[key] = nil
+			if not alive(state) then
+				return
+			end
+			if problem == worktree.NO_REPO then
+				openSettings(state, "worktrees", "checkout", true)
+				return reply(state, id, { noRepo = true })
+			end
+			if not r then
+				local why = problem or "Worktree failed"
+				noteWorktree(state, repo, n, nil, why)
+				return reply(state, id, { problem = why })
+			end
+			noteWorktree(state, repo, n, r, nil)
+			state.ready[r.path] = true
+			reply(state, id, {
+				path = r.path,
+				created = r.created,
+				current = r.head == r.prHead,
+				dirty = r.dirty,
+				summary = worktree.describe(r),
+				setup = if r.created then setupLine(repo) else nil,
+				why = if src then agent.unbound(src, r.path, nil) else nil,
+			})
+		end)
+	end)
+	if not started then
+		preparing[key] = nil
+		reply(state, id, { problem = tostring(err) })
+	end
+end
+
+-- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
+local function rpc(state: State, raw: any)
+	if type(raw) ~= "string" or #raw > 16384 then
+		return
+	end
+	local ok, q = pcall(tern.json.decode, raw)
+	if not ok or not isTable(q) or type(q.id) ~= "string" or not string.match(q.id, "^%w+$") or #q.id > 40 then
+		return
+	end
+	local id: string = q.id
+	if q.op == "menu" then
+		menu(state, id, q.consent == true)
+	elseif q.op == "worktree" then
+		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
+		local n = q.number
+		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+			return
+		end
+		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
+			return
+		end
+		prepare(state, id, owner .. "/" .. name, n, if type(q.tpl) == "string" then q.tpl else nil)
+	elseif q.op == "verify" then
+		local src = if type(q.tpl) == "string" then state.sources[q.tpl] else nil
+		local root = q.root
+		if not src or type(root) ~= "string" or not state.ready[root] then
+			return reply(state, id, { why = "Plotroom did not prepare that worktree or list that template; try again." })
+		end
+		agent.verify(src, root, function(why)
+			reply(state, id, { why = why })
+		end)
+	end
+end
+
+-- The worktree report of a PR: persistent, with what Plotroom found and the commands the user may run.
 local function worktreeNodes(state: State, pr: github.Pr): { Node }
 	local note = state.notes[pr.key]
 	if not note then
@@ -2120,7 +2252,7 @@ local function queueView(state: State): BlockView
 	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
-	return { main = ui.col({ contextNode(state) }), layer = ui.col(layer) }
+	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
 end
 
 local function confirmOverlay(state: State, row: string): Node
@@ -2171,10 +2303,9 @@ local function settingsView(state: State): BlockView
 	elseif state.help then
 		layer = ui.col({ helpOverlay(state) })
 	end
-	return {
-		main = ui.col({ contextNode(state), ui.node("prefs", props, extra) }),
-		layer = layer,
-	}
+	local main = rpcNodes(state)
+	table.insert(main, ui.node("prefs", props, extra))
+	return { main = ui.col(main), layer = layer }
 end
 
 -- A pane moved into or out of a PR worktree, or ended: redraw every queue so "In tab" marks follow. Deferred, since
@@ -2265,6 +2396,9 @@ tern.block.define("prs", {
 			notes = {},
 			noteSeq = 0,
 			settings = nil,
+			replies = {},
+			sources = {},
+			ready = {},
 		}
 		if not activeFilter(state) then
 			state.activeId = if store.items[1] then store.items[1].id else nil
@@ -2446,12 +2580,10 @@ tern.block.define("prs", {
 			end
 		elseif act == "copy-wt" then
 			copyCommands(state, ev.value)
-		elseif act == "worktree-status" then
-			noteWorktree(state, ev.value)
+		elseif act == "rpc" then
+			rpc(state, ev.value)
 		elseif act == "close-help" then
 			state.help = false
-		elseif act == "choose-repo" then
-			openSettings(state, "worktrees", "checkout", true)
 		elseif act == "confirm-delete" then
 			if s and s.confirm then
 				confirmDelete(state)

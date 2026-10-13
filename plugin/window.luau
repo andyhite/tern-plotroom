@@ -1,10 +1,11 @@
 --!strict
 -- The window half: opening Plotroom, validated PR links (Browser block, worktree tab, the PR's open tab, an agent
 -- running a picked omp prompt template or skill) and their keyboard-accessible palette commands.
--- Anything that runs omp where project config can run code (listing skills, checking a template, starting an agent)
--- asks first.
+-- This half runs on the machine showing the window; the block may run on a remote host. Whatever touches the checkout
+-- (git, gh, omp, its files) is asked of the block's host half (host.luau, "requests from window.luau"); this half only
+-- asks the user and arranges tabs. Anything that runs omp where project config can run code (listing skills, checking
+-- a template, starting an agent) asks first.
 
-local process = require("./process")
 local worktree = require("./worktree")
 
 local BLOCK = "plotroom.prs"
@@ -14,23 +15,21 @@ local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local CHECK_NODE = "layer.queue.runs.run"
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent"
-local RPC_MS = 10000
+-- How long the block's host may take to answer: listing omp's commands (10 s, plus finding PATH), preparing a worktree
+-- (fetch and add, 2 minutes each), asking omp about a template.
+local MENU_MS = 30 * 1000
+local PREPARE_MS = 5 * 60 * 1000
+local VERIFY_MS = 30 * 1000
+local PROTOCOL = "1" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
-
--- Template files are listed and compared up to this size.
-local TEMPLATE_CAP = 65536
--- omp loads prompt templates from every depth of a `prompts` directory. Looking through one gives up, and the agent
--- is refused, past this many entries or levels: a huge tree or a symlink loop must not hang the window.
-local SCAN_ENTRIES = 2000
-local SCAN_DEPTH = 8
 local RISK = "Project config can run code"
 
--- The file a template row was listed from, as it read then: `text` is nil when it could not be read (or is over
--- TEMPLATE_CAP); `project` marks the repository's own templates, as opposed to the user's.
-type Source = { path: string, text: string?, name: string, project: boolean }
-
--- Worktree requests in flight, so repeated clicks create it once.
-local inflight: { [string]: boolean } = {}
+-- A worktree the host prepared, as its answer says.
+type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, why: string? }
+-- Requests to a block's host waiting for their answer, by id.
+type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle }
+local pending: { [string]: Pending } = {}
+local requests = 0
 -- Picker labels chosen last, newest first. Kept in tern.kv: Tern reboots plugin VMs now and then, losing module state.
 local RECENT_KEY = "agent-recent"
 
@@ -175,55 +174,55 @@ local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n
 	openUrl(cx, pane, "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n, "the pull request")
 end
 
-local function mappedPath(repo: string): string?
-	local ok, repos = pcall(tern.kv.get, "repos")
-	if ok and type(repos) == "table" then
-		local p = repos["github.com/" .. string.lower(repo)]
-		if type(p) == "string" then
-			return p
-		end
+-- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
+-- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
+-- so instead. False when nothing was sent.
+local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> ()): boolean
+	if nodeProp(readNode(cx, pane, "main.rpc"), "text") ~= PROTOCOL then
+		cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
+		return false
 	end
-	return nil
-end
-
--- The directory the Plotroom block in `pane` was opened in, as its context line shows it; nil when unknown.
-local function launchDir(cx: WindowCx, pane: number): string?
-	local text = nodeProp(readNode(cx, pane, "main.context"), "text")
-	return if type(text) == "string" and text ~= "" then text else nil
-end
-
--- One persistent status per worktree attempt for the queue preview: an action event to the source pane, which
--- host.luau keeps per PR (`worktree-status`, payload JSON in `value`). A toast alone would vanish.
-local function publish(cx: WindowCx, pane: number, status: { [string]: any })
-	pcall(function()
-		if cx.session:pane(pane) then
-			cx.session:event(pane, { ev = "action", act = "worktree-status", value = tern.json.encode(status) })
+	requests += 1
+	local id = string.format("q%dt%d", requests, math.floor(tern.now()))
+	args.id, args.op = id, op
+	local timer = tern.timer(ms, function(cx2: WindowCx?)
+		if pending[id] then
+			pending[id] = nil
+			if cx2 then
+				cx2:toast("error", "Plotroom: the block's host did not answer", "Try again; if it keeps happening, reload plugins on that host.")
+			end
 		end
 	end)
+	pending[id] = { pane = pane, done = done, timer = timer }
+	local ok, why = pcall(function()
+		cx.session:event(pane, { ev = "action", act = "rpc", value = tern.json.encode(args) })
+	end)
+	if not ok then
+		timer:cancel()
+		pending[id] = nil
+		cx:toast("error", "Plotroom: the block could not be reached", tostring(why))
+	end
+	return ok
 end
 
--- The status of a worktree that is ready, published as soon as it exists so it stands whatever the tab or the agent
--- does next (and replaces an earlier failure card).
-local function publishResult(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result)
-	local update = worktree.update(r)
-	publish(cx, pane, {
-		repo = repo,
-		number = n,
-		ok = true,
-		created = r.created,
-		current = r.head == r.prHead,
-		dirty = r.dirty,
-		path = r.path,
-		root = r.root,
-		branch = r.branch,
-		ref = r.ref,
-		head = r.head,
-		prHead = r.prHead,
-		prRef = r.prRef,
-		summary = worktree.describe(r),
-		update = if #update > 0 then update else nil,
-		cleanup = worktree.cleanup(r),
-	})
+-- plotroom://rpc/<id>: the host answered request `id`. Only the window that asked acts, and only on the answer its
+-- block shows: a link without one (stale, or not the host's) leaves the request waiting.
+local function answered(cx: WindowCx, id: string)
+	local p = pending[id]
+	if not p then
+		return
+	end
+	local text = nodeProp(readNode(cx, p.pane, "main.r" .. id), "text")
+	if type(text) ~= "string" then
+		return
+	end
+	pending[id] = nil
+	p.timer:cancel()
+	local ok, answer = pcall(tern.json.decode, text)
+	if not ok or type(answer) ~= "table" then
+		return cx:toast("error", "Plotroom: the block's answer could not be read")
+	end
+	p.done(answer, cx)
 end
 
 -- The session holding `pane`'s tab, when it still exists.
@@ -253,29 +252,12 @@ local function namePrTab(cx: WindowCx, pane: number, repo: string, n: number)
 	end
 end
 
--- `repo`'s saved setup commands (Settings › Worktrees) as one shell line that stops at the first failure; nil if none.
-local function setupLine(repo: string): string?
-	local ok, map = pcall(tern.kv.get, "setup")
-	local list = if ok and type(map) == "table" then map["github.com/" .. string.lower(repo)] else nil
-	local cmds: { string } = {}
-	if type(list) == "table" then
-		for _, c in list do
-			if type(c) == "string" and string.find(c, "%S") then
-				table.insert(cmds, c)
-			end
-		end
-	end
-	return if #cmds > 0 then table.concat(cmds, " && ") else nil
-end
-
-local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result)
-	local summary = worktree.describe(r)
-	local current = r.head == r.prHead
+local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: Ready)
 	-- Success only when nothing needs the user's attention.
-	local level: ToastLevel = if current and r.dirty ~= true then "success" else "info"
+	local level: ToastLevel = if r.current and r.dirty ~= true then "success" else "info"
 	local sessionId = sourceSession(cx, pane)
 	if not sessionId then
-		return cx:toast(level, "Worktree ready (the source pane closed, so no tab was opened)", r.path .. " · " .. summary)
+		return cx:toast(level, "Worktree ready (the source pane closed, so no tab was opened)", r.path .. " · " .. r.summary)
 	end
 	cx.sessions:switch(sessionId)
 	local newPane = cx.layout:new_tab({ cwd = r.path })
@@ -283,17 +265,16 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
 	namePrTab(cx, newPane, repo, n)
-	local setup = if r.created then setupLine(repo) else nil
-	if setup then
-		cx:run(newPane, setup .. "\r")
+	if r.setup then
+		cx:run(newPane, r.setup .. "\r")
 	end
-	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, if setup then summary .. " · running setup" else summary)
+	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
 -- Starts an agent in the worktree with `prompt`: in the PR's open tab when there is one, else in a new tab. A new
 -- worktree's setup commands run first in a shell tab the agent joins. ponytail: the agent starts without waiting
 -- for them; poll the shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result, prompt: string)
+local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string)
 	local path = r.path
 	local _, tab, found = prPane(cx, repo, n)
 	local session = found or sourceSession(cx, pane)
@@ -301,7 +282,7 @@ local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, 
 		return cx:toast("success", "Worktree ready", path .. " (the source pane closed, so no agent was started)")
 	end
 	cx.sessions:switch(session)
-	local setup = if r.created then setupLine(repo) else nil
+	local setup = r.setup
 	if setup then
 		local shell = cx.layout:new_tab({ cwd = path })
 		if shell then
@@ -331,7 +312,7 @@ local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, 
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.
-local function afterReady(cx: WindowCx, r: worktree.Result, step: () -> ())
+local function afterReady(cx: WindowCx, r: Ready, step: () -> ())
 	local why: any
 	local ok = xpcall(step, function(e: any)
 		why = e
@@ -362,331 +343,108 @@ local function confirm(cx: WindowCx, question: string, where: string, stays: str
 	end)
 end
 
-local function readCapped(path: string): string?
-	local ok, text = pcall(tern.fs.read, path, TEMPLATE_CAP)
-	return if ok and type(text) == "string" then text else nil
-end
-
--- omp's slash commands over its RPC mode, run in `cwd`: done(commands, problem, cx), the commands nil when omp did not
--- list them. Skills and file commands are in that list, prompt templates are not.
-local function ompCatalog(cwd: string, done: ({ any }?, string?, WindowCx?) -> ())
-	local ask = tern.json.encode({ id = "plotroom", type = "get_available_commands" }) .. "\n"
-	process.run({ "omp", "--mode", "rpc", "--no-session" }, { cwd = cwd, stdin = ask, timeout_ms = RPC_MS }, function(result, problem, cx)
-		if not result then
-			return done(nil, problem, cx)
-		end
-		for line in string.gmatch(result.stdout, "[^\n]+") do
-			local ok, msg = pcall(tern.json.decode, line)
-			if ok and type(msg) == "table" and msg.id == "plotroom" then
-				local cmds = if msg.success == true and type(msg.data) == "table" then msg.data.commands else nil
-				if type(cmds) ~= "table" then
-					return done(nil, "omp answered without a command list", cx)
-				end
-				return done(cmds, nil, cx)
-			end
-		end
-		done(nil, if result.timed_out then "omp did not answer within 10 seconds" else "omp did not list its commands (exit " .. result.status .. ")", cx)
-	end)
-end
-
--- Where omp keeps the user's config (its templates and commands among it) unless something moves it.
-local function userAgentDir(): string?
-	local home = tern.getenv("HOME")
-	return if home and home ~= "" then (string.gsub(home, "/+$", "")) .. "/.omp/agent" else nil
-end
-
--- Where omp, run in `cwd`, reads the user's config: `omp config path`. A checkout's `.env` can move it, even into the
--- checkout. done(dir, problem, cx).
-local function ompAgentDir(cwd: string, done: (string?, string?, WindowCx?) -> ())
-	process.run({ "omp", "config", "path" }, { cwd = cwd, timeout_ms = RPC_MS }, function(result, problem, cx)
-		if not result then
-			return done(nil, problem, cx)
-		end
-		local dir = if result.status == 0 and not result.timed_out then string.match(result.stdout, "^(/[^\r\n]+)\r?\n?$") else nil
-		done(dir, if dir then nil else "omp did not report its agent directory (exit " .. result.status .. ")", cx)
-	end)
-end
-
--- Adds to `found` the path of every entry called `file` below `dir`, as omp loads prompt templates from every depth.
--- Raises when the tree is bigger or deeper than a scan allows, which a symlink loop always is.
-local function findNamed(dir: string, file: string, scan: { left: number }, depth: number, found: { string })
-	local ok, entries = pcall(tern.fs.list, dir)
-	if not ok then
-		return -- a file, not a directory
-	end
-	for _, entry in entries do
-		scan.left -= 1
-		if scan.left < 0 or depth >= SCAN_DEPTH then
-			error("more than " .. SCAN_ENTRIES .. " entries or " .. SCAN_DEPTH .. " levels of directories in a prompts directory", 0)
-		end
-		local path = dir .. "/" .. entry
-		if entry == file then
-			table.insert(found, path)
-		end
-		findNamed(path, file, scan, depth + 1, found)
-	end
-end
-
--- How omp's list names a command called `name` (a builtin's aliases count): its source; nil when the list has none.
-local function listedAs(cmds: { any }, name: string): string?
-	for _, c in cmds do
-		if type(c) == "table" and (c.name == name or (type(c.aliases) == "table" and table.find(c.aliases, name) ~= nil)) then
-			return tostring(c.source)
-		end
-	end
-	return nil
-end
-
--- Why `/name` of a picked template would no longer be that template; nil when it still is. Always: its file reads back
--- as it was listed. With the pull request's checkout `root`: every `<name>.md` anywhere under its `.omp/prompts` reads
--- back as the same text, and the repository's own template has one. With `agent`, where omp reads the user's config
--- there: unless that is ~/.omp/agent (a checkout's `.env` can move it, even into the checkout) its `prompts` are held
--- to the same, and the template must be somewhere. omp 18.10.3 reads the user's templates first, but that order has
--- no contract, so any difference refuses. Commands of the name are not looked for in files, whatever they are called
--- or wherever they sit: only omp's own list says which exist (`verify`).
-local function mismatch(src: Source, root: string?, agent: string?): string?
-	if src.text == nil or readCapped(src.path) ~= src.text then
-		return src.path .. " is gone, unreadable, over 64 KiB or changed since it was listed"
-	end
-	if not root then
-		return nil
-	end
-	local file = src.name .. ".md"
-	local found: { string } = {}
-	findNamed(root .. "/.omp/prompts", file, { left = SCAN_ENTRIES }, 0, found)
-	local moved = if agent and agent ~= userAgentDir() then agent else nil
-	if moved then
-		findNamed(moved .. "/prompts", file, { left = SCAN_ENTRIES }, 0, found)
-	end
-	for _, path in found do
-		if readCapped(path) ~= src.text then
-			return "omp would read a different template: " .. path
-		end
-	end
-	if #found == 0 then
-		if moved then
-			return "omp reads its templates from " .. moved .. "/prompts there, which has no " .. file
-		elseif src.project then
-			return "The pull request has no .omp/prompts/" .. file
-		end
-	end
-	return nil
-end
-
--- `mismatch` of a picked row, which has none when it is not a template. A filesystem call that raises ends it too.
-local function unbound(item: PickItem, root: string?, agent: string?): string?
-	local src = item.source :: Source?
-	if not src then
-		return nil
-	end
-	local ok, why = pcall(mismatch, src, root, agent)
-	return if ok then why else "The checkout could not be inspected: " .. tostring(why)
-end
-
--- Once the user agreed to run omp in `root`, asks omp itself about `/name` of a picked template there. A skill, file
--- command (from any config family, named by its file, its frontmatter or its directory), extension or builtin command
--- of that name runs instead, and omp's dispatch has no form that names the template: only omp's own list is
--- complete, so no list, or a command of the name in it, refuses. It also says where omp reads the user's templates
--- there, which a checkout's `.env` can change. The files are checked again last: the user may have waited.
--- done(cx, why): `why` is nil when the agent may start. Typed prompts, skills and file commands have no template to
--- bind and pass at once.
--- ponytail: code can answer for itself (an extension's input hook, an MCP server whose prompts connect after the list
--- is read), so only the consent covers that.
-local function verify(cx: WindowCx, item: PickItem?, root: string, done: (WindowCx, string?) -> ())
-	local src = if item then item.source :: Source? else nil
-	if not item or not src then
-		return done(cx, nil)
-	end
-	local name = src.name
-	local function cannot(what: string, problem: string?): string
-		return "omp could not " .. what .. " in the checkout, so /" .. name .. " cannot be confirmed: " .. tostring(problem)
-	end
-	ompAgentDir(root, function(agent, problem, cx2)
-		if not cx2 then
-			return
-		end
-		if not agent then
-			return done(cx2, cannot("report where it reads templates", problem))
-		end
-		ompCatalog(root, function(cmds, problem2, cx3)
-			if not cx3 then
-				return
-			end
-			if not cmds then
-				return done(cx3, cannot("list its commands", problem2))
-			end
-			local source = listedAs(cmds, name)
-			if source then
-				return done(cx3, "omp lists /" .. name .. " in the checkout (" .. source .. "), and that runs instead of your template")
-			end
-			done(cx3, unbound(item, root, agent))
-		end)
-	end)
-end
-
 -- With the worktree ready, an agent starts in it only if `/name` of the picked template still reaches that template
 -- there (the file as listed, and nothing of the pull request's answering to the name) and the user agrees to run omp
--- in that checkout; setup commands and the agent come after.
-local function startAgent(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result, prompt: string, item: PickItem?)
+-- in that checkout; setup commands and the agent come after. The host checks the files; after the consent, omp's own
+-- list in the checkout too (typed prompts, skills and file commands have no template to bind and pass at once).
+local function startAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string, item: PickItem?)
 	local title = "Agent not started for " .. repo .. "#" .. n
 	local function refuse(cx2: WindowCx, why: string)
 		cx2:toast("error", title, why .. " · The worktree is ready at " .. r.path)
 	end
-	local why = if item then unbound(item, r.path, nil) else nil
-	if why then
-		return refuse(cx, why)
+	if r.why then
+		return refuse(cx, r.why)
 	end
 	local question = "Start an agent for " .. repo .. "#" .. n .. " in " .. r.path .. "? That checkout's project config can run code."
 	confirm(cx, question, r.path, "The worktree stays; no agent starts", function(cx2: WindowCx)
-		verify(cx2, item, r.path, function(cx3: WindowCx, why2: string?)
-			if why2 then
-				return refuse(cx3, why2)
-			end
+		local function go(cx3: WindowCx)
 			afterReady(cx3, r, function()
 				finishAgent(cx3, pane, repo, n, r, prompt)
 			end)
+		end
+		local tpl = if item then item.tpl else nil
+		if type(tpl) ~= "string" then
+			return go(cx2)
+		end
+		ask(cx2, pane, "verify", { tpl = tpl, root = r.path }, VERIFY_MS, function(a: any, cx3: WindowCx)
+			if type(a.why) == "string" then
+				return refuse(cx3, a.why)
+			end
+			go(cx3)
 		end)
 	end, function(cx2: WindowCx)
 		cx2:toast("info", title, "The worktree is ready at " .. r.path)
 	end)
 end
 
+-- The host's answer about a ready worktree; nil when it is not one.
+local function readyOf(a: any): Ready?
+	if type(a.path) ~= "string" or type(a.summary) ~= "string" then
+		return nil
+	end
+	return {
+		path = a.path,
+		created = a.created == true,
+		current = a.current == true,
+		dirty = if type(a.dirty) == "boolean" then a.dirty else nil,
+		summary = a.summary,
+		setup = if type(a.setup) == "string" then a.setup else nil,
+		why = if type(a.why) == "string" then a.why else nil,
+	}
+end
+
+-- Has the block's host create or reuse the PR's worktree (and note it on the block), then opens its tab, or with
+-- `prompt` starts an agent in it.
 local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?, item: PickItem?)
 	local full = owner .. "/" .. repo
-	for _, h in cx.hosts:list() do
-		if table.find(h.panes, pane) and h.kind ~= "local" then
-			return cx:toast("error", "Open Plotroom on the local host to create a worktree")
-		end
-	end
-	local flight = string.lower(full) .. "#" .. n
-	if inflight[flight] then
-		return cx:toast("info", "A worktree for " .. full .. "#" .. n .. " is already being prepared")
-	end
-	local launch = launchDir(cx, pane)
-	inflight[flight] = true
-	local function done(result: worktree.Result?, problem: string?, cx2: WindowCx?)
-		inflight[flight] = nil
-		if not cx2 then
-			return
-		end
-		if problem == worktree.NO_REPO then
-			if cx2.session:pane(pane) then
-				cx2.session:event(pane, { ev = "action", act = "choose-repo", value = full })
-			end
+	local tpl = if item and type(item.tpl) == "string" then item.tpl else nil
+	local sent = ask(cx, pane, "worktree", { repo = full, number = n, tpl = tpl }, PREPARE_MS, function(a: any, cx2: WindowCx)
+		if a.busy == true then
+			return cx2:toast("info", "A worktree for " .. full .. "#" .. n .. " is already being prepared")
+		elseif a.noRepo == true then
 			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then try again.")
+		elseif type(a.refused) == "string" then
+			return cx2:toast("error", "Agent not started for " .. full .. "#" .. n, a.refused)
 		end
-		if not result then
-			local why = problem or "Worktree failed"
-			publish(cx2, pane, { repo = full, number = n, ok = false, message = why })
-			return cx2:toast("error", "Worktree failed", why)
+		local r = readyOf(a)
+		if not r then
+			return cx2:toast("error", "Worktree failed", if type(a.problem) == "string" then a.problem else "The block's host gave no worktree")
 		end
-		publishResult(cx2, pane, full, n, result)
-		afterReady(cx2, result, function()
+		local ready: Ready = r
+		afterReady(cx2, ready, function()
 			if prompt then
-				startAgent(cx2, pane, full, n, result, prompt, item)
+				startAgent(cx2, pane, full, n, ready, prompt, item)
 			else
-				finishWorktree(cx2, pane, full, n, result)
+				finishWorktree(cx2, pane, full, n, ready)
 			end
 		end)
-	end
-	-- worktree.open always ends in done; if anything raises before it could start, release the PR here.
-	local started, why = pcall(function()
-		process.reset()
+	end)
+	if sent then
 		cx:toast("info", "Preparing worktree for " .. full .. "#" .. n)
-		worktree.open(launch, mappedPath(full), full, n, done)
-	end)
-	if not started then
-		inflight[flight] = nil
-		cx:toast("error", "Worktree failed", tostring(why))
 	end
-end
-
--- omp prompt templates in `dir` (`<name>.md`, frontmatter description as the detail), skipping names in `seen`. Each
--- row keeps its file as read: `/name` must still mean that when the agent runs.
-local function templatesIn(dir: string, group: string, project: boolean, seen: { [string]: boolean }, out: { PickItem })
-	local ok, files = pcall(function(): { string }
-		return if tern.fs.exists(dir) then tern.fs.list(dir) else {}
-	end)
-	if not ok then
-		return
-	end
-	table.sort(files)
-	for _, file in files do
-		local name = string.match(file, "^([^%.%s][^%s]*)%.md$")
-		if name and not seen[name] then
-			seen[name] = true
-			local path = dir .. "/" .. file
-			local text = readCapped(path)
-			local front = if text then string.match(text, "^%-%-%-\r?\n(.-)\r?\n%-%-%-") else nil
-			local desc = if front then string.match("\n" .. front .. "\n", "\ndescription:[ \t]*([^\r\n]-)[ \t]*\r?\n") else nil
-			local source: Source = { path = path, text = text, name = name, project = project }
-			table.insert(out, { label = "/" .. name, detail = if desc ~= "" then desc else nil, group = group, send = "/" .. name, source = source })
-		end
-	end
-end
-
--- Prompt templates omp would expand: the nearest `.omp/prompts` above `cwd`, then `~/.omp/agent/prompts`. omp reads the
--- user's before the project's and the first of a name wins, so a user template hides a same-named repository one.
-local function templates(cwd: string?): { PickItem }
-	local seen: { [string]: boolean } = {}
-	local user: { PickItem } = {}
-	local agent = userAgentDir()
-	if agent then
-		templatesIn(agent .. "/prompts", "Your templates", false, seen, user)
-	end
-	local out: { PickItem } = {}
-	local dir = cwd
-	while dir and dir ~= "" and dir ~= "/" do
-		if tern.fs.exists(dir .. "/.omp/prompts") then
-			templatesIn(dir .. "/.omp/prompts", "This repository's templates", true, seen, out)
-			break
-		end
-		dir = string.match(dir, "^(.*)/[^/]*$")
-	end
-	for _, t in user do
-		table.insert(out, t)
-	end
-	return out
-end
-
--- omp's skills and file commands as picker rows (prompt templates are not in its list); done(items, problem, cx).
-local function ompCommands(cwd: string, done: ({ PickItem }, string?, WindowCx?) -> ())
-	ompCatalog(cwd, function(cmds, problem, cx)
-		local out: { PickItem } = {}
-		if cmds then
-			for _, c in cmds do
-				if type(c) == "table" and type(c.name) == "string" and (c.source == "skill" or c.source == "file") and not string.find(c.name, "%s") then
-					local desc = if type(c.description) == "string" then string.match(c.description, "^[^\r\n]*") else nil
-					table.insert(out, {
-						label = "/" .. c.name,
-						detail = if desc ~= "" then desc else nil,
-						group = if c.source == "skill" then "Skills" else "Commands",
-						send = "/" .. c.name,
-					})
-				end
-			end
-		end
-		done(out, problem, cx)
-	end)
 end
 
 -- Asks which prompt template or skill to run on PR `owner/repo#n`, then runs it as `/<name> <PR URL>` in an agent
--- in the PR's worktree. "Type a prompt…" sends the typed text as it is. omp lists skills by running in the directory
--- Plotroom was opened in, where project config can run code, so that asks first; the home directory needs no asking,
--- omp never treats it as a project.
+-- in the PR's worktree. "Type a prompt…" sends the typed text as it is. The block's host lists them; omp lists skills
+-- by running in the directory Plotroom was opened in, where project config can run code, so the host may answer with
+-- that directory first, and the user is asked.
 local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
 	local full = owner .. "/" .. repo
-	local cwd = launchDir(cx, pane)
-	local function offer(cmds: { PickItem }, problem: string?, cx2: WindowCx?)
-		if not cx2 then
-			return
+	local function offer(a: any, cx2: WindowCx)
+		if type(a.problem) == "string" then
+			cx2:toast("info", "Skills are not listed", a.problem)
 		end
-		if problem then
-			cx2:toast("info", "Skills are not listed", problem)
-		end
-		local all = templates(cwd)
-		for _, c in cmds do
-			table.insert(all, c)
+		local all: { PickItem } = {}
+		for _, it in if type(a.items) == "table" then a.items else {} do
+			if type(it) == "table" and type(it.label) == "string" and type(it.send) == "string" then
+				table.insert(all, {
+					label = it.label,
+					detail = if type(it.detail) == "string" then it.detail else nil,
+					group = if type(it.group) == "string" then it.group else nil,
+					send = it.send,
+					tpl = if type(it.tpl) == "string" then it.tpl else nil,
+				})
+			end
 		end
 		local items: { PickItem } = {}
 		for _, label in readRecent() do
@@ -714,10 +472,6 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 					end
 				end)
 			end
-			local why = unbound(item, nil, nil)
-			if why then
-				return cx3:toast("error", "Agent not started for " .. full .. "#" .. n, why)
-			end
 			local recent = readRecent()
 			local at = table.find(recent, item.label)
 			if at then
@@ -729,22 +483,27 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 			worktreePr(cx3, pane, owner, repo, n, item.send .. " https://github.com/" .. full .. "/pull/" .. n, item)
 		end)
 	end
-	local home = tern.getenv("HOME")
-	local dir = cwd or home or ""
-	if dir == "" then
-		return offer({}, "No directory is known to ask omp in", cx)
+	local function list(cx1: WindowCx, consent: boolean)
+		ask(cx1, pane, "menu", { consent = consent }, MENU_MS, function(a: any, cx2: WindowCx)
+			if type(a.consent) == "string" then
+				local dir: string = a.consent
+				return confirm(cx2, "Run omp in " .. dir .. " to list skills and commands? Its project config can run code.", dir, "Nothing is run", function(cx3: WindowCx)
+					list(cx3, true)
+				end)
+			end
+			offer(a, cx2)
+		end)
 	end
-	local function list()
-		ompCommands(dir, offer)
-	end
-	if home and (string.gsub(dir, "/+$", "")) == (string.gsub(home, "/+$", "")) then
-		return list()
-	end
-	confirm(cx, "Run omp in " .. dir .. " to list skills and commands? Its project config can run code.", dir, "Nothing is run", list)
+	list(cx, false)
 end
 
 -- Validates a plotroom:// link against the pane's live surface and runs it.
 local function handle(cx: WindowCx, url: string, pane: number): boolean
+	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
+	if rid then
+		answered(cx, rid)
+		return true
+	end
 	local index, target = parseCheck(url)
 	if index and target then
 		if not isPlotroom(cx, pane) then
