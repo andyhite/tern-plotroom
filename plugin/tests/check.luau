@@ -173,6 +173,67 @@ function M.run()
 	assert(input.selected(m) == "y", "shift-left selects one codepoint")
 	assert(input.undo(m) and curText() == "ab", "undo restores the earlier text")
 
+	-- multi-line mode
+	assert(input.clean("a\r\nb\rc\td\1") == "a b cd", "single-line clean: breaks become spaces, tabs and controls drop")
+	assert(input.clean("a\r\nb\rc\td\1", true) == "a\nb\nc\td", "multi clean keeps and normalises breaks and tabs")
+	assert(input.new("a\r\nb\tc", true).text == "a\nb\tc", "multi new keeps breaks and tabs")
+	assert(input.new("a\nb").text == "a b", "single new still flattens")
+	local function modKey(name: string, mod: string): Key
+		return { name = name, ctrl = mod == "ctrl", alt = mod == "alt", shift = false, meta = mod == "meta" }
+	end
+	local s1 = input.new("ab")
+	assert(not input.key(s1, key("enter"), noop) and s1.text == "ab", "enter is not handled single-line")
+	assert(not input.key(s1, key("up"), noop) and not input.key(s1, key("down"), noop), "up/down unhandled single-line")
+	s1.cur = 1
+	input.key(s1, key("home"), noop)
+	assert(s1.cur == 0, "home goes to the start single-line")
+	input.key(s1, key("end"), noop)
+	assert(s1.cur == 2, "end goes to the end single-line")
+	local ml = input.new("héllo\nab", true)
+	assert(input.key(ml, key("enter"), noop) and ml.text == "héllo\nab\n" and ml.cur == #ml.text, "enter inserts a newline")
+	assert(not input.key(ml, modKey("enter", "meta"), noop), "meta+enter is left to the caller")
+	assert(not input.key(ml, modKey("enter", "ctrl"), noop), "ctrl+enter is left to the caller")
+	assert(not input.key(ml, modKey("enter", "alt"), noop) and ml.text == "héllo\nab\n", "alt+enter is left to the caller")
+	ml = input.new("héllo\nab", true)
+	input.key(ml, key("up"), noop)
+	assert(ml.cur == #"h", "up keeps the byte column, snapped off the middle of é")
+	input.key(ml, key("up"), noop)
+	assert(ml.cur == 0, "up on the first line goes to 0")
+	ml.cur = 1
+	input.key(ml, key("down"), noop)
+	assert(ml.cur == #"héllo\na", "down keeps the column")
+	input.key(ml, key("down"), noop)
+	assert(ml.cur == #ml.text, "down on the last line goes to the end")
+	ml.cur = #"héllo"
+	input.key(ml, key("down"), noop)
+	assert(ml.cur == #ml.text, "down clamps to a shorter line")
+	ml = input.new("abc\nhé", true)
+	ml.cur = 2
+	input.key(ml, key("down"), noop)
+	assert(ml.cur == #"abc\nh", "down snaps off the middle of a multi-byte character")
+	ml = input.new("a\nbcd", true)
+	ml.cur = #"a\nbcd"
+	input.key(ml, key("up"), noop)
+	assert(ml.cur == 1, "up clamps to a shorter line")
+	ml = input.new("héllo\nab", true)
+	ml.cur = 0
+	ml.anchor = nil
+	input.key(ml, key("down", nil, true), noop)
+	assert(input.selected(ml) == "héllo\n", "shift+down extends the selection")
+	ml.cur, ml.anchor = #"héllo\nab", nil
+	input.key(ml, key("home"), noop)
+	assert(ml.cur == #"héllo\n", "home goes to the line start")
+	input.key(ml, key("end"), noop)
+	assert(ml.cur == #ml.text, "end goes to the line end")
+	ml.cur = 1
+	input.key(ml, key("end"), noop)
+	assert(ml.cur == #"héllo", "end stops before the newline")
+	input.key(ml, key("home", nil, true), noop)
+	assert(input.selected(ml) == "héllo", "shift+home selects to the line start")
+	local pm = input.new("", true)
+	input.key(pm, { name = "paste", text = "x\r\ny", ctrl = false, alt = false, shift = false, meta = false }, noop)
+	assert(pm.text == "x\ny", "paste keeps line breaks in multi")
+
 	-- remotes and worktree records
 	assert(worktree.normalizeRemote("https://github.com/cli/cli.git") == "cli/cli", "https remote")
 	assert(worktree.normalizeRemote("https://user:tok@github.com/cli/cli") == "cli/cli", "https remote with credentials")

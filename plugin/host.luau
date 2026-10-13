@@ -1,7 +1,6 @@
 --!strict
 -- The `prs` block: a live GitHub PR queue with saved, editable filters.
 
-local agent = require("./agent")
 local github = require("./github")
 local input = require("./input")
 local process = require("./process")
@@ -18,6 +17,10 @@ local NOTE_CAP = 20 -- worktree reports kept per block
 
 type Filter = { id: string, name: string, query: string }
 type Store = { version: number, nextId: number, items: { Filter } }
+-- An agent prompt from Settings › Prompts: `filters` are the filter ids it is offered under; none (or none that still
+-- exist) means every filter. `key` runs it on the selected pull request from the queue.
+type Prompt = { id: string, name: string, text: string, filters: { string }, key: string? }
+type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- `rows` caches the picker rows; `rowsRev` (worktree reports) and `rowsMin` (the minute, for the ages) say what built them.
 type Snap = {
 	prs: { github.Pr },
@@ -53,12 +56,13 @@ type Note = {
 	cleanup: { string },
 }
 type Settings = {
-	page: string, -- "filters" | "github" | "worktrees"
+	page: string, -- "filters" | "prompts" | "github" | "worktrees"
 	focus: string?, -- focused prefs row id
-	edit: { row: string, model: input.Model }?, -- text row being edited
+	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text
+	pick: { row: string, option: string? }?, -- a filters row whose chips the keys drive
 	errors: { [string]: string? }, -- row id -> warning under the row
 	busy: boolean, -- checkout path being verified
-	confirm: string?, -- filter id awaiting delete confirmation
+	confirm: string?, -- delete row ("delete:<filter id>" or "pdelete:<prompt id>") awaiting confirmation
 }
 
 type State = {
@@ -96,8 +100,6 @@ type State = {
 	noteSeq: number,
 	settings: Settings?,
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
-	sources: { [string]: agent.Source }, -- prompt templates as listed for picker rows, by path
-	ready: { [string]: boolean }, -- worktree paths prepared here: the only ones a template is verified in
 }
 
 local running: { [number]: State } = {}
@@ -202,6 +204,86 @@ local function setupOf(map: { [string]: any }, repo: string): { string }
 			if type(c) == "string" then
 				table.insert(out, c)
 			end
+		end
+	end
+	return out
+end
+
+local PROMPTS_BAD = "Saved prompts are malformed; not overwriting them."
+local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
+-- Keys the queue uses itself, so no prompt may take them as its shortcut.
+local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "/", "?", "r", "s" }
+
+-- Saved agent prompts (kv "prompts"; absent is none), or nil and why when unreadable or malformed: a write then fails
+-- closed rather than overwrite them.
+local function loadPrompts(): (Prompts?, string?)
+	local ok, v = pcall(tern.kv.get, "prompts")
+	if not ok then
+		return nil, "Saved prompts could not be read: " .. tostring(v)
+	end
+	if v == nil then
+		return { version = 1, nextId = 1, items = {} }, nil
+	end
+	if not isTable(v) or v.version ~= 1 or type(v.nextId) ~= "number" or not isTable(v.items) then
+		return nil, PROMPTS_BAD
+	end
+	local items: { Prompt } = {}
+	for _, p in v.items do
+		if
+			not isTable(p)
+			or type(p.id) ~= "string"
+			or type(p.name) ~= "string"
+			or type(p.text) ~= "string"
+			or not isTable(p.filters)
+			or (p.key ~= nil and type(p.key) ~= "string")
+		then
+			return nil, PROMPTS_BAD
+		end
+		local filters: { string } = {}
+		for _, f in p.filters do
+			if type(f) ~= "string" then
+				return nil, PROMPTS_BAD
+			end
+			table.insert(filters, f)
+		end
+		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = filters, key = p.key })
+	end
+	return { version = 1, nextId = v.nextId, items = items }, nil
+end
+
+-- Rereads the prompts, lets `fn` change them (an error string aborts) and saves them; an error message or nil.
+local function editPrompts(fn: (Prompts) -> string?): string?
+	local store, err = loadPrompts()
+	if not store then
+		return err
+	end
+	local ferr = fn(store)
+	if ferr then
+		return ferr
+	end
+	local items: { any } = {}
+	for _, p in store.items do
+		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = tern.json.array(p.filters), key = p.key })
+	end
+	local werr = kvSet("prompts", { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	return if werr then "Could not save: " .. werr else nil
+end
+
+local function promptById(store: Prompts, id: string): Prompt?
+	for _, p in store.items do
+		if p.id == id then
+			return p
+		end
+	end
+	return nil
+end
+
+-- The filters a prompt is offered under, as ids of filters that still exist; empty means every filter.
+local function scopeOf(p: Prompt, filters: Store): { string }
+	local out: { string } = {}
+	for _, f in filters.items do
+		if table.find(p.filters, f.id) then
+			table.insert(out, f.id)
 		end
 	end
 	return out
@@ -768,6 +850,11 @@ local function prHref(kind: string, pr: github.Pr): string
 	return "plotroom://github/" .. kind .. "/" .. pr.repo .. "/" .. pr.number
 end
 
+-- The link of a card button that runs saved prompt `id` (letters and digits) on `pr`.
+local function runHref(pr: github.Pr, id: string): string
+	return "plotroom://github/run/" .. pr.repo .. "/" .. pr.number .. "/" .. id
+end
+
 -- "45s", "3m 20s", "1h 5m" for a whole number of seconds.
 local function duration(s: number): string
 	s = math.max(0, math.ceil(s))
@@ -836,9 +923,10 @@ end
 
 local QUEUE_ID = "layer.queue"
 local SETTINGS_ID = "main.settings"
-local PAGES = { "filters", "github", "worktrees" }
+local PAGES = { "filters", "prompts", "github", "worktrees" }
 local PAGE_DEFS = {
 	{ id = "filters", label = "Filters", group = "Queue", icon = "funnel" },
+	{ id = "prompts", label = "Prompts", group = "Queue", icon = "app-omp" },
 	{ id = "github", label = "GitHub", group = "Connection", icon = "globe" },
 	{ id = "worktrees", label = "Worktrees", group = "Connection", icon = "tree" },
 }
@@ -870,7 +958,7 @@ local QUEUE_KEYS: { KeyHelp } = {
 	{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
 	{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab" },
 	{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
-	{ keys = { "a" }, text = "Run an omp prompt template or skill on the selected pull request, picked from a list" },
+	{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
 	{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
 	{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
 	{ keys = { "r" }, text = "Refresh now" },
@@ -880,6 +968,8 @@ local QUEUE_KEYS: { KeyHelp } = {
 local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
 	{ keys = { "Enter" }, text = "Edit a text row or press its button; while editing, Enter saves" },
+	{ keys = { "⌘↵" }, text = "Save a prompt's text (Enter there starts a new line)" },
+	{ keys = { "←", "→", "Space" }, text = "On a prompt's Filters row after Enter: move between filters and turn one on or off" },
 	{ keys = { "Esc" }, text = "Cancel the edit without saving; with nothing being edited, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
 	{ keys = { "?" }, text = "Show or hide this list" },
@@ -943,6 +1033,52 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					hint = "Adds a filter for open pull requests; name it and edit its query.",
 					disabled = locked,
 					control = { k = "action", act = "add", label = "Add filter" },
+				},
+			},
+		})
+	elseif s.page == "prompts" then
+		lead = "What the Agent button (a) offers to run on a pull request, in its worktree. {url} in a prompt becomes the pull request's link. A prompt with no filter turned on is offered under every filter."
+		local prompts, unreadable = loadPrompts()
+		local options: { any } = {}
+		for _, f in state.store.items do
+			table.insert(options, { value = f.id, label = f.name })
+		end
+		local list: { Prompt } = if prompts then prompts.items else {}
+		for _, p in list do
+			local first = string.match(p.text, "^%s*([^\n]*)") or ""
+			local rows: { Row } = {
+				{ id = "pname:" .. p.id, label = "Name", control = { k = "text", value = p.name, placeholder = "Review" } },
+				{
+					id = "ptext:" .. p.id,
+					label = "Prompt",
+					hint = if first ~= "" then clip(printable(first), 80) else "Empty",
+					control = { k = "action", act = "edit-prompt", label = "Edit…" },
+				},
+				{
+					id = "pkey:" .. p.id,
+					label = "Shortcut",
+					hint = "One key that runs it on the selected pull request in the queue; empty: none.",
+					control = { k = "text", value = p.key or "", placeholder = "None" },
+				},
+				{
+					id = "pscope:" .. p.id,
+					label = "Filters",
+					hint = "Offered only under the filters turned on; none turned on: every filter.",
+					control = { k = "multi", values = tern.json.array(scopeOf(p, state.store)), options = tern.json.array(options) },
+				},
+				{ id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } },
+			}
+			table.insert(sections, { id = "prompt:" .. p.id, title = p.name, rows = rows })
+		end
+		table.insert(sections, {
+			id = "pnew",
+			rows = {
+				{
+					id = "padd",
+					label = "New prompt",
+					hint = "Adds a prompt offered under every filter; name it and write it.",
+					disabled = unreadable,
+					control = { k = "action", act = "add-prompt", label = "Add prompt" },
 				},
 			},
 		})
@@ -1093,15 +1229,32 @@ local function rowById(state: State, id: string): Row?
 	return nil
 end
 
+-- The caret's field (the TSP focus op; a view diff never moves it): the prompt editor while its text is edited.
+local PROMPT_FIELD = SETTINGS_ID .. ".prompt.draft"
+local function focusPrompt(state: State, on: boolean)
+	local op: { any } = { "focus", if on then PROMPT_FIELD else tern.json.null }
+	state.cx:frame({ op })
+end
+
+-- Opens a text row for editing, or a prompt's text (its "ptext:" row) in the multi-line editor card.
 local function beginEdit(state: State, row: string, initial: string?)
 	local s = state.settings
 	local def = if s then rowById(state, row) else nil
-	if not s or not def or def.disabled or def.control.k ~= "text" then
+	if not s or not def or def.disabled then
 		return
 	end
-	s.focus = row
+	local id = string.match(row, "^ptext:(.+)$")
+	local prompts = if id then loadPrompts() else nil
+	local p = if prompts and id then promptById(prompts, id) else nil
+	if not p and def.control.k ~= "text" then
+		return
+	end
+	s.focus, s.pick = row, nil
 	s.errors[row] = nil
-	s.edit = { row = row, model = input.new(initial or def.control.value) }
+	s.edit = { row = row, model = if p then input.new(initial or p.text, true) else input.new(initial or def.control.value) }
+	if p then
+		focusPrompt(state, true)
+	end
 end
 
 -- Ends a save attempt: `err` is shown under the row and the edit stays open for a correction; on success the
@@ -1270,12 +1423,104 @@ local function deleteFilter(state: State, id: string)
 	propagate(state)
 end
 
--- Deletes the filter whose delete row `s.confirm` names ("delete:<id>").
+local function addPrompt(state: State)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local id = ""
+	local err = editPrompts(function(store: Prompts): string?
+		id = "p" .. store.nextId
+		store.nextId += 1
+		table.insert(store.items, { id = id, name = "New prompt", text = "", filters = {} })
+		return nil
+	end)
+	s.errors.padd = err
+	if not err then
+		beginEdit(state, "pname:" .. id, "")
+	end
+end
+
+local function deletePrompt(state: State, id: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	s.confirm = nil
+	local e = s.edit
+	if e and (e.row == "ptext:" .. id or e.row == "pname:" .. id) then
+		if e.model.multi then
+			focusPrompt(state, false)
+		end
+		s.edit = nil -- the prompt being edited goes
+	end
+	local err = editPrompts(function(store: Prompts): string?
+		for i, p in store.items do
+			if p.id == id then
+				table.remove(store.items, i)
+				break
+			end
+		end
+		return nil
+	end)
+	s.errors["pdelete:" .. id] = err
+	if not err then
+		s.focus = "padd"
+	end
+end
+
+-- Saves the filters prompt `id` is offered under: those of `values` that still name a filter.
+local function setScope(state: State, id: string, values: { any })
+	local s = state.settings
+	if not s then
+		return
+	end
+	local keep: { string } = {}
+	for _, f in state.store.items do
+		if table.find(values, f.id) then
+			table.insert(keep, f.id)
+		end
+	end
+	s.errors["pscope:" .. id] = editPrompts(function(store: Prompts): string?
+		local p = promptById(store, id)
+		if not p then
+			return "That prompt was deleted elsewhere."
+		end
+		p.filters = keep
+		return nil
+	end)
+end
+
+-- Turns filter `option` on or off for the prompt of filters row `row` ("pscope:<id>").
+local function toggleScope(state: State, row: string, option: string)
+	local def = rowById(state, row)
+	local id = string.match(row, "^pscope:(.+)$")
+	if not def or not id then
+		return
+	end
+	local values: { any } = {}
+	local on = false
+	for _, v in def.control.values do -- a tern.json.array: table.clone refuses its protected metatable
+		if v == option then
+			on = true
+		else
+			table.insert(values, v)
+		end
+	end
+	if not on then
+		table.insert(values, option)
+	end
+	setScope(state, id, values)
+end
+
+-- Deletes the filter or prompt whose delete row `s.confirm` names ("delete:<id>" or "pdelete:<id>").
 local function confirmDelete(state: State)
 	local s = state.settings
-	local id = string.match(if s and s.confirm then s.confirm else "", "^delete:(.+)$")
-	if id then
+	local kind, id = string.match(if s and s.confirm then s.confirm else "", "^(p?delete):(.+)$")
+	if kind == "delete" and id then
 		deleteFilter(state, id)
+	elseif kind == "pdelete" and id then
+		deletePrompt(state, id)
 	end
 end
 
@@ -1286,6 +1531,10 @@ local function runAction(state: State, act: string, row: string)
 	end
 	if act == "add" then
 		addFilter(state)
+	elseif act == "add-prompt" then
+		addPrompt(state)
+	elseif act == "edit-prompt" then
+		beginEdit(state, row)
 	elseif act == "delete" then
 		s.confirm = row
 	elseif act == "refresh" then
@@ -1294,7 +1543,8 @@ local function runAction(state: State, act: string, row: string)
 end
 
 local function runRow(state: State, row: string?)
-	if not row then
+	local s = state.settings
+	if not row or not s then
 		return
 	end
 	local def = rowById(state, row)
@@ -1305,6 +1555,8 @@ local function runRow(state: State, row: string?)
 		beginEdit(state, row)
 	elseif def.control.k == "action" then
 		runAction(state, def.control.act, row)
+	elseif def.control.k == "multi" and def.control.options[1] then
+		s.pick = { row = row, option = def.control.options[1].value }
 	end
 end
 
@@ -1318,7 +1570,8 @@ local function commitEdit(state: State)
 	local text = trim(e.model.text)
 	local row = e.row
 	local def = rowById(state, row)
-	if not def or text == def.control.value then
+	-- A prompt's unchanged name still saves: naming a new one "New prompt" must open its text all the same.
+	if not def or (text == def.control.value and not string.match(row, "^pname:")) then
 		settle(s, row, nil) -- nothing to save: the edit closes, and a warning about the rejected draft goes with it
 		return
 	end
@@ -1340,6 +1593,56 @@ local function commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
+	elseif kind == "pkey" and id then
+		local err: string? = nil
+		if text ~= "" and (utf8.len(text) ~= 1 or string.find(text, "%s")) then
+			err = "One key: a single letter, digit or symbol."
+		elseif table.find(QUEUE_TAKEN, text) then
+			err = "The queue already uses " .. text .. "."
+		else
+			err = editPrompts(function(store: Prompts): string?
+				local p = promptById(store, id)
+				if not p then
+					return "That prompt was deleted elsewhere."
+				end
+				for _, other in store.items do
+					if other ~= p and text ~= "" and other.key == text then
+						return "Already the shortcut of " .. other.name .. "."
+					end
+				end
+				p.key = if text ~= "" then text else nil
+				return nil
+			end)
+		end
+		settle(s, row, err)
+	elseif (kind == "pname" or kind == "ptext") and id then
+		local err: string? = nil
+		local empty = false
+		if text == "" then
+			err = if kind == "pname" then "A name is required." else "A prompt is required."
+		elseif #text > PROMPT_CAP then
+			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
+		else
+			err = editPrompts(function(store: Prompts): string?
+				local p = promptById(store, id)
+				if not p then
+					return "That prompt was deleted elsewhere."
+				end
+				if kind == "pname" then
+					p.name = text
+				else
+					p.text = text
+				end
+				empty = p.text == ""
+				return nil
+			end)
+		end
+		settle(s, row, err)
+		if not err and empty then
+			beginEdit(state, "ptext:" .. id) -- a new prompt: named, now write it
+		elseif not err and kind == "ptext" then
+			focusPrompt(state, false)
+		end
 	elseif kind == "setup" and id then
 		local at = tonumber(id) -- nil: the "Add a command" row
 		local err = editSetup(state, function(list: { string }): string?
@@ -1413,6 +1716,9 @@ local function discardEdit(state: State)
 	if s and e then
 		s.edit = nil
 		s.errors[e.row] = nil
+		if e.model.multi then
+			focusPrompt(state, false)
+		end
 	end
 end
 
@@ -1438,6 +1744,7 @@ local function resetRow(state: State, row: string)
 end
 
 local function openSettings(state: State, page: string, row: string?, edit: boolean?)
+	discardEdit(state) -- releases the prompt editor's caret, if one was open
 	state.settings = { page = page, focus = row, errors = {}, busy = false }
 	if edit and row then
 		beginEdit(state, row)
@@ -1688,7 +1995,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "1"
+local RPC_PROTOCOL = "3"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -1736,47 +2043,61 @@ local function setupLine(repo: string): string?
 	return if #cmds > 0 then table.concat(cmds, " && ") else nil
 end
 
-local function menu(state: State, id: string, consent: boolean)
-	agent.menu(state.launchCwd, consent, function(m)
-		if m.consent then
-			return reply(state, id, { consent = m.consent })
+-- The saved prompts offered under the active filter, those with text, that filter's own first (`here`), then those of
+-- every filter; and why the prompts could not be read.
+local function offered(state: State): ({ { prompt: Prompt, here: boolean } }, string?)
+	local prompts, problem = loadPrompts()
+	local active = activeFilter(state)
+	local mine: { { prompt: Prompt, here: boolean } } = {}
+	local every: { { prompt: Prompt, here: boolean } } = {}
+	local list: { Prompt } = if prompts then prompts.items else {}
+	for _, p in list do
+		local scope = scopeOf(p, state.store)
+		local here = active ~= nil and table.find(scope, active.id) ~= nil
+		if p.text ~= "" and (#scope == 0 or here) then
+			table.insert(if here then mine else every, { prompt = p, here = here })
 		end
-		for path, src in m.sources do
-			state.sources[path] = src
-		end
-		local items: { any } = {}
-		local size = 0
-		for _, it in m.items do
-			local row = {
-				label = clip(printable(it.label), 120),
-				detail = if it.detail then clip(printable(it.detail), 160) else nil,
-				group = it.group,
-				send = it.send,
-				tpl = it.tpl,
-			}
-			size += #tern.json.encode(row)
-			if size > MENU_BUDGET then
-				break
-			end
-			table.insert(items, row)
-		end
-		reply(state, id, { items = tern.json.array(items), problem = m.problem })
-	end)
+	end
+	table.move(every, 1, #every, #mine + 1, mine)
+	return mine, problem
 end
 
--- Creates or reuses the worktree of `repo`#`n` and notes the outcome. With `tpl`, the picked template must still read
--- as listed before anything is created, and the answer says whether `/name` still reaches it in the worktree.
-local function prepare(state: State, id: string, repo: string, n: number, tpl: string?)
+-- The agent picker's rows: `offered`, each with its id so a card button's link can name it. With `only`, just that
+-- prompt, so a card button never misses its prompt to the picker's size budget.
+local function menu(state: State, id: string, only: string?)
+	local list, problem = offered(state)
+	local active = activeFilter(state)
+	local mine: { any } = {}
+	for _, o in list do
+		local p = o.prompt
+		if only and p.id ~= only then
+			continue
+		end
+		table.insert(mine, {
+			id = p.id,
+			label = clip(printable(p.name), 120),
+			detail = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
+			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All filters",
+			send = p.text,
+		})
+	end
+	local items: { any } = {}
+	local size = 0
+	for _, row in mine do
+		size += #tern.json.encode(row)
+		if size > MENU_BUDGET then
+			break
+		end
+		table.insert(items, row)
+	end
+	reply(state, id, { items = tern.json.array(items), problem = problem })
+end
+
+-- Creates or reuses the worktree of `repo`#`n` and notes the outcome.
+local function prepare(state: State, id: string, repo: string, n: number)
 	local key = string.lower(repo) .. "#" .. n
 	if preparing[key] then
 		return reply(state, id, { busy = true })
-	end
-	local src = if tpl then state.sources[tpl] else nil
-	if tpl then
-		local why = if src then agent.unbound(src, nil, nil) else "Plotroom no longer knows that template; pick it again."
-		if why then
-			return reply(state, id, { refused = why })
-		end
 	end
 	local mapped = readRepos()["github.com/" .. string.lower(repo)]
 	preparing[key] = true
@@ -1797,7 +2118,6 @@ local function prepare(state: State, id: string, repo: string, n: number, tpl: s
 				return reply(state, id, { problem = why })
 			end
 			noteWorktree(state, repo, n, r, nil)
-			state.ready[r.path] = true
 			reply(state, id, {
 				path = r.path,
 				created = r.created,
@@ -1805,7 +2125,6 @@ local function prepare(state: State, id: string, repo: string, n: number, tpl: s
 				dirty = r.dirty,
 				summary = worktree.describe(r),
 				setup = if r.created then setupLine(repo) else nil,
-				why = if src then agent.unbound(src, r.path, nil) else nil,
 			})
 		end)
 	end)
@@ -1826,7 +2145,7 @@ local function rpc(state: State, raw: any)
 	end
 	local id: string = q.id
 	if q.op == "menu" then
-		menu(state, id, q.consent == true)
+		menu(state, id, if type(q.only) == "string" then q.only else nil)
 	elseif q.op == "worktree" then
 		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
 		local n = q.number
@@ -1836,16 +2155,7 @@ local function rpc(state: State, raw: any)
 		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
 			return
 		end
-		prepare(state, id, owner .. "/" .. name, n, if type(q.tpl) == "string" then q.tpl else nil)
-	elseif q.op == "verify" then
-		local src = if type(q.tpl) == "string" then state.sources[q.tpl] else nil
-		local root = q.root
-		if not src or type(root) ~= "string" or not state.ready[root] then
-			return reply(state, id, { why = "Plotroom did not prepare that worktree or list that template; try again." })
-		end
-		agent.verify(src, root, function(why)
-			reply(state, id, { why = why })
-		end)
+		prepare(state, id, owner .. "/" .. name, n)
 	end
 end
 
@@ -2053,15 +2363,6 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 			title = "Check out in a worktree tab",
 			aria = "Check out pull request #" .. pr.number .. " in a worktree tab",
 		}, { ui.node("kbd", { keys = { "w" } }) }),
-		ui.el("button", {
-			key = "agent",
-			class = "plotroom-btn",
-			text = "Agent",
-			href = prHref("agent", pr),
-			actions = { click = "open" },
-			title = "Pick an omp prompt template or skill and run it in this pull request's worktree",
-			aria = "Run an agent on pull request #" .. pr.number,
-		}, { ui.node("kbd", { keys = { "a" } }) }),
 	}
 	if open[pr.number] then
 		table.insert(
@@ -2075,6 +2376,29 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 				title = "Show the tab working in this pull request's worktree",
 			}, { ui.node("kbd", { keys = { "g" } }) })
 		)
+	end
+	-- The `a` picker's link stays on the card, unseen, for the key and the palette command to follow.
+	table.insert(btns, ui.node("text", { key = "agent", href = prHref("agent", pr), hidden = true }))
+	-- The saved prompts offered under this filter, one button each beside Open and Worktree: it runs that prompt in the
+	-- pull request's worktree.
+	local runs = 0
+	for _, o in offered(state) do
+		local p = o.prompt
+		if string.match(p.id, "^%w+$") then
+			table.insert(
+				btns,
+				ui.el("button", {
+					key = "prompt-" .. p.id,
+					class = "plotroom-btn",
+					text = clip(printable(p.name), 40),
+					href = runHref(pr, p.id),
+					actions = { click = "open" },
+					title = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
+					aria = "Run the prompt " .. printable(p.name) .. " on pull request #" .. pr.number,
+				}, if p.key then { ui.node("kbd", { keys = { p.key } }) } else nil)
+			)
+			runs += 1
+		end
 	end
 	local buttons = ui.el("div", { key = "buttons", class = "plotroom-actions" }, btns)
 	local out: { Node } = {
@@ -2096,6 +2420,9 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 		ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips),
 		buttons,
 	}
+	if runs == 0 then
+		table.insert(out, ui.node("text", { key = "prompts", spans = { ui.span("No agent prompts for this filter · Settings (s) › Prompts", "muted") } }))
+	end
 	for _, n in worktreeNodes(state, pr) do
 		table.insert(out, n)
 	end
@@ -2122,7 +2449,13 @@ local function previewNodes(state: State, open: { [number]: boolean }): { Node }
 end
 
 local function helpOverlay(state: State): Node
-	local rows: { KeyHelp } = if state.settings then SETTINGS_KEYS else QUEUE_KEYS
+	local rows: { KeyHelp } = table.clone(if state.settings then SETTINGS_KEYS else QUEUE_KEYS)
+	local shortcuts: { { prompt: Prompt, here: boolean } } = if state.settings then {} else offered(state)
+	for _, o in shortcuts do
+		if o.prompt.key then
+			table.insert(rows, { keys = { o.prompt.key }, text = "Run the prompt “" .. printable(o.prompt.name) .. "” on the selected pull request" })
+		end
+	end
 	local items: { { [string]: any } } = {}
 	for _, h in rows do
 		local caps: { Span | string } = {}
@@ -2256,15 +2589,23 @@ local function queueView(state: State): BlockView
 end
 
 local function confirmOverlay(state: State, row: string): Node
-	local id = string.match(row, "^delete:(.+)$")
-	local name = "this filter"
-	for _, f in state.store.items do
-		if f.id == id then
-			name = f.name
+	local kind, id = string.match(row, "^(p?delete):(.+)$")
+	local head, body
+	if kind == "pdelete" then
+		local prompts = loadPrompts()
+		local p = if prompts and id then promptById(prompts, id) else nil
+		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
+		body = "The Agent button stops offering it, in every Plotroom pane on this machine."
+	else
+		local name = "this filter"
+		for _, f in state.store.items do
+			if f.id == id then
+				name = f.name
+			end
 		end
+		head = "Delete filter “" .. name .. "”?"
+		body = "Every Plotroom pane loses this saved search."
 	end
-	local head = "Delete filter “" .. name .. "”?"
-	local body = "Every Plotroom pane loses this saved search."
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, {
 		ui.node("text", {
 			key = "body",
@@ -2293,9 +2634,45 @@ local function settingsView(state: State): BlockView
 		sections = sections,
 		focus = s.focus,
 	}
-	if s.edit then
-		local p = input.props(s.edit.model)
-		props.editing = { row = s.edit.row, draft = p.text, cursor = p.cursor }
+	local e = s.edit
+	if e and e.model.multi then
+		-- A prompt's text: the multi-line editor in the page's editor card, as Tern draws no multi-line control.
+		local p = input.props(e.model)
+		local prompts = loadPrompts()
+		local id = string.match(e.row, "^ptext:(.+)$")
+		local prompt = if prompts and id then promptById(prompts, id) else nil
+		local err = s.errors[e.row]
+		local kids: { Node } = {
+			ui.node("text", {
+				key = "head",
+				spans = { ui.span("Prompt · " .. (if prompt then prompt.name else ""), "strong"), ui.span("   ⌘↵ saves · Esc cancels", "muted") },
+			}),
+			ui.node("editor", {
+				key = "draft",
+				text = p.text,
+				cursor = p.cursor,
+				anchor = p.anchor,
+				placeholder = "Review {url}: …",
+				maxLines = 16,
+				aria = "Prompt text",
+			}),
+		}
+		if err then
+			table.insert(kids, ui.node("text", { key = "error", spans = { ui.span(err, "error") } }))
+		end
+		table.insert(
+			kids,
+			ui.el("div", { key = "buttons", class = "plotroom-actions" }, {
+				ui.el("button", { key = "save", class = "plotroom-btn primary", text = "Save", actions = { click = "save-prompt" } }),
+				ui.el("button", { key = "cancel", class = "plotroom-btn", text = "Cancel", actions = { click = "cancel-prompt" } }),
+			})
+		)
+		table.insert(extra, ui.node("col", { key = "prompt", role = "omp.prefs.editor" }, kids))
+	elseif e then
+		local p = input.props(e.model)
+		props.editing = { row = e.row, draft = p.text, cursor = p.cursor }
+	elseif s.pick then
+		props.editing = { row = s.pick.row, option = s.pick.option }
 	end
 	local layer: Node? = nil
 	if s.confirm then
@@ -2397,8 +2774,6 @@ tern.block.define("prs", {
 			noteSeq = 0,
 			settings = nil,
 			replies = {},
-			sources = {},
-			ready = {},
 		}
 		if not activeFilter(state) then
 			state.activeId = if store.items[1] then store.items[1].id else nil
@@ -2446,7 +2821,7 @@ tern.block.define("prs", {
 			if e then
 				if name == "escape" then
 					discardEdit(state)
-				elseif name == "enter" then
+				elseif name == "enter" and (not e.model.multi or key.meta or key.ctrl) then
 					commitEdit(state)
 				elseif not input.key(e.model, key, function(t)
 					cx:copy(t)
@@ -2455,12 +2830,36 @@ tern.block.define("prs", {
 				end
 				return true
 			end
+			local pick = s.pick
+			local pdef = if pick then rowById(state, pick.row) else nil
+			if pick and pdef then
+				local options = pdef.control.options
+				if name == "left" or name == "right" then
+					local at = 0
+					for i, o in options do
+						if o.value == pick.option then
+							at = i
+						end
+					end
+					local o = options[math.clamp(at + (if name == "left" then -1 else 1), 1, math.max(#options, 1))]
+					pick.option = if o then o.value else nil
+					return true
+				elseif (name == "enter" or name == "space") and pick.option then
+					toggleScope(state, pick.row, pick.option)
+					return true
+				elseif name == "escape" then
+					s.pick = nil
+					return true
+				end
+			end
+			s.pick = nil -- any other key leaves the chips
 			if name == "escape" then
 				state.settings = nil
 			elseif name == "tab" and plain then
 				local at = table.find(PAGES, s.page) or 1
 				s.page = PAGES[((at - 1 + (if key.shift then -1 else 1)) % #PAGES) + 1]
-				s.focus, s.edit, s.errors = nil, nil, {}
+				discardEdit(state)
+				s.focus, s.pick, s.errors = nil, nil, {}
 			elseif plain and k == "?" then
 				state.help = true
 			elseif name == "up" or name == "down" then
@@ -2550,7 +2949,19 @@ tern.block.define("prs", {
 		elseif plain and k == "a" then
 			openSelected(state, "agent", false)
 		else
-			return false
+			-- A saved prompt's own key runs it, through its card button's link (the window honours only links shown).
+			local pr = selectedPr(state)
+			local hit: Prompt? = nil
+			local list: { { prompt: Prompt, here: boolean } } = if plain and pr then offered(state) else {}
+			for _, o in list do
+				if o.prompt.key == k and string.match(o.prompt.id, "^%w+$") then
+					hit = o.prompt
+				end
+			end
+			if not pr or not hit then
+				return false
+			end
+			state.cx:open(runHref(pr, hit.id))
 		end
 		return true
 	end,
@@ -2592,21 +3003,30 @@ tern.block.define("prs", {
 			if s then
 				s.confirm = nil
 			end
+		elseif act == "save-prompt" or act == "cancel-prompt" then
+			-- The editor card's buttons: their own ids, not the prefs node's.
+			if s and act == "save-prompt" then
+				commitEdit(state)
+			elseif s then
+				discardEdit(state)
+			end
 		elseif s then
 			if ev.id ~= SETTINGS_ID then
 				return
 			end
 			if act == "page" then
 				if type(ev.value) == "string" and table.find(PAGES, ev.value) then
-					s.page, s.focus, s.edit, s.errors = ev.value, nil, nil, {}
+					discardEdit(state)
+					s.page, s.focus, s.pick, s.errors = ev.value, nil, nil, {}
 				end
 			elseif act == "close" then
 				if ev.value == nil then
+					discardEdit(state)
 					state.settings = nil
 				else
 					discardEdit(state)
 				end
-			elseif act == "add" or act == "delete" or act == "refresh" then
+			elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" then
 				if type(ev.value) == "string" then
 					s.focus = ev.value
 					runAction(state, act, ev.value)
@@ -2617,6 +3037,12 @@ tern.block.define("prs", {
 				s.focus = item
 			elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
 				resetRow(state, item)
+			elseif ev.ev == "change" and item and isTable(ev.value) then
+				local id = string.match(item, "^pscope:(.+)$")
+				if id then
+					s.focus = item
+					setScope(state, id, ev.value)
+				end
 			end
 		elseif ev.id == QUEUE_ID then
 			if ev.ev == "select" or ev.ev == "activate" then

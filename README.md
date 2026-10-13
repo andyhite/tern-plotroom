@@ -43,7 +43,7 @@ Update later with the same command plus `--force`.
 | ⚡ **Polite refresh** | Every 60 s while quota is ample; backs off from GitHub's rate-limit headers instead of hammering. |
 | ✅ **Checks** | The selected PR's full check list, re-runs collapsed to the newest. Reloaded on every successful refresh, so check status changes show up even when the PR itself is unchanged. |
 | 🌳 **Worktrees** | `w` checks the PR out with `omp worktree add` into omp's worktree directory (default `~/.omp/wt`) as `plotroom-<owner>_<repo>-pr-N`, and opens a tab there. Never resets, cleans or deletes anything of yours. |
-| 🤖 **Agents** | `a` runs an [omp](https://github.com/can1357/oh-my-pi) prompt template or skill on the PR, inside its worktree. |
+| 🤖 **Agents** | The PR card has one button per saved prompt (Settings › Prompts) offered under the current filter; each runs that prompt on the PR with [omp](https://github.com/can1357/oh-my-pi), inside its worktree. Give a prompt a shortcut key to run it straight from the queue. `a` picks one, or lets you type one. |
 | 👤 **Per-repo accounts** | Work and personal `gh` logins on one machine. Tokens stay in memory, never on disk. |
 
 ## Keys
@@ -57,10 +57,11 @@ Press `?` in the block for this list.
 | `Enter` | Open the PR in a Browser block beside the queue |
 | `w` | Create or reuse the PR's worktree in a new tab |
 | `g` | Go to the tab already working in that worktree |
-| `a` | Run an agent on the PR |
+| `a` | Pick a saved prompt, or type one, and run it on the PR |
+| your keys | Run the saved prompt with that shortcut on the PR (listed under `?`) |
 | `/` | Search loaded PRs |
 | `r` | Refresh now |
-| `s` | Settings: filters, GitHub account, worktree checkout path and setup commands |
+| `s` | Settings: filters, agent prompts, GitHub account, worktree checkout path and setup commands |
 
 ## Worktrees
 
@@ -76,22 +77,15 @@ flowchart LR
 - Reused worktrees are never updated. The preview shows `Created|Reused · Current|Different · Clean|Modified` and offers the `fetch` + `merge --ff-only` and cleanup commands for you to run.
 - Plotroom never runs `reset`, `clean`, `stash`, `worktree remove`, `prune`, `branch -d`, or `update-ref -d`.
 - **Setup commands** (Settings › Worktrees) run in the new tab's shell when a worktree is *created*. They execute the PR's code (`pnpm install` runs its scripts), so leave them empty for repos that take untrusted PRs.
+- **Prompts** (Settings › Prompts) become buttons on the PR card and rows in the `a` picker. Each has a name, multi-line text (Edit… opens an editor; Enter is a new line, ⌘↵ saves, Esc cancels), an optional one-key shortcut (not one the queue uses: `j k w g a r s / ?`) and the filters it is offered under; with none turned on it is offered under every filter. `{url}` in a prompt, or in a typed one, becomes the PR's link. Prompts are saved per machine, like filters.
 
 ## Trust
 
 - No shell: `gh`, `git`, `ssh -G` and `omp` run as argv arrays. If they are not on Tern's PATH, your login shell is run once to find them.
-- No secrets on disk. `kv.json` holds filters, checkout paths, setup commands, logins and recent agent picks in plaintext.
+- No secrets on disk. `kv.json` holds filters, agent prompts, checkout paths, setup commands, logins and recent agent picks in plaintext.
 - A saved account that cannot be used **fails closed**: nothing falls back to your active `gh` login.
 - Agents read PR text written by whoever opened the PR. Be careful with agents that can act.
-- **Agents can run project code.** `omp` loads the project configuration of the directory it starts in (extensions, hooks, MCP servers), not only your setup commands. That code is trusted once you allow it, not sandboxed. Plotroom asks first, every time, with Cancel as the first choice and nothing remembered:
-  - before listing agent commands, which runs `omp` in the directory Plotroom was launched from (skipped when that is your home directory). Cancelling runs no `omp` there;
-  - before starting an agent, naming the PR's worktree. It is asked once the worktree exists and before `omp` runs in it, setup commands run or the agent starts. Cancelling leaves the worktree as created and runs no `omp` in it, no setup commands and no agent, so the PR's project configuration is not executed.
-- **Templates are checked against omp.** A prompt template is sent as `/name <PR URL>` and omp expands it. After you continue, Plotroom runs `omp config path` and omp's own command discovery in the PR's worktree, across every source and alias, and refuses to start the agent if:
-  - omp lists any command or alias with the template's name, or cannot answer;
-  - the template file changed or vanished since it was listed;
-  - a `<name>.md` under the checkout's `.omp/prompts` (or the config directory omp reads there, if the checkout redirects it) differs from the file you picked, or the PR's own template is missing.
-
-  Skills, omp file commands and typed prompts are not checked this way: for those, your confirmation is the only guard.
+- **Agents can run project code.** `omp` loads the project configuration of the directory it starts in (extensions, hooks, MCP servers), not only your setup commands. That code is trusted once you allow it, not sandboxed. So before starting an agent Plotroom asks every time, naming the PR's worktree, with Deny as the first choice. It asks once the worktree exists and before `omp` runs in it, setup commands run or the agent starts. Deny leaves the worktree as created and runs no `omp` in it, no setup commands and no agent, so the PR's project configuration is not executed.
 
 SSH aliases (`git@github.com-work:…`) count as GitHub when `ssh -G` resolves them to `github.com`.
 
@@ -121,9 +115,9 @@ python3 scripts/check.py           # test · types · bench · smoke
 
 | | |
 | --- | --- |
-| `plugin/host.luau` | the `prs` block: queue, filters, refresh, state; worktrees and agent menus for the window, run where the block runs |
+| `plugin/host.luau` | the `prs` block: queue, filters, prompts, refresh, state; worktrees and the agent menu for the window, run where the block runs |
 | `plugin/window.luau` | links, palette commands, the pickers and tabs of the worktree and agent flows |
-| `plugin/github.luau` · `worktree.luau` · `agent.luau` · `process.luau` · `input.luau` | `gh` search, worktrees, omp templates and skills, argv process runner, text input |
+| `plugin/github.luau` · `worktree.luau` · `process.luau` · `input.luau` | `gh` search, worktrees, argv process runner, text input (one line or many) |
 | `plugin/tests/` | `regression.luau` (fake SDK), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
 | `scripts/check.py` | the gate; CI runs `--ci` (no smoke, Tern is not available there) |
 

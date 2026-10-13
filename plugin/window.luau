@@ -1,10 +1,10 @@
 --!strict
 -- The window half: opening Plotroom, validated PR links (Browser block, worktree tab, the PR's open tab, an agent
--- running a picked omp prompt template or skill) and their keyboard-accessible palette commands.
+-- running a saved or typed prompt) and their keyboard-accessible palette commands.
 -- This half runs on the machine showing the window; the block may run on a remote host. Whatever touches the checkout
--- (git, gh, omp, its files) is asked of the block's host half (host.luau, "requests from window.luau"); this half only
--- asks the user and arranges tabs. Anything that runs omp where project config can run code (listing skills, checking
--- a template, starting an agent) asks first.
+-- or the saved prompts (git, gh, omp, kv) is asked of the block's host half (host.luau, "requests from window.luau");
+-- this half only asks the user and arranges tabs. Starting an agent runs omp where project config can run code, so it
+-- asks first.
 
 local worktree = require("./worktree")
 
@@ -14,18 +14,18 @@ local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local CHECK_NODE = "layer.queue.runs.run"
 local GOTO_NODE = "layer.queue.buttons.goto"
-local AGENT_NODE = "layer.queue.buttons.agent"
--- How long the block's host may take to answer: listing omp's commands (10 s, plus finding PATH), preparing a worktree
--- (fetch and add, 2 minutes each), asking omp about a template.
+local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
+local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its card button
+-- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
+-- each).
 local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
-local VERIFY_MS = 30 * 1000
-local PROTOCOL = "1" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "3" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
 -- A worktree the host prepared, as its answer says.
-type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, why: string? }
+type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
 -- Requests to a block's host waiting for their answer, by id.
 type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle }
 local pending: { [string]: Pending } = {}
@@ -94,16 +94,25 @@ local function nodeProp(node: any, prop: string): any?
 	return nil
 end
 
-local function parseLink(url: string): (string?, string?, string?, number?)
+-- `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>`, or `…/run/<owner>/<repo>/<n>/<prompt id>`: the kind,
+-- the PR, and for `run` the saved prompt's id.
+local function parseLink(url: string): (string?, string?, string?, number?, string?)
 	local kind, owner, repo, n = string.match(url, "^plotroom://github/(%a+)/([^/]+)/([^/]+)/(%d+)$")
+	local id: string? = nil
+	if kind == "run" then
+		kind = nil
+	elseif not kind then
+		owner, repo, n, id = string.match(url, "^plotroom://github/run/([^/]+)/([^/]+)/(%d+)/(%w+)$")
+		kind = if id then "run" else nil
+	end
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
-		return nil, nil, nil, nil
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+		return nil, nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	end
-	return kind, owner, repo, num
+	return kind, owner, repo, num, id
 end
 
 local function unpct(s: string): string
@@ -323,12 +332,12 @@ local function afterReady(cx: WindowCx, r: Ready, step: () -> ())
 end
 
 -- Consent before omp runs where project config can run code: a native picker whose first row, the one ↵ takes, is
--- Cancel. Nothing is remembered. A dismissed picker, Cancel or a callback without a window context ends it; `no`
--- only runs with a context.
+-- Deny. `question` is the short placeholder; `where` (the full path) and `stays` are the rows' details. A dismissed
+-- picker, Deny or a callback without a window context ends it; `no` only runs with a context.
 local function confirm(cx: WindowCx, question: string, where: string, stays: string, yes: (WindowCx) -> (), no: ((WindowCx) -> ())?)
 	local items: { PickItem } = {
-		{ label = "Cancel", detail = stays, group = RISK },
-		{ label = "Continue", detail = where, group = RISK, go = true },
+		{ label = "Deny", detail = stays, group = RISK },
+		{ label = "Allow", detail = where, group = RISK, go = true },
 	}
 	cx:pick({ items = items, placeholder = question, icon = "merge" }):next(function(item, _, cx2)
 		if not cx2 then
@@ -343,37 +352,16 @@ local function confirm(cx: WindowCx, question: string, where: string, stays: str
 	end)
 end
 
--- With the worktree ready, an agent starts in it only if `/name` of the picked template still reaches that template
--- there (the file as listed, and nothing of the pull request's answering to the name) and the user agrees to run omp
--- in that checkout; setup commands and the agent come after. The host checks the files; after the consent, omp's own
--- list in the checkout too (typed prompts, skills and file commands have no template to bind and pass at once).
-local function startAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string, item: PickItem?)
-	local title = "Agent not started for " .. repo .. "#" .. n
-	local function refuse(cx2: WindowCx, why: string)
-		cx2:toast("error", title, why .. " · The worktree is ready at " .. r.path)
-	end
-	if r.why then
-		return refuse(cx, r.why)
-	end
-	local question = "Start an agent for " .. repo .. "#" .. n .. " in " .. r.path .. "? That checkout's project config can run code."
-	confirm(cx, question, r.path, "The worktree stays; no agent starts", function(cx2: WindowCx)
-		local function go(cx3: WindowCx)
-			afterReady(cx3, r, function()
-				finishAgent(cx3, pane, repo, n, r, prompt)
-			end)
-		end
-		local tpl = if item then item.tpl else nil
-		if type(tpl) ~= "string" then
-			return go(cx2)
-		end
-		ask(cx2, pane, "verify", { tpl = tpl, root = r.path }, VERIFY_MS, function(a: any, cx3: WindowCx)
-			if type(a.why) == "string" then
-				return refuse(cx3, a.why)
-			end
-			go(cx3)
+-- With the worktree ready, the agent starts once the user agrees to run omp in that checkout, where project config can
+-- run code; setup commands and the agent come after.
+local function startAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string)
+	local question = "Start an agent for " .. repo .. "#" .. n .. "?"
+	confirm(cx, question, "Runs omp in " .. r.path, "The worktree stays; no agent starts", function(cx2: WindowCx)
+		afterReady(cx2, r, function()
+			finishAgent(cx2, pane, repo, n, r, prompt)
 		end)
 	end, function(cx2: WindowCx)
-		cx2:toast("info", title, "The worktree is ready at " .. r.path)
+		cx2:toast("info", "Agent not started for " .. repo .. "#" .. n, "The worktree is ready at " .. r.path)
 	end)
 end
 
@@ -389,22 +377,18 @@ local function readyOf(a: any): Ready?
 		dirty = if type(a.dirty) == "boolean" then a.dirty else nil,
 		summary = a.summary,
 		setup = if type(a.setup) == "string" then a.setup else nil,
-		why = if type(a.why) == "string" then a.why else nil,
 	}
 end
 
 -- Has the block's host create or reuse the PR's worktree (and note it on the block), then opens its tab, or with
 -- `prompt` starts an agent in it.
-local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?, item: PickItem?)
+local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?)
 	local full = owner .. "/" .. repo
-	local tpl = if item and type(item.tpl) == "string" then item.tpl else nil
-	local sent = ask(cx, pane, "worktree", { repo = full, number = n, tpl = tpl }, PREPARE_MS, function(a: any, cx2: WindowCx)
+	local sent = ask(cx, pane, "worktree", { repo = full, number = n }, PREPARE_MS, function(a: any, cx2: WindowCx)
 		if a.busy == true then
 			return cx2:toast("info", "A worktree for " .. full .. "#" .. n .. " is already being prepared")
 		elseif a.noRepo == true then
 			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then try again.")
-		elseif type(a.refused) == "string" then
-			return cx2:toast("error", "Agent not started for " .. full .. "#" .. n, a.refused)
 		end
 		local r = readyOf(a)
 		if not r then
@@ -413,7 +397,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		local ready: Ready = r
 		afterReady(cx2, ready, function()
 			if prompt then
-				startAgent(cx2, pane, full, n, ready, prompt, item)
+				startAgent(cx2, pane, full, n, ready, prompt)
 			else
 				finishWorktree(cx2, pane, full, n, ready)
 			end
@@ -424,15 +408,36 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 	end
 end
 
--- Asks which prompt template or skill to run on PR `owner/repo#n`, then runs it as `/<name> <PR URL>` in an agent
--- in the PR's worktree. "Type a prompt…" sends the typed text as it is. The block's host lists them; omp lists skills
--- by running in the directory Plotroom was opened in, where project config can run code, so the host may answer with
--- that directory first, and the user is asked.
+-- Runs `text` in an agent in PR `owner/repo#n`'s worktree, `{url}` in it replaced with the PR's link.
+local function runPrompt(cx: WindowCx, pane: number, owner: string, repo: string, n: number, text: string)
+	local url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
+	worktreePr(cx, pane, owner, repo, n, (string.gsub(text, "{url}", function()
+		return url
+	end)))
+end
+
+-- A card button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
+local function runSaved(cx: WindowCx, pane: number, owner: string, repo: string, n: number, id: string)
+	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
+		for _, it in if type(a.items) == "table" then a.items else {} do
+			if type(it) == "table" and it.id == id and type(it.send) == "string" then
+				return runPrompt(cx2, pane, owner, repo, n, it.send)
+			end
+		end
+		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
+	end)
+end
+
+-- Asks which saved prompt (Settings › Prompts, those offered under the block's filter) to run on PR `owner/repo#n`,
+-- then runs it with runPrompt. "Type a prompt…" sends typed text the same way.
 local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
 	local full = owner .. "/" .. repo
-	local function offer(a: any, cx2: WindowCx)
+	local function run(cx2: WindowCx, text: string)
+		runPrompt(cx2, pane, owner, repo, n, text)
+	end
+	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
-			cx2:toast("info", "Skills are not listed", a.problem)
+			cx2:toast("error", "Saved prompts are not listed", a.problem)
 		end
 		local all: { PickItem } = {}
 		for _, it in if type(a.items) == "table" then a.items else {} do
@@ -442,7 +447,6 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 					detail = if type(it.detail) == "string" then it.detail else nil,
 					group = if type(it.group) == "string" then it.group else nil,
 					send = it.send,
-					tpl = if type(it.tpl) == "string" then it.tpl else nil,
 				})
 			end
 		end
@@ -450,14 +454,14 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 		for _, label in readRecent() do
 			for _, c in all do
 				if c.label == label then
-					local again = table.clone(c) -- the whole row, so it keeps the template it is bound to
+					local again = table.clone(c)
 					again.group = "Recent"
 					table.insert(items, again)
 					break
 				end
 			end
 		end
-		table.insert(items, { label = "Type a prompt…", detail = "Send your own text", typed = true })
+		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save prompts in Settings › Prompts (s)" else "Send your own text", typed = true })
 		for _, c in all do
 			table.insert(items, c)
 		end
@@ -468,7 +472,7 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 			if item.typed then
 				return cx3:prompt({ placeholder = "Prompt for an agent on " .. full .. "#" .. n, icon = "merge", action = "send" }):next(function(text, _, cx4)
 					if cx4 and text and string.find(text, "%S") then
-						worktreePr(cx4, pane, owner, repo, n, text)
+						run(cx4, text)
 					end
 				end)
 			end
@@ -480,21 +484,9 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			worktreePr(cx3, pane, owner, repo, n, item.send .. " https://github.com/" .. full .. "/pull/" .. n, item)
+			run(cx3, item.send)
 		end)
-	end
-	local function list(cx1: WindowCx, consent: boolean)
-		ask(cx1, pane, "menu", { consent = consent }, MENU_MS, function(a: any, cx2: WindowCx)
-			if type(a.consent) == "string" then
-				local dir: string = a.consent
-				return confirm(cx2, "Run omp in " .. dir .. " to list skills and commands? Its project config can run code.", dir, "Nothing is run", function(cx3: WindowCx)
-					list(cx3, true)
-				end)
-			end
-			offer(a, cx2)
-		end)
-	end
-	list(cx, false)
+	end)
 end
 
 -- Validates a plotroom:// link against the pane's live surface and runs it.
@@ -515,7 +507,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		end
 		return true
 	end
-	local kind, owner, repo, n = parseLink(url)
+	local kind, owner, repo, n, id = parseLink(url)
 	if not kind or not owner or not repo or not n then
 		cx:toast("error", "Plotroom: malformed link")
 		return true
@@ -524,7 +516,12 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		return true
 	end
-	local node = if kind == "open" then OPEN_NODE elseif kind == "goto" then GOTO_NODE elseif kind == "agent" then AGENT_NODE else WORKTREE_NODE
+	local node = if kind == "open"
+		then OPEN_NODE
+		elseif kind == "goto" then GOTO_NODE
+		elseif kind == "agent" then AGENT_NODE
+		elseif kind == "run" then PROMPT_NODE .. (id or "")
+		else WORKTREE_NODE
 	local present = nodeProp(readNode(cx, pane, node), "href") == url
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
@@ -536,6 +533,8 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		gotoPr(cx, owner .. "/" .. repo, n)
 	elseif kind == "agent" then
 		pickAgent(cx, pane, owner, repo, n)
+	elseif kind == "run" and id then
+		runSaved(cx, pane, owner, repo, n, id)
 	else
 		worktreePr(cx, pane, owner, repo, n, nil)
 	end

@@ -142,6 +142,19 @@
 	display: none;
 }
 
+/* A prompt's editor card over the Settings page: the card's width, up to 640px, so a narrow pane never clips it. */
+[data-surface='plugin.plotroom.prs'] .pf-editor > .sf-col {
+	width: 100%;
+	max-width: 640px;
+	box-sizing: border-box;
+	padding: 16px;
+	gap: 10px;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf-editor .sf-editor {
+	min-height: 120px;
+}
+
 [data-surface='plugin.plotroom.prs'] [data-role='plotroom.title'] {
 	font-size: 15px;
 	line-height: 1.35;

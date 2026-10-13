@@ -1,7 +1,8 @@
 --!strict
--- A single-line text model for the picker search and settings rows. Offsets
--- (`cur`, `anchor`) are byte offsets at UTF-8 codepoint boundaries; the SDK
--- wants UTF-16 units for drawn fields, so `props` converts at the edge.
+-- A text model for the picker search and settings rows: single-line by
+-- default, with an opt-in multi-line mode (`multi`) for prompt editors.
+-- Offsets (`cur`, `anchor`) are byte offsets at UTF-8 codepoint boundaries; the
+-- SDK wants UTF-16 units for drawn fields, so `props` converts at the edge.
 
 local M = {}
 
@@ -10,15 +11,17 @@ export type Model = {
 	cur: number,
 	anchor: number?,
 	undo: { { text: string, cur: number, anchor: number? } },
+	multi: boolean?,
 }
 
 local UNDO_LIMIT = 50
 
--- Valid UTF-8 only, line breaks as spaces, other control characters dropped.
+-- Valid UTF-8 only, other control characters dropped. Line breaks become
+-- spaces, or with `multi` are kept as "\n" (and tabs kept).
 -- A malformed byte is dropped alone; the valid characters around it stay.
-function M.clean(s: string): string
-	s = string.gsub(s, "\r\n", " ")
-	s = string.gsub(s, "[\r\n]", " ")
+function M.clean(s: string, multi: boolean?): string
+	s = string.gsub(s, "\r\n", if multi then "\n" else " ")
+	s = string.gsub(s, "[\r\n]", if multi then "\n" else " ")
 	if string.find(s, "[%c\128-\255]") == nil then
 		return s
 	end
@@ -29,7 +32,7 @@ function M.clean(s: string): string
 		local step = 1
 		local ok: boolean
 		if b < 0x80 then
-			ok = b >= 0x20 and b ~= 0x7F
+			ok = (b >= 0x20 and b ~= 0x7F) or (multi == true and (b == 10 or b == 9))
 		else
 			step = if b >= 0xF0 then 4 elseif b >= 0xE0 then 3 elseif b >= 0xC0 then 2 else 1
 			ok = step > 1 and utf8.len(s, i, i) ~= nil
@@ -53,9 +56,9 @@ function M.clean(s: string): string
 	return table.concat(out)
 end
 
-function M.new(text: string): Model
-	text = M.clean(text)
-	return { text = text, cur = #text, anchor = nil, undo = {} }
+function M.new(text: string, multi: boolean?): Model
+	text = M.clean(text, multi)
+	return { text = text, cur = #text, anchor = nil, undo = {}, multi = multi }
 end
 
 -- UTF-16 units in the first `bytes` bytes of `text`.
@@ -79,6 +82,33 @@ local function nextOff(text: string, off: number): number
 		return #text
 	end
 	return (utf8.offset(text, 2, off + 1) or #text + 1) - 1
+end
+
+-- Byte offset of the start / end of the line containing `off`.
+local function lineStart(text: string, off: number): number
+	while off > 0 and string.byte(text, off) ~= 10 do
+		off -= 1
+	end
+	return off
+end
+
+local function lineEnd(text: string, off: number): number
+	local i = string.find(text, "\n", off + 1, true)
+	return if i then i - 1 else #text
+end
+
+-- Offset on the line starting at `ls` (ending at `le`) `col` bytes in, clamped
+-- to the line and snapped back to a codepoint boundary.
+local function atColumn(text: string, ls: number, le: number, col: number): number
+	local to = math.min(ls + col, le)
+	while to > ls do
+		local b = string.byte(text, to + 1)
+		if b == nil or b < 0x80 or b >= 0xC0 then
+			break
+		end
+		to -= 1
+	end
+	return to
 end
 
 function M.selection(m: Model): (number?, number?)
@@ -121,7 +151,7 @@ local function range(m: Model): (number, number)
 end
 
 function M.insert(m: Model, s: string)
-	s = M.clean(s)
+	s = M.clean(s, m.multi)
 	local lo, hi = range(m)
 	if s == "" and lo == hi then
 		return
@@ -231,9 +261,29 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 			move(if word then wordRight(m.text, m.cur) else nextOff(m.text, m.cur))
 		end
 	elseif name == "home" then
-		move(0)
+		move(lineStart(m.text, m.cur))
 	elseif name == "end" then
-		move(#m.text)
+		move(lineEnd(m.text, m.cur))
+	elseif m.multi and name == "enter" then
+		if key.alt then
+			return false
+		end
+		M.insert(m, "\n")
+	elseif m.multi and name == "up" then
+		local ls = lineStart(m.text, m.cur)
+		if ls == 0 then
+			move(0)
+		else
+			local ps = lineStart(m.text, ls - 1)
+			move(atColumn(m.text, ps, ls - 1, m.cur - ls))
+		end
+	elseif m.multi and name == "down" then
+		local le = lineEnd(m.text, m.cur)
+		if le >= #m.text then
+			move(#m.text)
+		else
+			move(atColumn(m.text, le + 1, lineEnd(m.text, le + 1), m.cur - lineStart(m.text, m.cur)))
+		end
 	elseif name == "backspace" then
 		if lo and hi then
 			splice(m, lo, hi, "")
