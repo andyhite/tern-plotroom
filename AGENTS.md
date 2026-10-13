@@ -8,20 +8,20 @@ Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, tha
 
 Two Luau runtimes talk through Tern:
 
-- **Host** (`plugin/host.luau`): owns per-pane `State` (module table `running`, keyed by pane), polls GitHub, persists prefs in `tern.kv`, and returns a declarative `ui.el`/`ui.node` tree from `view`. Registered via `tern.block.define("prs", {init, title, view, key, event, save})` (~L2186).
-- **Window** (`plugin/window.luau`): registers `tern.route.link` for `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>` links, `tern.command` ids (`open`, `open-selected`, `worktree-selected`, `goto-selected`, `agent-selected`), and reads host nodes by dotted key (`layer.queue.buttons.open`) via `cx.session:surface`. Sends `{ev="action", act=...}` events back; host `event` (~L2409) handles them.
+- **Host** (`plugin/host.luau`): owns per-pane `State` (module table `running`, keyed by pane), polls GitHub, persists prefs in `tern.kv`, and returns a declarative `ui.el`/`ui.node` tree from `view`. Registered via `tern.block.define("prs", {init, title, view, key, event, save})` (~L2200).
+- **Window** (`plugin/window.luau`): registers `tern.route.link` for `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>` links, `tern.command` ids (`open`, `open-selected`, `worktree-selected`, `goto-selected`, `agent-selected`), and reads host nodes by dotted key (`layer.queue.buttons.open`) via `cx.session:surface`. Sends `{ev="action", act=...}` events back; host `event` (~L2424) handles them.
 - **Shared helpers** (no cycles): `host → github, input, process, worktree`; `window → process, worktree`; `worktree → process, github`; `github → process, input`; `process`, `input` have no requires.
   - `github.luau`: `gh` runner, paged GraphQL `search`, `parsePage`/`normalize`/`classify`, account switching, rate-limit quota.
   - `worktree.luau`: repo resolution, worktree create/reuse (`M.open`), `prOfPath`, ref validation.
   - `process.luau`: the single process runner `M.run(argv, opts, done)`; recovers PATH via login shell, always calls `done`, never throws.
   - `input.luau`: pure single-line text model (UTF-16 offsets for the SDK).
-- Persistence: `tern.kv` keys `filters`, `repos`, `setup`, `accounts`, `agent-recent`. Store changes fan out to other live blocks via `propagate` (host ~L717).
+- Persistence: `tern.kv` keys `filters`, `repos`, `setup`, `accounts`, `agent-recent`. Store changes fan out to other live blocks via `propagate` (host ~L721).
 
 ## Key Directories
 
 - `plugin/` — the plugin (`plugin.toml` manifest, `*.luau` modules, `plotroom.css`). Everything shipped lives here.
 - `plugin/tests/` — `regression.luau` (fake-SDK suite + bench), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
-- `scripts/` — `check.py` (the verification gate) and `tern-0.8.2.d.luau` (pinned SDK type snapshot, sha256-checked).
+- `scripts/` — `check.py` (the verification gate) and `tern-0.8.3.d.luau` (pinned SDK type snapshot, sha256-checked).
 - `.github/workflows/check.yml` — CI; `.omp/plans/` — historical design plans (README supersedes them).
 
 ## Development Commands
@@ -53,16 +53,16 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Important Files
 
 - `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, block `prs`.
-- `plugin/host.luau` (~2500 lines) — state type ~L62-95, storage ~L106-202, lifecycle `retire`/`alive` ~L223-250, views ~L752-2183, block define ~L2186, event handler ~L2409.
-- `plugin/window.luau` — link routing ~L546, commands ~L566-630, worktree/agent flows ~L233-400. `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
-- `scripts/check.py` — pins at L51-56 (SDK sha256, Luau 0.742, luau-lsp 1.70.1, Tern 0.8.2); bundle builder L203-266; stages L299-363; smoke L366-916.
-- `scripts/tern-0.8.2.d.luau` — tracked SDK snapshot used by `types`; changing it requires updating the sha in `check.py`.
+- `plugin/host.luau` (~2530 lines) — state type ~L63, storage ~L107-203, lifecycle `retire`/`alive` ~L225-241, views ~L752-2183, block define ~L2200, event handler ~L2424.
+- `plugin/window.luau` — link routing, palette commands, worktree/agent flows (`publishResult`, `finishWorktree`, `finishAgent`, `confirm`, `startAgent`, `worktreePr`, template guard `verify`/`listedAs`, `pickAgent`). `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
+- `scripts/check.py` — pins at L51-56 (SDK sha256, Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3); bundle builder `build_bundle`; stages `check_test`/`check_types`/`check_bench`/`check_smoke`.
+- `scripts/tern-0.8.3.d.luau` — tracked SDK snapshot used by `types`; changing it requires updating the sha in `check.py`.
 
 ## Runtime/Tooling Preferences
 
-- Luau (Tern's embedded runtime), not Lua 5.x: no `goto`, string/UTF-8 helpers per Luau. Type-checked with luau-lsp 1.70.1 against Tern 0.8.2 definitions.
+- Luau (Tern's embedded runtime), not Lua 5.x: no `goto`, string/UTF-8 helpers per Luau. Type-checked with luau-lsp 1.70.1 against Tern 0.8.3 definitions.
 - `scripts/check.py` is Python 3.9+, stdlib only; no pip, no package.json, no Makefile. Do not add dependencies.
-- Smoke needs real `tern` 0.8.2 and git ≥ 2.31; it is local-only (CI skips it). CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA.
+- Smoke needs real `tern` 0.8.3, git ≥ 2.36 (`worktree list --porcelain -z`) and `omp` on PATH (worktrees are created with `omp worktree add`); it is local-only (CI skips it). CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA.
 - `plugin/tern.d.luau` is gitignored editor output; never commit it or depend on it in checks.
 
 ## Testing & QA

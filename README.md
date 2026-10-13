@@ -6,7 +6,7 @@
 Triage with the keyboard. One key checks a PR out into its own worktree. Another points an agent at it.
 
 [![check](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml/badge.svg)](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml)
-![Tern 0.8.2](https://img.shields.io/badge/Tern-0.8.2-blue)
+![Tern 0.8.3](https://img.shields.io/badge/Tern-0.8.3-blue)
 
 </div>
 
@@ -23,7 +23,7 @@ Triage with the keyboard. One key checks a PR out into its own worktree. Another
 
 ## Install
 
-Requires Tern 0.8.2, `gh` signed in to github.com, and `git` ≥ 2.31.
+Requires Tern 0.8.3, `gh` signed in to github.com, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi) (worktrees and agents).
 
 ```sh
 tern plugin install github.com/andyhite/tern-plotroom/plugin
@@ -39,8 +39,8 @@ Update later with the same command plus `--force`.
 | --- | --- |
 | 🔍 **Saved filters** | Any GitHub search query, scoped to the repo you launched from. |
 | ⚡ **Polite refresh** | Every 60 s while quota is ample; backs off from GitHub's rate-limit headers instead of hammering. |
-| ✅ **Checks** | The selected PR's full check list, re-runs collapsed to the newest. |
-| 🌳 **Worktrees** | `w` checks the PR out into `<checkout>.plotroom/<owner>/<repo>/pr-N` and opens a tab there. Never resets, cleans or deletes anything of yours. |
+| ✅ **Checks** | The selected PR's full check list, re-runs collapsed to the newest. Reloaded on every successful refresh, so check status changes show up even when the PR itself is unchanged. |
+| 🌳 **Worktrees** | `w` checks the PR out with `omp worktree add` into omp's worktree directory (default `~/.omp/wt`) as `plotroom-<owner>_<repo>-pr-N`, and opens a tab there. Never resets, cleans or deletes anything of yours. |
 | 🤖 **Agents** | `a` runs an [omp](https://github.com/can1357/oh-my-pi) prompt template or skill on the PR, inside its worktree. |
 | 👤 **Per-repo accounts** | Work and personal `gh` logins on one machine. Tokens stay in memory, never on disk. |
 
@@ -65,10 +65,11 @@ Press `?` in the block for this list.
 ```mermaid
 flowchart LR
     W([w]) --> E{exists?}
-    E -- no --> F[fetch refs/pull/N/head] --> C[git worktree add] --> S[your setup commands] --> T[open tab]
+    E -- no --> F[fetch refs/pull/N/head] --> C[omp worktree add] --> S[your setup commands] --> T[open tab]
     E -- yes --> R[reuse as-is] --> T
 ```
 
+- Worktrees go in omp's worktree directory: `OMP_WORKTREE_DIR`, else omp's `worktree.base` setting, else `~/.omp/wt`. The Settings checkout path is only the repository the worktree is added from.
 - Branch `plotroom/<owner>/<repo>/pr-N` tracks `refs/pull/N/head`, so `gh pr view` and `git pull` work inside it without arguments.
 - Reused worktrees are never updated. The preview shows `Created|Reused · Current|Different · Clean|Modified` and offers the `fetch` + `merge --ff-only` and cleanup commands for you to run.
 - Plotroom never runs `reset`, `clean`, `stash`, `worktree remove`, `prune`, `branch -d`, or `update-ref -d`.
@@ -80,6 +81,15 @@ flowchart LR
 - No secrets on disk. `kv.json` holds filters, checkout paths, setup commands, logins and recent agent picks in plaintext.
 - A saved account that cannot be used **fails closed**: nothing falls back to your active `gh` login.
 - Agents read PR text written by whoever opened the PR. Be careful with agents that can act.
+- **Agents can run project code.** `omp` loads the project configuration of the directory it starts in (extensions, hooks, MCP servers), not only your setup commands. That code is trusted once you allow it, not sandboxed. Plotroom asks first, every time, with Cancel as the first choice and nothing remembered:
+  - before listing agent commands, which runs `omp` in the directory Plotroom was launched from (skipped when that is your home directory). Cancelling runs no `omp` there;
+  - before starting an agent, naming the PR's worktree. It is asked once the worktree exists and before `omp` runs in it, setup commands run or the agent starts. Cancelling leaves the worktree as created and runs no `omp` in it, no setup commands and no agent, so the PR's project configuration is not executed.
+- **Templates are checked against omp.** A prompt template is sent as `/name <PR URL>` and omp expands it. After you continue, Plotroom runs `omp config path` and omp's own command discovery in the PR's worktree, across every source and alias, and refuses to start the agent if:
+  - omp lists any command or alias with the template's name, or cannot answer;
+  - the template file changed or vanished since it was listed;
+  - a `<name>.md` under the checkout's `.omp/prompts` (or the config directory omp reads there, if the checkout redirects it) differs from the file you picked, or the PR's own template is missing.
+
+  Skills, omp file commands and typed prompts are not checked this way: for those, your confirmation is the only guard.
 
 SSH aliases (`git@github.com-work:…`) count as GitHub when `ssh -G` resolves them to `github.com`.
 
