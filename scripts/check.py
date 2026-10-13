@@ -23,7 +23,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.2 (44c7f76). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
-Smoke prerequisites: Tern 0.8.2 (TERN=/path or PATH), git >= 2.31, Python 3.9+. No network; every repository,
+Smoke prerequisites: Tern 0.8.2 (TERN=/path or PATH), git >= 2.31, omp on PATH, Python 3.9+. No network; every repository,
 fake gh/ssh, Tern directory and log lives under one temporary directory that is deleted afterwards.
 """
 
@@ -409,8 +409,8 @@ sys.exit(2)
 '''
 
 
-def smoke_prerequisites() -> Tuple[str, str]:
-    """(tern, git) executables, or a GateError saying what to install."""
+def smoke_prerequisites() -> Tuple[str, str, str]:
+    """(tern, git, omp) executables, or a GateError saying what to install."""
     given = os.environ.get("TERN")
     tern = str(Path(given).expanduser()) if given else shutil.which("tern")
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
@@ -429,7 +429,10 @@ def smoke_prerequisites() -> Tuple[str, str]:
     m = re.search(r"git version (\d+)\.(\d+)", said)
     if not m or (int(m.group(1)), int(m.group(2))) < GIT_MIN:
         raise GateError("smoke needs git >= %d.%d; %s reports %r. Upgrade git." % (GIT_MIN + (git, said)))
-    return tern, git
+    omp = shutil.which("omp")
+    if not omp:
+        raise GateError("smoke needs omp on PATH: Plotroom creates worktrees with `omp worktree add`.")
+    return tern, git, omp
 
 
 def file_tail(path: Path, count: int = 40) -> str:
@@ -442,7 +445,7 @@ def file_tail(path: Path, count: int = 40) -> str:
 class Smoke:
     """The isolated Tern session, its fakes and fixtures, and the assertion helpers; label names the running scenario."""
 
-    def __init__(self, tern: str, git: str, tmp: Path):
+    def __init__(self, tern: str, git: str, omp: str, tmp: Path):
         self.tern, self.gitbin, self.tmp = tern, git, tmp
         self.smoke = tmp / "smoke"
         self.sock = tmp / "ctl.sock"
@@ -467,8 +470,9 @@ class Smoke:
             path.write_text(header + body, encoding="utf-8")
             path.chmod(0o755)
         paths = [str(tmp / "bin")] + SYSTEM_PATH
-        if os.path.dirname(git) not in SYSTEM_PATH:
-            paths.append(os.path.dirname(git))
+        for tool in (git, omp):
+            if os.path.dirname(tool) not in paths:
+                paths.append(os.path.dirname(tool))
         drop = ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TOKEN")
         base = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k not in TERN_UNSET and k not in drop}
         iso = {
@@ -488,6 +492,7 @@ class Smoke:
             STENCIL_FIXTURE_ROOT=str(self.cwd),
             PLOTROOM_SELFTEST="1",
             PLOTROOM_SMOKE_DIR=str(self.smoke),
+            OMP_WORKTREE_DIR=str(tmp / "omp-wt"),
         )
         # git 2.31 predates GIT_CONFIG_GLOBAL: a private HOME keeps the user's ~/.gitconfig out of fixtures too.
         self.genv = dict(base, **iso)
@@ -574,9 +579,9 @@ class Smoke:
     def checkout(self, dirname: str) -> Path:
         return self.work / dirname
 
-    def wt(self, dirname: str, key: str, n: int) -> Path:
-        """Where Plotroom puts the worktree: <checkout>.plotroom/<owner>/<repo as named>/pr-N."""
-        return self.work / ("%s.plotroom" % dirname) / key / ("pr-%d" % n)
+    def wt(self, key: str, n: int) -> Path:
+        """Where Plotroom puts the worktree: <omp worktrees>/plotroom-<owner>_<repo as named>-pr-N, lowercase."""
+        return self.tmp / "omp-wt" / ("plotroom-%s-pr-%d" % (key.lower().replace("/", "_", 1), n))
 
     # ----- the Tern session
 
@@ -734,7 +739,7 @@ class Smoke:
 
 
 def sc_create(s: Smoke) -> None:
-    root, wt, sha = s.checkout("r"), s.wt("r", "o/r", 1), s.shas[("o/r", 1)]
+    root, wt, sha = s.checkout("r"), s.wt("o/r", 1), s.shas[("o/r", 1)]
     r = s.opened(s.open("o/r", 1, root))
     s.eq("created", True, r.get("created"))
     s.eq("head", sha, r.get("head"))
@@ -758,7 +763,7 @@ def sc_create(s: Smoke) -> None:
 
 
 def sc_reuse(s: Smoke) -> None:
-    root, wt, sha = s.checkout("r"), s.wt("r", "o/r", 1), s.shas[("o/r", 1)]
+    root, wt, sha = s.checkout("r"), s.wt("o/r", 1), s.shas[("o/r", 1)]
     r = s.opened(s.open("o/r", 1, root))
     s.eq("created", False, r.get("created"))
     s.eq("head", sha, r.get("head"))
@@ -772,7 +777,7 @@ def local_changes(s: Smoke, wt: Path) -> Tuple[bytes, bytes, str]:
 
 
 def sc_dirty_reuse(s: Smoke) -> None:
-    root, wt = s.checkout("r"), s.wt("r", "o/r", 1)
+    root, wt = s.checkout("r"), s.wt("o/r", 1)
     (wt / "untracked-note.txt").write_bytes(b"untracked\x00 bytes\n")
     with open(str(wt / "README.md"), "ab") as handle:
         handle.write(b"local edit\n")
@@ -786,7 +791,7 @@ def sc_dirty_reuse(s: Smoke) -> None:
 
 
 def sc_advanced(s: Smoke) -> None:
-    root, wt, old = s.checkout("r"), s.wt("r", "o/r", 1), s.shas[("o/r", 1)]
+    root, wt, old = s.checkout("r"), s.wt("o/r", 1), s.shas[("o/r", 1)]
     before = local_changes(s, wt)
     new = s.push_pr("o/r", 1, "pr-1")
     s.canned("o/r", 1, new)
@@ -805,7 +810,7 @@ def sc_advanced(s: Smoke) -> None:
 
 
 def sc_hook(s: Smoke) -> None:
-    root, wt, sha = s.checkout("r"), s.wt("r", "o/r", 2), s.shas[("o/r", 2)]
+    root, wt, sha = s.checkout("r"), s.wt("o/r", 2), s.shas[("o/r", 2)]
     hook = root / ".git" / "hooks" / "post-checkout"
     hook.write_text("#!/bin/sh\necho made-by-hook > hook-made.txt\n", encoding="utf-8")
     hook.chmod(0o755)
@@ -821,7 +826,7 @@ def sc_hook(s: Smoke) -> None:
 
 
 def sc_branch_elsewhere(s: Smoke) -> None:
-    root, wt = s.checkout("r"), s.wt("r", "o/r", 3)
+    root, wt = s.checkout("r"), s.wt("o/r", 3)
     main = s.out(root, "rev-parse", "main")
     s.out(root, "branch", "plotroom/o/r/pr-3", main)
     listed = s.out(root, "worktree", "list", "--porcelain")
@@ -832,7 +837,7 @@ def sc_branch_elsewhere(s: Smoke) -> None:
 
 
 def sc_dot_github(s: Smoke) -> None:
-    root, wt, sha = s.checkout("dotgithub"), s.wt("dotgithub", "github/.github", 1), s.shas[("github/.github", 1)]
+    root, wt, sha = s.checkout("dotgithub"), s.wt("github/.github", 1), s.shas[("github/.github", 1)]
     branch, ref = "plotroom/github/%2Egithub/pr-1", "refs/plotroom-pr/github/%2Egithub/pr-1"
     r = s.opened(s.open("github/.github", 1, root))
     s.eq("created", True, r.get("created"))
@@ -840,7 +845,6 @@ def sc_dot_github(s: Smoke) -> None:
     s.eq("ref", ref, r.get("ref"))
     s.eq("head", sha, r.get("head"))
     s.same_path("path", wt, r.get("path"))
-    s.eq("entries of dotgithub.plotroom/github (directory keeps the raw name)", [".github"], os.listdir(str(wt.parent.parent)))
     s.eq("worktree directory exists", True, wt.is_dir())
     s.eq("git check-ref-format --branch", 0, s.git(root, "check-ref-format", "--branch", branch).returncode)
     s.eq("git check-ref-format (ref)", 0, s.git(root, "check-ref-format", ref).returncode)
@@ -849,7 +853,7 @@ def sc_dot_github(s: Smoke) -> None:
 
 
 def sc_recovery(s: Smoke) -> None:
-    root, wt = s.checkout("r"), s.wt("r", "o/r", 9)
+    root, wt = s.checkout("r"), s.wt("o/r", 9)
     listed = s.out(root, "worktree", "list", "--porcelain")
     s.refused(s.open("o/r", 9, root))
     s.eq("(a) worktree directory for pr-9 exists", False, wt.exists())
@@ -862,8 +866,8 @@ def sc_recovery(s: Smoke) -> None:
     s.eq("(a, retry) head", sha, r.get("head"))
     s.eq("(a, retry) worktree directory exists", True, wt.is_dir())
 
-    q, qwt = s.checkout("q"), s.wt("q", "p/q", 1)
-    blocker = s.work / "q.plotroom"
+    q, qwt = s.checkout("q"), s.wt("p/q", 1)
+    blocker = qwt
     blocker.write_text("in the way\n", encoding="utf-8")
     listed = s.out(q, "worktree", "list", "--porcelain")
     problem = s.refused(s.open("p/q", 1, q))
@@ -889,10 +893,10 @@ SCENARIOS = [
 
 
 def check_smoke() -> str:
-    tern, git = smoke_prerequisites()
+    tern, git, omp = smoke_prerequisites()
     started = time.monotonic()
     tmp = Path(tempfile.mkdtemp(prefix="plotroom-smoke-", dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()
-    s = Smoke(tern, git, tmp)
+    s = Smoke(tern, git, omp, tmp)
     try:
         s.repo("o", "r", "r", (1, 2, 3))
         s.repo("github", ".github", "dotgithub", (1,))

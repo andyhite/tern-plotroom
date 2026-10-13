@@ -1010,7 +1010,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			table.insert(extra, ui.node("card", { key = "quota", head = { ui.span("GitHub API quota", "strong") } }, kids))
 		end
 	else
-		lead = "Worktree checks a pull request out in <checkout>.plotroom/<owner>/<repo>/pr-N on branch plotroom/<owner>/<repo>/pr-N and opens it in a new tab. When the worktree is new, that tab runs the setup commands first."
+		lead = "Worktree checks a pull request out with omp, in omp's worktrees directory (~/.omp/wt unless omp's worktree.base or OMP_WORKTREE_DIR says otherwise) as plotroom-<owner>_<repo>-pr-N, on branch plotroom/<owner>/<repo>/pr-N, and opens it in a new tab. When the worktree is new, that tab runs the setup commands first."
 		local mapped = if state.repo then readRepos()["github.com/" .. string.lower(state.repo)] else nil
 		table.insert(sections, {
 			id = "sec-checkout",
