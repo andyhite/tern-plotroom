@@ -3,16 +3,6 @@
    Everything else is drawn by Tern's own kinds (picker, prefs, list, overlay, md…): add a rule only where no kind or
    prop covers it. */
 
-/* The block has no dock; its empty strip would show the pane color under the settings page. */
-[data-surface='plugin.plotroom.prs'] .sf-region.sf-dock {
-	display: none;
-}
-
-/* The page is drawn on the pane's own color, like the queue picker, not as a darker sheet. */
-[data-surface='plugin.plotroom.prs'] .sf-prefs {
-	background: transparent;
-}
-
 /* Tern draws a Close (esc) button on every picker, but the queue is the block itself: there is nothing to close, and
    its close only clears the search, which the search field's own clear button does. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
@@ -88,10 +78,41 @@
 	display: none;
 }
 
-/* A prompt's editor card over the Settings page: the card's width, up to 640px, so a narrow pane never clips it. */
+/* Settings is Tern's side sheet in the layer, which narrows nothing in a plugin block; make room for it with its own
+   width (Tern's `.sf-layer .sf-prefs` rule), so the queue doesn't show through the sheet's glass. */
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role='plotroom.queue.aside'] {
+	margin-right: calc(var(--tv-aside, 440px) / var(--sf-zoom, 1));
+}
+
+/* A prompt's editor card over the Settings sheet: the card's width, up to 640px, so a narrow sheet never clips it. */
 [data-surface='plugin.plotroom.prs'] .pf-editor > .sf-col {
 	width: 100%;
 	max-width: 640px;
 	box-sizing: border-box;
 	padding: 16px;
+}
+
+/* In the narrow sheet a text field wraps under its label at a fixed 260px, right-aligned; ask for more than the row
+   so it takes the whole line instead. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-in {
+	flex: 1 1 auto;
+	width: 1000px;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-ctl {
+	max-width: 100%;
+}
+
+/* A changed row's hover-only Reset sits before its control and would indent a full-line field; pin it to the row's
+   top-right corner, beside the label. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-reset {
+	position: absolute;
+	top: 8px;
+	right: 18px;
+}
+
+/* Tern pads a multi row (.stack) 4px less than the others, so its label sat left of theirs. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row.stack {
+	padding-left: 18px;
+	padding-right: 18px;
 }

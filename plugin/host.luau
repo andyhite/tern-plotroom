@@ -883,8 +883,8 @@ local function brief(s: string): string
 end
 
 -- The adaptive refresh pace: cooldown while the server holds us back, else the
--- interval and quota behind the next automatic refresh. Nothing without a repo
--- or when no request was sent (invalid query).
+-- interval and the next refresh (the quota sits under this row). Nothing without
+-- a repo or when no request was sent (invalid query).
 local function paceLine(state: State): string?
 	if not state.repo then
 		local p = state.problem
@@ -898,27 +898,19 @@ local function paceLine(state: State): string?
 		return "Auto-refresh paused: " .. (HEADS[halted.kind] or halted.kind) .. ". Fix it, then Refresh."
 	end
 	local now = os.time()
-	local who = login(state)
-	local q = github.quota(who)
-	local wait = github.wait(now, who)
-	local line: string
+	local wait = github.wait(now, login(state))
 	if wait > 0 then
-		line = "Paused by GitHub rate limit until " .. os.date("%H:%M:%S", now + wait)
+		return "Paused by GitHub rate limit until " .. os.date("%H:%M:%S", now + wait)
 	elseif state.interval and state.nextAt and state.timer then
-		line = "Auto-refresh: every " .. duration(state.interval / 1000) .. ", next " .. os.date("%H:%M:%S", state.nextAt)
-	else
-		return nil
+		return "Auto-refresh every " .. duration(state.interval / 1000) .. ", next at " .. os.date("%H:%M", state.nextAt) .. "."
 	end
-	if q and q.remaining and q.limit and q.reset and q.reset > now then
-		line ..= " · GraphQL quota " .. q.remaining .. "/" .. q.limit .. ", resets " .. os.date("%H:%M:%S", q.reset)
-	end
-	return line
+	return nil
 end
 
 -- ---------------------------------------------------------------- settings and queue views
 
 local QUEUE_ID = "layer.queue"
-local SETTINGS_ID = "main.settings"
+local SETTINGS_ID = "layer.settings"
 local PAGES = { "filters", "prompts", "github", "worktrees" }
 local PAGE_DEFS = {
 	{ id = "filters", label = "Filters", group = "Queue", icon = "funnel" },
@@ -1014,9 +1006,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 	local extra: { Node } = {}
 	local lead = ""
 	if s.page == "filters" then
-		lead = "Saved GitHub searches, listed in the queue's filter column. Each runs inside "
-			.. where
-			.. ", so repo:, org:, user: and OR are not allowed."
+		lead = "Saved searches for the queue's filter column. They run inside " .. where .. ", so repo:, org:, user: and OR are not allowed."
 		local locked = if state.writable then nil else (state.storeError or "Saved filters are read-only.")
 		for _, f in state.store.items do
 			local active = f.id == state.activeId
@@ -1025,7 +1015,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "query:" .. f.id,
 					label = "Query",
-					hint = "GitHub search syntax, run inside " .. where .. ".",
+					hint = "GitHub search syntax.",
 					disabled = locked,
 					control = { k = "text", value = f.query, placeholder = "is:open author:@me", mono = true },
 				},
@@ -1033,7 +1023,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			table.insert(rows, { id = "delete:" .. f.id, label = "Delete filter", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
 			table.insert(sections, {
 				id = "filter:" .. f.id,
-				title = f.name .. (if active then " · showing" else ""),
+				title = f.name .. (if active then " · active" else ""),
 				rows = rows,
 			})
 		end
@@ -1043,14 +1033,14 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "add",
 					label = "New filter",
-					hint = "Adds a filter for open pull requests; name it and edit its query.",
+					hint = "Starts as every open pull request.",
 					disabled = locked,
 					control = { k = "action", act = "add", label = "Add filter" },
 				},
 			},
 		})
 	elseif s.page == "prompts" then
-		lead = "What the queue's action bar and the agent picker (a) offer to run on a pull request, in its worktree. {url} in a prompt becomes the pull request's link. A prompt with no filter turned on is offered under every filter."
+		lead = "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details."
 		local prompts, unreadable = loadPrompts()
 		local options: { any } = {}
 		for _, f in state.store.items do
@@ -1070,13 +1060,13 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "pkey:" .. p.id,
 					label = "Shortcut",
-					hint = "One key that runs it on the selected pull request in the queue; empty: none.",
+					hint = "Key that runs it on the selected pull request.",
 					control = { k = "text", value = p.key or "", placeholder = "None" },
 				},
 				{
 					id = "pscope:" .. p.id,
 					label = "Filters",
-					hint = "Offered only under the filters turned on; none turned on: every filter.",
+					hint = "Offered only under these filters. None: every filter.",
 					control = { k = "multi", values = tern.json.array(scopeOf(p, state.store)), options = tern.json.array(options) },
 				},
 				{ id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } },
@@ -1089,14 +1079,14 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "padd",
 					label = "New prompt",
-					hint = "Adds a prompt offered under every filter; name it and write it.",
+					hint = "Starts empty, offered under every filter.",
 					disabled = unreadable,
 					control = { k = "action", act = "add-prompt", label = "Add prompt" },
 				},
 			},
 		})
 	elseif s.page == "github" then
-		lead = "Plotroom reads pull requests through GitHub's GraphQL API with your gh login."
+		lead = "Pull requests load through GitHub's GraphQL API with your gh login."
 		local account: string? = nil
 		local unreadable: github.Problem? = nil
 		if state.repo then
@@ -1107,12 +1097,12 @@ local function pageContent(state: State): ({ any }, string, { Node })
 		local wait = if state.account then github.wait(now, who) else 0
 		table.insert(sections, {
 			id = "sec-account",
-			title = "Account",
+			title = if state.repo then "Account for " .. state.repo else "Account",
 			rows = {
 				{
 					id = "account",
 					label = "gh account",
-					hint = "Login used for " .. where .. ". Empty: the active gh account.",
+					hint = "Empty: gh's active account.",
 					control = {
 						k = "text",
 						value = account or "",
@@ -1126,13 +1116,14 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			},
 		})
 		table.insert(sections, {
-			id = "sec-refresh",
+			-- prefs draws its one in-section slot (a child with role omp.prefs.preview.status) only after this id.
+			id = "status-line",
 			title = "Refresh",
 			rows = {
 				{
 					id = "refresh",
 					label = "Refresh now",
-					hint = paceLine(state) or "Refreshes every minute while quota allows.",
+					hint = paceLine(state) or "Auto-refresh every minute while quota allows.",
 					control = { k = "action", act = "refresh", label = "Refresh" },
 					disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", now + wait) elseif state.repo then nil else NO_REPO,
 				},
@@ -1140,38 +1131,30 @@ local function pageContent(state: State): ({ any }, string, { Node })
 		})
 		local q = github.quota(who)
 		if q and q.limit and q.limit > 0 and q.remaining then
-			local kids: { Node } = {
-				ui.node("meter", {
-					key = "used",
-					value = 1 - q.remaining / q.limit,
-					thresholds = { warn = 0.8, bad = 0.95 },
-					label = { ui.span(q.remaining .. " of " .. q.limit .. " points left", "num") },
-					total = if q.reset then "resets " .. os.date("%H:%M", q.reset) else nil,
-				}),
-			}
-			local nextAt = state.nextAt
-			if state.timer and nextAt and nextAt > now then
-				table.insert(
-					kids,
-					ui.node("row", { key = "next" }, {
-						ui.text({ ui.span("Next refresh in", "muted") }),
-						ui.node("elapsed", { age = (now - nextAt) * 1000, format = "clock" }),
-					})
-				)
-			end
-			table.insert(extra, ui.node("card", { key = "quota", head = { ui.span("GitHub API quota", "strong") } }, kids))
+			local left = q.remaining .. " of " .. q.limit .. " points left" .. (if q.reset then ", resets " .. os.date("%H:%M", q.reset) else "")
+			-- Laid out as a prefs row: label and hint at the left, the meter where a control sits.
+			table.insert(
+				extra,
+				ui.node("row", { key = "quota", role = "omp.prefs.preview.status", gap = "md", align = "center" }, {
+					ui.node("col", { key = "lbl", grow = 1 }, {
+						ui.text({ ui.span("API quota") }),
+						ui.text({ ui.span(left, "muted") }),
+					}),
+					ui.node("meter", { key = "used", value = 1 - q.remaining / q.limit, thresholds = { warn = 0.8, bad = 0.95 }, size = "md", basis = 0.3 }),
+				})
+			)
 		end
 	else
-		lead = "Worktree checks a pull request out with omp, in omp's worktrees directory (~/.omp/wt unless omp's worktree.base or OMP_WORKTREE_DIR says otherwise) as plotroom-<owner>_<repo>-pr-N, on branch plotroom/<owner>/<repo>/pr-N, and opens it in a new tab. When the worktree is new, that tab runs the setup commands first."
+		lead = "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new."
 		local mapped = if state.repo then readRepos()["github.com/" .. string.lower(state.repo)] else nil
 		table.insert(sections, {
 			id = "sec-checkout",
-			title = "Local checkout",
+			title = if state.repo then "Local checkout of " .. state.repo else "Local checkout",
 			rows = {
 				{
 					id = "checkout",
-					label = if state.repo then "Checkout of " .. state.repo else "Local checkout",
-					hint = "Used when the launch directory (" .. (state.launchCwd or "none") .. ") is not a checkout of " .. where .. ".",
+					label = "Path",
+					hint = "Used when the launch directory is not a checkout of " .. where .. ".",
 					control = {
 						k = "text",
 						value = if type(mapped) == "string" then mapped else "",
@@ -1199,7 +1182,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 		table.insert(rows, {
 			id = "setup:new",
 			label = "Add a command",
-			hint = "Typed into the new worktree's shell, joined with &&, so they stop at the first failure. An agent started there does not wait for them.",
+			hint = "Run in order in the new worktree's tab, stopping at the first failure.",
 			disabled = off,
 			control = { k = "text", value = "", placeholder = if #cmds == 0 then "pnpm install" else "cp ../repo/.env .", mono = true },
 		})
@@ -2000,7 +1983,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "3"
+local RPC_PROTOCOL = "4"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -2130,6 +2113,10 @@ local function prepare(state: State, id: string, repo: string, n: number)
 				dirty = r.dirty,
 				summary = worktree.describe(r),
 				setup = if r.created then setupLine(repo) else nil,
+				branch = r.prRef,
+				base = r.prBase,
+				title = r.title,
+				author = r.author,
 			})
 		end)
 	end)
@@ -2482,7 +2469,8 @@ local function helpOverlay(state: State): Node
 	})
 end
 
-local function queueView(state: State): BlockView
+-- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
+local function queuePicker(state: State): Node
 	local snap, problem, f, pr = state.snap, state.problem, activeFilter(state), selectedPr(state)
 	local v = filtered(state)
 	local items: { any } = {}
@@ -2562,6 +2550,8 @@ local function queueView(state: State): BlockView
 
 	local props: { [string]: any } = {
 		key = "queue",
+		-- plotroom.css narrows the queue by the Settings sheet's width, so the sheet sits beside it, not over it.
+		role = if state.settings then "plotroom.queue.aside" else nil,
 		size = "screen",
 		layout = "cards",
 		preview = "side",
@@ -2588,12 +2578,17 @@ local function queueView(state: State): BlockView
 	}
 	if state.query then
 		local qp = input.props(state.query)
-		props.query, props.cursor = qp.text, qp.cursor
+		props.query = qp.text
+		props.cursor = if state.settings then nil else qp.cursor
 	end
 	if not snap and problem then
 		props.message = spans(ui.span(HEADS[problem.kind] or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted"))
 	end
-	local layer: { Node } = { ui.node("picker", props, previewNodes(state, pr, open, acts)) }
+	return ui.node("picker", props, previewNodes(state, pr, open, acts))
+end
+
+local function queueView(state: State): BlockView
+	local layer: { Node } = { queuePicker(state) }
 	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
@@ -2630,6 +2625,18 @@ local function confirmOverlay(state: State, row: string): Node
 	})
 end
 
+-- The variables window.luau's `fill` replaces in a prompt, for the editor's legend; keep the two in step.
+local PROMPT_VARS: { { k: { Span }, v: string } } = {
+	{ k = { ui.span("{url}", "code") }, v = "Link to the pull request" },
+	{ k = { ui.span("{owner}", "code") }, v = "Repository owner" },
+	{ k = { ui.span("{repo}", "code") }, v = "Repository name" },
+	{ k = { ui.span("{number}", "code") }, v = "Pull request number" },
+	{ k = { ui.span("{title}", "code") }, v = "Title" },
+	{ k = { ui.span("{author}", "code") }, v = "Author's login" },
+	{ k = { ui.span("{branch}", "code") }, v = "Head branch on GitHub" },
+	{ k = { ui.span("{base}", "code") }, v = "Branch it merges into" },
+}
+
 local function settingsView(state: State): BlockView
 	local s = state.settings :: Settings
 	local sections, lead, extra = pageContent(state)
@@ -2665,15 +2672,24 @@ local function settingsView(state: State): BlockView
 				min = { h = "6lines" },
 				aria = "Prompt text",
 			}),
+			ui.node("section", { key = "vars", head = { ui.span("Variables", "muted") }, collapsible = true, collapsed = true }, {
+				ui.node("kv", { key = "list", items = PROMPT_VARS }),
+			}),
 		}
 		if err then
 			table.insert(kids, ui.node("text", { key = "error", spans = { ui.span(err, "error") } }))
 		end
 		table.insert(
 			kids,
-			ui.node("list", { key = "buttons" }, {
-				ui.node("item", { key = "save", label = "Save", icon = "save", tone = "accent", hint = { "cmd", "enter" }, actions = { click = "save-prompt" } }),
-				ui.node("item", { key = "cancel", label = "Cancel", icon = "x", hint = { "esc" }, actions = { click = "cancel-prompt" } }),
+			ui.node("row", { key = "buttons", role = "omp.actions" }, {
+				ui.node("row", { key = "save", role = "omp.btn", tone = "accent", gap = "xs", align = "center", actions = { click = "save-prompt" } }, {
+					ui.node("icon", { key = "i", name = "save" }),
+					ui.text({ ui.span("Save") }),
+				}),
+				ui.node("row", { key = "cancel", role = "omp.btn", gap = "xs", align = "center", actions = { click = "cancel-prompt" } }, {
+					ui.node("icon", { key = "i", name = "x" }),
+					ui.text({ ui.span("Cancel") }),
+				}),
 			})
 		)
 		table.insert(extra, ui.node("col", { key = "prompt", role = "omp.prefs.editor", gap = "md" }, kids))
@@ -2683,15 +2699,14 @@ local function settingsView(state: State): BlockView
 	elseif s.pick then
 		props.editing = { row = s.pick.row, option = s.pick.option }
 	end
-	local layer: Node? = nil
+	-- In the layer, prefs is Tern's side sheet docked at the right, over the queue.
+	local layer: { Node } = { queuePicker(state), ui.node("prefs", props, extra) }
 	if s.confirm then
-		layer = ui.col({ confirmOverlay(state, s.confirm) })
+		table.insert(layer, confirmOverlay(state, s.confirm))
 	elseif state.help then
-		layer = ui.col({ helpOverlay(state) })
+		table.insert(layer, helpOverlay(state))
 	end
-	local main = rpcNodes(state)
-	table.insert(main, ui.node("prefs", props, extra))
-	return { main = ui.col(main), layer = layer }
+	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
 end
 
 -- A pane moved into or out of a PR worktree, or ended: redraw every queue so "In tab" marks follow. Deferred, since

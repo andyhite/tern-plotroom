@@ -1523,7 +1523,7 @@ type Gh = {
 	tokens: { [string]: string }, -- login -> what `gh auth token --user` prints
 	items: { [string]: { { [string]: any } } }, -- login -> search results, newest first
 	total: { [string]: number }, -- login -> issueCount when it differs from #items
-	meta: { [string]: { base: string, sha: string, ref: string, state: string } }, -- "owner/repo#N" -> pulls/N
+	meta: { [string]: { base: string, sha: string, ref: string, state: string, baseRef: string?, title: string?, author: string? } }, -- "owner/repo#N" -> pulls/N
 	checks: { [string]: { any } }, -- "owner/repo#N" -> check nodes of its latest commit
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
@@ -2019,6 +2019,9 @@ local function resultOf(created: boolean, head: string, prHead: string, dirty: b
 		head = head,
 		prHead = prHead,
 		prRef = "feature",
+		prBase = "main",
+		title = "Add a feature",
+		author = "ann",
 		dirty = dirty,
 	}
 end
@@ -2077,7 +2080,7 @@ local function scene(w: World, worktree: Worktree, owner: string, name: string, 
 	g.remotes.origin = { "https://github.com/" .. repo .. ".git" }
 	g.served["refs/pull/" .. n .. "/head"] = sha("b")
 	local gh = newGh(w)
-	gh.meta[repo .. "#" .. n] = { base = repo, sha = sha("b"), ref = "feature", state = "open" }
+	gh.meta[repo .. "#" .. n] = { base = repo, sha = sha("b"), ref = "feature", state = "open", baseRef = "main", title = "Add a feature", author = "ann" }
 	w.fs.dirs[root .. "/src"] = true
 	local branch, ref = worktree.refNames(owner, name, n)
 	return {
@@ -2425,10 +2428,10 @@ local function pickerOf(b: Block): any
 	return pickerNode(b).p
 end
 
--- The settings view's page props: its prefs node comes after the hidden nodes that hold the answers to the window.
+-- The settings view's page props: the side sheet in the layer, after the queue's picker.
 local function prefsOf(b: Block): any
 	local view: any = b.view()
-	return findKey(view.main, "settings", "prefs").p
+	return findKey(view.layer, "settings", "prefs").p
 end
 
 -- ---- window.luau: the Worktree link
@@ -2703,6 +2706,10 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[3].prompt, "Fix the flaky test in https://github.com/o/r/pull/5", "typed text gets {url} replaced too")
+	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "{owner}/{repo}#{number} {title} by {author}: {branch} into {base}, {nope}"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main, {nope}", "every variable is filled from a fresh read of the PR; an unknown one stays")
 end)
 
 windowCase("window: Recent lists only prompts that are still saved, and with none saved the picker says where to write them", function(w: World)
@@ -3141,7 +3148,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "3", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "4", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -3774,6 +3781,7 @@ case("github.pr: the head sha must be 40 hex digits and is lowercased", function
 	ask()
 	eq(got.sha, sha("a"), "lowercased")
 	eq(got.base, "o/r", "base")
+	eq(got.baseRef, "", "a base branch gh left out is empty, not a failed read")
 	gh.meta["o/r#5"] = { base = "o/r", sha = "abc123", ref = "feature", state = "open" }
 	ask()
 	eq(got, nil, "a short sha is refused")
@@ -3992,7 +4000,7 @@ case("host: ? lists the shortcuts of the current mode, and a ? is plain text whi
 	end
 	b.press("escape")
 	b.press("escape")
-	eq(b.view().layer.c[1].k, "picker", "Escape closes the list, then Settings")
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "Escape closes the list, then Settings")
 end)
 
 case("host: the documented queue keys move, open, refresh and switch filters", function(w: World)
@@ -4024,7 +4032,8 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	b.press("down")
 	eq(pickerOf(b).scope, "f2", "Down in the filter list switches filter")
 	b.typeText("s")
-	eq(b.view().main.c[2].k, "prefs", "s opens Settings")
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "s opens Settings")
+	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
 end)
 
 case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
@@ -4048,7 +4057,7 @@ case("host: the bar's Settings and Refresh events do what their keys do", functi
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "Refresh searches again")
 	act("settings")
-	eq(b.view().main.c[2].k, "prefs", "Settings opens the settings page")
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "Settings opens the settings page")
 end)
 
 case("host: with no pull request selected Enter and w open nothing", function(w: World)
@@ -4140,7 +4149,7 @@ case("host: setup commands are added, edited and removed per repository; unreada
 	local b = openQueue(w)
 	goToSettings(b, "worktrees")
 	local function save(row: string, text: string)
-		b.event({ ev = "select", id = "main.settings", item = row })
+		b.event({ ev = "select", id = "layer.settings", item = row })
 		b.press("enter")
 		for _ = 1, 40 do
 			b.press("backspace")
@@ -4190,7 +4199,7 @@ case("host: a first run saves the two default filters, Add creates one, and Dele
 	local b = openQueue(w)
 	eq(#w.kv.get("filters").items, 2, "the default filters were saved")
 	goToSettings(b, "filters")
-	b.event({ ev = "select", id = "main.settings", item = "add" })
+	b.event({ ev = "select", id = "layer.settings", item = "add" })
 	b.press("enter")
 	eq(#w.kv.get("filters").items, 3, "Add saved a new filter")
 	eq(prefsOf(b).editing.row, "name:f3", "and starts naming it")
@@ -4199,18 +4208,18 @@ case("host: a first run saves the two default filters, Add creates one, and Dele
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "the new filter became the active one and was searched")
 	has(b.title(), "New filter", "the title shows it")
-	b.event({ ev = "select", id = "main.settings", item = "delete:f2" })
+	b.event({ ev = "select", id = "layer.settings", item = "delete:f2" })
 	b.press("enter")
 	yes(findKey(b.view().layer, "confirm") ~= nil, "Delete asks for confirmation")
 	b.press("enter")
 	eq(#w.kv.get("filters").items, 3, "Enter keeps the filter")
-	eq(b.view().layer, nil, "and closes the question")
+	eq(findKey(b.view().layer, "confirm"), nil, "and closes the question")
 	b.press("enter")
 	b.typeText("d")
 	local items = w.kv.get("filters").items
 	eq(#items, 2, "d deletes it")
 	eq(items[2].id, "f3", "the other filters stay")
-	b.event({ ev = "select", id = "main.settings", item = "delete:f3" })
+	b.event({ ev = "select", id = "layer.settings", item = "delete:f3" })
 	b.press("enter")
 	b.typeText("d")
 	w.flush()
@@ -4234,7 +4243,7 @@ end)
 
 -- The prompt editor card of the Settings view; nil when no prompt's text is being edited.
 local function editorCard(b: Block): any
-	return findKey(b.view().main, "prompt", "col")
+	return findKey(b.view().layer, "prompt", "col")
 end
 
 -- The text in the card's draft; nil without a card.
@@ -4289,7 +4298,7 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	eq(editorCard(b).p.role, "omp.prefs.editor", "in the editor card")
 	eq(findKey(editorCard(b), "head", "text").p.spans[1].t, "Prompt · Review", "which names the prompt")
 	eq(draftOf(b), "", "with nothing in it")
-	eq(caretOf(w), "main.settings.prompt.draft", "and the caret in its field")
+	eq(caretOf(w), "layer.settings.prompt.draft", "and the caret in its field")
 	eq(prefsOf(b).focus, "ptext:p1", "the prompt's text row is the focused one")
 	eq(rowIn(b, "ptext:p1").hint, "Empty", "and says it is empty")
 	b.press("enter")
@@ -4307,7 +4316,7 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	eq(rowIn(b, "ptext:p1").hint, "Review {url}", "the row shows the text's first line")
 	b.press("enter")
 	eq(draftOf(b), "Review {url}\nThen summarise.", "Edit… opens the saved text")
-	eq(caretOf(w), "main.settings.prompt.draft", "with the caret in the field")
+	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret in the field")
 	b.press("up")
 	b.typeText("!")
 	eq(draftOf(b), "Review {url}!\nThen summarise.", "Up moves a line inside the editor")
@@ -4331,7 +4340,7 @@ case("host: naming a new prompt with the placeholder name itself still opens its
 	eq(prefsOf(b).editing, nil, "the name edit is over")
 	eq(w.kv.get("prompts").items[1].name, "New prompt", "the name stays what it was")
 	yes(editorCard(b) ~= nil, "and the prompt, still with no text, opens its text editor")
-	eq(caretOf(w), "main.settings.prompt.draft", "with the caret in its field")
+	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret in its field")
 end)
 
 case("host: a prompt's text that is empty or over 8000 bytes stays in the editor with the card's warning; Save and Cancel act like ⌘Enter and Esc", function(w: World)
@@ -4357,13 +4366,13 @@ case("host: a prompt's text that is empty or over 8000 bytes stays in the editor
 	b.press("enter", "m")
 	eq(cardWarning(b), "Over 8000 bytes; shorten it.", "a text over 8000 bytes is refused")
 	eq(savedText(w, 1), "Review {url}", "with nothing saved")
-	eq(caretOf(w), "main.settings.prompt.draft", "and the caret stays in the field")
+	eq(caretOf(w), "layer.settings.prompt.draft", "and the caret stays in the field")
 	b.press("backspace")
 	b.press("enter", "m")
 	eq(#savedText(w, 1), 8000, "8000 bytes are accepted")
 	eq(editorCard(b), nil, "and close the editor")
-	local cancel: { [string]: any } = { ev = "action", id = "main.settings.prompt.buttons.cancel", act = "cancel-prompt" }
-	local save: { [string]: any } = { ev = "action", id = "main.settings.prompt.buttons.save", act = "save-prompt" }
+	local cancel: { [string]: any } = { ev = "action", id = "layer.settings.prompt.buttons.cancel", act = "cancel-prompt" }
+	local save: { [string]: any } = { ev = "action", id = "layer.settings.prompt.buttons.save", act = "save-prompt" }
 	b.press("enter")
 	b.press("a", "c")
 	b.typeText("Short.")
@@ -4405,7 +4414,7 @@ case("host: a prompt's Filters chips keep only filters that exist, and Enter, Ri
 		return w.kv.get("prompts").items[1].filters
 	end
 	local function changed(values: { any })
-		b.event({ ev = "change", id = "main.settings", item = "pscope:p1", value = array(values) })
+		b.event({ ev = "change", id = "layer.settings", item = "pscope:p1", value = array(values) })
 	end
 	changed({ "f2", "gone" })
 	same(saved(), { "f2" }, "a change saves only the filters that still exist")
@@ -4446,21 +4455,21 @@ case("host: Delete on a prompt asks first, naming it: d deletes it, Enter keeps 
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
-	b.event({ ev = "select", id = "main.settings", item = "pdelete:p1" })
+	b.event({ ev = "select", id = "layer.settings", item = "pdelete:p1" })
 	b.press("enter")
 	local question: any = findKey(b.view().layer, "confirm")
 	yes(question ~= nil, "Delete asks for confirmation")
 	eq(question.p.head, "Delete prompt “Review”?", "naming the prompt")
 	b.press("enter")
 	eq(#w.kv.get("prompts").items, 2, "Enter keeps it")
-	eq(b.view().layer, nil, "and closes the question")
+	eq(findKey(b.view().layer, "confirm"), nil, "and closes the question")
 	b.press("enter")
 	b.typeText("d")
 	local items = w.kv.get("prompts").items
 	eq(#items, 1, "d deletes it")
 	eq(items[1].id, "p2", "the other prompt stays")
 	eq(prefsOf(b).focus, "padd", "and the Add row takes the focus")
-	b.event({ ev = "action", id = "main.settings", act = "delete", value = "pdelete:p2" })
+	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:p2" })
 	eq(findKey(b.view().layer, "confirm").p.head, "Delete prompt “Triage”?", "the Delete button asks the same question")
 	b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = "confirm-delete" })
 	eq(#w.kv.get("prompts").items, 0, "and the Delete in the question deletes it")
@@ -4475,10 +4484,10 @@ case("host: changing page, closing Settings or being sent to the Worktrees page 
 		goToSettings(b, "prompts")
 		b.press("down")
 		b.press("enter")
-		eq(caretOf(w), "main.settings.prompt.draft", "the text is being edited")
+		eq(caretOf(w), "layer.settings.prompt.draft", "the text is being edited")
 	end
 	editing()
-	b.event({ ev = "action", id = "main.settings", act = "page", value = "filters" })
+	b.event({ ev = "action", id = "layer.settings", act = "page", value = "filters" })
 	eq(prefsOf(b).page, "filters", "a click on another page leaves the Prompts page")
 	eq(editorCard(b), nil, "the editor is gone")
 	eq(caretOf(w), "released", "and the caret is given back")
@@ -4487,8 +4496,8 @@ case("host: changing page, closing Settings or being sent to the Worktrees page 
 	eq(editorCard(b), nil, "the edit did not come back")
 	b.press("escape")
 	editing()
-	b.event({ ev = "action", id = "main.settings", act = "close" })
-	yes(b.view().layer ~= nil and b.view().layer.c[1].k == "picker", "closing Settings shows the queue")
+	b.event({ ev = "action", id = "layer.settings", act = "close" })
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "closing Settings leaves the queue")
 	eq(caretOf(w), "released", "and gives the caret back")
 	b.typeText("s")
 	eq(editorCard(b), nil, "reopened Settings has no edit")
@@ -4511,22 +4520,22 @@ case("host: deleting a prompt drops an edit of its own name or text and leaves t
 	goToSettings(b, "prompts")
 	-- Deletes prompt `id` with the mouse: the keys cannot while an edit is open.
 	local function click(id: string)
-		b.event({ ev = "action", id = "main.settings", act = "delete", value = "pdelete:" .. id })
+		b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:" .. id })
 		b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = "confirm-delete" })
 	end
-	b.event({ ev = "select", id = "main.settings", item = "ptext:p2" })
+	b.event({ ev = "select", id = "layer.settings", item = "ptext:p2" })
 	b.press("enter")
 	eq(draftOf(b), "Triage {url}", "the text of the second prompt is being edited")
 	click("p1")
 	eq(#w.kv.get("prompts").items, 1, "the first prompt is deleted")
 	eq(draftOf(b), "Triage {url}", "the edit of the other prompt goes on")
-	eq(caretOf(w), "main.settings.prompt.draft", "with the caret where it was")
+	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret where it was")
 	click("p2")
 	eq(#w.kv.get("prompts").items, 0, "the prompt being edited is deleted")
 	eq(editorCard(b), nil, "its editor goes with it")
 	eq(caretOf(w), "released", "and the caret is given back")
 	savePrompts(w, { promptOf("p3", "Plan", "Plan {url}") })
-	b.event({ ev = "select", id = "main.settings", item = "pname:p3" })
+	b.event({ ev = "select", id = "layer.settings", item = "pname:p3" })
 	b.press("enter")
 	eq(prefsOf(b).editing.row, "pname:p3", "the name of another prompt is being edited")
 	click("p3")
@@ -4544,9 +4553,9 @@ case("host: unreadable or malformed saved prompts lock Add with the reason, are 
 		b.render()
 		local stored = w.kv.store.prompts
 		has(rowIn(b, "padd").disabled, why, what .. ": Add is locked, with the reason")
-		b.event({ ev = "action", id = "main.settings", act = "add-prompt", value = "padd" })
-		b.event({ ev = "change", id = "main.settings", item = "pscope:p1", value = array({ "f1" }) })
-		b.event({ ev = "action", id = "main.settings", act = "delete", value = "pdelete:p1" })
+		b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd" })
+		b.event({ ev = "change", id = "layer.settings", item = "pscope:p1", value = array({ "f1" }) })
+		b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:p1" })
 		b.press("d")
 		eq(w.kv.store.prompts, stored, what .. ": nothing was written over it")
 		asked += 1
@@ -4766,7 +4775,7 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 	eq(row.label, "Shortcut", "the row is the Shortcut")
 	eq(row.control.value, "", "empty while the prompt has none")
 	eq(row.control.placeholder, "None", "which it says")
-	b.event({ ev = "select", id = "main.settings", item = "pkey:p1" })
+	b.event({ ev = "select", id = "layer.settings", item = "pkey:p1" })
 	-- Tries `text` as the first prompt's shortcut: what the row warns afterwards.
 	local function try(text: string): string?
 		if prefsOf(b).editing == nil then

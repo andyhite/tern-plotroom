@@ -21,7 +21,7 @@ local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its
 -- each).
 local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
-local PROTOCOL = "3" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "4" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
@@ -381,8 +381,24 @@ local function readyOf(a: any): Ready?
 	}
 end
 
+-- `{name}` variables a prompt may use, from the PR's coordinates and the host's fresh read of it; others stay as typed.
+local function fill(prompt: string, owner: string, repo: string, n: number, a: any): string
+	local vars: { [string]: string } = {
+		url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n,
+		owner = owner,
+		repo = repo,
+		number = tostring(n),
+	}
+	for _, k in { "title", "author", "branch", "base" } do
+		if type(a[k]) == "string" then
+			vars[k] = a[k]
+		end
+	end
+	return (string.gsub(prompt, "{(%a+)}", vars))
+end
+
 -- Has the block's host create or reuse the PR's worktree (and note it on the block), then opens its tab, or with
--- `prompt` starts an agent in it.
+-- `prompt` starts an agent in it, its variables filled.
 local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?)
 	local full = owner .. "/" .. repo
 	local sent = ask(cx, pane, "worktree", { repo = full, number = n }, PREPARE_MS, function(a: any, cx2: WindowCx)
@@ -398,7 +414,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		local ready: Ready = r
 		afterReady(cx2, ready, function()
 			if prompt then
-				startAgent(cx2, pane, full, n, ready, prompt)
+				startAgent(cx2, pane, full, n, ready, fill(prompt, owner, repo, n, a))
 			else
 				finishWorktree(cx2, pane, full, n, ready)
 			end
@@ -409,20 +425,12 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 	end
 end
 
--- Runs `text` in an agent in PR `owner/repo#n`'s worktree, `{url}` in it replaced with the PR's link.
-local function runPrompt(cx: WindowCx, pane: number, owner: string, repo: string, n: number, text: string)
-	local url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
-	worktreePr(cx, pane, owner, repo, n, (string.gsub(text, "{url}", function()
-		return url
-	end)))
-end
-
 -- An action-bar button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
 local function runSaved(cx: WindowCx, pane: number, owner: string, repo: string, n: number, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return runPrompt(cx2, pane, owner, repo, n, it.send)
+				return worktreePr(cx2, pane, owner, repo, n, it.send)
 			end
 		end
 		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -430,11 +438,11 @@ local function runSaved(cx: WindowCx, pane: number, owner: string, repo: string,
 end
 
 -- Asks which saved prompt (Settings › Prompts, those offered under the block's filter) to run on PR `owner/repo#n`,
--- then runs it with runPrompt. "Type a prompt…" sends typed text the same way.
+-- then runs it in an agent in the PR's worktree. "Type a prompt…" sends typed text the same way.
 local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
 	local full = owner .. "/" .. repo
 	local function run(cx2: WindowCx, text: string)
-		runPrompt(cx2, pane, owner, repo, n, text)
+		worktreePr(cx2, pane, owner, repo, n, text)
 	end
 	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then

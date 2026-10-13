@@ -63,7 +63,7 @@ local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
-local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,state:.state}"
+local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,state:.state,baseRef:.base.ref,title:.title,author:.user.login}"
 local MERGE: { [string]: string } =
 	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
 local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
@@ -958,9 +958,10 @@ function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem
 	fetch(nil, 1)
 end
 
-export type PrMeta = { base: string, sha: string, ref: string, state: string }
+-- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read.
+export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string }
 
--- Base repository and head of one PR; done(meta, problem, cx).
+-- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?) -> ())
 	local account, refused = M.account(repo)
 	if refused then
@@ -985,7 +986,18 @@ function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?)
 		then
 			return done(nil, { kind = "failed", message = "gh printed unexpected pull request metadata." }, cx)
 		end
-		done({ base = data.base, sha = string.lower(data.sha), ref = data.ref, state = tostring(data.state) }, nil, cx)
+		local function text(v: any): string
+			return if type(v) == "string" then v else ""
+		end
+		done({
+			base = data.base,
+			sha = string.lower(data.sha),
+			ref = data.ref,
+			state = tostring(data.state),
+			baseRef = text(data.baseRef),
+			title = text(data.title),
+			author = text(data.author),
+		}, nil, cx)
 	end, account)
 end
 

@@ -77,7 +77,7 @@ flowchart LR
 - Reused worktrees are never updated. The preview shows `Created|Reused · Current|Different · Clean|Modified` and offers the `fetch` + `merge --ff-only` and cleanup commands for you to run.
 - Plotroom never runs `reset`, `clean`, `stash`, `worktree remove`, `prune`, `branch -d`, or `update-ref -d`.
 - **Setup commands** (Settings › Worktrees) run in the new tab's shell when a worktree is *created*. They execute the PR's code (`pnpm install` runs its scripts), so leave them empty for repos that take untrusted PRs.
-- **Prompts** (Settings › Prompts) become buttons in the queue's action bar and rows in the `a` picker. Each has a name, multi-line text (Edit… opens an editor; Enter is a new line, ⌘↵ saves, Esc cancels), an optional one-key shortcut (not one the queue uses: `j k w g a r s / ?`) and the filters it is offered under; with none turned on it is offered under every filter. `{url}` in a prompt, or in a typed one, becomes the PR's link. Prompts are saved per machine, like filters.
+- **Prompts** (Settings › Prompts) become buttons in the queue's action bar and rows in the `a` picker. Each has a name, multi-line text (Edit… opens an editor; Enter is a new line, ⌘↵ saves, Esc cancels), an optional one-key shortcut (not one the queue uses: `j k w g a r s / ?`) and the filters it is offered under; with none turned on it is offered under every filter. In a prompt, or a typed one, `{url}`, `{owner}`, `{repo}`, `{number}`, `{title}`, `{author}`, `{branch}` (the PR's head branch) and `{base}` (the branch it merges into) become the PR's details, read fresh from GitHub; any other `{…}` stays as written. Prompts are saved per machine, like filters.
 
 ## Trust
 

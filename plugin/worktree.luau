@@ -34,6 +34,9 @@ export type Result = {
 	head: string, -- the worktree's HEAD
 	prHead: string, -- the pull request's head, as GitHub reports it now
 	prRef: string, -- the pull request's head branch on GitHub
+	prBase: string, -- the branch it merges into; "" when GitHub did not say
+	title: string,
+	author: string,
 	dirty: boolean?,
 }
 
@@ -586,6 +589,9 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 								head = head,
 								prHead = plan.meta.sha,
 								prRef = plan.meta.ref,
+								prBase = plan.meta.baseRef,
+								title = plan.meta.title,
+								author = plan.meta.author,
 								dirty = if status then status ~= "" else nil,
 							}
 							finish(result, nil, cx4)
