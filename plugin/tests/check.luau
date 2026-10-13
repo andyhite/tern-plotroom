@@ -202,9 +202,10 @@ function M.run()
 	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/r/gone") == "error", "a record on the target path collides")
 	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/nonexistent/plotroom/target") == "create", "unrelated records do not block")
 	assert(worktree.expandPath("~/x", "/home/u") == "/home/u/x" and worktree.expandPath("rel", "/h") == nil, "path expansion")
-	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-12", "A/B") == 12, "worktree root maps to its PR")
-	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-12/src/lib", "a/b") == 12, "a directory inside the worktree maps to its PR")
-	for _, p in { "/r/x.plotroom/a/b/pr-12x", "/r/x.plotroom/a/bc/pr-1", "/r/a/b/pr-1", "" } do
+	assert(worktree.prOfPath("/h/.omp/wt/plotroom-a_b-pr-12", "A/B") == 12, "worktree root maps to its PR")
+	assert(worktree.prOfPath("/h/.omp/wt/plotroom-a_b-pr-12/src/lib", "a/b") == 12, "a directory inside the worktree maps to its PR")
+	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-7", "a/b") == 7, "a worktree from an earlier version still maps")
+	for _, p in { "/wt/plotroom-a_b-pr-12x", "/wt/plotroom-a_bc-pr-1", "/wt/xplotroom-a_b-pr-1", "/r/a/b/pr-1", "" } do
 		assert(worktree.prOfPath(p, "a/b") == nil, "not a PR worktree: " .. p)
 	end
 

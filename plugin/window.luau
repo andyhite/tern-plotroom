@@ -215,6 +215,21 @@ local function namePrTab(cx: WindowCx, pane: number, repo: string, n: number)
 	end
 end
 
+-- `repo`'s saved setup commands (Settings › Worktrees) as one shell line that stops at the first failure; nil if none.
+local function setupLine(repo: string): string?
+	local ok, map = pcall(tern.kv.get, "setup")
+	local list = if ok and type(map) == "table" then map["github.com/" .. string.lower(repo)] else nil
+	local cmds: { string } = {}
+	if type(list) == "table" then
+		for _, c in list do
+			if type(c) == "string" and string.find(c, "%S") then
+				table.insert(cmds, c)
+			end
+		end
+	end
+	return if #cmds > 0 then table.concat(cmds, " && ") else nil
+end
+
 local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result)
 	local summary = worktree.describe(r)
 	local current = r.head == r.prHead
@@ -250,17 +265,35 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
 	namePrTab(cx, newPane, repo, n)
-	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, summary)
+	local setup = if r.created then setupLine(repo) else nil
+	if setup then
+		cx:run(newPane, setup .. "\r")
+	end
+	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, if setup then summary .. " · running setup" else summary)
 end
 
--- Starts an agent in the worktree at `path` with `prompt`: in the PR's open tab when there is one, else in a new tab.
-local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, path: string, prompt: string)
+-- Starts an agent in the worktree with `prompt`: in the PR's open tab when there is one, else in a new tab. A new
+-- worktree's setup commands run first in a shell tab the agent joins. ponytail: the agent starts without waiting
+-- for them; poll the shell's `last` status if agents trip over a half-done setup.
+local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, r: worktree.Result, prompt: string)
+	local path = r.path
 	local _, tab, found = prPane(cx, repo, n)
 	local session = found or sourceSession(cx, pane)
 	if not session then
 		return cx:toast("success", "Worktree ready", path .. " (the source pane closed, so no agent was started)")
 	end
 	cx.sessions:switch(session)
+	local setup = if r.created then setupLine(repo) else nil
+	if setup then
+		local shell = cx.layout:new_tab({ cwd = path })
+		if shell then
+			cx:run(shell, setup .. "\r")
+			namePrTab(cx, shell, repo, n)
+			tab = cx.session:tab_of(shell)
+		else
+			cx:toast("error", "Setup did not run for " .. repo .. "#" .. n, "Its tab did not open.")
+		end
+	end
 	local ok, agent = pcall(function()
 		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab" })
 	end)
@@ -311,7 +344,7 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		-- The worktree exists whatever happens next: a failing tab call must not hide its path.
 		local ok, why = pcall(function()
 			if prompt then
-				finishAgent(cx2, pane, full, n, result.path, prompt)
+				finishAgent(cx2, pane, full, n, result, prompt)
 			else
 				finishWorktree(cx2, pane, full, n, result)
 			end
@@ -468,24 +501,6 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, target, "the check")
-		end
-		return true
-	end
-	-- `plotroom://github/edit-template/<name>`: the host just created or found ~/.omp/agent/prompts/<name>.md.
-	local tname = string.match(url, "^plotroom://github/edit%-template/([%w][%w%-_]*)$")
-	if tname then
-		local home = tern.getenv("HOME")
-		local dir = if home and home ~= "" then home .. "/.omp/agent/prompts" else nil
-		local path = if dir then dir .. "/" .. tname .. ".md" else nil
-		if not isPlotroom(cx, pane) then
-			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif not dir or not path or not tern.fs.exists(path) then
-			cx:toast("error", "Plotroom: there is no prompt template " .. tname)
-		else
-			local quoted = "'" .. string.gsub(path, "'", "'\\''") .. "'"
-			if not cx.layout:split(pane, "right", { cwd = dir, command = "${VISUAL:-${EDITOR:-vi}} " .. quoted }) then
-				cx:toast("error", "Plotroom: could not open an editor for " .. path)
-			end
 		end
 		return true
 	end

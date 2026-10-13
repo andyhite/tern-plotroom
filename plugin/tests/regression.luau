@@ -347,6 +347,7 @@ type Win = {
 	choose: string?, -- the label cx:pick answers with; nil dismisses it
 	typed: string?, -- what cx:prompt answers with; nil dismisses it
 	agents: { any }, -- every cx.agents:start request
+	runs: { { pane: number, text: string } }, -- every cx:run (text typed into a pane)
 }
 
 type Kv = {
@@ -504,6 +505,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		newTab = "ok",
 		picks = {},
 		agents = {},
+		runs = {},
 	}
 	local nextId = 10
 
@@ -521,6 +523,9 @@ local function newWorld(instantiate: Loader, context: string): World
 	windowCx = {
 		toast = function(_self: any, level: string, text: string, sub: string?)
 			table.insert(toasts, { level = level, text = text, sub = sub })
+		end,
+		run = function(_self: any, pane: number, text: string)
+			table.insert(win.runs, { pane = pane, text = text })
 		end,
 		session = {
 			pane = function(_self: any, id: number): any
@@ -591,6 +596,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			dock = function(_self: any, _pane: number, _target: number, _dir: string, _opts: any): any
 				return true
+			end,
+			move_to_tab = function(_self: any, pane: number, tab: number): (boolean, string?)
+				local p = win.panes[pane]
+				if p then
+					p.tab = tab
+				end
+				return p ~= nil, nil
 			end,
 		},
 		hosts = {
@@ -1651,6 +1663,14 @@ local function newGit(w: World, root: string): Git
 			end
 			return { status = 128, stderr = "fatal: not a git repository (or any of the parent directories): .git\n" }
 		end)
+		-- omp's worktrees directory, as `omp config get worktree.base --json` reports a set value
+		w.respond(function(call: Call): Reply?
+			local a = call.argv
+			if a[1] == "omp" and a[2] == "config" and a[3] == "get" and a[4] == "worktree.base" then
+				return { stdout = '{"key":"worktree.base","value":"/wt","type":"string"}\n' }
+			end
+			return nil
+		end)
 	end
 	local function worktreeOf(dir: string): GitWorktree?
 		local best: GitWorktree? = nil
@@ -1665,6 +1685,14 @@ local function newGit(w: World, root: string): Git
 	end
 	w.respond(function(call: Call): Reply?
 		local argv = call.argv
+		-- `omp worktree add -q -C <root> <args…>` is modelled as the `git worktree add` it performs
+		if argv[1] == "omp" and argv[2] == "worktree" and argv[3] == "add" and argv[4] == "-q" and argv[5] == "-C" then
+			local as: { string } = { "git", "-C", argv[6], "worktree", "add" }
+			for i = 7, #argv do
+				table.insert(as, argv[i])
+			end
+			argv = as
+		end
 		if argv[1] ~= "git" or argv[2] ~= "-C" or not argv[3] then
 			return nil
 		end
@@ -1983,7 +2011,7 @@ local function scene(w: World, worktree: Worktree, owner: string, name: string, 
 		repo = repo,
 		number = n,
 		root = root,
-		target = root .. ".plotroom/" .. string.lower(owner) .. "/" .. string.lower(name) .. "/pr-" .. n,
+		target = "/wt/plotroom-" .. string.lower(owner) .. "_" .. string.lower(name) .. "-pr-" .. n,
 		branch = branch,
 		ref = ref,
 		launch = root .. "/src",
@@ -2015,7 +2043,7 @@ windowCase("worktree: a first open fetches the PR head into its own ref and repo
 	eq(out.problem, nil, "problem")
 	yes(out.cx ~= nil, "the window cx reaches the callback")
 	local r = out.result
-	eq(r.path, "/work/r.plotroom/o/r/pr-5", "path")
+	eq(r.path, "/wt/plotroom-o_r-pr-5", "path: a direct child of omp's worktrees directory")
 	eq(r.root, "/work/r", "root")
 	eq(r.remote, "origin", "remote")
 	eq(r.branch, "plotroom/o/r/pr-5", "branch")
@@ -2028,7 +2056,8 @@ windowCase("worktree: a first open fetches the PR head into its own ref and repo
 	eq(s.git.refs["refs/plotroom-pr/o/r/pr-5"], sha("b"), "the PR head is fetched into refs/plotroom-pr/")
 	eq(s.git.refs["refs/heads/plotroom/o/r/pr-5"], sha("b"), "the branch starts at the PR head")
 	eq(s.git.worktrees[2].path, s.target, "the worktree is registered")
-	eq(w.fs.mkdirs[1], "/work/r.plotroom/o/r", "its parent directory was created")
+	eq(w.fs.mkdirs[1], "/wt", "omp's worktrees directory was created")
+	eq(countLog(s.git, "worktree add -b plotroom/o/r/pr-5 /wt/plotroom-o_r-pr-5 " .. sha("b")), 1, "added through omp worktree add")
 	local created = worktree.describe(r)
 	has(created, "Created", "summary: new")
 	has(created, "Current", "summary: at the PR head")
@@ -2207,14 +2236,14 @@ end)
 windowCase("worktree: a mkdir that raises ends the open once with its reason and creates nothing", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local s = scene(w, worktree, "o", "r", 5)
-	w.fs.denyMkdir["/work/r.plotroom/o/r"] = "permission denied"
+	w.fs.denyMkdir["/wt"] = "permission denied"
 	local out = openWt(w, worktree, s, nil, nil)
 	eq(out.calls, 1, "done calls")
 	eq(out.result, nil, "no result")
-	has(out.problem, "/work/r.plotroom/o/r", "names the directory")
+	has(out.problem, "/wt", "names the directory")
 	has(out.problem, "permission denied", "and the reason")
 	eq(countLog(s.git, "worktree add"), 0, "git was never asked to add it")
-	w.fs.denyMkdir["/work/r.plotroom/o/r"] = nil
+	w.fs.denyMkdir["/wt"] = nil
 	eq(openWt(w, worktree, s, nil, nil).result.created, true, "after the cause is fixed the next open works")
 end)
 
@@ -2259,7 +2288,35 @@ windowCase("worktree: no matching checkout is NO_REPO; a mapped checkout is used
 	local mapped = openWt(w, worktree, s, "/work/other", nil)
 	eq(mapped.problem, nil, "the mapped checkout resolves")
 	eq(mapped.result.root, "/work/other", "root")
-	eq(mapped.result.path, "/work/other.plotroom/o/r/pr-5", "path")
+	eq(mapped.result.path, "/wt/plotroom-o_r-pr-5", "path")
+end)
+
+windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktree.base, then ~/.omp/wt; relative values are ignored", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.env.HOME = "/home/u"
+	local base: string? = nil
+	w.respond(function(call: Call): Reply?
+		local a = call.argv
+		return if a[1] == "omp" and a[2] == "config" then { stdout = jsonEncode({ key = "worktree.base", value = base }) .. "\n" } else nil
+	end)
+	local function dir(): string?
+		local got: string? = nil
+		worktree.worktreesDir(function(d: string?)
+			got = d
+		end)
+		w.flush()
+		return got
+	end
+	eq(dir(), "/home/u/.omp/wt", "unset: omp's default")
+	base = "~/wts"
+	eq(dir(), "/home/u/wts", "the setting, ~ expanded")
+	base = "rel/wts"
+	eq(dir(), "/home/u/.omp/wt", "a relative setting is ignored")
+	base = "/cfg"
+	w.env.OMP_WORKTREE_DIR = "/env/wt"
+	eq(dir(), "/env/wt", "the environment variable wins")
+	w.env.OMP_WORKTREE_DIR = "relative"
+	eq(dir(), "/cfg", "a relative environment variable is ignored")
 end)
 
 -- ---- window.luau: the Worktree link
@@ -2358,7 +2415,7 @@ windowCase("window: Agent lists templates and omp's skills, runs the pick with t
 		}) },
 	})
 	w.respond(function(call: Call): Reply?
-		return if call.argv[1] == "omp" then { stdout = '{"type":"ready"}\n' .. listed .. "\n" } else nil
+		return if call.argv[1] == "omp" and call.argv[2] == "--mode" then { stdout = '{"type":"ready"}\n' .. listed .. "\n" } else nil
 	end)
 	listPr(w, "o/r", 5, s.launch)
 	w.window.choose = "/skill:code-review"
@@ -2390,21 +2447,63 @@ windowCase("window: Agent lists templates and omp's skills, runs the pick with t
 	eq(w.window.agents[2].prompt, "Fix the flaky test", "typed text is sent as it is")
 end)
 
+windowCase("window: a new worktree runs its repository's setup commands in its tab; a reused one does not", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install", "  ", "make" }), ["github.com/x/y"] = array({ "nope" }) })
+	listPr(w, "o/r", 5, s.launch)
+	w.click(prLink("worktree", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 1, "setup runs once")
+	eq(w.window.runs[1].text, "pnpm install && make\r", "this repository's commands, blanks dropped, stopping at the first failure")
+	eq(w.window.panes[w.window.runs[1].pane].cwd, s.target, "typed into the worktree's new tab")
+	has(w.toasts[#w.toasts].sub, "running setup", "the toast says so")
+	w.click(prLink("worktree", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 1, "a reused worktree is not set up again")
+end)
+
+windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install" }) })
+	w.respond(function(call: Call): Reply?
+		return if call.argv[1] == "omp" and call.argv[2] == "--mode" then { stdout = jsonEncode({ id = "plotroom", type = "response", success = true, data = { commands = array({}) } }) .. "\n" } else nil
+	end)
+	listPr(w, "o/r", 5, s.launch)
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 1, "setup runs")
+	local shell = w.window.panes[w.window.runs[1].pane]
+	eq(shell.cwd, s.target, "in a shell in the worktree")
+	eq(w.window.agents[1].prompt, "go", "the agent starts")
+	local inTab = 0
+	for _, p in w.window.panes do
+		if p.tab == shell.tab then
+			inTab += 1
+		end
+	end
+	eq(inTab, 2, "and joins the setup shell's tab")
+end)
+
 windowCase("window: a failing mkdir reports the failure, releases the PR, and the next click works", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
 	local s = scene(w, worktree, "o", "r", 5)
 	listPr(w, "o/r", 5, s.launch)
-	w.fs.denyMkdir["/work/r.plotroom/o/r"] = "permission denied"
+	w.fs.denyMkdir["/wt"] = "permission denied"
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()
 	eq(w.toasts[2].level, "error", "level")
-	has(w.toasts[2].sub, "/work/r.plotroom/o/r", "names the path")
+	has(w.toasts[2].sub, "/wt", "names the path")
 	has(w.toasts[2].sub, "permission denied", "and the reason")
 	local status = statusOf(w, 1)
 	eq(status.ok, false, "the failure is published for the queue preview")
 	has(status.message, "permission denied", "message")
-	w.fs.denyMkdir["/work/r.plotroom/o/r"] = nil
+	w.fs.denyMkdir["/wt"] = nil
 	w.click(prLink("worktree", "o/r", 5))
 	eq(w.toasts[3].level, "info", "a new run starts, not 'already being prepared'")
 	has(w.toasts[3].text, "o/r#5", "names the pull request")
@@ -2518,7 +2617,7 @@ windowCase("window: a legitimate .github repository gets a worktree through the 
 	w.flush()
 	eq(w.toasts[2].level, "success", "level")
 	has(w.toasts[2].text, "github/.github#1", "names the pull request")
-	eq(statusOf(w, 1).path, "/work/.github.plotroom/github/.github/pr-1", "the directory keeps the real name")
+	eq(statusOf(w, 1).path, "/wt/plotroom-github_.github-pr-1", "the directory keeps the real name")
 	eq(statusOf(w, 1).branch, "plotroom/github/%2Egithub/pr-1", "the branch is encoded")
 	eq(s.git.refs["refs/plotroom-pr/github/%2Egithub/pr-1"], sha("b"), "so is the fetched ref")
 end)
@@ -3474,34 +3573,45 @@ case("host: a filter that cannot be written keeps its draft and says why; an unc
 	eq(w.kv.get("filters").items[1].name, "My PRs2", "the draft was saved")
 end)
 
-case("host: a opens the selected PR's agent link; a named template is created once and opened", function(w: World)
+case("host: a opens the selected PR's agent link", function(w: World)
 	hostScene(w, 3)
-	w.env.HOME = "/home/u"
-	local dir = "/home/u/.omp/agent/prompts"
 	local b = openQueue(w)
 	local n = string.match(pickerOf(b).selected, "%d+") :: string
 	eq(findKey(pickerNode(b), "agent").p.href, "plotroom://github/agent/o/r/" .. n, "the Agent button links the selected PR")
 	b.typeText("a")
 	eq(w.opened[#w.opened], "plotroom://github/agent/o/r/" .. n, "a opens it")
-	b.typeText("s")
-	b.event({ ev = "select", id = "main.settings", item = "newtpl" })
-	b.press("enter")
-	b.typeText("bad name")
-	b.press("enter")
-	yes(type(rowIn(b, "newtpl").warning) == "string", "a name with a space is refused")
-	for _ = 1, 8 do
-		b.press("backspace")
+end)
+
+case("host: setup commands are added, edited and removed per repository; unreadable ones are never overwritten", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("setup", { ["github.com/x/y"] = array({ "make" }) })
+	local b = openQueue(w)
+	goToSettings(b, "worktrees")
+	local function save(row: string, text: string)
+		b.event({ ev = "select", id = "main.settings", item = row })
+		b.press("enter")
+		for _ = 1, 40 do
+			b.press("backspace")
+		end
+		b.typeText(text)
+		b.press("enter")
 	end
-	b.typeText("triage")
-	b.press("enter")
-	has(w.fs.files[dir .. "/triage.md"], "$ARGUMENTS", "the template is created from the skeleton")
-	eq(w.opened[#w.opened], "plotroom://github/edit-template/triage", "and opened in the editor")
-	w.fs.files[dir .. "/triage.md"] = "mine"
-	b.press("enter")
-	b.typeText("triage")
-	b.press("enter")
-	eq(w.fs.files[dir .. "/triage.md"], "mine", "an existing template is opened, never overwritten")
-	eq(#w.opened, 3, "it is opened again")
+	save("setup:new", "pnpm install")
+	save("setup:new", "cp ../r/.env .")
+	same(w.kv.get("setup")["github.com/o/r"], { "pnpm install", "cp ../r/.env ." }, "added in order under the launch repo")
+	same(w.kv.get("setup")["github.com/x/y"], { "make" }, "another repository's commands are kept")
+	eq(rowIn(b, "setup:2").control.value, "cp ../r/.env .", "each command is a row")
+	save("setup:1", "pnpm i")
+	same(w.kv.get("setup")["github.com/o/r"], { "pnpm i", "cp ../r/.env ." }, "edited in place")
+	save("setup:1", "")
+	same(w.kv.get("setup")["github.com/o/r"], { "cp ../r/.env ." }, "emptying a command removes it")
+	eq(prefsOf(b).focus, "setup:new", "focus moves to the add row")
+	save("setup:1", "")
+	eq(w.kv.get("setup")["github.com/o/r"], nil, "the last one removed drops the repository's entry")
+	w.kv.put("setup", "garbage")
+	b.render()
+	yes(type(rowIn(b, "setup:new").disabled) == "string", "an unreadable map disables the rows")
+	eq(w.kv.get("setup"), "garbage", "and is never overwritten")
 end)
 
 case("host: unreadable or malformed saved filters are shown as defaults and never overwritten", function(w: World)

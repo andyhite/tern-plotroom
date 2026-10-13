@@ -251,10 +251,6 @@ local function dirname(p: string): string
 	return string.match(p, "^(.*)/[^/]+$") or "."
 end
 
-local function basename(p: string): string
-	return string.match(p, "([^/]+)$") or p
-end
-
 -- Expands only a leading `~/`; anything else must already be absolute.
 function M.expandPath(p: string, home: string?): (string?, string?)
 	p = trim(p)
@@ -394,18 +390,44 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 	return "create", nil
 end
 
--- The PR number whose Plotroom worktree (`<checkout>.plotroom/<owner>/<repo>/pr-N`, lowercase as `M.open`
--- creates it) holds `path`, the worktree root or any directory inside it; nil otherwise.
+-- The PR number whose Plotroom worktree holds `path` (the worktree root or any directory inside it), nil otherwise:
+-- `<omp worktrees>/plotroom-<owner>_<repo>-pr-N` as `M.open` creates it, or `<checkout>.plotroom/<owner>/<repo>/pr-N`
+-- from earlier versions, lowercase.
 function M.prOfPath(path: string, repo: string): number?
-	local _, e = string.find(path, ".plotroom/" .. string.lower(repo) .. "/pr-", 1, true)
-	if not e then
+	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
+	if not owner or not name then
 		return nil
 	end
-	local n, rest = string.match(string.sub(path, e + 1), "^(%d+)(.*)$")
-	if not n or not rest or (rest ~= "" and string.sub(rest, 1, 1) ~= "/") then
-		return nil
+	for _, mark in { "/plotroom-" .. owner .. "_" .. name .. "-pr-", ".plotroom/" .. owner .. "/" .. name .. "/pr-" } do
+		local _, e = string.find(path, mark, 1, true)
+		if e then
+			local n, rest = string.match(string.sub(path, e + 1), "^(%d+)(.*)$")
+			if n and rest and (rest == "" or string.sub(rest, 1, 1) == "/") then
+				return tonumber(n)
+			end
+		end
 	end
-	return tonumber(n)
+	return nil
+end
+
+-- omp's worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else
+-- omp's `worktree.base` setting, else ~/.omp/wt. As in omp, a value that is neither absolute nor `~/` is ignored.
+-- ponytail: omp profiles (OMP_PROFILE) are not followed; set worktree.base if you use one.
+function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
+	local home = tern.getenv("HOME")
+	local env = M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)
+	if env then
+		tern.timer(0, function(cx)
+			done(env, nil, cx)
+		end)
+		return
+	end
+	process.run({ "omp", "config", "get", "worktree.base", "--json" }, { timeout_ms = LOCAL_MS }, function(res, _, cx)
+		local ok, data = pcall(tern.json.decode, if res and res.status == 0 and not res.timed_out then res.stdout else "")
+		local set = if ok and type(data) == "table" and type(data.value) == "string" then M.expandPath(data.value, home) else nil
+		local dir = set or M.expandPath("~/.omp/wt", home)
+		done(dir, if dir then nil else "HOME is not set, so omp's worktree directory is unknown.", cx)
+	end)
 end
 
 -- `s` as one shell word on a single line, for the commands shown to the user (Plotroom never runs them): bare when
@@ -477,8 +499,10 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 		end)
 		return
 	end
-	-- The directory keeps the names as they are; the branch and the ref encode what Git refuses.
-	local suffix = owner .. "/" .. name .. "/pr-" .. number
+	-- A direct child of omp's worktrees directory: `omp worktree clear` treats nested directories there as stray and
+	-- deletes them. GitHub owners hold no `_`, so the name is unambiguous; it keeps the names as they are, while the
+	-- branch and the ref encode what Git refuses.
+	local dirName = "plotroom-" .. owner .. "_" .. name .. "-pr-" .. number
 	local branch, ref = M.refNames(owner, name, number)
 
 	local candidates: { string } = {}
@@ -594,10 +618,19 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 		if not ok then
 			return finish(nil, "Could not create " .. parent .. ": " .. tostring(why), cx)
 		end
-		local args = if attach
-			then { "worktree", "add", plan.target, branch }
-			else { "worktree", "add", "-b", branch, plan.target, sha }
-		git(plan.info.root, args, NET_MS, function(_, addErr, cx5)
+		-- Through omp, so the worktree starts as omp's copy-on-write clone when `worktree.clone` is on (ignored build
+		-- output such as node_modules carries over) and `omp worktree` lists it.
+		local argv = { "omp", "worktree", "add", "-q", "-C", plan.info.root }
+		local rest: { string } = if attach then { plan.target, branch } else { "-b", branch, plan.target, sha }
+		for _, a in rest do
+			table.insert(argv, a)
+		end
+		process.run(argv, { timeout_ms = NET_MS, env = ENV }, function(res, perr, cx5)
+			local addErr = if not res
+				then (perr or "omp could not be started")
+				elseif res.timed_out then "omp worktree add timed out"
+				elseif res.status ~= 0 then "omp worktree add failed: " .. firstLine(if res.stderr ~= "" then res.stderr else res.stdout)
+				else nil
 			attempt(cx5, function()
 				if not addErr then
 					return ready(plan, plan.target, true)
@@ -670,30 +703,34 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 	end
 
 	local function proceed(info: Repo)
-		readPr(function(meta, cx1)
-			if string.lower(meta.base) ~= lrepo then
-				return finish(nil, "The pull request's base is " .. meta.base .. ", not " .. repo .. ".", cx1)
+		M.worktreesDir(function(base, why, cx0)
+			if not base then
+				return finish(nil, why, cx0)
 			end
-			run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
-				local recs = M.parseWorktrees(out)
-				local main = recs[1]
-				if not main or string.sub(main.path, 1, 1) ~= "/" then
-					return finish(nil, "Could not find this repository's main worktree.", cx2)
+			readPr(function(meta, cx1)
+				if string.lower(meta.base) ~= lrepo then
+					return finish(nil, "The pull request's base is " .. meta.base .. ", not " .. repo .. ".", cx1)
 				end
-				local root = string.gsub(main.path, "/+$", "")
-				local plan: Plan = {
-					info = info,
-					meta = meta,
-					root = root,
-					target = dirname(root) .. "/" .. basename(root) .. ".plotroom/" .. suffix,
-				}
-				local verdict, what = M.reconcile(recs, branch, plan.target)
-				if verdict == "error" then
-					return finish(nil, what :: string, cx2)
-				elseif verdict == "reuse" then
-					return ready(plan, (what :: Record).path, false)
-				end
-				fetch(plan)
+				run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
+					local recs = M.parseWorktrees(out)
+					local main = recs[1]
+					if not main or string.sub(main.path, 1, 1) ~= "/" then
+						return finish(nil, "Could not find this repository's main worktree.", cx2)
+					end
+					local plan: Plan = {
+						info = info,
+						meta = meta,
+						root = (string.gsub(main.path, "/+$", "")),
+						target = base .. "/" .. dirName,
+					}
+					local verdict, what = M.reconcile(recs, branch, plan.target)
+					if verdict == "error" then
+						return finish(nil, what :: string, cx2)
+					elseif verdict == "reuse" then
+						return ready(plan, (what :: Record).path, false)
+					end
+					fetch(plan)
+				end)
 			end)
 		end)
 	end

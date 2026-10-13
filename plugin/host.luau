@@ -178,6 +178,29 @@ local function readRepos(): { [string]: string }
 	return {}
 end
 
+-- Saved worktree setup commands per repository (kv "setup", keyed like "repos"), or nil and why when unreadable:
+-- a write then fails closed rather than overwrite them.
+local function setupMap(): ({ [string]: any }?, string?)
+	local ok, stored = pcall(tern.kv.get, "setup")
+	if not ok or (stored ~= nil and not isTable(stored)) then
+		return nil, "Saved setup commands could not be read."
+	end
+	return if stored ~= nil then stored else {}, nil
+end
+
+local function setupOf(map: { [string]: any }, repo: string): { string }
+	local out: { string } = {}
+	local list = map["github.com/" .. string.lower(repo)]
+	if isTable(list) then
+		for _, c in list do
+			if type(c) == "string" then
+				table.insert(out, c)
+			end
+		end
+	end
+	return out
+end
+
 -- ---------------------------------------------------------------- lifecycle
 
 -- Cancels the checks load waiting out its debounce or retry delay, if any.
@@ -877,15 +900,6 @@ type Row = {
 	disabled: string?,
 }
 
-local TEMPLATE_NAME = "^[%w][%w%-_]*$"
-local TEMPLATE_SKELETON = "---\ndescription: \nargument-hint: <pull request URL>\n---\n\nReview $ARGUMENTS and list the risks.\n"
-
--- omp's user prompt template directory, nil without HOME.
-local function promptDir(): string?
-	local home = tern.getenv("HOME")
-	return if home and home ~= "" then home .. "/.omp/agent/prompts" else nil
-end
-
 -- sections, lead and extra children of the open settings page.
 local function pageContent(state: State): ({ any }, string, { Node })
 	local s = state.settings :: Settings
@@ -926,20 +940,6 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					hint = "Adds a filter for open pull requests; name it and edit its query.",
 					disabled = locked,
 					control = { k = "action", act = "add", label = "Add filter" },
-				},
-			},
-		})
-		local dir = promptDir()
-		table.insert(sections, {
-			id = "templates",
-			title = "Prompt templates",
-			rows = {
-				{
-					id = "newtpl",
-					label = "Create or edit a prompt template",
-					hint = "Type its name: Plotroom creates " .. (dir or "~/.omp/agent/prompts") .. "/<name>.md if needed and opens it in $EDITOR.",
-					disabled = if dir then nil else "HOME is not set.",
-					control = { k = "text", value = "", placeholder = "review-pr", mono = true },
 				},
 			},
 		})
@@ -1010,7 +1010,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			table.insert(extra, ui.node("card", { key = "quota", head = { ui.span("GitHub API quota", "strong") } }, kids))
 		end
 	else
-		lead = "Worktree checks a pull request out in <checkout>.plotroom/<owner>/<repo>/pr-N on branch plotroom/<owner>/<repo>/pr-N and opens it in a new tab."
+		lead = "Worktree checks a pull request out in <checkout>.plotroom/<owner>/<repo>/pr-N on branch plotroom/<owner>/<repo>/pr-N and opens it in a new tab. When the worktree is new, that tab runs the setup commands first."
 		local mapped = if state.repo then readRepos()["github.com/" .. string.lower(state.repo)] else nil
 		table.insert(sections, {
 			id = "sec-checkout",
@@ -1032,6 +1032,26 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				},
 			},
 		})
+		local map, unreadable = setupMap()
+		local cmds: { string } = if map and state.repo then setupOf(map, state.repo) else {}
+		local off = if state.repo then unreadable else NO_REPO
+		local rows: { Row } = {}
+		for i, c in cmds do
+			table.insert(rows, {
+				id = "setup:" .. i,
+				label = "Command " .. i,
+				disabled = off,
+				control = { k = "text", value = c, placeholder = "Empty removes it", mono = true },
+			})
+		end
+		table.insert(rows, {
+			id = "setup:new",
+			label = "Add a command",
+			hint = "Typed into the new worktree's shell, joined with &&, so they stop at the first failure. An agent started there does not wait for them.",
+			disabled = off,
+			control = { k = "text", value = "", placeholder = if #cmds == 0 then "pnpm install" else "cp ../repo/.env .", mono = true },
+		})
+		table.insert(sections, { id = "sec-setup", title = if state.repo then "Setup commands for " .. state.repo else "Setup commands", rows = rows })
 	end
 	for _, sec in sections do
 		for _, row in sec.rows do
@@ -1122,6 +1142,26 @@ local function clearCheckout(state: State): string?
 		state.cx:toast("success", "Checkout cleared", state.repo or "")
 	end
 	return err
+end
+
+-- Rereads the launch repo's setup commands, lets `fn` change them (an error string aborts) and saves them.
+local function editSetup(state: State, fn: ({ string }) -> string?): string?
+	local repo = state.repo
+	if not repo then
+		return NO_REPO
+	end
+	local map, err = setupMap()
+	if not map then
+		return err
+	end
+	local list = setupOf(map, repo)
+	local ferr = fn(list)
+	if ferr then
+		return ferr
+	end
+	map["github.com/" .. string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
+	local werr = kvSet("setup", map)
+	return if werr then "Could not save: " .. werr else nil
 end
 
 -- New account: everything cached or running under the old one is dropped, here and in every other block (they compare
@@ -1297,29 +1337,24 @@ local function commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
-	elseif row == "newtpl" then
-		local name = string.gsub(text, "%.md$", "")
-		local dir = promptDir()
-		local err: string? = nil
-		if not string.match(name, TEMPLATE_NAME) or #name > 64 then
-			err = "Use letters, digits, - and _ (at most 64), starting with a letter or digit."
-		elseif not dir then
-			err = "HOME is not set."
-		else
-			local path = dir .. "/" .. name .. ".md"
-			local ok, why = pcall(function()
-				if not tern.fs.exists(path) then
-					tern.fs.mkdir(dir)
-					tern.fs.write(path, TEMPLATE_SKELETON)
-				end
-			end)
-			if ok then
-				state.cx:open("plotroom://github/edit-template/" .. name) -- the window opens it in $EDITOR
+	elseif kind == "setup" and id then
+		local at = tonumber(id) -- nil: the "Add a command" row
+		local err = editSetup(state, function(list: { string }): string?
+			if at and at > #list then
+				return "That command was removed elsewhere."
+			elseif not at then
+				table.insert(list, text)
+			elseif text == "" then
+				table.remove(list, at)
 			else
-				err = "Could not create " .. path .. ": " .. tostring(why)
+				list[at] = text
 			end
-		end
+			return nil
+		end)
 		settle(s, row, err)
+		if not err and at and text == "" then
+			s.focus = "setup:new"
+		end
 	elseif row == "account" then
 		local repo = state.repo
 		if not repo then
