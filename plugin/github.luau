@@ -1001,4 +1001,90 @@ function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?)
 	end, account)
 end
 
+-- What the repository picker lists, read slowly from gh, so kept by `key`: a known value answers at once (one older
+-- than LIST_TTL_S is then read again in the background), and callers during a read share it. `read` calls its
+-- callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.
+local LIST_TTL_S = 10 * 60
+local kept: { [string]: { at: number, value: any } } = {}
+local reading: { [string]: { (any, Problem?) -> () } } = {}
+local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (any, Problem?) -> ())
+	local hit = kept[key]
+	if hit then
+		local value = hit.value
+		tern.timer(0, function()
+			done(value, nil)
+		end)
+		if os.time() - hit.at < LIST_TTL_S or reading[key] then
+			return
+		end
+		done = function() end
+	end
+	local waiting = reading[key]
+	if waiting then
+		table.insert(waiting, done)
+		return
+	end
+	reading[key] = { done }
+	read(function(value: any, problem: Problem?)
+		if value ~= nil then
+			kept[key] = { at = os.time(), value = value }
+		end
+		local callers: { (any, Problem?) -> () } = reading[key] or {}
+		reading[key] = nil
+		for _, cb in callers do
+			cb(value, if value ~= nil then nil else problem)
+		end
+	end)
+end
+
+export type Account = { login: string, active: boolean }
+
+-- The gh logins signed in to github.com, the active one first; done(accounts, problem). Needs gh 2.66 or newer
+-- (`gh auth status --json`).
+function M.accounts(done: ({ Account }?, Problem?) -> ())
+	cached("accounts", function(finish)
+		M.gh({ "auth", "status", "--hostname", "github.com", "--json", "hosts" }, function(out, problem, _, failed)
+			-- An account whose token fails makes the exit status nonzero; the others are still listed.
+			local ok, data = pcall(tern.json.decode, out or failed or "")
+			local hosts = if ok and type(data) == "table" and type(data.hosts) == "table" then data.hosts["github.com"] else nil
+			if type(hosts) ~= "table" then
+				return finish(nil, problem or { kind = "failed", message = "gh auth status listed no accounts (it needs gh 2.66 or newer)." })
+			end
+			local list: { Account } = {}
+			for _, a in hosts do
+				if type(a) == "table" and a.state == "success" and type(a.login) == "string" and string.match(a.login, "^[%w%-]+$") then
+					table.insert(list, { login = a.login, active = a.active == true })
+				end
+			end
+			table.sort(list, function(x, y)
+				if x.active ~= y.active then
+					return x.active
+				end
+				return string.lower(x.login) < string.lower(y.login)
+			end)
+			finish(list, nil)
+		end)
+	end, done)
+end
+
+-- "owner/name" of every repository gh login `account` can access (owned, collaborator, org member), most recently
+-- pushed first; done(names, problem).
+function M.repos(account: string, done: ({ string }?, Problem?) -> ())
+	cached("repos:" .. account, function(finish)
+		M.gh({ "api", "--hostname", "github.com", "--paginate", "user/repos?per_page=100&sort=pushed", "--jq", ".[].full_name" }, function(out, problem)
+			if not out then
+				return finish(nil, problem)
+			end
+			local names: { string } = {}
+			for line in string.gmatch(out, "[^\n]+") do
+				local owner, name = string.match(line, "^([%w%-_%.]+)/([%w%-_%.]+)$")
+				if owner and name and name ~= "." and name ~= ".." then
+					table.insert(names, line)
+				end
+			end
+			finish(names, nil)
+		end, account)
+	end, done)
+end
+
 return M

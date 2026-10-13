@@ -101,6 +101,7 @@ type State = {
 	noteSeq: number,
 	settings: Settings?,
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
+	listing: number, -- repository picker lists still waiting on GitHub: the heading shows a loader meanwhile
 }
 
 local running: { [number]: State } = {}
@@ -179,12 +180,37 @@ local function loadStore(): (Store, boolean, string?)
 	return s, true, nil
 end
 
-local function readRepos(): { [string]: string }
+-- Saved repositories (kv "repos", keyed "github.com/<owner/name>" in lowercase) to their local checkout; "" marks one
+-- picked without a checkout.
+local function readRepos(): { [string]: any }
 	local ok, v = pcall(tern.kv.get, "repos")
 	if ok and isTable(v) then
 		return v
 	end
 	return {}
+end
+
+-- The saved local checkout of `repo`, nil when none: then nothing may make a worktree of it.
+local function checkoutOf(repo: string?): string?
+	local path = if repo then readRepos()["github.com/" .. string.lower(repo)] else nil
+	return if type(path) == "string" and path ~= "" then path else nil
+end
+
+-- Saves `path` as `repo`'s checkout ("": none, but still pickable); with `keep`, only a repository not saved yet. Fails
+-- closed when the saved map cannot be read.
+local function saveCheckout(repo: string, path: string, keep: boolean?): string?
+	local ok, stored = pcall(tern.kv.get, "repos")
+	if not ok or (stored ~= nil and not isTable(stored)) then
+		return "Saved checkouts could not be read"
+	end
+	local repos: { [string]: any } = if stored ~= nil then stored else {}
+	local key = "github.com/" .. string.lower(repo)
+	if repos[key] == path or (keep and repos[key] ~= nil) then
+		return nil
+	end
+	repos[key] = path
+	local err = kvSet("repos", repos)
+	return if err then "Could not save: " .. err else nil
 end
 
 -- Saved worktree setup commands per repository (kv "setup", keyed like "repos"), or nil and why when unreadable:
@@ -213,7 +239,7 @@ end
 local PROMPTS_BAD = "Saved prompts are malformed; not overwriting them."
 local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 -- Keys the queue uses itself, so no prompt may take them as its shortcut.
-local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "/", "?", "r", "s" }
+local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "o", "/", "?", "r", "s" }
 
 -- Saved agent prompts (kv "prompts"; absent is none), or nil and why when unreadable or malformed: a write then fails
 -- closed rather than overwrite them.
@@ -538,7 +564,7 @@ local HELP: { [string]: string } = {
 	["not-found"] = "Check this repository's account in Settings › GitHub, then Refresh.",
 	invalid = "Check the filter query and this repository's account in Settings, then Refresh.",
 	account = "Fix or clear this repository's account in Settings › GitHub, then Refresh (a damaged saved-accounts file needs a manual repair).",
-	["no-repo"] = "Open Plotroom from a checkout of a GitHub repository.",
+	["no-repo"] = "Press o to pick a repository, or open Plotroom inside a checkout of one.",
 }
 
 -- Panes of this runtime that still exist; they share one search quota.
@@ -573,28 +599,35 @@ local function schedule(state: State, ms: number)
 	end)
 end
 
--- The repository of the launch directory, from local git only. Fails closed:
--- without one no search runs.
+-- The repository of the launch directory, from local git only; launching inside a checkout also saves it as that
+-- repository's checkout. Fails closed: without a repository no search runs.
 local function resolveRepo(state: State)
 	if state.resolving then
 		return
 	end
 	local cwd = state.launchCwd
 	if not cwd then
-		state.problem = { kind = "no-repo", message = "No launch directory, so there is no repository to show pull requests for." }
+		state.problem = { kind = "no-repo", message = "No launch directory to find a repository in." }
 		return
 	end
 	state.resolving = true
-	worktree.currentRepository(cwd, function(repo, why)
+	worktree.currentRepository(cwd, function(found, why)
 		if not alive(state) then
 			return
 		end
 		state.resolving = false
-		if repo then
-			state.repo, state.problem = repo, nil
+		if found then
+			local err = saveCheckout(found.id, found.checkout)
+			if err then
+				state.cx:toast("error", "Checkout of " .. found.id .. " not saved", err)
+			end
+		end
+		-- A repository the user picked meanwhile stays.
+		if found and not state.repo then
+			state.repo, state.problem = found.id, nil
 			showSnapshot(state)
 			refresh(state)
-		else
+		elseif not state.repo then
 			state.problem = { kind = "no-repo", message = "No GitHub repository for " .. cwd .. ": " .. (why or "unknown") }
 		end
 		state.cx:render()
@@ -704,6 +737,8 @@ refresh = function(state: State)
 			state.problem = nil
 			ensureCursor(state)
 			prune(state)
+			-- Warms the repository picker's list of gh logins (window.luau's pickRepo), so it opens without waiting on gh.
+			github.accounts(function() end)
 		else
 			state.problem = problem
 		end
@@ -747,6 +782,21 @@ local function retry(state: State)
 		state.cx:toast("info", "Already refreshing", state.repo)
 	end
 	refresh(state)
+end
+
+-- The window's repository picker chose `raw` ("owner/name", maybe typed): it stays pickable and the block shows it.
+local function showRepo(state: State, raw: any)
+	local owner, name = string.match(if type(raw) == "string" then trim(raw) else "", "^([^/]+)/([^/]+)$")
+	if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+		return state.cx:toast("error", "Not a repository", "Type it as owner/name.")
+	end
+	local repo = owner .. "/" .. name
+	saveCheckout(repo, "", true) -- best effort: an unsaved one is only missing from the picker next time
+	if state.repo and string.lower(state.repo) == string.lower(repo) then
+		return
+	end
+	state.repo, state.problem, state.cursor = repo, nil, nil
+	changed(state)
 end
 
 local function switchFilter(state: State, id: string?)
@@ -889,7 +939,7 @@ local function paceLine(state: State): string?
 	if not state.repo then
 		local p = state.problem
 		if p and p.kind == "no-repo" then
-			return "Auto-refresh unavailable: no GitHub repository. Refresh to look again."
+			return "Auto-refresh unavailable: no repository. Pick one (o), or Refresh to look again."
 		end
 		return nil
 	end
@@ -918,7 +968,7 @@ local PAGE_DEFS = {
 	{ id = "github", label = "GitHub", group = "Connection", icon = "globe" },
 	{ id = "worktrees", label = "Worktrees", group = "Connection", icon = "tree" },
 }
-local NO_REPO = "No GitHub repository for the launch directory."
+local NO_REPO = "No repository is shown; pick one in the queue (o)."
 
 local STATE_BADGE: { [string]: { text: string, tone: string } } = {
 	open = { text = "Open", tone = "success" },
@@ -961,9 +1011,10 @@ type KeyHelp = { keys: { string }, text: string }
 local QUEUE_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
 	{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
-	{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab" },
+	{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (without a saved checkout of the repository: set one)" },
 	{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
 	{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
+	{ keys = { "o" }, text = "Show another repository: a saved one, or type owner/name" },
 	{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
 	{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
 	{ keys = { "r" }, text = "Refresh now" },
@@ -1001,7 +1052,7 @@ type Row = {
 -- sections, lead and extra children of the open settings page.
 local function pageContent(state: State): ({ any }, string, { Node })
 	local s = state.settings :: Settings
-	local where = state.repo or "the launch repository"
+	local where = state.repo or "the repository"
 	local sections: { any } = {}
 	local extra: { Node } = {}
 	local lead = ""
@@ -1145,8 +1196,8 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			)
 		end
 	else
-		lead = "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new."
-		local mapped = if state.repo then readRepos()["github.com/" .. string.lower(state.repo)] else nil
+		lead = "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new. It needs the repository's local checkout."
+		local mapped = checkoutOf(state.repo)
 		table.insert(sections, {
 			id = "sec-checkout",
 			title = if state.repo then "Local checkout of " .. state.repo else "Local checkout",
@@ -1154,15 +1205,15 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "checkout",
 					label = "Path",
-					hint = "Used when the launch directory is not a checkout of " .. where .. ".",
+					hint = "Worktrees of " .. where .. " are made from it. Opening Plotroom inside a checkout saves it here.",
 					control = {
 						k = "text",
-						value = if type(mapped) == "string" then mapped else "",
-						placeholder = state.launchCwd or "~/Code/repo",
+						value = mapped or "",
+						placeholder = "~/Code/repo",
 						mono = true,
 					},
-					changed = type(mapped) == "string",
-					defaultLabel = "Launch directory",
+					changed = mapped ~= nil,
+					defaultLabel = "Not set",
 					disabled = if s.busy then "Checking the checkout…" elseif state.repo then nil else NO_REPO,
 				},
 			},
@@ -1264,39 +1315,20 @@ local function settle(s: Settings, row: string, err: string?)
 	end
 end
 
--- Saves (nil clears) the local checkout of the launch repo. Fails closed when the saved map cannot be read.
-local function setCheckout(state: State, root: string?): string?
+-- Clears the shown repository's checkout; it stays pickable.
+local function clearCheckout(state: State): string?
 	local repo = state.repo
 	if not repo then
 		return NO_REPO
 	end
-	local ok, stored = pcall(tern.kv.get, "repos")
-	if not ok or (stored ~= nil and not isTable(stored)) then
-		return "Saved checkouts could not be read"
-	end
-	local repos: { [string]: string } = if stored ~= nil then stored else {}
-	local key = "github.com/" .. string.lower(repo)
-	if root then
-		repos[key] = root
-	else
-		repos[key] = nil
-	end
-	local err = kvSet("repos", repos)
-	if err then
-		return "Could not save: " .. err
-	end
-	return nil
-end
-
-local function clearCheckout(state: State): string?
-	local err = setCheckout(state, nil)
+	local err = saveCheckout(repo, "")
 	if not err then
-		state.cx:toast("success", "Checkout cleared", state.repo or "")
+		state.cx:toast("success", "Checkout cleared", repo)
 	end
 	return err
 end
 
--- Rereads the launch repo's setup commands, lets `fn` change them (an error string aborts) and saves them.
+-- Rereads the shown repository's setup commands, lets `fn` change them (an error string aborts) and saves them.
 local function editSetup(state: State, fn: ({ string }) -> string?): string?
 	local repo = state.repo
 	if not repo then
@@ -1690,7 +1722,7 @@ local function commitEdit(state: State)
 			end
 			s.busy = false
 			local root = if info then info.root else nil
-			local err = if root then setCheckout(state, root) else (problem or "That path is not a checkout of " .. repo .. ".")
+			local err = if root then saveCheckout(repo, root) else (problem or "That path is not a checkout of " .. repo .. ".")
 			if not err then
 				s.errors.checkout = nil
 				state.cx:toast("success", "Checkout saved", root)
@@ -1746,6 +1778,18 @@ local function openSettings(state: State, page: string, row: string?, edit: bool
 		beginEdit(state, row)
 	end
 end
+
+-- Without a saved checkout of the shown repository nothing may make a worktree: Settings asks for one instead.
+local function needsCheckout(state: State): boolean
+	if state.repo and not checkoutOf(state.repo) then
+		openSettings(state, "worktrees", "checkout", true)
+		return true
+	end
+	return false
+end
+
+-- The window's repository picker for this block (window.luau's `pickRepo`).
+local REPOS_HREF = "plotroom://repos"
 
 local function openSelected(state: State, kind: string, rerender: boolean)
 	local pr = selectedPr(state)
@@ -1983,7 +2027,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "4"
+local RPC_PROTOCOL = "5"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -2087,11 +2131,15 @@ local function prepare(state: State, id: string, repo: string, n: number)
 	if preparing[key] then
 		return reply(state, id, { busy = true })
 	end
-	local mapped = readRepos()["github.com/" .. string.lower(repo)]
+	local checkout = checkoutOf(repo)
+	if not checkout then
+		openSettings(state, "worktrees", "checkout", true)
+		return reply(state, id, { noRepo = true })
+	end
 	preparing[key] = true
 	local started, err = pcall(function()
 		process.reset()
-		worktree.open(state.launchCwd, if type(mapped) == "string" then mapped else nil, repo, n, function(r, problem)
+		worktree.open(checkout, repo, n, function(r, problem)
 			preparing[key] = nil
 			if not alive(state) then
 				return
@@ -2126,6 +2174,53 @@ local function prepare(state: State, id: string, repo: string, n: number)
 	end
 end
 
+-- The repository picker's first page: every saved repository with its checkout (and the shown one), sorted by name,
+-- and the gh logins signed in to github.com, whose repositories the picker offers next (`profile`). Without the
+-- logins, `problem` says why.
+local function repos(state: State, id: string)
+	local current = if state.repo then string.lower(state.repo) else nil
+	local items: { any } = {}
+	local listed = false
+	for key, path in readRepos() do
+		local name = if type(key) == "string" then string.match(key, "^github%.com/(.+)$") else nil
+		if name and type(path) == "string" then
+			listed = listed or name == current
+			table.insert(items, { repo = if name == current then state.repo else name, path = if path ~= "" then path else nil, current = name == current })
+		end
+	end
+	if state.repo and not listed then
+		table.insert(items, { repo = state.repo, current = true })
+	end
+	table.sort(items, function(a, b)
+		return string.lower(a.repo) < string.lower(b.repo)
+	end)
+	state.listing += 1
+	github.accounts(function(accounts, problem)
+		state.listing -= 1
+		reply(state, id, { items = tern.json.array(items), accounts = tern.json.array(accounts or {}), problem = if problem then problem.message else nil })
+	end)
+end
+
+-- The repository picker's second page: the repositories gh login `login` can access, most recently pushed first, cut
+-- to MENU_BUDGET, with the shown one named. Without them, `problem` says why.
+local function profile(state: State, id: string, login: string)
+	state.listing += 1
+	github.repos(login, function(names, problem)
+		state.listing -= 1
+		local more: { string } = {}
+		local size = 0
+		local list: { string } = names or {}
+		for _, name in list do
+			size += #name + 3
+			if size > MENU_BUDGET then
+				break
+			end
+			table.insert(more, name)
+		end
+		reply(state, id, { repos = tern.json.array(more), current = state.repo, problem = if problem then problem.message else nil })
+	end)
+end
+
 -- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
 local function rpc(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 16384 then
@@ -2138,6 +2233,10 @@ local function rpc(state: State, raw: any)
 	local id: string = q.id
 	if q.op == "menu" then
 		menu(state, id, if type(q.only) == "string" then q.only else nil)
+	elseif q.op == "repos" then
+		repos(state, id)
+	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-]+$") then
+		profile(state, id, q.login)
 	elseif q.op == "worktree" then
 		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
 		local n = q.number
@@ -2267,18 +2366,21 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 end
 
 -- The selected PR's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
--- it, and one per saved prompt offered under this filter (it runs that prompt in the PR's worktree).
+-- it, and one per saved prompt offered under this filter (it runs that prompt in the PR's worktree). Without a saved
+-- checkout of its repository nothing that makes a worktree is offered.
 type PrAction = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
 local function prActions(state: State, pr: github.Pr, open: { [number]: boolean }): { PrAction }
-	local out: { PrAction } = {
-		-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
-		{ id = "open", label = "GitHub ↗", href = prHref("open", pr), primary = true },
-		{ id = "worktree", label = "Worktree", keys = { "w" }, href = prHref("worktree", pr) },
-	}
+	local made = checkoutOf(pr.repo) ~= nil
+	-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
+	local out: { PrAction } = { { id = "open", label = "GitHub ↗", href = prHref("open", pr), primary = true } }
+	if made then
+		table.insert(out, { id = "worktree", label = "Worktree", keys = { "w" }, href = prHref("worktree", pr) })
+	end
 	if open[pr.number] then
 		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = prHref("goto", pr) })
 	end
-	for _, o in offered(state) do
+	local prompts: { { prompt: Prompt, here: boolean } } = if made then offered(state) else {}
+	for _, o in prompts do
 		local p = o.prompt
 		if string.match(p.id, "^%w+$") then
 			local keys = if p.key then { p.key } else nil
@@ -2323,10 +2425,14 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 		table.insert(facts, 2, { k = "Merge", v = { ui.span(m.text, m.tone) } })
 	end
 	-- The buttons are the picker's action bar; the window honours only links the block shows, so each button's link,
-	-- and the `a` picker's, also sits here unseen for the window (and the palette commands) to read.
-	local links: { Node } = { ui.node("text", { key = "agent", href = prHref("agent", pr) }) }
+	-- and the `a` picker's (with Worktree: it runs in the worktree), also sits here unseen for the window (and the
+	-- palette commands) to read.
+	local links: { Node } = {}
 	for _, a in acts do
 		table.insert(links, ui.node("text", { key = a.id, href = a.href }))
+		if a.id == "worktree" then
+			table.insert(links, ui.node("text", { key = "agent", href = prHref("agent", pr) }))
+		end
 	end
 	local out: { Node } = {
 		ui.node("col", { key = "buttons", hidden = true }, links),
@@ -2487,8 +2593,8 @@ local function queuePicker(state: State): Node
 		tern.json.array(order)
 	end
 
-	-- The repo is the heading: the filter's name is already the selected scope.
-	local title: { any } = { ui.span(state.repo or "No repository") }
+	-- The repo is the heading: the filter's name is already the selected scope. It opens the repository picker.
+	local title: { any } = { ui.link(state.repo or "Pick a repository", REPOS_HREF) }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "warning"))
 	elseif snap and not snap.complete then
@@ -2507,6 +2613,11 @@ local function queuePicker(state: State): Node
 		note(busy)
 	elseif snap then
 		note(ui.span("updated " .. os.date("%H:%M", snap.fetched), "muted"))
+	end
+	if state.listing > 0 then
+		local busy: any = ui.span("Loading repositories…", "muted")
+		busy.fx = "shimmer"
+		note(busy)
 	end
 	if problem and snap then
 		note(ui.span((HEADS[problem.kind] or "Plotroom") .. ", showing the last results", "warning"))
@@ -2527,7 +2638,8 @@ local function queuePicker(state: State): Node
 
 	local wait = if state.account then github.wait(os.time(), login(state)) else 0
 	local acts: { PrAction } = if pr then prActions(state, pr, open) else {}
-	-- Settings and Refresh (the queue's) on the left; the PR's buttons on the right, Open last in the corner.
+	-- Settings, Refresh and Repository (the queue's) on the left, with Set checkout while the shown repository has none;
+	-- the PR's buttons on the right, Open last in the corner.
 	local actions: { any } = {
 		{ id = "settings", label = "Settings", keys = { "s" } },
 		{
@@ -2536,7 +2648,11 @@ local function queuePicker(state: State): Node
 			keys = { "r" },
 			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
 		},
+		{ id = "repos", label = "Repository", keys = { "o" } },
 	}
+	if state.repo and not checkoutOf(state.repo) then
+		table.insert(actions, { id = "checkout", label = "Set checkout", keys = { "w" } })
+	end
 	for _, a in acts do
 		if not a.primary then
 			table.insert(actions, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
@@ -2763,6 +2879,12 @@ tern.block.define("prs", {
 				sp = pause
 			end
 		end
+		-- The repository the block showed, picked or found at launch; without one the launch directory decides.
+		local shown: string? = if isTable(saved) and type(saved.repo) == "string" then saved.repo else nil
+		local owner, name = string.match(shown or "", "^([^/]+)/([^/]+)$")
+		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+			shown = if sp then sp.repo else nil
+		end
 		local state: State = {
 			cx = cx,
 			launchCwd = cwd,
@@ -2776,7 +2898,7 @@ tern.block.define("prs", {
 			focus = "list",
 			inflight = nil,
 			gen = 0,
-			repo = if sp then sp.repo else nil,
+			repo = shown,
 			account = nil,
 			applied = nil,
 			resolving = false,
@@ -2798,6 +2920,7 @@ tern.block.define("prs", {
 			noteSeq = 0,
 			settings = nil,
 			replies = {},
+			listing = 0,
 		}
 		if not activeFilter(state) then
 			state.activeId = if store.items[1] then store.items[1].id else nil
@@ -2963,7 +3086,9 @@ tern.block.define("prs", {
 		elseif plain and k == "s" then
 			openSettings(state, "filters")
 		elseif plain and k == "w" then
-			openSelected(state, "worktree", false)
+			if not needsCheckout(state) then
+				openSelected(state, "worktree", false)
+			end
 		elseif plain and k == "g" then
 			local pr = selectedPr(state)
 			if not pr or not openPrs(state)[pr.number] then
@@ -2971,7 +3096,11 @@ tern.block.define("prs", {
 			end
 			openSelected(state, "goto", false)
 		elseif plain and k == "a" then
-			openSelected(state, "agent", false)
+			if not needsCheckout(state) then
+				openSelected(state, "agent", false)
+			end
+		elseif plain and k == "o" then
+			state.cx:open(REPOS_HREF)
 		else
 			-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
 			local pr = selectedPr(state)
@@ -2985,7 +3114,9 @@ tern.block.define("prs", {
 			if not pr or not hit then
 				return false
 			end
-			state.cx:open(runHref(pr, hit.id))
+			if not needsCheckout(state) then
+				state.cx:open(runHref(pr, hit.id))
+			end
 		end
 		return true
 	end,
@@ -3006,6 +3137,8 @@ tern.block.define("prs", {
 			end
 		elseif act == "rpc" then
 			rpc(state, ev.value)
+		elseif act == "show-repo" then
+			showRepo(state, ev.value)
 		elseif act == "fold-description" then
 			state.descOpen = nil
 		elseif ev.ev == "toggle" and ev.key == "description" then
@@ -3088,6 +3221,10 @@ tern.block.define("prs", {
 				openSettings(state, "filters")
 			elseif act == "retry" then
 				retry(state)
+			elseif act == "repos" then
+				state.cx:open(REPOS_HREF)
+			elseif act == "checkout" then
+				needsCheckout(state)
 			elseif act then
 				-- A PR button in the action bar: open its link, as its key does.
 				local pr = selectedPr(state)
@@ -3108,6 +3245,6 @@ tern.block.define("prs", {
 		if p and terminal then
 			pause = { kind = p.kind, message = p.message, repo = state.repo }
 		end
-		return { version = 1, launchCwd = state.launchCwd, activeFilterId = state.activeId, pause = pause }
+		return { version = 1, launchCwd = state.launchCwd, repo = state.repo, activeFilterId = state.activeId, pause = pause }
 	end,
 })

@@ -343,31 +343,38 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 	end)
 end
 
--- "owner/repo" of the checkout at `path`: the first github.com remote in
--- origin/upstream/lexical order; local git only, no network.
-function M.currentRepository(path: string, done: Cb<string>)
+-- "owner/repo" of the checkout at `path` (the first github.com remote in origin/upstream/lexical order) and its main
+-- checkout: a linked worktree's main one, so a saved checkout outlives the worktree. Local git only, no network.
+function M.currentRepository(path: string, done: Cb<{ id: string, checkout: string }>)
 	topLevel(path, function(root, err, cx)
 		if not root then
 			return done(nil, err, cx)
 		end
-		rankedRemotes(root, function(names, err2, cx2)
-			if not names then
-				return done(nil, err2, cx2)
+		git(root, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, LOCAL_MS, function(cd, err1, cx1)
+			if not cd then
+				return done(nil, err1, cx1)
 			end
-			local function try(i: number, cxi: WindowCx?)
-				if i > #names then
-					return done(nil, root .. " has no github.com remote.", cxi)
+			-- `<main>/.git` for a checkout and its linked worktrees; anything else (a bare repository) keeps the top level.
+			local checkout = string.match(trim(cd), "^(/.+)/%.git$") or root
+			rankedRemotes(root, function(names, err2, cx2)
+				if not names then
+					return done(nil, err2, cx2)
 				end
-				git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
-					scan(lines(urls or ""), nil, cxu, function(id, cx2)
-						if id then
-							return done(id, nil, cx2)
-						end
-						try(i + 1, cx2)
+				local function try(i: number, cxi: WindowCx?)
+					if i > #names then
+						return done(nil, root .. " has no github.com remote.", cxi)
+					end
+					git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
+						scan(lines(urls or ""), nil, cxu, function(id, cx3)
+							if id then
+								return done({ id = id, checkout = checkout }, nil, cx3)
+							end
+							try(i + 1, cx3)
+						end)
 					end)
-				end)
-			end
-			try(1, cx2)
+				end
+				try(1, cx2)
+			end)
 		end)
 	end)
 end
@@ -490,10 +497,10 @@ function M.cleanup(r: Result): { string }
 	}
 end
 
--- Creates or reuses the worktree of PR `repo`#`number`; done(result, problem, cx) runs exactly once, even when a
--- step raises. A worktree that already exists is only read, never changed or updated. Problem M.NO_REPO means
--- neither the launch directory nor a saved mapping holds a matching checkout.
-function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: number, done: Cb<Result>)
+-- Creates or reuses the worktree of PR `repo`#`number` from the saved `checkout`; done(result, problem, cx) runs exactly
+-- once, even when a step raises. A worktree that already exists is only read, never changed or updated. Problem
+-- M.NO_REPO means `checkout` is not a checkout of `repo`.
+function M.open(checkout: string, repo: string, number: number, done: Cb<Result>)
 	local lrepo = string.lower(repo)
 	local owner, name = string.match(lrepo, "^([^/]+)/([^/]+)$")
 	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
@@ -507,13 +514,6 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 	-- branch and the ref encode what Git refuses.
 	local dirName = "plotroom-" .. owner .. "_" .. name .. "-pr-" .. number
 	local branch, ref = M.refNames(owner, name, number)
-
-	local candidates: { string } = {}
-	for _, p in { launchCwd, mappedPath } do
-		if p and p ~= "" and not table.find(candidates, p) then
-			table.insert(candidates, p)
-		end
-	end
 
 	local finished = false
 	local function finish(result: Result?, problem: string?, cx: WindowCx?)
@@ -741,24 +741,15 @@ function M.open(launchCwd: string?, mappedPath: string?, repo: string, number: n
 		end)
 	end
 
-	local function try(i: number)
-		if i > #candidates then
-			tern.timer(0, function(cx)
+	M.resolveRepository(checkout, repo, function(info, _, cx)
+		attempt(cx, function()
+			if info then
+				proceed(info)
+			else
 				finish(nil, M.NO_REPO, cx)
-			end)
-			return
-		end
-		M.resolveRepository(candidates[i], repo, function(info, _, cx)
-			attempt(cx, function()
-				if info then
-					proceed(info)
-				else
-					try(i + 1)
-				end
-			end)
+			end
 		end)
-	end
-	try(1)
+	end)
 end
 
 return M

@@ -21,7 +21,9 @@ local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its
 -- each).
 local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
-local PROTOCOL = "4" -- what host.luau's `main.rpc` node must say
+-- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
+local REPOS_MS = 70 * 1000
+local PROTOCOL = "5" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
@@ -498,6 +500,73 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 	end)
 end
 
+-- Shows `repo` in the Plotroom block in `pane`; its host checks it.
+local function showRepo(cx: WindowCx, pane: number, repo: string)
+	cx.session:event(pane, { ev = "action", act = "show-repo", value = repo })
+end
+
+-- The repositories gh login `login` can access, listed by the block's host (its heading shows they are loading), to
+-- pick the one the block shows.
+local function pickProfile(cx: WindowCx, pane: number, login: string)
+	ask(cx, pane, "profile", { login = login }, REPOS_MS, function(a: any, cx2: WindowCx)
+		if type(a.problem) == "string" then
+			return cx2:toast("error", "The repositories of @" .. login .. " are not listed", a.problem)
+		end
+		local current = if type(a.current) == "string" then string.lower(a.current) else nil
+		local items: { PickItem } = {}
+		for _, name in if type(a.repos) == "table" then a.repos else {} do
+			if type(name) == "string" then
+				table.insert(items, { label = name, current = string.lower(name) == current })
+			end
+		end
+		if #items == 0 then
+			return cx2:toast("info", "@" .. login .. " has no repositories")
+		end
+		cx2:pick({ items = items, placeholder = "Open repository of @" .. login .. "…", icon = "merge", action = "open" }):next(function(item, _, cx3)
+			if item and cx3 then
+				showRepo(cx3, pane, item.label)
+			end
+		end)
+	end)
+end
+
+-- Asks which repository the Plotroom block in `pane` shows: a saved one (its checkout as the detail), one of a signed-in
+-- gh login's (picked next), or one typed as owner/name.
+local function pickRepo(cx: WindowCx, pane: number)
+	ask(cx, pane, "repos", {}, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.problem) == "string" then
+			cx2:toast("error", "Your GitHub accounts are not listed", a.problem)
+		end
+		local items: { PickItem } = {}
+		for _, it in if type(a.items) == "table" then a.items else {} do
+			if type(it) == "table" and type(it.repo) == "string" then
+				local path = if type(it.path) == "string" then it.path else "No local checkout: no worktrees"
+				table.insert(items, { label = it.repo, detail = path, group = "Saved", current = it.current == true, repo = it.repo })
+			end
+		end
+		for _, acc in if type(a.accounts) == "table" then a.accounts else {} do
+			if type(acc) == "table" and type(acc.login) == "string" then
+				table.insert(items, { label = "@" .. acc.login, detail = "View repositories…", group = "GitHub accounts", login = acc.login })
+			end
+		end
+		table.insert(items, { label = "Other repository…", detail = "Type owner/name", typed = true })
+		cx2:pick({ items = items, placeholder = "Open repository…", icon = "merge", action = "open" }):next(function(item, _, cx3)
+			if not item or not cx3 then
+				return
+			elseif item.login then
+				return pickProfile(cx3, pane, item.login)
+			elseif item.typed then
+				return cx3:prompt({ placeholder = "owner/name", icon = "merge", action = "open" }):next(function(text, _, cx4)
+					if cx4 and text and string.find(text, "%S") then
+						showRepo(cx4, pane, text)
+					end
+				end)
+			end
+			showRepo(cx3, pane, item.repo)
+		end)
+	end)
+end
+
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
 	for _, list in CHECK_LISTS do
@@ -513,6 +582,13 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
 	if rid then
 		answered(cx, rid)
+		return true
+	elseif url == "plotroom://repos" then
+		if isPlotroom(cx, pane) then
+			pickRepo(cx, pane)
+		else
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		end
 		return true
 	end
 	local index, target = parseCheck(url)
@@ -655,6 +731,19 @@ tern.command({
 	available = available,
 	run = function(cx: WindowCx)
 		selected(cx, AGENT_NODE)
+	end,
+})
+
+tern.command({
+	id = "repo",
+	title = "Plotroom: Show another repository",
+	icon = "merge",
+	available = available,
+	run = function(cx: WindowCx)
+		local pane = cx.session:focused()
+		if pane then
+			pickRepo(cx, pane)
+		end
 	end,
 })
 

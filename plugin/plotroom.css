@@ -9,6 +9,17 @@
 	display: none;
 }
 
+/* The heading's repository name opens the repository picker; it keeps the title's color, not the link's. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-title .sf-link {
+	color: inherit;
+}
+
+/* Tern's primary button (GitHub ↗) is 30px tall with 12px padding; every other action is 28px with 8px. Same size. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn.primary {
+	height: 28px;
+	padding: 0 8px;
+}
+
 /* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds {
 	display: inline-flex;

@@ -374,7 +374,8 @@ SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
 # Fake gh: the canned pull request file, or the 404 gh prints for a pull request it cannot see; a search answers with the
-# canned list in search.json (none: empty), a checks load with no checks. Header is prepended.
+# canned list in search.json (none: empty), a checks load with no checks, `auth status` with one signed-in login (the
+# repository picker's list, warmed after a search). Header is prepended.
 FAKE_GH = r'''
 import json, os, re, sys
 a = sys.argv[1:]
@@ -391,6 +392,9 @@ if a[:2] == ["api", "graphql"]:
     if "o" in fields:
         sys.stdout.write(json.dumps({"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
+if a == ["auth", "status", "--hostname", "github.com", "--json", "hosts"]:
+    sys.stdout.write(json.dumps({"hosts": {"github.com": [{"state": "success", "active": True, "host": "github.com", "login": "smoke"}]}}))
+    sys.exit(0)
 if m:
     f = os.path.join(SMOKE, "pr", "%s__%s__%s.json" % m.groups())
     if os.path.exists(f):
@@ -682,11 +686,11 @@ class Smoke:
         seen = [l.strip() for l in tree.splitlines() if re.search(r"plotroom|plugin|error|fail", l, re.I)]
         self.fail("UI tree text after plugins run plugin.plotroom.selftest", "a text node %r" % SMOKE_TOAST, seen[-10:] or "no Plotroom/plugin text at all")
 
-    def open(self, repo: str, number: int, launch: Optional[Path], mapped: Optional[Path] = None) -> Dict[str, object]:
+    def open(self, repo: str, number: int, checkout: Path) -> Dict[str, object]:
         result, dup = self.smoke / "result.json", self.smoke / "duplicate.json"
         if result.exists():
             result.unlink()
-        request = {"op": "open", "repo": repo, "number": number, "launch": str(launch) if launch else None, "mapped": str(mapped) if mapped else None}
+        request = {"op": "open", "repo": repo, "number": number, "checkout": str(checkout)}
         (self.smoke / "request.json").write_text(json.dumps(request), encoding="utf-8")
         self.ctl_ok("plugins", "run", "plugin.plotroom.smoke")
         deadline = time.monotonic() + SMOKE_TIMEOUT

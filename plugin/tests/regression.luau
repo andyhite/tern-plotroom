@@ -966,6 +966,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			span = function(t: string, s: string?): any
 				return { t = t, s = s }
 			end,
+			link = function(t: string, href: string, s: string?): any
+				return { t = t, s = s, href = href }
+			end,
 			text = function(spans: any): any
 				return { k = "text", p = { spans = spans } }
 			end,
@@ -1528,6 +1531,7 @@ type Gh = {
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
+	repos: { [string]: { string } }, -- login -> the repositories `user/repos` lists, most recently pushed first
 	pageSize: number,
 	override: ((GhReq) -> Reply?)?, -- answers first: a failure, a malformed page
 	requests: { GhReq },
@@ -1544,6 +1548,7 @@ local function newGh(w: World): Gh
 		checkTotal = {},
 		about = {},
 		limits = {},
+		repos = {},
 		pageSize = 100,
 		override = nil,
 		requests = {},
@@ -1569,6 +1574,27 @@ local function newGh(w: World): Gh
 			return nil
 		end
 		local override = gh.override
+		if argv[2] == "auth" and argv[3] == "status" then
+			-- the active account and every one with a token, as `gh auth status --json hosts` lists them
+			local req: GhReq = { kind = "accounts", login = nil, fields = {}, call = call }
+			table.insert(gh.requests, req)
+			local forced = if override then override(req) else nil
+			if forced then
+				return forced
+			end
+			local list: { any } = { { state = "success", active = true, host = "github.com", login = gh.active } }
+			local logins: { string } = {}
+			for login in gh.tokens do
+				if login ~= gh.active then
+					table.insert(logins, login)
+				end
+			end
+			table.sort(logins)
+			for _, login in logins do
+				table.insert(list, { state = "success", active = false, host = "github.com", login = login })
+			end
+			return { stdout = jsonEncode({ hosts = { ["github.com"] = list } }) }
+		end
 		if argv[2] == "auth" and argv[3] == "token" then
 			local user = ""
 			for i = 4, #argv - 1 do
@@ -1602,6 +1628,8 @@ local function newGh(w: World): Gh
 			else
 				if string.match(a, "^repos/") then
 					path = a
+				elseif string.match(a, "^user/repos") then
+					path = "user/repos"
 				end
 				i += 1
 			end
@@ -1611,6 +1639,8 @@ local function newGh(w: World): Gh
 			kind = "search"
 		elseif fields.o and fields.r and fields.n then
 			kind = "checks"
+		elseif path == "user/repos" then
+			kind = "repos"
 		elseif path then
 			kind = "pr"
 		end
@@ -1662,6 +1692,9 @@ local function newGh(w: World): Gh
 				return { status = 1, stderr = "gh: Not Found (HTTP 404)\n" }
 			end
 			return { stdout = jsonEncode(meta) }
+		elseif kind == "repos" then
+			local list = gh.repos[key] or {}
+			return { stdout = if #list > 0 then table.concat(list, "\n") .. "\n" else "" }
 		end
 		return nil
 	end)
@@ -2098,9 +2131,10 @@ end
 
 type Opened = { calls: number, result: any, problem: string?, cx: any }
 
-local function openWt(w: World, worktree: Worktree, s: Scene, mapped: string?, waitMs: number?): Opened
+-- Opens the scene's PR from `checkout` (the scene's launch directory by default).
+local function openWt(w: World, worktree: Worktree, s: Scene, checkout: string?, waitMs: number?): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-	worktree.open(s.launch, mapped, s.repo, s.number, function(result, problem, cx)
+	worktree.open(checkout or s.launch, s.repo, s.number, function(result, problem, cx)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -2352,7 +2386,7 @@ windowCase("worktree: a runtime that reports one process twice still ends the op
 	yes(out.result ~= nil or out.problem ~= nil, "an outcome")
 end)
 
-windowCase("worktree: no matching checkout is NO_REPO; a mapped checkout is used when the launch directory is not it", function(w: World)
+windowCase("worktree: a checkout of another repository is NO_REPO; the checkout given is the one used", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local s = scene(w, worktree, "o", "r", 5)
 	s.git.remotes.origin = { "https://github.com/x/y.git" }
@@ -2363,10 +2397,10 @@ windowCase("worktree: no matching checkout is NO_REPO; a mapped checkout is used
 	local other = newGit(w, "/work/other")
 	other.remotes.origin = { "https://github.com/o/r.git" }
 	other.served["refs/pull/5/head"] = sha("b")
-	local mapped = openWt(w, worktree, s, "/work/other", nil)
-	eq(mapped.problem, nil, "the mapped checkout resolves")
-	eq(mapped.result.root, "/work/other", "root")
-	eq(mapped.result.path, "/wt/plotroom-o_r-pr-5", "path")
+	local given = openWt(w, worktree, s, "/work/other", nil)
+	eq(given.problem, nil, "the given checkout resolves")
+	eq(given.result.root, "/work/other", "root")
+	eq(given.result.path, "/wt/plotroom-o_r-pr-5", "path")
 end)
 
 windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktree.base, then ~/.omp/wt; relative values are ignored", function(w: World)
@@ -2607,6 +2641,36 @@ local function agentScene(w: World): (Scene, Block)
 	local s = scene(w, worktree, "o", "r", 5)
 	return s, linkQueue(w, s)
 end
+
+windowCase("window: the repository picker offers the saved repositories and each gh login, whose repositories it lists next; a pick or a typed one is shown", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.repos.work = { "z/z", "o/r" }
+	local b = linkQueue(w, s)
+	w.window.choose = { "@work", "z/z" }
+	w.click("plotroom://repos")
+	w.flush()
+	local function labels(i: number): { string }
+		local out: { string } = {}
+		for _, item in w.window.picks[i].items do
+			table.insert(out, item.label)
+		end
+		return out
+	end
+	same(labels(1), { "o/r", "@octocat", "@work", "Other repository…" }, "saved, then the gh logins (active first), then a typed one")
+	eq(w.window.picks[1].items[1].current, true, "the shown repository is checked")
+	same(labels(2), { "z/z", "o/r" }, "picking a login lists its repositories")
+	eq(w.window.picks[2].items[2].current, true, "with the shown one checked")
+	eq(pickerOf(b).title[1].t, "z/z", "the pick is shown")
+	w.window.choose = "Other repository…"
+	w.window.typed = " p/q "
+	w.click("plotroom://repos")
+	w.flush()
+	eq(pickerOf(b).title[1].t, "p/q", "so is a typed one")
+end)
 
 windowCase("window: clicking Worktree coalesces repeats, notes the worktree on the block first, then opens its tab", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
@@ -3148,7 +3212,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "4", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "5", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -3807,6 +3871,12 @@ local function openQueue(w: World, pane: number?): Block
 	local b = w.open(pane or 1, { "/work/r" })
 	w.flush()
 	return b
+end
+
+-- Forgets every saved checkout: opening the queue in /work/r saves that one.
+local function forgetCheckouts(w: World)
+	local store: any = w.kv.store
+	store.repos = nil
 end
 
 local function requestsOf(gh: Gh, kind: string): { GhReq }
@@ -4648,7 +4718,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 	eq(#only("p9"), 0, "none that is not saved")
 end)
 
-case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
+case("host: the picker's action bar has Settings, Refresh and Repository on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
 		promptOf("p1", "Mine", "Review {url}", { "f1" }, "m"),
@@ -4678,7 +4748,7 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 		local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
 		return if node then node.p.href else nil
 	end
-	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs its own prompt, then the one of every filter; none for another filter's prompt, a blank one or one whose id is no link; Open last")
+	same(bar(), { "settings", "retry", "repos", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs its own prompt, then the one of every filter; none for another filter's prompt, a blank one or one whose id is no link; Open last")
 	eq(action("open").primary, true, "Open is the primary button")
 	eq(action("open").keys, nil, "with no keycap")
 	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
@@ -4697,16 +4767,111 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 	eq(w.opened[#w.opened], "plotroom://github/worktree/o/r/1", "Worktree's too")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "repos", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
 	eq(link("goto"), "plotroom://github/goto/o/r/1", "with its link")
 	table.remove(w.panes)
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(bar(), { "settings", "retry", "worktree", "prompt-p3", "prompt-p2", "open" }, "under Review requested the prompt buttons swap")
+	same(bar(), { "settings", "retry", "repos", "worktree", "prompt-p3", "prompt-p2", "open" }, "under Review requested the prompt buttons swap")
 	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", { "f1" }, "m") })
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "open" }, "with none offered the bar has no prompt button")
+	same(bar(), { "settings", "retry", "repos", "worktree", "open" }, "with none offered the bar has no prompt button")
+	b.event({ ev = "action", id = "layer.queue", act = "repos" })
+	eq(w.opened[#w.opened], "plotroom://repos", "Repository opens the window's repository picker")
+end)
+
+case("host: without a saved checkout nothing makes a worktree: Set checkout replaces Worktree, the prompts and the agent link, and their keys open Settings for one", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", {}, "m") })
+	local b = openQueue(w)
+	forgetCheckouts(w)
+	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
+	b.render()
+	local ids: { string } = {}
+	for _, a in pickerOf(b).actions do
+		table.insert(ids, a.id)
+	end
+	same(ids, { "settings", "retry", "repos", "checkout", "goto", "open" }, "Go to tab and Open stay; Worktree and the prompt go")
+	local links: { string } = {}
+	for _, node in findKey(pickerNode(b), "buttons").c do
+		table.insert(links, node.p.key)
+	end
+	same(links, { "open", "goto" }, "the window finds no worktree, agent or prompt link to follow")
+	local opened = #w.opened
+	for _, k in { "w", "a", "m" } do
+		b.typeText(k)
+		eq(prefsOf(b).page, "worktrees", k .. " opens Settings on the Worktrees page")
+		eq(prefsOf(b).editing.row, "checkout", k .. " to enter the checkout")
+		b.press("escape")
+		b.press("escape")
+	end
+	b.event({ ev = "action", id = "layer.queue", act = "checkout" })
+	eq(prefsOf(b).editing.row, "checkout", "so does the Set checkout button")
+	eq(#w.opened, opened, "and no link was opened")
+end)
+
+case("host: opening in a linked worktree shows its repository, saves the main checkout, and the heading opens the repository picker", function(w: World)
+	local s = hostScene(w, 3)
+	table.insert(s.git.worktrees, { path = "/wt/feature", branch = "refs/heads/feature", head = sha("1"), locked = false })
+	w.fs.dirs["/wt/feature"] = true
+	local b = w.open(1, { "/wt/feature" })
+	w.flush()
+	eq(w.kv.get("repos")["github.com/o/r"], "/work/r", "the main checkout is saved, not the worktree")
+	local title = pickerOf(b).title[1]
+	eq(title.t, "o/r", "the heading names the repository")
+	eq(title.href, "plotroom://repos", "and opens the repository picker")
+	b.typeText("o")
+	eq(w.opened[#w.opened], "plotroom://repos", "as o does")
+end)
+
+case("host: a picked repository is shown, saved without a checkout, kept on restore; the picker gets the saved ones, the gh logins, then a login's repositories", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.override = function(req: GhReq): Reply?
+		return if req.kind == "repos" then { delay = 5000, stdout = "z/z\nO/R\na/b\n" } else nil
+	end
+	local b = openQueue(w)
+	b.event({ ev = "action", act = "show-repo", value = "x/y" })
+	w.flush()
+	eq(pickerOf(b).title[1].t, "x/y", "the picked repository is shown")
+	local searches = requestsOf(s.gh, "search")
+	has(searches[#searches].fields.q, "repo:x/y ", "and searched")
+	eq(w.kv.get("repos")["github.com/x/y"], "", "it is saved without a checkout")
+	eq(w.kv.get("repos")["github.com/o/r"], "/work/r", "the launch checkout stays")
+	b.event({ ev = "action", act = "show-repo", value = "x/y/z" })
+	eq(w.toasts[#w.toasts].level, "error", "a malformed pick is refused")
+	eq(pickerOf(b).title[1].t, "x/y", "and changes nothing")
+	local again = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	eq(pickerOf(again).title[1].t, "x/y", "a restored block shows the picked repository, not the launch directory's")
+	local function subtitle(): string
+		local out = ""
+		for _, span in pickerOf(b).subtitle or {} do
+			out ..= span.t
+		end
+		return out
+	end
+	request(b, "q1", { op = "repos" })
+	w.flush()
+	local answer = answerOf(b, "q1")
+	local want: { any } = {
+		{ repo = "o/r", path = "/work/r", current = false },
+		{ repo = "x/y", current = true },
+	}
+	same(answer.items, want, "saved repositories by name, with their checkouts and the shown one marked")
+	local accounts: { any } = { { login = "octocat", active = true } }
+	same(answer.accounts, accounts, "and the gh logins")
+	eq(#requestsOf(s.gh, "accounts"), 1, "read once, when the first search warmed them")
+	request(b, "q2", { op = "profile", login = "octocat" })
+	w.flush()
+	eq(answerOf(b, "q2"), nil, "no answer while GitHub lists the login's repositories")
+	has(subtitle(), "Loading repositories…", "the heading shows they are loading")
+	w.advance(5000)
+	lacks(subtitle(), "Loading repositories…", "until they are in")
+	same(answerOf(b, "q2").repos, { "z/z", "O/R", "a/b" }, "most recently pushed first")
+	eq(answerOf(b, "q2").current, "x/y", "with the shown one named")
+	eq(requestsOf(s.gh, "repos")[1].login, "octocat", "listed as that login")
 end)
 
 case("host: a prompt's key opens its run link for the selected pull request, but not while searching, under a filter that does not offer it, or with ctrl, alt or meta", function(w: World)
@@ -4854,6 +5019,7 @@ end)
 case("host: a checkout git does not confirm keeps its draft; a real one is saved only after git confirms it", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
+	forgetCheckouts(w)
 	goToSettings(b, "worktrees")
 	eq(prefsOf(b).focus, "checkout", "the checkout row is focused")
 	b.press("enter")
@@ -4883,6 +5049,7 @@ end)
 case("host: a checkout refusal that arrives late stays inline on the Worktrees page and is a toast anywhere else", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
+	forgetCheckouts(w)
 	-- git answers about /elsewhere only after five seconds
 	w.respond(function(call: Call): Reply?
 		if call.argv[1] == "git" and call.argv[3] == "/elsewhere" then

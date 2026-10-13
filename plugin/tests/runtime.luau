@@ -12,7 +12,7 @@ local function write(dir: string, name: string, body: { [string]: any })
 	tern.fs.write(dir .. "/" .. name, tern.json.encode(body))
 end
 
--- Request: { op = "open", repo = "owner/name", number = N, launch = path?, mapped = path? }.
+-- Request: { op = "open", repo = "owner/name", number = N, checkout = path }.
 -- Result: { ok, hasCx, result?, describe?, update?, cleanup?, problem? }; a second `done` writes duplicate.json.
 function M.run(cx: WindowCx)
 	local dir = tern.getenv("PLOTROOM_SMOKE_DIR")
@@ -24,14 +24,14 @@ function M.run(cx: WindowCx)
 		return tern.json.decode(tern.fs.read(dir .. "/request.json"))
 	end)
 	local request: any = if read then decoded else nil
-	if type(request) ~= "table" or request.op ~= "open" or type(request.repo) ~= "string" or type(request.number) ~= "number" then
+	if type(request) ~= "table" or request.op ~= "open" or type(request.repo) ~= "string" or type(request.number) ~= "number" or type(request.checkout) ~= "string" then
 		write(dir, "result.json", { ok = false, hasCx = true, problem = "bad request: " .. tostring(decoded) })
 		cx:toast("error", "Plotroom smoke: bad request")
 		return
 	end
 	local answers = 0
 	local started, why = pcall(function()
-		worktree.open(request.launch, request.mapped, request.repo, request.number, function(result, problem, cx2)
+		worktree.open(request.checkout, request.repo, request.number, function(result, problem, cx2)
 			answers += 1
 			if answers > 1 then
 				write(dir, "duplicate.json", { ok = false, problem = "done ran " .. answers .. " times" })
