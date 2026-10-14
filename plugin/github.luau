@@ -4,6 +4,7 @@
 
 local process = require("./process")
 local input = require("./input")
+local tracker = require("./tracker")
 
 local M = {}
 
@@ -60,6 +61,8 @@ end
 
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } } } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}]}"
+local ISSUE_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }"
+local ISSUE_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]}]}"
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
@@ -362,6 +365,84 @@ function M.parsePage(stdout: string): ({ total: number, next: string?, cost: num
 	}, nil
 end
 
+local ISSUE_STATE: { [string]: string } = { COMPLETED = "completed", NOT_PLANNED = "not-planned", DUPLICATE = "duplicate" }
+
+-- One search item as an Issue, or nil and why. Pull requests and malformed URLs are rejected.
+function M.normalizeIssue(item: any): (tracker.Issue?, string?)
+	if type(item) ~= "table" or type(item.number) ~= "number" or type(item.url) ~= "string" then
+		return nil, "the search returned an item that is not an issue"
+	end
+	if string.find(item.url, "^https://github%.com/[^/]+/[^/]+/pull/%d+$") then
+		return nil, "the search returned an item that is not an issue"
+	end
+	local o, r, ns = string.match(item.url, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/issues/(%d+)$")
+	local n = if ns then tonumber(ns) else nil
+	if not o or not r or not n or item.number ~= n then
+		return nil, "the search returned an issue with an unexpected URL"
+	end
+	if type(item.title) ~= "string" then
+		return nil, "the search returned an issue without a title"
+	end
+	local function count(v: any): number
+		return if type(v) == "number" and v >= 0 then v else 0
+	end
+	local function str(v: any): string
+		return if type(v) == "string" then v else ""
+	end
+	local function strings(v: any): { string }
+		local out: { string } = {}
+		if type(v) == "table" then
+			for _, s in v do
+				if type(s) == "string" then
+					table.insert(out, s)
+				end
+			end
+		end
+		return out
+	end
+	local closed = item.state == "CLOSED"
+	return {
+		key = M.identity(o, r, n),
+		tracker = "github",
+		repo = o .. "/" .. r,
+		ref = tostring(n),
+		id = "n" .. n,
+		title = item.title,
+		url = item.url,
+		author = if type(item.author) == "string" then item.author else "ghost",
+		state = if closed then "closed" else "open",
+		reason = if closed and type(item.reason) == "string" then ISSUE_STATE[item.reason] else nil,
+		labels = strings(item.labels),
+		assignees = strings(item.assignees),
+		comments = count(item.comments),
+		created = M.epoch(str(item.createdAt)) or 0,
+		updated = M.epoch(str(item.updatedAt)) or 0,
+	}, nil
+end
+
+-- One page of the issue search JSON: total, next cursor, points cost, raw item count, issues.
+function M.parseIssuePage(stdout: string): ({ total: number, next: string?, cost: number, raw: number, issues: { tracker.Issue } }?, string?)
+	local ok, data = pcall(tern.json.decode, stdout)
+	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total) ~= "number" then
+		return nil, "gh printed something other than a search result"
+	end
+	local issues: { tracker.Issue } = {}
+	for _, item in data.items do
+		local issue, why = M.normalizeIssue(item)
+		if not issue then
+			return nil, why
+		end
+		table.insert(issues, issue)
+	end
+	return {
+		total = data.total,
+		next = if type(data.next) == "string" and data.next ~= "" then data.next else nil,
+		cost = if type(data.cost) == "number" and data.cost > 0 then data.cost else 1,
+		raw = #data.items,
+		issues = issues,
+	}, nil
+end
+
 -- Local search over loaded PRs: whether `pr` matches, and the matched UTF-16
 -- range in its title (nil when the match is elsewhere or the needle is blank).
 function M.match(pr: Pr, needle: string): (boolean, { number }?)
@@ -406,9 +487,9 @@ local function firstLines(text: string, n: number): string
 	return table.concat(out, "\n")
 end
 
-function M.classify(result: ProcessResult): Problem
+function M.classify(result: ProcessResult, limit: string?): Problem
 	if result.timed_out then
-		return { kind = "failed", message = "gh did not answer within 30 seconds." }
+		return { kind = "failed", message = "gh did not answer within " .. (limit or "30 seconds") .. "." }
 	end
 	local err = result.stderr
 	local low = string.lower(err)
@@ -440,18 +521,19 @@ end
 -- response headers) as the 4th value. An account's token is read per call with
 -- `gh auth token` and kept in memory only: no answer in time is `failed`
 -- (retryable); only a definite refusal is `auth`.
-function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> (), account: string?)
+function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> (), account: string?, timeoutMs: number?)
 	local argv: { string } = { "gh" }
 	for _, a in args do
 		table.insert(argv, a)
 	end
+	local limit = if timeoutMs then (timeoutMs // 60000) .. " minutes" else nil
 	local function run(env: { [string]: string })
-		process.run(argv, { timeout_ms = GH_TIMEOUT_MS, env = env }, function(result, perr, cx)
+		process.run(argv, { timeout_ms = timeoutMs or GH_TIMEOUT_MS, env = env }, function(result, perr, cx)
 			if not result then
 				return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
 			end
 			if result.status ~= 0 or result.timed_out then
-				return done(nil, M.classify(result), cx, result.stdout)
+				return done(nil, M.classify(result, limit), cx, result.stdout)
 			end
 			done(result.stdout, nil, cx, nil)
 		end)
@@ -478,6 +560,20 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 		env.GH_TOKEN = token
 		run(env)
 	end)
+end
+
+local CLONE_MS = 10 * 60 * 1000
+
+-- Clones `repo` into the absolute `path` with `gh repo clone`, as the repository's saved gh account: gh's own protocol
+-- and credentials, so private repositories work. git makes the folder and refuses a non-empty one.
+function M.clone(repo: string, path: string, done: (Problem?, WindowCx?) -> ())
+	local login, why = M.account(repo)
+	if why then
+		return done(why)
+	end
+	M.gh({ "repo", "clone", repo, path }, function(_, problem, cx)
+		done(problem, cx)
+	end, login, CLONE_MS)
 end
 
 -- ---------------------------------------------------------------- search quota
@@ -746,80 +842,86 @@ local function observe(out: string?, raw: string?, problem: Problem?, account: s
 	return body
 end
 
--- All pages of the search, sequentially; one swap-ready SearchResult at the end.
+type Page = { total: number, next: string?, cost: number, raw: number, items: { any } }
+
+-- All pages of the search, sequentially; `done(items, total, complete, problem, spent)` at the end.
 -- `shouldContinue` is checked before every page and after every response; a
 -- false answer ends with kind="superseded" and no further page runs. At most
--- SEARCH_PAGES requests are sent. `complete` holds only when every PR the search
+-- SEARCH_PAGES requests are sent. `complete` holds only when every item the search
 -- counts loaded within GitHub's CAP: a scan cut short (quota, page budget, an
--- empty page, a cursor that did not advance) or ended with fewer PRs than counted
--- is partial and keeps what arrived.
-function M.search(
+-- empty page, a cursor that did not advance) or ended with fewer items than counted
+-- is partial and keeps what arrived. `qualifier` closes the query (" is:pr sort:...").
+local function searchAll(
 	repo: string,
 	query: string,
+	qualifier: string,
+	gql: string,
+	jq: string,
+	parse: (string) -> (Page?, string?),
 	shouldContinue: () -> boolean,
-	done: (SearchResult?, Problem?, number) -> ()
+	done: ({ any }?, number, boolean, Problem?, number) -> ()
 )
 	query = string.match(query, "^%s*(.-)%s*$") or ""
 	if query == "" then
 		tern.timer(0, function()
-			done(nil, { kind = "failed", message = "The filter query is empty." }, 0)
+			done(nil, 0, false, { kind = "failed", message = "The filter query is empty." }, 0)
 		end)
 		return
 	end
 	local widened = M.scopeProblem(query)
 	if widened then
 		tern.timer(0, function()
-			done(nil, { kind = "failed", message = widened }, 0)
+			done(nil, 0, false, { kind = "failed", message = widened }, 0)
 		end)
 		return
 	end
 	local account, refused = M.account(repo)
 	if refused then
 		tern.timer(0, function()
-			done(nil, refused, 0)
+			done(nil, 0, false, refused, 0)
 		end)
 		return
 	end
-	query = "repo:" .. repo .. " " .. query .. " is:pr sort:updated-desc"
+	query = "repo:" .. repo .. " " .. query .. qualifier
 	local superseded: Problem = { kind = "superseded", message = "" }
-	local all: { Pr } = {}
+	local all: { any } = {}
 	local total = 0
 	local loaded = 0
 	local spent = 0
 	local function finish(cut: boolean)
-		done({ prs = M.reconcile(all), total = total, complete = not cut and loaded >= total and total <= CAP }, nil, spent)
+		done(all, total, not cut and loaded >= total and total <= CAP, nil, spent)
 	end
 	local function fetch(after: string?, page: number)
 		if not shouldContinue() then
-			return done(nil, superseded, spent)
+			return done(nil, 0, false, superseded, spent)
 		end
 		spent += 1
-		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. SEARCH_GQL, "-f", "q=" .. query }
+		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. gql, "-f", "q=" .. query }
 		if after then
 			table.insert(args, "-f")
 			table.insert(args, "after=" .. after)
 		end
 		table.insert(args, "--jq")
-		table.insert(args, SEARCH_JQ)
+		table.insert(args, jq)
 		M.gh(args, function(out, problem, _, raw)
 			local body = observe(out, raw, problem, account)
 			if not shouldContinue() then
-				return done(nil, superseded, spent)
+				return done(nil, 0, false, superseded, spent)
 			end
 			if not out then
-				return done(nil, problem, spent)
+				return done(nil, 0, false, problem, spent)
 			end
-			local pg, why = M.parsePage(body)
+			local pg, why = parse(body)
 			if not pg then
-				return done(nil, { kind = "failed", message = why or "malformed response" }, spent)
+				return done(nil, 0, false, { kind = "failed", message = why or "malformed response" }, spent)
 			end
 			spent += pg.cost - 1
 			if after == nil then
 				total = pg.total
 			end
 			loaded += pg.raw
-			for _, pr in pg.prs do
-				table.insert(all, pr)
+			for _, item in pg.items do
+				table.insert(all, item)
 			end
 			local cursor = pg.next
 			if cursor == nil or loaded >= math.min(total, CAP) then
@@ -832,6 +934,48 @@ function M.search(
 		end, account)
 	end
 	fetch(nil, 1)
+end
+
+-- All pages of the PR search; one swap-ready SearchResult at the end (see searchAll).
+function M.search(
+	repo: string,
+	query: string,
+	shouldContinue: () -> boolean,
+	done: (SearchResult?, Problem?, number) -> ()
+)
+	searchAll(repo, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, function(body)
+		local pg, why = M.parsePage(body)
+		if not pg then
+			return nil, why
+		end
+		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.prs }, nil
+	end, shouldContinue, function(items, total, complete, problem, spent)
+		if not items then
+			return done(nil, problem, spent)
+		end
+		done({ prs = M.reconcile(items :: { Pr }), total = total, complete = complete }, nil, spent)
+	end)
+end
+
+-- All pages of the issue search; one swap-ready IssueResult at the end (see searchAll).
+function M.issues(
+	repo: string,
+	query: string,
+	shouldContinue: () -> boolean,
+	done: (tracker.IssueResult?, Problem?, number) -> ()
+)
+	searchAll(repo, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, function(body)
+		local pg, why = M.parseIssuePage(body)
+		if not pg then
+			return nil, why
+		end
+		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.issues }, nil
+	end, shouldContinue, function(items, total, complete, problem, spent)
+		if not items then
+			return done(nil, problem, spent)
+		end
+		done({ issues = tracker.reconcile(items :: { tracker.Issue }), total = total, complete = complete }, nil, spent)
+	end)
 end
 
 local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
@@ -849,6 +993,18 @@ local CHECK_PAGES = 3
 
 local function login(v: any): string?
 	return if type(v) == "string" and #v <= 64 and string.match(v, "^[%w][%w%-_%.%[%]]*$") then v else nil
+end
+
+-- A PR or issue body as the sidebar shows it: bot summaries stripped, cut to BODY_CHARS.
+local function cleanBody(raw: any): string
+	local body = if type(raw) == "string" then raw else ""
+	-- Cursor's bot appends a generated summary between these markers; it repeats the diff, not the author.
+	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
+	local cut = utf8.offset(body, BODY_CHARS + 1)
+	if cut and cut <= #body then
+		body = string.sub(body, 1, cut - 1) .. "\n\n…"
+	end
+	return body
 end
 
 -- The `about` part of a checks page as CHECKS_JQ prints it; whatever is missing or malformed reads as unknown/empty.
@@ -874,14 +1030,7 @@ function M.about(raw: any): About
 	for _, who in (if type(t.requested) == "table" then t.requested else {}) :: { any } do
 		add(login(who), "requested")
 	end
-	local body = if type(t.body) == "string" then t.body else ""
-	-- Cursor's bot appends a generated summary between these markers; it repeats the diff, not the author.
-	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
-	local cut = utf8.offset(body, BODY_CHARS + 1)
-	if cut and cut <= #body then
-		body = string.sub(body, 1, cut - 1) .. "\n\n…"
-	end
-	return { merge = merge, reviews = reviews, body = body }
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body) }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -956,6 +1105,67 @@ function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem
 		end, account)
 	end
 	fetch(nil, 1)
+end
+
+local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { rateLimit { cost } repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
+local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}]}"
+
+-- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
+-- the rate-limit pause behave as in M.checks. done never runs before this call returns.
+function M.issue(repo: string, number: number, done: (tracker.IssueDetail?, Problem?) -> (), shouldContinue: (() -> boolean)?)
+	local superseded: Problem = { kind = "superseded", message = "" }
+	local function finish(detail: tracker.IssueDetail?, problem: Problem?)
+		if shouldContinue and not shouldContinue() then
+			return done(nil, superseded)
+		end
+		done(detail, problem)
+	end
+	local function fail(problem: Problem)
+		tern.timer(0, function()
+			finish(nil, problem)
+		end)
+	end
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if not owner or not name then
+		return fail({ kind = "failed", message = "Unexpected repository name." })
+	end
+	local account, refused = M.account(repo)
+	if refused then
+		return fail(refused)
+	end
+	if shouldContinue and not shouldContinue() then
+		return fail(superseded)
+	end
+	local wait = M.wait(os.time(), account)
+	if wait > 0 then
+		return fail({ kind = "rate-limit", message = "GitHub's rate limit is reached; details resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
+	end
+	local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. ISSUE_DETAIL_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", ISSUE_DETAIL_JQ }
+	M.gh(args, function(out, problem, _, raw)
+		local body = observe(out, raw, problem, account)
+		if not out then
+			return finish(nil, problem)
+		end
+		local ok, data = pcall(tern.json.decode, body)
+		if not ok or type(data) ~= "table" then
+			return finish(nil, { kind = "failed", message = "gh printed unexpected issue data." })
+		end
+		local linked: { tracker.Linked } = {}
+		for _, n in (if type(data.linked) == "table" then data.linked else {}) :: { any } do
+			local num, title, url = field(n, "number"), field(n, "title"), field(n, "url")
+			if type(num) == "number" and type(title) == "string" and type(url) == "string" and string.sub(url, 1, 8) == "https://" then
+				local s = field(n, "state")
+				local state = if s == "MERGED" then "merged" elseif s == "CLOSED" then "closed" elseif field(n, "isDraft") == true then "draft" else "open"
+				table.insert(linked, { ref = tostring(num), title = title, url = url, state = state })
+			end
+		end
+		local milestone = data.milestone
+		finish({
+			body = cleanBody(data.body),
+			milestone = if type(milestone) == "string" and milestone ~= "" then milestone else nil,
+			linked = linked,
+		}, nil)
+	end, account)
 end
 
 -- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read.

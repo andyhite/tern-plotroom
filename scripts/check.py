@@ -366,7 +366,7 @@ def check_bench() -> str:
 
 # --------------------------------------------------------------------------- smoke
 # One isolated headless `tern serve` (everything under a temp dir), a fake gh and ssh, real git repositories.
-# plugin.plotroom.smoke (plugin/tests/runtime.luau) runs worktree.open for each scenario; git is the oracle.
+# plugin.plotroom.smoke (plugin/tests/runtime.luau) runs worktree.open (a PR's) or worktree.openIssue (an issue's) for each scenario; git is the oracle.
 
 SMOKE_TOAST = "Plotroom self-test passed"
 GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
@@ -599,6 +599,10 @@ class Smoke:
         """Where Plotroom puts the worktree: <omp worktrees>/plotroom-<owner>_<repo as named>-pr-N, lowercase."""
         return self.tmp / "omp-wt" / ("plotroom-%s-pr-%d" % (key.lower().replace("/", "_", 1), n))
 
+    def issue_wt(self, key: str, ref: str) -> Path:
+        """Where Plotroom puts an issue's worktree: <omp worktrees>/plotroom-<owner>_<repo as named>-issue-<ref>, lowercase."""
+        return self.tmp / "omp-wt" / ("plotroom-%s-issue-%s" % (key.lower().replace("/", "_", 1), ref.lower()))
+
     # ----- the Tern session
 
     def alive(self) -> bool:
@@ -687,10 +691,17 @@ class Smoke:
         self.fail("UI tree text after plugins run plugin.plotroom.selftest", "a text node %r" % SMOKE_TOAST, seen[-10:] or "no Plotroom/plugin text at all")
 
     def open(self, repo: str, number: int, checkout: Path) -> Dict[str, object]:
+        request = {"op": "open", "repo": repo, "number": number, "checkout": str(checkout)}
+        return self.run_request(request, "open %s#%d" % (repo, number))
+
+    def open_issue(self, repo: str, key: str, branch: str, checkout: Path) -> Dict[str, object]:
+        request = {"op": "issue", "repo": repo, "key": key, "branch": branch, "checkout": str(checkout)}
+        return self.run_request(request, "open issue %s#%s" % (repo, key))
+
+    def run_request(self, request: Dict[str, object], what: str) -> Dict[str, object]:
         result, dup = self.smoke / "result.json", self.smoke / "duplicate.json"
         if result.exists():
             result.unlink()
-        request = {"op": "open", "repo": repo, "number": number, "checkout": str(checkout)}
         (self.smoke / "request.json").write_text(json.dumps(request), encoding="utf-8")
         self.ctl_ok("plugins", "run", "plugin.plotroom.smoke")
         deadline = time.monotonic() + SMOKE_TIMEOUT
@@ -702,13 +713,13 @@ class Smoke:
                 except ValueError:
                     pass  # half-written: read again
             if not self.alive():
-                self.fail("open %s#%d" % (repo, number), "result.json", "tern serve exited")
+                self.fail(what, "result.json", "tern serve exited")
             if time.monotonic() > deadline:
-                self.fail("open %s#%d" % (repo, number), "result.json within %d s" % SMOKE_TIMEOUT, "none (see the serve log tail below)")
+                self.fail(what, "result.json within %d s" % SMOKE_TIMEOUT, "none (see the serve log tail below)")
             time.sleep(0.1)
         self.last = data
         if dup.exists():
-            self.fail("open %s#%d" % (repo, number), "done runs once (no duplicate.json)", dup.read_text(encoding="utf-8"))
+            self.fail(what, "done runs once (no duplicate.json)", dup.read_text(encoding="utf-8"))
         return data
 
     def opened(self, data: Dict[str, object]) -> Dict[str, object]:
@@ -923,6 +934,33 @@ def sc_recovery(s: Smoke) -> None:
     s.eq("(b, retry) worktree directory exists", True, qwt.is_dir())
 
 
+def sc_issue(s: Smoke) -> None:
+    """An issue's worktree is a new branch at the remote's default branch, no upstream configured; opened again it is reused."""
+    root, wt, branch = s.checkout("r"), s.issue_wt("o/r", "7"), "7-smoke-issue"
+    base = s.out(s.repos["o/r"]["bare"], "rev-parse", "HEAD")  # type: ignore[arg-type]
+    r = s.opened(s.open_issue("o/r", "7", branch, root))
+    s.eq("created", True, r.get("created"))
+    s.eq("head", base, r.get("head"))
+    s.eq("branch", branch, r.get("branch"))
+    s.eq("key", "7", r.get("key"))
+    s.eq("dirty", False, r.get("dirty"))
+    s.same_path("path", wt, r.get("path"))
+    s.same_path("root", root, r.get("root"))
+    s.eq("worktree directory exists", True, wt.is_dir())
+    s.eq("git rev-parse --show-toplevel in the worktree", os.path.realpath(str(wt)), os.path.realpath(s.out(wt, "rev-parse", "--show-toplevel")))
+    s.eq("git branch --show-current in the worktree", branch, s.out(wt, "branch", "--show-current"))
+    s.eq("refs/heads/" + branch, base, s.out(root, "rev-parse", "--verify", "refs/heads/" + branch))
+    s.eq("refs/plotroom-base/o/r", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/o/r"))
+    s.eq("git config branch.%s.merge exit status (no upstream)" % branch, 1, s.git(root, "config", "branch.%s.merge" % branch).returncode)
+    s.contains("describe", branch, s.last.get("describe"))  # type: ignore[union-attr]
+    cleanup = s.last.get("cleanup")  # type: ignore[union-attr]
+    s.eq("cleanup command count", 2, len(cleanup) if isinstance(cleanup, list) else cleanup)
+    again = s.opened(s.open_issue("o/r", "7", branch, root))
+    s.eq("created (second open)", False, again.get("created"))
+    s.eq("head (second open)", base, again.get("head"))
+    s.eq("worktree HEAD untouched", base, s.out(wt, "rev-parse", "HEAD"))
+
+
 def sc_remote_host(s: Smoke) -> None:
     """A Plotroom block on another host (an attached loopback daemon) gets its worktree from its own host half, run
     where the block runs: the window half only asks, then opens the PR's tab on that host."""
@@ -960,6 +998,7 @@ SCENARIOS = [
     ("branch elsewhere", sc_branch_elsewhere),
     (".github", sc_dot_github),
     ("recovery", sc_recovery),
+    ("issue worktree", sc_issue),
     ("remote host", sc_remote_host),
 ]
 

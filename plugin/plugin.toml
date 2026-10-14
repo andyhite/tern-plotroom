@@ -2,7 +2,7 @@ schema = 1
 id = "plotroom"
 name = "Tern Plotroom"
 version = "0.1.0"
-description = "A live GitHub pull request queue with saved filters, Browser links and PR worktrees."
+description = "A live GitHub pull request and issue queue with saved filters, Browser links, worktrees and agents."
 icon = "merge"
 host = "host.luau"
 window = "window.luau"
@@ -12,4 +12,10 @@ styles = ["plotroom.css"]
 id = "prs"
 title = "Plotroom · GitHub PRs"
 icon = "merge"
+palette = false
+
+[[blocks]]
+id = "issues"
+title = "Plotroom · GitHub Issues"
+icon = "circle-dot"
 palette = false

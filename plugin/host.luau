@@ -1,9 +1,10 @@
 --!strict
--- The `prs` block: a live GitHub PR queue with saved, editable filters.
+-- The `prs` and `issues` blocks: one engine for a live GitHub PR queue or issue list with saved, editable filters.
 
 local github = require("./github")
 local input = require("./input")
 local process = require("./process")
+local tracker = require("./tracker")
 local worktree = require("./worktree")
 
 local ui = tern.ui
@@ -14,34 +15,54 @@ local DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on a PR before 
 local DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
 local DETAIL_RETRY_MAX_S = 300
 local NOTE_CAP = 20 -- worktree reports kept per block
+local ISSUE_ICON = "circle-dot" -- the issues block's icon, as in plugin.toml and window.luau
+-- The issue trackers the issues kind reads from: how it lists issues and how it loads one.
+-- ponytail: GitHub only. Jira and Linear join this table, with the account, rate-limit and scope calls the engine makes on `github` directly.
+local TRACKERS = { github = { search = github.issues, detail = github.issue } }
 
 type Filter = { id: string, name: string, query: string }
 type Store = { version: number, nextId: number, items: { Filter } }
 -- An agent prompt from Settings › Prompts: `filters` are the filter ids it is offered under; none (or none that still
--- exist) means every filter. `key` runs it on the selected pull request from the queue.
-type Prompt = { id: string, name: string, text: string, filters: { string }, key: string? }
+-- exist) means every filter. `key` runs it on the selected item from the queue. `worktree` (issue prompts; nil means
+-- true) says where it runs: in the issue's worktree, or in the repository's main checkout.
+type Prompt = { id: string, name: string, text: string, filters: { string }, key: string?, worktree: boolean? }
 type Prompts = { version: number, nextId: number, items: { Prompt } }
+type KeyHelp = { keys: { string }, text: string }
+-- What tells the two blocks apart; the rest is one engine.
+type Kind = {
+	id: string, -- the block id: "prs" | "issues"
+	title: string, -- the block title without a filter: "GitHub PRs" | "GitHub Issues"
+	one: string, -- "pull request" | "issue"
+	many: string, -- "pull requests" | "issues"
+	icon: string, -- the picker's icon
+	filtersKey: string, -- kv key of the saved filters
+	promptsKey: string, -- kv key of the saved prompts
+	seeds: { Filter }, -- the filters of a first run
+	keys: { KeyHelp }, -- the `?` list of the queue
+	vars: { { k: { Span }, v: string } }, -- the prompt editor's legend of variables
+}
 -- `rows` caches the picker rows; `rowsRev` (worktree reports) and `rowsMin` (the minute, for the ages) say what built them.
 type Snap = {
-	prs: { github.Pr },
+	items: { any }, -- github.Pr (prs) or tracker.Issue (issues)
 	total: number,
 	complete: boolean,
 	fetched: number,
 	rows: { any }?,
 	rowsRev: number?,
 	rowsMin: number?,
-	rowsOpen: string?, -- the open-in-a-tab PR numbers, comma-joined
+	rowsOpen: string?, -- the ids of the items open in a tab, comma-joined
 }
 -- What the local search lets through: computed once per snapshot and search text.
-type Visible = { snap: Snap, needle: string, prs: { github.Pr }, order: { string }, hits: { [string]: any }? }
+type Visible = { snap: Snap, needle: string, items: { any }, order: { string }, hits: { [string]: any }? }
 -- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
--- `about` is the PR's merge state, reviewers and description, nil when gh did not print them.
-type Detail = { runs: { github.Run }, total: number, round: number, about: github.About? }
+-- `about` is the PR's merge state, reviewers and description, nil when gh did not print them. `issue` is an issue's
+-- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty).
+type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
 type Attempt = { key: string, timer: TimerHandle? }
--- The outcome of the last worktree attempt for a PR; kept in memory only.
+-- The outcome of the last worktree attempt for an item; kept in memory only.
 type Note = {
 	seq: number,
 	at: number,
@@ -56,18 +77,21 @@ type Note = {
 	update: { string },
 	cleanup: { string },
 }
+-- What a worktree attempt found, as the preview notes it: the same for pull requests and issues. `current`: the
+-- worktree holds what it should (a PR's head; an issue's branch always does).
+type Report = { path: string, branch: string, created: boolean, current: boolean, dirty: boolean?, summary: string, update: { string }, cleanup: { string } }
 type Settings = {
 	page: string, -- "filters" | "prompts" | "github" | "worktrees"
 	focus: string?, -- focused prefs row id
 	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text
 	pick: { row: string, option: string? }?, -- a filters row whose chips the keys drive
 	errors: { [string]: string? }, -- row id -> warning under the row
-	busy: boolean, -- checkout path being verified
 	confirm: string?, -- delete row ("delete:<filter id>" or "pdelete:<prompt id>") awaiting confirmation
 }
 
 type State = {
 	cx: BlockCx,
+	kind: Kind,
 	launchCwd: string?,
 	activeId: string?,
 	store: Store,
@@ -86,18 +110,19 @@ type State = {
 	interval: number?,
 	nextAt: number?,
 	resolving: boolean,
+	claiming: string?, -- repository whose checkout folder is being verified or cloned into
 	problem: github.Problem?,
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
 	help: boolean, -- the shortcut list is open
 	vis: Visible?,
-	details: { [string]: Detail }, -- all checks per PR (key: account, PR and update time)
+	details: { [string]: Detail }, -- loaded details per item: all checks of a PR, the body of an issue (key: account, item and update time)
 	detailFail: { [string]: DetailFail },
 	detailBusy: { [string]: boolean }, -- checks loads running
 	detailAttempt: Attempt?,
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
-	notes: { [string]: Note }, -- worktree reports by PR key
-	descOpen: string?, -- key of the PR whose description is unfolded; the view mirrors it so Show less can fold it again
+	notes: { [string]: Note }, -- worktree reports by item key
+	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
 	noteSeq: number,
 	settings: Settings?,
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
@@ -113,15 +138,12 @@ local function isTable(v: any): boolean
 	return type(v) == "table"
 end
 
-local function seeds(): Store
-	return {
-		version = 1,
-		nextId = 3,
-		items = {
-			{ id = "f1", name = "My PRs", query = "is:open author:@me" },
-			{ id = "f2", name = "Review requested", query = "is:open review-requested:@me" },
-		},
-	}
+local function seeds(kind: Kind): Store
+	local items: { Filter } = {}
+	for _, f in kind.seeds do
+		table.insert(items, { id = f.id, name = f.name, query = f.query })
+	end
+	return { version = 1, nextId = #items + 1, items = items }
 end
 
 local function validStore(v: any): Store?
@@ -150,24 +172,24 @@ local function kvSet(key: string, value: any): string?
 	return tostring(err)
 end
 
-local function writeStore(store: Store): string?
+local function writeStore(kind: Kind, store: Store): string?
 	local items: { any } = {}
 	for _, f in store.items do
 		table.insert(items, { id = f.id, name = f.name, query = f.query })
 	end
-	return kvSet("filters", { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	return kvSet(kind.filtersKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 end
 
 -- store, writable, error. An absent key is seeded; unreadable or malformed
 -- storage is never overwritten: seeds are shown but Save is disabled.
-local function loadStore(): (Store, boolean, string?)
-	local ok, v = pcall(tern.kv.get, "filters")
+local function loadStore(kind: Kind): (Store, boolean, string?)
+	local ok, v = pcall(tern.kv.get, kind.filtersKey)
 	if not ok then
-		return seeds(), false, "Saved filters could not be read: " .. tostring(v)
+		return seeds(kind), false, "Saved filters could not be read: " .. tostring(v)
 	end
 	if v == nil then
-		local s = seeds()
-		local err = writeStore(s)
+		local s = seeds(kind)
+		local err = writeStore(kind, s)
 		if err then
 			return s, false, "Saved filters could not be written: " .. err
 		end
@@ -175,7 +197,7 @@ local function loadStore(): (Store, boolean, string?)
 	end
 	local s = validStore(v)
 	if not s then
-		return seeds(), false, "Saved filters are malformed; not overwriting them."
+		return seeds(kind), false, "Saved filters are malformed; not overwriting them."
 	end
 	return s, true, nil
 end
@@ -236,6 +258,23 @@ local function setupOf(map: { [string]: any }, repo: string): { string }
 	return out
 end
 
+-- Saved branch name formats per repository (kv "branches", keyed like "repos"), or nil and why when unreadable: a write
+-- then fails closed rather than overwrite them.
+local function branchMap(): ({ [string]: any }?, string?)
+	local ok, stored = pcall(tern.kv.get, "branches")
+	if not ok or (stored ~= nil and not isTable(stored)) then
+		return nil, "Saved branch formats could not be read."
+	end
+	return if stored ~= nil then stored else {}, nil
+end
+
+-- The branch name format saved for `repo`; nil when none is (tracker.FORMAT_DEFAULT applies) or they cannot be read.
+local function branchFormatOf(repo: string): string?
+	local map = branchMap()
+	local fmt = if map then map["github.com/" .. string.lower(repo)] else nil
+	return if type(fmt) == "string" and fmt ~= "" then fmt else nil
+end
+
 local PROMPTS_BAD = "Saved prompts are malformed; not overwriting them."
 local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 -- Keys the queue uses itself, so no prompt may take them as its shortcut.
@@ -243,8 +282,8 @@ local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "o", "/", "?", "r", "s" }
 
 -- Saved agent prompts (kv "prompts"; absent is none), or nil and why when unreadable or malformed: a write then fails
 -- closed rather than overwrite them.
-local function loadPrompts(): (Prompts?, string?)
-	local ok, v = pcall(tern.kv.get, "prompts")
+local function loadPrompts(kind: Kind): (Prompts?, string?)
+	local ok, v = pcall(tern.kv.get, kind.promptsKey)
 	if not ok then
 		return nil, "Saved prompts could not be read: " .. tostring(v)
 	end
@@ -263,6 +302,7 @@ local function loadPrompts(): (Prompts?, string?)
 			or type(p.text) ~= "string"
 			or not isTable(p.filters)
 			or (p.key ~= nil and type(p.key) ~= "string")
+			or (p.worktree ~= nil and type(p.worktree) ~= "boolean")
 		then
 			return nil, PROMPTS_BAD
 		end
@@ -273,14 +313,14 @@ local function loadPrompts(): (Prompts?, string?)
 			end
 			table.insert(filters, f)
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = filters, key = p.key })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = filters, key = p.key, worktree = p.worktree })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
 
 -- Rereads the prompts, lets `fn` change them (an error string aborts) and saves them; an error message or nil.
-local function editPrompts(fn: (Prompts) -> string?): string?
-	local store, err = loadPrompts()
+local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
+	local store, err = loadPrompts(kind)
 	if not store then
 		return err
 	end
@@ -290,9 +330,9 @@ local function editPrompts(fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = tern.json.array(p.filters), key = p.key })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = tern.json.array(p.filters), key = p.key, worktree = p.worktree })
 	end
-	local werr = kvSet("prompts", { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
 end
 
@@ -373,32 +413,38 @@ local function activeFilter(state: State): Filter?
 	return nil
 end
 
-local function indexOf(prs: { github.Pr }, key: string?): number
-	for i, pr in prs do
-		if pr.key == key then
+local function indexOf(items: { any }, key: string?): number
+	for i, item in items do
+		if item.key == key then
 			return i
 		end
 	end
 	return 0
 end
 
-local function selectedPr(state: State): github.Pr?
+-- The item under the cursor, a github.Pr (prs) or a tracker.Issue (issues); nil when there is none.
+local function selected(state: State): any
 	local snap = state.snap
 	if snap then
-		return snap.prs[indexOf(snap.prs, state.cursor)]
+		return snap.items[indexOf(snap.items, state.cursor)]
 	end
 	return nil
 end
 
--- Numbers of the launch repo's PRs whose Plotroom worktree holds some pane's cwd on this host.
-local function openPrs(state: State): { [number]: boolean }
-	local open: { [number]: boolean } = {}
+-- Picker ids ("n" .. number or ref, see itemId) of the launch repo's items whose Plotroom worktree holds some pane's
+-- cwd on this host.
+local function openItems(state: State): { [string]: boolean }
+	local open: { [string]: boolean } = {}
 	local repo = state.repo
 	if repo then
+		local issues = state.kind.id == "issues"
 		for _, p in tern.pane.list() do
-			local n = if p.cwd then worktree.prOfPath(p.cwd, repo) else nil
-			if n then
-				open[n] = true
+			local cwd = p.cwd
+			if cwd then
+				local ref: any = if issues then worktree.issueOfPath(cwd, repo) else worktree.prOfPath(cwd, repo)
+				if ref then
+					open["n" .. ref] = true
+				end
 			end
 		end
 	end
@@ -409,24 +455,32 @@ local function trim(s: string): string
 	return string.match(s, "^%s*(.-)%s*$") or ""
 end
 
--- Picker ids hold no `/` or `#`; search is scoped to one repo, so numbers are unique.
-local function itemId(pr: github.Pr): string
-	return "n" .. pr.number
+-- Picker ids hold no `/` or `#`; search is scoped to one repo, so numbers (refs) are unique.
+local function itemId(state: State, item: any): string
+	return "n" .. (if state.kind.id == "issues" then item.ref else item.number)
 end
 
-local function prOfItem(state: State, id: string): github.Pr?
+local function itemOf(state: State, id: string): any
 	local snap = state.snap
 	if snap then
-		for _, pr in snap.prs do
-			if itemId(pr) == id then
-				return pr
+		for _, item in snap.items do
+			if itemId(state, item) == id then
+				return item
 			end
 		end
 	end
 	return nil
 end
 
--- The PRs the local search lets through, in snapshot order, with their picker ids and title hits. Recomputed only when
+-- Whether `item` matches the search text, and the matched UTF-16 range in its title (nil when elsewhere or blank).
+local function matchItem(state: State, item: any, text: string): (boolean, { number }?)
+	if state.kind.id == "issues" then
+		return tracker.match(item, text)
+	end
+	return github.match(item, text)
+end
+
+-- The items the local search lets through, in snapshot order, with their picker ids and title hits. Recomputed only when
 -- the snapshot or the search text changes.
 local function filtered(state: State): Visible?
 	local snap = state.snap
@@ -438,20 +492,20 @@ local function filtered(state: State): Visible?
 	if cached and cached.snap == snap and cached.needle == text then
 		return cached
 	end
-	local prs: { github.Pr } = {}
+	local items: { any } = {}
 	local order: { string } = {}
 	local hits: { [string]: any } = {}
 	local hasHits = false
 	local blank = trim(text) == ""
-	for _, pr in snap.prs do
+	for _, item in snap.items do
 		local ok = true
 		local range: { number }? = nil
 		if not blank then
-			ok, range = github.match(pr, text)
+			ok, range = matchItem(state, item, text)
 		end
 		if ok then
-			table.insert(prs, pr)
-			local id = itemId(pr)
+			table.insert(items, item)
+			local id = itemId(state, item)
 			table.insert(order, id)
 			if range then
 				hits[id] = { range }
@@ -459,7 +513,7 @@ local function filtered(state: State): Visible?
 			end
 		end
 	end
-	local out: Visible = { snap = snap, needle = text, prs = prs, order = tern.json.array(order), hits = if hasHits then hits else nil }
+	local out: Visible = { snap = snap, needle = text, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
 	state.vis = out
 	return out
 end
@@ -467,9 +521,9 @@ end
 -- Keep the cursor on a visible result (the first when it vanished).
 local function ensureCursor(state: State)
 	local v = filtered(state)
-	local prs: { github.Pr } = if v then v.prs else {}
-	if indexOf(prs, state.cursor) == 0 then
-		state.cursor = if prs[1] then prs[1].key else nil
+	local items: { any } = if v then v.items else {}
+	if indexOf(items, state.cursor) == 0 then
+		state.cursor = if items[1] then items[1].key else nil
 	end
 end
 
@@ -490,13 +544,14 @@ local function snapKey(state: State, query: string): string?
 	return repo .. "\0" .. account .. "\0" .. query
 end
 
--- Cache key of a PR's loaded checks; the account is part of it, so one identity never sees another's list.
-local function detailKey(state: State, pr: github.Pr): string?
+-- Cache key of an item's loaded details (a PR's checks, an issue's body); the account is part of it, so one identity
+-- never sees another's.
+local function detailKey(state: State, item: any): string?
 	local account = state.account
 	if not account then
 		return nil
 	end
-	return account .. "\0" .. pr.key .. "@" .. pr.updated
+	return account .. "\0" .. item.key .. "@" .. item.updated
 end
 
 -- Drops everything shown, cached or running under the previous gh identity.
@@ -555,7 +610,6 @@ local HEADS: { [string]: string } = {
 	invalid = "GitHub rejected the search",
 	account = "GitHub account unavailable",
 	["no-repo"] = "No GitHub repository",
-	failed = "Could not load pull requests",
 }
 local HELP: { [string]: string } = {
 	missing = "Install the GitHub CLI (cli.github.com) so it is on your shell's PATH, then Refresh.",
@@ -566,6 +620,11 @@ local HELP: { [string]: string } = {
 	account = "Fix or clear this repository's account in Settings › GitHub, then Refresh (a damaged saved-accounts file needs a manual repair).",
 	["no-repo"] = "Press o to pick a repository, or open Plotroom inside a checkout of one.",
 }
+
+-- The heading of problem kind `k`, nil when it has none; a failed load names what it was loading.
+local function headOf(state: State, k: string): string?
+	return if k == "failed" then "Could not load " .. state.kind.many else HEADS[k]
+end
 
 -- Panes of this runtime that still exist; they share one search quota.
 local function openPanes(): number
@@ -639,9 +698,9 @@ local function prune(state: State)
 	local live: { [string]: boolean } = {}
 	local keep: { [string]: boolean } = {}
 	for _, snap in state.snaps do
-		for _, pr in snap.prs do
-			live[pr.key] = true
-			local key = detailKey(state, pr)
+		for _, item in snap.items do
+			live[item.key] = true
+			local key = detailKey(state, item)
 			if key then
 				keep[key] = true
 			end
@@ -704,9 +763,11 @@ refresh = function(state: State)
 		return
 	end
 	state.inflight = gen
-	github.search(repo, query, function()
+	local function current(): boolean
 		return running[state.cx.pane] == state and state.gen == gen
-	end, function(result, problem, spent)
+	end
+	-- `result` is a github.SearchResult (prs) or a tracker.IssueResult (issues).
+	local function landed(result: any, problem: github.Problem?, spent: number)
 		if not alive(state) then
 			return
 		end
@@ -730,7 +791,7 @@ refresh = function(state: State)
 			return
 		end
 		if result then
-			local snap: Snap = { prs = result.prs, total = result.total, complete = result.complete, fetched = os.time() }
+			local snap: Snap = { items = if state.kind.id == "issues" then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
 			state.snaps[key] = snap
 			state.snap = snap
 			state.round += 1 -- every loaded checks list is older than this result now
@@ -753,7 +814,12 @@ refresh = function(state: State)
 			schedule(state, state.interval or POLL_MS)
 		end
 		state.cx:render()
-	end)
+	end
+	if state.kind.id == "issues" then
+		TRACKERS.github.search(repo, query, current, landed)
+	else
+		github.search(repo, query, current, landed)
+	end
 end
 
 -- A different applied query or account: invalidate whatever is in flight and reload now. A rejected query (HTTP 422)
@@ -839,7 +905,7 @@ end
 
 -- After another block wrote the filters or the repository's account, or on restore: reread storage; what is shown must match it.
 local function reloadStore(state: State)
-	local store, writable, err = loadStore()
+	local store, writable, err = loadStore(state.kind)
 	state.store, state.writable, state.storeError = store, writable, err
 	local f = activeFilter(state)
 	if not f then
@@ -861,14 +927,14 @@ end
 
 -- ---------------------------------------------------------------- navigation
 
--- Moves the cursor `delta` rows through the visible PRs, clamped to the list.
+-- Moves the cursor `delta` rows through the visible items, clamped to the list.
 local function moveCursor(state: State, delta: number)
 	local v = filtered(state)
-	if not v or #v.prs == 0 then
+	if not v or #v.items == 0 then
 		return
 	end
-	local i = indexOf(v.prs, state.cursor)
-	state.cursor = v.prs[math.clamp(i + delta, 1, #v.prs)].key
+	local i = indexOf(v.items, state.cursor)
+	state.cursor = v.items[math.clamp(i + delta, 1, #v.items)].key
 end
 
 local function moveFilter(state: State, delta: number)
@@ -892,13 +958,42 @@ local function spans(...: Span | string): { Span | string }
 	return { ... }
 end
 
-local function prHref(kind: string, pr: github.Pr): string
-	return "plotroom://github/" .. kind .. "/" .. pr.repo .. "/" .. pr.number
+-- Percent-encodes everything but unreserved URL characters.
+local function pct(s: string): string
+	return (string.gsub(s, "[^%w%-_%.~]", function(c)
+		return string.format("%%%02X", string.byte(c))
+	end))
+end
+
+local function prHref(act: string, pr: github.Pr): string
+	return "plotroom://github/" .. act .. "/" .. pr.repo .. "/" .. pr.number
 end
 
 -- The link of an action-bar button that runs saved prompt `id` (letters and digits) on `pr`.
 local function runHref(pr: github.Pr, id: string): string
 	return "plotroom://github/run/" .. pr.repo .. "/" .. pr.number .. "/" .. id
+end
+
+-- The same links for an issue: open carries the percent-encoded URL (the window compares it with the one shown), the
+-- others the repository and the issue's ref.
+local function issueHref(act: string, issue: tracker.Issue): string
+	if act == "open" then
+		return "plotroom://issue/open/" .. pct(issue.url)
+	end
+	return "plotroom://issue/" .. act .. "/" .. issue.repo .. "/" .. issue.ref
+end
+
+local function issueRunHref(issue: tracker.Issue, id: string): string
+	return "plotroom://issue/run/" .. issue.repo .. "/" .. issue.ref .. "/" .. id
+end
+
+-- The link of action `act` (open | worktree | goto | agent) on `item`, and of the button that runs prompt `id` on it.
+local function hrefOf(state: State, item: any, act: string): string
+	return if state.kind.id == "issues" then issueHref(act, item) else prHref(act, item)
+end
+
+local function runHrefOf(state: State, item: any, id: string): string
+	return if state.kind.id == "issues" then issueRunHref(item, id) else runHref(item, id)
 end
 
 -- "45s", "3m 20s", "1h 5m" for a whole number of seconds.
@@ -945,7 +1040,7 @@ local function paceLine(state: State): string?
 	end
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
-		return "Auto-refresh paused: " .. (HEADS[halted.kind] or halted.kind) .. ". Fix it, then Refresh."
+		return "Auto-refresh paused: " .. (headOf(state, halted.kind) or halted.kind) .. ". Fix it, then Refresh."
 	end
 	local now = os.time()
 	local wait = github.wait(now, login(state))
@@ -976,6 +1071,12 @@ local STATE_BADGE: { [string]: { text: string, tone: string } } = {
 	merged = { text = "Merged", tone = "accent" },
 	closed = { text = "Closed", tone = "error" },
 }
+-- Why a closed issue closed; any other reason (or none) is a plain Closed.
+local CLOSED_REASON: { [string]: { text: string, tone: string } } = {
+	completed = { text = "Completed", tone = "accent" },
+	["not-planned"] = { text = "Not planned", tone = "muted" },
+	duplicate = { text = "Duplicate", tone = "muted" },
+}
 local REVIEW_BADGE: { [string]: { text: string, tone: string } } = {
 	approved = { text = "Approved", tone = "success" },
 	changes = { text = "Changes requested", tone = "error" },
@@ -1005,22 +1106,85 @@ local CHECK: { [string]: { text: string, tone: string, mark: string } } = {
 	pending = { text = "Pending", tone = "warning", mark = "●" },
 }
 
-type KeyHelp = { keys: { string }, text: string }
-
--- The `?` lists: every shortcut of the mode, concise.
-local QUEUE_KEYS: { KeyHelp } = {
-	{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
-	{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
-	{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (without a saved checkout of the repository: set one)" },
-	{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
-	{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
-	{ keys = { "o" }, text = "Show another repository: a saved one, or type owner/name" },
-	{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
-	{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
-	{ keys = { "r" }, text = "Refresh now" },
-	{ keys = { "s" }, text = "Settings" },
-	{ keys = { "?" }, text = "Show or hide this list" },
+-- The blocks the engine runs. `keys` is the `?` list of the queue (every shortcut of the mode, concise); `vars` the
+-- prompt editor's legend of the variables a prompt may use.
+local PRS: Kind = {
+	id = "prs",
+	title = "GitHub PRs",
+	one = "pull request",
+	many = "pull requests",
+	icon = "merge",
+	filtersKey = "filters",
+	promptsKey = "prompts",
+	seeds = {
+		{ id = "f1", name = "My PRs", query = "is:open author:@me" },
+		{ id = "f2", name = "Review requested", query = "is:open review-requested:@me" },
+	},
+	keys = {
+		{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
+		{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
+		{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (without a saved checkout of the repository: set one)" },
+		{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
+		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
+		{ keys = { "o" }, text = "Show another repository: a saved one, or type owner/name" },
+		{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
+		{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
+		{ keys = { "r" }, text = "Refresh now" },
+		{ keys = { "s" }, text = "Settings" },
+		{ keys = { "?" }, text = "Show or hide this list" },
+	},
+	-- The variables window.luau's `fill` replaces in a prompt; keep the two in step.
+	vars = {
+		{ k = { ui.span("{url}", "code") }, v = "Link to the pull request" },
+		{ k = { ui.span("{owner}", "code") }, v = "Repository owner" },
+		{ k = { ui.span("{repo}", "code") }, v = "Repository name" },
+		{ k = { ui.span("{number}", "code") }, v = "Pull request number" },
+		{ k = { ui.span("{title}", "code") }, v = "Title" },
+		{ k = { ui.span("{author}", "code") }, v = "Author's login" },
+		{ k = { ui.span("{branch}", "code") }, v = "Head branch on GitHub" },
+		{ k = { ui.span("{base}", "code") }, v = "Branch it merges into" },
+	},
 }
+
+local ISSUES: Kind = {
+	id = "issues",
+	title = "GitHub Issues",
+	one = "issue",
+	many = "issues",
+	icon = ISSUE_ICON,
+	filtersKey = "issue-filters",
+	promptsKey = "issue-prompts",
+	seeds = {
+		{ id = "f1", name = "Assigned to me", query = "is:open assignee:@me" },
+		{ id = "f2", name = "Created by me", query = "is:open author:@me" },
+	},
+	keys = {
+		{ keys = { "↑", "↓" }, text = "Move through the issues (j and k too; Page Up/Down jump ten, Home/End the ends)" },
+		{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
+		{ keys = { "w" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (without a saved checkout of the repository: set one)" },
+		{ keys = { "g" }, text = "Go to the tab working in the selected issue's worktree" },
+		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)" },
+		{ keys = { "o" }, text = "Show another repository: a saved one, or type owner/name" },
+		{ keys = { "/" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
+		{ keys = { "Tab" }, text = "Switch between the filter list and the issues" },
+		{ keys = { "r" }, text = "Refresh now" },
+		{ keys = { "s" }, text = "Settings" },
+		{ keys = { "?" }, text = "Show or hide this list" },
+	},
+	-- The variables prepareIssue sends the window (issueVars; `branch` too when it runs in a worktree), which fills them in.
+	vars = {
+		{ k = { ui.span("{url}", "code") }, v = "Link to the issue" },
+		{ k = { ui.span("{owner}", "code") }, v = "Repository owner" },
+		{ k = { ui.span("{repo}", "code") }, v = "Repository name" },
+		{ k = { ui.span("{key}", "code") }, v = "Issue number" },
+		{ k = { ui.span("{number}", "code") }, v = "Issue number" },
+		{ k = { ui.span("{title}", "code") }, v = "Title" },
+		{ k = { ui.span("{author}", "code") }, v = "Author's login" },
+		{ k = { ui.span("{labels}", "code") }, v = "Labels, comma-separated" },
+		{ k = { ui.span("{branch}", "code") }, v = "The worktree's branch (prompts that run in a worktree)" },
+	},
+}
+
 local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
 	{ keys = { "Enter" }, text = "Edit a text row or press its button; while editing, Enter saves" },
@@ -1038,6 +1202,14 @@ local function stateKind(pr: github.Pr): string
 	return if pr.draft then "draft" else "open"
 end
 
+-- An issue's state badge: Open, or why it was closed.
+local function issueBadge(issue: tracker.Issue): { text: string, tone: string }
+	if issue.state ~= "closed" then
+		return STATE_BADGE.open
+	end
+	return CLOSED_REASON[issue.reason or ""] or STATE_BADGE.closed
+end
+
 type Row = {
 	id: string,
 	label: string,
@@ -1053,22 +1225,23 @@ type Row = {
 local function pageContent(state: State): ({ any }, string, { Node })
 	local s = state.settings :: Settings
 	local where = state.repo or "the repository"
+	local issues = state.kind.id == "issues"
 	local sections: { any } = {}
 	local extra: { Node } = {}
 	local lead = ""
 	if s.page == "filters" then
-		lead = "Saved searches for the queue's filter column. They run inside " .. where .. ", so repo:, org:, user: and OR are not allowed."
+		lead = "Saved searches for the " .. (if issues then "issue list's" else "queue's") .. " filter column. They run inside " .. where .. ", so repo:, org:, user: and OR are not allowed."
 		local locked = if state.writable then nil else (state.storeError or "Saved filters are read-only.")
 		for _, f in state.store.items do
 			local active = f.id == state.activeId
 			local rows: { Row } = {
-				{ id = "name:" .. f.id, label = "Name", disabled = locked, control = { k = "text", value = f.name, placeholder = "My PRs" } },
+				{ id = "name:" .. f.id, label = "Name", disabled = locked, control = { k = "text", value = f.name, placeholder = if issues then "Assigned to me" else "My PRs" } },
 				{
 					id = "query:" .. f.id,
 					label = "Query",
 					hint = "GitHub search syntax.",
 					disabled = locked,
-					control = { k = "text", value = f.query, placeholder = "is:open author:@me", mono = true },
+					control = { k = "text", value = f.query, placeholder = if issues then "is:open assignee:@me" else "is:open author:@me", mono = true },
 				},
 			}
 			table.insert(rows, { id = "delete:" .. f.id, label = "Delete filter", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
@@ -1084,15 +1257,17 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "add",
 					label = "New filter",
-					hint = "Starts as every open pull request.",
+					hint = "Starts as every open " .. state.kind.one .. ".",
 					disabled = locked,
 					control = { k = "action", act = "add", label = "Add filter" },
 				},
 			},
 		})
 	elseif s.page == "prompts" then
-		lead = "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details."
-		local prompts, unreadable = loadPrompts()
+		lead = if issues
+			then "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details."
+			else "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details."
+		local prompts, unreadable = loadPrompts(state.kind)
 		local options: { any } = {}
 		for _, f in state.store.items do
 			table.insert(options, { value = f.id, label = f.name })
@@ -1111,7 +1286,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "pkey:" .. p.id,
 					label = "Shortcut",
-					hint = "Key that runs it on the selected pull request.",
+					hint = "Key that runs it on the selected " .. state.kind.one .. ".",
 					control = { k = "text", value = p.key or "", placeholder = "None" },
 				},
 				{
@@ -1120,8 +1295,17 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					hint = "Offered only under these filters. None: every filter.",
 					control = { k = "multi", values = tern.json.array(scopeOf(p, state.store)), options = tern.json.array(options) },
 				},
-				{ id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } },
 			}
+			if issues then
+				local runs: { string } = if p.worktree ~= false then { "worktree" } else {}
+				table.insert(rows, {
+					id = "pwhere:" .. p.id,
+					label = "Runs in",
+					hint = "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.",
+					control = { k = "multi", values = tern.json.array(runs), options = tern.json.array({ { value = "worktree", label = "Worktree" } }) },
+				})
+			end
+			table.insert(rows, { id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } })
 			table.insert(sections, { id = "prompt:" .. p.id, title = p.name, rows = rows })
 		end
 		table.insert(sections, {
@@ -1130,14 +1314,14 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "padd",
 					label = "New prompt",
-					hint = "Starts empty, offered under every filter.",
+					hint = if issues then "Starts empty, runs in a worktree, offered under every filter." else "Starts empty, offered under every filter.",
 					disabled = unreadable,
 					control = { k = "action", act = "add-prompt", label = "Add prompt" },
 				},
 			},
 		})
 	elseif s.page == "github" then
-		lead = "Pull requests load through GitHub's GraphQL API with your gh login."
+		lead = (if issues then "Issues" else "Pull requests") .. " load through GitHub's GraphQL API with your gh login."
 		local account: string? = nil
 		local unreadable: github.Problem? = nil
 		if state.repo then
@@ -1196,7 +1380,9 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			)
 		end
 	else
-		lead = "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new. It needs the repository's local checkout."
+		lead = if issues
+			then "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the repository's local checkout."
+			else "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new. It needs the repository's local checkout."
 		local mapped = checkoutOf(state.repo)
 		table.insert(sections, {
 			id = "sec-checkout",
@@ -1205,7 +1391,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "checkout",
 					label = "Path",
-					hint = "Worktrees of " .. where .. " are made from it. Opening Plotroom inside a checkout saves it here.",
+					hint = "Worktrees of " .. where .. " are made from it. A folder holding it is used as it is; a new or empty folder gets a clone (gh repo clone); another repository's folder is refused. Opening Plotroom inside a checkout saves it here.",
 					control = {
 						k = "text",
 						value = mapped or "",
@@ -1214,10 +1400,29 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					},
 					changed = mapped ~= nil,
 					defaultLabel = "Not set",
-					disabled = if s.busy then "Checking the checkout…" elseif state.repo then nil else NO_REPO,
+					disabled = if state.claiming then "Checking the folder, or cloning into it…" elseif state.repo then nil else NO_REPO,
 				},
 			},
 		})
+		if issues then
+			local formats, unreadable = branchMap()
+			local fmt = if formats and state.repo then branchFormatOf(state.repo) else nil
+			table.insert(sections, {
+				id = "sec-branch",
+				title = if state.repo then "Branch names for " .. state.repo else "Branch names",
+				rows = {
+					{
+						id = "branch",
+						label = "Format",
+						hint = "Variables {key} {slug} {owner} {repo}. Empty: " .. tracker.FORMAT_DEFAULT .. ".",
+						control = { k = "text", value = fmt or "", placeholder = tracker.FORMAT_DEFAULT, mono = true },
+						changed = fmt ~= nil,
+						defaultLabel = tracker.FORMAT_DEFAULT,
+						disabled = if state.repo then unreadable else NO_REPO,
+					},
+				},
+			})
+		end
 		local map, unreadable = setupMap()
 		local cmds: { string } = if map and state.repo then setupOf(map, state.repo) else {}
 		local off = if state.repo then unreadable else NO_REPO
@@ -1291,7 +1496,7 @@ local function beginEdit(state: State, row: string, initial: string?)
 		return
 	end
 	local id = string.match(row, "^ptext:(.+)$")
-	local prompts = if id then loadPrompts() else nil
+	local prompts = if id then loadPrompts(state.kind) else nil
 	local p = if prompts and id then promptById(prompts, id) else nil
 	if not p and def.control.k ~= "text" then
 		return
@@ -1348,6 +1553,22 @@ local function editSetup(state: State, fn: ({ string }) -> string?): string?
 	return if werr then "Could not save: " .. werr else nil
 end
 
+-- Saves `fmt` as the shown repository's branch name format (nil: back to the default). Fails closed when the saved
+-- formats cannot be read.
+local function saveBranchFormat(state: State, fmt: string?): string?
+	local repo = state.repo
+	if not repo then
+		return NO_REPO
+	end
+	local map, err = branchMap()
+	if not map then
+		return err
+	end
+	map["github.com/" .. string.lower(repo)] = fmt
+	local werr = kvSet("branches", map)
+	return if werr then "Could not save: " .. werr else nil
+end
+
 -- New account: everything cached or running under the old one is dropped, here and in every other block (they compare
 -- the account they applied with the saved one), and each block refreshes once as an intentional retry.
 local function accountChanged(state: State)
@@ -1359,7 +1580,7 @@ end
 
 -- Rereads the store, applies `fn` to filter `id` and writes it back; an error message or nil.
 local function updateFilter(state: State, id: string, fn: (Filter) -> ()): string?
-	local store, writable, err = loadStore()
+	local store, writable, err = loadStore(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
 		return err or "Filters cannot be saved."
@@ -1375,7 +1596,7 @@ local function updateFilter(state: State, id: string, fn: (Filter) -> ()): strin
 	end
 	local before = target.query
 	fn(target)
-	local werr = writeStore(store)
+	local werr = writeStore(state.kind, store)
 	if werr then
 		return "Could not save: " .. werr
 	end
@@ -1392,7 +1613,7 @@ local function addFilter(state: State)
 	if not s then
 		return
 	end
-	local store, writable, err = loadStore()
+	local store, writable, err = loadStore(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
 		s.errors.add = err or "Filters cannot be saved."
@@ -1401,7 +1622,7 @@ local function addFilter(state: State)
 	local id = "f" .. store.nextId
 	store.nextId += 1
 	table.insert(store.items, { id = id, name = "New filter", query = "is:open" })
-	local werr = writeStore(store)
+	local werr = writeStore(state.kind, store)
 	if werr then
 		s.errors.add = "Could not save: " .. werr
 		return
@@ -1420,7 +1641,7 @@ local function deleteFilter(state: State, id: string)
 	end
 	s.confirm = nil
 	local rowId = "delete:" .. id
-	local store, writable, err = loadStore()
+	local store, writable, err = loadStore(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
 		s.errors[rowId] = err or "Filters cannot be saved."
@@ -1436,7 +1657,7 @@ local function deleteFilter(state: State, id: string)
 		return
 	end
 	table.remove(store.items, at)
-	local werr = writeStore(store)
+	local werr = writeStore(state.kind, store)
 	if werr then
 		s.errors[rowId] = "Could not delete: " .. werr
 		return
@@ -1457,10 +1678,10 @@ local function addPrompt(state: State)
 		return
 	end
 	local id = ""
-	local err = editPrompts(function(store: Prompts): string?
+	local err = editPrompts(state.kind, function(store: Prompts): string?
 		id = "p" .. store.nextId
 		store.nextId += 1
-		table.insert(store.items, { id = id, name = "New prompt", text = "", filters = {} })
+		table.insert(store.items, { id = id, name = "New prompt", text = "", filters = {}, worktree = if state.kind.id == "issues" then true else nil })
 		return nil
 	end)
 	s.errors.padd = err
@@ -1482,7 +1703,7 @@ local function deletePrompt(state: State, id: string)
 		end
 		s.edit = nil -- the prompt being edited goes
 	end
-	local err = editPrompts(function(store: Prompts): string?
+	local err = editPrompts(state.kind, function(store: Prompts): string?
 		for i, p in store.items do
 			if p.id == id then
 				table.remove(store.items, i)
@@ -1509,7 +1730,7 @@ local function setScope(state: State, id: string, values: { any })
 			table.insert(keep, f.id)
 		end
 	end
-	s.errors["pscope:" .. id] = editPrompts(function(store: Prompts): string?
+	s.errors["pscope:" .. id] = editPrompts(state.kind, function(store: Prompts): string?
 		local p = promptById(store, id)
 		if not p then
 			return "That prompt was deleted elsewhere."
@@ -1519,10 +1740,27 @@ local function setScope(state: State, id: string, values: { any })
 	end)
 end
 
--- Turns filter `option` on or off for the prompt of filters row `row` ("pscope:<id>").
+-- Saves where an issue prompt runs: in the issue's worktree (`on`), or in the repository's main checkout.
+local function setWhere(state: State, id: string, on: boolean)
+	local s = state.settings
+	if not s then
+		return
+	end
+	s.errors["pwhere:" .. id] = editPrompts(state.kind, function(store: Prompts): string?
+		local p = promptById(store, id)
+		if not p then
+			return "That prompt was deleted elsewhere."
+		end
+		p.worktree = on
+		return nil
+	end)
+end
+
+-- Turns `option` on or off on a prompt's multi row `row`: its filters ("pscope:<id>") or where it runs ("pwhere:<id>").
 local function toggleScope(state: State, row: string, option: string)
 	local def = rowById(state, row)
-	local id = string.match(row, "^pscope:(.+)$")
+	local scope = string.match(row, "^pscope:(.+)$")
+	local id = scope or string.match(row, "^pwhere:(.+)$")
 	if not def or not id then
 		return
 	end
@@ -1538,7 +1776,11 @@ local function toggleScope(state: State, row: string, option: string)
 	if not on then
 		table.insert(values, option)
 	end
-	setScope(state, id, values)
+	if scope then
+		setScope(state, scope, values)
+	else
+		setWhere(state, id, table.find(values, "worktree") ~= nil)
+	end
 end
 
 -- Deletes the filter or prompt whose delete row `s.confirm` names ("delete:<id>" or "pdelete:<id>").
@@ -1628,7 +1870,7 @@ local function commitEdit(state: State)
 		elseif table.find(QUEUE_TAKEN, text) then
 			err = "The queue already uses " .. text .. "."
 		else
-			err = editPrompts(function(store: Prompts): string?
+			err = editPrompts(state.kind, function(store: Prompts): string?
 				local p = promptById(store, id)
 				if not p then
 					return "That prompt was deleted elsewhere."
@@ -1651,7 +1893,7 @@ local function commitEdit(state: State)
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
 		else
-			err = editPrompts(function(store: Prompts): string?
+			err = editPrompts(state.kind, function(store: Prompts): string?
 				local p = promptById(store, id)
 				if not p then
 					return "That prompt was deleted elsewhere."
@@ -1689,6 +1931,9 @@ local function commitEdit(state: State)
 		if not err and at and text == "" then
 			s.focus = "setup:new"
 		end
+	elseif row == "branch" then
+		-- Empty goes back to the default format; anything else must be a format that can name a branch.
+		settle(s, row, if text == "" then saveBranchFormat(state, nil) else (tracker.formatProblem(text) or saveBranchFormat(state, text)))
 	elseif row == "account" then
 		local repo = state.repo
 		if not repo then
@@ -1715,17 +1960,19 @@ local function commitEdit(state: State)
 			s.errors.checkout = why or "That is not a usable path."
 			return
 		end
-		s.busy, s.edit = true, nil
-		worktree.resolveRepository(path, repo, function(info, problem)
+		s.edit = nil
+		state.claiming = repo
+		worktree.claimCheckout(path, repo, function(claimed, problem)
 			if not alive(state) then
 				return
 			end
-			s.busy = false
-			local root = if info then info.root else nil
+			state.claiming = nil
+			local root = if claimed then claimed.root else nil
 			local err = if root then saveCheckout(repo, root) else (problem or "That path is not a checkout of " .. repo .. ".")
 			if not err then
 				s.errors.checkout = nil
-				state.cx:toast("success", "Checkout saved", root)
+				local cloned = claimed ~= nil and claimed.cloned
+				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", root)
 			elseif state.settings == s and s.page == "worktrees" then
 				beginEdit(state, "checkout", text) -- the draft stays for a correction; this clears the row's warning, so set it after
 				s.errors.checkout = err
@@ -1764,6 +2011,8 @@ local function resetRow(state: State, row: string)
 		end
 	elseif row == "checkout" then
 		err = clearCheckout(state)
+	elseif row == "branch" then
+		err = saveBranchFormat(state, nil)
 	end
 	s.errors[row] = err
 	if not err and s.edit and s.edit.row == row then
@@ -1773,15 +2022,20 @@ end
 
 local function openSettings(state: State, page: string, row: string?, edit: boolean?)
 	discardEdit(state) -- releases the prompt editor's caret, if one was open
-	state.settings = { page = page, focus = row, errors = {}, busy = false }
+	state.settings = { page = page, focus = row, errors = {} }
 	if edit and row then
 		beginEdit(state, row)
 	end
 end
 
+-- Whether the shown repository has no saved checkout: then nothing may make a worktree, and the queue says so.
+local function missingCheckout(state: State): boolean
+	return state.repo ~= nil and checkoutOf(state.repo) == nil
+end
+
 -- Without a saved checkout of the shown repository nothing may make a worktree: Settings asks for one instead.
 local function needsCheckout(state: State): boolean
-	if state.repo and not checkoutOf(state.repo) then
+	if missingCheckout(state) then
 		openSettings(state, "worktrees", "checkout", true)
 		return true
 	end
@@ -1790,14 +2044,16 @@ end
 
 -- The window's repository picker for this block (window.luau's `pickRepo`).
 local REPOS_HREF = "plotroom://repos"
+-- The heading's Set checkout button, which the window turns into this block's `set-checkout` action.
+local CHECKOUT_HREF = "plotroom://checkout"
 
-local function openSelected(state: State, kind: string, rerender: boolean)
-	local pr = selectedPr(state)
-	if pr then
+local function openSelected(state: State, act: string, rerender: boolean)
+	local item = selected(state)
+	if item then
 		if rerender then
 			state.cx:render() -- sends the new preview before the open request
 		end
-		state.cx:open(prHref(kind, pr))
+		state.cx:open(hrefOf(state, item, act))
 	end
 end
 
@@ -1809,12 +2065,11 @@ local function noteTone(note: Note): string
 	return if note.current and note.dirty == false then "success" else "warning"
 end
 
-local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]: any }
-	local check = if pr.checks then CHECK[pr.checks] else nil
-	local kind = stateKind(pr)
+-- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip.
+local function tabBadges(one: string, note: Note?, open: boolean): { any }
 	local badges: { any } = {}
 	if open then
-		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this pull request's worktree (g goes there)" })
+		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree (g goes there)" })
 	end
 	if note and note.ok then
 		table.insert(badges, {
@@ -1823,6 +2078,13 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]
 			title = (note.summary or "Worktree ready") .. (if note.path then " · " .. note.path else ""),
 		})
 	end
+	return badges
+end
+
+local function pickerItem(state: State, pr: github.Pr, note: Note?, open: boolean): { [string]: any }
+	local check = if pr.checks then CHECK[pr.checks] else nil
+	local kind = stateKind(pr)
+	local badges = tabBadges("pull request", note, open)
 	if kind ~= "open" then
 		table.insert(badges, STATE_BADGE[kind])
 	end
@@ -1849,7 +2111,7 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]
 		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
 	end
 	return {
-		id = itemId(pr),
+		id = itemId(state, pr),
 		label = pr.title,
 		title = pr.title,
 		detail = detail,
@@ -1859,34 +2121,54 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]
 	}
 end
 
--- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
--- ages) or the set of PRs open in a tab changes.
-local function rowsOf(state: State, snap: Snap, open: { [number]: boolean }): { any }
-	local minute = os.time() // 60
-	local nums: { number } = {}
-	for n in open do
-		table.insert(nums, n)
+-- An issue's picker row: "#N · @author opened 2h ago · @assignee +1", the state (when closed) and labels as badges.
+local function issueRow(issue: tracker.Issue, note: Note?, open: boolean): { [string]: any }
+	local badges = tabBadges("issue", note, open)
+	if issue.state == "closed" then
+		table.insert(badges, issueBadge(issue))
 	end
-	table.sort(nums)
-	local openKey = table.concat(nums, ",")
+	for _, l in issue.labels do
+		table.insert(badges, { text = l })
+	end
+	local detail: { any } = { ui.span("#" .. issue.ref, "num"), " · ", ui.span("@" .. issue.author, "mono"), " opened " .. github.age(issue.created) .. " ago" }
+	local first = issue.assignees[1]
+	if first then
+		table.insert(detail, " · @" .. first .. (if #issue.assignees > 1 then " +" .. (#issue.assignees - 1) else ""))
+	end
+	return {
+		id = issue.id,
+		label = issue.title,
+		title = issue.title,
+		detail = detail,
+		mark = { text = issue.author, seed = issue.author },
+		badges = if #badges > 0 then badges else nil,
+		facts = { comments = if issue.comments > 0 then tostring(issue.comments) else nil }, -- the icon is CSS (plotroom.css)
+	}
+end
+
+-- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
+-- ages) or the set of items open in a tab changes.
+local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { any }
+	local minute = os.time() // 60
+	local ids: { string } = {}
+	for id in open do
+		table.insert(ids, id)
+	end
+	table.sort(ids)
+	local openKey = table.concat(ids, ",")
 	local cached = snap.rows
 	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsOpen == openKey then
 		return cached
 	end
 	local rows: { any } = {}
-	for _, pr in snap.prs do
-		table.insert(rows, pickerItem(pr, state.notes[pr.key], open[pr.number] == true))
+	local issues = state.kind.id == "issues"
+	for _, item in snap.items do
+		local isOpen = open[itemId(state, item)] == true
+		table.insert(rows, if issues then issueRow(item, state.notes[item.key], isOpen) else pickerItem(state, item, state.notes[item.key], isOpen))
 	end
 	tern.json.array(rows)
 	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
 	return rows
-end
-
--- Percent-encodes everything but unreserved URL characters.
-local function pct(s: string): string
-	return (string.gsub(s, "[^%w%-_%.~]", function(c)
-		return string.format("%%%02X", string.byte(c))
-	end))
 end
 
 -- Link to a check's page: its row index (the window reads the live row to validate) and the percent-encoded URL.
@@ -1935,15 +2217,41 @@ local function upToDate(state: State, key: string): boolean
 end
 
 loadDetails = function(state: State, key: string)
-	local pr = selectedPr(state)
-	if not pr or detailKey(state, pr) ~= key or upToDate(state, key) or state.detailBusy[key] then
+	local item = selected(state)
+	if not item or detailKey(state, item) ~= key or upToDate(state, key) or state.detailBusy[key] then
 		return -- the cursor moved on, or it is loaded or loading already: a render asks again if it still matters
 	end
 	local account, round = state.account, state.round
 	local function current(): boolean
 		return state.account == account and state.round == round
 	end
+	local function live(): boolean
+		return running[state.cx.pane] == state and current()
+	end
 	state.detailBusy[key] = true
+	if state.kind.id == "issues" then
+		-- Like github.checks, it sends nothing while the quota is spent or the saved login unusable: it answers with that
+		-- problem, which failDetails paces. A GitHub issue's ref is its number.
+		TRACKERS.github.detail(item.repo, tonumber(item.ref) :: number, function(detail, problem)
+			state.detailBusy[key] = nil
+			if not alive(state) then
+				return
+			end
+			if not current() or (problem and problem.kind == "superseded") then
+				state.cx:render() -- another identity or a newer search owns the preview now: its own render asks for fresh details
+				return
+			end
+			if detail then
+				state.details[key] = { runs = {}, total = 0, round = round, issue = detail }
+				state.detailFail[key] = nil
+			else
+				failDetails(state, key, problem or { kind = "failed", message = "The issue could not be read." })
+			end
+			state.cx:render()
+		end, live)
+		return
+	end
+	local pr: github.Pr = item
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
 	github.checks(pr.repo, pr.number, function(runs, total, problem, about)
 		state.detailBusy[key] = nil
@@ -1961,17 +2269,15 @@ loadDetails = function(state: State, key: string)
 			failDetails(state, key, problem or { kind = "failed", message = "The checks could not be read." })
 		end
 		state.cx:render()
-	end, function()
-		return running[state.cx.pane] == state and current()
-	end)
+	end, live)
 end
 
 -- Once the cursor rests on a PR with checks, loads all of them with their required flags (the search carries the first
 -- 25, unflagged, and shows them meanwhile; checks loaded before the latest search show meanwhile too, and load again).
--- Idempotent: every render calls it. A load waits out a debounce and a failed one its retry delay; moving to another PR
--- cancels the wait.
-local function wantDetails(state: State, pr: github.Pr)
-	local key = detailKey(state, pr)
+-- Once it rests on an issue, loads its body, milestone and linked pull requests. Idempotent: every render calls it. A
+-- load waits out a debounce and a failed one its retry delay; moving to another item cancels the wait.
+local function wantDetails(state: State, item: any)
+	local key = detailKey(state, item)
 	local waiting = state.detailAttempt
 	if waiting and waiting.key ~= key then
 		cancelDetails(state)
@@ -1988,24 +2294,24 @@ local function wantDetails(state: State, pr: github.Pr)
 	end
 end
 
--- Keeps the outcome of a worktree attempt (a result, or why there is none) for the queue preview: persistent, unlike
--- a toast.
-local function noteWorktree(state: State, repo: string, number: number, r: worktree.Result?, problem: string?)
+-- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike
+-- a toast. `key` is the item's key (lowercase "owner/repo#n").
+local function noteWorktree(state: State, key: string, r: Report?, problem: string?)
 	local note: Note = {
 		seq = state.noteSeq + 1,
 		at = os.time(),
 		ok = r ~= nil,
 		created = r ~= nil and r.created,
-		current = r ~= nil and r.head == r.prHead,
+		current = r ~= nil and r.current,
 		dirty = if r then r.dirty else nil,
 		path = if r then r.path else nil,
 		branch = if r then r.branch else nil,
-		summary = if r then worktree.describe(r) else nil,
+		summary = if r then r.summary else nil,
 		message = if problem then clip(printable(problem), 1500) else nil,
-		update = if r then worktree.update(r) else {},
-		cleanup = if r then worktree.cleanup(r) else {},
+		update = if r then r.update else {},
+		cleanup = if r then r.cleanup else {},
 	}
-	state.notes[string.lower(repo) .. "#" .. number] = note
+	state.notes[key] = note
 	state.noteSeq = note.seq
 	local count, oldest = 0, nil :: string?
 	local oldestSeq = math.huge
@@ -2027,12 +2333,13 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "5"
+local RPC_PROTOCOL = "6"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
 
--- PRs whose worktree is being prepared on this host ("owner/repo#n", lowercase): one at a time, whichever window asks.
+-- Pull requests and issues whose worktree is being prepared on this host ("owner/repo#n", lowercase): one at a time,
+-- whichever window asks.
 local preparing: { [string]: boolean } = {}
 
 local function reply(state: State, id: string, body: { [string]: any })
@@ -2075,10 +2382,47 @@ local function setupLine(repo: string): string?
 	return if #cmds > 0 then table.concat(cmds, " && ") else nil
 end
 
+-- The variables of an issue's prompts and branch name (ISSUES.vars lists them); `branch` is only known once a worktree
+-- exists.
+local function issueVars(issue: tracker.Issue): { [string]: string }
+	local owner, name = string.match(issue.repo, "^([^/]+)/([^/]+)$")
+	return {
+		url = issue.url,
+		owner = owner or "",
+		repo = name or "",
+		key = issue.ref,
+		number = issue.ref,
+		title = issue.title,
+		author = issue.author,
+		labels = table.concat(issue.labels, ", "),
+	}
+end
+
+-- The branch an issue's worktree gets: the repository's saved format (tracker.FORMAT_DEFAULT without one) over the
+-- issue's variables. nil and why when the format cannot name one.
+local function issueBranch(issue: tracker.Issue): (string?, string?)
+	local vars = issueVars(issue)
+	local format = branchFormatOf(issue.repo) or tracker.FORMAT_DEFAULT
+	return tracker.branchName(format, { key = vars.key, slug = tracker.slug(issue.title), owner = vars.owner, repo = vars.repo })
+end
+
+-- The issue with identity `key` (lowercase "owner/repo#ref") as the freshest cached snapshot lists it; nil when none does.
+local function loadedIssue(state: State, key: string): tracker.Issue?
+	local found: tracker.Issue? = nil
+	for _, snap in state.snaps do
+		for _, item in snap.items do
+			if item.key == key and (not found or item.updated > found.updated) then
+				found = item
+			end
+		end
+	end
+	return found
+end
+
 -- The saved prompts offered under the active filter, those with text, that filter's own first (`here`), then those of
 -- every filter; and why the prompts could not be read.
 local function offered(state: State): ({ { prompt: Prompt, here: boolean } }, string?)
-	local prompts, problem = loadPrompts()
+	local prompts, problem = loadPrompts(state.kind)
 	local active = activeFilter(state)
 	local mine: { { prompt: Prompt, here: boolean } } = {}
 	local every: { { prompt: Prompt, here: boolean } } = {}
@@ -2099,6 +2443,7 @@ end
 local function menu(state: State, id: string, only: string?)
 	local list, problem = offered(state)
 	local active = activeFilter(state)
+	local issues = state.kind.id == "issues"
 	local mine: { any } = {}
 	for _, o in list do
 		local p = o.prompt
@@ -2111,6 +2456,7 @@ local function menu(state: State, id: string, only: string?)
 			detail = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All filters",
 			send = p.text,
+			worktree = if issues then p.worktree ~= false else nil, -- where it runs; a PR prompt always runs in its worktree
 		})
 	end
 	local items: { any } = {}
@@ -2150,21 +2496,102 @@ local function prepare(state: State, id: string, repo: string, n: number)
 			end
 			if not r then
 				local why = problem or "Worktree failed"
-				noteWorktree(state, repo, n, nil, why)
+				noteWorktree(state, key, nil, why)
 				return reply(state, id, { problem = why })
 			end
-			noteWorktree(state, repo, n, r, nil)
+			local current = r.head == r.prHead
+			local summary = worktree.describe(r)
+			noteWorktree(state, key, {
+				path = r.path,
+				branch = r.branch,
+				created = r.created,
+				current = current,
+				dirty = r.dirty,
+				summary = summary,
+				update = worktree.update(r),
+				cleanup = worktree.cleanup(r),
+			}, nil)
 			reply(state, id, {
 				path = r.path,
 				created = r.created,
-				current = r.head == r.prHead,
+				current = current,
 				dirty = r.dirty,
-				summary = worktree.describe(r),
+				summary = summary,
 				setup = if r.created then setupLine(repo) else nil,
 				branch = r.prRef,
 				base = r.prBase,
 				title = r.title,
 				author = r.author,
+			})
+		end)
+	end)
+	if not started then
+		preparing[key] = nil
+		reply(state, id, { problem = tostring(err) })
+	end
+end
+
+-- Answers the window's request for issue `ref`'s checkout: its worktree on its own branch (made first if needed), or,
+-- with `wt` false, the repository's main checkout. Either way `vars` fill in the prompt that runs there.
+local function prepareIssue(state: State, id: string, repo: string, ref: string, wt: boolean)
+	local key = string.lower(repo) .. "#" .. ref
+	local issue = loadedIssue(state, key)
+	if not issue then
+		return reply(state, id, { problem = "That issue is not loaded here any more; Refresh and try again." })
+	end
+	if wt and preparing[key] then
+		return reply(state, id, { busy = true })
+	end
+	local checkout = checkoutOf(repo)
+	if not checkout then
+		openSettings(state, "worktrees", "checkout", true)
+		return reply(state, id, { noRepo = true })
+	end
+	local vars = issueVars(issue)
+	if not wt then
+		return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars })
+	end
+	local branch, why = issueBranch(issue)
+	if not branch then
+		return reply(state, id, { problem = why })
+	end
+	preparing[key] = true
+	local started, err = pcall(function()
+		process.reset()
+		worktree.openIssue(checkout, repo, ref, branch, function(r, problem)
+			preparing[key] = nil
+			if not alive(state) then
+				return
+			end
+			if problem == worktree.NO_REPO then
+				openSettings(state, "worktrees", "checkout", true)
+				return reply(state, id, { noRepo = true })
+			end
+			if not r then
+				local failed = problem or "Worktree failed"
+				noteWorktree(state, key, nil, failed)
+				return reply(state, id, { problem = failed })
+			end
+			local summary = worktree.describeIssue(r)
+			noteWorktree(state, key, {
+				path = r.path,
+				branch = r.branch,
+				created = r.created,
+				current = true,
+				dirty = r.dirty,
+				summary = summary,
+				update = {},
+				cleanup = worktree.cleanupIssue(r),
+			}, nil)
+			vars.branch = r.branch
+			reply(state, id, {
+				path = r.path,
+				created = r.created,
+				current = true,
+				dirty = r.dirty,
+				summary = summary,
+				setup = if r.created then setupLine(repo) else nil,
+				vars = vars,
 			})
 		end)
 	end)
@@ -2237,7 +2664,7 @@ local function rpc(state: State, raw: any)
 		repos(state, id)
 	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-]+$") then
 		profile(state, id, q.login)
-	elseif q.op == "worktree" then
+	elseif q.op == "worktree" and state.kind.id == "prs" then
 		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
 		local n = q.number
 		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
@@ -2247,12 +2674,22 @@ local function rpc(state: State, raw: any)
 			return
 		end
 		prepare(state, id, owner .. "/" .. name, n)
+	elseif q.op == "issue" and state.kind.id == "issues" then
+		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
+		local ref = q.ref
+		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+			return
+		end
+		if type(ref) ~= "string" or #ref > 64 or not string.match(ref, "^[%w%-]+$") or type(q.worktree) ~= "boolean" then
+			return
+		end
+		prepareIssue(state, id, owner .. "/" .. name, ref, q.worktree)
 	end
 end
 
--- The worktree report of a PR: persistent, with what Plotroom found and the commands the user may run.
-local function worktreeNodes(state: State, pr: github.Pr): { Node }
-	local note = state.notes[pr.key]
+-- The worktree report of the item with key `key`: persistent, with what Plotroom found and the commands the user may run.
+local function worktreeNodes(state: State, key: string): { Node }
+	local note = state.notes[key]
 	if not note then
 		return {}
 	end
@@ -2365,33 +2802,98 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	return out
 end
 
--- The selected PR's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
--- it, and one per saved prompt offered under this filter (it runs that prompt in the PR's worktree). Without a saved
--- checkout of its repository nothing that makes a worktree is offered.
-type PrAction = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
-local function prActions(state: State, pr: github.Pr, open: { [number]: boolean }): { PrAction }
-	local made = checkoutOf(pr.repo) ~= nil
+-- The selected item's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
+-- it, and one per saved prompt offered under this filter (it runs that prompt in the item's worktree, or in the
+-- repository's main checkout for an issue prompt set that way). Without a saved checkout of its repository nothing
+-- that makes a worktree is offered.
+type Action = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
+local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
+	local made = checkoutOf(item.repo) ~= nil
 	-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
-	local out: { PrAction } = { { id = "open", label = "GitHub ↗", href = prHref("open", pr), primary = true } }
+	local out: { Action } = { { id = "open", label = "GitHub ↗", href = hrefOf(state, item, "open"), primary = true } }
 	if made then
-		table.insert(out, { id = "worktree", label = "Worktree", keys = { "w" }, href = prHref("worktree", pr) })
+		table.insert(out, { id = "worktree", label = "Worktree", keys = { "w" }, href = hrefOf(state, item, "worktree") })
 	end
-	if open[pr.number] then
-		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = prHref("goto", pr) })
+	if open[itemId(state, item)] then
+		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = hrefOf(state, item, "goto") })
 	end
 	local prompts: { { prompt: Prompt, here: boolean } } = if made then offered(state) else {}
 	for _, o in prompts do
 		local p = o.prompt
 		if string.match(p.id, "^%w+$") then
 			local keys = if p.key then { p.key } else nil
-			table.insert(out, { id = "prompt-" .. p.id, label = clip(printable(p.name), 40), keys = keys, href = runHref(pr, p.id) })
+			table.insert(out, { id = "prompt-" .. p.id, label = clip(printable(p.name), 40), keys = keys, href = runHrefOf(state, item, p.id) })
 		end
 	end
 	return out
 end
 
--- pr: selectedPr(state); acts: prActions(state, pr, open).
-local function previewNodes(state: State, pr: github.Pr?, open: { [number]: boolean }, acts: { PrAction }): { Node }
+-- The buttons are the picker's action bar; the window honours only links the block shows, so each button's link,
+-- and the `a` picker's (with Worktree: it runs in the worktree), also sits here unseen for the window (and the
+-- palette commands) to read.
+local function buttonLinks(state: State, item: any, acts: { Action }): Node
+	local links: { Node } = {}
+	for _, a in acts do
+		table.insert(links, ui.node("text", { key = a.id, href = a.href }))
+		if a.id == "worktree" then
+			table.insert(links, ui.node("text", { key = "agent", href = hrefOf(state, item, "agent") }))
+		end
+	end
+	return ui.node("col", { key = "buttons", hidden = true }, links)
+end
+
+-- Each part below the head sits under a hairline rule; a part with nothing to show brings none.
+local function addPart(out: { Node }, key: string, nodes: { Node })
+	if #nodes > 0 then
+		table.insert(out, ui.node("rule", { key = "rule-" .. key }))
+		table.move(nodes, 1, #nodes, #out + 1, out)
+	end
+end
+
+-- A kv value is spans only, so a copy icon cannot sit in one: Branch and Base are rows of their own, spaced like
+-- the kv's rows they head.
+local function refRow(key: string, label: string, name: string): Node
+	return ui.node("row", { key = key, role = "plotroom.ref", gap = "xs", align = "center" }, {
+		ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
+		-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
+		ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, spans = { ui.span(name, "code") } }),
+		ui.node("icon", {
+			key = "copy",
+			name = "copy",
+			href = name,
+			actions = { click = "copy" },
+			title = "Copy " .. string.lower(label),
+			aria = "Copy the " .. string.lower(label) .. " " .. name,
+		}),
+	})
+end
+
+-- The description card of the item with key `key`, with no rule: it reads as part of the head. A folded bare card
+-- shows its first lines under a fade and Tern's own "N more lines" button; its head row is hidden by plotroom.css, so
+-- the text stands alone. `collapsed` mirrors state.descOpen (set by the card's toggle event), so Show less, a value
+-- the card has not been sent yet, folds it again.
+local function addDescription(out: { Node }, state: State, key: string, body: string)
+	local unfolded = state.descOpen == key
+	local nodes: { Node } = {
+		ui.node("card", {
+			key = "description",
+			role = "plotroom.description",
+			variant = "bare",
+			collapsible = true,
+			collapsed = not unfolded,
+			preview = { lines = 6 },
+		}, {
+			ui.node("md", { key = "body", text = body }),
+		}),
+	}
+	if unfolded then
+		table.insert(nodes, ui.node("item", { key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
+	end
+	table.move(nodes, 1, #nodes, #out + 1, out)
+end
+
+-- pr: selected(state) of a prs block; acts: itemActions(state, pr, open).
+local function previewNodes(state: State, pr: github.Pr?, open: { [string]: boolean }, acts: { Action }): { Node }
 	if not pr then
 		cancelDetails(state)
 		return {}
@@ -2402,7 +2904,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
 	local chips: { Node } = {}
-	if open[pr.number] then
+	if open[itemId(state, pr)] then
 		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
 	end
 	for i, l in pr.labels do
@@ -2424,18 +2926,8 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 		local m = MERGE_STATE[about.merge] or MERGE_STATE.unknown
 		table.insert(facts, 2, { k = "Merge", v = { ui.span(m.text, m.tone) } })
 	end
-	-- The buttons are the picker's action bar; the window honours only links the block shows, so each button's link,
-	-- and the `a` picker's (with Worktree: it runs in the worktree), also sits here unseen for the window (and the
-	-- palette commands) to read.
-	local links: { Node } = {}
-	for _, a in acts do
-		table.insert(links, ui.node("text", { key = a.id, href = a.href }))
-		if a.id == "worktree" then
-			table.insert(links, ui.node("text", { key = "agent", href = prHref("agent", pr) }))
-		end
-	end
 	local out: { Node } = {
-		ui.node("col", { key = "buttons", hidden = true }, links),
+		buttonLinks(state, pr, acts),
 		-- The PR's state sits at the head row's right end; an empty growing column pushes it there.
 		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
 			ui.text({ ui.span("#" .. pr.number, "num") }),
@@ -2455,57 +2947,14 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
-	-- Each part below the head sits under a hairline rule; a part with nothing to show brings none.
-	local function part(key: string, nodes: { Node })
-		if #nodes > 0 then
-			table.insert(out, ui.node("rule", { key = "rule-" .. key }))
-			table.move(nodes, 1, #nodes, #out + 1, out)
-		end
-	end
-	part("worktree", worktreeNodes(state, pr))
-	-- A kv value is spans only, so a copy icon cannot sit in one: Branch and Base are rows of their own, spaced like
-	-- the kv's rows they head.
-	local function ref(key: string, label: string, name: string): Node
-		return ui.node("row", { key = key, role = "plotroom.ref", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
-			-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
-			ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, spans = { ui.span(name, "code") } }),
-			ui.node("icon", {
-				key = "copy",
-				name = "copy",
-				href = name,
-				actions = { click = "copy" },
-				title = "Copy " .. string.lower(label),
-				aria = "Copy the " .. string.lower(label) .. " " .. name,
-			}),
-		})
-	end
+	addPart(out, "worktree", worktreeNodes(state, pr.key))
 	if about and string.find(about.body, "%S") then
-		-- A folded bare card shows its first lines under a fade and Tern's own "N more lines" button; its head row is
-		-- hidden by plotroom.css, so the text stands alone. `collapsed` mirrors state.descOpen (set by the card's
-		-- toggle event), so Show less, a value the card has not been sent yet, folds it again.
-		local unfolded = state.descOpen == pr.key
-		local nodes: { Node } = {
-			ui.node("card", {
-				key = "description",
-				role = "plotroom.description",
-				variant = "bare",
-				collapsible = true,
-				collapsed = not unfolded,
-				preview = { lines = 6 },
-			}, {
-				ui.node("md", { key = "body", text = about.body }),
-			}),
-		}
-		if unfolded then
-			table.insert(nodes, ui.node("item", { key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
-		end
-		table.move(nodes, 1, #nodes, #out + 1, out) -- no rule: the description reads as part of the head
+		addDescription(out, state, pr.key, about.body)
 	end
 	local properties: { Node } = {
 		ui.node("col", { key = "about", gap = "sm" }, {
-			ref("branch", "Branch", pr.head),
-			ref("base", "Base", pr.base),
+			refRow("branch", "Branch", pr.head),
+			refRow("base", "Base", pr.base),
 			ui.node("kv", { key = "facts", items = facts }),
 		}),
 	}
@@ -2524,7 +2973,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 			})
 		)
 	end
-	part("properties", properties)
+	addPart(out, "properties", properties)
 	if about and #about.reviews > 0 then
 		local rows: { Node } = {}
 		for i, r in about.reviews do
@@ -2534,26 +2983,125 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [number]: bool
 				table.insert(rows, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
 			end
 		end
-		part("reviewers", {
+		addPart(out, "reviewers", {
 			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
 			ui.node("list", { key = "reviewers" }, rows),
 		})
 	elseif loading then
-		part("reviewers", {
+		addPart(out, "reviewers", {
 			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
 			ui.node("shimmer", { key = "reviewers-loading", text = "Loading reviewers…" }),
 		})
 	end
-	part("checks", checksNodes(state, pr))
+	addPart(out, "checks", checksNodes(state, pr))
+	return out
+end
+
+-- The pull requests that close an issue once its details loaded (Tern's shimmer meanwhile), or why they did not load,
+-- with a Retry button; nothing when none close it.
+local function linkedNodes(detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
+	local head = ui.node("text", { key = "linked-head", spans = { ui.span("Linked pull requests", "strong") } })
+	if detail then
+		if #detail.linked == 0 then
+			return {}
+		end
+		local rows: { Node } = {}
+		for i, l in detail.linked do
+			local badge = STATE_BADGE[l.state] or STATE_BADGE.open
+			table.insert(rows, ui.node("item", { key = "pr" .. i, label = "#" .. l.ref .. " " .. l.title, icon = "merge", tone = badge.tone, title = l.url }))
+		end
+		return { head, ui.node("list", { key = "linked" }, rows) }
+	elseif loading then
+		return { head, ui.node("shimmer", { key = "linked-loading", text = "Loading details…" }) }
+	elseif fail then
+		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
+		return {
+			head,
+			ui.node("text", {
+				key = "linked-state",
+				spans = { ui.span("Could not load the details: " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") },
+			}),
+			ui.node("item", { key = "linked-retry", label = "Retry", icon = "redo", aria = "Retry loading the details", actions = { click = "retry-checks" } }),
+		}
+	end
+	return {}
+end
+
+-- The selected issue's sidebar: head, labels, description, worktree report, properties and the pull requests that close
+-- it. issue: selected(state) of an issues block; acts: itemActions(state, issue, open).
+local function issuePreview(state: State, issue: tracker.Issue?, open: { [string]: boolean }, acts: { Action }): { Node }
+	if not issue then
+		cancelDetails(state)
+		return {}
+	end
+	-- The body, milestone and linked pull requests come with the detail load.
+	wantDetails(state, issue)
+	local sb = issueBadge(issue)
+	local chips: { Node } = {}
+	if open[issue.id] then
+		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
+	end
+	for i, l in issue.labels do
+		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
+	end
+	local dkey = detailKey(state, issue)
+	local loaded = if dkey then state.details[dkey] else nil
+	local detail = if loaded then loaded.issue else nil
+	local fail = if dkey then state.detailFail[dkey] else nil
+	local loading = dkey ~= nil and detail == nil and fail == nil
+	-- The milestone is only known once the details load.
+	local milestone = if not detail then ui.span("…", "muted") elseif detail.milestone then ui.span(detail.milestone) else ui.span("None", "muted")
+	local facts: { { [string]: any } } = {
+		{ k = "Author", v = "@" .. issue.author },
+		{ k = "Assignees", v = if #issue.assignees > 0 then "@" .. table.concat(issue.assignees, ", @") else { ui.span("None", "muted") } },
+		{ k = "Milestone", v = { milestone } },
+		{ k = "Comments", v = { ui.span(tostring(issue.comments), "num") } },
+		{ k = "Opened", v = github.age(issue.created) .. " ago" },
+		{ k = "Updated", v = github.age(issue.updated) .. " ago" },
+	}
+	-- The Branch row shows the branch Worktree would make; without one (the saved format is unusable) there is none.
+	local about: { Node } = {}
+	local branch = issueBranch(issue)
+	if branch then
+		table.insert(about, refRow("branch", "Branch", branch))
+	end
+	table.insert(about, ui.node("kv", { key = "facts", items = facts }))
+	local out: { Node } = {
+		buttonLinks(state, issue, acts),
+		-- The issue's state sits at the head row's right end; an empty growing column pushes it there.
+		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
+			ui.text({ ui.span("#" .. issue.ref, "num") }),
+			ui.node("icon", {
+				key = "copy",
+				name = "copy",
+				href = issue.url,
+				actions = { click = "copy" },
+				title = "Copy link",
+				aria = "Copy link to issue #" .. issue.ref,
+			}),
+			ui.node("col", { key = "fill", grow = 1 }),
+			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
+		}),
+		ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
+	}
+	if #chips > 0 then
+		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
+	end
+	if detail and string.find(detail.body, "%S") then
+		addDescription(out, state, issue.key, detail.body)
+	end
+	addPart(out, "worktree", worktreeNodes(state, issue.key))
+	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
+	addPart(out, "linked", linkedNodes(detail, fail, loading))
 	return out
 end
 
 local function helpOverlay(state: State): Node
-	local rows: { KeyHelp } = table.clone(if state.settings then SETTINGS_KEYS else QUEUE_KEYS)
+	local rows: { KeyHelp } = table.clone(if state.settings then SETTINGS_KEYS else state.kind.keys)
 	local shortcuts: { { prompt: Prompt, here: boolean } } = if state.settings then {} else offered(state)
 	for _, o in shortcuts do
 		if o.prompt.key then
-			table.insert(rows, { keys = { o.prompt.key }, text = "Run the prompt “" .. printable(o.prompt.name) .. "” on the selected pull request" })
+			table.insert(rows, { keys = { o.prompt.key }, text = "Run the prompt “" .. printable(o.prompt.name) .. "” on the selected " .. state.kind.one })
 		end
 	end
 	local items: { { [string]: any } } = {}
@@ -2577,11 +3125,11 @@ end
 
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 local function queuePicker(state: State): Node
-	local snap, problem, f, pr = state.snap, state.problem, activeFilter(state), selectedPr(state)
+	local snap, problem, f, item = state.snap, state.problem, activeFilter(state), selected(state)
 	local v = filtered(state)
 	local items: { any } = {}
 	local order: { string } = {}
-	local open = openPrs(state)
+	local open = openItems(state)
 	if snap then
 		items = rowsOf(state, snap, open)
 	else
@@ -2620,7 +3168,7 @@ local function queuePicker(state: State): Node
 		note(busy)
 	end
 	if problem and snap then
-		note(ui.span((HEADS[problem.kind] or "Plotroom") .. ", showing the last results", "warning"))
+		note(ui.span((headOf(state, problem.kind) or "Plotroom") .. ", showing the last results", "warning"))
 	end
 	if snap and not snap.complete then
 		note(ui.span("Partial results: narrow this filter", "warning"))
@@ -2628,18 +3176,33 @@ local function queuePicker(state: State): Node
 	if state.storeError then
 		note(ui.span(state.storeError, "error"))
 	end
+	-- Without a saved checkout nothing makes a worktree: the subtitle ends with a notice saying so (the heading's only
+	-- mark span) and a button that opens Settings on the checkout row, or with one saying a checkout is being checked
+	-- or cloned; plotroom.css sets them at the heading's right by the picker's `.nocheckout` role.
+	local repo = state.repo
+	local missing = missingCheckout(state)
+	if repo and missing then
+		if state.claiming == repo then
+			local busy: any = ui.span("Checking the folder, or cloning into it…", "mark")
+			busy.fx = "shimmer"
+			table.insert(subtitle, busy)
+		else
+			table.insert(subtitle, ui.span("No local checkout of " .. repo, "mark"))
+			table.insert(subtitle, ui.link("Set checkout", CHECKOUT_HREF))
+		end
+	end
 
 	local scopes: { any } = {}
 	for _, fl in state.store.items do
 		local k = snapKey(state, fl.query)
 		local cached = if k then state.snaps[k] else nil
-		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", count = if cached then #cached.prs else nil })
+		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", count = if cached then #cached.items else nil })
 	end
 
 	local wait = if state.account then github.wait(os.time(), login(state)) else 0
-	local acts: { PrAction } = if pr then prActions(state, pr, open) else {}
-	-- Settings, Refresh and Repository (the queue's) on the left, with Set checkout while the shown repository has none;
-	-- the PR's buttons on the right, Open last in the corner.
+	local acts: { Action } = if item then itemActions(state, item, open) else {}
+	-- Settings, Refresh and Repository (the queue's) on the left;
+	-- the selected item's buttons on the right, Open last in the corner.
 	local actions: { any } = {
 		{ id = "settings", label = "Settings", keys = { "s" } },
 		{
@@ -2650,9 +3213,6 @@ local function queuePicker(state: State): Node
 		},
 		{ id = "repos", label = "Repository", keys = { "o" } },
 	}
-	if state.repo and not checkoutOf(state.repo) then
-		table.insert(actions, { id = "checkout", label = "Set checkout", keys = { "w" } })
-	end
 	for _, a in acts do
 		if not a.primary then
 			table.insert(actions, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
@@ -2666,24 +3226,25 @@ local function queuePicker(state: State): Node
 
 	local props: { [string]: any } = {
 		key = "queue",
-		-- plotroom.css narrows the queue by the Settings sheet's width, so the sheet sits beside it, not over it.
-		role = if state.settings then "plotroom.queue.aside" else nil,
+		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over
+		-- it, and sets the no-checkout notice at the heading's right (`.nocheckout`).
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if missing then ".nocheckout" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "side",
-		icon = "merge",
+		icon = state.kind.icon,
 		title = title,
 		subtitle = if #subtitle > 0 then subtitle else nil,
-		noun = "pull requests",
-		placeholder = "Filter the loaded pull requests",
+		noun = state.kind.many,
+		placeholder = "Filter the loaded " .. state.kind.many,
 		state = if not snap and problem then "error" elseif not snap and f then "loading" else "ready",
 		empty = {
-			ui.span(if f then "No pull requests match " .. f.name .. "." else "No saved filters yet. Press s to add one.", "muted"),
+			ui.span(if f then "No " .. state.kind.many .. " match " .. f.name .. "." else "No saved filters yet. Press s to add one.", "muted"),
 		},
 		items = items,
 		order = order,
 		hits = if v then v.hits else nil,
-		selected = if pr then itemId(pr) else nil,
+		selected = if item then itemId(state, item) else nil,
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
 		scope = state.activeId,
@@ -2698,9 +3259,10 @@ local function queuePicker(state: State): Node
 		props.cursor = if state.settings then nil else qp.cursor
 	end
 	if not snap and problem then
-		props.message = spans(ui.span(HEADS[problem.kind] or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted"))
+		props.message = spans(ui.span(headOf(state, problem.kind) or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(HELP[problem.kind] or "", "muted"))
 	end
-	return ui.node("picker", props, previewNodes(state, pr, open, acts))
+	local preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
+	return ui.node("picker", props, preview)
 end
 
 local function queueView(state: State): BlockView
@@ -2715,7 +3277,7 @@ local function confirmOverlay(state: State, row: string): Node
 	local kind, id = string.match(row, "^(p?delete):(.+)$")
 	local head, body
 	if kind == "pdelete" then
-		local prompts = loadPrompts()
+		local prompts = loadPrompts(state.kind)
 		local p = if prompts and id then promptById(prompts, id) else nil
 		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
 		body = "The action bar and the agent picker stop offering it, in every Plotroom pane on this machine."
@@ -2741,18 +3303,6 @@ local function confirmOverlay(state: State, row: string): Node
 	})
 end
 
--- The variables window.luau's `fill` replaces in a prompt, for the editor's legend; keep the two in step.
-local PROMPT_VARS: { { k: { Span }, v: string } } = {
-	{ k = { ui.span("{url}", "code") }, v = "Link to the pull request" },
-	{ k = { ui.span("{owner}", "code") }, v = "Repository owner" },
-	{ k = { ui.span("{repo}", "code") }, v = "Repository name" },
-	{ k = { ui.span("{number}", "code") }, v = "Pull request number" },
-	{ k = { ui.span("{title}", "code") }, v = "Title" },
-	{ k = { ui.span("{author}", "code") }, v = "Author's login" },
-	{ k = { ui.span("{branch}", "code") }, v = "Head branch on GitHub" },
-	{ k = { ui.span("{base}", "code") }, v = "Branch it merges into" },
-}
-
 local function settingsView(state: State): BlockView
 	local s = state.settings :: Settings
 	local sections, lead, extra = pageContent(state)
@@ -2769,7 +3319,7 @@ local function settingsView(state: State): BlockView
 	if e and e.model.multi then
 		-- A prompt's text: the multi-line editor in the page's editor card, as Tern draws no multi-line control.
 		local p = input.props(e.model)
-		local prompts = loadPrompts()
+		local prompts = loadPrompts(state.kind)
 		local id = string.match(e.row, "^ptext:(.+)$")
 		local prompt = if prompts and id then promptById(prompts, id) else nil
 		local err = s.errors[e.row]
@@ -2789,7 +3339,7 @@ local function settingsView(state: State): BlockView
 				aria = "Prompt text",
 			}),
 			ui.node("section", { key = "vars", head = { ui.span("Variables", "muted") }, collapsible = true, collapsed = true }, {
-				ui.node("kv", { key = "list", items = PROMPT_VARS }),
+				ui.node("kv", { key = "list", items = state.kind.vars }),
 			}),
 		}
 		if err then
@@ -2845,406 +3395,418 @@ end)
 
 -- ---------------------------------------------------------------- block
 
-tern.block.define("prs", {
-	init = function(cx: BlockCx, args: { string }, saved: any): State
-		local cwd: string? = nil
-		local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }
-		for _, c in from do
-			if type(c) == "string" and c ~= "" and tern.fs.exists(c) then
-				cwd = c
-				break
+-- One kind's block: both run this engine, which takes its filters, prompts and wording from the kind.
+local function blockDef(kind: Kind): BlockDef<State>
+	return {
+		init = function(cx: BlockCx, args: { string }, saved: any): State
+			local cwd: string? = nil
+			local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }
+			for _, c in from do
+				if type(c) == "string" and c ~= "" and tern.fs.exists(c) then
+					cwd = c
+					break
+				end
 			end
-		end
-		local previous = running[cx.pane]
-		if previous and previous.launchCwd == cwd and alive(previous) then
-			-- The runtime re-runs init on every settings reload (observed every 7-15 s).
-			-- Keep the live state: a fresh one would restart the repo lookup and the
-			-- GitHub search each time, flashing the spinner/card.
-			previous.cx = cx
-			return previous
-		end
-		if previous then
-			retire(previous)
-		end
-		local store, writable, err = loadStore()
-		local active: string? = nil
-		if isTable(saved) and type(saved.activeFilterId) == "string" then
-			active = saved.activeFilterId
-		end
-		local sp: { kind: string, message: string, repo: string? }? = nil
-		if isTable(saved) and isTable(saved.pause) and saved.launchCwd == cwd then
-			local k: string, m, r = saved.pause.kind, saved.pause.message, saved.pause.repo
-			if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found" or k == "invalid") and type(r) == "string")) then
-				local pause: { kind: string, message: string, repo: string? } = { kind = k :: string, message = m, repo = if type(r) == "string" then r else nil }
-				sp = pause
+			local previous = running[cx.pane]
+			if previous and previous.kind == kind and previous.launchCwd == cwd and alive(previous) then
+				-- The runtime re-runs init on every settings reload (observed every 7-15 s).
+				-- Keep the live state: a fresh one would restart the repo lookup and the
+				-- GitHub search each time, flashing the spinner/card.
+				previous.cx = cx
+				return previous
 			end
-		end
-		-- The repository the block showed, picked or found at launch; without one the launch directory decides.
-		local shown: string? = if isTable(saved) and type(saved.repo) == "string" then saved.repo else nil
-		local owner, name = string.match(shown or "", "^([^/]+)/([^/]+)$")
-		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
-			shown = if sp then sp.repo else nil
-		end
-		local state: State = {
-			cx = cx,
-			launchCwd = cwd,
-			activeId = active,
-			store = store,
-			writable = writable,
-			storeError = err,
-			snaps = {},
-			snap = nil,
-			cursor = nil,
-			focus = "list",
-			inflight = nil,
-			gen = 0,
-			repo = shown,
-			account = nil,
-			applied = nil,
-			resolving = false,
-			cost = COST_GUESS,
-			interval = nil,
-			nextAt = nil,
-			problem = if sp then { kind = sp.kind, message = sp.message } else nil,
-			timer = nil,
-			query = nil,
-			help = false,
-			vis = nil,
-			details = {},
-			detailFail = {},
-			detailBusy = {},
-			detailAttempt = nil,
-			round = 0,
-			notes = {},
-			descOpen = nil,
-			noteSeq = 0,
-			settings = nil,
-			replies = {},
-			listing = 0,
-		}
-		if not activeFilter(state) then
-			state.activeId = if store.items[1] then store.items[1].id else nil
-		end
-		running[cx.pane] = state
-		refresh(state)
-		return state
-	end,
-
-	title = function(state: State): string?
-		local snap = state.snap
-		local f = activeFilter(state)
-		return "Plotroom · " .. (if f then f.name else "GitHub PRs") .. (if snap then " (" .. #snap.prs .. ")" else "")
-	end,
-
-	view = function(state: State, _cx: BlockCx): BlockView
-		return if state.settings then settingsView(state) else queueView(state)
-	end,
-
-	key = function(state: State, key: Key, cx: BlockCx): boolean?
-		local plain = not (key.ctrl or key.alt or key.meta)
-		local name = key.name
-		local k = key.text or name
-		local s = state.settings
-		if state.help then
-			if name == "escape" or name == "enter" or (plain and k == "?") then
-				state.help = false
-				return true
+			if previous then
+				retire(previous)
 			end
-			return false
-		end
-		if s then
-			if s.confirm then
-				-- Enter keeps the filter or command: deleting takes a deliberate `d` or a click.
-				if name == "enter" or name == "escape" then
-					s.confirm = nil
-				elseif plain and k == "d" then
-					confirmDelete(state)
+			local store, writable, err = loadStore(kind)
+			local active: string? = nil
+			if isTable(saved) and type(saved.activeFilterId) == "string" then
+				active = saved.activeFilterId
+			end
+			local sp: { kind: string, message: string, repo: string? }? = nil
+			if isTable(saved) and isTable(saved.pause) and saved.launchCwd == cwd then
+				local k: string, m, r = saved.pause.kind, saved.pause.message, saved.pause.repo
+				if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found" or k == "invalid") and type(r) == "string")) then
+					local pause: { kind: string, message: string, repo: string? } = { kind = k :: string, message = m, repo = if type(r) == "string" then r else nil }
+					sp = pause
+				end
+			end
+			-- The repository the block showed, picked or found at launch; without one the launch directory decides.
+			local shown: string? = if isTable(saved) and type(saved.repo) == "string" then saved.repo else nil
+			local owner, name = string.match(shown or "", "^([^/]+)/([^/]+)$")
+			if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+				shown = if sp then sp.repo else nil
+			end
+			local state: State = {
+				cx = cx,
+				kind = kind,
+				launchCwd = cwd,
+				activeId = active,
+				store = store,
+				writable = writable,
+				storeError = err,
+				snaps = {},
+				snap = nil,
+				cursor = nil,
+				focus = "list",
+				inflight = nil,
+				gen = 0,
+				repo = shown,
+				account = nil,
+				applied = nil,
+				resolving = false,
+				claiming = nil,
+				cost = COST_GUESS,
+				interval = nil,
+				nextAt = nil,
+				problem = if sp then { kind = sp.kind, message = sp.message } else nil,
+				timer = nil,
+				query = nil,
+				help = false,
+				vis = nil,
+				details = {},
+				detailFail = {},
+				detailBusy = {},
+				detailAttempt = nil,
+				round = 0,
+				notes = {},
+				descOpen = nil,
+				noteSeq = 0,
+				settings = nil,
+				replies = {},
+				listing = 0,
+			}
+			if not activeFilter(state) then
+				state.activeId = if store.items[1] then store.items[1].id else nil
+			end
+			running[cx.pane] = state
+			refresh(state)
+			return state
+		end,
+
+		title = function(state: State): string?
+			local snap = state.snap
+			local f = activeFilter(state)
+			return "Plotroom · " .. (if f then f.name else state.kind.title) .. (if snap then " (" .. #snap.items .. ")" else "")
+		end,
+
+		view = function(state: State, _cx: BlockCx): BlockView
+			return if state.settings then settingsView(state) else queueView(state)
+		end,
+
+		key = function(state: State, key: Key, cx: BlockCx): boolean?
+			local plain = not (key.ctrl or key.alt or key.meta)
+			local name = key.name
+			local k = key.text or name
+			local s = state.settings
+			if state.help then
+				if name == "escape" or name == "enter" or (plain and k == "?") then
+					state.help = false
+					return true
+				end
+				return false
+			end
+			if s then
+				if s.confirm then
+					-- Enter keeps the filter or command: deleting takes a deliberate `d` or a click.
+					if name == "enter" or name == "escape" then
+						s.confirm = nil
+					elseif plain and k == "d" then
+						confirmDelete(state)
+					else
+						return false
+					end
+					return true
+				end
+				local e = s.edit
+				if e then
+					if name == "escape" then
+						discardEdit(state)
+					elseif name == "enter" and (not e.model.multi or key.meta or key.ctrl) then
+						commitEdit(state)
+					elseif not input.key(e.model, key, function(t)
+						cx:copy(t)
+					end) then
+						return false
+					end
+					return true
+				end
+				local pick = s.pick
+				local pdef = if pick then rowById(state, pick.row) else nil
+				if pick and pdef then
+					local options = pdef.control.options
+					if name == "left" or name == "right" then
+						local at = 0
+						for i, o in options do
+							if o.value == pick.option then
+								at = i
+							end
+						end
+						local o = options[math.clamp(at + (if name == "left" then -1 else 1), 1, math.max(#options, 1))]
+						pick.option = if o then o.value else nil
+						return true
+					elseif (name == "enter" or name == "space") and pick.option then
+						toggleScope(state, pick.row, pick.option)
+						return true
+					elseif name == "escape" then
+						s.pick = nil
+						return true
+					end
+				end
+				s.pick = nil -- any other key leaves the chips
+				if name == "escape" then
+					state.settings = nil
+				elseif name == "tab" and plain then
+					local at = table.find(PAGES, s.page) or 1
+					s.page = PAGES[((at - 1 + (if key.shift then -1 else 1)) % #PAGES) + 1]
+					discardEdit(state)
+					s.focus, s.pick, s.errors = nil, nil, {}
+				elseif plain and k == "?" then
+					state.help = true
+				elseif name == "up" or name == "down" then
+					local rows = focusRows(state)
+					if #rows == 0 then
+						return false
+					end
+					local at = if s.focus then table.find(rows, s.focus) else nil
+					local down = name == "down"
+					s.focus = rows[if at then math.clamp(at + (if down then 1 else -1), 1, #rows) elseif down then 1 else #rows]
+				elseif name == "enter" or name == "space" then
+					runRow(state, s.focus)
 				else
 					return false
 				end
 				return true
 			end
-			local e = s.edit
-			if e then
-				if name == "escape" then
-					discardEdit(state)
-				elseif name == "enter" and (not e.model.multi or key.meta or key.ctrl) then
-					commitEdit(state)
-				elseif not input.key(e.model, key, function(t)
+
+			local searching = state.query ~= nil
+			local scopes = state.focus == "scopes"
+			if name == "tab" and plain then
+				state.focus = if scopes then "list" else "scopes"
+			elseif name == "escape" then
+				local q = state.query
+				if q then
+					state.query = if q.text ~= "" then input.new("") else nil
+					ensureCursor(state)
+				elseif scopes then
+					state.focus = "list"
+				else
+					return false
+				end
+			elseif name == "up" or (not searching and plain and k == "k") then
+				if scopes then
+					moveFilter(state, -1)
+				else
+					moveCursor(state, -1)
+				end
+			elseif name == "down" or (not searching and plain and k == "j") then
+				if scopes then
+					moveFilter(state, 1)
+				else
+					moveCursor(state, 1)
+				end
+			elseif name == "page_up" or name == "page_down" then
+				moveCursor(state, if name == "page_up" then -10 else 10)
+			elseif not searching and (name == "home" or name == "end") then
+				local d = if name == "home" then -100000 else 100000
+				if scopes then
+					moveFilter(state, d)
+				else
+					moveCursor(state, d)
+				end
+			elseif name == "enter" then
+				if scopes then
+					state.focus = "list"
+				else
+					openSelected(state, "open", false)
+				end
+			elseif state.query then
+				local q = state.query
+				local before = q.text
+				if not input.key(q, key, function(t)
 					cx:copy(t)
 				end) then
 					return false
 				end
-				return true
-			end
-			local pick = s.pick
-			local pdef = if pick then rowById(state, pick.row) else nil
-			if pick and pdef then
-				local options = pdef.control.options
-				if name == "left" or name == "right" then
-					local at = 0
-					for i, o in options do
-						if o.value == pick.option then
-							at = i
-						end
-					end
-					local o = options[math.clamp(at + (if name == "left" then -1 else 1), 1, math.max(#options, 1))]
-					pick.option = if o then o.value else nil
-					return true
-				elseif (name == "enter" or name == "space") and pick.option then
-					toggleScope(state, pick.row, pick.option)
-					return true
-				elseif name == "escape" then
-					s.pick = nil
-					return true
+				if q.text ~= before then
+					ensureCursor(state)
 				end
-			end
-			s.pick = nil -- any other key leaves the chips
-			if name == "escape" then
-				state.settings = nil
-			elseif name == "tab" and plain then
-				local at = table.find(PAGES, s.page) or 1
-				s.page = PAGES[((at - 1 + (if key.shift then -1 else 1)) % #PAGES) + 1]
-				discardEdit(state)
-				s.focus, s.pick, s.errors = nil, nil, {}
+			elseif plain and k == "/" then
+				state.query = input.new("")
 			elseif plain and k == "?" then
 				state.help = true
-			elseif name == "up" or name == "down" then
-				local rows = focusRows(state)
-				if #rows == 0 then
+			elseif plain and k == "r" then
+				retry(state)
+			elseif plain and k == "s" then
+				openSettings(state, "filters")
+			elseif plain and k == "w" then
+				if not needsCheckout(state) then
+					openSelected(state, "worktree", false)
+				end
+			elseif plain and k == "g" then
+				local chosen = selected(state)
+				if not chosen or not openItems(state)[itemId(state, chosen)] then
 					return false
 				end
-				local at = if s.focus then table.find(rows, s.focus) else nil
-				local down = name == "down"
-				s.focus = rows[if at then math.clamp(at + (if down then 1 else -1), 1, #rows) elseif down then 1 else #rows]
-			elseif name == "enter" or name == "space" then
-				runRow(state, s.focus)
+				openSelected(state, "goto", false)
+			elseif plain and k == "a" then
+				if not needsCheckout(state) then
+					openSelected(state, "agent", false)
+				end
+			elseif plain and k == "o" then
+				state.cx:open(REPOS_HREF)
 			else
-				return false
+				-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
+				local chosen = selected(state)
+				local hit: Prompt? = nil
+				local list: { { prompt: Prompt, here: boolean } } = if plain and chosen then offered(state) else {}
+				for _, o in list do
+					if o.prompt.key == k and string.match(o.prompt.id, "^%w+$") then
+						hit = o.prompt
+					end
+				end
+				if not chosen or not hit then
+					return false
+				end
+				if not needsCheckout(state) then
+					state.cx:open(runHrefOf(state, chosen, hit.id))
+				end
 			end
 			return true
-		end
+		end,
 
-		local searching = state.query ~= nil
-		local scopes = state.focus == "scopes"
-		if name == "tab" and plain then
-			state.focus = if scopes then "list" else "scopes"
-		elseif name == "escape" then
-			local q = state.query
-			if q then
-				state.query = if q.text ~= "" then input.new("") else nil
-				ensureCursor(state)
-			elseif scopes then
-				state.focus = "list"
-			else
-				return false
-			end
-		elseif name == "up" or (not searching and plain and k == "k") then
-			if scopes then
-				moveFilter(state, -1)
-			else
-				moveCursor(state, -1)
-			end
-		elseif name == "down" or (not searching and plain and k == "j") then
-			if scopes then
-				moveFilter(state, 1)
-			else
-				moveCursor(state, 1)
-			end
-		elseif name == "page_up" or name == "page_down" then
-			moveCursor(state, if name == "page_up" then -10 else 10)
-		elseif not searching and (name == "home" or name == "end") then
-			local d = if name == "home" then -100000 else 100000
-			if scopes then
-				moveFilter(state, d)
-			else
-				moveCursor(state, d)
-			end
-		elseif name == "enter" then
-			if scopes then
-				state.focus = "list"
-			else
-				openSelected(state, "open", false)
-			end
-		elseif state.query then
-			local q = state.query
-			local before = q.text
-			if not input.key(q, key, function(t)
-				cx:copy(t)
-			end) then
-				return false
-			end
-			if q.text ~= before then
-				ensureCursor(state)
-			end
-		elseif plain and k == "/" then
-			state.query = input.new("")
-		elseif plain and k == "?" then
-			state.help = true
-		elseif plain and k == "r" then
-			retry(state)
-		elseif plain and k == "s" then
-			openSettings(state, "filters")
-		elseif plain and k == "w" then
-			if not needsCheckout(state) then
-				openSelected(state, "worktree", false)
-			end
-		elseif plain and k == "g" then
-			local pr = selectedPr(state)
-			if not pr or not openPrs(state)[pr.number] then
-				return false
-			end
-			openSelected(state, "goto", false)
-		elseif plain and k == "a" then
-			if not needsCheckout(state) then
-				openSelected(state, "agent", false)
-			end
-		elseif plain and k == "o" then
-			state.cx:open(REPOS_HREF)
-		else
-			-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
-			local pr = selectedPr(state)
-			local hit: Prompt? = nil
-			local list: { { prompt: Prompt, here: boolean } } = if plain and pr then offered(state) else {}
-			for _, o in list do
-				if o.prompt.key == k and string.match(o.prompt.id, "^%w+$") then
-					hit = o.prompt
-				end
-			end
-			if not pr or not hit then
-				return false
-			end
-			if not needsCheckout(state) then
-				state.cx:open(runHref(pr, hit.id))
-			end
-		end
-		return true
-	end,
-
-	event = function(state: State, ev: UiEvent, _cx: BlockCx)
-		if not alive(state) then
-			return
-		end
-		local s = state.settings
-		local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
-		local item = if type(ev.item) == "string" then ev.item else nil
-		if act == "retry-checks" then
-			local pr = selectedPr(state)
-			local key = if pr then detailKey(state, pr) else nil
-			if key then
-				state.detailFail[key] = nil
-				cancelDetails(state)
-			end
-		elseif act == "rpc" then
-			rpc(state, ev.value)
-		elseif act == "show-repo" then
-			showRepo(state, ev.value)
-		elseif act == "fold-description" then
-			state.descOpen = nil
-		elseif ev.ev == "toggle" and ev.key == "description" then
-			local pr = selectedPr(state)
-			state.descOpen = if pr and ev.collapsed == false then pr.key else nil
-		elseif act == "close-help" then
-			state.help = false
-		elseif act == "confirm-delete" then
-			if s and s.confirm then
-				confirmDelete(state)
-			end
-		elseif act == "cancel-delete" then
-			if s then
-				s.confirm = nil
-			end
-		elseif act == "save-prompt" or act == "cancel-prompt" then
-			-- The editor card's buttons: their own ids, not the prefs node's.
-			if s and act == "save-prompt" then
-				commitEdit(state)
-			elseif s then
-				discardEdit(state)
-			end
-		elseif s then
-			if ev.id ~= SETTINGS_ID then
+		event = function(state: State, ev: UiEvent, _cx: BlockCx)
+			if not alive(state) then
 				return
 			end
-			if act == "page" then
-				if type(ev.value) == "string" and table.find(PAGES, ev.value) then
-					discardEdit(state)
-					s.page, s.focus, s.pick, s.errors = ev.value, nil, nil, {}
+			local s = state.settings
+			local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
+			local item = if type(ev.item) == "string" then ev.item else nil
+			if act == "retry-checks" then
+				local chosen = selected(state)
+				local key = if chosen then detailKey(state, chosen) else nil
+				if key then
+					state.detailFail[key] = nil
+					cancelDetails(state)
 				end
-			elseif act == "close" then
-				if ev.value == nil then
-					discardEdit(state)
-					state.settings = nil
-				else
+			elseif act == "rpc" then
+				rpc(state, ev.value)
+			elseif act == "show-repo" then
+				showRepo(state, ev.value)
+			elseif act == "fold-description" then
+				state.descOpen = nil
+			elseif ev.ev == "toggle" and ev.key == "description" then
+				local chosen = selected(state)
+				state.descOpen = if chosen and ev.collapsed == false then chosen.key else nil
+			elseif act == "set-checkout" then
+				needsCheckout(state)
+			elseif act == "close-help" then
+				state.help = false
+			elseif act == "confirm-delete" then
+				if s and s.confirm then
+					confirmDelete(state)
+				end
+			elseif act == "cancel-delete" then
+				if s then
+					s.confirm = nil
+				end
+			elseif act == "save-prompt" or act == "cancel-prompt" then
+				-- The editor card's buttons: their own ids, not the prefs node's.
+				if s and act == "save-prompt" then
+					commitEdit(state)
+				elseif s then
 					discardEdit(state)
 				end
-			elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" then
-				if type(ev.value) == "string" then
-					s.focus = ev.value
-					runAction(state, act, ev.value)
+			elseif s then
+				if ev.id ~= SETTINGS_ID then
+					return
 				end
-			elseif ev.ev == "activate" and item then
-				beginEdit(state, item)
-			elseif ev.ev == "select" and item then
-				s.focus = item
-			elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
-				resetRow(state, item)
-			elseif ev.ev == "change" and item and isTable(ev.value) then
-				local id = string.match(item, "^pscope:(.+)$")
-				if id then
+				if act == "page" then
+					if type(ev.value) == "string" and table.find(PAGES, ev.value) then
+						discardEdit(state)
+						s.page, s.focus, s.pick, s.errors = ev.value, nil, nil, {}
+					end
+				elseif act == "close" then
+					if ev.value == nil then
+						discardEdit(state)
+						state.settings = nil
+					else
+						discardEdit(state)
+					end
+				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" then
+					if type(ev.value) == "string" then
+						s.focus = ev.value
+						runAction(state, act, ev.value)
+					end
+				elseif ev.ev == "activate" and item then
+					beginEdit(state, item)
+				elseif ev.ev == "select" and item then
 					s.focus = item
-					setScope(state, id, ev.value)
+				elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
+					resetRow(state, item)
+				elseif ev.ev == "change" and item and isTable(ev.value) then
+					local scope = string.match(item, "^pscope:(.+)$")
+					local where = string.match(item, "^pwhere:(.+)$")
+					if scope then
+						s.focus = item
+						setScope(state, scope, ev.value)
+					elseif where then
+						s.focus = item
+						setWhere(state, where, table.find(ev.value, "worktree") ~= nil)
+					end
 				end
-			end
-		elseif ev.id == QUEUE_ID then
-			if ev.ev == "select" or ev.ev == "activate" then
-				local pr = if item then prOfItem(state, item) else nil
-				if not pr then
-					return -- a refresh replaced the snapshot
-				end
-				state.cursor, state.focus = pr.key, "list"
-				if ev.ev == "activate" then
-					openSelected(state, "open", true)
-				end
-			elseif act == "scope" then
-				state.focus = "list"
-				if type(ev.value) == "string" and ev.value ~= state.activeId then
-					for _, f in state.store.items do
-						if f.id == ev.value then
-							switchFilter(state, f.id)
+			elseif ev.id == QUEUE_ID then
+				if ev.ev == "select" or ev.ev == "activate" then
+					local picked = if item then itemOf(state, item) else nil
+					if not picked then
+						return -- a refresh replaced the snapshot
+					end
+					state.cursor, state.focus = picked.key, "list"
+					if ev.ev == "activate" then
+						openSelected(state, "open", true)
+					end
+				elseif act == "scope" then
+					state.focus = "list"
+					if type(ev.value) == "string" and ev.value ~= state.activeId then
+						for _, f in state.store.items do
+							if f.id == ev.value then
+								switchFilter(state, f.id)
+							end
+						end
+					end
+				elseif act == "clear" or act == "close" then
+					state.query = nil
+					ensureCursor(state)
+				elseif act == "settings" then
+					openSettings(state, "filters")
+				elseif act == "retry" then
+					retry(state)
+				elseif act == "repos" then
+					state.cx:open(REPOS_HREF)
+				elseif act then
+					-- An item's button in the action bar: open its link, as its key does.
+					local chosen = selected(state)
+					local acts: { Action } = if chosen then itemActions(state, chosen, openItems(state)) else {}
+					for _, a in acts do
+						if a.id == act then
+							state.cx:open(a.href)
 						end
 					end
 				end
-			elseif act == "clear" or act == "close" then
-				state.query = nil
-				ensureCursor(state)
-			elseif act == "settings" then
-				openSettings(state, "filters")
-			elseif act == "retry" then
-				retry(state)
-			elseif act == "repos" then
-				state.cx:open(REPOS_HREF)
-			elseif act == "checkout" then
-				needsCheckout(state)
-			elseif act then
-				-- A PR button in the action bar: open its link, as its key does.
-				local pr = selectedPr(state)
-				local acts: { PrAction } = if pr then prActions(state, pr, openPrs(state)) else {}
-				for _, a in acts do
-					if a.id == act then
-						state.cx:open(a.href)
-					end
-				end
 			end
-		end
-	end,
+		end,
 
-	save = function(state: State): any
-		local p = state.problem
-		local pause: { kind: string, message: string, repo: string? }? = nil
-		local terminal = p ~= nil and (p.kind == "no-repo" or (TERMINAL[p.kind] and p.kind ~= "account"))
-		if p and terminal then
-			pause = { kind = p.kind, message = p.message, repo = state.repo }
-		end
-		return { version = 1, launchCwd = state.launchCwd, repo = state.repo, activeFilterId = state.activeId, pause = pause }
-	end,
-})
+		save = function(state: State): any
+			local p = state.problem
+			local pause: { kind: string, message: string, repo: string? }? = nil
+			local terminal = p ~= nil and (p.kind == "no-repo" or (TERMINAL[p.kind] and p.kind ~= "account"))
+			if p and terminal then
+				pause = { kind = p.kind, message = p.message, repo = state.repo }
+			end
+			return { version = 1, launchCwd = state.launchCwd, repo = state.repo, activeFilterId = state.activeId, pause = pause }
+		end,
+	}
+end
+
+tern.block.define("prs", blockDef(PRS))
+tern.block.define("issues", blockDef(ISSUES))

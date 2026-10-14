@@ -40,6 +40,17 @@ export type Result = {
 	dirty: boolean?,
 }
 
+export type IssueResult = {
+	path: string,
+	root: string,
+	remote: string,
+	branch: string,
+	key: string,
+	created: boolean,
+	head: string,
+	dirty: boolean?,
+}
+
 type Plan = { info: Repo, meta: github.PrMeta, root: string, target: string }
 
 local LOCAL_MS = 10 * 1000
@@ -343,6 +354,38 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 	end)
 end
 
+-- Makes `path` the checkout of `repo`: a folder inside a work tree of it is used as it is (`cloned` false); a folder that
+-- is missing, or not inside any work tree, gets `gh repo clone` (git refuses a non-empty one, and that is the problem
+-- reported); a work tree of another repository is refused. done({ root, cloned }, problem, cx); cx is nil in the host.
+function M.claimCheckout(path: string, repo: string, done: Cb<{ root: string, cloned: boolean }>)
+	local function resolved(cloned: boolean)
+		M.resolveRepository(path, repo, function(info, why, cx)
+			if not info then
+				return done(nil, if cloned then "Cloned " .. repo .. ", but " .. (why or "it could not be read") else why, cx)
+			end
+			done({ root = info.root, cloned = cloned }, nil, cx)
+		end)
+	end
+	local function clone()
+		github.clone(repo, path, function(problem, cx)
+			if problem then
+				return done(nil, problem.message, cx)
+			end
+			resolved(true)
+		end)
+	end
+	if not tern.fs.exists(path) then
+		return clone()
+	end
+	topLevel(path, function(root)
+		if root then
+			resolved(false)
+		else
+			clone()
+		end
+	end)
+end
+
 -- "owner/repo" of the checkout at `path` (the first github.com remote in origin/upstream/lexical order) and its main
 -- checkout: a linked worktree's main one, so a saved checkout outlives the worktree. Local git only, no network.
 function M.currentRepository(path: string, done: Cb<{ id: string, checkout: string }>)
@@ -395,7 +438,7 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 		end
 	end
 	if tern.fs.exists(target) then
-		return "error", target .. " already exists and is not this PR's worktree; move it away or remove it."
+		return "error", target .. " already exists and is not the worktree of " .. branch .. "; move it away or remove it."
 	end
 	return "create", nil
 end
@@ -497,7 +540,118 @@ function M.cleanup(r: Result): { string }
 	}
 end
 
--- Creates or reuses the worktree of PR `repo`#`number` from the saved `checkout`; done(result, problem, cx) runs exactly
+-- Shared by `open` and `openIssue`: `finish` reports the result exactly once; `attempt` runs fn and fails the request
+-- on an error it raises (a failed fs call, a bug) instead of letting it escape into the runtime, where done would
+-- never run and the caller would wait forever; `run` is `git -C dir args`, a failure ending the request.
+type Steps<T> = {
+	finish: (T?, string?, WindowCx?) -> (),
+	attempt: (WindowCx?, () -> ()) -> (),
+	run: (string, { string }, number, (string, WindowCx?) -> ()) -> (),
+}
+
+local function steps<T>(done: Cb<T>): Steps<T>
+	local finished = false
+	local function finish(result: T?, problem: string?, cx: WindowCx?)
+		if not finished then
+			finished = true
+			done(result, problem, cx)
+		end
+	end
+	local function attempt(cx: WindowCx?, fn: () -> ())
+		local why: any
+		local ok = xpcall(fn, function(e: any)
+			why = e
+		end)
+		if not ok then
+			if finished then
+				error(why, 0) -- done itself raised: not ours to swallow
+			end
+			finish(nil, "Worktree step failed: " .. tostring(why), cx)
+		end
+	end
+	local function run(dir: string, args: { string }, ms: number, step: (string, WindowCx?) -> ())
+		git(dir, args, ms, function(out, err, cx)
+			if not out then
+				return finish(nil, err or "git failed", cx)
+			end
+			attempt(cx, function()
+				step(out, cx)
+			end)
+		end)
+	end
+	return { finish = finish, attempt = attempt, run = run }
+end
+
+-- Confirms `path` is a work tree of the repository whose git common dir is `commonDir`, then reports its HEAD and
+-- whether it has changes. A worktree made just now must sit at `want`; it is read for changes too, since a checkout
+-- hook may have written some.
+local function inspectPath<T>(s: Steps<T>, path: string, commonDir: string, want: string?, step: (string, boolean?, WindowCx?) -> ())
+	s.run(path, { "rev-parse", "--show-toplevel" }, LOCAL_MS, function(top, cx1)
+		if trim(top) == "" then
+			return s.finish(nil, path .. " is not a work tree.", cx1)
+		end
+		s.run(path, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, LOCAL_MS, function(common, cx2)
+			if trim(common) ~= commonDir then
+				return s.finish(nil, path .. " belongs to a different repository.", cx2)
+			end
+			s.run(path, { "rev-parse", "HEAD" }, LOCAL_MS, function(out, cx3)
+				local head = trim(out)
+				if want and head ~= want then
+					return s.finish(nil, "The new worktree is not at " .. want .. ".", cx3)
+				end
+				-- A failed or slow status leaves `dirty` unknown instead of failing the open.
+				git(path, { "status", "--porcelain", "--untracked-files=normal" }, LOCAL_MS, function(status, _, cx4)
+					s.attempt(cx4, function()
+						step(head, if status then status ~= "" else nil, cx4)
+					end)
+				end)
+			end)
+		end)
+	end)
+end
+
+-- Adds the worktree at `target`: on a new branch at `sha`, or (sha nil) on the branch that already exists. A lost
+-- race is accepted only when the other window made the very same worktree.
+local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch: string, sha: string?, step: (string, boolean, WindowCx?) -> (), cx: WindowCx?)
+	local parent = dirname(target)
+	local why: any
+	local ok = xpcall(tern.fs.mkdir, function(e: any)
+		why = e
+	end, parent)
+	if not ok then
+		return s.finish(nil, "Could not create " .. parent .. ": " .. tostring(why), cx)
+	end
+	-- Through omp, so the worktree starts as omp's copy-on-write clone when `worktree.clone` is on (ignored build
+	-- output such as node_modules carries over) and `omp worktree` lists it.
+	local argv = { "omp", "worktree", "add", "-q", "-C", root }
+	local rest: { string } = if sha then { "-b", branch, target, sha } else { target, branch }
+	for _, a in rest do
+		table.insert(argv, a)
+	end
+	process.run(argv, { timeout_ms = NET_MS, env = ENV }, function(res, perr, cx5)
+		local addErr = if not res
+			then (perr or "omp could not be started")
+			elseif res.timed_out then "omp worktree add timed out"
+			elseif res.status ~= 0 then "omp worktree add failed: " .. firstLine(if res.stderr ~= "" then res.stderr else res.stdout)
+			else nil
+		s.attempt(cx5, function()
+			if not addErr then
+				return step(target, true, cx5)
+			end
+			-- Another window may have won the race: accept only a full match.
+			git(root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, _, cx6)
+				s.attempt(cx6 or cx5, function()
+					local verdict, what = M.reconcile(if out then M.parseWorktrees(out) else {}, branch, target)
+					if verdict == "reuse" then
+						return step((what :: Record).path, false, cx6 or cx5)
+					end
+					s.finish(nil, addErr .. " (left as is: " .. target .. ")", cx6 or cx5)
+				end)
+			end)
+		end)
+	end)
+end
+
 -- once, even when a step raises. A worktree that already exists is only read, never changed or updated. Problem
 -- M.NO_REPO means `checkout` is not a checkout of `repo`.
 function M.open(checkout: string, repo: string, number: number, done: Cb<Result>)
@@ -515,38 +669,8 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	local dirName = "plotroom-" .. owner .. "_" .. name .. "-pr-" .. number
 	local branch, ref = M.refNames(owner, name, number)
 
-	local finished = false
-	local function finish(result: Result?, problem: string?, cx: WindowCx?)
-		if not finished then
-			finished = true
-			done(result, problem, cx)
-		end
-	end
-	-- Runs fn; an error it raises (a failed fs call, a bug) fails the request instead of escaping into the runtime,
-	-- where done would never run and the caller would wait forever.
-	local function attempt(cx: WindowCx?, fn: () -> ())
-		local why: any
-		local ok = xpcall(fn, function(e: any)
-			why = e
-		end)
-		if not ok then
-			if finished then
-				error(why, 0) -- done itself raised: not ours to swallow
-			end
-			finish(nil, "Worktree step failed: " .. tostring(why), cx)
-		end
-	end
-	-- `git -C dir args`: a failure ends the request, otherwise step(stdout, cx).
-	local function run(dir: string, args: { string }, ms: number, step: (string, WindowCx?) -> ())
-		git(dir, args, ms, function(out, err, cx)
-			if not out then
-				return finish(nil, err or "git failed", cx)
-			end
-			attempt(cx, function()
-				step(out, cx)
-			end)
-		end)
-	end
+	local s = steps(done)
+	local finish, attempt, run = s.finish, s.attempt, s.run
 	-- The pull request's current head and base, read from GitHub.
 	local function readPr(step: (github.PrMeta, WindowCx?) -> ())
 		github.pr(repo, number, function(meta, problem, cx)
@@ -562,43 +686,24 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	-- Confirms `path` is a work tree of this repository, then reports its HEAD and whether it has changes. A worktree
 	-- made just now must sit at the PR head; it is read for changes too, since a checkout hook may have written some.
 	local function inspect(plan: Plan, path: string, created: boolean)
-		run(path, { "rev-parse", "--show-toplevel" }, LOCAL_MS, function(top, cx1)
-			if trim(top) == "" then
-				return finish(nil, path .. " is not a work tree.", cx1)
-			end
-			run(path, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, LOCAL_MS, function(common, cx2)
-				if trim(common) ~= plan.info.commonDir then
-					return finish(nil, path .. " belongs to a different repository.", cx2)
-				end
-				run(path, { "rev-parse", "HEAD" }, LOCAL_MS, function(out, cx3)
-					local head = trim(out)
-					if created and head ~= plan.meta.sha then
-						return finish(nil, "The new worktree is not at " .. plan.meta.sha .. ".", cx3)
-					end
-					-- A failed or slow status leaves `dirty` unknown instead of failing the open.
-					git(path, { "status", "--porcelain", "--untracked-files=normal" }, LOCAL_MS, function(status, _, cx4)
-						attempt(cx4, function()
-							local result: Result = {
-								path = path,
-								root = plan.root,
-								remote = plan.info.remote,
-								branch = branch,
-								ref = ref,
-								number = number,
-								created = created,
-								head = head,
-								prHead = plan.meta.sha,
-								prRef = plan.meta.ref,
-								prBase = plan.meta.baseRef,
-								title = plan.meta.title,
-								author = plan.meta.author,
-								dirty = if status then status ~= "" else nil,
-							}
-							finish(result, nil, cx4)
-						end)
-					end)
-				end)
-			end)
+		inspectPath(s, path, plan.info.commonDir, if created then plan.meta.sha else nil, function(head, dirty, cx)
+			local result: Result = {
+				path = path,
+				root = plan.root,
+				remote = plan.info.remote,
+				branch = branch,
+				ref = ref,
+				number = number,
+				created = created,
+				head = head,
+				prHead = plan.meta.sha,
+				prRef = plan.meta.ref,
+				prBase = plan.meta.baseRef,
+				title = plan.meta.title,
+				author = plan.meta.author,
+				dirty = dirty,
+			}
+			s.finish(result, nil, cx)
 		end)
 	end
 
@@ -616,43 +721,9 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 
 	-- Adds the worktree: on a new branch at `sha`, or on the branch that already sits there.
 	local function add(plan: Plan, sha: string, attach: boolean, cx: WindowCx?)
-		local parent = dirname(plan.target)
-		local why: any
-		local ok = xpcall(tern.fs.mkdir, function(e: any)
-			why = e
-		end, parent)
-		if not ok then
-			return finish(nil, "Could not create " .. parent .. ": " .. tostring(why), cx)
-		end
-		-- Through omp, so the worktree starts as omp's copy-on-write clone when `worktree.clone` is on (ignored build
-		-- output such as node_modules carries over) and `omp worktree` lists it.
-		local argv = { "omp", "worktree", "add", "-q", "-C", plan.info.root }
-		local rest: { string } = if attach then { plan.target, branch } else { "-b", branch, plan.target, sha }
-		for _, a in rest do
-			table.insert(argv, a)
-		end
-		process.run(argv, { timeout_ms = NET_MS, env = ENV }, function(res, perr, cx5)
-			local addErr = if not res
-				then (perr or "omp could not be started")
-				elseif res.timed_out then "omp worktree add timed out"
-				elseif res.status ~= 0 then "omp worktree add failed: " .. firstLine(if res.stderr ~= "" then res.stderr else res.stdout)
-				else nil
-			attempt(cx5, function()
-				if not addErr then
-					return ready(plan, plan.target, true)
-				end
-				-- Another window may have won the race: accept only a full match.
-				git(plan.info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, _, cx6)
-					attempt(cx6 or cx5, function()
-						local verdict, what = M.reconcile(if out then M.parseWorktrees(out) else {}, branch, plan.target)
-						if verdict == "reuse" then
-							return ready(plan, (what :: Record).path, false)
-						end
-						finish(nil, addErr .. " (left as is: " .. plan.target .. ")", cx6 or cx5)
-					end)
-				end)
-			end)
-		end)
+		addWorktree(s, plan.info.root, plan.target, branch, if attach then nil else sha, function(path, created)
+			ready(plan, path, created)
+		end, cx)
 	end
 
 	-- The branch exists but not at the PR head and no worktree has it: left alone, with the ways forward spelled out.
@@ -750,6 +821,159 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 			end
 		end)
 	end)
+end
+
+-- Creates or reuses the worktree of issue `key` of `repo` on `branch`, in `<omp worktrees>/plotroom-<owner>_<repo>-issue-<key>`.
+-- A worktree already at that directory is reused whatever its branch; an existing local branch is attached, never
+-- moved; a new branch starts at the remote's default branch. done(result, problem, cx) runs exactly once. Problem
+-- M.NO_REPO means `checkout` is not a checkout of `repo`.
+function M.openIssue(checkout: string, repo: string, key: string, branch: string, done: Cb<IssueResult>)
+	local lrepo = string.lower(repo)
+	local owner, name = string.match(lrepo, "^([^/]+)/([^/]+)$")
+	local bad: string? = nil
+	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+		bad = "Invalid repository " .. repo
+	elseif not string.match(key, "^[%w%-]+$") or #key > 64 or branch == "" then
+		bad = "Invalid issue " .. key .. " of " .. repo
+	end
+	if bad or not owner or not name then
+		tern.timer(0, function(cx)
+			done(nil, bad, cx)
+		end)
+		return
+	end
+	local dirName = "plotroom-" .. owner .. "_" .. name .. "-issue-" .. string.lower(key)
+	local baseRef = "refs/plotroom-base/" .. refPart(owner) .. "/" .. refPart(name)
+
+	local s = steps(done)
+	local finish, attempt, run = s.finish, s.attempt, s.run
+
+	local function inspect(info: Repo, root: string, path: string, created: boolean, want: string?, rbranch: string)
+		inspectPath(s, path, info.commonDir, want, function(head, dirty, cx)
+			finish({
+				path = path,
+				root = root,
+				remote = info.remote,
+				branch = rbranch,
+				key = key,
+				created = created,
+				head = head,
+				dirty = dirty,
+			}, nil, cx)
+		end)
+	end
+
+	local function create(info: Repo, root: string, target: string)
+		git(info.root, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }, LOCAL_MS, function(tip, _, cx, status)
+			attempt(cx, function()
+				if tip then
+					return addWorktree(s, root, target, branch, nil, function(path, created)
+						inspect(info, root, path, created, trim(tip), branch)
+					end, cx)
+				elseif status ~= 1 then
+					return finish(nil, "Could not inspect branch " .. branch .. ".", cx)
+				end
+				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+HEAD:" .. baseRef }, NET_MS, function(_, ferr, cx3)
+					attempt(cx3, function()
+						git(info.root, { "rev-parse", "--verify", "--quiet", baseRef }, LOCAL_MS, function(out, _, cx4)
+							attempt(cx4 or cx3, function()
+								local sha = if out then trim(out) else ""
+								if sha == "" then
+									return finish(nil, ferr or ("Could not read the default branch of " .. repo .. "."), cx4 or cx3)
+								end
+								addWorktree(s, root, target, branch, sha, function(path, created)
+									inspect(info, root, path, created, sha, branch)
+								end, cx4 or cx3)
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end
+
+	local function proceed(info: Repo)
+		M.worktreesDir(function(base, why, cx0)
+			if not base then
+				return finish(nil, why, cx0)
+			end
+			git(info.root, { "check-ref-format", "--branch", branch }, LOCAL_MS, function(_, _, cx1, status)
+				attempt(cx1, function()
+					if status ~= 0 then
+						return finish(nil, "Branch name " .. branch .. " is not valid; change the branch format in Settings › Worktrees.", cx1)
+					end
+					run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
+						local recs = M.parseWorktrees(out)
+						local main = recs[1]
+						if not main or string.sub(main.path, 1, 1) ~= "/" then
+							return finish(nil, "Could not find this repository's main worktree.", cx2)
+						end
+						local root = (string.gsub(main.path, "/+$", ""))
+						local target = base .. "/" .. dirName
+						for _, r in recs do
+							if r.path == target then
+								local rb = if r.branch then string.gsub(r.branch, "^refs/heads/", "") else branch
+								if r.locked or r.prunable or not tern.fs.exists(r.path) then
+									return finish(nil, "The worktree of " .. rb .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune).", cx2)
+								end
+								return inspect(info, root, r.path, false, nil, rb)
+							end
+						end
+						local verdict, what = M.reconcile(recs, branch, target)
+						if verdict == "error" then
+							return finish(nil, what :: string, cx2)
+						elseif verdict == "reuse" then
+							return inspect(info, root, (what :: Record).path, false, nil, branch)
+						end
+						create(info, root, target)
+					end)
+				end)
+			end)
+		end)
+	end
+
+	M.resolveRepository(checkout, repo, function(info, _, cx)
+		attempt(cx, function()
+			if info then
+				proceed(info)
+			else
+				finish(nil, M.NO_REPO, cx)
+			end
+		end)
+	end)
+end
+
+function M.describeIssue(r: IssueResult): string
+	local changes = if r.dirty == true
+		then "Modified (uncommitted changes kept)"
+		elseif r.dirty == false then "Clean"
+		else "Changes unchecked"
+	return (if r.created then "Created" else "Reused") .. " · " .. r.branch .. " at " .. short(r.head) .. " · " .. changes
+end
+
+-- Commands that remove the worktree, then its branch. Only shown to the user, as `cleanup`.
+function M.cleanupIssue(r: IssueResult): { string }
+	local at = "git -C " .. shellWord(r.root)
+	return {
+		at .. " worktree remove " .. shellWord(r.path),
+		at .. " branch -d " .. shellWord(r.branch),
+	}
+end
+
+-- The issue ref whose Plotroom worktree holds `path` (the root or any directory inside it), nil otherwise.
+function M.issueOfPath(path: string, repo: string): string?
+	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
+	if not owner or not name then
+		return nil
+	end
+	local _, e = string.find(path, "/plotroom-" .. owner .. "_" .. name .. "-issue-", 1, true)
+	if e then
+		local ref, rest = string.match(string.sub(path, e + 1), "^([%w%-]+)(.*)$")
+		if ref and rest and (rest == "" or string.sub(rest, 1, 1) == "/") then
+			return ref
+		end
+	end
+	return nil
 end
 
 return M

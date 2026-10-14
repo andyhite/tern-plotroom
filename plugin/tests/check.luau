@@ -6,6 +6,7 @@
 local github = require("../github")
 local input = require("../input")
 local process = require("../process")
+local tracker = require("../tracker")
 local worktree = require("../worktree")
 
 local M = {}
@@ -268,6 +269,49 @@ function M.run()
 	assert(worktree.prOfPath("/r/x.plotroom/a/b/pr-7", "a/b") == 7, "a worktree from an earlier version still maps")
 	for _, p in { "/wt/plotroom-a_b-pr-12x", "/wt/plotroom-a_bc-pr-1", "/wt/xplotroom-a_b-pr-1", "/r/a/b/pr-1", "" } do
 		assert(worktree.prOfPath(p, "a/b") == nil, "not a PR worktree: " .. p)
+	end
+
+	-- issues: slugs, branch formats, matching, ordering and worktree paths
+	assert(tracker.slug("Fix: Login → redirect!!") == "fix-login-redirect", "a title becomes ASCII words joined by dashes")
+	assert(tracker.slug("  --Hello__World--  ") == "hello-world", "a run of other characters is one dash, none at the ends")
+	assert(tracker.slug(string.rep("abcdefghi ", 6)) == "abcdefghi-abcdefghi-abcdefghi-abcdefghi", "a long title is cut at 40 bytes, with no dash left at the end")
+	assert(tracker.slug("¡¿") == "issue", "a title with no ASCII letter or digit is just issue")
+	assert(tracker.branchName("{key}-{slug}", { key = "12", slug = "x" }) == "12-x", "a format fills in its variables")
+	assert(tracker.branchName("{owner}/{repo}#{key}", { key = "12", slug = "x", owner = "o", repo = "r" }) == "o/r#12", "any variable, anywhere")
+	local nobranch, nobranchWhy = tracker.branchName("{slug}", { slug = "x" })
+	assert(nobranch == nil and nobranchWhy == "Include {key}, so each issue gets its own branch.", "a format without {key} names no branch")
+	assert(tracker.formatProblem("   ") == "A format is required.", "a blank format is refused")
+	assert(tracker.formatProblem("{foo}-{key}") == "Unknown variable {foo}.", "an unknown variable is named")
+	assert(tracker.formatProblem("x-{slug}") == "Include {key}, so each issue gets its own branch.", "{key} is required")
+	assert(tracker.formatProblem("feat/{owner}-{repo}-{key}-{slug}") == nil, "every variable is accepted")
+	local ip = github.normalizeIssue({ number = 12, title = "Fix 😀 login", url = "https://github.com/a/b/issues/12", author = "octo", state = "OPEN", labels = tern.json.array({ "bug" }), assignees = tern.json.array({ "ann" }) })
+	assert(ip, "the issue fixture normalizes")
+	assert(ip.key == "a/b#12" and ip.ref == "12" and ip.id == "n12" and ip.tracker == "github" and ip.state == "open", "an issue's identity and state")
+	local ihit, irange = tracker.match(ip, " LOGIN ")
+	assert(ihit and irange and irange[1] == 7 and irange[2] == 12, "an issue's title match gives a UTF-16 range")
+	ihit, irange = tracker.match(ip, "#12")
+	assert(ihit and irange == nil, "the number matches without a range")
+	assert((tracker.match(ip, "bug")) and (tracker.match(ip, "ann")) and (tracker.match(ip, "octo")), "labels, assignees and the author match")
+	assert(not (tracker.match(ip, "zzz")), "no match")
+	local function ni(n: number, repo: string, updated: string): any
+		local made = github.normalizeIssue({ number = n, title = "T" .. n, url = "https://github.com/" .. repo .. "/issues/" .. n, updatedAt = updated, createdAt = updated })
+		assert(made, "the issue fixture normalizes")
+		return made
+	end
+	local irec = tracker.reconcile({
+		ni(1, "A/B", "2026-01-01T00:00:00Z"),
+		ni(2, "a/b", "2026-03-01T00:00:00Z"),
+		ni(1, "a/b", "2026-01-01T00:00:00Z"),
+		ni(3, "a/b", "2026-03-01T00:00:00Z"),
+	})
+	assert(#irec == 3 and irec[1].key == "a/b#2" and irec[2].key == "a/b#3" and irec[3].key == "a/b#1", "duplicates fold by lowercase identity: updated desc, key tie-break")
+	assert(irec[3].repo == "A/B", "display spelling preserved")
+	assert(worktree.issueOfPath("/wt/plotroom-o_r-issue-12/src", "O/R") == "12", "a directory inside an issue's worktree maps to its key")
+	assert(worktree.issueOfPath("/wt/plotroom-o_r-issue-abc-12", "o/r") == "abc-12", "a key may hold dashes")
+	assert(worktree.issueOfPath("/wt/plotroom-o_r-pr-12", "o/r") == nil, "a PR worktree is no issue worktree")
+	assert(worktree.prOfPath("/wt/plotroom-o_r-issue-12", "o/r") == nil, "nor an issue worktree a PR's")
+	for _, p in { "/wt/plotroom-o_r-issue-12.bak", "/wt/plotroom-o_rr-issue-1", "/wt/xplotroom-o_r-issue-1", "/r/o/r/issue-1", "" } do
+		assert(worktree.issueOfPath(p, "o/r") == nil, "not an issue worktree: " .. p)
 	end
 
 	-- PATH probe output

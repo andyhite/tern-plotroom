@@ -8,7 +8,8 @@
 
 local worktree = require("./worktree")
 
-local BLOCK = "plotroom.prs"
+local BLOCKS = { "plotroom.prs", "plotroom.issues" }
+local ISSUE_ICON = "circle-dot"
 local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
@@ -23,12 +24,24 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "5" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "6" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
 -- A worktree the host prepared, as its answer says.
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
+-- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
+type Target = { kind: "pr" | "issue", owner: string, name: string, repo: string, ref: string, label: string, tab: string }
+
+local function prTarget(owner: string, name: string, n: number): Target
+	local repo = owner .. "/" .. name
+	return { kind = "pr", owner = owner, name = name, repo = repo, ref = tostring(n), label = repo .. "#" .. n, tab = "PR #" .. n .. " · " .. name }
+end
+
+local function issueTarget(owner: string, name: string, ref: string): Target
+	local repo = owner .. "/" .. name
+	return { kind = "issue", owner = owner, name = name, repo = repo, ref = ref, label = repo .. "#" .. ref, tab = "#" .. ref .. " · " .. name }
+end
 -- Requests to a block's host waiting for their answer, by id.
 type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle }
 local pending: { [string]: Pending } = {}
@@ -52,7 +65,15 @@ end
 local function isPlotroom(cx: WindowCx, pane: number): boolean
 	local info = cx.session:pane(pane)
 	local block = if info then info.block else nil
-	return type(block) == "string" and string.sub(block, -#BLOCK) == BLOCK
+	if type(block) ~= "string" then
+		return false
+	end
+	for _, b in BLOCKS do
+		if string.sub(block, -#b) == b then
+			return true
+		end
+	end
+	return false
 end
 
 local function findNode(node: any, id: string): any?
@@ -138,13 +159,14 @@ local function parseCheck(url: string): (number?, string?)
 	return index, target
 end
 
--- A pane in a tab of this window working in PR `repo`#`n`'s Plotroom worktree: pane, tab and session ids.
-local function prPane(cx: WindowCx, repo: string, n: number): (number?, number?, number?)
+-- A pane in a tab of this window working in the target's Plotroom worktree: pane, tab and session ids.
+local function targetPane(cx: WindowCx, t: Target): (number?, number?, number?)
 	for _, p in cx.session:panes() do
-		if p.tab and worktree.prOfPath(p.cwd or "", repo) == n then
-			for _, t in cx.session:tabs() do
-				if t.id == p.tab then
-					return p.pane, t.id, t.session
+		local here = if t.kind == "pr" then worktree.prOfPath(p.cwd or "", t.repo) == tonumber(t.ref) else worktree.issueOfPath(p.cwd or "", t.repo) == t.ref
+		if p.tab and here then
+			for _, tb in cx.session:tabs() do
+				if tb.id == p.tab then
+					return p.pane, tb.id, tb.session
 				end
 			end
 		end
@@ -152,10 +174,10 @@ local function prPane(cx: WindowCx, repo: string, n: number): (number?, number?,
 	return nil, nil, nil
 end
 
-local function gotoPr(cx: WindowCx, repo: string, n: number)
-	local pane, _, session = prPane(cx, repo, n)
+local function gotoTarget(cx: WindowCx, t: Target)
+	local pane, _, session = targetPane(cx, t)
 	if not pane or not session then
-		return cx:toast("info", "No tab is open for " .. repo .. "#" .. n)
+		return cx:toast("info", "No tab is open for " .. t.label)
 	end
 	cx.sessions:switch(session)
 	cx.layout:focus(pane)
@@ -256,15 +278,15 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 	return nil
 end
 
--- Names the tab holding `pane` "PR #n · <repo name>".
-local function namePrTab(cx: WindowCx, pane: number, repo: string, n: number)
+-- Names the tab holding `pane` after the target.
+local function nameTab(cx: WindowCx, pane: number, t: Target)
 	local tab = cx.session:tab_of(pane)
 	if tab then
-		cx.layout:name_tab(tab, "PR #" .. n .. " · " .. (string.match(repo, "/(.+)$") or repo))
+		cx.layout:name_tab(tab, t.tab)
 	end
 end
 
-local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: number, r: Ready)
+local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 	-- Success only when nothing needs the user's attention.
 	local level: ToastLevel = if r.current and r.dirty ~= true then "success" else "info"
 	local sessionId = sourceSession(cx, pane)
@@ -276,51 +298,57 @@ local function finishWorktree(cx: WindowCx, pane: number, repo: string, n: numbe
 	if not newPane then
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
-	namePrTab(cx, newPane, repo, n)
+	nameTab(cx, newPane, t)
 	if r.setup then
 		cx:run(newPane, r.setup .. "\r")
 	end
-	cx:toast(level, "Worktree ready for " .. repo .. "#" .. n, if r.setup then r.summary .. " · running setup" else r.summary)
+	cx:toast(level, "Worktree ready for " .. t.label, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
--- Starts an agent in the worktree with `prompt`: in the PR's open tab when there is one, else in a new tab. A new
--- worktree's setup commands run first in a shell tab the agent joins. ponytail: the agent starts without waiting
--- for them; poll the shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string)
+-- Starts an agent at `r.path` with `prompt`. `join` (a worktree): in the target's open tab when there is one, else in
+-- a new tab, a new worktree's setup commands running first in a shell tab the agent joins. Not `join` (the main
+-- checkout): always a new tab, no setup. ponytail: the agent starts without waiting for the setup commands; poll the
+-- shell's `last` status if agents trip over a half-done setup.
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, join: boolean)
 	local path = r.path
-	local _, tab, found = prPane(cx, repo, n)
+	local tab: number? = nil
+	local found: number? = nil
+	if join then
+		local _pane
+		_pane, tab, found = targetPane(cx, t)
+	end
 	local session = found or sourceSession(cx, pane)
 	if not session then
-		return cx:toast("success", "Worktree ready", path .. " (the source pane closed, so no agent was started)")
+		return cx:toast("success", if join then "Worktree ready" else "Checkout ready", path .. " (the source pane closed, so no agent was started)")
 	end
 	cx.sessions:switch(session)
-	local setup = r.setup
+	local setup = if join then r.setup else nil
 	if setup then
 		local shell = cx.layout:new_tab({ cwd = path })
 		if shell then
 			cx:run(shell, setup .. "\r")
-			namePrTab(cx, shell, repo, n)
+			nameTab(cx, shell, t)
 			tab = cx.session:tab_of(shell)
 		else
-			cx:toast("error", "Setup did not run for " .. repo .. "#" .. n, "Its tab did not open.")
+			cx:toast("error", "Setup did not run for " .. t.label, "Its tab did not open.")
 		end
 	end
 	local ok, agent = pcall(function()
 		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab" })
 	end)
 	if not ok or type(agent) ~= "number" then
-		return cx:toast("error", "Could not start an agent for " .. repo .. "#" .. n, tostring(agent))
+		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
 	end
 	if tab then
 		local moved, why = cx.layout:move_to_tab(agent, tab)
 		if moved then
-			return cx:toast("success", "Agent started in the tab of " .. repo .. "#" .. n, prompt)
+			return cx:toast("success", "Agent started in the tab of " .. t.label, prompt)
 		end
-		namePrTab(cx, agent, repo, n)
-		return cx:toast("info", "Agent started in a new tab for " .. repo .. "#" .. n, "It could not join the pull request's tab: " .. (why or "unknown reason"))
+		nameTab(cx, agent, t)
+		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 	end
-	namePrTab(cx, agent, repo, n)
-	cx:toast("success", "Agent started for " .. repo .. "#" .. n, prompt)
+	nameTab(cx, agent, t)
+	cx:toast("success", "Agent started for " .. t.label, prompt)
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.
@@ -355,16 +383,16 @@ local function confirm(cx: WindowCx, question: string, where: string, stays: str
 	end)
 end
 
--- With the worktree ready, the agent starts once the user agrees to run omp in that checkout, where project config can
--- run code; setup commands and the agent come after.
-local function startAgent(cx: WindowCx, pane: number, repo: string, n: number, r: Ready, prompt: string)
-	local question = "Start an agent for " .. repo .. "#" .. n .. "?"
-	confirm(cx, question, "Runs omp in " .. r.path, "The worktree stays; no agent starts", function(cx2: WindowCx)
+-- With the directory ready, the agent starts once the user agrees to run omp there, where project config can run
+-- code; setup commands and the agent come after.
+local function startAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, wt: boolean)
+	local question = "Start an agent for " .. t.label .. "?"
+	confirm(cx, question, "Runs omp in " .. r.path, if wt then "The worktree stays; no agent starts" else "Nothing changes; no agent starts", function(cx2: WindowCx)
 		afterReady(cx2, r, function()
-			finishAgent(cx2, pane, repo, n, r, prompt)
+			finishAgent(cx2, pane, t, r, prompt, wt)
 		end)
 	end, function(cx2: WindowCx)
-		cx2:toast("info", "Agent not started for " .. repo .. "#" .. n, "The worktree is ready at " .. r.path)
+		cx2:toast("info", "Agent not started for " .. t.label, (if wt then "The worktree is ready at " else "The checkout is at ") .. r.path)
 	end)
 end
 
@@ -399,15 +427,25 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 	return (string.gsub(prompt, "{(%a+)}", vars))
 end
 
--- Has the block's host create or reuse the PR's worktree (and note it on the block), then opens its tab, or with
--- `prompt` starts an agent in it, its variables filled.
-local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: string, n: number, prompt: string?)
-	local full = owner .. "/" .. repo
-	local sent = ask(cx, pane, "worktree", { repo = full, number = n }, PREPARE_MS, function(a: any, cx2: WindowCx)
+-- An issue's prompt variables: the host's `vars` (strings only); others stay as typed.
+local function fillVars(prompt: string, vars: any): string
+	if type(vars) ~= "table" then
+		return prompt
+	end
+	return (string.gsub(prompt, "{(%a+)}", function(k: string): string
+		local v = vars[k]
+		return if type(v) == "string" then v else "{" .. k .. "}"
+	end))
+end
+
+-- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
+-- worktree (noted on the block) and open its tab. `wt` false (issues only): the repository's main checkout, no worktree.
+local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: string?, wt: boolean)
+	local function done(a: any, cx2: WindowCx)
 		if a.busy == true then
-			return cx2:toast("info", "A worktree for " .. full .. "#" .. n .. " is already being prepared")
+			return cx2:toast("info", "A worktree for " .. t.label .. " is already being prepared")
 		elseif a.noRepo == true then
-			return cx2:toast("info", "No local checkout of " .. full, "Enter its path in Plotroom, then try again.")
+			return cx2:toast("info", "No local checkout of " .. t.repo, "Enter its path in Plotroom, then try again.")
 		end
 		local r = readyOf(a)
 		if not r then
@@ -415,36 +453,41 @@ local function worktreePr(cx: WindowCx, pane: number, owner: string, repo: strin
 		end
 		local ready: Ready = r
 		afterReady(cx2, ready, function()
-			if prompt then
-				startAgent(cx2, pane, full, n, ready, fill(prompt, owner, repo, n, a))
+			if not prompt then
+				finishWorktree(cx2, pane, t, ready)
+			elseif t.kind == "pr" then
+				startAgent(cx2, pane, t, ready, fill(prompt, t.owner, t.name, tonumber(t.ref) :: number, a), wt)
 			else
-				finishWorktree(cx2, pane, full, n, ready)
+				startAgent(cx2, pane, t, ready, fillVars(prompt, a.vars), wt)
 			end
 		end)
-	end)
-	if sent then
-		cx:toast("info", "Preparing worktree for " .. full .. "#" .. n)
+	end
+	local sent = if t.kind == "pr"
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref) }, PREPARE_MS, done)
+		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt }, PREPARE_MS, done)
+	if sent and wt then
+		cx:toast("info", "Preparing worktree for " .. t.label)
 	end
 end
 
 -- An action-bar button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
-local function runSaved(cx: WindowCx, pane: number, owner: string, repo: string, n: number, id: string)
+local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return worktreePr(cx2, pane, owner, repo, n, it.send)
+				return prepareTarget(cx2, pane, t, it.send, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
 	end)
 end
 
--- Asks which saved prompt (Settings › Prompts, those offered under the block's filter) to run on PR `owner/repo#n`,
--- then runs it in an agent in the PR's worktree. "Type a prompt…" sends typed text the same way.
-local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
-	local full = owner .. "/" .. repo
-	local function run(cx2: WindowCx, text: string)
-		worktreePr(cx2, pane, owner, repo, n, text)
+-- Asks which saved prompt (Settings › Prompts, those offered under the block's filter) to run on the target, then
+-- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
+-- to the worktree.
+local function pickAgent(cx: WindowCx, pane: number, t: Target)
+	local function run(cx2: WindowCx, text: string, wt: boolean)
+		prepareTarget(cx2, pane, t, text, wt)
 	end
 	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
@@ -458,6 +501,7 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 					detail = if type(it.detail) == "string" then it.detail else nil,
 					group = if type(it.group) == "string" then it.group else nil,
 					send = it.send,
+					worktree = it.worktree ~= false,
 				})
 			end
 		end
@@ -476,14 +520,14 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 		for _, c in all do
 			table.insert(items, c)
 		end
-		cx2:pick({ items = items, placeholder = "Run on " .. full .. "#" .. n, icon = "merge", action = "run" }):next(function(item, _, cx3)
+		cx2:pick({ items = items, placeholder = "Run on " .. t.label, icon = "merge", action = "run" }):next(function(item, _, cx3)
 			if not item or not cx3 then
 				return
 			end
 			if item.typed then
-				return cx3:prompt({ placeholder = "Prompt for an agent on " .. full .. "#" .. n, icon = "merge", action = "send" }):next(function(text, _, cx4)
+				return cx3:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx4)
 					if cx4 and text and string.find(text, "%S") then
-						run(cx4, text)
+						run(cx4, text, true)
 					end
 				end)
 			end
@@ -495,7 +539,7 @@ local function pickAgent(cx: WindowCx, pane: number, owner: string, repo: string
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			run(cx3, item.send)
+			run(cx3, item.send, item.worktree ~= false)
 		end)
 	end)
 end
@@ -583,11 +627,14 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	if rid then
 		answered(cx, rid)
 		return true
-	elseif url == "plotroom://repos" then
-		if isPlotroom(cx, pane) then
+	elseif url == "plotroom://repos" or url == "plotroom://checkout" then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
 		else
-			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+			-- The heading's Set checkout button: the block opens Settings on its checkout row.
+			cx.session:event(pane, { ev = "action", act = "set-checkout" })
 		end
 		return true
 	end
@@ -599,6 +646,54 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, target, "the check")
+		end
+		return true
+	end
+	local issueOpen = string.match(url, "^plotroom://issue/open/(.+)$")
+	if issueOpen then
+		local page = unpct(issueOpen)
+		if string.sub(page, 1, 8) ~= "https://" or string.find(page, "[%c%s]") then
+			cx:toast("error", "Plotroom: malformed link")
+		elseif not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= url then
+			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
+		else
+			openUrl(cx, pane, page, "the issue")
+		end
+		return true
+	end
+	if string.sub(url, 1, 15) == "plotroom://issu" then
+		local act, io, ir, ref = string.match(url, "^plotroom://issue/(%a+)/([^/]+)/([^/]+)/([%w%-]+)$")
+		local rid2: string? = nil
+		if act == "run" then
+			act = nil
+		elseif not act then
+			io, ir, ref, rid2 = string.match(url, "^plotroom://issue/run/([^/]+)/([^/]+)/([%w%-]+)/(%w+)$")
+			act = if rid2 then "run" else nil
+		end
+		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "run") or not io or not ir or not ref or not worktree.validSegment(io) or not worktree.validSegment(ir) or #ref > 64 then
+			cx:toast("error", "Plotroom: malformed link")
+			return true
+		end
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+			return true
+		end
+		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
+		if nodeProp(readNode(cx, pane, node), "href") ~= url then
+			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
+			return true
+		end
+		local t = issueTarget(io, ir, ref)
+		if act == "goto" then
+			gotoTarget(cx, t)
+		elseif act == "agent" then
+			pickAgent(cx, pane, t)
+		elseif act == "run" and rid2 then
+			runSaved(cx, pane, t, rid2)
+		else
+			prepareTarget(cx, pane, t, nil, true)
 		end
 		return true
 	end
@@ -622,16 +717,17 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
 		return true
 	end
+	local t = prTarget(owner, repo, n)
 	if kind == "open" then
 		openPr(cx, pane, owner, repo, n)
 	elseif kind == "goto" then
-		gotoPr(cx, owner .. "/" .. repo, n)
+		gotoTarget(cx, t)
 	elseif kind == "agent" then
-		pickAgent(cx, pane, owner, repo, n)
+		pickAgent(cx, pane, t)
 	elseif kind == "run" and id then
-		runSaved(cx, pane, owner, repo, n, id)
+		runSaved(cx, pane, t, id)
 	else
-		worktreePr(cx, pane, owner, repo, n, nil)
+		prepareTarget(cx, pane, t, nil, true)
 	end
 	return true
 end
@@ -643,7 +739,7 @@ local function selected(cx: WindowCx, nodeId: string, missing: string?)
 	end
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
-		return cx:toast("info", missing or "No pull request is selected")
+		return cx:toast("info", missing or "Nothing is selected")
 	end
 	handle(cx, href, pane)
 end
@@ -668,24 +764,37 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	end
 end)
 
+local function launch(cx: WindowCx, block: string)
+	local source = cx.session:focused()
+	local cwd: string? = nil
+	if source then
+		local info = cx.session:pane(source)
+		if info and info.cwd and info.cwd ~= "" then
+			cwd = info.cwd
+		end
+	end
+	local spec: Launch = { block = block, cwd = cwd, args = if cwd then { cwd } else nil }
+	local pane = if source then cx.layout:split(source, "right", spec) else cx.layout:new_tab(spec)
+	if not pane then
+		cx:toast("error", "Plotroom is not loaded on this host")
+	end
+end
+
 tern.command({
 	id = "open",
 	title = "Plotroom: Open GitHub PRs",
 	icon = "merge",
 	run = function(cx: WindowCx)
-		local source = cx.session:focused()
-		local cwd: string? = nil
-		if source then
-			local info = cx.session:pane(source)
-			if info and info.cwd and info.cwd ~= "" then
-				cwd = info.cwd
-			end
-		end
-		local launch: Launch = { block = BLOCK, cwd = cwd, args = if cwd then { cwd } else nil }
-		local pane = if source then cx.layout:split(source, "right", launch) else cx.layout:new_tab(launch)
-		if not pane then
-			cx:toast("error", "Plotroom is not loaded on this host")
-		end
+		launch(cx, "plotroom.prs")
+	end,
+})
+
+tern.command({
+	id = "open-issues",
+	title = "Plotroom: Open GitHub Issues",
+	icon = ISSUE_ICON,
+	run = function(cx: WindowCx)
+		launch(cx, "plotroom.issues")
 	end,
 })
 
@@ -696,7 +805,7 @@ end
 
 tern.command({
 	id = "open-selected",
-	title = "Plotroom: Open selected PR in Browser",
+	title = "Plotroom: Open the selected PR or issue in Browser",
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
@@ -706,7 +815,7 @@ tern.command({
 
 tern.command({
 	id = "worktree-selected",
-	title = "Plotroom: Open selected PR in a worktree",
+	title = "Plotroom: Open the selected PR or issue in a worktree",
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
@@ -716,7 +825,7 @@ tern.command({
 
 tern.command({
 	id = "goto-selected",
-	title = "Plotroom: Go to the selected PR's tab",
+	title = "Plotroom: Go to the selected PR or issue's tab",
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
@@ -726,7 +835,7 @@ tern.command({
 
 tern.command({
 	id = "agent-selected",
-	title = "Plotroom: Run an agent on the selected PR",
+	title = "Plotroom: Run an agent on the selected PR or issue",
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
