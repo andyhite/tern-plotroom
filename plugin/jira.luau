@@ -12,7 +12,7 @@ local M = {}
 type Problem = { kind: string, message: string }
 
 local TIMEOUT_MS = 60 * 1000
--- ponytail: the newest 100 by update per filter; page with --paginate if filters need more
+-- ponytail: the newest 100 by update per view; page with --paginate if views need more
 M.LIMIT = 100
 -- The only fields acli's search accepts; a work item's dates and comment count come with its details.
 local SEARCH_FIELDS = "key,summary,status,issuetype,priority,assignee,reporter,labels"
@@ -145,8 +145,8 @@ local function elements(data: any): { any }?
 	return out
 end
 
--- Why `query` cannot run inside the project's scope, or nil: quotes and parentheses must balance (an extra `)` would
--- close the scope) and ordering is the search's own.
+-- Why `query` cannot be wrapped in parentheses, or nil: quotes and parentheses must balance (an extra `)` would
+-- close the wrapper) and ordering is the search's own.
 function M.scopeProblem(query: string): string?
 	local depth = 0
 	local quote: string? = nil
@@ -169,7 +169,7 @@ function M.scopeProblem(query: string): string?
 			elseif c == ")" then
 				depth -= 1
 				if depth < 0 then
-					return "Unbalanced parentheses: a filter cannot close the project's scope."
+					return "Unbalanced parentheses."
 				end
 			end
 			table.insert(outside, c)
@@ -186,10 +186,11 @@ function M.scopeProblem(query: string): string?
 end
 
 -- One work item of the search as an Issue, or nil and why. `siteUrl` is the browse URL base.
-function M.normalize(item: any, project: string, siteUrl: string): (tracker.Issue?, string?)
+function M.normalize(item: any, siteUrl: string): (tracker.Issue?, string?)
 	local key, fields = field(item, "key"), field(item, "fields")
 	local summary = field(fields, "summary")
-	if type(key) ~= "string" or not string.match(key, KEY) or type(fields) ~= "table" or type(summary) ~= "string" then
+	local project = if type(key) == "string" then string.match(key, "^(.-)%-%d+$") else nil
+	if type(key) ~= "string" or not project or not string.match(key, KEY) or type(fields) ~= "table" or type(summary) ~= "string" then
 		return nil, "acli returned a work item without a key or summary"
 	end
 	local category = field(fields, "status", "statusCategory", "key")
@@ -206,7 +207,6 @@ function M.normalize(item: any, project: string, siteUrl: string): (tracker.Issu
 		tracker = "jira",
 		repo = project,
 		ref = key,
-		id = "n" .. key,
 		title = summary,
 		url = siteUrl .. "/browse/" .. key,
 		author = nonEmpty(field(fields, "reporter", "displayName")) or "Unknown",
@@ -223,9 +223,9 @@ function M.normalize(item: any, project: string, siteUrl: string): (tracker.Issu
 	}, nil
 end
 
--- The newest work items of `project` that `query` (JQL) finds; one swap-ready IssueResult, in acli's order. Spent is
+-- The newest work items that `query` (JQL) finds across every project; one swap-ready IssueResult, in acli's order. Spent is
 -- always 0: Jira has no quota to account for. done never runs before this call returns.
-function M.issues(project: string, query: string, shouldContinue: () -> boolean, done: (tracker.IssueResult?, Problem?, number) -> ())
+function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.IssueResult?, Problem?, number) -> ())
 	local superseded: Problem = { kind = "superseded", message = "" }
 	-- Every result passes here: a cancelled request reports "superseded" whatever it found.
 	local function finish(result: tracker.IssueResult?, problem: Problem?)
@@ -239,11 +239,8 @@ function M.issues(project: string, query: string, shouldContinue: () -> boolean,
 			finish(nil, problem)
 		end)
 	end
-	if not tracker.jiraProject(project) then
-		return fail({ kind = "failed", message = "Unexpected project key." })
-	end
 	if string.match(query, "^%s*$") then
-		return fail({ kind = "failed", message = "The filter query is empty." })
+		return fail({ kind = "failed", message = "The view's query is empty." })
 	end
 	local why = M.scopeProblem(query)
 	if why then
@@ -256,7 +253,7 @@ function M.issues(project: string, query: string, shouldContinue: () -> boolean,
 		if not shouldContinue() then
 			return fail(superseded)
 		end
-		local jql = 'project = "' .. project .. '" AND (' .. query .. ") ORDER BY updated DESC"
+		local jql = "(" .. query .. ") ORDER BY updated DESC"
 		acli({ "jira", "workitem", "search", "--jql", jql, "--limit", tostring(M.LIMIT), "--json", "--fields", SEARCH_FIELDS }, function(out, problem2)
 			if not out then
 				return finish(nil, noted(problem2))
@@ -268,7 +265,7 @@ function M.issues(project: string, query: string, shouldContinue: () -> boolean,
 			end
 			local issues: { tracker.Issue } = {}
 			for _, item in found do
-				local issue, reason = M.normalize(item, project, base)
+				local issue, reason = M.normalize(item, base)
 				if not issue then
 					return finish(nil, { kind = "failed", message = reason or "acli printed something other than a search result" })
 				end

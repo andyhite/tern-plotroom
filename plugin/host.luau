@@ -1,5 +1,5 @@
 --!strict
--- The `prs` and `issues` blocks: one engine for a live GitHub PR queue or a GitHub or Jira issue list with saved, editable filters.
+-- The `prs` and `issues` blocks: one engine for a live GitHub PR queue or a GitHub or Jira issue list with saved, editable views.
 
 local github = require("./github")
 local input = require("./input")
@@ -17,54 +17,52 @@ local DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, d
 local DETAIL_RETRY_MAX_S = 300
 local NOTE_CAP = 20 -- worktree reports kept per block
 local ISSUE_ICON = "circle-dot" -- the issues block's icon, as in plugin.toml and window.luau
--- How the issues kinds list a tracker's issues, load one issue's details and check a filter query.
+-- How the issues block lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
 type TrackerApi = {
-	search: (string, string, () -> boolean, (tracker.IssueResult?, github.Problem?, number) -> ()) -> (),
-	scope: (string) -> string?,
-	detail: (tracker.Issue, (tracker.IssueDetail?, github.Problem?) -> (), () -> boolean) -> (),
+	search: (string?, string, () -> boolean, (tracker.IssueResult?, github.Problem?, number) -> ()) -> (),
+	detail: (tracker.Issue, string?, (tracker.IssueDetail?, github.Problem?) -> (), () -> boolean) -> (),
 }
 local TRACKERS: { [string]: TrackerApi } = {
 	github = {
 		search = github.issues,
-		scope = github.scopeProblem,
-		detail = function(issue, done, live)
-			github.issue(issue.repo, tonumber(issue.ref) :: number, done, live)
+		detail = function(issue, account, done, live)
+			github.issue(issue.repo, tonumber(issue.ref) :: number, account, done, live)
 		end,
 	},
 	jira = {
-		search = jira.issues,
-		scope = jira.scopeProblem,
-		detail = function(issue, done, live)
+		search = function(_account, query, live, done)
+			jira.issues(query, live, done)
+		end,
+		detail = function(issue, _account, done, live)
 			jira.issue(issue.ref, done, live)
 		end,
 	},
 }
 
-type Filter = { id: string, name: string, query: string }
-type Store = { version: number, nextId: number, items: { Filter } }
--- An agent prompt from Settings › Prompts: `filters` are the filter ids it is offered under; none (or none that still
--- exist) means every filter. `key` runs it on the selected item from the queue. `worktree` (issue prompts; nil means
--- true) says where it runs: in the issue's worktree, or in the repository's main checkout.
-type Prompt = { id: string, name: string, text: string, filters: { string }, key: string?, worktree: boolean? }
+-- A saved search: `integration` is the tracker it asks ("github" | "jira"), `logins` the gh logins a GitHub view runs
+-- as (none: gh's active account; with several, the view is one sidebar scope under each login, running as it),
+-- `group` how the list is grouped ("none" or a GROUPS value) and `prompts` the ids of the prompts offered under it
+-- (none: every prompt).
+type View = { id: string, name: string, integration: string, query: string, logins: { string }, group: string, prompts: { string } }
+type Views = { version: number, nextId: number, items: { View } }
+-- An agent prompt from Settings › Prompts; the views list which of them they offer. `key` runs it on the selected
+-- item from the queue. `worktree` (issue prompts; nil means true) says where it runs: in the issue's worktree, or in
+-- the repository's main checkout.
+type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean? }
 type Prompts = { version: number, nextId: number, items: { Prompt } }
 type KeyHelp = { keys: { string }, text: string }
 -- What tells the blocks apart; the rest is one engine.
 type Kind = {
 	id: string, -- the block id: "prs" | "issues"
-	tracker: string, -- the tracker it reads: "github" | "jira" (keys TRACKERS and tracker.VARS)
-	title: string, -- the block title without a filter: "GitHub PRs" | "GitHub Issues" | "Jira Issues"
+	title: string, -- the block title without a view: "GitHub PRs" | "Issues"
 	one: string, -- "pull request" | "issue"
 	many: string, -- "pull requests" | "issues"
 	icon: string, -- the picker's icon
-	site: string, -- the tracker's name on the Open button: "GitHub" | "Jira"
-	place: string, -- what its items belong to: "repository" | "project"
-	pickHref: string, -- the window's picker of that place
 	pages: { string }, -- the Settings pages, in order
-	filtersKey: string, -- kv key of the saved filters
+	viewsKey: string, -- kv key of the saved views
 	promptsKey: string, -- kv key of the saved prompts
-	seeds: { Filter }, -- the filters of a first run
-	newQuery: string, -- the query a new filter starts with
-	linked: string, -- the issue sidebar's heading for its linked items ("" for pull requests)
+	integrations: { string }, -- the trackers its views may use, the first a new view's: "github" | "jira" (keys TRACKERS and INTEGRATIONS)
+	seeds: { View }, -- the views of a first run
 	keys: { KeyHelp }, -- the `?` list of the queue
 	vars: { { k: { Span }, v: string } }, -- the prompt editor's legend of variables
 }
@@ -80,7 +78,15 @@ type Snap = {
 	rowsOpen: string?, -- the ids of the items open in a tab, comma-joined
 }
 -- What the local search lets through: computed once per snapshot and search text.
-type Visible = { snap: Snap, needle: string, items: { any }, order: { string }, hits: { [string]: any }? }
+type Visible = { snap: Snap, needle: string, group: string, items: { any }, order: { any }, hits: { [string]: any }? }
+-- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in.
+type Group = { value: string, label: string, of: (any) -> string }
+-- What each kind can group each integration's items by; assigned below, once the badges it reads are defined.
+local GROUPS: { [string]: { [string]: { Group } } }
+local function groupsOf(kindId: string, integration: string): { Group }
+	local list: { Group } = GROUPS[kindId][integration] or {}
+	return list
+end
 -- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
 -- `about` is the PR's merge state, reviewers and description, nil when gh did not print them. `issue` is an issue's
 -- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty).
@@ -108,12 +114,13 @@ type Note = {
 -- worktree holds what it should (a PR's head; an issue's branch always does).
 type Report = { path: string, branch: string, created: boolean, current: boolean, dirty: boolean?, summary: string, update: { string }, cleanup: { string } }
 type Settings = {
-	page: string, -- "filters" | "prompts" | "github" | "source" | "worktrees"
+	page: string, -- "views" | "prompts" | "repos" | "jira" | "connection"
 	focus: string?, -- focused prefs row id
+	open: string?, -- id of the view or prompt whose form is expanded; every other one shows as a one-row summary
 	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text
-	pick: { row: string, option: string? }?, -- a filters row whose chips the keys drive
+	pick: { row: string, option: string? }?, -- a chips row the keys drive
 	errors: { [string]: string? }, -- row id -> warning under the row
-	confirm: string?, -- delete row ("delete:<filter id>" or "pdelete:<prompt id>") awaiting confirmation
+	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") awaiting confirmation
 }
 
 type State = {
@@ -121,7 +128,8 @@ type State = {
 	kind: Kind,
 	launchCwd: string?,
 	activeId: string?,
-	store: Store,
+	activeLogin: string?, -- the gh login of the active scope when the view lists several: each login is its own scope in the sidebar (nil: the first)
+	store: Views,
 	writable: boolean,
 	storeError: string?,
 	snaps: { [string]: Snap },
@@ -130,14 +138,13 @@ type State = {
 	focus: string, -- the picker part the keys drive: "list" | "scopes"
 	inflight: number?, -- generation of the search request that owns the spinner
 	gen: number,
-	repo: string?,
-	account: string?, -- the gh login ("" = the active gh account) the data and requests belong to; nil: not read yet, or unreadable
-	applied: string?, -- the query text the shown snapshot belongs to
+	account: string, -- the gh login ("" = the active gh account) the data and requests belong to
+	tracker: string, -- the integration the data and requests belong to
+	applied: string?, -- the snapshot key (snapKey) the shown snapshot belongs to
 	cost: number,
 	interval: number?,
 	nextAt: number?,
-	resolving: boolean,
-	claiming: string?, -- repository whose checkout folder is being verified or cloned into
+	claiming: string?, -- lowercase repository whose checkout folder is being verified or cloned into
 	problem: github.Problem?,
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
@@ -158,10 +165,29 @@ type State = {
 
 local running: { [number]: State } = {}
 
--- The CLI each tracker needs, and whether it starts on this host: the Integration page offers only those that do.
+-- The CLI each tracker needs, and whether it starts on this host: the Jira projects page offers Add only when Jira's does.
 local CLIS: { { id: string, argv: { string } } } = { { id = "github", argv = { "gh", "--version" } }, { id = "jira", argv = { "acli", "--version" } } }
 local installed: { [string]: boolean } = {} -- tracker id -> its CLI starts on this host; absent: not checked yet
 local probing: { [string]: boolean } = {} -- tracker id -> its check is running
+-- gh's active login on this host once known (`login`), the logins signed in (`accounts`) and the helpers that use them:
+-- the sidebar groups of views that run as one login.
+local ghActive: {
+	login: string?,
+	accounts: { string },
+	note: (State) -> (),
+	shown: (View) -> string,
+	isActive: (State, Scope) -> boolean,
+} = {
+	login = nil,
+	accounts = {},
+	note = function() end,
+	shown = function()
+		return ""
+	end,
+	isActive = function()
+		return false
+	end,
+}
 
 -- ---------------------------------------------------------------- storage
 
@@ -170,24 +196,55 @@ local function isTable(v: any): boolean
 	return type(v) == "table"
 end
 
-local function seeds(kind: Kind): Store
-	local items: { Filter } = {}
-	for _, f in kind.seeds do
-		table.insert(items, { id = f.id, name = f.name, query = f.query })
+local function seedViews(kind: Kind): Views
+	local items: { View } = {}
+	for _, v in kind.seeds do
+		table.insert(items, { id = v.id, name = v.name, integration = v.integration, query = v.query, logins = {}, group = v.group, prompts = {} })
 	end
 	return { version = 1, nextId = #items + 1, items = items }
 end
 
-local function validStore(v: any): Store?
+local function validViews(kind: Kind, v: any): Views?
 	if not isTable(v) or v.version ~= 1 or type(v.nextId) ~= "number" or not isTable(v.items) then
 		return nil
 	end
-	local items: { Filter } = {}
+	local items: { View } = {}
 	for _, f in v.items do
-		if not isTable(f) or type(f.id) ~= "string" or type(f.name) ~= "string" or type(f.query) ~= "string" then
+		if
+			not isTable(f)
+			or type(f.id) ~= "string"
+			or type(f.name) ~= "string"
+			or type(f.query) ~= "string"
+			or type(f.integration) ~= "string"
+			or not table.find(kind.integrations, f.integration)
+			or (f.logins ~= nil and not isTable(f.logins))
+			or (f.login ~= nil and (type(f.login) ~= "string" or not string.match(f.login, "^[%w%-]+$")))
+			or type(f.group) ~= "string"
+			or not isTable(f.prompts)
+		then
 			return nil
 		end
-		table.insert(items, { id = f.id, name = f.name, query = f.query })
+		local prompts: { string } = {}
+		for _, p in f.prompts do
+			if type(p) ~= "string" then
+				return nil
+			end
+			table.insert(prompts, p)
+		end
+		-- The gh logins a GitHub view runs as; a view saved with one `login` loads as a list of one.
+		local logins: { string } = {}
+		local seen: { [string]: boolean } = {}
+		local saved: { any } = if f.logins ~= nil then f.logins else (if f.login ~= nil then { f.login } else {})
+		for _, who in saved do
+			if type(who) ~= "string" or not string.match(who, "^[%w%-]+$") then
+				return nil
+			end
+			if not seen[string.lower(who)] and f.integration == "github" then
+				seen[string.lower(who)] = true
+				table.insert(logins, who)
+			end
+		end
+		table.insert(items, { id = f.id, name = f.name, integration = f.integration, query = f.query, logins = logins, group = f.group, prompts = prompts })
 	end
 	return { version = 1, nextId = v.nextId, items = items }
 end
@@ -204,78 +261,87 @@ local function kvSet(key: string, value: any): string?
 	return tostring(err)
 end
 
-local function writeStore(kind: Kind, store: Store): string?
+local function writeViews(kind: Kind, store: Views): string?
 	local items: { any } = {}
-	for _, f in store.items do
-		table.insert(items, { id = f.id, name = f.name, query = f.query })
+	for _, v in store.items do
+		table.insert(items, { id = v.id, name = v.name, integration = v.integration, query = v.query, logins = tern.json.array(v.logins), group = v.group, prompts = tern.json.array(v.prompts) })
 	end
-	return kvSet(kind.filtersKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	return kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 end
 
--- store, writable, error. An absent key is seeded; unreadable or malformed
+-- views, writable, error. An absent key is seeded; unreadable or malformed
 -- storage is never overwritten: seeds are shown but Save is disabled.
-local function loadStore(kind: Kind): (Store, boolean, string?)
-	local ok, v = pcall(tern.kv.get, kind.filtersKey)
+local function loadViews(kind: Kind): (Views, boolean, string?)
+	local ok, v = pcall(tern.kv.get, kind.viewsKey)
 	if not ok then
-		return seeds(kind), false, "Saved filters could not be read: " .. tostring(v)
+		return seedViews(kind), false, "Saved views could not be read: " .. tostring(v)
 	end
 	if v == nil then
-		local s = seeds(kind)
-		local err = writeStore(kind, s)
+		local s = seedViews(kind)
+		local err = writeViews(kind, s)
 		if err then
-			return s, false, "Saved filters could not be written: " .. err
+			return s, false, "Saved views could not be written: " .. err
 		end
 		return s, true, nil
 	end
-	local s = validStore(v)
+	local s = validViews(kind, v)
 	if not s then
-		return seeds(kind), false, "Saved filters are malformed; not overwriting them."
+		return seedViews(kind), false, "Saved views are malformed; not overwriting them."
 	end
 	return s, true, nil
 end
 
--- Saved projects (kv "repos", keyed by projectKey) to their local checkout; "" marks one picked without a checkout.
-local function readRepos(): { [string]: any }
-	local ok, v = pcall(tern.kv.get, "repos")
+-- The strings of a saved list; anything else in it is dropped.
+local function stringList(v: any): { string }
+	local out: { string } = {}
+	if isTable(v) then
+		for _, x in v do
+			if type(x) == "string" then
+				table.insert(out, x)
+			end
+		end
+	end
+	return out
+end
+
+-- Saved repositories (kv "checkouts", keyed by lowercase "owner/name") to their local checkout; "" marks one listed
+-- in Settings without a checkout.
+local function readCheckouts(): { [string]: any }
+	local ok, v = pcall(tern.kv.get, "checkouts")
 	if ok and isTable(v) then
 		return v
 	end
 	return {}
 end
 
--- The key of `repo` in the per-project kv maps ("repos", "setup", "branches"): GitHub's owner/name in lowercase under
--- "github.com/", a Jira project key as it is under "jira/".
-local function projectKey(repo: string): string
-	return if tracker.jiraProject(repo) then "jira/" .. repo else "github.com/" .. string.lower(repo)
-end
-
--- The saved local checkout of `repo`, nil when none: then nothing may make a worktree of it.
-local function checkoutOf(repo: string?): string?
-	local path = if repo then readRepos()[projectKey(repo)] else nil
+-- The saved local checkout of `repo`, nil when none: then the window's palette asks for one before anything makes a
+-- worktree of it.
+local function checkoutOf(repo: string): string?
+	local path = readCheckouts()[string.lower(repo)]
 	return if type(path) == "string" and path ~= "" then path else nil
 end
 
--- Saves `path` as `repo`'s checkout ("": none, but still pickable); with `keep`, only a repository not saved yet. Fails
+-- Saves `path` as `repo`'s checkout ("": none, but still listed); with `keep`, only a repository not saved yet. Fails
 -- closed when the saved map cannot be read.
 local function saveCheckout(repo: string, path: string, keep: boolean?): string?
-	local ok, stored = pcall(tern.kv.get, "repos")
+	local ok, stored = pcall(tern.kv.get, "checkouts")
 	if not ok or (stored ~= nil and not isTable(stored)) then
 		return "Saved checkouts could not be read"
 	end
 	local repos: { [string]: any } = if stored ~= nil then stored else {}
-	local key = projectKey(repo)
+	local key = string.lower(repo)
 	if repos[key] == path or (keep and repos[key] ~= nil) then
 		return nil
 	end
 	repos[key] = path
-	local err = kvSet("repos", repos)
+	local err = kvSet("checkouts", repos)
 	return if err then "Could not save: " .. err else nil
 end
 
--- Saved worktree setup commands per repository (kv "setup", keyed like "repos"), or nil and why when unreadable:
--- a write then fails closed rather than overwrite them.
+-- Saved worktree setup commands per repository (kv "setup-commands", keyed like "checkouts"), or nil and why
+-- when unreadable: a write then fails closed rather than overwrite them.
 local function setupMap(): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, "setup")
+	local ok, stored = pcall(tern.kv.get, "setup-commands")
 	if not ok or (stored ~= nil and not isTable(stored)) then
 		return nil, "Saved setup commands could not be read."
 	end
@@ -283,22 +349,13 @@ local function setupMap(): ({ [string]: any }?, string?)
 end
 
 local function setupOf(map: { [string]: any }, repo: string): { string }
-	local out: { string } = {}
-	local list = map[projectKey(repo)]
-	if isTable(list) then
-		for _, c in list do
-			if type(c) == "string" then
-				table.insert(out, c)
-			end
-		end
-	end
-	return out
+	return stringList(map[string.lower(repo)])
 end
 
--- Saved branch name formats per repository (kv "branches", keyed like "repos"), or nil and why when unreadable: a write
--- then fails closed rather than overwrite them.
+-- Saved branch name formats per repository (kv "branch-formats", keyed like "checkouts"), or nil and why when
+-- unreadable: a write then fails closed rather than overwrite them.
 local function branchMap(): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, "branches")
+	local ok, stored = pcall(tern.kv.get, "branch-formats")
 	if not ok or (stored ~= nil and not isTable(stored)) then
 		return nil, "Saved branch formats could not be read."
 	end
@@ -308,17 +365,92 @@ end
 -- The branch name format saved for `repo`; nil when none is (tracker.FORMAT_DEFAULT applies) or they cannot be read.
 local function branchFormatOf(repo: string): string?
 	local map = branchMap()
-	local fmt = if map then map[projectKey(repo)] else nil
+	local fmt = if map then map[string.lower(repo)] else nil
 	return if type(fmt) == "string" and fmt ~= "" then fmt else nil
+end
+
+-- Saved repositories per Jira project (kv "jira-repos": KEY to lowercase "owner/name" list), or nil and why when
+-- unreadable: a write then fails closed rather than overwrite them.
+local function readJiraRepos(): ({ [string]: any }?, string?)
+	local ok, stored = pcall(tern.kv.get, "jira-repos")
+	if not ok or (stored ~= nil and not isTable(stored)) then
+		return nil, "Saved Jira project repositories could not be read."
+	end
+	return if stored ~= nil then stored else {}, nil
+end
+
+-- The repositories Jira project `project` is worked in: the valid "owner/name" strings saved for it, in saved order.
+local function jiraReposOf(project: string): { string }
+	local map = readJiraRepos()
+	local out: { string } = {}
+	for _, r in stringList(if map then map[project] else nil) do
+		local owner, name = string.match(r, "^([^/]+)/([^/]+)$")
+		if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
+			table.insert(out, r)
+		end
+	end
+	return out
+end
+
+-- Rereads the Jira project map, lets `fn` change it (an error string aborts) and saves it; an error message or nil.
+local function editJiraRepos(fn: ({ [string]: any }) -> string?): string?
+	local map, err = readJiraRepos()
+	if not map then
+		return err
+	end
+	local ferr = fn(map)
+	if ferr then
+		return ferr
+	end
+	local out: { [string]: any } = {}
+	for key, list in map do
+		out[key] = tern.json.array(stringList(list))
+	end
+	local werr = kvSet("jira-repos", out)
+	return if werr then "Could not save: " .. werr else nil
+end
+
+-- The folder worktrees go in (kv "worktree-root"); "" is omp's own.
+local function readWorktreeRoot(): string
+	local ok, v = pcall(tern.kv.get, "worktree-root")
+	return if ok and type(v) == "string" then v else ""
+end
+
+-- Deletes `repo` from the checkouts, branch formats, setup commands and every Jira project's repositories. A map is
+-- only written when it was readable; the first failure is returned.
+local function removeRepo(repo: string): string?
+	local key = string.lower(repo)
+	local failed: string? = nil
+	for _, name in { "checkouts", "branch-formats", "setup-commands" } do
+		local ok, stored = pcall(tern.kv.get, name)
+		if ok and isTable(stored) and stored[key] ~= nil then
+			stored[key] = nil
+			local err = kvSet(name, stored)
+			failed = failed or (if err then "Could not save: " .. err else nil)
+		end
+	end
+	local jerr = editJiraRepos(function(map: { [string]: any }): string?
+		for project, list in map do
+			local keep: { string } = {}
+			for _, r in stringList(list) do
+				if string.lower(r) ~= key then
+					table.insert(keep, r)
+				end
+			end
+			map[project] = keep
+		end
+		return nil
+	end)
+	return failed or jerr
 end
 
 local PROMPTS_BAD = "Saved prompts are malformed; not overwriting them."
 local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 -- Keys the queue uses itself, so no prompt may take them as its shortcut.
-local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "o", "/", "?", "r", "s" }
+local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "/", "?", "r", "s" }
 
--- Saved agent prompts (kv "prompts"; absent is none), or nil and why when unreadable or malformed: a write then fails
--- closed rather than overwrite them.
+-- Saved agent prompts (kv prompts-prs / prompts-issues; absent is none), or nil and why when unreadable or malformed:
+-- a write then fails closed rather than overwrite them.
 local function loadPrompts(kind: Kind): (Prompts?, string?)
 	local ok, v = pcall(tern.kv.get, kind.promptsKey)
 	if not ok then
@@ -337,20 +469,12 @@ local function loadPrompts(kind: Kind): (Prompts?, string?)
 			or type(p.id) ~= "string"
 			or type(p.name) ~= "string"
 			or type(p.text) ~= "string"
-			or not isTable(p.filters)
 			or (p.key ~= nil and type(p.key) ~= "string")
 			or (p.worktree ~= nil and type(p.worktree) ~= "boolean")
 		then
 			return nil, PROMPTS_BAD
 		end
-		local filters: { string } = {}
-		for _, f in p.filters do
-			if type(f) ~= "string" then
-				return nil, PROMPTS_BAD
-			end
-			table.insert(filters, f)
-		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = filters, key = p.key, worktree = p.worktree })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -367,7 +491,7 @@ local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, filters = tern.json.array(p.filters), key = p.key, worktree = p.worktree })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
@@ -382,12 +506,12 @@ local function promptById(store: Prompts, id: string): Prompt?
 	return nil
 end
 
--- The filters a prompt is offered under, as ids of filters that still exist; empty means every filter.
-local function scopeOf(p: Prompt, filters: Store): { string }
+-- The prompts view `v` lists, as ids of prompts that still exist, in the prompts' order; empty: it lists none.
+local function livePrompts(v: View, list: { Prompt }): { string }
 	local out: { string } = {}
-	for _, f in filters.items do
-		if table.find(p.filters, f.id) then
-			table.insert(out, f.id)
+	for _, p in list do
+		if table.find(v.prompts, p.id) then
+			table.insert(out, p.id)
 		end
 	end
 	return out
@@ -441,6 +565,40 @@ local function alive(state: State): boolean
 	return false
 end
 
+-- Learns gh's active login (cached by github.accounts) and redraws when it changed, so views without a login of their own
+-- sit under whichever account is active.
+function ghActive.note(state: State)
+	local any = false
+	for _, v in state.store.items do
+		any = any or v.integration == "github"
+	end
+	if not any then
+		return
+	end
+	github.accounts(function(list)
+		local found: string? = nil
+		local names: { string } = {}
+		if list then
+			for _, a in list do
+				table.insert(names, a.login)
+				if a.active then
+					found = a.login
+				end
+			end
+		end
+		local known = table.concat(ghActive.accounts, ",")
+		if list then
+			ghActive.accounts = names
+		end
+		if (found and found ~= ghActive.login) or (list ~= nil and known ~= table.concat(names, ",")) then
+			ghActive.login = found or ghActive.login
+			if alive(state) then
+				state.cx:render()
+			end
+		end
+	end)
+end
+
 -- Looks up which tracker CLIs start on this host, once each until Retry forgets the answers; every open Settings is
 -- redrawn as an answer lands.
 local function probeClis()
@@ -460,13 +618,88 @@ local function probeClis()
 	end
 end
 
-local function activeFilter(state: State): Filter?
-	for _, f in state.store.items do
-		if f.id == state.activeId then
-			return f
+local function activeView(state: State): View?
+	for _, v in state.store.items do
+		if v.id == state.activeId then
+			return v
 		end
 	end
 	return nil
+end
+
+-- The gh login view `v` runs as in the scope that picked `login` (nil, or one it does not list: its first): "" is gh's
+-- active account. Jira has none.
+local function accountOf(v: View, login: string?): string
+	if v.integration ~= "github" or #v.logins == 0 then
+		return ""
+	end
+	if login then
+		for _, who in v.logins do
+			if string.lower(who) == string.lower(login) then
+				return who
+			end
+		end
+	end
+	return v.logins[1]
+end
+
+-- The logins a view's summary in Settings names: its own, in the order saved; else gh's active one ("" while that is
+-- unknown, and for Jira, which has none).
+function ghActive.shown(v: View): string
+	if v.integration ~= "github" then
+		return ""
+	end
+	return if #v.logins > 0 then table.concat(v.logins, ", ") else (ghActive.login or "")
+end
+
+-- One row of the sidebar: a view as one login runs it. A view that lists several logins is one scope under each login's
+-- group (`login` is that login, the scope's id "<view id>@<login>"); any other view is one scope, under its login's
+-- group or, with none, under gh's active one. `shown` is the login its group names ("" for Jira, or while unknown).
+type Scope = { id: string, view: View, login: string?, shown: string }
+
+-- The scopes as the sidebar lists them: a block with several integrations groups them, each integration's views in
+-- store order within the group of the login they run as; groups by login, sorted by name.
+local function orderedViews(state: State): { Scope }
+	local out: { Scope } = {}
+	for _, id in state.kind.integrations do
+		local keys: { string } = {}
+		local groups: { [string]: { Scope } } = {}
+		for _, v in state.store.items do
+			if v.integration ~= id then
+				continue
+			end
+			local runs: { string } = if #v.logins > 0 and id == "github" then v.logins else { "" }
+			for _, who in runs do
+				local shown = if who ~= "" then who elseif id == "github" then (ghActive.login or "") else ""
+				local key = string.lower(shown)
+				if not groups[key] then
+					groups[key] = {}
+					table.insert(keys, key)
+				end
+				table.insert(groups[key], {
+					id = if #v.logins > 1 then v.id .. "@" .. who else v.id,
+					view = v,
+					login = if who ~= "" then who else nil,
+					shown = shown,
+				})
+			end
+		end
+		table.sort(keys)
+		for _, key in keys do
+			for _, scope in groups[key] do
+				table.insert(out, scope)
+			end
+		end
+	end
+	return out
+end
+
+-- Whether `scope` is the one the block shows: its view, and for a view of several logins its login.
+function ghActive.isActive(state: State, scope: Scope): boolean
+	if scope.view.id ~= state.activeId then
+		return false
+	end
+	return #scope.view.logins <= 1 or string.lower(scope.login or "") == string.lower(accountOf(scope.view, state.activeLogin))
 end
 
 local function indexOf(items: { any }, key: string?): number
@@ -487,20 +720,16 @@ local function selected(state: State): any
 	return nil
 end
 
--- Picker ids ("n" .. number or ref, see itemId) of the launch repo's items whose Plotroom worktree holds some pane's
--- cwd on this host.
+-- Keys ("owner/repo#n", "abc#ABC-12") of the items whose Plotroom worktree holds some pane's cwd on this host.
 local function openItems(state: State): { [string]: boolean }
 	local open: { [string]: boolean } = {}
-	local repo = state.repo
-	if repo then
-		local issues = state.kind.id == "issues"
-		for _, p in tern.pane.list() do
-			local cwd = p.cwd
-			if cwd then
-				local ref: any = if issues then worktree.issueOfPath(cwd, repo) else worktree.prOfPath(cwd, repo)
-				if ref then
-					open["n" .. ref] = true
-				end
+	local want = if state.kind.id == "issues" then "issue" else "pr"
+	for _, p in tern.pane.list() do
+		local cwd = p.cwd
+		if cwd then
+			local key, what = worktree.itemOfPath(cwd)
+			if key and what == want then
+				open[key] = true
 			end
 		end
 	end
@@ -511,16 +740,28 @@ local function trim(s: string): string
 	return string.match(s, "^%s*(.-)%s*$") or ""
 end
 
--- Picker ids hold no `/` or `#`; search is scoped to one repo, so numbers (refs) are unique.
-local function itemId(state: State, item: any): string
-	return "n" .. (if state.kind.id == "issues" then item.ref else item.number)
+-- `raw` as a GitHub "owner/name" (both parts valid worktree segments, trimmed); nil when it is not one.
+local function parseRepo(raw: any): string?
+	local owner, name = string.match(if type(raw) == "string" then trim(raw) else "", "^([^/]+)/([^/]+)$")
+	if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
+		return owner .. "/" .. name
+	end
+	return nil
+end
+
+-- Picker ids hold no `/` or `#`: the item's key ("owner/repo#n", or "abc#ABC-12") with every other character spelled
+-- `_xx`, `_` included, so two keys never share one.
+local function itemId(item: any): string
+	return "n" .. (string.gsub(item.key, "[^%w%-]", function(c: string): string
+		return string.format("_%02x", string.byte(c))
+	end))
 end
 
 local function itemOf(state: State, id: string): any
 	local snap = state.snap
 	if snap then
 		for _, item in snap.items do
-			if itemId(state, item) == id then
+			if itemId(item) == id then
 				return item
 			end
 		end
@@ -544,12 +785,21 @@ local function filtered(state: State): Visible?
 		return nil
 	end
 	local text = if state.query then state.query.text else ""
+	local view = activeView(state)
+	local group = if view then view.group else "none"
 	local cached = state.vis
-	if cached and cached.snap == snap and cached.needle == text then
+	if cached and cached.snap == snap and cached.needle == text and cached.group == group then
 		return cached
 	end
-	local items: { any } = {}
-	local order: { string } = {}
+	local spec: Group? = nil
+	if view then
+		for _, g in groupsOf(state.kind.id, view.integration) do
+			if g.value == group then
+				spec = g
+			end
+		end
+	end
+	local kept: { any } = {}
 	local hits: { [string]: any } = {}
 	local hasHits = false
 	local blank = trim(text) == ""
@@ -560,16 +810,51 @@ local function filtered(state: State): Visible?
 			ok, range = matchItem(state, item, text)
 		end
 		if ok then
-			table.insert(items, item)
-			local id = itemId(state, item)
-			table.insert(order, id)
+			table.insert(kept, item)
 			if range then
-				hits[id] = { range }
+				hits[itemId(item)] = { range }
 				hasHits = true
 			end
 		end
 	end
-	local out: Visible = { snap = snap, needle = text, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
+	local items: { any } = {}
+	local order: { any } = {}
+	if spec then
+		-- Headers of the groups, in label order, each followed by its items; navigation walks `items`, so a header is never selected.
+		local buckets: { [string]: { any } } = {}
+		local labels: { string } = {}
+		for _, item in kept do
+			local label = spec.of(item)
+			local bucket = buckets[label]
+			if not bucket then
+				bucket = {}
+				buckets[label] = bucket
+				table.insert(labels, label)
+			end
+			table.insert(bucket, item)
+		end
+		table.sort(labels, function(a: string, b: string): boolean
+			local x, y = string.lower(a), string.lower(b)
+			if x ~= y then
+				return x < y
+			end
+			return a < b
+		end)
+		for _, label in labels do
+			local bucket = buckets[label]
+			table.insert(order, { group = label, label = label, count = #bucket })
+			for _, item in bucket do
+				table.insert(items, item)
+				table.insert(order, itemId(item))
+			end
+		end
+	else
+		for _, item in kept do
+			table.insert(items, item)
+			table.insert(order, itemId(item))
+		end
+	end
+	local out: Visible = { snap = snap, needle = text, group = group, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
 	state.vis = out
 	return out
 end
@@ -585,42 +870,33 @@ end
 
 -- ---------------------------------------------------------------- identity
 
--- The gh login for github.wait/quota (nil: the active gh account).
+-- The gh login the active scope runs as (nil: the active gh account), for github.wait and quota and every gh call.
 local function login(state: State): string?
-	local a = state.account
-	return if a ~= nil and a ~= "" then a else nil
+	local v = activeView(state)
+	local who = if v then accountOf(v, state.activeLogin) else ""
+	return if who ~= "" then who else nil
 end
 
--- The saved gh account of `repo` (github.account); only GitHub has one, so Jira reads the default ("").
-local function savedAccount(state: State, repo: string): (string?, github.Problem?)
-	if state.kind.tracker ~= "github" then
-		return nil, nil
-	end
-	return github.account(repo)
+-- The active view's integration: what a search, wait or heading of the block belongs to.
+local function trackerOf(state: State): string
+	local v = activeView(state)
+	return if v then v.integration else state.kind.integrations[1]
 end
 
 -- Seconds every pane must still wait before a search of this block's tracker: only GitHub has a shared quota.
 local function waitOf(state: State): number
-	return if state.kind.tracker == "github" then github.wait(os.time(), login(state)) else 0
+	return if trackerOf(state) == "github" then github.wait(os.time(), login(state)) else 0
 end
 
--- Cache key of a snapshot: repository, gh account and query. nil while the account is unknown or unreadable.
-local function snapKey(state: State, query: string): string?
-	local repo, account = state.repo, state.account
-	if not repo or not account then
-		return nil
-	end
-	return repo .. "\0" .. account .. "\0" .. query
+-- Cache key of a snapshot: integration, the gh login the scope runs as and query.
+local function snapKey(v: View, login: string?): string
+	return v.integration .. "\0" .. string.lower(accountOf(v, login)) .. "\0" .. v.query
 end
 
--- Cache key of an item's loaded details (a PR's checks, an issue's body); the account is part of it, so one identity
+-- Cache key of an item's loaded details (a PR's checks, an issue's body); the login is part of it, so one identity
 -- never sees another's.
-local function detailKey(state: State, item: any): string?
-	local account = state.account
-	if not account then
-		return nil
-	end
-	return account .. "\0" .. item.key .. "@" .. item.updated
+local function detailKey(state: State, item: any): string
+	return state.account .. "\0" .. item.key .. "@" .. item.updated
 end
 
 -- Drops everything shown, cached or running under the previous gh identity.
@@ -630,47 +906,32 @@ local function forget(state: State)
 	dropDetails(state)
 end
 
--- Rereads the repository's saved gh account: `state.account` is the identity everything on screen and in flight belongs to. A
--- different one (or none) drops all data and problems of the old one; an unreadable one says why. False: no request may run.
-local function identify(state: State): boolean
-	local repo = state.repo
-	if not repo then
-		return false
+-- `state.account` and `state.tracker` are the identity everything on screen and in flight belongs to: the active view's
+-- gh login and integration. A different one drops all data and problems of the old one.
+local function identify(state: State)
+	local v = activeView(state)
+	local account = if v then accountOf(v, state.activeLogin) else ""
+	local integration = if v then v.integration else state.kind.integrations[1]
+	if account ~= state.account or integration ~= state.tracker then
+		state.account, state.tracker = account, integration
+		forget(state)
 	end
-	local saved, why = savedAccount(state, repo)
-	local now = if why then nil else (saved or "")
-	local before = state.account
-	if now ~= before then
-		state.account = now
-		if before ~= nil then
-			forget(state)
-		end
-	end
-	local p = state.problem
-	if why then
-		state.problem = { kind = "account", message = why.message }
-	elseif p and p.kind == "account" then
-		state.problem = nil
-	end
-	return now ~= nil
 end
 
--- Shows the cached snapshot of the active filter (none while the account is unknown).
+-- Shows the cached snapshot of the active scope.
 local function showSnapshot(state: State)
 	identify(state)
-	local f = activeFilter(state)
-	state.applied = if f then f.query else nil
-	local key = if f then snapKey(state, f.query) else nil
-	state.snap = if key then state.snaps[key] else nil
+	local v = activeView(state)
+	state.applied = if v then snapKey(v, state.activeLogin) else nil
+	state.snap = if v then state.snaps[snapKey(v, state.activeLogin)] else nil
 	ensureCursor(state)
 end
 
 local refresh: (State) -> ()
 
 -- Problems that retrying cannot fix by itself: no automatic refresh until an explicit Retry. "invalid" belongs to one
--- query, "account" to an unreadable saved account, "not-found" to a repository or project the account cannot see (each
--- tracker's classifier reports it).
-local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true, invalid = true, account = true }
+-- query, "not-found" to a repository or project the login cannot see (each tracker's classifier reports it).
+local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true, invalid = true }
 
 local HEADS: { [string]: string } = {
 	missing = "GitHub CLI not found",
@@ -678,17 +939,13 @@ local HEADS: { [string]: string } = {
 	["rate-limit"] = "GitHub rate limit",
 	["not-found"] = "Repository not visible",
 	invalid = "GitHub rejected the search",
-	account = "GitHub account unavailable",
-	["no-repo"] = "No GitHub repository",
 }
 local HELP: { [string]: string } = {
 	missing = "Install the GitHub CLI (cli.github.com) so it is on your shell's PATH, then Refresh.",
 	auth = "Run gh auth login in a terminal, then Refresh.",
 	["rate-limit"] = "Searches resume automatically when GitHub's limit resets.",
-	["not-found"] = "Check this repository's account in Settings › GitHub, then Refresh.",
-	invalid = "Check the filter query and this repository's account in Settings, then Refresh.",
-	account = "Fix or clear this repository's account in Settings › GitHub, then Refresh (a damaged saved-accounts file needs a manual repair).",
-	["no-repo"] = "Press o to pick a repository, or open Plotroom inside a checkout of one.",
+	["not-found"] = "Check this view's GitHub login in Settings › Views, then Refresh.",
+	invalid = "Check the view's query and login in Settings › Views, then Refresh.",
 }
 local JIRA_HEADS: { [string]: string } = {
 	missing = "Atlassian CLI not found",
@@ -701,8 +958,8 @@ local JIRA_HELP: { [string]: string } = {
 	missing = "Install Atlassian's CLI (acli) so it is on your shell's PATH, then Refresh.",
 	auth = "Run acli jira auth login in a terminal, then Refresh.",
 	["rate-limit"] = "Searches resume at the next refresh.",
-	["not-found"] = "Check the project key, or pick another project (o), then Refresh.",
-	invalid = "Check the filter's JQL in Settings › Filters, then Refresh.",
+	["not-found"] = "Check the view's JQL in Settings › Views, then Refresh.",
+	invalid = "Check the view's JQL in Settings › Views, then Refresh.",
 }
 
 -- The heading of problem kind `k`, nil when it has none; a failed load names what it was loading.
@@ -710,17 +967,12 @@ local function headOf(state: State, k: string): string?
 	if k == "failed" then
 		return "Could not load " .. state.kind.many
 	end
-	return if state.kind.tracker == "jira" then JIRA_HEADS[k] else HEADS[k]
+	return if trackerOf(state) == "jira" then JIRA_HEADS[k] else HEADS[k]
 end
 
 -- What to do about problem kind `k`, nil when there is no advice.
 local function helpOf(state: State, k: string): string?
-	if state.kind.tracker == "jira" then
-		return JIRA_HELP[k]
-	elseif k == "no-repo" and state.kind.id == "issues" then
-		return "Press o to pick a repository, open Plotroom inside a checkout of one, or choose Jira in Settings › Integration."
-	end
-	return HELP[k]
+	return if trackerOf(state) == "jira" then JIRA_HELP[k] else HELP[k]
 end
 
 -- Panes of this runtime that still exist; they share one search quota.
@@ -755,40 +1007,6 @@ local function schedule(state: State, ms: number)
 	end)
 end
 
--- The repository of the launch directory, from local git only; launching inside a checkout also saves it as that
--- repository's checkout. Fails closed: without a repository no search runs.
-local function resolveRepo(state: State)
-	if state.resolving then
-		return
-	end
-	local cwd = state.launchCwd
-	if not cwd then
-		state.problem = { kind = "no-repo", message = "No launch directory to find a repository in." }
-		return
-	end
-	state.resolving = true
-	worktree.currentRepository(cwd, function(found, why)
-		if not alive(state) then
-			return
-		end
-		state.resolving = false
-		if found then
-			local err = saveCheckout(found.id, found.checkout)
-			if err then
-				state.cx:toast("error", "Checkout of " .. found.id .. " not saved", err)
-			end
-		end
-		-- A repository the user picked meanwhile stays.
-		if found and not state.repo then
-			state.repo, state.problem = found.id, nil
-			showSnapshot(state)
-			refresh(state)
-		elseif not state.repo then
-			state.problem = { kind = "no-repo", message = "No GitHub repository for " .. cwd .. ": " .. (why or "unknown") }
-		end
-		state.cx:render()
-	end)
-end
 
 -- Checks, failures and folds of PRs that no cached snapshot lists any more (or lists with a newer update) cannot be shown again.
 local function prune(state: State)
@@ -823,18 +1041,7 @@ refresh = function(state: State)
 		state.timer:cancel()
 		state.timer = nil
 	end
-	local repo = state.repo
-	if not repo then
-		-- A failed lookup stays failed until an explicit Retry: nothing else may respawn git.
-		local p = state.problem
-		if p and p.kind == "no-repo" then
-			return
-		end
-		return resolveRepo(state)
-	end
-	if not identify(state) then
-		return -- the saved account is unreadable: nothing may run as another identity
-	end
+	identify(state)
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
 		return
@@ -842,27 +1049,25 @@ refresh = function(state: State)
 	if state.inflight == state.gen then
 		return -- the request for the current query is already running
 	end
-	local f = activeFilter(state)
-	if not f then
+	local v = activeView(state)
+	if not v then
 		state.problem = nil
 		return
 	end
 	-- The server's cooldown holds for every trigger, manual refresh included.
 	local wait = waitOf(state)
 	if wait > 0 then
-		-- Nothing is loading: say why, so an uncached filter does not show a spinner until the reset.
+		-- Nothing is loading: say why, so an uncached view does not show a spinner until the reset.
 		state.problem = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }
 		return schedule(state, wait * 1000)
 	end
-	local gen, query = state.gen, f.query
-	local key = snapKey(state, query)
-	if not key then
-		return
-	end
+	local gen, query, integration = state.gen, v.query, v.integration
+	local key = snapKey(v, state.activeLogin)
 	state.inflight = gen
 	local function current(): boolean
 		return running[state.cx.pane] == state and state.gen == gen
 	end
+	local issues = state.kind.id == "issues"
 	-- `result` is a github.SearchResult (prs) or a tracker.IssueResult (issues).
 	local function landed(result: any, problem: github.Problem?, spent: number)
 		if not alive(state) then
@@ -872,32 +1077,24 @@ refresh = function(state: State)
 			state.inflight = nil
 		end
 		if state.gen ~= gen or (problem and problem.kind == "superseded") then
-			-- The query or the account changed meanwhile and its own request is running or paused: only the spent quota counts.
+			-- The query or the login changed meanwhile and its own request is running or paused: only the spent quota counts.
 			if spent > 0 then
 				state.cost = math.max(spent, state.cost)
 			end
 			state.cx:render()
 			return
 		end
-		if problem and problem.kind == "account" then
-			-- The saved account became unreadable under the request: nothing of the old identity may stay on screen.
-			state.account = nil
-			forget(state)
-			state.problem = problem
-			state.cx:render()
-			return
-		end
 		if result then
-			local snap: Snap = { items = if state.kind.id == "issues" then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
+			local snap: Snap = { items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
 			state.snaps[key] = snap
 			state.snap = snap
 			state.round += 1 -- every loaded checks list is older than this result now
 			state.problem = nil
 			ensureCursor(state)
 			prune(state)
-			if state.kind.tracker == "github" then
+			if integration == "github" then
 				-- Warms the repository picker's list of gh logins (window.luau's pickRepo), so it opens without waiting on gh.
-				github.accounts(function() end)
+				ghActive.note(state)
 			end
 		else
 			state.problem = problem
@@ -906,7 +1103,7 @@ refresh = function(state: State)
 			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.
 			state.cost = if result then spent else math.max(spent, state.cost)
 			state.interval = github.interval(github.quota(login(state)), os.time(), state.cost, openPanes(), POLL_MS)
-		elseif result and state.kind.tracker == "jira" then
+		elseif result and integration == "jira" then
 			state.interval = POLL_MS -- Jira has no quota to pace: the plain minute
 		else
 			state.interval = nil -- nothing was sent (invalid query): no quota to pace
@@ -916,53 +1113,53 @@ refresh = function(state: State)
 		end
 		state.cx:render()
 	end
-	if state.kind.id == "issues" then
-		TRACKERS[state.kind.tracker].search(repo, query, current, landed)
+	if issues then
+		TRACKERS[integration].search(login(state), query, current, landed)
 	else
-		github.search(repo, query, current, landed)
+		github.search(login(state), query, current, landed)
 	end
 end
 
--- A different applied query or account: invalidate whatever is in flight and reload now. A rejected query (HTTP 422)
+-- A different applied query or login: invalidate whatever is in flight and reload now. A rejected query (HTTP 422)
 -- belonged to the old query; the other pauses are about the environment and stay.
 local function changed(state: State)
 	state.gen += 1
 	local p = state.problem
-	if state.repo and p and (p.kind == "invalid" or not TERMINAL[p.kind]) then
+	if p and (p.kind == "invalid" or not TERMINAL[p.kind]) then
 		state.problem = nil
 	end
 	showSnapshot(state)
 	refresh(state)
 end
 
--- Explicit user retry (`r`, Refresh, Retry): also looks for a repository again, forgets which tracker CLIs start and
--- Jira's site, and retries failed checks loads. The search it starts makes the loaded checks stale (State.round): the
--- selected PR's load again once it lands.
+-- Explicit user retry (`r`, Refresh, Retry): also forgets which tracker CLIs start and Jira's site, and retries failed
+-- checks loads. The search it starts makes the loaded checks stale (State.round): the selected PR's load again once it
+-- lands.
 local function retry(state: State)
 	process.reset()
 	jira.reset()
-	table.clear(installed) -- a CLI installed meanwhile counts: the Integration page asks again
-	if state.settings and state.settings.page == "source" then
+	table.clear(installed) -- a CLI installed meanwhile counts: the Jira projects page asks again
+	if state.settings and state.settings.page == "jira" then
 		probeClis()
 	end
 	local p = state.problem
-	if p and (TERMINAL[p.kind] or (not state.repo and p.kind == "no-repo")) then
+	if p and TERMINAL[p.kind] then
 		state.problem = nil
 	end
 	state.detailFail = {}
 	cancelDetails(state)
-	if state.repo and state.inflight == state.gen then
-		state.cx:toast("info", "Already refreshing", state.repo)
+	if state.inflight == state.gen then
+		local v = activeView(state)
+		state.cx:toast("info", "Already refreshing", if v then v.name else nil)
 	end
 	refresh(state)
 end
 
-local function switchFilter(state: State, id: string?)
-	state.activeId = id
+local function switchView(state: State, id: string?, activeLogin: string?)
+	state.activeId, state.activeLogin = id, activeLogin
 	identify(state)
-	local f = activeFilter(state)
-	local key = if f then snapKey(state, f.query) else nil
-	local cached = if key then state.snaps[key] else nil
+	local v = activeView(state)
+	local cached = if v then state.snaps[snapKey(v, state.activeLogin)] else nil
 	local age = if cached then os.time() - cached.fetched else 0
 	local fresh = math.floor((state.interval or POLL_MS) / 1000)
 	local halted = state.problem
@@ -980,29 +1177,20 @@ local function switchFilter(state: State, id: string?)
 	end
 end
 
--- Whether what the block shows no longer fits the active filter's query or the repository's saved account (changed by
--- another block). The block remembers what it applied: reading the account again after the write would see the new one both times.
-local function stale(state: State, f: Filter): boolean
-	if f.query ~= state.applied then
-		return true
-	end
-	local repo = state.repo
-	if not repo then
-		return false
-	end
-	local saved, why = savedAccount(state, repo)
-	local now = if why then nil else (saved or "")
-	return now ~= state.account
+-- Whether what the block shows no longer fits the active view's integration, query or login (changed by another
+-- block). The block remembers the snapshot key it applied.
+local function stale(v: View, state: State): boolean
+	return snapKey(v, state.activeLogin) ~= state.applied
 end
 
--- After another block wrote the filters or the repository's account, or on restore: reread storage; what is shown must match it.
-local function reloadStore(state: State)
-	local store, writable, err = loadStore(state.kind)
+-- After another block wrote the views, or on restore: reread storage; what is shown must match it.
+local function reloadViews(state: State)
+	local store, writable, err = loadViews(state.kind)
 	state.store, state.writable, state.storeError = store, writable, err
-	local f = activeFilter(state)
-	if not f then
-		switchFilter(state, if store.items[1] then store.items[1].id else nil)
-	elseif stale(state, f) then
+	local v = activeView(state)
+	if not v then
+		switchView(state, if store.items[1] then store.items[1].id else nil)
+	elseif stale(v, state) then
 		changed(state)
 	end
 end
@@ -1011,7 +1199,7 @@ end
 local function propagate(origin: State)
 	for _, s in running do
 		if s ~= origin and alive(s) then
-			reloadStore(s)
+			reloadViews(s)
 			s.cx:render()
 		end
 	end
@@ -1029,17 +1217,17 @@ local function moveCursor(state: State, delta: number)
 	state.cursor = v.items[math.clamp(i + delta, 1, #v.items)].key
 end
 
-local function moveFilter(state: State, delta: number)
-	local items = state.store.items
+local function moveView(state: State, delta: number)
+	local items = orderedViews(state)
 	local at = 0
-	for i, f in items do
-		if f.id == state.activeId then
+	for i, scope in items do
+		if ghActive.isActive(state, scope) then
 			at = i
 		end
 	end
 	local target = items[math.clamp(at + delta, 1, math.max(1, #items))]
-	if target and target.id ~= state.activeId then
-		switchFilter(state, target.id)
+	if target and not ghActive.isActive(state, target) then
+		switchView(state, target.view.id, target.login)
 	end
 end
 
@@ -1119,17 +1307,9 @@ local function brief(s: string): string
 	return clip(printable(string.match(s, "[^\n]*") or ""), 160)
 end
 
--- The adaptive refresh pace: cooldown while the server holds us back, else the
--- interval and the next refresh (the quota sits under this row). Nothing without
--- a repo or when no request was sent (invalid query).
+-- The adaptive refresh pace: cooldown while the server holds us back, else the interval and the next refresh (the
+-- quota sits under this row). Nothing when no request was sent (invalid query).
 local function paceLine(state: State): string?
-	if not state.repo then
-		local p = state.problem
-		if p and p.kind == "no-repo" then
-			return "Auto-refresh unavailable: no repository. Pick one (o), or Refresh to look again."
-		end
-		return nil
-	end
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
 		return "Auto-refresh paused: " .. (headOf(state, halted.kind) or halted.kind) .. ". Fix it, then Refresh."
@@ -1149,16 +1329,39 @@ end
 local QUEUE_ID = "layer.queue"
 local SETTINGS_ID = "layer.settings"
 local PAGE_DEFS: { [string]: { id: string, label: string, group: string, icon: string } } = {
-	filters = { id = "filters", label = "Filters", group = "Queue", icon = "funnel" },
+	views = { id = "views", label = "Views", group = "Queue", icon = "funnel" },
 	prompts = { id = "prompts", label = "Prompts", group = "Queue", icon = "app-omp" },
-	github = { id = "github", label = "GitHub", group = "Connection", icon = "globe" },
-	source = { id = "source", label = "Integration", group = "Connection", icon = "globe" },
-	worktrees = { id = "worktrees", label = "Worktrees", group = "Connection", icon = "tree" },
+	repos = { id = "repos", label = "Repositories", group = "Code", icon = "tree" },
+	jira = { id = "jira", label = "Jira projects", group = "Code", icon = "globe" },
+	connection = { id = "connection", label = "Connection", group = "Connection", icon = "globe" },
 }
--- The pickers the window opens for a block's repository or project (window.luau's `pickRepo` and `pickJira`).
+-- The pickers the window opens for Settings' add rows (window.luau's `pickRepo` and `pickJira`).
 local REPOS_HREF = "plotroom://repos"
 local JIRA_HREF = "plotroom://jira-projects"
-local NO_REPO = "No repository is shown; pick one in the queue (o)."
+
+-- What each integration is called, what a new view of it starts as, how its query is written, and the heading of an
+-- issue's linked items.
+type Integration = { label: string, newQuery: string, hint: string, linked: string }
+local INTEGRATIONS: { [string]: Integration } = {
+	github = {
+		label = "GitHub",
+		newQuery = "is:open involves:@me",
+		hint = "GitHub search syntax, across every repository the login can see; repo:, org: and user: narrow it.",
+		linked = "Linked pull requests",
+	},
+	jira = {
+		label = "Jira",
+		newQuery = "assignee = currentUser() AND statusCategory != Done",
+		hint = "JQL across every project, listed newest update first, so leave out ORDER BY.",
+		linked = "Linked issues",
+	},
+}
+
+-- The sidebar group a view sits under: "GitHub - andyhite" for a view with its own login.
+local function groupLabel(v: View): string
+	local login = ghActive.shown(v)
+	return if login ~= "" then INTEGRATIONS[v.integration].label .. " - " .. login else INTEGRATIONS[v.integration].label
+end
 
 local STATE_BADGE: { [string]: { text: string, tone: string } } = {
 	open = { text = "Open", tone = "success" },
@@ -1206,32 +1409,26 @@ local CHECK: { [string]: { text: string, tone: string, mark: string } } = {
 -- prompt editor's legend of the variables a prompt may use.
 local PRS: Kind = {
 	id = "prs",
-	tracker = "github",
 	title = "GitHub PRs",
 	one = "pull request",
 	many = "pull requests",
 	icon = "merge",
-	site = "GitHub",
-	place = "repository",
-	pickHref = REPOS_HREF,
-	pages = { "filters", "prompts", "github", "worktrees" },
-	filtersKey = "filters",
-	promptsKey = "prompts",
-	newQuery = "is:open",
-	linked = "",
+	pages = { "views", "prompts", "repos", "connection" },
+	viewsKey = "views-prs",
+	promptsKey = "prompts-prs",
+	integrations = { "github" },
 	seeds = {
-		{ id = "f1", name = "My PRs", query = "is:open author:@me" },
-		{ id = "f2", name = "Review requested", query = "is:open review-requested:@me" },
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", logins = {}, group = "none", prompts = {} },
+		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", logins = {}, group = "none", prompts = {} },
 	},
 	keys = {
 		{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
 		{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
-		{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (without a saved checkout of the repository: set one)" },
+		{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (Plotroom asks for the repository's checkout the first time)" },
 		{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
 		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
-		{ keys = { "o" }, text = "Show another repository: a saved one, or type owner/name" },
 		{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
-		{ keys = { "Tab" }, text = "Switch between the filter list and the pull requests" },
+		{ keys = { "Tab" }, text = "Switch between the view list and the pull requests" },
 		{ keys = { "r" }, text = "Refresh now" },
 		{ keys = { "s" }, text = "Settings" },
 		{ keys = { "?" }, text = "Show or hide this list" },
@@ -1249,17 +1446,16 @@ local PRS: Kind = {
 	},
 }
 
--- The `?` list of an issues kind's queue; `o` says where the other repository or project comes from.
-local function issueKeys(o: string): { KeyHelp }
+-- The `?` list of the issues queue.
+local function issueKeys(): { KeyHelp }
 	return {
 		{ keys = { "↑", "↓" }, text = "Move through the issues (j and k too; Page Up/Down jump ten, Home/End the ends)" },
 		{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
-		{ keys = { "w" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (without a saved checkout of the repository: set one)" },
+		{ keys = { "w" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (Plotroom asks for the repository, and its checkout, the first time)" },
 		{ keys = { "g" }, text = "Go to the tab working in the selected issue's worktree" },
 		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)" },
-		{ keys = { "o" }, text = o },
 		{ keys = { "/" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
-		{ keys = { "Tab" }, text = "Switch between the filter list and the issues" },
+		{ keys = { "Tab" }, text = "Switch between the view list and the issues" },
 		{ keys = { "r" }, text = "Refresh now" },
 		{ keys = { "s" }, text = "Settings" },
 		{ keys = { "?" }, text = "Show or hide this list" },
@@ -1267,7 +1463,7 @@ local function issueKeys(o: string): { KeyHelp }
 end
 
 -- The variables prepareIssue sends the window (issueVars; `branch` too when it runs in a worktree), which fills them in:
--- the legend of both issue kinds, each tracker filling its own.
+-- the legend of the issues kind, each tracker filling its own.
 local ISSUE_VARS = {
 	{ k = { ui.span("{url}", "code") }, v = "Link to the issue" },
 	{ k = { ui.span("{key}", "code") }, v = "Issue number (GitHub) or key (Jira, ABC-12)" },
@@ -1275,8 +1471,8 @@ local ISSUE_VARS = {
 	{ k = { ui.span("{author}", "code") }, v = "Author's login (GitHub) or reporter's name (Jira)" },
 	{ k = { ui.span("{labels}", "code") }, v = "Labels, comma-separated" },
 	{ k = { ui.span("{branch}", "code") }, v = "The worktree's branch (prompts that run in a worktree)" },
-	{ k = { ui.span("{owner}", "code") }, v = "Repository owner (GitHub)" },
-	{ k = { ui.span("{repo}", "code") }, v = "Repository name (GitHub)" },
+	{ k = { ui.span("{owner}", "code") }, v = "Owner of the repository the issue is worked in" },
+	{ k = { ui.span("{repo}", "code") }, v = "Name of that repository" },
 	{ k = { ui.span("{number}", "code") }, v = "Issue number (GitHub)" },
 	{ k = { ui.span("{project}", "code") }, v = "Project key (Jira)" },
 	{ k = { ui.span("{status}", "code") }, v = "Status (Jira)" },
@@ -1285,104 +1481,27 @@ local ISSUE_VARS = {
 
 local ISSUES: Kind = {
 	id = "issues",
-	tracker = "github",
-	title = "GitHub Issues",
+	title = "Issues",
 	one = "issue",
 	many = "issues",
 	icon = ISSUE_ICON,
-	site = "GitHub",
-	place = "repository",
-	pickHref = REPOS_HREF,
-	pages = { "filters", "prompts", "source", "worktrees" },
-	filtersKey = "issue-filters",
-	promptsKey = "issue-prompts",
+	pages = { "views", "prompts", "repos", "jira", "connection" },
+	viewsKey = "views-issues",
+	promptsKey = "prompts-issues",
+	integrations = { "github", "jira" },
 	seeds = {
-		{ id = "f1", name = "Assigned to me", query = "is:open assignee:@me" },
-		{ id = "f2", name = "Created by me", query = "is:open author:@me" },
+		{ id = "v1", name = "Assigned to me", integration = "github", query = "is:open assignee:@me", logins = {}, group = "none", prompts = {} },
+		{ id = "v2", name = "Created by me", integration = "github", query = "is:open author:@me", logins = {}, group = "none", prompts = {} },
 	},
-	newQuery = "is:open",
-	linked = "Linked pull requests",
-	keys = issueKeys("Show another repository: a saved one, or type owner/name"),
+	keys = issueKeys(),
 	vars = ISSUE_VARS,
 }
-
-local JIRA: Kind = {
-	id = "issues",
-	tracker = "jira",
-	title = "Jira Issues",
-	one = "issue",
-	many = "issues",
-	icon = ISSUE_ICON,
-	site = "Jira",
-	place = "project",
-	pickHref = JIRA_HREF,
-	pages = { "filters", "prompts", "source", "worktrees" },
-	filtersKey = "jira-filters",
-	promptsKey = "issue-prompts", -- shared with ISSUES
-	seeds = {
-		{ id = "f1", name = "Assigned to me", query = "assignee = currentUser() AND statusCategory != Done" },
-		{ id = "f2", name = "Reported by me", query = "reporter = currentUser() AND statusCategory != Done" },
-	},
-	newQuery = "statusCategory != Done",
-	linked = "Linked issues",
-	keys = issueKeys("Show another Jira project: a saved one, one acli lists, or type its key"),
-	vars = ISSUE_VARS,
-}
-
--- Shows `kind` (ISSUES or JIRA, in an issues block) with its own saved filters; nothing of the other tracker stays.
-local function setKind(state: State, kind: Kind)
-	if state.kind == kind then
-		return
-	end
-	state.kind = kind
-	state.store, state.writable, state.storeError = loadStore(kind)
-	state.activeId = if state.store.items[1] then state.store.items[1].id else nil
-	state.account, state.query, state.interval, state.nextAt, state.descOpen = nil, nil, nil, nil, nil
-	forget(state) -- drops the snapshots, details and problems of the other tracker
-end
-
--- The window's repository picker chose `raw` ("owner/name", maybe typed): it stays pickable and the block shows it
--- (an issues block as GitHub issues).
-local function showRepo(state: State, raw: any)
-	local owner, name = string.match(if type(raw) == "string" then trim(raw) else "", "^([^/]+)/([^/]+)$")
-	if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
-		return state.cx:toast("error", "Not a repository", "Type it as owner/name.")
-	end
-	local repo = owner .. "/" .. name
-	saveCheckout(repo, "", true) -- best effort: an unsaved one is only missing from the picker next time
-	local wanted = if state.kind.id == "issues" then ISSUES else state.kind
-	if state.kind == wanted and state.repo and string.lower(state.repo) == string.lower(repo) then
-		return
-	end
-	setKind(state, wanted)
-	state.repo, state.problem, state.cursor = repo, nil, nil
-	changed(state)
-end
-
--- The window's Jira project picker chose `raw` (a project key, maybe typed in lowercase): it stays pickable and the
--- issues block shows it as Jira issues.
-local function showJira(state: State, raw: any)
-	if state.kind.id ~= "issues" then
-		return
-	end
-	local key = string.upper(if type(raw) == "string" then trim(raw) else "")
-	if not tracker.jiraProject(key) then
-		return state.cx:toast("error", "Not a Jira project key", "Type its key, such as ABC.")
-	end
-	saveCheckout(key, "", true) -- best effort, as for a repository
-	if state.kind == JIRA and state.repo == key then
-		return
-	end
-	setKind(state, JIRA)
-	state.repo, state.problem, state.cursor = key, nil, nil
-	changed(state)
-end
 
 local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
 	{ keys = { "Enter" }, text = "Edit a text row or press its button; while editing, Enter saves" },
 	{ keys = { "⌘↵" }, text = "Save a prompt's text (Enter there starts a new line)" },
-	{ keys = { "←", "→", "Space" }, text = "On a prompt's Filters row after Enter: move between filters and turn one on or off" },
+	{ keys = { "←", "→", "Space" }, text = "On a chips row after Enter: move between options and turn one on or off (a single-choice row switches to the option)" },
 	{ keys = { "Esc" }, text = "Cancel the edit without saving; with nothing being edited, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
 	{ keys = { "?" }, text = "Show or hide this list" },
@@ -1406,6 +1525,35 @@ local function issueBadge(issue: tracker.Issue): { text: string, tone: string }
 	return CLOSED_REASON[issue.reason or ""] or STATE_BADGE.closed
 end
 
+GROUPS = {
+	prs = {
+		github = {
+			{ value = "repo", label = "Repository", of = function(pr: any): string return pr.repo end },
+			{ value = "author", label = "Author", of = function(pr: any): string return pr.author end },
+			{ value = "state", label = "State", of = function(pr: any): string return STATE_BADGE[stateKind(pr)].text end },
+			{ value = "review", label = "Review", of = function(pr: any): string return if pr.review then REVIEW_BADGE[pr.review].text else "No review" end },
+			{ value = "checks", label = "Checks", of = function(pr: any): string return if pr.checks then CHECK[pr.checks].text else "No checks" end },
+			{ value = "base", label = "Base branch", of = function(pr: any): string return pr.base end },
+		},
+	},
+	issues = {
+		github = {
+			{ value = "repo", label = "Repository", of = function(issue: any): string return issue.repo end },
+			{ value = "author", label = "Author", of = function(issue: any): string return issue.author end },
+			{ value = "state", label = "State", of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
+		},
+		jira = {
+			{ value = "project", label = "Project", of = function(issue: any): string return issue.repo end },
+			{ value = "status", label = "Status", of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "type", label = "Type", of = function(issue: any): string return issue.type or "No type" end },
+			{ value = "priority", label = "Priority", of = function(issue: any): string return issue.priority or "No priority" end },
+			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
+			{ value = "reporter", label = "Reporter", of = function(issue: any): string return issue.author end },
+		},
+	},
+}
+
 type Row = {
 	id: string,
 	label: string,
@@ -1417,92 +1565,170 @@ type Row = {
 	disabled: string?,
 }
 
--- The Integration page's row for tracker `id` ("github" | "jira"): the one the block shows offers to change its
--- place, the other to switch to it; both stay off while their CLI is unchecked or does not start on this host.
-local function useRow(state: State, id: string): Row
+-- Why the CLI of tracker `id` ("github" | "jira") cannot be used yet: nil when it starts on this host.
+local function cliOff(id: string): string?
 	local gh = id == "github"
-	local current = state.kind.tracker == id
-	local off: string? = nil
 	if installed[id] == nil then
-		off = "Checking whether " .. (if gh then "gh" else "acli") .. " is installed…"
+		return "Checking whether " .. (if gh then "gh" else "acli") .. " is installed…"
 	elseif not installed[id] then
-		off = if gh
+		return if gh
 			then "gh is not installed on this host. Install the GitHub CLI (cli.github.com) to use GitHub."
 			else "acli is not installed on this host. Install Atlassian's CLI (developer.atlassian.com/cloud/acli) and sign in with acli jira auth login to use Jira."
 	end
-	return {
-		id = "use:" .. id,
-		label = if gh then "GitHub" else "Jira",
-		hint = if current
-			then "In use" .. (if state.repo then ": " .. state.repo else "") .. "."
-			elseif gh then "Issues of a GitHub repository, read with gh."
-			else "Issues of a Jira Cloud project, read with Atlassian's acli.",
-		control = {
-			k = "action",
-			act = "use-" .. id,
-			label = if current then (if gh then "Change repository" else "Change project") elseif gh then "Use GitHub" else "Use Jira",
-		},
-		disabled = off,
-	}
+	return nil
 end
 
 -- sections, lead and extra children of the open settings page.
 local function pageContent(state: State): ({ any }, string, { Node })
 	local s = state.settings :: Settings
-	local where = state.repo or ("the " .. state.kind.place)
 	local issues = state.kind.id == "issues"
-	local jiraOn = state.kind.tracker == "jira"
 	local sections: { any } = {}
 	local extra: { Node } = {}
 	local lead = ""
-	if s.page == "filters" then
-		lead = if jiraOn
-			then "Saved JQL searches for the issue list's filter column. Each runs as project = " .. where .. " AND (your query), newest update first, so it may not close that parenthesis or add ORDER BY."
-			else "Saved searches for the " .. (if issues then "issue list's" else "queue's") .. " filter column. They run inside " .. where .. ", so repo:, org:, user: and OR are not allowed."
-		local locked = if state.writable then nil else (state.storeError or "Saved filters are read-only.")
-		for _, f in state.store.items do
-			local active = f.id == state.activeId
+	if s.page == "views" then
+		lead = "Saved searches for the sidebar. GitHub views search every repository the view's login can see; Jira views search every project acli can see."
+		local locked = if state.writable then nil else (state.storeError or "Saved views are read-only.")
+		local prompts = loadPrompts(state.kind)
+		local list: { Prompt } = if prompts then prompts.items else {}
+		local promptOptions: { any } = {}
+		for _, p in list do
+			table.insert(promptOptions, { value = p.id, label = p.name })
+		end
+		local integrationOptions: { any } = {}
+		for _, id in state.kind.integrations do
+			table.insert(integrationOptions, { value = id, label = INTEGRATIONS[id].label })
+		end
+		for _, v in state.store.items do
+			local active = v.id == state.activeId
+			if s.open ~= v.id then
+				local parts: { string } = { groupLabel(v) }
+				table.insert(parts, v.query)
+				if v.group ~= "none" then
+					for _, g in groupsOf(state.kind.id, v.integration) do
+						if g.value == v.group then
+							table.insert(parts, "by " .. string.lower(g.label))
+						end
+					end
+				end
+				local n = #livePrompts(v, list)
+				if n > 0 then
+					table.insert(parts, n .. (if n == 1 then " prompt" else " prompts"))
+				end
+				table.insert(sections, {
+					id = "view:" .. v.id,
+					rows = { {
+						id = "vopen:" .. v.id,
+						label = v.name .. (if active then " · active" else ""),
+						hint = clip(printable(table.concat(parts, " · ")), 120),
+						control = { k = "action", act = "expand", label = "Edit" },
+					} },
+				})
+				continue
+			end
+			local info = INTEGRATIONS[v.integration]
 			local rows: { Row } = {
-				{ id = "name:" .. f.id, label = "Name", disabled = locked, control = { k = "text", value = f.name, placeholder = if issues then "Assigned to me" else "My PRs" } },
-				{
-					id = "query:" .. f.id,
-					label = "Query",
-					hint = if jiraOn then "JQL." else "GitHub search syntax.",
-					disabled = locked,
-					control = { k = "text", value = f.query, placeholder = if jiraOn then "assignee = currentUser() AND statusCategory != Done" elseif issues then "is:open assignee:@me" else "is:open author:@me", mono = true },
-				},
+				{ id = "name:" .. v.id, label = "Name", disabled = locked, control = { k = "text", value = v.name, placeholder = if issues then "Assigned to me" else "My PRs" } },
 			}
-			table.insert(rows, { id = "delete:" .. f.id, label = "Delete filter", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
+			if #state.kind.integrations > 1 then
+				table.insert(rows, {
+					id = "vint:" .. v.id,
+					label = "Integration",
+					disabled = locked,
+					control = { k = "multi", values = tern.json.array({ v.integration }), options = tern.json.array(integrationOptions) },
+				})
+			end
+			table.insert(rows, {
+				id = "query:" .. v.id,
+				label = "Query",
+				hint = info.hint,
+				disabled = locked,
+				control = { k = "text", value = v.query, placeholder = info.newQuery, mono = true },
+			})
+			if v.integration == "github" then
+				-- The signed-in logins, then any saved one gh does not know (so it can still be removed).
+				local loginOptions: { any } = {}
+				local listed: { [string]: boolean } = {}
+				for _, who in ghActive.accounts do
+					listed[string.lower(who)] = true
+					table.insert(loginOptions, { value = who, label = who })
+				end
+				for _, who in v.logins do
+					if not listed[string.lower(who)] then
+						table.insert(loginOptions, { value = who, label = who })
+					end
+				end
+				table.insert(rows, {
+					id = "vlogins:" .. v.id,
+					label = "GitHub logins",
+					hint = "Each login you pick is its own entry in the sidebar, searching as that login, so @me means it. None: gh's active account.",
+					disabled = locked,
+					control = { k = "multi", values = tern.json.array(v.logins), options = tern.json.array(loginOptions) },
+					changed = #v.logins > 0,
+					defaultLabel = "Active gh account",
+				})
+			end
+			local groupOptions: { any } = { { value = "none", label = "None" } }
+			for _, g in groupsOf(state.kind.id, v.integration) do
+				table.insert(groupOptions, { value = g.value, label = g.label })
+			end
+			table.insert(rows, {
+				id = "vgroup:" .. v.id,
+				label = "Group by",
+				disabled = locked,
+				control = { k = "multi", values = tern.json.array({ v.group }), options = tern.json.array(groupOptions) },
+			})
+			table.insert(rows, {
+				id = "vprompts:" .. v.id,
+				label = "Prompts",
+				hint = "Offered under this view. None: every prompt.",
+				disabled = locked,
+				control = { k = "multi", values = tern.json.array(livePrompts(v, list)), options = tern.json.array(promptOptions) },
+			})
+			table.insert(rows, { id = "delete:" .. v.id, label = "Delete view", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
+			table.insert(rows, { id = "vclose:" .. v.id, label = "Done", control = { k = "action", act = "collapse", label = "Done" } })
 			table.insert(sections, {
-				id = "filter:" .. f.id,
-				title = f.name .. (if active then " · active" else ""),
+				id = "view:" .. v.id,
+				title = v.name .. (if active then " · active" else ""),
 				rows = rows,
 			})
 		end
+		local first = INTEGRATIONS[state.kind.integrations[1]]
 		table.insert(sections, {
 			id = "new",
 			rows = {
 				{
 					id = "add",
-					label = "New filter",
-					hint = "Starts as every open " .. state.kind.one .. ".",
+					label = "New view",
+					hint = "Starts as " .. first.label .. ": " .. first.newQuery .. ".",
 					disabled = locked,
-					control = { k = "action", act = "add", label = "Add filter" },
+					control = { k = "action", act = "add", label = "Add view" },
 				},
 			},
 		})
 	elseif s.page == "prompts" then
 		lead = if issues
-			then "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the " .. state.kind.place .. "'s main checkout. Variables such as {url} fill in the issue's details."
-			else "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details."
+			then "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views."
+			else "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details. Offer a prompt under particular views from Settings › Views."
 		local prompts, unreadable = loadPrompts(state.kind)
-		local options: { any } = {}
-		for _, f in state.store.items do
-			table.insert(options, { value = f.id, label = f.name })
-		end
 		local list: { Prompt } = if prompts then prompts.items else {}
 		for _, p in list do
 			local first = string.match(p.text, "^%s*([^\n]*)") or ""
+			if s.open ~= p.id then
+				local parts: { string } = { if first ~= "" then first else "Empty" }
+				if p.key and p.key ~= "" then
+					table.insert(parts, "key " .. p.key)
+				end
+				table.insert(sections, {
+					id = "prompt:" .. p.id,
+					rows = { {
+						id = "popen:" .. p.id,
+						label = p.name,
+						hint = clip(printable(table.concat(parts, " · ")), 120),
+						control = { k = "action", act = "expand", label = "Edit" },
+					} },
+				})
+				continue
+			end
 			local rows: { Row } = {
 				{ id = "pname:" .. p.id, label = "Name", control = { k = "text", value = p.name, placeholder = "Review" } },
 				{
@@ -1517,23 +1743,18 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					hint = "Key that runs it on the selected " .. state.kind.one .. ".",
 					control = { k = "text", value = p.key or "", placeholder = "None" },
 				},
-				{
-					id = "pscope:" .. p.id,
-					label = "Filters",
-					hint = "Offered only under these filters. None: every filter.",
-					control = { k = "multi", values = tern.json.array(scopeOf(p, state.store)), options = tern.json.array(options) },
-				},
 			}
 			if issues then
 				local runs: { string } = if p.worktree ~= false then { "worktree" } else {}
 				table.insert(rows, {
 					id = "pwhere:" .. p.id,
 					label = "Runs in",
-					hint = "On: in the issue's worktree (made first if needed). Off: in the " .. state.kind.place .. "'s main checkout, in a new tab.",
+					hint = "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.",
 					control = { k = "multi", values = tern.json.array(runs), options = tern.json.array({ { value = "worktree", label = "Worktree" } }) },
 				})
 			end
 			table.insert(rows, { id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } })
+			table.insert(rows, { id = "pclose:" .. p.id, label = "Done", control = { k = "action", act = "collapse", label = "Done" } })
 			table.insert(sections, { id = "prompt:" .. p.id, title = p.name, rows = rows })
 		end
 		table.insert(sections, {
@@ -1542,50 +1763,144 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "padd",
 					label = "New prompt",
-					hint = if issues then "Starts empty, runs in a worktree, offered under every filter." else "Starts empty, offered under every filter.",
+					hint = if issues then "Starts empty and runs in a worktree." else "Starts empty.",
 					disabled = unreadable,
 					control = { k = "action", act = "add-prompt", label = "Add prompt" },
 				},
 			},
 		})
-	elseif s.page == "github" or s.page == "source" then
-		if s.page == "source" then
-			lead = if jiraOn
-				then "Issues load through Atlassian's acli as the account it is signed in to (acli jira auth login), the newest " .. jira.LIMIT .. " per filter."
-				else "Issues load through GitHub's GraphQL API with your gh login."
-			table.insert(sections, { id = "sec-source", title = "Integration", rows = { useRow(state, "github"), useRow(state, "jira") } })
-		else
-			lead = "Pull requests load through GitHub's GraphQL API with your gh login."
-		end
-		local now = os.time()
-		local wait = if state.account then waitOf(state) else 0
-		if not jiraOn then
-			local account: string? = nil
-			local unreadable: github.Problem? = nil
-			if state.repo then
-				account, unreadable = github.account(state.repo)
-			end
-			table.insert(sections, {
-				id = "sec-account",
-				title = if state.repo then "Account for " .. state.repo else "Account",
-				rows = {
-					{
-						id = "account",
-						label = "gh account",
-						hint = "Empty: gh's active account.",
-						control = {
-							k = "text",
-							value = account or "",
-							placeholder = if unreadable then "Saved account unreadable" else "Active gh account",
-						},
-						changed = account ~= nil,
-						defaultLabel = "Active gh account",
-						warning = if unreadable then unreadable.message else nil,
-						disabled = if state.repo then nil else NO_REPO,
-					},
+	elseif s.page == "repos" then
+		lead = "Repositories you work in, each with its local checkout (used for worktrees and prompts), the branch format of its issue worktrees and setup commands. Opening Plotroom inside a checkout adds it."
+		local root = readWorktreeRoot()
+		table.insert(sections, {
+			id = "sec-wtroot",
+			title = "Worktrees",
+			rows = {
+				{
+					id = "wtroot",
+					label = "Folder",
+					hint = "Where new worktrees go. A relative path is resolved against each repository's checkout, such as ../worktrees. Empty: omp's folder.",
+					control = { k = "text", value = root, placeholder = "omp's worktree folder", mono = true },
+					changed = root ~= "",
+					defaultLabel = "omp's folder",
 				},
-			})
+			},
+		})
+		local checkouts = readCheckouts()
+		local names: { string } = {}
+		for name in checkouts do
+			if type(name) == "string" then
+				table.insert(names, name)
+			end
 		end
+		table.sort(names)
+		local formats, formatsOff = branchMap()
+		local setups, setupsOff = setupMap()
+		for _, repo in names do
+			local path = checkouts[repo]
+			local mapped = if type(path) == "string" and path ~= "" then path else nil
+			local fmt = if formats then branchFormatOf(repo) else nil
+			local cmds: { string } = if setups then setupOf(setups, repo) else {}
+			local rows: { Row } = {
+				{
+					id = "checkout:" .. repo,
+					label = "Checkout",
+					hint = "Worktrees are made from it. A folder holding the repository is used as it is; a new or empty folder gets a clone (gh repo clone); another repository's folder is refused.",
+					control = { k = "text", value = mapped or "", placeholder = "~/Code/" .. (string.match(repo, "/(.+)$") or repo), mono = true },
+					changed = mapped ~= nil,
+					defaultLabel = "Not set",
+					disabled = if state.claiming == repo then "Checking the folder, or cloning into it…" else nil,
+				},
+				{
+					id = "branch:" .. repo,
+					label = "Format (issue worktrees)",
+					hint = "Variables {" .. table.concat(tracker.VARS, "} {") .. "}. Empty: " .. tracker.FORMAT_DEFAULT .. ".",
+					control = { k = "text", value = fmt or "", placeholder = tracker.FORMAT_DEFAULT, mono = true },
+					changed = fmt ~= nil,
+					defaultLabel = tracker.FORMAT_DEFAULT,
+					disabled = formatsOff,
+				},
+			}
+			for i, c in cmds do
+				table.insert(rows, {
+					id = "setup:" .. repo .. ":" .. i,
+					label = "Command " .. i,
+					disabled = setupsOff,
+					control = { k = "text", value = c, placeholder = "Empty removes it", mono = true },
+				})
+			end
+			table.insert(rows, {
+				id = "setup:" .. repo .. ":new",
+				label = "Add a command",
+				hint = "Run in order in the new worktree's tab, stopping at the first failure.",
+				disabled = setupsOff,
+				control = { k = "text", value = "", placeholder = if #cmds == 0 then "pnpm install" else "cp ../repo/.env .", mono = true },
+			})
+			table.insert(rows, { id = "rremove:" .. repo, label = "Remove repository", control = { k = "action", act = "delete", label = "Remove" } })
+			table.insert(sections, { id = "repo:" .. repo, title = repo, rows = rows })
+		end
+		table.insert(sections, {
+			id = "rnew",
+			rows = {
+				{
+					id = "radd",
+					label = "New repository",
+					hint = "Pick one of yours, or type owner/name.",
+					control = { k = "action", act = "add-repo", label = "Add repository" },
+				},
+			},
+		})
+	elseif s.page == "jira" then
+		lead = "Jira projects and the repositories their issues are worked in: Worktree on a Jira issue makes its worktree in the project's repository."
+		local map, unreadable = readJiraRepos()
+		local keys: { string } = {}
+		local saved: { [string]: any } = map or {}
+		for key in saved do
+			if type(key) == "string" then
+				table.insert(keys, key)
+			end
+		end
+		table.sort(keys)
+		local options: { any } = {}
+		local known: { string } = {}
+		for name in readCheckouts() do
+			if type(name) == "string" then
+				table.insert(known, name)
+			end
+		end
+		table.sort(known)
+		for _, name in known do
+			table.insert(options, { value = name, label = name })
+		end
+		for _, key in keys do
+			local rows: { Row } = {
+				{
+					id = "jrepos:" .. key,
+					label = "Repositories",
+					hint = "Asked on first use when none is set; asked each time when several are.",
+					disabled = unreadable or (if #options == 0 then "Add a repository first." else nil),
+					control = { k = "multi", values = tern.json.array(jiraReposOf(key)), options = tern.json.array(options) },
+				},
+				{ id = "jremove:" .. key, label = "Remove project", disabled = unreadable, control = { k = "action", act = "delete", label = "Remove" } },
+			}
+			table.insert(sections, { id = "project:" .. key, title = key, rows = rows })
+		end
+		table.insert(sections, {
+			id = "jnew",
+			rows = {
+				{
+					id = "jadd",
+					label = "New project",
+					hint = "Pick one acli lists, or type its key.",
+					disabled = unreadable or cliOff("jira"),
+					control = { k = "action", act = "add-jira", label = "Add project" },
+				},
+			},
+		})
+	else
+		lead = "Views refresh every minute; GitHub views pace themselves to the login's API quota."
+		local now = os.time()
+		local wait = waitOf(state)
 		table.insert(sections, {
 			-- prefs draws its one in-section slot (a child with role omp.prefs.preview.status) only after this id.
 			id = "status-line",
@@ -1594,13 +1909,13 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "refresh",
 					label = "Refresh now",
-					hint = paceLine(state) or (if jiraOn then "Auto-refresh every minute." else "Auto-refresh every minute while quota allows."),
+					hint = paceLine(state) or (if trackerOf(state) == "jira" then "Auto-refresh every minute." else "Auto-refresh every minute while quota allows."),
 					control = { k = "action", act = "refresh", label = "Refresh" },
-					disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", now + wait) elseif state.repo then nil else NO_REPO,
+					disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", now + wait) else nil,
 				},
 			},
 		})
-		local q = if jiraOn then nil else github.quota(login(state))
+		local q = if trackerOf(state) == "github" then github.quota(login(state)) else nil
 		if q and q.limit and q.limit > 0 and q.remaining then
 			local left = q.remaining .. " of " .. q.limit .. " points left" .. (if q.reset then ", resets " .. os.date("%H:%M", q.reset) else "")
 			-- Laid out as a prefs row: label and hint at the left, the meter where a control sits.
@@ -1615,72 +1930,6 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				})
 			)
 		end
-	else
-		lead = if issues
-			then "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the " .. state.kind.place .. "'s local checkout."
-			else "Worktree (w) checks a pull request out with omp and opens it in a new tab, which runs the setup commands when the worktree is new. It needs the repository's local checkout."
-		local mapped = checkoutOf(state.repo)
-		table.insert(sections, {
-			id = "sec-checkout",
-			title = if state.repo then "Local checkout of " .. state.repo else "Local checkout",
-			rows = {
-				{
-					id = "checkout",
-					label = "Path",
-					hint = if jiraOn
-						then "Worktrees of " .. where .. " are made from this git checkout, on a new branch from its first remote's default branch (origin, then upstream, then by name). The folder must already be a checkout; nothing is cloned for Jira."
-						else "Worktrees of " .. where .. " are made from it. A folder holding it is used as it is; a new or empty folder gets a clone (gh repo clone); another repository's folder is refused. Opening Plotroom inside a checkout saves it here.",
-					control = {
-						k = "text",
-						value = mapped or "",
-						placeholder = "~/Code/repo",
-						mono = true,
-					},
-					changed = mapped ~= nil,
-					defaultLabel = "Not set",
-					disabled = if state.claiming then "Checking the folder, or cloning into it…" elseif state.repo then nil else NO_REPO,
-				},
-			},
-		})
-		if issues then
-			local formats, unreadable = branchMap()
-			local fmt = if formats and state.repo then branchFormatOf(state.repo) else nil
-			table.insert(sections, {
-				id = "sec-branch",
-				title = if state.repo then "Branch names for " .. state.repo else "Branch names",
-				rows = {
-					{
-						id = "branch",
-						label = "Format",
-						hint = "Variables {" .. table.concat(tracker.VARS[state.kind.tracker], "} {") .. "}. Empty: " .. tracker.FORMAT_DEFAULT .. ".",
-						control = { k = "text", value = fmt or "", placeholder = tracker.FORMAT_DEFAULT, mono = true },
-						changed = fmt ~= nil,
-						defaultLabel = tracker.FORMAT_DEFAULT,
-						disabled = if state.repo then unreadable else NO_REPO,
-					},
-				},
-			})
-		end
-		local map, unreadable = setupMap()
-		local cmds: { string } = if map and state.repo then setupOf(map, state.repo) else {}
-		local off = if state.repo then unreadable else NO_REPO
-		local rows: { Row } = {}
-		for i, c in cmds do
-			table.insert(rows, {
-				id = "setup:" .. i,
-				label = "Command " .. i,
-				disabled = off,
-				control = { k = "text", value = c, placeholder = "Empty removes it", mono = true },
-			})
-		end
-		table.insert(rows, {
-			id = "setup:new",
-			label = "Add a command",
-			hint = "Run in order in the new worktree's tab, stopping at the first failure.",
-			disabled = off,
-			control = { k = "text", value = "", placeholder = if #cmds == 0 then "pnpm install" else "cp ../repo/.env .", mono = true },
-		})
-		table.insert(sections, { id = "sec-setup", title = if state.repo then "Setup commands for " .. state.repo else "Setup commands", rows = rows })
 	end
 	for _, sec in sections do
 		for _, row in sec.rows do
@@ -1758,12 +2007,8 @@ local function settle(s: Settings, row: string, err: string?)
 	end
 end
 
--- Clears the shown repository's checkout; it stays pickable.
-local function clearCheckout(state: State): string?
-	local repo = state.repo
-	if not repo then
-		return NO_REPO
-	end
+-- Clears `repo`'s checkout; it stays listed.
+local function clearCheckout(state: State, repo: string): string?
 	local err = saveCheckout(repo, "")
 	if not err then
 		state.cx:toast("success", "Checkout cleared", repo)
@@ -1771,12 +2016,8 @@ local function clearCheckout(state: State): string?
 	return err
 end
 
--- Rereads the shown repository's setup commands, lets `fn` change them (an error string aborts) and saves them.
-local function editSetup(state: State, fn: ({ string }) -> string?): string?
-	local repo = state.repo
-	if not repo then
-		return NO_REPO
-	end
+-- Rereads `repo`'s setup commands, lets `fn` change them (an error string aborts) and saves them.
+local function editSetup(repo: string, fn: ({ string }) -> string?): string?
 	local map, err = setupMap()
 	if not map then
 		return err
@@ -1786,108 +2027,130 @@ local function editSetup(state: State, fn: ({ string }) -> string?): string?
 	if ferr then
 		return ferr
 	end
-	map[projectKey(repo)] = if #list > 0 then tern.json.array(list) else nil
-	local werr = kvSet("setup", map)
+	map[string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
+	local werr = kvSet("setup-commands", map)
 	return if werr then "Could not save: " .. werr else nil
 end
 
--- Saves `fmt` as the shown repository's branch name format (nil: back to the default). Fails closed when the saved
--- formats cannot be read.
-local function saveBranchFormat(state: State, fmt: string?): string?
-	local repo = state.repo
-	if not repo then
-		return NO_REPO
-	end
+-- Saves `fmt` as `repo`'s branch name format (nil: back to the default). Fails closed when the saved formats cannot
+-- be read.
+local function saveBranchFormat(repo: string, fmt: string?): string?
 	local map, err = branchMap()
 	if not map then
 		return err
 	end
-	map[projectKey(repo)] = fmt
-	local werr = kvSet("branches", map)
+	map[string.lower(repo)] = fmt
+	local werr = kvSet("branch-formats", map)
 	return if werr then "Could not save: " .. werr else nil
 end
 
--- New account: everything cached or running under the old one is dropped, here and in every other block (they compare
--- the account they applied with the saved one), and each block refreshes once as an intentional retry.
-local function accountChanged(state: State)
-	forget(state)
-	state.cx:toast("success", "GitHub account saved", "Refreshing " .. (state.repo or ""))
-	retry(state)
-	propagate(state)
+-- Saves the folder worktrees go in ("" is omp's own).
+local function saveWorktreeRoot(path: string): string?
+	local err = kvSet("worktree-root", path)
+	return if err then "Could not save: " .. err else nil
 end
 
--- Rereads the store, applies `fn` to filter `id` and writes it back; an error message or nil.
-local function updateFilter(state: State, id: string, fn: (Filter) -> ()): string?
-	local store, writable, err = loadStore(state.kind)
+local function viewOf(state: State, id: string): View?
+	for _, v in state.store.items do
+		if v.id == id then
+			return v
+		end
+	end
+	return nil
+end
+
+-- Whether `value` is a group-by of views of `integration` (every kind accepts "none").
+local function groupKnown(kind: Kind, integration: string, value: string): boolean
+	if value == "none" then
+		return true
+	end
+	for _, g in groupsOf(kind.id, integration) do
+		if g.value == value then
+			return true
+		end
+	end
+	return false
+end
+
+-- Rereads the views, applies `fn` to view `id` and writes them back; an error message or nil. A change to the active
+-- view's integration, query or login reloads it.
+local function updateView(state: State, id: string, fn: (View) -> ()): string?
+	local store, writable, err = loadViews(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
-		return err or "Filters cannot be saved."
+		return err or "Views cannot be saved."
 	end
-	local target: Filter? = nil
-	for _, f in store.items do
-		if f.id == id then
-			target = f
+	local target: View? = nil
+	for _, v in store.items do
+		if v.id == id then
+			target = v
 		end
 	end
 	if not target then
-		return "That filter was deleted elsewhere."
+		return "That view was deleted elsewhere."
 	end
-	local before = target.query
+	local before = snapKey(target, state.activeLogin)
 	fn(target)
-	local werr = writeStore(state.kind, store)
+	local werr = writeViews(state.kind, store)
 	if werr then
 		return "Could not save: " .. werr
 	end
 	state.store, state.writable, state.storeError = store, true, nil
-	if id == state.activeId and target.query ~= before then
-		changed(state)
+	if id == state.activeId then
+		-- A login the view no longer lists is no longer a scope: the view's first takes over.
+		state.activeLogin = if #target.logins > 1 then accountOf(target, state.activeLogin) else nil
+		if snapKey(target, state.activeLogin) ~= before then
+			changed(state)
+		end
 	end
 	propagate(state)
 	return nil
 end
 
-local function addFilter(state: State)
+local function addView(state: State)
 	local s = state.settings
 	if not s then
 		return
 	end
-	local store, writable, err = loadStore(state.kind)
+	local store, writable, err = loadViews(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
-		s.errors.add = err or "Filters cannot be saved."
+		s.errors.add = err or "Views cannot be saved."
 		return
 	end
-	local id = "f" .. store.nextId
+	local id = "v" .. store.nextId
 	store.nextId += 1
-	table.insert(store.items, { id = id, name = "New filter", query = state.kind.newQuery })
-	local werr = writeStore(state.kind, store)
+	local first = state.kind.integrations[1]
+	table.insert(store.items, { id = id, name = "New view", integration = first, query = INTEGRATIONS[first].newQuery, logins = {}, group = "none", prompts = {} })
+	local werr = writeViews(state.kind, store)
 	if werr then
 		s.errors.add = "Could not save: " .. werr
 		return
 	end
 	s.errors.add = nil
 	state.store, state.writable, state.storeError = store, true, nil
-	switchFilter(state, id)
+	switchView(state, id)
 	propagate(state)
+	s.open = id
 	beginEdit(state, "name:" .. id, "")
 end
 
-local function deleteFilter(state: State, id: string)
+local function deleteView(state: State, id: string)
 	local s = state.settings
 	if not s then
 		return
 	end
 	s.confirm = nil
 	local rowId = "delete:" .. id
-	local store, writable, err = loadStore(state.kind)
+	local store, writable, err = loadViews(state.kind)
 	if not writable then
 		state.store, state.writable, state.storeError = store, false, err
-		s.errors[rowId] = err or "Filters cannot be saved."
+		s.errors[rowId] = err or "Views cannot be saved."
 		return
 	end
 	local at = 0
-	for i, f in store.items do
-		if f.id == id then
+	for i, v in store.items do
+		if v.id == id then
 			at = i
 		end
 	end
@@ -1895,7 +2158,7 @@ local function deleteFilter(state: State, id: string)
 		return
 	end
 	table.remove(store.items, at)
-	local werr = writeStore(state.kind, store)
+	local werr = writeViews(state.kind, store)
 	if werr then
 		s.errors[rowId] = "Could not delete: " .. werr
 		return
@@ -1903,8 +2166,8 @@ local function deleteFilter(state: State, id: string)
 	s.errors[rowId] = nil
 	state.store, state.writable, state.storeError = store, true, nil
 	if id == state.activeId then
-		local nextF = store.items[math.min(at, #store.items)]
-		switchFilter(state, if nextF then nextF.id else nil)
+		local nextV = store.items[math.min(at, #store.items)]
+		switchView(state, if nextV then nextV.id else nil)
 	end
 	s.focus = "add"
 	propagate(state)
@@ -1919,11 +2182,12 @@ local function addPrompt(state: State)
 	local err = editPrompts(state.kind, function(store: Prompts): string?
 		id = "p" .. store.nextId
 		store.nextId += 1
-		table.insert(store.items, { id = id, name = "New prompt", text = "", filters = {}, worktree = if state.kind.id == "issues" then true else nil })
+		table.insert(store.items, { id = id, name = "New prompt", text = "", worktree = if state.kind.id == "issues" then true else nil })
 		return nil
 	end)
 	s.errors.padd = err
 	if not err then
+		s.open = id
 		beginEdit(state, "pname:" .. id, "")
 	end
 end
@@ -1956,26 +2220,35 @@ local function deletePrompt(state: State, id: string)
 	end
 end
 
--- Saves the filters prompt `id` is offered under: those of `values` that still name a filter.
-local function setScope(state: State, id: string, values: { any })
+-- Removes repository `repo` everywhere it is saved.
+local function deleteRepo(state: State, repo: string)
 	local s = state.settings
 	if not s then
 		return
 	end
-	local keep: { string } = {}
-	for _, f in state.store.items do
-		if table.find(values, f.id) then
-			table.insert(keep, f.id)
-		end
+	s.confirm = nil
+	local err = removeRepo(repo)
+	s.errors["rremove:" .. repo] = err
+	if not err then
+		s.focus = "radd"
 	end
-	s.errors["pscope:" .. id] = editPrompts(state.kind, function(store: Prompts): string?
-		local p = promptById(store, id)
-		if not p then
-			return "That prompt was deleted elsewhere."
-		end
-		p.filters = keep
+end
+
+-- Removes Jira project `key` and its repositories.
+local function deleteJira(state: State, key: string)
+	local s = state.settings
+	if not s then
+		return
+	end
+	s.confirm = nil
+	local err = editJiraRepos(function(map: { [string]: any }): string?
+		map[key] = nil
 		return nil
 	end)
+	s.errors["jremove:" .. key] = err
+	if not err then
+		s.focus = "jadd"
+	end
 end
 
 -- Saves where an issue prompt runs: in the issue's worktree (`on`), or in the repository's main checkout.
@@ -1994,14 +2267,102 @@ local function setWhere(state: State, id: string, on: boolean)
 	end)
 end
 
--- Turns `option` on or off on a prompt's multi row `row`: its filters ("pscope:<id>") or where it runs ("pwhere:<id>").
-local function toggleScope(state: State, row: string, option: string)
-	local def = rowById(state, row)
-	local scope = string.match(row, "^pscope:(.+)$")
-	local id = scope or string.match(row, "^pwhere:(.+)$")
-	if not def or not id then
+-- Saves chips row `row` with the options `values` now has on. The single-choice rows (a view's integration and
+-- group-by) take the first value that differs from the saved one and ignore a list that has none.
+local function setMulti(state: State, row: string, values: { any })
+	local s = state.settings
+	local kind, id = string.match(row, "^(%a+):(.+)$")
+	if not s or not kind or not id then
 		return
 	end
+	if kind == "vint" or kind == "vgroup" then
+		local view = viewOf(state, id)
+		if not view then
+			return
+		end
+		local current = if kind == "vint" then view.integration else view.group
+		local pick: string? = nil
+		for _, x in values do
+			if type(x) == "string" and x ~= current then
+				pick = x
+				break
+			end
+		end
+		if not pick then
+			return
+		end
+		local chosen: string = pick
+		s.errors[row] = updateView(state, id, function(v: View)
+			if kind == "vint" then
+				if chosen ~= v.integration and table.find(state.kind.integrations, chosen) then
+					v.integration, v.query, v.logins, v.group = chosen, INTEGRATIONS[chosen].newQuery, {}, "none"
+				end
+			elseif groupKnown(state.kind, v.integration, chosen) then
+				v.group = chosen
+			end
+		end)
+	elseif kind == "vprompts" then
+		local prompts, err = loadPrompts(state.kind)
+		if not prompts then
+			s.errors[row] = err
+			return
+		end
+		local keep: { string } = {}
+		for _, p in prompts.items do
+			if table.find(values, p.id) then
+				table.insert(keep, p.id)
+			end
+		end
+		s.errors[row] = updateView(state, id, function(v: View)
+			v.prompts = keep
+		end)
+	elseif kind == "vlogins" then
+		-- The saved order stays; a login newly on goes last. A name that is no login is dropped, a repeat too.
+		local view = viewOf(state, id)
+		if not view then
+			return
+		end
+		local keep: { string } = {}
+		local seen: { [string]: boolean } = {}
+		local function add(who: any)
+			if type(who) == "string" and string.match(who, "^[%w%-]+$") and not seen[string.lower(who)] and table.find(values, who) then
+				seen[string.lower(who)] = true
+				table.insert(keep, who)
+			end
+		end
+		for _, who in view.logins do
+			add(who)
+		end
+		for _, who in values do
+			add(who)
+		end
+		s.errors[row] = updateView(state, id, function(v: View)
+			v.logins = keep
+		end)
+	elseif kind == "jrepos" then
+		local have = readCheckouts()
+		local keep: { string } = {}
+		for _, x in values do
+			if type(x) == "string" and have[x] ~= nil then
+				table.insert(keep, x)
+			end
+		end
+		table.sort(keep)
+		s.errors[row] = editJiraRepos(function(map: { [string]: any }): string?
+			map[id] = keep
+			return nil
+		end)
+	end
+end
+
+-- Turns `option` on or off on a multi row `row`: where an issue prompt runs ("pwhere:<id>"), or a chips row of
+-- setMulti (a single-choice one switches to `option`).
+local function toggleScope(state: State, row: string, option: string)
+	local def = rowById(state, row)
+	if not def then
+		return
+	end
+	local where = string.match(row, "^pwhere:(.+)$")
 	local values: { any } = {}
 	local on = false
 	for _, v in def.control.values do -- a tern.json.array: table.clone refuses its protected metatable
@@ -2014,21 +2375,29 @@ local function toggleScope(state: State, row: string, option: string)
 	if not on then
 		table.insert(values, option)
 	end
-	if scope then
-		setScope(state, scope, values)
+	if where then
+		setWhere(state, where, table.find(values, "worktree") ~= nil)
 	else
-		setWhere(state, id, table.find(values, "worktree") ~= nil)
+		setMulti(state, row, values)
 	end
 end
 
--- Deletes the filter or prompt whose delete row `s.confirm` names ("delete:<id>" or "pdelete:<id>").
+-- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>" or
+-- "jremove:<project key>").
 local function confirmDelete(state: State)
 	local s = state.settings
-	local kind, id = string.match(if s and s.confirm then s.confirm else "", "^(p?delete):(.+)$")
-	if kind == "delete" and id then
-		deleteFilter(state, id)
-	elseif kind == "pdelete" and id then
+	local kind, id = string.match(if s and s.confirm then s.confirm else "", "^(%a+):(.+)$")
+	if not id then
+		return
+	end
+	if kind == "delete" then
+		deleteView(state, id)
+	elseif kind == "pdelete" then
 		deletePrompt(state, id)
+	elseif kind == "rremove" then
+		deleteRepo(state, id)
+	elseif kind == "jremove" then
+		deleteJira(state, id)
 	end
 end
 
@@ -2038,18 +2407,32 @@ local function runAction(state: State, act: string, row: string)
 		return
 	end
 	if act == "add" then
-		addFilter(state)
+		addView(state)
 	elseif act == "add-prompt" then
 		addPrompt(state)
+	elseif act == "expand" or act == "collapse" then
+		-- One form open at a time; a single-line edit in progress belongs to the form being left.
+		if s.edit and not s.edit.model.multi then
+			s.errors[s.edit.row] = nil
+			s.edit = nil
+		end
+		local id = string.match(row, "^%a+:(.+)$")
+		if act == "expand" then
+			s.open = id
+			s.focus = (if string.sub(row, 1, 1) == "v" then "name:" else "pname:") .. (id or "")
+		else
+			s.open = nil
+			s.focus = (if string.sub(row, 1, 1) == "v" then "vopen:" else "popen:") .. (id or "")
+		end
 	elseif act == "edit-prompt" then
 		beginEdit(state, row)
 	elseif act == "delete" then
 		s.confirm = row
 	elseif act == "refresh" then
 		retry(state)
-	elseif act == "use-github" then
+	elseif act == "add-repo" then
 		state.cx:open(REPOS_HREF)
-	elseif act == "use-jira" then
+	elseif act == "add-jira" then
 		state.cx:open(JIRA_HREF)
 	end
 end
@@ -2089,18 +2472,19 @@ local function commitEdit(state: State)
 	end
 	local kind, id = string.match(row, "^(%a+):(.+)$")
 	if (kind == "name" or kind == "query") and id then
+		local view = viewOf(state, id)
 		local err: string? = nil
 		if text == "" then
 			err = if kind == "name" then "A name is required." else "A query is required."
-		elseif kind == "query" then
-			err = TRACKERS[state.kind.tracker].scope(text)
+		elseif kind == "query" and view and view.integration == "jira" then
+			err = jira.scopeProblem(text)
 		end
 		if not err then
-			err = updateFilter(state, id, function(f: Filter)
+			err = updateView(state, id, function(v: View)
 				if kind == "name" then
-					f.name = text
+					v.name = text
 				else
-					f.query = text
+					v.query = text
 				end
 			end)
 		end
@@ -2156,8 +2540,12 @@ local function commitEdit(state: State)
 			focusPrompt(state, false)
 		end
 	elseif kind == "setup" and id then
-		local at = tonumber(id) -- nil: the "Add a command" row
-		local err = editSetup(state, function(list: { string }): string?
+		local repo, slot = string.match(row, "^setup:(.+):(%w+)$")
+		if not repo then
+			return
+		end
+		local at = tonumber(slot) -- nil: the "Add a command" row
+		local err = editSetup(repo, function(list: { string }): string?
 			if at and at > #list then
 				return "That command was removed elsewhere."
 			elseif not at then
@@ -2171,40 +2559,27 @@ local function commitEdit(state: State)
 		end)
 		settle(s, row, err)
 		if not err and at and text == "" then
-			s.focus = "setup:new"
+			s.focus = "setup:" .. repo .. ":new"
 		end
-	elseif row == "branch" then
+	elseif kind == "branch" and id then
 		-- Empty goes back to the default format; anything else must be a format that can name a branch.
-		settle(s, row, if text == "" then saveBranchFormat(state, nil) else (tracker.formatProblem(text, state.kind.tracker) or saveBranchFormat(state, text)))
-	elseif row == "account" then
-		local repo = state.repo
-		if not repo then
-			s.errors.account = NO_REPO
-			return
-		end
-		local err = github.setAccount(repo, text)
-		settle(s, row, err)
-		if not err then
-			accountChanged(state)
-		end
-	elseif row == "checkout" then
+		settle(s, row, if text == "" then saveBranchFormat(id, nil) else (tracker.formatProblem(text) or saveBranchFormat(id, text)))
+	elseif row == "wtroot" then
+		settle(s, row, saveWorktreeRoot(text))
+	elseif kind == "checkout" and id then
+		local repo = id
 		if text == "" then
-			settle(s, row, clearCheckout(state))
-			return
-		end
-		local repo = state.repo
-		if not repo then
-			s.errors.checkout = NO_REPO
+			settle(s, row, clearCheckout(state, repo))
 			return
 		end
 		local path, why = worktree.expandPath(text, tern.getenv("HOME"))
 		if not path then
-			s.errors.checkout = why or "That is not a usable path."
+			s.errors[row] = why or "That is not a usable path."
 			return
 		end
 		s.edit = nil
 		state.claiming = repo
-		worktree.claimCheckout(path, repo, function(claimed, problem)
+		worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
 			if not alive(state) then
 				return
 			end
@@ -2212,14 +2587,14 @@ local function commitEdit(state: State)
 			local root = if claimed then claimed.root else nil
 			local err = if root then saveCheckout(repo, root) else (problem or "That path is not a checkout of " .. repo .. ".")
 			if not err then
-				s.errors.checkout = nil
+				s.errors[row] = nil
 				local cloned = claimed ~= nil and claimed.cloned
 				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", root)
-			elseif state.settings == s and s.page == "worktrees" then
-				beginEdit(state, "checkout", text) -- the draft stays for a correction; this clears the row's warning, so set it after
-				s.errors.checkout = err
+			elseif state.settings == s and s.page == "repos" then
+				beginEdit(state, row, text) -- the draft stays for a correction; this clears the row's warning, so set it after
+				s.errors[row] = err
 			else
-				state.cx:toast("error", "Checkout not saved", err) -- Settings closed, or the Worktrees page that shows the row was left
+				state.cx:toast("error", "Checkout not saved", err) -- Settings closed, or the Repositories page that shows the row was left
 			end
 			state.cx:render()
 		end)
@@ -2239,12 +2614,14 @@ local function discardEdit(state: State)
 	end
 end
 
--- Opens Settings page `page` with nothing focused or being edited; the Integration page looks up which CLIs are installed.
+-- Opens Settings page `page` with nothing focused or being edited; the Jira projects page looks up which CLIs are installed.
 local function showPage(state: State, s: Settings, page: string)
 	discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
-	if page == "source" then
+	if page == "jira" then
 		probeClis()
+	elseif page == "views" then
+		ghActive.note(state) -- the logins a view's chips offer
 	end
 end
 
@@ -2253,17 +2630,18 @@ local function resetRow(state: State, row: string)
 	if not s then
 		return
 	end
-	local repo = state.repo
+	local kind, id = string.match(row, "^(%a+):(.+)$")
 	local err: string? = nil
-	if row == "account" and repo then
-		err = github.setAccount(repo, nil)
-		if not err then
-			accountChanged(state)
-		end
-	elseif row == "checkout" then
-		err = clearCheckout(state)
-	elseif row == "branch" then
-		err = saveBranchFormat(state, nil)
+	if kind == "vlogins" and id then
+		err = updateView(state, id, function(v: View)
+			v.logins = {}
+		end)
+	elseif kind == "checkout" and id then
+		err = clearCheckout(state, id)
+	elseif kind == "branch" and id then
+		err = saveBranchFormat(id, nil)
+	elseif row == "wtroot" then
+		err = saveWorktreeRoot("")
 	end
 	s.errors[row] = err
 	if not err and s.edit and s.edit.row == row then
@@ -2274,30 +2652,50 @@ end
 local function openSettings(state: State, page: string, row: string?, edit: boolean?)
 	discardEdit(state) -- releases the prompt editor's caret, if one was open
 	state.settings = { page = page, focus = row, errors = {} }
-	if page == "source" then
+	if page == "jira" then
 		probeClis()
+	elseif page == "views" then
+		ghActive.note(state) -- the logins a view's chips offer
 	end
 	if edit and row then
 		beginEdit(state, row)
 	end
 end
 
--- Whether the shown repository has no saved checkout: then nothing may make a worktree, and the queue says so.
-local function missingCheckout(state: State): boolean
-	return state.repo ~= nil and checkoutOf(state.repo) == nil
-end
-
--- Without a saved checkout of the shown repository nothing may make a worktree: Settings asks for one instead.
-local function needsCheckout(state: State): boolean
-	if missingCheckout(state) then
-		openSettings(state, "worktrees", "checkout", true)
-		return true
+-- The window's repository picker chose `raw` ("owner/name", maybe typed): it is listed in Settings, which opens on
+-- its checkout row to set it.
+local function addRepo(state: State, raw: any)
+	local repo = parseRepo(raw)
+	if not repo then
+		return state.cx:toast("error", "Not a repository", "Type it as owner/name.")
 	end
-	return false
+	local err = saveCheckout(repo, "", true)
+	if err then
+		return state.cx:toast("error", "Repository not saved", err)
+	end
+	openSettings(state, "repos", "checkout:" .. string.lower(repo), true)
 end
 
--- The heading's Set checkout button, which the window turns into this block's `set-checkout` action.
-local CHECKOUT_HREF = "plotroom://checkout"
+-- The window's Jira project picker chose `raw` (a project key, maybe typed in lowercase): it is listed in Settings,
+-- which opens on its repositories.
+local function addJira(state: State, raw: any)
+	if state.kind.id ~= "issues" then
+		return
+	end
+	local key = string.upper(if type(raw) == "string" then trim(raw) else "")
+	if not tracker.jiraProject(key) then
+		return state.cx:toast("error", "Not a Jira project key", "Type its key, such as ABC.")
+	end
+	local err = editJiraRepos(function(map: { [string]: any }): string?
+		map[key] = stringList(map[key])
+		return nil
+	end)
+	if err then
+		return state.cx:toast("error", "Jira project not saved", err)
+	end
+	openSettings(state, "jira", "jrepos:" .. key, false)
+end
+
 
 local function openSelected(state: State, act: string, rerender: boolean)
 	local item = selected(state)
@@ -2333,7 +2731,7 @@ local function tabBadges(one: string, note: Note?, open: boolean): { any }
 	return badges
 end
 
-local function pickerItem(state: State, pr: github.Pr, note: Note?, open: boolean): { [string]: any }
+local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]: any }
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local kind = stateKind(pr)
 	local badges = tabBadges("pull request", note, open)
@@ -2343,9 +2741,11 @@ local function pickerItem(state: State, pr: github.Pr, note: Note?, open: boolea
 	for _, l in pr.labels do
 		table.insert(badges, { text = l })
 	end
+	-- The integration comes first, on the title's row.
+	table.insert(badges, 1, { text = INTEGRATIONS.github.label, tone = "muted" })
 	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
 	-- they don't read as the state and label badges.
-	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
+	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span(pr.repo, "mono"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	if review then
 		table.insert(detail, " · ")
@@ -2363,7 +2763,7 @@ local function pickerItem(state: State, pr: github.Pr, note: Note?, open: boolea
 		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
 	end
 	return {
-		id = itemId(state, pr),
+		id = itemId(pr),
 		label = pr.title,
 		title = pr.title,
 		detail = detail,
@@ -2373,8 +2773,8 @@ local function pickerItem(state: State, pr: github.Pr, note: Note?, open: boolea
 	}
 end
 
--- An issue's picker row: "#N · @author opened 2h ago · @assignee +1" (Jira: "ABC-12 · Author · Type · Assignee"); its
--- workflow status or, once closed, its state, and its labels as badges.
+-- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its integration, workflow
+-- status or, once closed, its state, and its labels as badges. The preview lists the assignees; the rows do not.
 local function issueRow(issue: tracker.Issue, note: Note?, open: boolean): { [string]: any }
 	local badges = tabBadges("issue", note, open)
 	if issue.status or issue.state == "closed" then
@@ -2383,26 +2783,29 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean): { [st
 	for _, l in issue.labels do
 		table.insert(badges, { text = l })
 	end
+	table.insert(badges, 1, { text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" })
 	local at = if issue.tracker == "github" then "@" else ""
-	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num"), " · ", ui.span(at .. issue.author, "mono") }
+	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
+	if issue.tracker == "github" then
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span(issue.repo, "mono")) -- a Jira key already names its project
+	end
+	table.insert(detail, " · ")
+	table.insert(detail, ui.span(at .. issue.author, "mono"))
 	if issue.created > 0 then
 		table.insert(detail, " opened " .. github.age(issue.created) .. " ago")
 	end
 	if issue.type then
 		table.insert(detail, " · " .. issue.type)
 	end
-	local first = issue.assignees[1]
-	if first then
-		table.insert(detail, " · " .. at .. first .. (if #issue.assignees > 1 then " +" .. (#issue.assignees - 1) else ""))
-	end
 	return {
-		id = issue.id,
+		id = itemId(issue),
 		label = issue.title,
 		title = issue.title,
 		detail = detail,
 		mark = { text = issue.author, seed = issue.author },
 		badges = if #badges > 0 then badges else nil,
-		facts = { comments = if issue.comments > 0 then tostring(issue.comments) else nil }, -- the icon is CSS (plotroom.css)
+		facts = { comments = if issue.comments > 0 then tostring(issue.comments) else nil }, -- the comment icon is CSS (plotroom.css)
 	}
 end
 
@@ -2423,8 +2826,8 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	local rows: { any } = {}
 	local issues = state.kind.id == "issues"
 	for _, item in snap.items do
-		local isOpen = open[itemId(state, item)] == true
-		table.insert(rows, if issues then issueRow(item, state.notes[item.key], isOpen) else pickerItem(state, item, state.notes[item.key], isOpen))
+		local isOpen = open[item.key] == true
+		table.insert(rows, if issues then issueRow(item, state.notes[item.key], isOpen) else pickerItem(item, state.notes[item.key], isOpen))
 	end
 	tern.json.array(rows)
 	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
@@ -2490,9 +2893,9 @@ loadDetails = function(state: State, key: string)
 	end
 	state.detailBusy[key] = true
 	if state.kind.id == "issues" then
-		-- A GitHub load, like github.checks, sends nothing while the quota is spent or the saved login unusable: it
+		-- A GitHub load, like github.checks, sends nothing while the quota is spent or the login unusable: it
 		-- answers with that problem, which failDetails paces.
-		TRACKERS[state.kind.tracker].detail(item, function(detail, problem)
+		TRACKERS[item.tracker].detail(item, login(state), function(detail, problem)
 			state.detailBusy[key] = nil
 			if not alive(state) then
 				return
@@ -2513,7 +2916,7 @@ loadDetails = function(state: State, key: string)
 	end
 	local pr: github.Pr = item
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
-	github.checks(pr.repo, pr.number, function(runs, total, problem, about)
+	github.checks(pr.repo, pr.number, login(state), function(runs, total, problem, about)
 		state.detailBusy[key] = nil
 		if not alive(state) then
 			return
@@ -2593,7 +2996,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "7"
+local RPC_PROTOCOL = "8"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -2628,7 +3031,7 @@ local function rpcNodes(state: State): { Node }
 	return out
 end
 
--- `repo`'s saved setup commands (Settings › Worktrees) as one shell line that stops at the first failure, blank ones
+-- `repo`'s saved setup commands (Settings › Repositories) as one shell line that stops at the first failure, blank ones
 -- left out; nil if none.
 local function setupLine(repo: string): string?
 	local map = setupMap()
@@ -2642,38 +3045,51 @@ local function setupLine(repo: string): string?
 	return if #cmds > 0 then table.concat(cmds, " && ") else nil
 end
 
--- The variables of an issue's prompts and branch name (ISSUE_VARS lists them); `branch` is only known once a worktree
--- exists.
-local function issueVars(issue: tracker.Issue): { [string]: string }
+-- The variables of an issue's prompts and branch name (ISSUE_VARS lists them); `code` is the GitHub repository the
+-- issue is worked in. `branch` is only known once a worktree exists.
+local function issueVars(issue: tracker.Issue, code: string): { [string]: string }
+	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
 	local vars: { [string]: string } = {
 		url = issue.url,
 		key = issue.ref,
 		title = issue.title,
 		author = issue.author,
 		labels = table.concat(issue.labels, ", "),
+		owner = owner or "",
+		repo = name or "",
 	}
 	if issue.tracker == "jira" then
 		vars.project = issue.repo
 		vars.status = if issue.status then issue.status.text else ""
 		vars.type = issue.type or ""
 	else
-		local owner, name = string.match(issue.repo, "^([^/]+)/([^/]+)$")
-		vars.owner, vars.repo, vars.number = owner or "", name or "", issue.ref
+		vars.number = issue.ref
 	end
 	return vars
 end
 
--- The branch an issue's worktree gets: the project's saved format (tracker.FORMAT_DEFAULT without one) over the issue's
--- variables. nil and why when the format cannot name one.
-local function issueBranch(issue: tracker.Issue): (string?, string?)
-	local vars = issueVars(issue)
-	local names: { [string]: string } = { key = vars.key, slug = tracker.slug(issue.title) }
-	if issue.tracker == "jira" then
-		names.project = vars.project
-	else
-		names.owner, names.repo = vars.owner, vars.repo
+-- The GitHub repository an issue is worked in: its own, or the one its Jira project maps to when that is exactly one;
+-- nil while the choice is still to be made.
+local function codeRepoOf(issue: tracker.Issue): string?
+	if issue.tracker ~= "jira" then
+		return issue.repo
 	end
-	return tracker.branchName(branchFormatOf(issue.repo) or tracker.FORMAT_DEFAULT, issue.tracker, names)
+	local mapped = jiraReposOf(issue.repo)
+	return if #mapped == 1 then mapped[1] else nil
+end
+
+-- The branch an issue's worktree in `code` gets: the repository's saved format (tracker.FORMAT_DEFAULT without one)
+-- over the issue's variables. nil and why when the format cannot name one.
+local function issueBranch(issue: tracker.Issue, code: string): (string?, string?)
+	local vars = issueVars(issue, code)
+	local names: { [string]: string } = {
+		key = vars.key,
+		slug = tracker.slug(issue.title),
+		owner = vars.owner,
+		repo = vars.repo,
+		project = if issue.tracker == "jira" then issue.repo else "",
+	}
+	return tracker.branchName(branchFormatOf(code) or tracker.FORMAT_DEFAULT, names)
 end
 
 -- The issue with identity `key` (lowercase "owner/repo#ref") as the freshest cached snapshot lists it; nil when none does.
@@ -2689,30 +3105,27 @@ local function loadedIssue(state: State, key: string): tracker.Issue?
 	return found
 end
 
--- The saved prompts offered under the active filter, those with text, that filter's own first (`here`), then those of
--- every filter; and why the prompts could not be read.
+-- The saved prompts offered under the active view, those with text: the ones the view lists (`here`), else every one;
+-- and why the prompts could not be read.
 local function offered(state: State): ({ { prompt: Prompt, here: boolean } }, string?)
 	local prompts, problem = loadPrompts(state.kind)
-	local active = activeFilter(state)
-	local mine: { { prompt: Prompt, here: boolean } } = {}
-	local every: { { prompt: Prompt, here: boolean } } = {}
+	local active = activeView(state)
 	local list: { Prompt } = if prompts then prompts.items else {}
+	local ids = if active then livePrompts(active, list) else {}
+	local out: { { prompt: Prompt, here: boolean } } = {}
 	for _, p in list do
-		local scope = scopeOf(p, state.store)
-		local here = active ~= nil and table.find(scope, active.id) ~= nil
-		if p.text ~= "" and (#scope == 0 or here) then
-			table.insert(if here then mine else every, { prompt = p, here = here })
+		if p.text ~= "" and (#ids == 0 or table.find(ids, p.id) ~= nil) then
+			table.insert(out, { prompt = p, here = #ids > 0 })
 		end
 	end
-	table.move(every, 1, #every, #mine + 1, mine)
-	return mine, problem
+	return out, problem
 end
 
 -- The agent picker's rows: `offered`, each with its id so an action-bar button's link can name it. With `only`, just
 -- that prompt, so a button never misses its prompt to the picker's size budget.
 local function menu(state: State, id: string, only: string?)
 	local list, problem = offered(state)
-	local active = activeFilter(state)
+	local active = activeView(state)
 	local issues = state.kind.id == "issues"
 	local mine: { any } = {}
 	for _, o in list do
@@ -2724,7 +3137,7 @@ local function menu(state: State, id: string, only: string?)
 			id = p.id,
 			label = clip(printable(p.name), 120),
 			detail = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
-			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All filters",
+			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All prompts",
 			send = p.text,
 			worktree = if issues then p.worktree ~= false else nil, -- where it runs; a PR prompt always runs in its worktree
 		})
@@ -2741,7 +3154,8 @@ local function menu(state: State, id: string, only: string?)
 	reply(state, id, { items = tern.json.array(items), problem = problem })
 end
 
--- Creates or reuses the worktree of `repo`#`n` and notes the outcome.
+-- Creates or reuses the worktree of `repo`#`n` and notes the outcome. Without a checkout of `repo` the answer asks the
+-- window for one.
 local function prepare(state: State, id: string, repo: string, n: number)
 	local key = string.lower(repo) .. "#" .. n
 	if preparing[key] then
@@ -2749,20 +3163,18 @@ local function prepare(state: State, id: string, repo: string, n: number)
 	end
 	local checkout = checkoutOf(repo)
 	if not checkout then
-		openSettings(state, "worktrees", "checkout", true)
-		return reply(state, id, { noRepo = true })
+		return reply(state, id, { needCheckout = string.lower(repo) })
 	end
 	preparing[key] = true
 	local started, err = pcall(function()
 		process.reset()
-		worktree.open(checkout, repo, n, function(r, problem)
+		worktree.open(checkout, repo, n, readWorktreeRoot(), login(state), function(r, problem)
 			preparing[key] = nil
 			if not alive(state) then
 				return
 			end
 			if problem == worktree.NO_REPO then
-				openSettings(state, "worktrees", "checkout", true)
-				return reply(state, id, { noRepo = true })
+				return reply(state, id, { needCheckout = string.lower(repo) })
 			end
 			if not r then
 				local why = problem or "Worktree failed"
@@ -2802,8 +3214,10 @@ local function prepare(state: State, id: string, repo: string, n: number)
 end
 
 -- Answers the window's request for issue `ref`'s checkout: its worktree on its own branch (made first if needed), or,
--- with `wt` false, the repository's main checkout. Either way `vars` fill in the prompt that runs there.
-local function prepareIssue(state: State, id: string, repo: string, ref: string, wt: boolean)
+-- with `wt` false, the repository's main checkout. Either way `vars` fill in the prompt that runs there. The
+-- repository is the GitHub issue's own; a Jira issue's is `target` (a repository of its project), the project's only
+-- one, or asked for: the answer is needRepo (none mapped yet), chooseRepo (several) or needCheckout.
+local function prepareIssue(state: State, id: string, repo: string, ref: string, wt: boolean, target: string?)
 	local key = string.lower(repo) .. "#" .. ref
 	local issue = loadedIssue(state, key)
 	if not issue then
@@ -2812,30 +3226,58 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 	if wt and preparing[key] then
 		return reply(state, id, { busy = true })
 	end
-	local checkout = checkoutOf(repo)
-	if not checkout then
-		openSettings(state, "worktrees", "checkout", true)
-		return reply(state, id, { noRepo = true })
+	local code = issue.repo
+	if issue.tracker == "jira" then
+		local mapped = jiraReposOf(issue.repo)
+		if target then
+			local want = string.lower(target)
+			local found: string? = nil
+			for _, m in mapped do
+				if string.lower(m) == want then
+					found = m
+				end
+			end
+			if not found then
+				return reply(state, id, { problem = target .. " is not a repository of " .. issue.repo .. "." })
+			end
+			code = found
+		elseif #mapped == 0 then
+			local names: { string } = {}
+			for name in readCheckouts() do
+				if type(name) == "string" then
+					table.insert(names, name)
+				end
+			end
+			table.sort(names)
+			return reply(state, id, { needRepo = true, project = issue.repo, repos = tern.json.array(names) })
+		elseif #mapped == 1 then
+			code = mapped[1]
+		else
+			return reply(state, id, { chooseRepo = true, project = issue.repo, repos = tern.json.array(mapped) })
+		end
 	end
-	local vars = issueVars(issue)
+	local checkout = checkoutOf(code)
+	if not checkout then
+		return reply(state, id, { needCheckout = string.lower(code) })
+	end
+	local vars = issueVars(issue, code)
 	if not wt then
 		return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars })
 	end
-	local branch, why = issueBranch(issue)
+	local branch, why = issueBranch(issue, code)
 	if not branch then
 		return reply(state, id, { problem = why })
 	end
 	preparing[key] = true
 	local started, err = pcall(function()
 		process.reset()
-		worktree.openIssue(checkout, repo, ref, branch, function(r, problem)
+		worktree.openIssue(checkout, code, ref, branch, readWorktreeRoot(), function(r, problem)
 			preparing[key] = nil
 			if not alive(state) then
 				return
 			end
 			if problem == worktree.NO_REPO then
-				openSettings(state, "worktrees", "checkout", true)
-				return reply(state, id, { noRepo = true })
+				return reply(state, id, { needCheckout = string.lower(code) })
 			end
 			if not r then
 				local failed = problem or "Worktree failed"
@@ -2860,7 +3302,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				current = true,
 				dirty = r.dirty,
 				summary = summary,
-				setup = if r.created then setupLine(repo) else nil,
+				setup = if r.created then setupLine(code) else nil,
 				vars = vars,
 			})
 		end)
@@ -2871,26 +3313,17 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 	end
 end
 
--- The repository picker's first page: every saved repository with its checkout (and the shown one), sorted by name,
--- and the gh logins signed in to github.com, whose repositories the picker offers next (`profile`). Without the
--- logins, `problem` says why.
+-- The repository picker's first page: every saved repository with its checkout, sorted by name, and the gh logins
+-- signed in to github.com, whose repositories the picker offers next (`profile`). Without the logins, `problem` says why.
 local function repos(state: State, id: string)
-	local shown = if state.kind.tracker == "github" then state.repo else nil -- a Jira key never enters this list
-	local current = if shown then string.lower(shown) else nil
 	local items: { any } = {}
-	local listed = false
-	for key, path in readRepos() do
-		local name = if type(key) == "string" then string.match(key, "^github%.com/(.+)$") else nil
-		if name and type(path) == "string" then
-			listed = listed or name == current
-			table.insert(items, { repo = if name == current then shown else name, path = if path ~= "" then path else nil, current = name == current })
+	for name, path in readCheckouts() do
+		if type(name) == "string" then
+			table.insert(items, { repo = name, path = if type(path) == "string" and path ~= "" then path else nil })
 		end
 	end
-	if shown and not listed then
-		table.insert(items, { repo = shown, current = true })
-	end
 	table.sort(items, function(a, b)
-		return string.lower(a.repo) < string.lower(b.repo)
+		return a.repo < b.repo
 	end)
 	state.listing += 1
 	github.accounts(function(accounts, problem)
@@ -2900,7 +3333,7 @@ local function repos(state: State, id: string)
 end
 
 -- The repository picker's second page: the repositories gh login `login` can access, most recently pushed first, cut
--- to MENU_BUDGET, with the shown one named. Without them, `problem` says why.
+-- to MENU_BUDGET. Without them, `problem` says why.
 local function profile(state: State, id: string, login: string)
 	state.listing += 1
 	github.repos(login, function(names, problem)
@@ -2915,23 +3348,24 @@ local function profile(state: State, id: string, login: string)
 			end
 			table.insert(more, name)
 		end
-		reply(state, id, { repos = tern.json.array(more), current = if state.kind.tracker == "github" then state.repo else nil, problem = if problem then problem.message else nil })
+		reply(state, id, { repos = tern.json.array(more), problem = if problem then problem.message else nil })
 	end)
 end
 
--- The Jira project picker's list: every saved project with its checkout (and the shown one), sorted by key, then the
--- projects acli lists that are not saved, cut to MENU_BUDGET. Without the list, `problem` says why.
+-- The Jira project picker's list: every saved project with its repositories, sorted by key, then the projects acli
+-- lists that are not saved, cut to MENU_BUDGET. Without the list, `problem` says why.
 local function jiraProjects(state: State, id: string)
-	local shown = if state.kind.tracker == "jira" then state.repo else nil
-	local saved: { [string]: string } = {}
-	for key, path in readRepos() do
-		local name = if type(key) == "string" then string.match(key, "^jira/(.+)$") else nil
-		if name and tracker.jiraProject(name) then
-			saved[name] = if type(path) == "string" then path else ""
+	local keys: { string } = {}
+	local map: { [string]: any } = (readJiraRepos()) or {}
+	for key in map do
+		if type(key) == "string" and tracker.jiraProject(key) then
+			table.insert(keys, key)
 		end
 	end
-	if shown and saved[shown] == nil then
-		saved[shown] = ""
+	table.sort(keys)
+	local saved: { [string]: boolean } = {}
+	for _, key in keys do
+		saved[key] = true
 	end
 	jira.projects(function(listed, problem)
 		local list: { { key: string, name: string } } = listed or {}
@@ -2939,18 +3373,12 @@ local function jiraProjects(state: State, id: string)
 		for _, p in list do
 			names[p.key] = p.name
 		end
-		local keys: { string } = {}
-		for key in saved do
-			table.insert(keys, key)
-		end
-		table.sort(keys)
 		local rows: { any } = {}
 		for _, key in keys do
-			local path = saved[key]
-			table.insert(rows, { key = key, name = names[key], path = if path ~= "" then path else nil, saved = true, current = key == shown })
+			table.insert(rows, { key = key, name = names[key], repos = table.concat(jiraReposOf(key), ", "), saved = true })
 		end
 		for _, p in list do
-			if saved[p.key] == nil then
+			if not saved[p.key] then
 				table.insert(rows, { key = p.key, name = p.name, saved = false })
 			end
 		end
@@ -2965,6 +3393,46 @@ local function jiraProjects(state: State, id: string)
 		end
 		reply(state, id, { items = tern.json.array(items), problem = if problem then problem.message else nil })
 	end)
+end
+
+-- Verifies `raw` as a checkout of `repo` (a new or empty folder gets a clone) and saves it; the answer is {ok, root,
+-- cloned} or {problem}.
+local function claim(state: State, id: string, repo: string, raw: string)
+	local path = worktree.expandPath(trim(raw), tern.getenv("HOME"))
+	if not path then
+		return reply(state, id, { problem = "That is not a usable path." })
+	end
+	local key = string.lower(repo)
+	state.claiming = key
+	worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
+		if state.claiming == key then
+			state.claiming = nil
+		end
+		local root = if claimed then claimed.root else nil
+		if not root then
+			return reply(state, id, { problem = problem or "That path is not a checkout of " .. repo .. "." })
+		end
+		local err = saveCheckout(repo, root)
+		if err then
+			return reply(state, id, { problem = err })
+		end
+		reply(state, id, { ok = true, root = root, cloned = claimed ~= nil and claimed.cloned })
+	end)
+end
+
+-- Adds `repo` to the repositories Jira project `project` is worked in, and lists it in Settings.
+local function mapJira(state: State, id: string, project: string, repo: string)
+	local lower = string.lower(repo)
+	local err = editJiraRepos(function(map: { [string]: any }): string?
+		local list = stringList(map[project])
+		if not table.find(list, lower) then
+			table.insert(list, lower)
+		end
+		map[project] = list
+		return nil
+	end)
+	err = err or saveCheckout(lower, "", true)
+	reply(state, id, if err then { problem = err } else { ok = true })
 end
 
 -- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
@@ -2984,27 +3452,48 @@ local function rpc(state: State, raw: any)
 	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-]+$") then
 		profile(state, id, q.login)
 	elseif q.op == "worktree" and state.kind.id == "prs" then
-		local owner, name = string.match(if type(q.repo) == "string" then q.repo else "", "^([^/]+)/([^/]+)$")
+		local repo = parseRepo(q.repo)
 		local n = q.number
-		if not owner or not name or not worktree.validSegment(owner) or not worktree.validSegment(name) then
+		if not repo then
 			return
 		end
 		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
 			return
 		end
-		prepare(state, id, owner .. "/" .. name, n)
+		prepare(state, id, repo, n)
+	elseif q.op == "checkout" then
+		local repo = parseRepo(q.repo)
+		local path = q.path
+		if not repo or type(path) ~= "string" or #path > 4096 or trim(path) == "" then
+			return
+		end
+		claim(state, id, repo, path)
+	elseif q.op == "map-jira" and state.kind.id == "issues" then
+		local repo = parseRepo(q.repo)
+		local project = q.project
+		if not repo or type(project) ~= "string" or not tracker.jiraProject(project) then
+			return
+		end
+		mapJira(state, id, project, repo)
 	elseif q.op == "jira-projects" and state.kind.id == "issues" then
 		jiraProjects(state, id)
 	elseif q.op == "issue" and state.kind.id == "issues" then
 		local repo, ref = q.repo, q.ref
-		-- A project of the tracker this block reads: the link's repository is whatever the window was handed.
-		if type(repo) ~= "string" or not worktree.validProject(repo) or tracker.jiraProject(repo) ~= (state.kind.tracker == "jira") then
+		-- A GitHub repository or a Jira project key: the link's repository is whatever the window was handed.
+		if type(repo) ~= "string" or not worktree.validProject(repo) then
 			return
 		end
 		if type(ref) ~= "string" or #ref > 64 or not string.match(ref, "^[%w_%-]+$") or type(q.worktree) ~= "boolean" then
 			return
 		end
-		prepareIssue(state, id, repo, ref, q.worktree)
+		local target: string? = nil
+		if q.target ~= nil then
+			target = parseRepo(q.target)
+			if not target then
+				return
+			end
+		end
+		prepareIssue(state, id, repo, ref, q.worktree, target)
 	end
 end
 
@@ -3124,21 +3613,21 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 end
 
 -- The selected item's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
--- it, and one per saved prompt offered under this filter (it runs that prompt in the item's worktree, or in the
--- repository's main checkout for an issue prompt set that way). Without a saved checkout of its repository nothing
--- that makes a worktree is offered.
+-- it, and one per saved prompt offered under this view (it runs that prompt in the item's worktree, or in the
+-- repository's main checkout for an issue prompt set that way). A missing repository or checkout is asked for in the
+-- window's palette when one is needed.
 type Action = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
-	local made = checkoutOf(item.repo) ~= nil
+	local tr: string = if state.kind.id == "issues" then item.tracker else "github"
 	-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
-	local out: { Action } = { { id = "open", label = state.kind.site .. " ↗", href = hrefOf(state, item, "open"), primary = true } }
-	if made then
-		table.insert(out, { id = "worktree", label = "Worktree", keys = { "w" }, href = hrefOf(state, item, "worktree") })
-	end
-	if open[itemId(state, item)] then
+	local out: { Action } = {
+		{ id = "open", label = INTEGRATIONS[tr].label .. " ↗", href = hrefOf(state, item, "open"), primary = true },
+		{ id = "worktree", label = "Worktree", keys = { "w" }, href = hrefOf(state, item, "worktree") },
+	}
+	if open[item.key] then
 		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = hrefOf(state, item, "goto") })
 	end
-	local prompts: { { prompt: Prompt, here: boolean } } = if made then offered(state) else {}
+	local prompts: { { prompt: Prompt, here: boolean } } = offered(state)
 	for _, o in prompts do
 		local p = o.prompt
 		if string.match(p.id, "^%w+$") then
@@ -3236,7 +3725,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
 	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
 	local chips: { Node } = {}
-	if open[itemId(state, pr)] then
+	if open[pr.key] then
 		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
 	end
 	for i, l in pr.labels do
@@ -3247,6 +3736,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 	local about = if detail then detail.about else nil
 	local loading = dkey ~= nil and detail == nil and state.detailFail[dkey] == nil
 	local facts: { { [string]: any } } = {
+		{ k = "Repository", v = { ui.span(pr.repo, "mono") } },
 		{ k = "Author", v = "@" .. pr.author },
 		{ k = "Checks", v = if check then { ui.span(check.text, check.tone) } else nil },
 		{ k = "Review", v = if review then { ui.span(review.text, review.tone) } else nil },
@@ -3274,7 +3764,10 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 			ui.node("col", { key = "fill", grow = 1 }),
 			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
 		}),
-		ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
+			ui.node("badge", { key = "integration", text = INTEGRATIONS.github.label, tone = "muted" }),
+		}),
 	}
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
@@ -3332,8 +3825,8 @@ end
 -- The items that go with an issue, once its details loaded (Tern's shimmer meanwhile): the pull requests that close a
 -- GitHub issue, the issues linked to a Jira one. Or why the details did not load, with a Retry button; nothing when
 -- there are none.
-local function linkedNodes(kind: Kind, detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
-	local head = ui.node("text", { key = "linked-head", spans = { ui.span(kind.linked, "strong") } })
+local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
+	local head = ui.node("text", { key = "linked-head", spans = { ui.span(INTEGRATIONS[tr].linked, "strong") } })
 	if detail then
 		if #detail.linked == 0 then
 			return {}
@@ -3342,7 +3835,7 @@ local function linkedNodes(kind: Kind, detail: tracker.IssueDetail?, fail: Detai
 		for i, l in detail.linked do
 			local badge = STATE_BADGE[l.state] or STATE_BADGE.open
 			local label = (if l.relation then l.relation .. " " else "") .. tracker.refLabel(l.ref) .. " " .. l.title
-			table.insert(rows, ui.node("item", { key = "pr" .. i, label = label, icon = if kind.tracker == "jira" then ISSUE_ICON else "merge", tone = badge.tone, title = l.url }))
+			table.insert(rows, ui.node("item", { key = "pr" .. i, label = label, icon = if tr == "jira" then ISSUE_ICON else "merge", tone = badge.tone, title = l.url }))
 		end
 		return { head, ui.node("list", { key = "linked" }, rows) }
 	elseif loading then
@@ -3372,7 +3865,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	wantDetails(state, issue)
 	local sb = issueBadge(issue)
 	local chips: { Node } = {}
-	if open[issue.id] then
+	if open[issue.key] then
 		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
 	end
 	for i, l in issue.labels do
@@ -3385,6 +3878,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	local loading = dkey ~= nil and detail == nil and fail == nil
 	local at = if issue.tracker == "github" then "@" else ""
 	local facts: { { [string]: any } } = {
+		{ k = if issue.tracker == "jira" then "Project" else "Repository", v = { ui.span(issue.repo, "mono") } },
 		{ k = if issue.tracker == "jira" then "Reporter" else "Author", v = at .. issue.author },
 		{ k = "Assignees", v = if #issue.assignees > 0 then at .. table.concat(issue.assignees, ", " .. at) else nil },
 	}
@@ -3418,7 +3912,8 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	end
 	-- The Branch row shows the branch Worktree would make; without one (the saved format is unusable) there is none.
 	local about: { Node } = {}
-	local branch = issueBranch(issue)
+	local code = codeRepoOf(issue)
+	local branch = if code then issueBranch(issue, code) else nil
 	if branch then
 		table.insert(about, refRow("branch", "Branch", branch))
 	end
@@ -3440,7 +3935,10 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 			ui.node("col", { key = "fill", grow = 1 }),
 			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
 		}),
-		ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
+			ui.node("badge", { key = "integration", text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }),
+		}),
 	}
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
@@ -3450,7 +3948,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	end
 	addPart(out, "worktree", worktreeNodes(state, issue.key))
 	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
-	addPart(out, "linked", linkedNodes(state.kind, detail, fail, loading))
+	addPart(out, "linked", linkedNodes(issue.tracker, detail, fail, loading))
 	return out
 end
 
@@ -3483,24 +3981,24 @@ end
 
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 local function queuePicker(state: State): Node
-	local snap, problem, f, item = state.snap, state.problem, activeFilter(state), selected(state)
-	local v = filtered(state)
+	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
+	local vis = filtered(state)
 	local items: { any } = {}
-	local order: { string } = {}
+	local order: { any } = {}
 	local open = openItems(state)
 	if snap then
 		items = rowsOf(state, snap, open)
 	else
 		tern.json.array(items)
 	end
-	if v then
-		order = v.order
+	if vis then
+		order = vis.order
 	else
 		tern.json.array(order)
 	end
 
-	-- The repository (or Jira project) is the heading: the filter's name is already the selected scope. It opens its picker.
-	local title: { any } = { ui.link(state.repo or ("Pick a " .. state.kind.place), state.kind.pickHref) }
+	-- The active view's name is the heading; the sidebar lists them all.
+	local title: { any } = { ui.span(if view then view.name else state.kind.title, "strong") }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "warning"))
 	elseif snap and not snap.complete then
@@ -3529,37 +4027,39 @@ local function queuePicker(state: State): Node
 		note(ui.span((headOf(state, problem.kind) or "Plotroom") .. ", showing the last results", "warning"))
 	end
 	if snap and not snap.complete then
-		note(ui.span("Partial results: narrow this filter", "warning"))
+		note(ui.span("Partial results: narrow this view", "warning"))
 	end
 	if state.storeError then
 		note(ui.span(state.storeError, "error"))
 	end
-	-- Without a saved checkout nothing makes a worktree: the subtitle ends with a notice saying so (the heading's only
-	-- mark span) and a button that opens Settings on the checkout row, or with one saying a checkout is being checked
-	-- or cloned; plotroom.css sets them at the heading's right by the picker's `.nocheckout` role.
-	local repo = state.repo
-	local missing = missingCheckout(state)
-	if repo and missing then
-		if state.claiming == repo then
-			local busy: any = ui.span("Checking the folder, or cloning into it…", "mark")
-			busy.fx = "shimmer"
-			table.insert(subtitle, busy)
-		else
-			table.insert(subtitle, ui.span("No local checkout of " .. repo, "mark"))
-			table.insert(subtitle, ui.link("Set checkout", CHECKOUT_HREF))
-		end
-	end
 
+	-- A block with several integrations groups its views in the sidebar by integration; so does one whose views run as
+	-- several logins (a view of several is one entry in each login's group).
+	local scopeList = orderedViews(state)
+	local grouped = #state.kind.integrations > 1
+	for _, scope in scopeList do
+		grouped = grouped or #scope.view.logins > 1
+	end
 	local scopes: { any } = {}
-	for _, fl in state.store.items do
-		local k = snapKey(state, fl.query)
-		local cached = if k then state.snaps[k] else nil
-		table.insert(scopes, { id = fl.id, label = fl.name, icon = "funnel", count = if cached then #cached.items else nil })
+	local activeScope: string? = nil
+	for _, scope in scopeList do
+		local v = scope.view
+		local cached = state.snaps[snapKey(v, scope.login)]
+		if ghActive.isActive(state, scope) then
+			activeScope = scope.id
+		end
+		table.insert(scopes, {
+			id = scope.id,
+			label = v.name,
+			icon = "funnel",
+			count = if cached then #cached.items else nil,
+			group = if grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
+		})
 	end
 
-	local wait = if state.account then waitOf(state) else 0
+	local wait = waitOf(state)
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
-	-- Settings, Refresh and Repository (the queue's) on the left;
+	-- Settings and Refresh on the left;
 	-- the selected item's buttons on the right, Open last in the corner.
 	local actions: { any } = {
 		{ id = "settings", label = "Settings", keys = { "s" } },
@@ -3569,7 +4069,6 @@ local function queuePicker(state: State): Node
 			keys = { "r" },
 			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
 		},
-		{ id = "repos", label = if state.kind.place == "project" then "Project" else "Repository", keys = { "o" } },
 	}
 	for _, a in acts do
 		if not a.primary then
@@ -3584,9 +4083,8 @@ local function queuePicker(state: State): Node
 
 	local props: { [string]: any } = {
 		key = "queue",
-		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over
-		-- it, and sets the no-checkout notice at the heading's right (`.nocheckout`).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if missing then ".nocheckout" else ""),
+		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it.
+		role = "plotroom.queue" .. (if state.settings then ".aside" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "side",
@@ -3595,20 +4093,18 @@ local function queuePicker(state: State): Node
 		subtitle = if #subtitle > 0 then subtitle else nil,
 		noun = state.kind.many,
 		placeholder = "Filter the loaded " .. state.kind.many,
-		state = if not snap and problem then "error" elseif not snap and f then "loading" else "ready",
+		state = if not snap and problem then "error" elseif not snap and view then "loading" else "ready",
 		empty = {
-			ui.span(if f then "No " .. state.kind.many .. " match " .. f.name .. "." else "No saved filters yet. Press s to add one.", "muted"),
+			ui.span(if view then "No " .. state.kind.many .. " match " .. view.name .. "." else "No saved views yet. Press s to add one.", "muted"),
 		},
 		items = items,
 		order = order,
-		hits = if v then v.hits else nil,
-		selected = if item then itemId(state, item) else nil,
+		hits = if vis then vis.hits else nil,
+		selected = if item then itemId(item) else nil,
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
-		scope = state.activeId,
-		columns = {
-			{ id = "comments", format = "text", priority = 50 },
-		},
+		scope = activeScope,
+		columns = { { id = "comments", format = "text", priority = 50 } },
 		actions = actions,
 	}
 	if state.query then
@@ -3632,21 +4128,27 @@ local function queueView(state: State): BlockView
 end
 
 local function confirmOverlay(state: State, row: string): Node
-	local kind, id = string.match(row, "^(p?delete):(.+)$")
+	local kind, id = string.match(row, "^(%a+):(.+)$")
 	local head, body
 	if kind == "pdelete" then
 		local prompts = loadPrompts(state.kind)
 		local p = if prompts and id then promptById(prompts, id) else nil
 		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
 		body = "The action bar and the agent picker stop offering it, in every Plotroom pane on this machine."
+	elseif kind == "rremove" then
+		head = "Remove repository “" .. (id or "") .. "”?"
+		body = "Its checkout, branch format, setup commands and Jira mappings are forgotten, in every Plotroom pane on this machine. No folder is touched."
+	elseif kind == "jremove" then
+		head = "Remove Jira project “" .. (id or "") .. "”?"
+		body = "Its repositories are forgotten; Plotroom asks again the first time one of its issues needs a worktree."
 	else
-		local name = "this filter"
-		for _, f in state.store.items do
-			if f.id == id then
-				name = f.name
+		local name = "this view"
+		for _, v in state.store.items do
+			if v.id == id then
+				name = v.name
 			end
 		end
-		head = "Delete filter “" .. name .. "”?"
+		head = "Delete view “" .. name .. "”?"
 		body = "Every Plotroom pane loses this saved search."
 	end
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, {
@@ -3757,17 +4259,7 @@ end)
 
 -- ---------------------------------------------------------------- block
 
--- Whether `repo` can be shown by a block of `kind`: a Jira project key, or GitHub's owner/name.
-local function validFor(kind: Kind, repo: string): boolean
-	if kind.tracker == "jira" then
-		return tracker.jiraProject(repo)
-	end
-	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
-	return owner ~= nil and name ~= nil and worktree.validSegment(owner) and worktree.validSegment(name)
-end
-
--- One base kind's block: both run this engine, which takes its filters, prompts and wording from the kind. An issues
--- block restores as Jira when it last showed a Jira project (the saved `tracker`).
+-- One base kind's block: both run this engine, which takes its views, prompts and wording from the kind.
 local function blockDef(base: Kind): BlockDef<State>
 	return {
 		init = function(cx: BlockCx, args: { string }, saved: any): State
@@ -3782,39 +4274,30 @@ local function blockDef(base: Kind): BlockDef<State>
 			local previous = running[cx.pane]
 			if previous and previous.kind.id == base.id and previous.launchCwd == cwd and alive(previous) then
 				-- The runtime re-runs init on every settings reload (observed every 7-15 s).
-				-- Keep the live state: a fresh one would restart the repo lookup and the
-				-- GitHub search each time, flashing the spinner/card.
+				-- Keep the live state: a fresh one would restart the GitHub search each time, flashing the spinner/card.
 				previous.cx = cx
 				return previous
 			end
 			if previous then
 				retire(previous)
 			end
-			local kind = if base.id == "issues" and isTable(saved) and saved.tracker == "jira" then JIRA else base
+			-- State saved by another Plotroom version is ignored: a fresh start.
+			local mine = isTable(saved) and saved.version == 2
 			local active: string? = nil
-			if isTable(saved) and type(saved.activeFilterId) == "string" then
-				active = saved.activeFilterId
+			if mine and type(saved.activeViewId) == "string" then
+				active = saved.activeViewId
 			end
-			local sp: { kind: string, message: string, repo: string? }? = nil
-			if isTable(saved) and isTable(saved.pause) and saved.launchCwd == cwd then
-				local k: string, m, r = saved.pause.kind, saved.pause.message, saved.pause.repo
-				if type(m) == "string" and (k == "no-repo" or ((k == "auth" or k == "missing" or k == "not-found" or k == "invalid") and type(r) == "string")) then
-					local pause: { kind: string, message: string, repo: string? } = { kind = k :: string, message = m, repo = if type(r) == "string" then r else nil }
-					sp = pause
+			local sp: { kind: string, message: string }? = nil
+			if mine and isTable(saved.pause) and saved.launchCwd == cwd then
+				local k, m = saved.pause.kind, saved.pause.message
+				if type(m) == "string" and (k == "auth" or k == "missing" or k == "not-found" or k == "invalid") then
+					sp = { kind = k :: string, message = m }
 				end
 			end
-			-- The repository the block showed, picked or found at launch; without one the launch directory decides.
-			local shown: string? = if isTable(saved) and type(saved.repo) == "string" then saved.repo else nil
-			if not shown or not validFor(kind, shown) then
-				shown = if sp and sp.repo and validFor(kind, sp.repo) then sp.repo else nil
-			end
-			if kind == JIRA and not shown then
-				kind, sp = base, nil -- no project to show: begin as the base kind, from the launch directory
-			end
-			local store, writable, err = loadStore(kind)
+			local store, writable, err = loadViews(base)
 			local state: State = {
 				cx = cx,
-				kind = kind,
+				kind = base,
 				launchCwd = cwd,
 				activeId = active,
 				store = store,
@@ -3826,10 +4309,9 @@ local function blockDef(base: Kind): BlockDef<State>
 				focus = "list",
 				inflight = nil,
 				gen = 0,
-				repo = shown,
-				account = nil,
+				account = "",
+				tracker = base.integrations[1],
 				applied = nil,
-				resolving = false,
 				claiming = nil,
 				cost = COST_GUESS,
 				interval = nil,
@@ -3851,18 +4333,35 @@ local function blockDef(base: Kind): BlockDef<State>
 				replies = {},
 				listing = 0,
 			}
-			if not activeFilter(state) then
+			if not activeView(state) then
 				state.activeId = if store.items[1] then store.items[1].id else nil
 			end
+			-- What the first scope runs as is the identity from the start, so a restored pause survives identify. A saved
+			-- login the view no longer lists falls back to the view's first.
+			local first = activeView(state)
+			if first then
+				local picked = if mine and type(saved.activeLogin) == "string" then saved.activeLogin else nil
+				state.activeLogin = if #first.logins > 1 then accountOf(first, picked) else nil
+				state.account, state.tracker, state.applied = accountOf(first, state.activeLogin), first.integration, snapKey(first, state.activeLogin)
+			end
 			running[cx.pane] = state
+			if cwd then
+				-- Launching inside a checkout maps its repository to it, unless it has one already.
+				worktree.currentRepository(cwd, function(found)
+					if found and alive(state) and checkoutOf(found.id) == nil then
+						saveCheckout(found.id, found.checkout)
+					end
+				end)
+			end
+			ghActive.note(state)
 			refresh(state)
 			return state
 		end,
 
 		title = function(state: State): string?
 			local snap = state.snap
-			local f = activeFilter(state)
-			return "Plotroom · " .. (if f then f.name else state.kind.title) .. (if snap then " (" .. #snap.items .. ")" else "")
+			local v = activeView(state)
+			return "Plotroom · " .. (if v then v.name else state.kind.title) .. (if snap then " (" .. #snap.items .. ")" else "")
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView
@@ -3883,7 +4382,7 @@ local function blockDef(base: Kind): BlockDef<State>
 			end
 			if s then
 				if s.confirm then
-					-- Enter keeps the filter or command: deleting takes a deliberate `d` or a click.
+					-- Enter keeps it: deleting takes a deliberate `d` or a click.
 					if name == "enter" or name == "escape" then
 						s.confirm = nil
 					elseif plain and k == "d" then
@@ -3969,13 +4468,13 @@ local function blockDef(base: Kind): BlockDef<State>
 				end
 			elseif name == "up" or (not searching and plain and k == "k") then
 				if scopes then
-					moveFilter(state, -1)
+					moveView(state, -1)
 				else
 					moveCursor(state, -1)
 				end
 			elseif name == "down" or (not searching and plain and k == "j") then
 				if scopes then
-					moveFilter(state, 1)
+					moveView(state, 1)
 				else
 					moveCursor(state, 1)
 				end
@@ -3984,7 +4483,7 @@ local function blockDef(base: Kind): BlockDef<State>
 			elseif not searching and (name == "home" or name == "end") then
 				local d = if name == "home" then -100000 else 100000
 				if scopes then
-					moveFilter(state, d)
+					moveView(state, d)
 				else
 					moveCursor(state, d)
 				end
@@ -4012,23 +4511,17 @@ local function blockDef(base: Kind): BlockDef<State>
 			elseif plain and k == "r" then
 				retry(state)
 			elseif plain and k == "s" then
-				openSettings(state, "filters")
+				openSettings(state, "views")
 			elseif plain and k == "w" then
-				if not needsCheckout(state) then
-					openSelected(state, "worktree", false)
-				end
+				openSelected(state, "worktree", false)
 			elseif plain and k == "g" then
 				local chosen = selected(state)
-				if not chosen or not openItems(state)[itemId(state, chosen)] then
+				if not chosen or not openItems(state)[chosen.key] then
 					return false
 				end
 				openSelected(state, "goto", false)
 			elseif plain and k == "a" then
-				if not needsCheckout(state) then
-					openSelected(state, "agent", false)
-				end
-			elseif plain and k == "o" then
-				state.cx:open(state.kind.pickHref)
+				openSelected(state, "agent", false)
 			else
 				-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
 				local chosen = selected(state)
@@ -4042,9 +4535,7 @@ local function blockDef(base: Kind): BlockDef<State>
 				if not chosen or not hit then
 					return false
 				end
-				if not needsCheckout(state) then
-					state.cx:open(runHrefOf(state, chosen, hit.id))
-				end
+				state.cx:open(runHrefOf(state, chosen, hit.id))
 			end
 			return true
 		end,
@@ -4065,19 +4556,15 @@ local function blockDef(base: Kind): BlockDef<State>
 				end
 			elseif act == "rpc" then
 				rpc(state, ev.value)
-			elseif act == "show-repo" then
-				showRepo(state, ev.value)
-			elseif act == "show-jira" then
-				showJira(state, ev.value)
-			elseif act == "pick-project" then
-				state.cx:open(state.kind.pickHref)
+			elseif act == "add-repo" and ev.id ~= SETTINGS_ID then
+				addRepo(state, ev.value)
+			elseif act == "add-jira" and ev.id ~= SETTINGS_ID then
+				addJira(state, ev.value)
 			elseif act == "fold-description" then
 				state.descOpen = nil
 			elseif ev.ev == "toggle" and ev.key == "description" then
 				local chosen = selected(state)
 				state.descOpen = if chosen and ev.collapsed == false then chosen.key else nil
-			elseif act == "set-checkout" then
-				needsCheckout(state)
 			elseif act == "close-help" then
 				state.help = false
 			elseif act == "confirm-delete" then
@@ -4110,7 +4597,7 @@ local function blockDef(base: Kind): BlockDef<State>
 					else
 						discardEdit(state)
 					end
-				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "use-github" or act == "use-jira" then
+				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)
@@ -4122,14 +4609,12 @@ local function blockDef(base: Kind): BlockDef<State>
 				elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
 					resetRow(state, item)
 				elseif ev.ev == "change" and item and isTable(ev.value) then
-					local scope = string.match(item, "^pscope:(.+)$")
 					local where = string.match(item, "^pwhere:(.+)$")
-					if scope then
-						s.focus = item
-						setScope(state, scope, ev.value)
-					elseif where then
-						s.focus = item
+					s.focus = item
+					if where then
 						setWhere(state, where, table.find(ev.value, "worktree") ~= nil)
+					else
+						setMulti(state, item, ev.value)
 					end
 				end
 			elseif ev.id == QUEUE_ID then
@@ -4144,10 +4629,12 @@ local function blockDef(base: Kind): BlockDef<State>
 					end
 				elseif act == "scope" then
 					state.focus = "list"
-					if type(ev.value) == "string" and ev.value ~= state.activeId then
-						for _, f in state.store.items do
-							if f.id == ev.value then
-								switchFilter(state, f.id)
+					local scopeId = ev.value
+					if type(scopeId) == "string" then
+						for _, scope in orderedViews(state) do
+							if scope.id == scopeId and not ghActive.isActive(state, scope) then
+								switchView(state, scope.view.id, scope.login)
+								break
 							end
 						end
 					end
@@ -4155,11 +4642,9 @@ local function blockDef(base: Kind): BlockDef<State>
 					state.query = nil
 					ensureCursor(state)
 				elseif act == "settings" then
-					openSettings(state, "filters")
+					openSettings(state, "views")
 				elseif act == "retry" then
 					retry(state)
-				elseif act == "repos" then
-					state.cx:open(state.kind.pickHref)
 				elseif act then
 					-- An item's button in the action bar: open its link, as its key does.
 					local chosen = selected(state)
@@ -4175,12 +4660,11 @@ local function blockDef(base: Kind): BlockDef<State>
 
 		save = function(state: State): any
 			local p = state.problem
-			local pause: { kind: string, message: string, repo: string? }? = nil
-			local terminal = p ~= nil and (p.kind == "no-repo" or (TERMINAL[p.kind] and p.kind ~= "account"))
-			if p and terminal then
-				pause = { kind = p.kind, message = p.message, repo = state.repo }
+			local pause: { kind: string, message: string }? = nil
+			if p and TERMINAL[p.kind] then
+				pause = { kind = p.kind, message = p.message }
 			end
-			return { version = 1, launchCwd = state.launchCwd, repo = state.repo, activeFilterId = state.activeId, pause = pause, tracker = state.kind.tracker }
+			return { version = 2, launchCwd = state.launchCwd, activeViewId = state.activeId, activeLogin = state.activeLogin, pause = pause }
 		end,
 	}
 end

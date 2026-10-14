@@ -11,7 +11,6 @@ export type Issue = {
 	tracker: string, -- "github" | "jira"
 	repo: string, -- the project: GitHub "Owner/Repo" as GitHub spells it, or a Jira project key "ABC"
 	ref: string, -- "12" or "ABC-12": links, {key}, directory names; matches ^[%w_%-]+$
-	id: string, -- picker id "n" .. ref
 	title: string,
 	url: string,
 	author: string,
@@ -32,7 +31,7 @@ export type IssueDetail = { body: string, fields: { Field }, linked: { Linked },
 export type IssueResult = { issues: { Issue }, total: number, complete: boolean }
 
 M.FORMAT_DEFAULT = "{key}-{slug}"
-M.VARS = { github = { "key", "slug", "owner", "repo" }, jira = { "key", "slug", "project" } }
+M.VARS = { "key", "slug", "owner", "repo", "project" }
 -- The detail rows each tracker fills, in order.
 M.FIELDS = { github = { "Milestone" }, jira = { "Parent", "Sprint", "Components", "Fix versions" } }
 
@@ -47,11 +46,11 @@ function M.slug(title: string): string
 end
 
 -- Why `fmt` cannot name branches, or nil.
-function M.formatProblem(fmt: string, trackerId: string): string?
+function M.formatProblem(fmt: string): string?
 	if string.match(fmt, "^%s*$") then
 		return "A format is required."
 	end
-	local known = M.VARS[trackerId] or {}
+	local known = M.VARS
 	for name in string.gmatch(fmt, "{(%a+)}") do
 		if not table.find(known, name) then
 			return "Unknown variable {" .. name .. "}."
@@ -64,8 +63,8 @@ function M.formatProblem(fmt: string, trackerId: string): string?
 end
 
 -- The branch `fmt` makes of `vars`, or nil and why.
-function M.branchName(fmt: string, trackerId: string, vars: { [string]: string }): (string?, string?)
-	local why = M.formatProblem(fmt, trackerId)
+function M.branchName(fmt: string, vars: { [string]: string }): (string?, string?)
+	local why = M.formatProblem(fmt)
 	if why then
 		return nil, why
 	end

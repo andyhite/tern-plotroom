@@ -2275,7 +2275,7 @@ type Opened = { calls: number, result: any, problem: string?, cx: any }
 -- Opens the scene's PR from `checkout` (the scene's launch directory by default).
 local function openWt(w: World, worktree: Worktree, s: Scene, checkout: string?, waitMs: number?): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-	worktree.open(checkout or s.launch, s.repo, s.number, function(result, problem, cx)
+	worktree.open(checkout or s.launch, s.repo, s.number, "", nil, function(result, problem, cx)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -2554,7 +2554,7 @@ windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktr
 	end)
 	local function dir(): string?
 		local got: string? = nil
-		worktree.worktreesDir(function(d: string?)
+		worktree.worktreesDir("", "/work/r", function(d: string?)
 			got = d
 		end)
 		w.flush()
@@ -2570,6 +2570,24 @@ windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktr
 	eq(dir(), "/env/wt", "the environment variable wins")
 	w.env.OMP_WORKTREE_DIR = "relative"
 	eq(dir(), "/cfg", "a relative environment variable is ignored")
+end)
+
+windowCase("worktree: worktree root is omp's directory when empty, an absolute path as it is, a relative one from the checkout", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local function pathFor(place: string): string?
+		local s = scene(w, worktree, "o", "r", 1)
+		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+		worktree.open(s.launch, s.repo, s.number, place, nil, function(result, problem, cx)
+			out.calls += 1
+			out.result, out.problem, out.cx = result, problem, cx
+		end)
+		w.flush()
+		eq(out.problem, nil, "problem for " .. place)
+		return if out.result then out.result.path else nil
+	end
+	eq(pathFor(""), "/wt/plotroom-o_r-pr-1", "empty: omp's worktrees directory")
+	eq(pathFor("/abs/wt"), "/abs/wt/plotroom-o_r-pr-1", "an absolute root is used as it is")
+	eq(pathFor("../wt"), "/work/wt/plotroom-o_r-pr-1", "a relative root is resolved against the checkout /work/r")
 end)
 
 -- ---- worktree.openIssue against the git model
@@ -2589,7 +2607,7 @@ end
 -- Opens issue `key` of o/r on `branch` from `checkout` (the repository's src directory by default).
 local function openIssueWt(w: World, worktree: Worktree, r: IssueRepo, key: string, branch: string, checkout: string?): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-	worktree.openIssue(checkout or r.launch, "o/r", key, branch, function(result, problem, cx)
+	worktree.openIssue(checkout or r.launch, "o/r", key, branch, "", function(result, problem, cx)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -2705,7 +2723,7 @@ windowCase("worktree.openIssue: a branch name git rejects ends the request with 
 	local out = openIssueWt(w, worktree, r, "12", "12-fix-login", nil)
 	eq(out.calls, 1, "done calls")
 	eq(out.result, nil, "no result")
-	eq(out.problem, "Branch name 12-fix-login is not valid; change the branch format in Settings › Worktrees.", "problem")
+	eq(out.problem, "Branch name 12-fix-login is not valid; change the branch format in Settings › Repositories.", "problem")
 	eq(snapshot(r.git), before, "git state is untouched")
 	eq(countLog(r.git, "fetch"), 0, "nothing was fetched")
 	eq(countLog(r.git, "worktree add"), 0, "and nothing added")
@@ -2716,7 +2734,7 @@ windowCase("worktree.openIssue: a repository, key or branch it cannot use ends t
 	local r = issueRepo(w, "12")
 	local function refused(what: string, repo: string, key: string, branch: string, want: string)
 		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.openIssue(r.launch, repo, key, branch, function(result, problem, cx)
+		worktree.openIssue(r.launch, repo, key, branch, "", function(result, problem, cx)
 			out.calls += 1
 			out.result, out.problem, out.cx = result, problem, cx
 		end)
@@ -2763,13 +2781,12 @@ windowCase("worktree.openIssue: a remote whose default branch cannot be read cre
 	eq(countLog(r.git, "worktree add"), 0, "git was never asked to add one")
 end)
 
-windowCase("worktree.openIssue: a Jira project's issue is made from the checkout's first remote on any host, in the project's own directory", function(w: World)
+windowCase("worktree.openIssue: a Jira issue is made in the GitHub repository's checkout, in the repository's own directory", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local r = issueRepo(w, "ABC-7")
-	r.git.remotes = { origin = { "git@gitlab.com:o/r.git" }, upstream = { "https://example.org/x/y.git" } }
 	local function open(key: string): Opened
 		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.openIssue(r.launch, "ABC", key, key .. "-fix", function(result, problem, cx)
+		worktree.openIssue(r.launch, "o/r", key, key .. "-fix", "", function(result, problem, cx)
 			out.calls += 1
 			out.result, out.problem, out.cx = result, problem, cx
 		end)
@@ -2779,29 +2796,26 @@ windowCase("worktree.openIssue: a Jira project's issue is made from the checkout
 	local out = open("ABC-7")
 	eq(out.calls, 1, "done calls")
 	eq(out.problem, nil, "problem")
-	eq(out.result.path, "/wt/plotroom-jira.abc-issue-ABC-7", "the project's slot, the key in its own case")
-	eq(out.result.remote, "origin", "origin, whatever its host")
+	eq(out.result.path, "/wt/plotroom-o_r-issue-ABC-7", "the repository's slot, the key in its own case")
+	eq(out.result.remote, "origin", "origin")
 	eq(out.result.key, "ABC-7", "key")
 	eq(out.result.branch, "ABC-7-fix", "branch")
 	eq(out.result.created, true, "created")
-	eq(countLog(r.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the default branch is fetched into the project's own base ref")
+	eq(countLog(r.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/o/r"), 1, "the default branch is fetched into the repository's base ref")
 	eq(r.git.refs["refs/heads/ABC-7-fix"], sha("b"), "the branch starts at the remote's default branch")
-	eq(worktree.issueOfPath(out.result.path, "ABC"), "ABC-7", "the path maps back to the key")
-	eq(worktree.issueOfPath(out.result.path .. "/src", "ABC"), "ABC-7", "from a directory inside it too")
-	eq(worktree.issueOfPath(out.result.path, "o/r"), nil, "and no GitHub repository claims it")
+	same({ worktree.itemOfPath(out.result.path) }, { "abc#ABC-7", "issue" }, "the path maps back to the Jira key")
+	same({ worktree.itemOfPath(out.result.path .. "/src") }, { "abc#ABC-7", "issue" }, "from a directory inside it too")
 	local again = open("ABC-7")
 	eq(again.result.created, false, "the same issue again reuses its worktree")
 	eq(again.result.path, out.result.path, "at the same path")
-	-- without origin: upstream, then the remotes by name
-	r.git.remotes = { zeta = { "https://example.org/z.git" }, upstream = { "https://example.org/x/y.git" } }
-	eq(open("ABC-8").result.remote, "upstream", "upstream before the rest")
-	r.git.remotes = { zeta = { "https://example.org/z.git" }, beta = { "https://example.org/b.git" } }
-	eq(open("ABC-9").result.remote, "beta", "then by name")
-	-- a project or key it cannot use
+	-- the remote of the repository is the one used, whatever its name
+	r.git.remotes = { zeta = { "https://github.com/x/z.git" }, upstream = { "https://github.com/o/r.git" } }
+	eq(open("ABC-8").result.remote, "upstream", "the remote that points at o/r")
+	-- a repository or key it cannot use
 	local before = #w.calls
-	for _, bad in { { "abc", "ABC-1" }, { "A", "ABC-1" }, { "ABC", "ABC/1" }, { "ABC", "" } } do
+	for _, bad in { { "ABC", "ABC-1" }, { "o", "ABC-1" }, { "o/r", "ABC/1" }, { "o/r", "" } } do
 		local refused: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.openIssue(r.launch, bad[1], bad[2], "x", function(result, problem, cx)
+		worktree.openIssue(r.launch, bad[1], bad[2], "x", "", function(result, problem, cx)
 			refused.calls += 1
 			refused.result, refused.problem, refused.cx = result, problem, cx
 		end)
@@ -2813,17 +2827,16 @@ windowCase("worktree.openIssue: a Jira project's issue is made from the checkout
 	eq(#w.calls, before, "no process was started")
 end)
 
-windowCase("worktree: a Jira project is a valid project, its checkout is any work tree with a remote, and nothing is cloned for it", function(w: World)
+windowCase("worktree: a project is a Jira key or a GitHub repository, and a checkout is claimed by cloning when it is no work tree", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local r = issueRepo(w, "ABC-7")
-	r.git.remotes = { origin = { "git@gitlab.com:o/r.git" } }
 	yes(worktree.validProject("ABC") and worktree.validProject("A1_B") and worktree.validProject("o/r"), "a Jira key and a GitHub repository are projects")
 	for _, bad in { "abc", "A", "o", "o/r/s", "" } do
 		yes(not worktree.validProject(bad), "not a project: " .. bad)
 	end
 	local function claim(path: string): Opened
 		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.claimCheckout(path, "ABC", function(result, problem, cx)
+		worktree.claimCheckout(path, "o/r", nil, function(result, problem, cx)
 			out.calls += 1
 			out.result, out.problem, out.cx = result, problem, cx
 		end)
@@ -2838,15 +2851,35 @@ windowCase("worktree: a Jira project is a valid project, its checkout is any wor
 	r.git.remotes = {}
 	local bare = claim("/work/r")
 	eq(bare.result, nil, "a checkout with no remote")
-	eq(bare.problem, "/work/r has no git remote to branch from.", "has nothing to branch from")
-	local refusal = "That folder is not a git checkout. A Jira project names no repository to clone, so enter the folder of an existing checkout."
+	eq(bare.problem, "No remote of /work/r points at github.com/o/r.", "has no remote of the repository")
+	-- a folder that is no checkout, or is missing, is cloned into with gh
+	local cloned = newGit(w, "/work/new")
+	cloned.remotes.origin = { "https://github.com/o/r.git" }
+	w.fs.dirs["/work/new"] = nil
+	w.fs.dirs["/work/new/.git"] = nil
+	w.respond(function(call: Call): Reply?
+		if table.concat(call.argv, " ") == "gh repo clone o/r /work/new" then
+			w.fs.dirs["/work/new"] = true
+			w.fs.dirs["/work/new/.git"] = true
+			return { stdout = "" }
+		end
+		return nil
+	end)
+	local made = claim("/work/new")
+	eq(made.problem, nil, "a missing folder is cloned into: problem")
+	eq(made.result.root, "/work/new", "and is the checkout")
+	eq(made.result.cloned, true, "cloned")
+	eq(countCalls(w, "gh repo clone o/r /work/new"), 1, "gh cloned once")
 	w.fs.dirs["/work/plain"] = true
+	w.respond(function(call: Call): Reply?
+		if table.concat(call.argv, " ") == "gh repo clone o/r /work/plain" then
+			return { status = 1, stderr = "fatal: destination path '/work/plain' already exists and is not an empty directory.\n" }
+		end
+		return nil
+	end)
 	local plain = claim("/work/plain")
-	eq(plain.result, nil, "a folder that is no checkout")
-	eq(plain.problem, refusal, "is refused, not cloned")
-	local missing = claim("/work/missing")
-	eq(missing.result, nil, "a folder that does not exist")
-	eq(missing.problem, refusal, "is refused too")
+	eq(plain.result, nil, "a folder that is no checkout and cannot be cloned into")
+	has(plain.problem, "not an empty directory", "gh's reason is the problem")
 end)
 
 case("worktree: describeIssue and cleanupIssue say how the issue's worktree stands and how to remove it", function(w: World)
@@ -2995,7 +3028,7 @@ end
 
 -- Moves the queue's selection to PR `n`: its worktree's card and badge are what the block then shows.
 local function showPr(b: Block, n: number)
-	b.event({ ev = "select", id = "layer.queue", item = "n" .. n })
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_23" .. n })
 end
 
 -- The requests the window has sent to blocks' hosts, decoded, oldest first.
@@ -3024,13 +3057,13 @@ end
 
 -- Saved prompts as kv keeps them: `filters` are the ids of the filters a prompt is offered under, none: every filter;
 -- `key` is its shortcut in the queue.
-local function promptOf(id: string, name: string, text: string, filters: { string }?, key: string?): { [string]: any }
-	return { id = id, name = name, text = text, filters = array(filters or {}), key = key }
+local function promptOf(id: string, name: string, text: string, key: string?): { [string]: any }
+	return { id = id, name = name, text = text, key = key }
 end
 
 -- Makes `list` the saved prompts.
 local function savePrompts(w: World, list: { { [string]: any } })
-	w.kv.put("prompts", { version = 1, nextId = #list + 1, items = array(list) })
+	w.kv.put("prompts-prs", { version = 1, nextId = #list + 1, items = array(list) })
 end
 
 -- The picks the agent flow has asked: "consent" is the two-row question, asked once the worktree is ready, whose first
@@ -3086,7 +3119,7 @@ local function agentScene(w: World): (Scene, Block)
 	return s, linkQueue(w, s)
 end
 
-windowCase("window: the repository picker offers the saved repositories and each gh login, whose repositories it lists next; a pick or a typed one is shown", function(w: World)
+windowCase("window: the Add repository picker offers the saved repositories and each gh login, whose repositories it lists next; a pick or a typed one is saved and its checkout row opens", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
 	local s = scene(w, worktree, "o", "r", 5)
@@ -3105,15 +3138,16 @@ windowCase("window: the repository picker offers the saved repositories and each
 		return out
 	end
 	same(labels(1), { "o/r", "@octocat", "@work", "Other repository…" }, "saved, then the gh logins (active first), then a typed one")
-	eq(w.window.picks[1].items[1].current, true, "the shown repository is checked")
+	eq(w.window.picks[1].items[1].detail, "/work/r", "a saved repository shows its checkout")
 	same(labels(2), { "z/z", "o/r" }, "picking a login lists its repositories")
-	eq(w.window.picks[2].items[2].current, true, "with the shown one checked")
-	eq(pickerOf(b).title[1].t, "z/z", "the pick is shown")
+	eq(w.kv.get("checkouts")["z/z"], "", "the pick is saved without a checkout")
+	eq(prefsOf(b).editing.row, "checkout:z/z", "and Settings opens on its checkout row")
 	w.window.choose = "Other repository…"
 	w.window.typed = " p/q "
 	w.click("plotroom://repos")
 	w.flush()
-	eq(pickerOf(b).title[1].t, "p/q", "so is a typed one")
+	eq(w.kv.get("checkouts")["p/q"], "", "so is a typed one")
+	eq(prefsOf(b).editing.row, "checkout:p/q", "with its row open")
 end)
 
 windowCase("window: clicking Worktree coalesces repeats, notes the worktree on the block first, then opens its tab", function(w: World)
@@ -3166,13 +3200,16 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 end)
 
 windowCase("window: Agent lists the saved prompts of the active filter first, runs the pick with {url} replaced in the PR's worktree once allowed, recent first next time", function(w: World)
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2" }) },
+	}) })
 	local s = agentScene(w)
 	savePrompts(w, {
-		promptOf("p1", "Review", "Review {url}\nthen summarise", { "f1" }),
+		promptOf("p1", "Review", "Review {url}\nthen summarise"),
 		promptOf("p2", "Triage", "Triage {url}, then triage {url} again"),
-		promptOf("p3", "Others", "Check the tests", { "f2" }),
+		promptOf("p3", "Others", "Check the tests"),
 		promptOf("p4", "Blank", ""),
-		promptOf("p5", "Orphan", "Look into {url}", { "f9" }),
+		promptOf("p5", "Orphan", "Look into {url}"),
 	})
 	w.window.choose = { "Allow", "Review" }
 	w.click(prLink("agent", "o/r", 5))
@@ -3182,12 +3219,11 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	for _, item in items do
 		table.insert(labels, item.label)
 	end
-	same(labels, { "Type a prompt…", "Review", "Triage", "Orphan" }, "typing, the filter's own prompts, then those offered under every filter; one for another filter and one with no text are left out")
+	same(labels, { "Type a prompt…", "Review", "Triage" }, "typing, then only the prompts the view lists; one it leaves out and one with no text are not offered")
 	eq(items[1].detail, "Send your own text", "typing says what it does")
-	eq(items[2].group, "For My PRs", "a prompt of the active filter has that filter's group")
+	eq(items[2].group, "For My PRs", "a prompt of a restricted view has that view's group")
 	eq(items[2].detail, "Review {url}", "and its first line as its detail")
-	eq(items[3].group, "All filters", "an every-filter prompt")
-	eq(items[4].group, "All filters", "so is one scoped only to a filter that no longer exists")
+	eq(items[3].group, "For My PRs", "so does the next")
 	local asked = picksOf(w, "consent")
 	eq(#asked, 1, "the one question comes once the worktree is ready")
 	eq(asked[1].placeholder, "Start an agent for o/r#5?", "it names the pull request")
@@ -3242,7 +3278,7 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 		table.insert(groups, item.group or "")
 	end
 	same(labels, { "Triage", "Type a prompt…", "Triage" }, "a prompt deleted since is no longer a recent row")
-	same(groups, { "Recent", "", "All filters" }, "the recent one leads, then typing, then the saved prompts")
+	same(groups, { "Recent", "", "All prompts" }, "the recent one leads, then typing, then the saved prompts")
 	savePrompts(w, {})
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -3254,7 +3290,7 @@ end)
 
 windowCase("window: saved prompts the host cannot read are reported, and a prompt can still be typed", function(w: World)
 	agentScene(w)
-	w.kv.put("prompts", "garbage")
+	w.kv.put("prompts-prs", "garbage")
 	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "Look at {url}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -3263,13 +3299,13 @@ windowCase("window: saved prompts the host cannot read are reported, and a promp
 	has(w.toasts[1].sub, "malformed", "and why")
 	eq(#picksOf(w, "prompts")[1].items, 1, "the picker still opens")
 	eq(w.window.agents[1].prompt, "Look at https://github.com/o/r/pull/5", "to type a prompt")
-	eq(w.kv.get("prompts"), "garbage", "and the saved prompts are untouched")
+	eq(w.kv.get("prompts-prs"), "garbage", "and the saved prompts are untouched")
 end)
 
 windowCase("window: a card button's run link runs its prompt with every {url} replaced in the PR's worktree once allowed, as the prompt is saved now", function(w: World)
 	local s, b = agentScene(w)
 	savePrompts(w, {
-		promptOf("p1", "Review", "Review {url}\nthen summarise {url}", { "f1" }),
+		promptOf("p1", "Review", "Review {url}\nthen summarise {url}"),
 		promptOf("p2", "Triage", "Triage {url}"),
 	})
 	b.render()
@@ -3370,7 +3406,6 @@ windowCase("window: a prompt no longer offered once the card was drawn gives a t
 		eq(cardOf(b), nil, what .. ": and no worktree was prepared")
 	end
 	gone("deleted", { promptOf("p2", "Triage", "Triage {url}") })
-	gone("moved to another filter", { promptOf("p1", "Review", "Review {url}", { "f2" }) })
 	gone("emptied", { promptOf("p1", "Review", "") })
 end)
 
@@ -3390,7 +3425,7 @@ windowCase("window: a new worktree runs its repository's setup commands in its t
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
 	local s = scene(w, worktree, "o", "r", 5)
-	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install", "  ", "make" }), ["github.com/x/y"] = array({ "nope" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install", "  ", "make" }), ["x/y"] = array({ "nope" }) })
 	linkQueue(w, s)
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()
@@ -3405,7 +3440,7 @@ end)
 
 windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)
 	local s = agentScene(w)
-	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "go"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -3427,7 +3462,7 @@ type Way = { what: string, pick: string, start: string? }
 windowCase("window: declining the question about the agent leaves the worktree ready and starts nothing, however the prompt was picked", function(w: World)
 	local s, b = agentScene(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
-	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	w.window.typed = "go"
 	local ways: { Way } = {
 		{ what = "typed prompt", pick = "Type a prompt…", start = "Deny" },
@@ -3549,27 +3584,44 @@ windowCase("window: a source pane that closed meanwhile gets a toast but no tab"
 	has(cardText(b), s.target, "and the block noted the worktree")
 end)
 
-windowCase("window: no local checkout opens the block's settings for one; any other failure is noted and toasted", function(w: World)
+windowCase("window: PR worktree without a checkout asks for one, then continues", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	linkQueue(w, s)
+	w.kv.put("checkouts", {})
+	w.window.typed = "/work/r"
+	w.click(prLink("worktree", "o/r", 5))
+	w.flush()
+	local sent = requestsSent(w)
+	eq(#sent, 3, "the worktree request, the checkout it led to, then the worktree request again")
+	eq(sent[1].op, "worktree", "first the worktree")
+	eq(sent[2].op, "checkout", "then the folder the user gave")
+	eq(sent[2].repo, "o/r", "for the repository")
+	eq(sent[2].path, "/work/r", "and that path")
+	eq(sent[3].op, "worktree", "and the worktree once more")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the checkout is saved under the lowercase repository")
+	eq(w.toasts[#w.toasts].level, "success", "the worktree is made")
+	has(w.toasts[#w.toasts].text, "o/r#5", "for the pull request")
+	eq(countLog(s.git, "worktree add"), 1, "once")
+	w.window.typed = nil
+	w.kv.put("checkouts", {})
+	w.click(prLink("worktree", "o/r", 5))
+	w.flush()
+	eq(#requestsSent(w), 4, "a dismissed question sends nothing more")
+	eq(countLog(s.git, "worktree add"), 1, "and creates nothing")
+end)
+
+windowCase("window: any worktree failure is noted and toasted", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
 	local s = scene(w, worktree, "o", "r", 5)
 	local b = linkQueue(w, s)
-	s.git.remotes.origin = { "https://github.com/x/y.git" }
-	w.click(prLink("worktree", "o/r", 5))
-	w.flush()
-	eq(w.toasts[2].level, "info", "level")
-	has(w.toasts[2].text, "o/r", "names the repository")
-	eq(prefsOf(b).page, "worktrees", "the block's settings open on the Worktrees page")
-	eq(prefsOf(b).editing.row, "checkout", "with the checkout row ready for a path")
-	eq(countLog(s.git, "worktree add"), 0, "nothing was created")
-	b.press("escape")
-	b.press("escape")
-	s.git.remotes.origin = { "https://github.com/o/r.git" }
 	s.gh.meta["o/r#5"] = nil
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()
-	eq(w.toasts[4].level, "error", "level")
-	has(w.toasts[4].sub, "not visible to this GitHub account", "gh's classified reason")
+	eq(w.toasts[2].level, "error", "level")
+	has(w.toasts[2].sub, "not visible to this GitHub account", "gh's classified reason")
 	eq(cardOf(b).p.tone, "error", "noted as a failure")
 	has(cardText(b), "not visible to this GitHub account", "with that reason")
 end)
@@ -3656,7 +3708,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "7", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "8", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -3709,86 +3761,6 @@ local function checkRun(name: string, status: string, conclusion: string?, start
 	end
 	return node
 end
-
-case("github.account: an unreadable or malformed store fails closed and is never overwritten", function(w: World)
-	local github = w.load("github") :: Github
-	local saved = { ["github.com/a/b"] = "work", ["github.com/other/repo"] = "other-user" }
-	w.kv.put("accounts", saved)
-	w.kv.failGet["accounts"] = "disk offline"
-	local login: string?, problem: any = github.account("a/b")
-	eq(login, nil, "no login from an unreadable store")
-	eq(problem.kind, "account", "problem kind")
-	has(problem.message, "could not be read", "problem message")
-	w.kv.failSet["*"] = "set must not be called"
-	local err = github.setAccount("a/b", "ok-user")
-	has(err, "could not be read", "setAccount refuses to write over an unreadable store")
-	lacks(err, "set must not be called", "kv.set was never attempted")
-	w.kv.failGet["accounts"] = nil
-	same(w.kv.get("accounts"), saved, "the saved map is untouched")
-	w.kv.failSet["*"] = nil
-	local malformed: { any } = { "oops", { "x" } }
-	for _, bad in malformed do
-		w.kv.put("accounts", bad)
-		local who: string?, why: any = github.account("a/b")
-		eq(who, nil, "no login from a malformed store")
-		has(why.message, "malformed", "malformed store")
-		has(github.setAccount("a/b", "ok-user"), "malformed", "setAccount refuses a malformed store")
-		same(w.kv.get("accounts"), bad, "a malformed store is not replaced")
-	end
-end)
-
-case("github.account: entries are per repository; one bad entry does not touch the others", function(w: World)
-	local github = w.load("github") :: Github
-	local none: string?, nothing: any = github.account("a/b")
-	eq(none, nil, "nothing saved: the active account")
-	eq(nothing, nil, "and no problem")
-	w.kv.put("accounts", { ["github.com/a/b"] = "bad name" })
-	local login: string?, problem: any = github.account("a/b")
-	eq(login, nil, "an invalid saved login is not used")
-	has(problem.message, "not a valid login", "problem")
-	eq(github.setAccount("c/d", "ok"), nil, "saving another repository works")
-	same(w.kv.get("accounts"), { ["github.com/a/b"] = "bad name", ["github.com/c/d"] = "ok" }, "the other entry is kept verbatim")
-	local ok: string?, fine: any = github.account("c/d")
-	eq(ok, "ok", "login")
-	eq(fine, nil, "no problem")
-	w.kv.put("accounts", { ["github.com/a/b"] = "work", ["github.com/other/repo"] = "other-user" })
-	eq((github.account("A/B")), "work", "keys are case-insensitive")
-	eq(github.setAccount("a/b", nil), nil, "clearing works")
-	same(w.kv.get("accounts"), { ["github.com/other/repo"] = "other-user" }, "only this repository's entry was removed")
-	eq(github.setAccount("other/repo", ""), nil, "an empty login clears")
-	same(w.kv.get("accounts"), {}, "the map is empty")
-end)
-
-case("github.setAccount: a bad login is refused before the store is read; a failing write is reported", function(w: World)
-	local github = w.load("github") :: Github
-	w.kv.failGet["*"] = "boom"
-	has(github.setAccount("a/b", "bad name"), "letters, digits and hyphens", "validation comes first")
-	w.kv.failGet["*"] = nil
-	w.kv.failSet["accounts"] = "read-only file system"
-	has(github.setAccount("a/b", "ok"), "read-only file system", "write failure")
-end)
-
-windowCase("github: with the saved accounts unreadable, search, checks and pr report an account problem and send nothing", function(w: World)
-	local github = w.load("github") :: Github
-	w.kv.failGet["accounts"] = "disk offline"
-	local seen: { string } = {}
-	local prCx: any = nil
-	github.search("a/b", "is:open", always, function(result, problem, spent)
-		table.insert(seen, "search " .. (if result then "result" else (if problem then problem.kind else "?")) .. " " .. spent)
-	end)
-	github.checks("a/b", 5, function(runs, total, problem)
-		table.insert(seen, "checks " .. (if runs then "runs" else (if problem then problem.kind else "?")) .. " " .. total)
-	end)
-	github.pr("a/b", 5, function(meta, problem, cx)
-		table.insert(seen, "pr " .. (if meta then "meta" else (if problem then problem.kind else "?")))
-		prCx = cx
-	end)
-	eq(#seen, 0, "answers are deferred, never synchronous")
-	w.flush()
-	same(seen, { "search account 0", "checks account 0", "pr account" }, "answers")
-	yes(prCx ~= nil, "pr's answer carries a window cx")
-	eq(#w.calls, 0, "no gh process was started")
-end)
 
 case("github.gh: a token that times out is 'failed' after one spawn, a refusal is 'auth', a token travels only in GH_TOKEN", function(w: World)
 	local github = w.load("github") :: Github
@@ -3954,21 +3926,11 @@ case("github.classify: statuses map to the pause kinds the host acts on", functi
 	eq(kind(1, "gh: something broke\n"), "failed", "anything else")
 end)
 
-case("github.scopeProblem: nothing may widen the search beyond the repository, quoted phrases stay plain text", function(w: World)
-	local github = w.load("github") :: Github
-	for _, fine in { 'is:open label:"bug OR regression"', '"foo OR bar" is:open', 'is:open "OR"', "is:open or later", "is:open author:@me" } do
-		eq(github.scopeProblem(fine), nil, "allowed: " .. fine)
-	end
-	for _, bad in { "is:open OR is:draft", 'label:"x" OR is:draft', 'label:"bug OR', "is:open repo:x/y", '"repo:x/y"', 'label:"a repo:x/y"', "-org:x", "(user:x OR is:open)", "is:open (OR)" } do
-		yes(github.scopeProblem(bad) ~= nil, "refused: " .. bad)
-	end
-end)
-
 type SearchOut = { result: any, problem: any, spent: number?, calls: number }
 
 local function runSearch(w: World, github: Github, shouldContinue: (() -> boolean)?): SearchOut
 	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
-	github.search("o/r", "is:open", shouldContinue or always, function(result, problem, spent)
+	github.search(nil, "is:open", shouldContinue or always, function(result, problem, spent)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -4123,27 +4085,32 @@ case("github.search: cancellation is checked before every page and after every r
 	eq(during.spent, 1, "spent")
 end)
 
-case("github.search: a saved account searches as that account and never leaks the active one's PRs", function(w: World)
+case("github.search: no repo qualifier, runs as the view's login", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
-	w.kv.put("accounts", { ["github.com/o/r"] = "work" })
 	gh.tokens.work = "tok-work"
 	gh.items.work = manyItems("o/r", 3)
 	gh.items.octocat = manyItems("o/r", 7)
-	local out = runSearch(w, github, nil)
-	eq(#out.result.prs, 3, "the work account's PRs")
+	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
+	github.search("work", "is:open author:@me", always, function(result, problem, spent)
+		out.calls += 1
+		out.result, out.problem, out.spent = result, problem, spent
+	end)
+	w.flush()
+	eq(#out.result.prs, 3, "the work account's PRs, not the active one's")
 	eq(gh.requests[1].kind, "token", "the token is read first")
 	eq(gh.requests[2].kind, "search", "then the search")
+	eq(gh.requests[2].fields.q, "is:open author:@me is:pr sort:updated-desc", "the view's query, no repo: qualifier")
 	for _, req in gh.requests do
-		eq(req.login, "work", "every request ran as the saved account")
+		eq(req.login, "work", "every request ran as the view's login")
 	end
 end)
 
-case("github.search: an empty or scope-widening query fails asynchronously without a request", function(w: World)
+case("github.search: an empty query fails asynchronously without a request", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
 	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
-	github.search("o/r", "   ", always, function(result, problem, spent)
+	github.search(nil, "   ", always, function(result, problem, spent)
 		out.calls += 1
 		out.result, out.problem, out.spent = result, problem, spent
 	end)
@@ -4151,22 +4118,14 @@ case("github.search: an empty or scope-widening query fails asynchronously witho
 	w.flush()
 	eq(out.problem.kind, "failed", "problem kind")
 	eq(out.spent, 0, "spent")
-	out.calls = 0
-	github.search("o/r", "is:open repo:x/y", always, function(result, problem, spent)
-		out.calls += 1
-		out.result, out.problem, out.spent = result, problem, spent
-	end)
-	eq(out.calls, 0, "never synchronous")
-	w.flush()
-	has(out.problem.message, "repo:x/y", "the offending word is named")
 	eq(#gh.requests, 0, "nothing was sent")
 end)
 
 type ChecksOut = { runs: any, total: number?, problem: any, calls: number }
 
-local function runChecks(github: Github, shouldContinue: (() -> boolean)?): ChecksOut
+local function runChecks(github: Github, shouldContinue: (() -> boolean)?, account: string?): ChecksOut
 	local out: ChecksOut = { runs = nil, total = nil, problem = nil, calls = 0 }
-	github.checks("o/r", 5, function(runs, total, problem)
+	github.checks("o/r", 5, account, function(runs, total, problem)
 		out.calls += 1
 		out.runs, out.total, out.problem = runs, total, problem
 	end, shouldContinue)
@@ -4228,20 +4187,18 @@ case("github.checks: a paused quota or an unusable account sends nothing, and ca
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
 	gh.checks["o/r#5"] = nodes(250)
-	w.kv.put("accounts", { ["github.com/o/r"] = "limited" })
 	github.record({ remaining = 0, reset = w.seconds() + 60, limit = 30 }, w.seconds(), "limited")
-	local paused = runChecks(github, nil)
+	local paused = runChecks(github, nil, "limited")
 	eq(paused.calls, 0, "never synchronous")
 	w.flush()
 	eq(paused.problem.kind, "rate-limit", "problem kind")
 	has(paused.problem.message, "checks resume at", "message")
 	eq(#gh.requests, 0, "nothing was sent while paused")
-	w.kv.put("accounts", { ["github.com/o/r"] = "fine" })
 	gh.tokens.fine = "tok-fine"
 	gh.checks["o/r#5"] = nodes(250)
 	local cancelled = runChecks(github, function(): boolean
 		return false
-	end)
+	end, "fine")
 	w.flush()
 	eq(cancelled.problem.kind, "superseded", "cancelled before the call")
 	eq(#gh.requests, 0, "nothing was sent")
@@ -4255,7 +4212,7 @@ case("github.checks: a paused quota or an unusable account sends nothing, and ca
 	end
 	local during = runChecks(github, function(): boolean
 		return go
-	end)
+	end, "fine")
 	w.flush()
 	eq(during.problem.kind, "superseded", "cancelled while the first page was in flight")
 	local checkCalls = 0
@@ -4266,7 +4223,7 @@ case("github.checks: a paused quota or an unusable account sends nothing, and ca
 	end
 	eq(checkCalls, 1, "no second page")
 	local bad: ChecksOut = { runs = nil, total = nil, problem = nil, calls = 0 }
-	github.checks("not-a-repo", 5, function(runs, total, problem)
+	github.checks("not-a-repo", 5, nil, function(runs, total, problem)
 		bad.runs, bad.total, bad.problem = runs, total, problem
 	end)
 	w.flush()
@@ -4280,7 +4237,7 @@ case("github.pr: the head sha must be 40 hex digits and is lowercased", function
 	local why: any = nil
 	local function ask()
 		got, why = nil, nil
-		github.pr("o/r", 5, function(meta, problem, _cx)
+		github.pr("o/r", 5, nil, function(meta, problem, _cx)
 			got, why = meta, problem
 		end)
 		w.flush()
@@ -4300,7 +4257,7 @@ end)
 
 local function runIssues(w: World, github: Github, query: string): SearchOut
 	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
-	github.issues("o/r", query, always, function(result, problem, spent)
+	github.issues(nil, query, always, function(result, problem, spent)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -4322,7 +4279,7 @@ case("github.issues: searches is:issue in the repository and normalizes issues",
 	eq(out.problem, nil, "problem")
 	eq(#gh.requests, 1, "one request covers two issues")
 	eq(gh.requests[1].kind, "issue-search", "an issue search")
-	eq(gh.requests[1].fields.q, "repo:o/r is:open assignee:@me is:issue sort:updated-desc", "scoped to the repository, the filter's own query, issues only")
+	eq(gh.requests[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the view's own query, issues only, no repo: qualifier")
 	eq(out.result.total, 2, "total")
 	eq(out.result.complete, true, "complete")
 	eq(out.spent, 1, "spent")
@@ -4333,7 +4290,6 @@ case("github.issues: searches is:issue in the repository and normalizes issues",
 	eq(first.tracker, "github", "tracker")
 	eq(first.repo, "O/R", "the repository as GitHub spells it")
 	eq(first.ref, "12", "ref")
-	eq(first.id, "n12", "picker id")
 	eq(first.title, "Fix login", "title")
 	eq(first.url, "https://github.com/O/R/issues/12", "url")
 	eq(first.author, "octo", "author")
@@ -4370,12 +4326,8 @@ case("github.issues: searches is:issue in the repository and normalizes issues",
 	eq(runIssues(w, github, "is:open").problem.message, "the search returned an issue with an unexpected URL", "a foreign URL")
 	gh.issueItems.octocat = { issueItem(5, "o/r", EPOCH - 60, { number = 6 }) }
 	eq(runIssues(w, github, "is:open").problem.message, "the search returned an issue with an unexpected URL", "a URL of another number")
-	-- the checks of the PR search apply, and the pages are the same
+	-- the pages are the same
 	gh.requests = {}
-	local widened = runIssues(w, github, "is:open repo:x/y")
-	eq(widened.result, nil, "a scope-widening query fails")
-	eq(widened.problem.kind, "failed", "problem kind")
-	eq(#gh.requests, 0, "without a request")
 	local many: { { [string]: any } } = {}
 	for i = 1, 250 do
 		table.insert(many, issueItem(i, "o/r", EPOCH - i * 60))
@@ -4389,9 +4341,9 @@ end)
 
 type IssueOut = { detail: any, problem: any, calls: number }
 
-local function runIssue(w: World, github: Github, shouldContinue: (() -> boolean)?): IssueOut
+local function runIssue(w: World, github: Github, shouldContinue: (() -> boolean)?, account: string?): IssueOut
 	local out: IssueOut = { detail = nil, problem = nil, calls = 0 }
-	github.issue("o/r", 12, function(detail, problem)
+	github.issue("o/r", 12, account, function(detail, problem)
 		out.calls += 1
 		out.detail, out.problem = detail, problem
 	end, shouldContinue)
@@ -4468,17 +4420,15 @@ case("github.issue: a paused quota or an unusable account sends nothing, and can
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
 	gh.issueDetail["o/r#12"] = { body = "x", linked = array({}) }
-	w.kv.put("accounts", { ["github.com/o/r"] = "limited" })
 	github.record({ remaining = 0, reset = w.seconds() + 60, limit = 30 }, w.seconds(), "limited")
-	local paused = runIssue(w, github, nil)
+	local paused = runIssue(w, github, nil, "limited")
 	eq(paused.problem.kind, "rate-limit", "problem kind")
 	has(paused.problem.message, "resume at", "message")
 	eq(#gh.requests, 0, "nothing was sent while paused")
-	w.kv.put("accounts", { ["github.com/o/r"] = "fine" })
 	gh.tokens.fine = "tok-fine"
 	local cancelled = runIssue(w, github, function(): boolean
 		return false
-	end)
+	end, "fine")
 	eq(cancelled.problem.kind, "superseded", "cancelled before the call")
 	eq(#gh.requests, 0, "nothing was sent")
 	local go = true
@@ -4490,37 +4440,21 @@ case("github.issue: a paused quota or an unusable account sends nothing, and can
 	end
 	local during = runIssue(w, github, function(): boolean
 		return go
-	end)
+	end, "fine")
 	eq(during.problem.kind, "superseded", "cancelled while the call was in flight")
 	local bad: IssueOut = { detail = nil, problem = nil, calls = 0 }
-	github.issue("not-a-repo", 5, function(detail, problem)
+	github.issue("not-a-repo", 5, nil, function(detail, problem)
 		bad.detail, bad.problem = detail, problem
 	end)
 	w.flush()
 	eq(bad.problem.kind, "failed", "an unexpected repository name")
 end)
 
-case("github.issues and github.issue: with the saved accounts unreadable they report an account problem and send nothing", function(w: World)
-	local github = w.load("github") :: Github
-	w.kv.failGet["accounts"] = "disk offline"
-	local seen: { string } = {}
-	github.issues("a/b", "is:open", always, function(result, problem, spent)
-		table.insert(seen, "issues " .. (if result then "result" else (if problem then problem.kind else "?")) .. " " .. spent)
-	end)
-	github.issue("a/b", 5, function(detail, problem)
-		table.insert(seen, "issue " .. (if detail then "detail" else (if problem then problem.kind else "?")))
-	end)
-	eq(#seen, 0, "answers are deferred, never synchronous")
-	w.flush()
-	same(seen, { "issues account 0", "issue account" }, "answers")
-	eq(#w.calls, 0, "no gh process was started")
-end)
-
 -- ---- jira.luau: acli's search, one work item's details and the project list
 
 local function runJira(w: World, jira: Jira, query: string, shouldContinue: (() -> boolean)?): SearchOut
 	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
-	jira.issues("ABC", query, shouldContinue or always, function(result, problem, spent)
+	jira.issues(query, shouldContinue or always, function(result, problem, spent)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -4563,11 +4497,11 @@ local function acliCount(acli: Acli, kind: string): number
 	return n
 end
 
-case("jira.issues: one search scoped to the project, newest update first, normalized", function(w: World)
+case("jira.issues: one search of the view's query, newest update first, normalized", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
 	local query = "assignee = currentUser() AND statusCategory != Done"
-	local jql = 'project = "ABC" AND (' .. query .. ") ORDER BY updated DESC"
+	local jql = "(" .. query .. ") ORDER BY updated DESC"
 	acli.searches[jql] = {
 		jiraItem("ABC-12", "Fix login", {
 			status = { name = "In Progress", statusCategory = { key = "indeterminate" } },
@@ -4586,7 +4520,7 @@ case("jira.issues: one search scoped to the project, newest update first, normal
 	eq(acli.requests[1].kind, "auth", "the site comes first")
 	eq(acli.requests[2].kind, "search", "then the search")
 	local argv = acli.requests[2].argv
-	eq(acliOption(argv, "--jql"), jql, "scoped to the project, the filter's query in parentheses, newest update first")
+	eq(acliOption(argv, "--jql"), jql, "the view's query in parentheses, newest update first, no project clause")
 	eq(acliOption(argv, "--limit"), "100", "the newest 100")
 	eq(acliOption(argv, "--fields"), "key,summary,status,issuetype,priority,assignee,reporter,labels", "only the fields acli's search allows")
 	yes(table.find(argv, "--json"), "as JSON")
@@ -4596,7 +4530,6 @@ case("jira.issues: one search scoped to the project, newest update first, normal
 	eq(#issues, 2, "issues, in acli's order")
 	local first = issues[1]
 	eq(first.key, "abc#ABC-12", "identity: the lowercase project, then the key")
-	eq(first.id, "nABC-12", "picker id")
 	eq(first.ref, "ABC-12", "ref")
 	eq(first.repo, "ABC", "the project")
 	eq(first.tracker, "jira", "tracker")
@@ -4656,7 +4589,7 @@ case("jira.issues: one search scoped to the project, newest update first, normal
 	eq(acliCount(acli, "auth"), 2, "reset forgets it")
 end)
 
-case("jira.issues: acli's failures become problems, and a filter that would leave the project never reaches acli", function(w: World)
+case("jira.issues: acli's failures become problems, and a query that cannot be wrapped never reaches acli", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
 	local query = "assignee = currentUser()"
@@ -4717,7 +4650,7 @@ case("jira.issues: acli's failures become problems, and a filter that would leav
 	acli.override = nil
 	eq(runJira(w, jira, query, nil).problem, nil, "signed in again")
 	eq(acliCount(acli, "auth"), lookups + 1, "the site was looked up again")
-	-- a filter that cannot stay inside the project is refused without asking acli
+	-- a query that cannot be wrapped in parentheses is refused without asking acli
 	local sent = #acli.requests
 	for _, bad in { "a = 1) OR (b = 2", "a = 1 ORDER BY created", "a = 1 order  by x", "x = 'open", "(a = 1" } do
 		local refused = runJira(w, jira, bad, nil)
@@ -4725,12 +4658,12 @@ case("jira.issues: acli's failures become problems, and a filter that would leav
 		eq(refused.problem.kind, "invalid", "refused: " .. bad)
 	end
 	eq(#acli.requests, sent, "none of them reached acli")
-	eq(jira.scopeProblem("a = 1) OR (b = 2"), "Unbalanced parentheses: a filter cannot close the project's scope.", "an extra closing parenthesis")
+	eq(jira.scopeProblem("a = 1) OR (b = 2"), "Unbalanced parentheses.", "an extra closing parenthesis")
 	eq(jira.scopeProblem("(a = 1"), "Unbalanced quotes or parentheses.", "an open parenthesis")
 	eq(jira.scopeProblem("a = 1 ORDER BY x"), "Leave out ORDER BY: issues are listed newest update first.", "ordering is the search's")
 	local blank = runJira(w, jira, "  ", nil)
 	eq(blank.problem.kind, "failed", "a blank filter")
-	eq(blank.problem.message, "The filter query is empty.", "message")
+	eq(blank.problem.message, "The view's query is empty.", "message")
 	eq(runJira(w, jira, 'summary ~ "a) ORDER BY (b"', nil).problem, nil, "quoted text may hold parentheses and ORDER BY")
 	-- cancellation wins everywhere
 	local searches = acliCount(acli, "search")
@@ -4750,13 +4683,6 @@ case("jira.issues: acli's failures become problems, and a filter that would leav
 		return go
 	end)
 	eq(during.problem.kind, "superseded", "cancelled while the search was in flight")
-	acli.override = nil
-	local wrong: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
-	jira.issues("abc", query, always, function(result, problem, spent)
-		wrong.result, wrong.problem, wrong.spent = result, problem, spent
-	end)
-	w.flush()
-	eq(wrong.problem.kind, "failed", "a project key that is none")
 end)
 
 case("jira.issue: body as markdown, fields, links and dates", function(w: World)
@@ -5026,7 +4952,7 @@ end
 -- Forgets every saved checkout: opening the queue in /work/r saves that one.
 local function forgetCheckouts(w: World)
 	local store: any = w.kv.store
-	store.repos = nil
+	store.checkouts = nil
 end
 
 local function requestsOf(gh: Gh, kind: string): { GhReq }
@@ -5070,13 +4996,19 @@ local function rowIn(b: Block, id: string): any
 end
 
 -- Opens Settings on `page` with its first row focused.
-local function goToSettings(b: Block, page: string)
+local function goToSettings(b: Block, page: string, issues: boolean?)
 	b.typeText("s")
-	local turns = (table.find({ "filters", "prompts", "github", "worktrees" }, page) or 1) - 1
+	local pages = if issues then { "views", "prompts", "repos", "jira", "connection" } else { "views", "prompts", "repos", "connection" }
+	local turns = (table.find(pages, page) or 1) - 1
 	for _ = 1, turns do
 		b.press("tab")
 	end
 	b.press("down")
+end
+
+-- Expands the view or prompt whose summary row is `row` ("vopen:<id>" / "popen:<id>"), as its Edit button does.
+local function expand(b: Block, row: string)
+	b.event({ ev = "action", id = "layer.settings", act = "expand", value = row })
 end
 
 -- The lowercased key labels of a shortcut list overlay found under `node`.
@@ -5122,18 +5054,20 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	local items = s.gh.items.octocat
 	s.gh.items.octocat = { items[3], items[1], items[2] }
 	local b = w.open(1, { "/work/r" })
-	eq(#s.gh.requests, 0, "nothing is sent before the repository is known")
 	eq(pickerOf(b).state, "loading", "the first card is the spinner")
 	w.flush()
 	local searches = requestsOf(s.gh, "search")
 	eq(#searches, 1, "one request covers three PRs")
-	has(searches[1].fields.q, "repo:o/r", "the search is scoped to the launch repository")
-	has(searches[1].fields.q, "is:open author:@me", "and runs the active filter")
-	same(listed(b), { "n1", "n2", "n3" }, "newest update first")
-	eq(pickerOf(b).selected, "n1", "the first PR is selected")
+	has(searches[1].fields.q, "is:pr", "the search asks for pull requests")
+	eq(searches[1].fields.q, "is:open author:@me is:pr sort:updated-desc", "the view's own query, with no repository qualifier")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "newest update first")
+	eq(pickerOf(b).selected, "no_2fr_231", "the first PR is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	has(b.title(), "My PRs", "the title names the filter")
 	has(b.title(), "(3)", "and counts the PRs")
+	local prRow: any = findKey(pickerNode(b), "titlerow")
+	eq(prRow.c[1].p.key, "title", "the preview's title row starts with the title")
+	eq(prRow.c[2].p.text, "GitHub", "and ends with the integration badge")
 	w.advance(59999)
 	eq(#requestsOf(s.gh, "search"), 1, "no refresh before the minute is up")
 	w.advance(1)
@@ -5148,31 +5082,27 @@ case("host: running init again for a live pane keeps its list and does not searc
 	openQueue(w)
 	local again = w.open(1, { "/work/r" })
 	w.flush()
-	same(listed(again), { "n1", "n2", "n3" }, "the loaded list is still there")
+	same(listed(again), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the loaded list is still there")
 	eq(#requestsOf(s.gh, "search"), 1, "and nothing was searched again")
 end)
 
-case("host: a launch directory without a GitHub remote searches nothing until Refresh looks again", function(w: World)
-	local s = hostScene(w, 3)
-	s.git.remotes.origin = { "https://gitlab.com/o/r.git" }
-	local b = openQueue(w)
-	eq(#s.gh.requests, 0, "no search without a repository")
-	eq(pickerOf(b).state, "error", "the card explains it")
-	local looked = #w.calls
-	w.advance(10 * 60 * 1000)
-	eq(#w.calls, looked, "nothing respawns git on its own")
-	s.git.remotes.origin = { "https://github.com/o/r.git" }
-	b.typeText("r")
-	w.flush()
-	same(listed(b), { "n1", "n2", "n3" }, "an explicit Refresh looks again and loads")
-end)
-
-case("host: a launch directory that is gone starts no process and shows the card", function(w: World)
+case("host: launching in a directory that is gone maps no checkout and still shows the views", function(w: World)
 	w.load("host")
+	newGh(w)
 	local b = w.open(1, { "/nowhere" })
 	w.flush()
-	eq(#w.calls, 0, "no git for a directory that does not exist")
-	eq(pickerOf(b).state, "error", "the card says there is no repository")
+	eq(w.kv.get("checkouts"), nil, "no checkout is saved for a directory that does not exist")
+	eq(pickerOf(b).state ~= "loading", true, "the card is not left on the spinner")
+end)
+
+case("host: launch dir maps its checkout once", function(w: World)
+	hostScene(w, 3)
+	forgetCheckouts(w)
+	openQueue(w)
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "an unmapped repository gets the launch checkout")
+	w.kv.put("checkouts", { ["o/r"] = "/elsewhere" })
+	openQueue(w, 2)
+	eq(w.kv.get("checkouts")["o/r"], "/elsewhere", "an existing mapping is kept")
 end)
 
 case("host: Escape clears the search, then closes it, and is left to the pane when there is nothing to cancel", function(w: World)
@@ -5181,11 +5111,11 @@ case("host: Escape clears the search, then closes it, and is left to the pane wh
 	b.typeText("/")
 	eq(pickerOf(b).query, "", "the search opens empty")
 	b.typeText("2")
-	same(listed(b), { "n2" }, "the search narrows the list")
-	eq(pickerOf(b).selected, "n2", "and the selection follows")
+	same(listed(b), { "no_2fr_232" }, "the search narrows the list")
+	eq(pickerOf(b).selected, "no_2fr_232", "and the selection follows")
 	eq(b.press("escape"), true, "the first Escape is handled")
 	eq(pickerOf(b).query, "", "it cleared the text but kept the search open")
-	same(listed(b), { "n1", "n2", "n3" }, "the whole list is back")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the whole list is back")
 	eq(b.press("escape"), true, "the second Escape is handled")
 	eq(pickerOf(b).query, nil, "it closed the search")
 	eq(b.press("escape"), false, "with nothing to cancel Escape is not consumed")
@@ -5227,19 +5157,19 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	local s = hostScene(w, 12)
 	local b = openQueue(w)
 	b.typeText("j")
-	eq(pickerOf(b).selected, "n2", "j moves down")
+	eq(pickerOf(b).selected, "no_2fr_232", "j moves down")
 	b.press("down")
-	eq(pickerOf(b).selected, "n3", "Down moves down")
+	eq(pickerOf(b).selected, "no_2fr_233", "Down moves down")
 	b.typeText("k")
-	eq(pickerOf(b).selected, "n2", "k moves up")
+	eq(pickerOf(b).selected, "no_2fr_232", "k moves up")
 	b.press("home")
-	eq(pickerOf(b).selected, "n1", "Home jumps to the first PR")
+	eq(pickerOf(b).selected, "no_2fr_231", "Home jumps to the first PR")
 	b.press("page_down")
-	eq(pickerOf(b).selected, "n11", "Page Down jumps ten")
+	eq(pickerOf(b).selected, "no_2fr_2311", "Page Down jumps ten")
 	b.press("page_up")
-	eq(pickerOf(b).selected, "n1", "Page Up jumps back ten")
+	eq(pickerOf(b).selected, "no_2fr_231", "Page Up jumps back ten")
 	b.press("end")
-	eq(pickerOf(b).selected, "n12", "End jumps to the last PR")
+	eq(pickerOf(b).selected, "no_2fr_2312", "End jumps to the last PR")
 	b.press("enter")
 	eq(w.opened[#w.opened], prLink("open", "o/r", 12), "Enter opens the selected PR in a Browser block")
 	b.typeText("w")
@@ -5250,7 +5180,7 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	b.press("tab")
 	eq(pickerOf(b).focus, "scopes", "Tab moves to the filters")
 	b.press("down")
-	eq(pickerOf(b).scope, "f2", "Down in the filter list switches filter")
+	eq(pickerOf(b).scope, "v2", "Down in the filter list switches view")
 	b.typeText("s")
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "s opens Settings")
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
@@ -5293,69 +5223,71 @@ end)
 case("host: Escape cancels a settings edit, Enter saves it, and a rejected value keeps its warning and its draft", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
-	goToSettings(b, "filters")
-	eq(prefsOf(b).focus, "name:f1", "the first row is focused")
+	goToSettings(b, "views")
+	eq(prefsOf(b).focus, "vopen:v1", "the first view is a one-row summary")
+	expand(b, "vopen:v1")
+	eq(prefsOf(b).focus, "name:v1", "the first row is focused")
 	b.press("enter")
-	eq(prefsOf(b).editing.row, "name:f1", "Enter starts the edit")
+	eq(prefsOf(b).editing.row, "name:v1", "Enter starts the edit")
 	b.typeText(" j?")
 	eq(prefsOf(b).editing.draft, "My PRs j?", "keys are text while editing")
 	eq(b.press("escape"), true, "Escape is handled")
 	eq(prefsOf(b).editing, nil, "Escape ends the edit")
-	eq(w.kv.get("filters").items[1].name, "My PRs", "nothing was saved")
+	eq(w.kv.get("views-prs").items[1].name, "My PRs", "nothing was saved")
 	b.press("enter")
 	b.typeText("!")
 	eq(b.press("enter"), true, "Enter is handled")
 	eq(prefsOf(b).editing, nil, "Enter ends the edit")
-	eq(w.kv.get("filters").items[1].name, "My PRs!", "and saves it")
+	eq(w.kv.get("views-prs").items[1].name, "My PRs!", "and saves it")
 	has(b.title(), "My PRs!", "the title follows the new name")
 	b.press("down")
 	b.press("enter")
-	b.typeText(" repo:x/y")
-	b.press("enter")
-	yes(type(rowIn(b, "query:f1").warning) == "string", "the rejected query is explained under its row")
-	eq(prefsOf(b).editing.row, "query:f1", "the edit stays open for a correction")
-	eq(prefsOf(b).editing.draft, "is:open author:@me repo:x/y", "with the draft")
-	eq(w.kv.get("filters").items[1].query, "is:open author:@me", "nothing was saved")
-	eq(#requestsOf(s.gh, "search"), 1, "and nothing was searched")
-	for _ = 1, 9 do
+	for _ = 1, 18 do
 		b.press("backspace")
 	end
-	b.typeText(" label:bug")
 	b.press("enter")
-	eq(rowIn(b, "query:f1").warning, nil, "a saved value clears the warning")
+	eq(rowIn(b, "query:v1").warning, "A query is required.", "the rejected query is explained under its row")
+	eq(prefsOf(b).editing.row, "query:v1", "the edit stays open for a correction")
+	eq(prefsOf(b).editing.draft, "", "with the draft")
+	eq(w.kv.get("views-prs").items[1].query, "is:open author:@me", "nothing was saved")
+	eq(#requestsOf(s.gh, "search"), 1, "and nothing was searched")
+	b.typeText("is:open label:bug")
+	b.press("enter")
+	eq(rowIn(b, "query:v1").warning, nil, "a saved value clears the warning")
 	eq(prefsOf(b).editing, nil, "and closes the edit")
-	eq(w.kv.get("filters").items[1].query, "is:open author:@me label:bug", "the correction is saved")
+	eq(w.kv.get("views-prs").items[1].query, "is:open label:bug", "the correction is saved")
 	w.flush()
 	local searches = requestsOf(s.gh, "search")
-	eq(#searches, 2, "the active filter searches again")
+	eq(#searches, 2, "the active view searches again")
 	has(searches[2].fields.q, "label:bug", "with its new query")
 end)
 
-case("host: a filter that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)
+case("host: a view that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	goToSettings(b, "filters")
-	w.kv.failSet["filters"] = "read-only file system"
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	w.kv.failSet["views-prs"] = "read-only file system"
 	b.press("enter")
 	b.press("enter")
 	eq(prefsOf(b).editing, nil, "Enter on unchanged text only closes the edit")
-	eq(rowIn(b, "name:f1").warning, nil, "without a write, so without a warning")
+	eq(rowIn(b, "name:v1").warning, nil, "without a write, so without a warning")
 	b.press("enter")
 	b.typeText("2")
 	b.press("enter")
-	has(rowIn(b, "name:f1").warning, "read-only file system", "a failed write is explained under its row")
+	has(rowIn(b, "name:v1").warning, "read-only file system", "a failed write is explained under its row")
 	eq(prefsOf(b).editing.draft, "My PRs2", "the draft is kept for another try")
-	eq(w.kv.get("filters").items[1].name, "My PRs", "nothing was written")
-	w.kv.failSet["filters"] = nil
+	eq(w.kv.get("views-prs").items[1].name, "My PRs", "nothing was written")
+	w.kv.failSet["views-prs"] = nil
 	b.press("enter")
-	eq(rowIn(b, "name:f1").warning, nil, "the retry saved it and cleared the warning")
-	eq(w.kv.get("filters").items[1].name, "My PRs2", "the draft was saved")
+	eq(rowIn(b, "name:v1").warning, nil, "the retry saved it and cleared the warning")
+	eq(w.kv.get("views-prs").items[1].name, "My PRs2", "the draft was saved")
 end)
 
 case("host: a opens the selected PR's agent link", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	local n = string.match(pickerOf(b).selected, "%d+") :: string
+	local n = string.match(pickerOf(b).selected, "_23(%d+)$") :: string
 	local link: any = findKey(pickerNode(b), "agent")
 	eq(link.p.href, "plotroom://github/agent/o/r/" .. n, "the card keeps the selected PR's Agent link")
 	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "unseen: the action bar has no Agent button")
@@ -5365,9 +5297,9 @@ end)
 
 case("host: setup commands are added, edited and removed per repository; unreadable ones are never overwritten", function(w: World)
 	hostScene(w, 3)
-	w.kv.put("setup", { ["github.com/x/y"] = array({ "make" }) })
+	w.kv.put("setup-commands", { ["x/y"] = array({ "make" }) })
 	local b = openQueue(w)
-	goToSettings(b, "worktrees")
+	goToSettings(b, "repos")
 	local function save(row: string, text: string)
 		b.event({ ev = "select", id = "layer.settings", item = row })
 		b.press("enter")
@@ -5377,77 +5309,81 @@ case("host: setup commands are added, edited and removed per repository; unreada
 		b.typeText(text)
 		b.press("enter")
 	end
-	save("setup:new", "pnpm install")
-	save("setup:new", "cp ../r/.env .")
-	same(w.kv.get("setup")["github.com/o/r"], { "pnpm install", "cp ../r/.env ." }, "added in order under the launch repo")
-	same(w.kv.get("setup")["github.com/x/y"], { "make" }, "another repository's commands are kept")
-	eq(rowIn(b, "setup:2").control.value, "cp ../r/.env .", "each command is a row")
-	save("setup:1", "pnpm i")
-	same(w.kv.get("setup")["github.com/o/r"], { "pnpm i", "cp ../r/.env ." }, "edited in place")
-	save("setup:1", "")
-	same(w.kv.get("setup")["github.com/o/r"], { "cp ../r/.env ." }, "emptying a command removes it")
-	eq(prefsOf(b).focus, "setup:new", "focus moves to the add row")
-	save("setup:1", "")
-	eq(w.kv.get("setup")["github.com/o/r"], nil, "the last one removed drops the repository's entry")
-	w.kv.put("setup", "garbage")
+	save("setup:o/r:new", "pnpm install")
+	save("setup:o/r:new", "cp ../r/.env .")
+	same(w.kv.get("setup-commands")["o/r"], { "pnpm install", "cp ../r/.env ." }, "added in order under the launch repo")
+	same(w.kv.get("setup-commands")["x/y"], { "make" }, "another repository's commands are kept")
+	eq(rowIn(b, "setup:o/r:2").control.value, "cp ../r/.env .", "each command is a row")
+	save("setup:o/r:1", "pnpm i")
+	same(w.kv.get("setup-commands")["o/r"], { "pnpm i", "cp ../r/.env ." }, "edited in place")
+	save("setup:o/r:1", "")
+	same(w.kv.get("setup-commands")["o/r"], { "cp ../r/.env ." }, "emptying a command removes it")
+	eq(prefsOf(b).focus, "setup:o/r:new", "focus moves to the add row")
+	save("setup:o/r:1", "")
+	eq(w.kv.get("setup-commands")["o/r"], nil, "the last one removed drops the repository's entry")
+	w.kv.put("setup-commands", "garbage")
 	b.render()
-	yes(type(rowIn(b, "setup:new").disabled) == "string", "an unreadable map disables the rows")
-	eq(w.kv.get("setup"), "garbage", "and is never overwritten")
+	yes(type(rowIn(b, "setup:o/r:new").disabled) == "string", "an unreadable map disables the rows")
+	eq(w.kv.get("setup-commands"), "garbage", "and is never overwritten")
 end)
 
-case("host: unreadable or malformed saved filters are shown as defaults and never overwritten", function(w: World)
+case("host: unreadable or malformed saved views are shown as defaults and never overwritten", function(w: World)
 	hostScene(w, 3)
-	local saved = { version = 1, nextId = 9, items = array({ { id = "f7", name = "Mine", query = "is:open label:x" } }) }
-	w.kv.put("filters", saved)
-	w.kv.failGet["filters"] = "disk offline"
+	local saved = { version = 1, nextId = 9, items = array({ { id = "v7", name = "Mine", integration = "github", query = "is:open label:x", group = "none", prompts = array({}) } }) }
+	w.kv.put("views-prs", saved)
+	w.kv.failGet["views-prs"] = "disk offline"
 	local b = openQueue(w)
-	same(listed(b), { "n1", "n2", "n3" }, "the queue still works with the default filters")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the queue still works with the default views")
 	has(b.text(), "disk offline", "the cause is on screen")
-	goToSettings(b, "filters")
-	has(rowIn(b, "name:f1").disabled, "disk offline", "the rows are locked, with the cause")
-	eq(b.press("down"), false, "nothing in the page can be focused")
-	same(w.kv.get("filters"), saved, "the saved filters were not overwritten")
-	w.kv.failGet["filters"] = nil
-	w.kv.put("filters", { version = 2 })
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	has(rowIn(b, "name:v1").disabled, "disk offline", "the rows are locked, with the cause")
+	has(rowIn(b, "query:v1").disabled, "disk offline", "and so is every other row of the form")
+	same(w.kv.get("views-prs"), saved, "the saved views were not overwritten")
+	w.kv.failGet["views-prs"] = nil
+	w.kv.put("views-prs", { version = 2 })
 	local other = openQueue(w, 2)
-	same(listed(other), { "n1", "n2", "n3" }, "malformed filters show the defaults too")
-	same(w.kv.get("filters"), { version = 2 }, "and are not overwritten either")
+	same(listed(other), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "malformed views show the defaults too")
+	same(w.kv.get("views-prs"), { version = 2 }, "and are not overwritten either")
 end)
 
-case("host: a first run saves the two default filters, Add creates one, and Delete asks first", function(w: World)
+case("host: a first run saves the two default views, Add creates one, and Delete asks first", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
-	eq(#w.kv.get("filters").items, 2, "the default filters were saved")
-	goToSettings(b, "filters")
+	eq(#w.kv.get("views-prs").items, 2, "the default views were saved")
+	same({ w.kv.get("views-prs").items[1].name, w.kv.get("views-prs").items[2].name }, { "My PRs", "Review requested" }, "the pull request seeds")
+	goToSettings(b, "views")
 	b.event({ ev = "select", id = "layer.settings", item = "add" })
 	b.press("enter")
-	eq(#w.kv.get("filters").items, 3, "Add saved a new filter")
-	eq(prefsOf(b).editing.row, "name:f3", "and starts naming it")
+	eq(#w.kv.get("views-prs").items, 3, "Add saved a new view")
+	eq(prefsOf(b).editing.row, "name:v3", "and starts naming it")
 	b.press("escape")
-	eq(w.kv.get("filters").items[3].name, "New filter", "cancelling the naming keeps the placeholder name")
+	eq(w.kv.get("views-prs").items[3].name, "New view", "cancelling the naming keeps the placeholder name")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "the new filter became the active one and was searched")
-	has(b.title(), "New filter", "the title shows it")
-	b.event({ ev = "select", id = "layer.settings", item = "delete:f2" })
+	eq(#requestsOf(s.gh, "search"), 2, "the new view became the active one and was searched")
+	has(b.title(), "New view", "the title shows it")
+	expand(b, "vopen:v2")
+	b.event({ ev = "select", id = "layer.settings", item = "delete:v2" })
 	b.press("enter")
 	yes(findKey(b.view().layer, "confirm") ~= nil, "Delete asks for confirmation")
 	b.press("enter")
-	eq(#w.kv.get("filters").items, 3, "Enter keeps the filter")
+	eq(#w.kv.get("views-prs").items, 3, "Enter keeps the view")
 	eq(findKey(b.view().layer, "confirm"), nil, "and closes the question")
 	b.press("enter")
 	b.typeText("d")
-	local items = w.kv.get("filters").items
+	local items = w.kv.get("views-prs").items
 	eq(#items, 2, "d deletes it")
-	eq(items[2].id, "f3", "the other filters stay")
-	b.event({ ev = "select", id = "layer.settings", item = "delete:f3" })
+	eq(items[2].id, "v3", "the other views stay")
+	expand(b, "vopen:v3")
+	b.event({ ev = "select", id = "layer.settings", item = "delete:v3" })
 	b.press("enter")
 	b.typeText("d")
 	w.flush()
-	eq(#w.kv.get("filters").items, 1, "the active filter can be deleted too")
-	has(b.title(), "My PRs", "the filter that took its place is shown")
+	eq(#w.kv.get("views-prs").items, 1, "the active view can be deleted too")
+	has(b.title(), "My PRs", "the view that took its place is shown")
 end)
 
-case("host: Tab cycles the Settings pages in order, Filters, Prompts, GitHub, Worktrees, and Shift+Tab goes back", function(w: World)
+case("host: Tab cycles the Settings pages in order, Views, Prompts, Repositories, Connection, and Shift+Tab goes back", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	b.typeText("s")
@@ -5456,9 +5392,24 @@ case("host: Tab cycles the Settings pages in order, Filters, Prompts, GitHub, Wo
 		b.press("tab")
 		table.insert(pages, prefsOf(b).page)
 	end
-	same(pages, { "filters", "prompts", "github", "worktrees", "filters" }, "Tab walks the pages and wraps around")
+	same(pages, { "views", "prompts", "repos", "connection", "views" }, "Tab walks the pages and wraps around")
 	b.press("tab", "s")
-	eq(prefsOf(b).page, "worktrees", "Shift+Tab goes back, wrapping the other way")
+	eq(prefsOf(b).page, "connection", "Shift+Tab goes back, wrapping the other way")
+end)
+
+case("host: switching a view's integration resets its query, login and group", function(w: World)
+	hostScene(w, 3)
+	newAcli(w)
+	w.kv.put("views-issues", { version = 1, nextId = 2, items = array({ { id = "v1", name = "Mine", integration = "github", query = "is:open label:x", logins = array({ "work" }), group = "repo", prompts = array({}) } }) })
+	local b = w.open(1, { "/work/r" }, nil, "issues")
+	w.flush()
+	goToSettings(b, "views", true)
+	b.event({ ev = "change", id = "layer.settings", item = "vint:v1", value = array({ "jira" }) })
+	local saved: any = w.kv.get("views-issues").items[1]
+	eq(saved.integration, "jira", "the integration changed")
+	eq(saved.query, "assignee = currentUser() AND statusCategory != Done", "to the new integration's starting query")
+	same(saved.logins, array({}), "the GitHub logins are gone")
+	eq(saved.group, "none", "and the grouping starts over")
 end)
 
 -- The prompt editor card of the Settings view; nil when no prompt's text is being edited.
@@ -5482,7 +5433,7 @@ end
 
 -- The text kv keeps for the prompt at `index`.
 local function savedText(w: World, index: number): string
-	return w.kv.get("prompts").items[index].text
+	return w.kv.get("prompts-prs").items[index].text
 end
 
 -- Where the block last put the caret: the id of the field, "released" for none; nil when it never moved it.
@@ -5501,7 +5452,7 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	goToSettings(b, "prompts")
 	eq(prefsOf(b).focus, "padd", "with nothing saved the Add row is the first")
 	b.press("enter")
-	same(w.kv.get("prompts"), { version = 1, nextId = 2, items = array({ promptOf("p1", "New prompt", "") }) }, "Add saves a prompt with no text at once, offered under every filter")
+	same(w.kv.get("prompts-prs"), { version = 1, nextId = 2, items = array({ promptOf("p1", "New prompt", "") }) }, "Add saves a prompt with no text at once, offered under every view")
 	eq(prefsOf(b).editing.row, "pname:p1", "and starts naming it")
 	eq(prefsOf(b).editing.draft, "", "from an empty draft")
 	eq(editorCard(b), nil, "the text editor waits for the name")
@@ -5509,10 +5460,10 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	b.press("enter")
 	eq(rowIn(b, "pname:p1").warning, "A name is required.", "an empty name is refused under its row")
 	eq(prefsOf(b).editing.row, "pname:p1", "and the name edit stays open")
-	eq(w.kv.get("prompts").items[1].name, "New prompt", "with nothing saved")
+	eq(w.kv.get("prompts-prs").items[1].name, "New prompt", "with nothing saved")
 	b.typeText("Review")
 	b.press("enter")
-	eq(w.kv.get("prompts").items[1].name, "Review", "Enter saves the name")
+	eq(w.kv.get("prompts-prs").items[1].name, "Review", "Enter saves the name")
 	eq(prefsOf(b).editing, nil, "the name edit is over")
 	yes(editorCard(b) ~= nil, "and a prompt with no text opens its text editor next")
 	eq(editorCard(b).p.role, "omp.prefs.editor", "in the editor card")
@@ -5558,7 +5509,7 @@ case("host: naming a new prompt with the placeholder name itself still opens its
 	b.typeText("New prompt")
 	b.press("enter")
 	eq(prefsOf(b).editing, nil, "the name edit is over")
-	eq(w.kv.get("prompts").items[1].name, "New prompt", "the name stays what it was")
+	eq(w.kv.get("prompts-prs").items[1].name, "New prompt", "the name stays what it was")
 	yes(editorCard(b) ~= nil, "and the prompt, still with no text, opens its text editor")
 	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret in its field")
 end)
@@ -5568,6 +5519,7 @@ case("host: a prompt's text that is empty or over 8000 bytes stays in the editor
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
+	expand(b, "popen:p1")
 	b.press("down")
 	eq(prefsOf(b).focus, "ptext:p1", "the prompt's text row")
 	b.press("enter")
@@ -5616,58 +5568,57 @@ case("host: a prompt's text that is empty or over 8000 bytes stays in the editor
 	eq(savedText(w, 1), "Short.", "and keeps the saved one")
 end)
 
-case("host: a prompt's Filters chips keep only filters that exist, and Enter, Right and Space toggle them from the keyboard", function(w: World)
+case("host: a view's Prompts chips keep only prompts that exist, and Enter, Right and Space toggle them from the keyboard", function(w: World)
 	hostScene(w, 3)
-	savePrompts(w, { promptOf("p1", "Review", "Review {url}", { "f1" }) })
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
 	local b = openQueue(w)
-	goToSettings(b, "prompts")
-	b.press("down")
-	b.press("down")
-	b.press("down")
-	eq(prefsOf(b).focus, "pscope:p1", "the prompt's Filters row")
-	local chips: any = rowIn(b, "pscope:p1").control
-	same(chips.values, { "f1" }, "the filters it is offered under are on")
-	eq(#chips.options, 2, "among all the filters")
-	eq(chips.options[2].value, "f2", "by id")
-	eq(chips.options[2].label, "Review requested", "and name")
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	b.event({ ev = "select", id = "layer.settings", item = "vprompts:v1" })
+	eq(prefsOf(b).focus, "vprompts:v1", "the view's Prompts row")
+	local chips: any = rowIn(b, "vprompts:v1").control
+	same(chips.values, array({}), "a view that lists none offers every prompt")
+	eq(#chips.options, 2, "among all the prompts")
+	eq(chips.options[2].value, "p2", "by id")
+	eq(chips.options[2].label, "Triage", "and name")
 	local function saved(): any
-		return w.kv.get("prompts").items[1].filters
+		return w.kv.get("views-prs").items[1].prompts
 	end
 	local function changed(values: { any })
-		b.event({ ev = "change", id = "layer.settings", item = "pscope:p1", value = array(values) })
+		b.event({ ev = "change", id = "layer.settings", item = "vprompts:v1", value = array(values) })
 	end
-	changed({ "f2", "gone" })
-	same(saved(), { "f2" }, "a change saves only the filters that still exist")
-	same(rowIn(b, "pscope:p1").control.values, { "f2" }, "and the row shows them")
-	changed({ "f2", "f1" })
-	same(saved(), { "f1", "f2" }, "in the filters' order")
+	changed({ "p2", "gone" })
+	same(saved(), { "p2" }, "a change saves only the prompts that still exist")
+	same(rowIn(b, "vprompts:v1").control.values, { "p2" }, "and the row shows them")
+	changed({ "p2", "p1" })
+	same(saved(), { "p1", "p2" }, "in the prompts' order")
 	changed({ "gone" })
-	same(saved(), array({}), "none left means every filter")
+	same(saved(), array({}), "none left means every prompt")
 	b.press("enter")
-	eq(prefsOf(b).editing.row, "pscope:p1", "Enter starts picking: the chips take the keys")
-	eq(prefsOf(b).editing.option, "f1", "at the first filter")
+	eq(prefsOf(b).editing.row, "vprompts:v1", "Enter starts picking: the chips take the keys")
+	eq(prefsOf(b).editing.option, "p1", "at the first prompt")
 	b.press("right")
-	eq(prefsOf(b).editing.option, "f2", "Right moves to the next filter")
+	eq(prefsOf(b).editing.option, "p2", "Right moves to the next prompt")
 	b.press("space")
-	same(saved(), { "f2" }, "Space turns it on, saved at once")
+	same(saved(), { "p2" }, "Space turns it on, saved at once")
 	b.press("enter")
 	same(saved(), array({}), "Enter turns it off again")
 	b.press("right")
-	eq(prefsOf(b).editing.option, "f2", "Right stops at the last filter")
+	eq(prefsOf(b).editing.option, "p2", "Right stops at the last prompt")
 	b.press("left")
 	b.press("left")
-	eq(prefsOf(b).editing.option, "f1", "Left stops at the first")
+	eq(prefsOf(b).editing.option, "p1", "Left stops at the first")
 	b.press("space")
-	same(saved(), { "f1" }, "and toggles that one")
+	same(saved(), { "p1" }, "and toggles that one")
 	b.press("escape")
 	eq(prefsOf(b).editing, nil, "Esc leaves the chips")
-	eq(prefsOf(b).page, "prompts", "with Settings still open")
+	eq(prefsOf(b).page, "views", "with Settings still open")
 	b.press("space")
-	eq(prefsOf(b).editing.option, "f1", "Space starts picking too")
+	eq(prefsOf(b).editing.option, "p1", "Space starts picking too")
 	b.press("down")
 	eq(prefsOf(b).editing, nil, "any other key leaves the chips")
-	eq(prefsOf(b).focus, "pdelete:p1", "and does what it does")
-	same(saved(), { "f1" }, "without changing the filters")
+	eq(prefsOf(b).focus, "delete:v1", "and does what it does")
+	same(saved(), { "p1" }, "without changing the prompts")
 end)
 
 case("host: Delete on a prompt asks first, naming it: d deletes it, Enter keeps it", function(w: World)
@@ -5675,40 +5626,42 @@ case("host: Delete on a prompt asks first, naming it: d deletes it, Enter keeps 
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
+	expand(b, "popen:p1")
 	b.event({ ev = "select", id = "layer.settings", item = "pdelete:p1" })
 	b.press("enter")
 	local question: any = findKey(b.view().layer, "confirm")
 	yes(question ~= nil, "Delete asks for confirmation")
 	eq(question.p.head, "Delete prompt “Review”?", "naming the prompt")
 	b.press("enter")
-	eq(#w.kv.get("prompts").items, 2, "Enter keeps it")
+	eq(#w.kv.get("prompts-prs").items, 2, "Enter keeps it")
 	eq(findKey(b.view().layer, "confirm"), nil, "and closes the question")
 	b.press("enter")
 	b.typeText("d")
-	local items = w.kv.get("prompts").items
+	local items = w.kv.get("prompts-prs").items
 	eq(#items, 1, "d deletes it")
 	eq(items[1].id, "p2", "the other prompt stays")
 	eq(prefsOf(b).focus, "padd", "and the Add row takes the focus")
 	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:p2" })
 	eq(findKey(b.view().layer, "confirm").p.head, "Delete prompt “Triage”?", "the Delete button asks the same question")
 	b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = "confirm-delete" })
-	eq(#w.kv.get("prompts").items, 0, "and the Delete in the question deletes it")
+	eq(#w.kv.get("prompts-prs").items, 0, "and the Delete in the question deletes it")
 end)
 
-case("host: changing page, closing Settings or being sent to the Worktrees page drops an open text edit and gives the caret back", function(w: World)
-	local s = hostScene(w, 3)
+case("host: changing page or closing Settings drops an open text edit and gives the caret back", function(w: World)
+	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
 	local b = openQueue(w)
 	-- Opens Settings on the Prompts page with the prompt's text being edited.
 	local function editing()
 		goToSettings(b, "prompts")
+		expand(b, "popen:p1")
 		b.press("down")
 		b.press("enter")
 		eq(caretOf(w), "layer.settings.prompt.draft", "the text is being edited")
 	end
 	editing()
-	b.event({ ev = "action", id = "layer.settings", act = "page", value = "filters" })
-	eq(prefsOf(b).page, "filters", "a click on another page leaves the Prompts page")
+	b.event({ ev = "action", id = "layer.settings", act = "page", value = "views" })
+	eq(prefsOf(b).page, "views", "a click on another page leaves the Prompts page")
 	eq(editorCard(b), nil, "the editor is gone")
 	eq(caretOf(w), "released", "and the caret is given back")
 	b.press("tab")
@@ -5721,16 +5674,6 @@ case("host: changing page, closing Settings or being sent to the Worktrees page 
 	eq(caretOf(w), "released", "and gives the caret back")
 	b.typeText("s")
 	eq(editorCard(b), nil, "reopened Settings has no edit")
-	b.press("escape")
-	editing()
-	s.git.remotes.origin = { "https://github.com/x/y.git" }
-	request(b, "w1", { op = "worktree", repo = "o/r", number = 1 })
-	w.flush()
-	eq(answerOf(b, "w1").noRepo, true, "a worktree for a repository with no local checkout")
-	eq(prefsOf(b).page, "worktrees", "reopens Settings on the Worktrees page")
-	eq(prefsOf(b).editing.row, "checkout", "to enter the checkout")
-	eq(editorCard(b), nil, "the text edit that was open is gone")
-	eq(caretOf(w), "released", "and the caret is given back")
 end)
 
 case("host: deleting a prompt drops an edit of its own name or text and leaves the edit of another prompt alone", function(w: World)
@@ -5743,23 +5686,25 @@ case("host: deleting a prompt drops an edit of its own name or text and leaves t
 		b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:" .. id })
 		b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = "confirm-delete" })
 	end
+	expand(b, "popen:p2")
 	b.event({ ev = "select", id = "layer.settings", item = "ptext:p2" })
 	b.press("enter")
 	eq(draftOf(b), "Triage {url}", "the text of the second prompt is being edited")
 	click("p1")
-	eq(#w.kv.get("prompts").items, 1, "the first prompt is deleted")
+	eq(#w.kv.get("prompts-prs").items, 1, "the first prompt is deleted")
 	eq(draftOf(b), "Triage {url}", "the edit of the other prompt goes on")
 	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret where it was")
 	click("p2")
-	eq(#w.kv.get("prompts").items, 0, "the prompt being edited is deleted")
+	eq(#w.kv.get("prompts-prs").items, 0, "the prompt being edited is deleted")
 	eq(editorCard(b), nil, "its editor goes with it")
 	eq(caretOf(w), "released", "and the caret is given back")
 	savePrompts(w, { promptOf("p3", "Plan", "Plan {url}") })
+	expand(b, "popen:p3")
 	b.event({ ev = "select", id = "layer.settings", item = "pname:p3" })
 	b.press("enter")
 	eq(prefsOf(b).editing.row, "pname:p3", "the name of another prompt is being edited")
 	click("p3")
-	eq(#w.kv.get("prompts").items, 0, "it is deleted")
+	eq(#w.kv.get("prompts-prs").items, 0, "it is deleted")
 	eq(prefsOf(b).editing, nil, "and its name edit ends")
 end)
 
@@ -5771,13 +5716,12 @@ case("host: unreadable or malformed saved prompts lock Add with the reason, are 
 	-- Tries every way to write the prompts while they cannot be loaded: `why` is what the reason must say.
 	local function locked(what: string, why: string)
 		b.render()
-		local stored = w.kv.store.prompts
+		local stored = w.kv.store["prompts-prs"]
 		has(rowIn(b, "padd").disabled, why, what .. ": Add is locked, with the reason")
 		b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd" })
-		b.event({ ev = "change", id = "layer.settings", item = "pscope:p1", value = array({ "f1" }) })
 		b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:p1" })
 		b.press("d")
-		eq(w.kv.store.prompts, stored, what .. ": nothing was written over it")
+		eq(w.kv.store["prompts-prs"], stored, what .. ": nothing was written over it")
 		asked += 1
 		request(b, "m" .. asked, { op = "menu" })
 		local answer = answerOf(b, "m" .. asked)
@@ -5787,17 +5731,17 @@ case("host: unreadable or malformed saved prompts lock Add with the reason, are 
 	local malformed: { any } = {
 		"garbage",
 		{ version = 2, nextId = 1, items = array({}) },
-		{ version = 1, nextId = 2, items = array({ { id = "p1", name = "Review", filters = array({}) } }) },
-		{ version = 1, nextId = 2, items = array({ { id = "p1", name = "Review", text = "Review {url}", filters = array({}), key = 5 } }) },
+		{ version = 1, nextId = 2, items = array({ { id = "p1", name = "Review" } }) },
+		{ version = 1, nextId = 2, items = array({ { id = "p1", name = "Review", text = "Review {url}", key = 5 } }) },
 	}
 	for i, value in malformed do
-		w.kv.put("prompts", value)
+		w.kv.put("prompts-prs", value)
 		locked("malformed value " .. i, "malformed")
 	end
-	w.kv.put("prompts", { version = 1, nextId = 2, items = array({ promptOf("p1", "Review", "Review {url}") }) })
-	w.kv.failGet["prompts"] = "disk offline"
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ promptOf("p1", "Review", "Review {url}") }) })
+	w.kv.failGet["prompts-prs"] = "disk offline"
 	locked("an unreadable store", "disk offline")
-	w.kv.failGet["prompts"] = nil
+	w.kv.failGet["prompts-prs"] = nil
 	b.render()
 	eq(rowIn(b, "padd").disabled, nil, "a readable store unlocks Add")
 	request(b, "m9", { op = "menu" })
@@ -5806,16 +5750,17 @@ case("host: unreadable or malformed saved prompts lock Add with the reason, are 
 	eq(#answer.items, 1, "but the prompt")
 end)
 
-case("host: the agent menu offers the prompts of the active filter first, then those of every filter, and swaps with the filter", function(w: World)
+case("host: view prompts limit the menu", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
-		promptOf("p1", "Mine", "Review {url}", { "f1" }),
+		promptOf("p1", "Mine", "Review {url}"),
 		promptOf("p2", "Anywhere", "Look at {url}\nTwice"),
-		promptOf("p3", "Theirs", "Only for review requests", { "f2" }),
-		promptOf("p4", "Blank", ""),
-		promptOf("p5", "Gone", "Gone {url}", { "f9" }),
-		promptOf("p6", "Both", "Both", { "f1", "f2" }),
+		promptOf("p3", "Blank", ""),
 	})
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p2" }) },
+		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none", prompts = array({}) },
+	}) })
 	local b = openQueue(w)
 	local asked = 0
 	-- What the block answers a window asking for the menu: the rows, in order.
@@ -5828,31 +5773,29 @@ case("host: the agent menu offers the prompts of the active filter first, then t
 	local first = menu()
 	eq(first.problem, nil, "nothing is wrong")
 	same(first.items, {
-		{ id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}" },
-		{ id = "p6", label = "Both", detail = "Both", group = "For My PRs", send = "Both" },
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All filters", send = "Look at {url}\nTwice" },
-		{ id = "p5", label = "Gone", detail = "Gone {url}", group = "All filters", send = "Gone {url}" },
-	}, "under My PRs its own prompts come first, then those of every filter, one scoped to a deleted filter among them; the prompt for Review requested and the one with no text are left out")
+		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "For My PRs", send = "Look at {url}\nTwice" },
+	}, "a view that lists a prompt offers only it, in the group For the view")
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	eq(pickerOf(b).scope, "f2", "the second filter is active")
+	eq(pickerOf(b).scope, "v2", "the second view is active")
 	same(menu().items, {
-		{ id = "p3", label = "Theirs", detail = "Only for review requests", group = "For Review requested", send = "Only for review requests" },
-		{ id = "p6", label = "Both", detail = "Both", group = "For Review requested", send = "Both" },
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All filters", send = "Look at {url}\nTwice" },
-		{ id = "p5", label = "Gone", detail = "Gone {url}", group = "All filters", send = "Gone {url}" },
-	}, "under Review requested the prompts swap")
+		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All prompts", send = "Review {url}" },
+		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All prompts", send = "Look at {url}\nTwice" },
+	}, "a view that lists none offers every prompt with text, as All prompts")
 end)
 
 case("host: the menu asked for one prompt answers just that one, if it is offered, however many are saved", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
-		promptOf("p1", "Mine", "Review {url}", { "f1" }),
+		promptOf("p1", "Mine", "Review {url}"),
 		promptOf("p2", "Anywhere", "Look at {url}"),
-		promptOf("p3", "Theirs", "Only for review requests", { "f2" }),
+		promptOf("p3", "Theirs", "Only for review requests"),
 		promptOf("p4", "Blank", ""),
 	})
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p4" }) },
+	}) })
 	local b = openQueue(w)
 	local asked = 0
 	-- The rows the block answers a menu request that names prompt `id`.
@@ -5861,22 +5804,25 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 		request(b, "o" .. asked, { op = "menu", only = id })
 		return answerOf(b, "o" .. asked).items
 	end
-	same(only("p2"), { { id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All filters", send = "Look at {url}" } }, "just the prompt asked for")
-	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}" } }, "in the group it has under the filter")
-	eq(#only("p3"), 0, "none that the filter does not offer")
+	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}" } }, "just the prompt asked for, in the group it has under the view")
+	eq(#only("p2"), 0, "none that the view does not list")
 	eq(#only("p4"), 0, "none with no text")
 	eq(#only("p9"), 0, "none that is not saved")
 end)
 
-case("host: the picker's action bar has Settings, Refresh and Repository on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
+case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
-		promptOf("p1", "Mine", "Review {url}", { "f1" }, "m"),
+		promptOf("p1", "Mine", "Review {url}", "m"),
 		promptOf("p2", "Anywhere", "Look at {url}\nTwice"),
-		promptOf("p3", "Theirs", "Only for review requests", { "f2" }, "x"),
-		promptOf("p4", "Blank", "", {}, "b"),
-		promptOf("p-5", "Dashed", "Its id cannot be part of a link", {}, "d"),
+		promptOf("p3", "Theirs", "Only for review requests", "x"),
+		promptOf("p4", "Blank", "", "b"),
+		promptOf("p-5", "Dashed", "Its id cannot be part of a link", "d"),
 	})
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2", "p4", "p-5" }) },
+		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none", prompts = array({ "p3" }) },
+	}) })
 	local b = openQueue(w)
 	-- The ids of the action bar's buttons, in order.
 	local function bar(): { string }
@@ -5898,7 +5844,7 @@ case("host: the picker's action bar has Settings, Refresh and Repository on the 
 		local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
 		return if node then node.p.href else nil
 	end
-	same(bar(), { "settings", "retry", "repos", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs its own prompt, then the one of every filter; none for another filter's prompt, a blank one or one whose id is no link; Open last")
+	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs the prompts it lists; none for a prompt it does not list, a blank one or one whose id is no link; Open last")
 	eq(action("open").primary, true, "Open is the primary button")
 	eq(action("open").keys, nil, "with no keycap")
 	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
@@ -5917,85 +5863,45 @@ case("host: the picker's action bar has Settings, Refresh and Repository on the 
 	eq(w.opened[#w.opened], "plotroom://github/worktree/o/r/1", "Worktree's too")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
 	b.render()
-	same(bar(), { "settings", "retry", "repos", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
 	eq(link("goto"), "plotroom://github/goto/o/r/1", "with its link")
 	table.remove(w.panes)
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(bar(), { "settings", "retry", "repos", "worktree", "prompt-p3", "prompt-p2", "open" }, "under Review requested the prompt buttons swap")
-	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", { "f1" }, "m") })
+	same(bar(), { "settings", "retry", "worktree", "prompt-p3", "open" }, "under Review requested the prompt buttons swap")
+	savePrompts(w, { promptOf("p4", "Blank", "", "b") })
 	b.render()
-	same(bar(), { "settings", "retry", "repos", "worktree", "open" }, "with none offered the bar has no prompt button")
-	b.event({ ev = "action", id = "layer.queue", act = "repos" })
-	eq(w.opened[#w.opened], "plotroom://repos", "Repository opens the window's repository picker")
+	same(bar(), { "settings", "retry", "worktree", "open" }, "with none offered the bar has no prompt button")
 end)
 
-case("host: without a saved checkout nothing makes a worktree: Worktree, the prompts and the agent link go, the heading says why, and their keys open Settings for one", function(w: World)
-	hostScene(w, 3)
-	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", {}, "m") })
-	local b = openQueue(w)
-	forgetCheckouts(w)
-	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
-	b.render()
-	local ids: { string } = {}
-	for _, a in pickerOf(b).actions do
-		table.insert(ids, a.id)
-	end
-	same(ids, { "settings", "retry", "repos", "goto", "open" }, "Go to tab and Open stay; Worktree and the prompt go")
-	local sub = pickerOf(b).subtitle
-	eq(sub[#sub - 1].t, "No local checkout of o/r", "the heading says there is none")
-	eq(sub[#sub].t, "Set checkout", "with the button for one")
-	local links: { string } = {}
-	for _, node in findKey(pickerNode(b), "buttons").c do
-		table.insert(links, node.p.key)
-	end
-	same(links, { "open", "goto" }, "the window finds no worktree, agent or prompt link to follow")
-	local opened = #w.opened
-	for _, k in { "w", "a", "m" } do
-		b.typeText(k)
-		eq(prefsOf(b).page, "worktrees", k .. " opens Settings on the Worktrees page")
-		eq(prefsOf(b).editing.row, "checkout", k .. " to enter the checkout")
-		b.press("escape")
-		b.press("escape")
-	end
-	eq(#w.opened, opened, "and no link was opened")
-end)
-
-case("host: opening in a linked worktree shows its repository, saves the main checkout, and the heading opens the repository picker", function(w: World)
+case("host: opening in a linked worktree saves its main checkout, not the worktree", function(w: World)
 	local s = hostScene(w, 3)
 	table.insert(s.git.worktrees, { path = "/wt/feature", branch = "refs/heads/feature", head = sha("1"), locked = false })
 	w.fs.dirs["/wt/feature"] = true
-	local b = w.open(1, { "/wt/feature" })
+	w.kv.put("checkouts", {})
+	w.open(1, { "/wt/feature" })
 	w.flush()
-	eq(w.kv.get("repos")["github.com/o/r"], "/work/r", "the main checkout is saved, not the worktree")
-	local title = pickerOf(b).title[1]
-	eq(title.t, "o/r", "the heading names the repository")
-	eq(title.href, "plotroom://repos", "and opens the repository picker")
-	b.typeText("o")
-	eq(w.opened[#w.opened], "plotroom://repos", "as o does")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the main checkout is saved, not the worktree")
 end)
 
-case("host: a picked repository is shown, saved without a checkout, kept on restore; the picker gets the saved ones, the gh logins, then a login's repositories", function(w: World)
+case("host: Add repository saves a picked repository without a checkout and opens its checkout row; the picker gets the saved ones, the gh logins, then a login's repositories", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.tokens.octocat = "tok-octo"
 	s.gh.override = function(req: GhReq): Reply?
 		return if req.kind == "repos" then { delay = 5000, stdout = "z/z\nO/R\na/b\n" } else nil
 	end
 	local b = openQueue(w)
-	b.event({ ev = "action", act = "show-repo", value = "x/y" })
+	b.event({ ev = "action", act = "add-repo", value = "X/Y" })
 	w.flush()
-	eq(pickerOf(b).title[1].t, "x/y", "the picked repository is shown")
-	local searches = requestsOf(s.gh, "search")
-	has(searches[#searches].fields.q, "repo:x/y ", "and searched")
-	eq(w.kv.get("repos")["github.com/x/y"], "", "it is saved without a checkout")
-	eq(w.kv.get("repos")["github.com/o/r"], "/work/r", "the launch checkout stays")
-	b.event({ ev = "action", act = "show-repo", value = "x/y/z" })
+	eq(w.kv.get("checkouts")["x/y"], "", "the picked repository is saved without a checkout, by its lowercase name")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the launch checkout stays")
+	eq(prefsOf(b).page, "repos", "Settings opens on the Repositories page")
+	eq(prefsOf(b).editing.row, "checkout:x/y", "to enter its checkout")
+	b.press("escape")
+	b.event({ ev = "action", act = "add-repo", value = "x/y/z" })
 	eq(w.toasts[#w.toasts].level, "error", "a malformed pick is refused")
-	eq(pickerOf(b).title[1].t, "x/y", "and changes nothing")
-	local again = w.open(2, { "/work/r" }, b.saved())
-	w.flush()
-	eq(pickerOf(again).title[1].t, "x/y", "a restored block shows the picked repository, not the launch directory's")
+	eq(w.kv.get("checkouts")["x/y/z"], nil, "and saves nothing")
 	local function subtitle(): string
 		local out = ""
 		for _, span in pickerOf(b).subtitle or {} do
@@ -6007,10 +5913,10 @@ case("host: a picked repository is shown, saved without a checkout, kept on rest
 	w.flush()
 	local answer = answerOf(b, "q1")
 	local want: { any } = {
-		{ repo = "o/r", path = "/work/r", current = false },
-		{ repo = "x/y", current = true },
+		{ repo = "o/r", path = "/work/r" },
+		{ repo = "x/y" },
 	}
-	same(answer.items, want, "saved repositories by name, with their checkouts and the shown one marked")
+	same(answer.items, want, "saved repositories by name, with their checkouts")
 	local accounts: { any } = { { login = "octocat", active = true } }
 	same(answer.accounts, accounts, "and the gh logins")
 	eq(#requestsOf(s.gh, "accounts"), 1, "read once, when the first search warmed them")
@@ -6021,18 +5927,21 @@ case("host: a picked repository is shown, saved without a checkout, kept on rest
 	w.advance(5000)
 	lacks(subtitle(), "Loading repositories…", "until they are in")
 	same(answerOf(b, "q2").repos, { "z/z", "O/R", "a/b" }, "most recently pushed first")
-	eq(answerOf(b, "q2").current, "x/y", "with the shown one named")
 	eq(requestsOf(s.gh, "repos")[1].login, "octocat", "listed as that login")
 end)
 
-case("host: a prompt's key opens its run link for the selected pull request, but not while searching, under a filter that does not offer it, or with ctrl, alt or meta", function(w: World)
+case("host: a prompt's key opens its run link for the selected pull request, but not while searching, under a view that does not offer it, or with ctrl, alt or meta", function(w: World)
 	local s = hostScene(w, 3)
 	savePrompts(w, {
-		promptOf("p1", "Mine", "Review {url}", { "f1" }, "m"),
-		promptOf("p2", "Anywhere", "Look at {url}", {}, "T"),
-		promptOf("p3", "Theirs", "Only for review requests", { "f2" }, "x"),
-		promptOf("p4", "Hand edited", "The queue's own key wins", {}, "w"),
+		promptOf("p1", "Mine", "Review {url}", "m"),
+		promptOf("p2", "Anywhere", "Look at {url}", "T"),
+		promptOf("p3", "Theirs", "Only for review requests", "x"),
+		promptOf("p4", "Hand edited", "The queue's own key wins", "w"),
 	})
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2", "p4" }) },
+		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none", prompts = array({ "p3" }) },
+	}) })
 	local b = openQueue(w)
 	local opened = #w.opened
 	-- A key the pane may use: not handled, and nothing opened.
@@ -6051,7 +5960,7 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 2), "a key the queue uses itself stays the queue's, whatever a prompt says")
 	opened = #w.opened
 	ignored("a key no prompt has", "z")
-	ignored("a prompt of another filter", "x")
+	ignored("a prompt of another view", "x")
 	ignored("ctrl", "m", "c")
 	ignored("alt", "m", "a")
 	ignored("meta", "m", "m")
@@ -6064,9 +5973,9 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	eq(pickerOf(b).scope, "f2", "under the second filter")
-	ignored("a prompt of the first filter", "m")
-	local n = tonumber(string.match(pickerOf(b).selected, "%d+")) :: number
+	eq(pickerOf(b).scope, "v2", "under the second view")
+	ignored("a prompt of the first view", "m")
+	local n = tonumber(string.match(pickerOf(b).selected, "^no_2fr_23(%d+)$")) :: number
 	b.typeText("x")
 	eq(w.opened[#w.opened], runLink("o/r", n, "p3"), "its own prompt's key works there")
 	s.gh.items.octocat = {}
@@ -6079,14 +5988,15 @@ end)
 
 case("host: a prompt's shortcut is one free key: the row refuses what the queue uses or another prompt has, and clearing it removes the key", function(w: World)
 	hostScene(w, 3)
-	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}", {}, "t") })
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}", "t") })
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
+	expand(b, "popen:p1")
 	local ids: { string } = {}
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pscope:p1", "pdelete:p1" }, "a prompt has its name, text, shortcut, filters and Delete, in that order")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pdelete:p1", "pclose:p1" }, "a prompt has its name, text, shortcut, Delete and Done, in that order")
 	local row = rowIn(b, "pkey:p1")
 	eq(row.label, "Shortcut", "the row is the Shortcut")
 	eq(row.control.value, "", "empty while the prompt has none")
@@ -6112,30 +6022,34 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 		eq(try(k), "The queue already uses " .. k .. ".", "the queue's own " .. k .. " is refused")
 	end
 	eq(try("t"), "Already the shortcut of Triage.", "another prompt's key is refused")
-	eq(w.kv.get("prompts").items[1].key, nil, "nothing was saved")
+	eq(w.kv.get("prompts-prs").items[1].key, nil, "nothing was saved")
 	eq(try("m"), nil, "a free key is accepted")
 	eq(prefsOf(b).editing, nil, "and closes the edit")
-	same(w.kv.get("prompts").items[1], { id = "p1", name = "Review", text = "Review {url}", filters = array({}), key = "m" }, "it is saved as the prompt's key, the rest as it was")
-	eq(w.kv.get("prompts").items[2].key, "t", "another prompt keeps its key")
+	same(w.kv.get("prompts-prs").items[1], { id = "p1", name = "Review", text = "Review {url}", key = "m" }, "it is saved as the prompt's key, the rest as it was")
+	eq(w.kv.get("prompts-prs").items[2].key, "t", "another prompt keeps its key")
 	eq(rowIn(b, "pkey:p1").control.value, "m", "the row shows it")
 	eq(try("A"), nil, "a capital is not the queue's a")
-	eq(w.kv.get("prompts").items[1].key, "A", "and is saved as typed")
+	eq(w.kv.get("prompts-prs").items[1].key, "A", "and is saved as typed")
 	eq(try("é"), nil, "one character is one key, whatever its bytes")
-	eq(w.kv.get("prompts").items[1].key, "é", "and is saved")
+	eq(w.kv.get("prompts-prs").items[1].key, "é", "and is saved")
 	eq(try(""), nil, "an empty shortcut is accepted")
-	eq(w.kv.get("prompts").items[1].key, nil, "and removes the key")
+	eq(w.kv.get("prompts-prs").items[1].key, nil, "and removes the key")
 	eq(rowIn(b, "pkey:p1").control.value, "", "which the row shows")
 end)
 
-case("host: ? adds a row for each prompt offered under the filter that has a key, in the queue only", function(w: World)
+case("host: ? adds a row for each prompt offered under the view that has a key, in the queue only", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {
-		promptOf("p1", "Mine", "Review {url}", { "f1" }, "m"),
+		promptOf("p1", "Mine", "Review {url}", "m"),
 		promptOf("p2", "Quiet", "Has no key {url}"),
-		promptOf("p3", "Theirs", "Only for review requests", { "f2" }, "x"),
-		promptOf("p4", "Blank", "", {}, "b"),
-		promptOf("p5", "Anywhere", "Look at {url}", {}, "T"),
+		promptOf("p3", "Theirs", "Only for review requests", "x"),
+		promptOf("p4", "Blank", "", "b"),
+		promptOf("p5", "Anywhere", "Look at {url}", "T"),
 	})
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2", "p4", "p5" }) },
+		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none", prompts = array({ "p3", "p5" }) },
+	}) })
 	local b = openQueue(w)
 	-- The rows of the open shortcut list that say what a prompt's key does.
 	local function promptRows(): { { keys: string, text: string } }
@@ -6151,7 +6065,7 @@ case("host: ? adds a row for each prompt offered under the filter that has a key
 	same(promptRows(), {
 		{ keys = "m", text = "Run the prompt “Mine” on the selected pull request" },
 		{ keys = "T", text = "Run the prompt “Anywhere” on the selected pull request" },
-	}, "each prompt offered under My PRs that has a key, in the menu's order; none without a key, with no text or for another filter")
+	}, "each prompt offered under My PRs that has a key, in the menu's order; none without a key, with no text or for another view")
 	b.press("escape")
 	b.press("tab")
 	b.press("down")
@@ -6172,37 +6086,37 @@ case("host: a checkout of another repository is refused with its draft kept; a r
 	local other = newGit(w, "/work/other")
 	other.remotes.origin = { "https://github.com/x/y.git" }
 	local b = openQueue(w)
-	forgetCheckouts(w)
-	goToSettings(b, "worktrees")
-	eq(prefsOf(b).focus, "checkout", "the checkout row is focused")
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	goToSettings(b, "repos")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	eq(prefsOf(b).focus, "checkout:o/r", "the checkout row is focused")
 	b.press("enter")
 	b.typeText("/work/other")
 	b.press("enter")
 	w.flush()
-	has(rowIn(b, "checkout").warning, "No remote of /work/other points at github.com/o/r", "git's refusal is shown under the row")
+	has(rowIn(b, "checkout:o/r").warning, "No remote of /work/other points at github.com/o/r", "git's refusal is shown under the row")
 	eq(prefsOf(b).editing.draft, "/work/other", "the draft stays for a correction")
-	eq(w.kv.get("repos"), nil, "nothing was saved")
+	eq(w.kv.get("checkouts")["o/r"], "", "nothing was saved")
 	eq(#requestsOf(s.gh, "clone"), 0, "a repository that is there is never cloned over")
-	w.kv.failGet["repos"] = "disk offline"
+	w.kv.failGet["checkouts"] = "disk offline"
+	request(b, "c1", { op = "checkout", repo = "o/r", path = "/work/r" })
+	w.flush()
+	has(answerOf(b, "c1").problem, "could not be read", "an unreadable checkout map is refused")
+	eq(w.kv.get("checkouts")["o/r"], "", "and nothing written over it")
+	w.kv.failGet["checkouts"] = nil
 	b.press("a", "c")
 	b.typeText("/work/r")
 	b.press("enter")
 	w.flush()
-	yes(type(rowIn(b, "checkout").warning) == "string", "an unreadable checkout map is refused")
-	eq(prefsOf(b).editing.draft, "/work/r", "with the draft kept")
-	eq(w.kv.get("repos"), nil, "and nothing written over it")
-	w.kv.failGet["repos"] = nil
-	b.press("enter")
-	w.flush()
-	eq(w.kv.get("repos")["github.com/o/r"], "/work/r", "the confirmed checkout is saved")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the confirmed checkout is saved")
 	eq(w.toasts[#w.toasts].level, "success", "and reported")
 	eq(w.toasts[#w.toasts].text, "Checkout saved", "as saved, not cloned")
 	eq(#requestsOf(s.gh, "clone"), 0, "nothing was cloned")
 	eq(prefsOf(b).editing, nil, "the edit is closed")
-	eq(rowIn(b, "checkout").warning, nil, "without a warning")
+	eq(rowIn(b, "checkout:o/r").warning, nil, "without a warning")
 end)
 
-case("host: a folder that does not exist is cloned into with gh, saved once git confirms the clone, and the heading follows", function(w: World)
+case("host: a folder that does not exist is cloned into with gh, saved once git confirms the clone", function(w: World)
 	local s = hostScene(w, 3)
 	-- the clone's git state exists in the model, but the folder only appears once gh has run
 	local fresh = newGit(w, "/code/r")
@@ -6218,29 +6132,28 @@ case("host: a folder that does not exist is cloned into with gh, saved once git 
 		return nil
 	end
 	local b = openQueue(w)
-	forgetCheckouts(w)
-	b.render()
-	has(b.text(), "No local checkout of o/r", "the heading says there is none")
-	has(b.text(), "Set checkout", "and offers the button")
-	b.event({ ev = "action", act = "set-checkout" })
-	eq(prefsOf(b).editing.row, "checkout", "which opens the checkout row ready for a path")
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	goToSettings(b, "repos")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	eq(prefsOf(b).editing.row, "checkout:o/r", "the checkout row is ready for a path")
 	b.typeText("/code/r")
 	b.press("enter")
-	has(b.text(), "cloning into it", "while gh clones the heading says so")
-	lacks(b.text(), "Set checkout", "and has no button")
+	has(rowIn(b, "checkout:o/r").disabled, "cloning into it", "while gh clones the row says so and cannot be edited")
 	same(requestsOf(s.gh, "clone")[1].call.argv, { "gh", "repo", "clone", "o/r", "/code/r" }, "gh clones the repository into the folder")
-	eq(w.kv.get("repos"), nil, "nothing is saved before the clone ends")
+	eq(w.kv.get("checkouts")["o/r"], "", "nothing is saved before the clone ends")
 	w.advance(2000)
-	eq(w.kv.get("repos")["github.com/o/r"], "/code/r", "the clone is saved as the checkout")
+	eq(w.kv.get("checkouts")["o/r"], "/code/r", "the clone is saved as the checkout")
 	eq(w.toasts[#w.toasts].text, "Cloned o/r", "and reported as a clone")
 	eq(w.toasts[#w.toasts].sub, "/code/r", "naming where")
-	lacks(b.text(), "No local checkout", "the notice is gone")
+	eq(rowIn(b, "checkout:o/r").disabled, nil, "and the row is free again")
+	eq(rowIn(b, "checkout:o/r").control.value, "/code/r", "showing it")
 end)
 
-case("host: a checkout clone that fails late stays inline on the Worktrees page and is a toast anywhere else", function(w: World)
+case("host: a checkout clone that fails late stays inline on the Repositories page and is a toast anywhere else", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
-	forgetCheckouts(w)
+	w.kv.put("checkouts", { ["o/r"] = "" })
 	-- gh answers about the clone only after five seconds
 	s.gh.override = function(req: GhReq): Reply?
 		if req.kind == "clone" then
@@ -6249,51 +6162,51 @@ case("host: a checkout clone that fails late stays inline on the Worktrees page 
 		return nil
 	end
 	local function submit()
+		b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
 		b.press("enter")
 		b.typeText("/elsewhere")
 		b.press("enter")
 		eq(prefsOf(b).editing, nil, "the edit closes while gh clones")
 	end
-	goToSettings(b, "worktrees")
+	goToSettings(b, "repos")
 	submit()
 	w.advance(5000)
-	has(rowIn(b, "checkout").warning, "not an empty directory", "on the Worktrees page the refusal is shown under the row")
+	has(rowIn(b, "checkout:o/r").warning, "not an empty directory", "on the Repositories page the refusal is shown under the row")
 	eq(prefsOf(b).editing.draft, "/elsewhere", "with the draft kept for a correction")
 	eq(#w.toasts, 0, "and no toast")
 	b.press("escape")
 	submit()
 	b.press("tab")
-	eq(prefsOf(b).page, "filters", "the user moved on while gh was cloning")
+	eq(prefsOf(b).page, "connection", "the user moved on while gh was cloning")
 	w.advance(5000)
 	eq(#w.toasts, 1, "the refusal is reported once")
 	eq(w.toasts[1].level, "error", "as an error")
 	eq(w.toasts[1].text, "Checkout not saved", "that says what happened")
 	has(w.toasts[1].sub, "not an empty directory", "with gh's reason")
-	eq(prefsOf(b).page, "filters", "the page the user is on is left alone")
-	for _ = 1, 3 do -- Filters, Prompts, GitHub, Worktrees
+	eq(prefsOf(b).page, "connection", "the page the user is on is left alone")
+	for _ = 1, 3 do -- Views, Prompts, Repositories
 		b.press("tab")
 	end
-	b.press("down")
-	eq(prefsOf(b).focus, "checkout", "back on the Worktrees page")
+	eq(prefsOf(b).page, "repos", "back on the Repositories page")
 	submit()
 	b.press("escape")
 	w.advance(5000)
 	eq(#w.toasts, 2, "closing Settings meanwhile reports it as well")
 	eq(w.toasts[2].text, "Checkout not saved", "with the same toast")
-	goToSettings(b, "worktrees")
+	goToSettings(b, "repos")
 	submit()
 	for _ = 1, 4 do
 		b.press("tab")
 	end
-	eq(prefsOf(b).page, "worktrees", "a user who is back on the page before gh answers")
+	eq(prefsOf(b).page, "repos", "a user who is back on the page before gh answers")
 	w.advance(5000)
-	has(rowIn(b, "checkout").warning, "not an empty directory", "sees the refusal under its row")
+	has(rowIn(b, "checkout:o/r").warning, "not an empty directory", "sees the refusal under its row")
 	eq(prefsOf(b).editing.draft, "/elsewhere", "with the draft")
 	eq(#w.toasts, 2, "and no extra toast")
-	eq(w.kv.get("repos"), nil, "nothing was ever saved")
+	eq(w.kv.get("checkouts")["o/r"], "", "nothing was ever saved")
 end)
 
-case("host: switching filters searches the new query, reuses a fresh cached list, and never waits for a superseded request", function(w: World)
+case("host: switching views searches the new query, reuses a fresh cached list, and never waits for a superseded request", function(w: World)
 	local s = hostScene(w, 3)
 	local second = { searchItem(21, "o/r", EPOCH - 10), searchItem(22, "o/r", EPOCH - 20) }
 	local slow = false
@@ -6312,28 +6225,28 @@ case("host: switching filters searches the new query, reuses a fresh cached list
 	local function scope(id: string)
 		b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
 	end
-	scope("f2")
+	scope("v2")
 	w.flush()
-	same(listed(b), { "n21", "n22" }, "the second filter shows its own results")
+	same(listed(b), { "no_2fr_2321", "no_2fr_2322" }, "the second view shows its own results")
 	eq(#requestsOf(s.gh, "search"), 2, "it was searched")
-	scope("f1")
-	same(listed(b), { "n1", "n2", "n3" }, "going back shows the cached list at once")
-	scope("f1")
+	scope("v1")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "going back shows the cached list at once")
+	scope("v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "a fresh cached list and re-selecting the active filter cost nothing")
+	eq(#requestsOf(s.gh, "search"), 2, "a fresh cached list and re-selecting the active view cost nothing")
 	slow = true
 	second = { searchItem(23, "o/r", EPOCH - 5) }
 	b.typeText("r")
-	scope("f2")
+	scope("v2")
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 4, "the switch sent its own search while the slow one is still pending")
-	same(listed(b), { "n23" }, "the switch showed the new answer without waiting for the slow search")
+	same(listed(b), { "no_2fr_2323" }, "the switch showed the new answer without waiting for the slow search")
 	w.advance(5000)
-	same(listed(b), { "n23" }, "and the superseded answer never replaces it")
-	eq(pickerOf(b).scope, "f2", "the second filter is still the one shown")
+	same(listed(b), { "no_2fr_2323" }, "and the superseded answer never replaces it")
+	eq(pickerOf(b).scope, "v2", "the second view is still the one shown")
 end)
 
-case("host: a rejected query pauses only itself: no automatic retry, and another filter still loads", function(w: World)
+case("host: a rejected query pauses only itself: no automatic retry, and another view still loads", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.override = function(req: GhReq): Reply?
 		if req.kind == "search" and string.find(req.fields.q, "author:@me", 1, true) then
@@ -6346,14 +6259,41 @@ case("host: a rejected query pauses only itself: no automatic retry, and another
 	local sent = #requestsOf(s.gh, "search")
 	w.advance(30 * 60 * 1000)
 	eq(#requestsOf(s.gh, "search"), sent, "the timer does not retry a rejected query")
-	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "f2" })
+	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "v2" })
 	w.flush()
-	same(listed(b), { "n1", "n2", "n3" }, "another filter loads")
-	eq(pickerOf(b).state, "ready", "without the first filter's card")
-	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "f1" })
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "another view loads")
+	eq(pickerOf(b).state, "ready", "without the first view's card")
+	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "v1" })
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), sent + 2, "going back asks again instead of trusting the old rejection")
 	eq(pickerOf(b).state, "error", "and it is rejected again")
+end)
+
+case("host: view group-by emits headers", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { searchItem(1, "o/b", EPOCH - 10), searchItem(2, "o/a", EPOCH - 20), searchItem(3, "o/b", EPOCH - 30) }
+	-- Makes `group` the group-by of the only view.
+	local function groupBy(group: string)
+		w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+			{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = group, prompts = array({}) },
+		}) })
+	end
+	groupBy("repo")
+	local b = openQueue(w)
+	local expectedOrder: { any } = {
+		{ group = "o/a", label = "o/a", count = 1 },
+		"no_2fa_232",
+		{ group = "o/b", label = "o/b", count = 2 },
+		"no_2fb_231",
+		"no_2fb_233",
+	}
+	same(pickerOf(b).order, expectedOrder, "a header per repository in label order, each followed by its PRs in list order")
+	eq(pickerOf(b).selected, "no_2fa_232", "the first PR of the first group is selected")
+	b.typeText("j")
+	eq(pickerOf(b).selected, "no_2fb_231", "and navigation steps over the header to the next PR")
+	groupBy("none")
+	local plain = openQueue(w, 2)
+	same(pickerOf(plain).order, { "no_2fb_231", "no_2fa_232", "no_2fb_233" }, "without a group-by the order is the PRs alone, with no header")
 end)
 
 case("host: a rate limit holds every refresh, the manual one included, until it resets", function(w: World)
@@ -6377,7 +6317,7 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	eq(#requestsOf(s.gh, "search"), 1, "nothing is sent before the reset")
 	w.advance(1000)
 	eq(#requestsOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
-	same(listed(b), { "n1", "n2", "n3" }, "and loads")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
 	eq(actionOf(b, "retry").disabled, nil, "Refresh is available again")
 end)
 
@@ -6395,15 +6335,18 @@ case("host: a sign-in failure survives a restart and only an explicit Refresh tr
 	w.advance(30 * 60 * 1000)
 	eq(#requestsOf(s.gh, "search"), 1, "a sign-in failure is not retried by the timer")
 	b.cx:save()
-	local calls = #w.calls
+	local function sentToGithub(): number
+		return #s.gh.requests - #requestsOf(s.gh, "accounts") -- learning the active login is no search
+	end
+	local sent = sentToGithub()
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
-	eq(#w.calls, calls, "a restored block starts no process while the pause stands")
+	eq(sentToGithub(), sent, "a restored block sends nothing to GitHub while the pause stands")
 	eq(pickerOf(again).state, "error", "and shows the same card")
 	signedIn = true
 	again.typeText("r")
 	w.flush()
-	same(listed(again), { "n1", "n2", "n3" }, "Refresh tries again and loads")
+	same(listed(again), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "Refresh tries again and loads")
 end)
 
 case("host: Refresh while a search is running says so and sends nothing more", function(w: World)
@@ -6420,17 +6363,18 @@ case("host: Refresh while a search is running says so and sends nothing more", f
 	eq(w.toasts[1].level, "info", "Refresh says it is already refreshing")
 	eq(#requestsOf(s.gh, "search"), 1, "and does not start another")
 	w.advance(5000)
-	same(listed(b), { "n1", "n2", "n3" }, "the one search lands")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the one search lands")
 	eq(#requestsOf(s.gh, "search"), 1, "once")
 end)
 
-case("host: a filter change in one block reaches the other live blocks, and a closed pane is skipped", function(w: World)
+case("host: a view change in one block reaches the other live blocks, and a closed pane is skipped", function(w: World)
 	local s = hostScene(w, 3)
 	local a = w.open(1, { "/work/r" })
 	local c = w.open(2, { "/work/r" })
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "each block searches for itself")
-	goToSettings(a, "filters")
+	goToSettings(a, "views")
+	expand(a, "vopen:v1")
 	a.press("enter")
 	a.press("a", "c")
 	a.typeText("Mine")
@@ -6446,7 +6390,7 @@ case("host: a filter change in one block reaches the other live blocks, and a cl
 	has(searches[3].fields.q, "label:bug", "this block")
 	has(searches[4].fields.q, "label:bug", "and the other one")
 	w.flush()
-	same(listed(c), { "n1", "n2", "n3" }, "the other block still lists the PRs")
+	same(listed(c), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the other block still lists the PRs")
 	c.close()
 	local drawn = c.renders()
 	a.press("enter")
@@ -6456,40 +6400,38 @@ case("host: a filter change in one block reaches the other live blocks, and a cl
 	eq(c.renders(), drawn, "and not drawn")
 end)
 
-case("host: saving a repository's account reaches every block: the old account's data goes and nothing runs as it", function(w: World)
+case("host: saving a view's login reaches every block: the old account's data goes and nothing runs as it", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.tokens.work = "tok-work"
 	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30), searchItem(8, "o/r", EPOCH - 90) }
 	local a = w.open(1, { "/work/r" })
 	local c = w.open(2, { "/work/r" })
 	w.flush()
-	same(listed(a), { "n1", "n2", "n3" }, "the active gh account's PRs")
+	same(listed(a), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the active gh account's PRs")
 	local before = #s.gh.requests
-	goToSettings(a, "github")
-	a.press("enter")
-	a.typeText("work")
-	a.press("enter")
-	eq(w.toasts[1].level, "success", "the account was saved")
-	same(w.kv.get("accounts"), { ["github.com/o/r"] = "work" }, "for this repository")
+	goToSettings(a, "views")
+	expand(a, "vopen:v1")
+	a.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "work" }) })
+	same(w.kv.get("views-prs").items[1].logins, { "work" }, "the login was saved on the view")
+	same(w.kv.get("views-prs").items[2].logins, array({}), "and on no other")
+	eq(w.kv.get("views-prs").items[1].login, nil, "and not under the old key")
 	a.press("escape")
 	w.flush()
-	same(listed(a), { "n7", "n8" }, "this block shows the new account's PRs")
-	same(listed(c), { "n7", "n8" }, "and so does the other one")
+	same(listed(a), { "no_2fr_237", "no_2fr_238" }, "this block shows the new account's PRs")
+	same(listed(c), { "no_2fr_237", "no_2fr_238" }, "and so does the other one")
 	for i = before + 1, #s.gh.requests do
 		eq(s.gh.requests[i].login, "work", "request " .. i .. " ran as the new account")
 	end
 	eq(#requestsOf(s.gh, "search"), 4, "each block searched once more")
 	before = #s.gh.requests
-	goToSettings(a, "github")
-	a.press("enter")
-	a.press("a", "c")
-	a.press("backspace")
-	a.press("enter")
+	goToSettings(a, "views")
+	expand(a, "vopen:v1")
+	a.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({}) })
 	a.press("escape")
 	w.flush()
-	same(w.kv.get("accounts"), {}, "clearing the account removes only this repository's entry")
-	same(listed(a), { "n1", "n2", "n3" }, "this block is back on the active gh account")
-	same(listed(c), { "n1", "n2", "n3" }, "and so is the other one")
+	same(w.kv.get("views-prs").items[1].logins, array({}), "clearing the logins empties the view's list")
+	same(listed(a), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "this block is back on the active gh account")
+	same(listed(c), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and so is the other one")
 	for i = before + 1, #s.gh.requests do
 		eq(s.gh.requests[i].login, "octocat", "request " .. i .. " ran as the active account")
 	end
@@ -6507,55 +6449,15 @@ case("host: a search still running for the old account never shows after the acc
 	end
 	local b = openQueue(w)
 	eq(pickerOf(b).state, "loading", "the first search is still running")
-	goToSettings(b, "github")
-	b.press("enter")
-	b.typeText("work")
-	b.press("enter")
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	b.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "work" }) })
 	b.press("escape")
 	w.flush()
-	same(listed(b), { "n7" }, "the new account's list is shown")
+	same(listed(b), { "no_2fr_237" }, "the new account's list is shown")
 	w.advance(5000)
-	same(listed(b), { "n7" }, "the old account's late answer is dropped")
+	same(listed(b), { "no_2fr_237" }, "the old account's late answer is dropped")
 	eq(#requestsOf(s.gh, "search"), 2, "one search per account")
-end)
-
-case("host: an unreadable or malformed saved account stops every request, and an explicit Refresh recovers", function(w: World)
-	local s = hostScene(w, 3)
-	s.gh.tokens.work = "tok-work"
-	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30) }
-	w.kv.put("accounts", { ["github.com/o/r"] = "work" })
-	w.kv.failGet["accounts"] = "disk offline"
-	local a = openQueue(w, 1)
-	eq(pickerOf(a).state, "error", "an unreadable store shows the card")
-	has(a.text(), "disk offline", "with the cause")
-	w.kv.failGet["accounts"] = nil
-	w.kv.put("accounts", { ["github.com/o/r"] = "bad name" })
-	eq(pickerOf(openQueue(w, 2)).state, "error", "a damaged entry shows the card too")
-	w.kv.put("accounts", "oops")
-	eq(pickerOf(openQueue(w, 3)).state, "error", "and so does a malformed store")
-	w.advance(30 * 60 * 1000)
-	eq(#s.gh.requests, 0, "nothing was ever sent, not even a token request")
-	w.kv.put("accounts", { ["github.com/o/r"] = "work" })
-	a.typeText("r")
-	w.flush()
-	same(listed(a), { "n7" }, "Refresh recovers once the store is readable")
-	eq(s.gh.requests[1].kind, "token", "the first thing sent is the account's token request")
-end)
-
-case("host: an account that becomes unreadable under a loaded block takes its data off the screen", function(w: World)
-	local s = hostScene(w, 3)
-	local b = openQueue(w)
-	same(listed(b), { "n1", "n2", "n3" }, "loaded")
-	local before = #s.gh.requests
-	w.kv.failGet["accounts"] = "disk offline"
-	w.advance(60000)
-	same(listed(b), {}, "nothing of the old identity stays on screen")
-	eq(pickerOf(b).state, "error", "the card says why")
-	eq(#s.gh.requests, before, "and nothing was sent")
-	w.kv.failGet["accounts"] = nil
-	b.typeText("r")
-	w.flush()
-	same(listed(b), { "n1", "n2", "n3" }, "Refresh loads again once it is readable")
 end)
 
 -- Two PRs whose checks the search only summarises, and the full checks each one loads.
@@ -6908,10 +6810,9 @@ case("host: checks loading or loaded under one account never show under another"
 	local b = openQueue(w)
 	w.advance(300)
 	eq(#requestsOf(s.gh, "checks"), 1, "the old account's checks are on their way")
-	goToSettings(b, "github")
-	b.press("enter")
-	b.typeText("work")
-	b.press("enter")
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	b.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "work" }) })
 	b.press("escape")
 	w.flush()
 	w.advance(300)
@@ -6924,18 +6825,29 @@ case("host: checks loading or loaded under one account never show under another"
 	lacks(b.text(), "old-job", "and is not shown")
 end)
 
+case("host: items from two repositories with the same number get distinct ids", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { searchItem(12, "o/a", EPOCH - 60), searchItem(12, "o/b", EPOCH - 120) }
+	local b = openQueue(w)
+	same(listed(b), { "no_2fa_2312", "no_2fb_2312" }, "one id per repository, though both are #12")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fb_2312" })
+	eq(pickerOf(b).selected, "no_2fb_2312", "selecting the second puts the cursor on it")
+	b.typeText("w")
+	eq(w.opened[#w.opened], prLink("worktree", "o/b", 12), "and the Worktree link names o/b, not o/a")
+end)
+
 case("host: selecting and activating rows follows the picker, and a row that is gone is ignored", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	b.event({ ev = "select", id = "layer.queue", item = "n2" })
-	eq(pickerOf(b).selected, "n2", "selecting a row moves the selection")
-	b.event({ ev = "activate", id = "layer.queue", item = "n3" })
-	eq(pickerOf(b).selected, "n3", "activating a row selects it")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
+	eq(pickerOf(b).selected, "no_2fr_232", "selecting a row moves the selection")
+	b.event({ ev = "activate", id = "layer.queue", item = "no_2fr_233" })
+	eq(pickerOf(b).selected, "no_2fr_233", "activating a row selects it")
 	eq(w.opened[#w.opened], prLink("open", "o/r", 3), "and opens it in a Browser block")
-	b.event({ ev = "select", id = "layer.queue", item = "n99" })
-	eq(pickerOf(b).selected, "n3", "a row that a refresh removed is ignored")
-	b.event({ ev = "select", id = "somewhere.else", item = "n1" })
-	eq(pickerOf(b).selected, "n3", "and so is an event for another surface")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2399" })
+	eq(pickerOf(b).selected, "no_2fr_233", "a row that a refresh removed is ignored")
+	b.event({ ev = "select", id = "somewhere.else", item = "no_2fr_231" })
+	eq(pickerOf(b).selected, "no_2fr_233", "and so is an event for another surface")
 end)
 
 case("host: a worktree request becomes a badge and a card that shows its commands, and nothing is ever run", function(w: World)
@@ -7036,7 +6948,7 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	request(b, "m1", { op = "menu" })
 	w.flush()
-	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All filters", send = "Review {url}\nthen report" } }, "a well-formed request is answered with the saved prompts")
+	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All prompts", send = "Review {url}\nthen report" } }, "a well-formed request is answered with the saved prompts")
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
@@ -7079,30 +6991,6 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	w.flush()
 	eq(w.toasts[#w.toasts].text, "Could not start an agent for o/r#5", "an agent that cannot start is toasted")
 	has(cardText(b), s.target, "and the worktree's card is still on screen")
-end)
-
-windowCase("window: the heading's Set checkout opens the block's Settings on its checkout row; from a pane that is not Plotroom it reaches nothing", function(w: World)
-	local worktree = w.load("worktree") :: Worktree
-	w.load("window")
-	local s = scene(w, worktree, "o", "r", 5)
-	local b = linkQueue(w, s)
-	forgetCheckouts(w)
-	b.render()
-	local sub = pickerOf(b).subtitle
-	local button = sub[#sub]
-	eq(button.t, "Set checkout", "the heading shows the button")
-	w.click(button.href)
-	w.flush()
-	eq(prefsOf(b).page, "worktrees", "a click opens the block's Settings on the Worktrees page")
-	eq(prefsOf(b).editing.row, "checkout", "with the checkout row ready for a path")
-	b.press("escape")
-	b.press("escape")
-	local sent = #w.window.events
-	w.window.panes[1] = { block = "plugin.terminal", cwd = "/", tab = 1 }
-	w.click(button.href)
-	w.flush()
-	eq(w.toasts[#w.toasts].level, "error", "a pane that is not Plotroom gets an error")
-	eq(#w.window.events, sent, "and nothing is asked of any block")
 end)
 
 -- ---------------------------------------------------------------- the issues block
@@ -7149,13 +7037,13 @@ end
 -- no repository) whose remote serves its default branch at sha("b"). acli is signed in to acme.atlassian.net and finds
 -- under "Assigned to me" ABC-12 "Fix login" (In Progress, a High-priority Bug of Bob Ray, labelled ui) and ABC-13 "Old
 -- bug" (Done), newest update first. There is no gh: a Jira block must never ask for it.
-type JiraScene = { git: Git, acli: Acli }
-local JIRA_ASSIGNED = 'project = "ABC" AND (assignee = currentUser() AND statusCategory != Done) ORDER BY updated DESC'
+type JiraScene = { git: Git, acli: Acli, gh: Gh }
+local JIRA_ASSIGNED = "(assignee = currentUser() AND statusCategory != Done) ORDER BY updated DESC"
 
 local function jiraHost(w: World): JiraScene
 	w.load("host")
 	local g = newGit(w, "/work/r")
-	g.remotes.origin = { "git@gitlab.com:o/r.git" }
+	g.remotes.origin = { "https://github.com/o/r.git" }
 	g.served["HEAD"] = sha("b")
 	local acli = newAcli(w)
 	acli.searches[JIRA_ASSIGNED] = {
@@ -7168,13 +7056,19 @@ local function jiraHost(w: World): JiraScene
 		}),
 		jiraItem("ABC-13", "Old bug", { status = { name = "Done", statusCategory = { key = "done" } } }),
 	}
-	w.kv.put("repos", { ["jira/ABC"] = "/work/r" })
-	return { git = g, acli = acli }
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	w.kv.put("jira-repos", { ABC = array({ "o/r" }) })
+	w.kv.put("views-issues", {
+		version = 1,
+		nextId = 2,
+		items = array({ { id = "v1", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", group = "none", prompts = array({}) } }),
+	})
+	return { git = g, acli = acli, gh = newGh(w) }
 end
 
 -- The issues block of `pane` restored on Jira project ABC, after its first search.
 local function openJira(w: World, pane: number?): Block
-	local b = w.open(pane or 1, { "/work/r" }, { version = 1, launchCwd = "/work/r", repo = "ABC", tracker = "jira" }, "issues")
+	local b = w.open(pane or 1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" }, "issues")
 	w.flush()
 	return b
 end
@@ -7190,14 +7084,14 @@ end
 
 -- A saved issue prompt as kv keeps it: `inWorktree` false runs it in the main checkout, nil leaves the field out.
 local function issuePrompt(id: string, name: string, text: string, inWorktree: boolean?, key: string?): { [string]: any }
-	local p = promptOf(id, name, text, {}, key)
+	local p = promptOf(id, name, text, key)
 	p.worktree = inWorktree
 	return p
 end
 
 -- Makes `list` the saved issue prompts.
 local function saveIssuePrompts(w: World, list: { { [string]: any } })
-	w.kv.put("issue-prompts", { version = 1, nextId = #list + 1, items = array(list) })
+	w.kv.put("prompts-issues", { version = 1, nextId = #list + 1, items = array(list) })
 end
 
 -- The link the selected row's card keeps unseen for button `id`; nil when it keeps none.
@@ -7237,21 +7131,20 @@ end
 case("host: the issues block lists issues under its own seeded filters", function(w: World)
 	local s = issueHost(w)
 	local b = openIssues(w)
-	same(w.kv.get("issue-filters"), {
+	same(w.kv.get("views-issues"), {
 		version = 1,
 		nextId = 3,
 		items = {
-			{ id = "f1", name = "Assigned to me", query = "is:open assignee:@me" },
-			{ id = "f2", name = "Created by me", query = "is:open author:@me" },
+			{ id = "v1", name = "Assigned to me", integration = "github", query = "is:open assignee:@me", logins = array({}), group = "none", prompts = array({}) },
+			{ id = "v2", name = "Created by me", integration = "github", query = "is:open author:@me", logins = array({}), group = "none", prompts = array({}) },
 		},
-	}, "the first run seeds the issue filters")
-	eq(w.kv.get("filters"), nil, "and leaves the PR filters alone")
-	eq(#requestsOf(s.gh, "search"), 0, "no pull request search runs")
+	}, "the first run seeds the issue views")
+	eq(w.kv.get("views-prs"), nil, "and leaves the PR views alone")
 	local searches = requestsOf(s.gh, "issue-search")
 	eq(#searches, 1, "one request covers three issues")
-	eq(searches[1].fields.q, "repo:o/r is:open assignee:@me is:issue sort:updated-desc", "the active filter inside the launch repository, issues only")
-	same(listed(b), { "n12", "n13", "n14" }, "newest update first")
-	eq(pickerOf(b).selected, "n12", "the first issue is selected")
+	eq(searches[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the active view's query across every repository, issues only")
+	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "newest update first")
+	eq(pickerOf(b).selected, "no_2fr_2312", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	eq(b.title(), "Plotroom · Assigned to me (3)", "the title names the filter and counts the issues")
 	eq(pickerOf(b).noun, "issues", "the picker counts issues")
@@ -7269,10 +7162,10 @@ case("host: the issues block lists issues under its own seeded filters", functio
 		b.press("escape")
 		return ids
 	end
-	same(found("dark"), { "n13" }, "the search matches titles")
-	same(found("ui"), { "n12" }, "labels")
-	same(found("ann"), { "n12", "n14" }, "assignees and authors")
-	same(found("#14"), { "n14" }, "and numbers")
+	same(found("dark"), { "no_2fr_2313" }, "the search matches titles")
+	same(found("ui"), { "no_2fr_2312" }, "labels")
+	same(found("ann"), { "no_2fr_2312", "no_2fr_2314" }, "assignees and authors")
+	same(found("#14"), { "no_2fr_2314" }, "and numbers")
 	-- the shortcut list speaks of issues
 	b.typeText("?")
 	local byKeys: { [string]: string } = {}
@@ -7280,19 +7173,19 @@ case("host: the issues block lists issues under its own seeded filters", functio
 		byKeys[row.keys] = row.text
 		lacks(row.text, "pull request", "no shortcut speaks of pull requests: " .. row.keys)
 	end
-	eq(byKeys.w, "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (without a saved checkout of the repository: set one)", "w makes the issue's worktree")
+	eq(byKeys.w, "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (Plotroom asks for the repository, and its checkout, the first time)", "w makes the issue's worktree")
 	eq(byKeys.a, "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)", "a runs a prompt on the issue")
 	b.press("escape")
 	-- the second filter searches its own query
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	eq(pickerOf(b).scope, "f2", "the second filter is active")
-	eq(requestsOf(s.gh, "issue-search")[2].fields.q, "repo:o/r is:open author:@me is:issue sort:updated-desc", "and searched")
+	eq(pickerOf(b).scope, "v2", "the second view is active")
+	eq(requestsOf(s.gh, "issue-search")[2].fields.q, "is:open author:@me is:issue sort:updated-desc", "and searched")
 	has(b.title(), "Created by me", "the title follows")
 end)
 
-case("host: an issue row names its number, author and first assignee, wears its labels, and says why a closed issue closed", function(w: World)
+case("host: an issue row names its number, repository, author and age, wears its labels, shows no assignee, and says why a closed issue closed", function(w: World)
 	local s = issueHost(w)
 	s.gh.issueItems.octocat = {
 		issueItem(12, "o/r", EPOCH - 60, { title = "Fix login", labels = array({ "bug", "ui" }), assignees = array({ "ann", "bob" }), comments = 3 }),
@@ -7313,23 +7206,31 @@ case("host: an issue row names its number, author and first assignee, wears its 
 		end
 		return table.concat(out, " ")
 	end
-	eq(row(1).id, "n12", "the id is n and the issue's reference")
+	eq(row(1).id, "no_2fr_2312", "the id is n and the issue's reference")
 	eq(row(1).label, "Fix login", "the title is the label")
-	eq(detailText(row(1)), "#12 · @octo opened 1m ago · @ann +1", "the number, the author, the age, the first assignee and how many more")
-	eq(detailText(row(3)), "#14 · @octo opened 3m ago · @cy", "a lone assignee has no count")
-	eq(detailText(row(2)), "#13 · @octo opened 2m ago", "an unassigned issue shows none")
+	eq(detailText(row(1)), "#12 · o/r · @octo opened 1m ago", "the number, the repository, the author and the age")
+	eq(detailText(row(3)), "#14 · o/r · @octo opened 3m ago", "a lone assignee is not in the detail")
+	eq(detailText(row(2)), "#13 · o/r · @octo opened 2m ago", "nor is the lack of one")
 	eq(row(1).mark.text, "octo", "the author's mark")
 	eq(row(1).facts.comments, "3", "the comment count")
 	eq(row(2).facts.comments, nil, "none without comments")
-	eq(badges(1), "bug/- ui/-", "labels are plain badges")
-	eq(badges(2), "Completed/accent", "a completed issue")
-	eq(badges(3), "Not planned/muted", "one closed as not planned")
-	eq(badges(4), "Duplicate/muted", "a duplicate")
-	eq(badges(5), "Closed/error", "and a closed one with no reason")
+	eq(row(1).facts.assignee, nil, "the row shows no assignee, with or without one")
+	eq(row(3).facts.assignee, nil, "not even a lone one")
+	same(pickerOf(b).columns, { { id = "comments", format = "text", priority = 50 } }, "the comment count is the only column")
+	local titlerow: any = findKey(pickerNode(b), "titlerow")
+	eq(titlerow.c[1].p.key, "title", "the preview's title row starts with the title")
+	eq(titlerow.c[2].p.key, "integration", "and ends with the integration badge")
+	eq(titlerow.c[2].p.text, "GitHub", "naming GitHub")
+	eq(titlerow.c[2].p.tone, "muted", "muted for GitHub")
+	eq(badges(1), "GitHub/muted bug/- ui/-", "the integration is the first badge, then the labels")
+	eq(badges(2), "GitHub/muted Completed/accent", "a completed issue")
+	eq(badges(3), "GitHub/muted Not planned/muted", "one closed as not planned")
+	eq(badges(4), "GitHub/muted Duplicate/muted", "a duplicate")
+	eq(badges(5), "GitHub/muted Closed/error", "and a closed one with no reason")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-14/src" })
 	b.render()
-	eq(badges(3), "In tab/accent Not planned/muted", "a tab working in the issue's worktree marks its row, before its state")
-	eq(badges(1), "bug/- ui/-", "and no other row")
+	eq(badges(3), "GitHub/muted In tab/accent Not planned/muted", "a tab working in the issue's worktree marks its row, after the integration and before its state")
+	eq(badges(1), "GitHub/muted bug/- ui/-", "and no other row")
 end)
 
 case("host: the issue preview shows its body, assignees, milestone, linked pull requests and the branch it would create", function(w: World)
@@ -7398,7 +7299,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	b.render()
 	same(chips(), { "In tab", "bug", "ui" }, "a tab in the issue's worktree adds In tab first")
 	-- an issue with no milestone, assignee or pull request, and no description
-	b.event({ ev = "select", id = "layer.queue", item = "n13" })
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.advance(300)
 	eq(#requestsOf(s.gh, "issue"), 2, "the next issue loads its own details")
 	eq(factOf(b, "Milestone"), nil, "no milestone row")
@@ -7463,7 +7364,7 @@ end)
 
 case("host: an issue request makes its worktree once, notes it on the block with the commands that remove it, and refuses a repeat while it runs", function(w: World)
 	local s = issueHost(w)
-	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	local b = openIssues(w)
 	local target = "/wt/plotroom-o_r-issue-12"
 	eq(badgeOf(b), nil, "no badge before there is a worktree")
@@ -7502,7 +7403,7 @@ case("host: an issue request makes its worktree once, notes it on the block with
 	eq(answerOf(b, "a4").summary, "Reused · 12-fix-login at bbbbbbb · Modified (uncommitted changes kept)", "local changes are reported")
 	eq(badgeOf(b).tone, "warning", "and deserve a look")
 	s.git.dirty[target] = nil
-	b.event({ ev = "select", id = "layer.queue", item = "n13" })
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.fs.denyMkdir["/wt"] = "mkdir denied"
 	request(b, "a5", { op = "issue", repo = "o/r", ref = "13", worktree = true })
 	w.flush()
@@ -7563,7 +7464,7 @@ case("host: an issue request reports an issue the block no longer lists, a missi
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(listed(b), { "n20" }, "the second filter lists another issue")
+	same(listed(b), { "no_2fr_2320" }, "the second filter lists another issue")
 	request(b, "k1", { op = "issue", repo = "o/r", ref = "12", worktree = false })
 	eq(answerOf(b, "k1").vars.title, "Fix login", "an issue of the first filter's list is still known")
 	request(b, "k2", { op = "issue", repo = "o/r", ref = "20", worktree = false })
@@ -7574,7 +7475,7 @@ case("host: an issue request reports an issue the block no longer lists, a missi
 	eq(answerOf(b, "k4").vars.title, "Fix login", "the repository's case does not matter")
 	ran = #w.calls
 	-- a branch format that no longer holds
-	w.kv.put("branches", { ["github.com/o/r"] = "{foo}" })
+	w.kv.put("branch-formats", { ["o/r"] = "{foo}" })
 	request(b, "f1", { op = "issue", repo = "o/r", ref = "12", worktree = true })
 	w.flush()
 	eq(answerOf(b, "f1").problem, "Unknown variable {foo}.", "a worktree is refused with the format's problem")
@@ -7584,28 +7485,26 @@ case("host: an issue request reports an issue the block no longer lists, a missi
 	-- no saved checkout
 	forgetCheckouts(w)
 	request(b, "c1", { op = "issue", repo = "o/r", ref = "12", worktree = false })
-	eq(answerOf(b, "c1").noRepo, true, "no checkout, no main checkout")
-	eq(prefsOf(b).page, "worktrees", "Settings opens on the Worktrees page")
-	eq(prefsOf(b).editing.row, "checkout", "to enter the checkout")
+	eq(answerOf(b, "c1").needCheckout, "o/r", "no checkout, no main checkout: the window is asked for one")
 	request(b, "c2", { op = "issue", repo = "o/r", ref = "12", worktree = true })
-	eq(answerOf(b, "c2").noRepo, true, "nor a worktree")
+	eq(answerOf(b, "c2").needCheckout, "o/r", "nor a worktree")
 	eq(#w.calls, ran, "and nothing ran")
 end)
 
 case("host: the branch format rejects unknown variables and saves per repository", function(w: World)
 	issueHost(w)
-	newAcli(w) -- the Tab cycle to Worktrees passes the Integration page, which asks whether acli starts
-	w.kv.put("branches", { ["github.com/x/y"] = "keep/{key}" })
+	w.kv.put("checkouts", { ["x/y"] = "/work/y" })
+	w.kv.put("branch-formats", { ["x/y"] = "keep/{key}" })
 	local b = openIssues(w)
-	goToSettings(b, "worktrees")
+	goToSettings(b, "repos", true)
 	local sections: { string } = {}
 	for _, section in prefsOf(b).sections do
 		table.insert(sections, section.id)
 	end
-	same(sections, { "sec-checkout", "sec-branch", "sec-setup" }, "the branch format sits between the checkout and the setup commands")
-	local row = rowIn(b, "branch")
-	eq(row.label, "Format", "label")
-	eq(row.hint, "Variables {key} {slug} {owner} {repo}. Empty: {key}-{slug}.", "the hint lists the variables and the default")
+	same(sections, { "sec-wtroot", "repo:o/r", "repo:x/y", "rnew" }, "each repository has its own section: the launch one was added")
+	local row = rowIn(b, "branch:o/r")
+	eq(row.label, "Format (issue worktrees)", "label")
+	eq(row.hint, "Variables {key} {slug} {owner} {repo} {project}. Empty: {key}-{slug}.", "the hint lists the variables and the default")
 	eq(row.control.k, "text", "a text field")
 	eq(row.control.placeholder, "{key}-{slug}", "the default is its placeholder")
 	eq(row.control.value, "", "nothing is saved for o/r")
@@ -7613,7 +7512,7 @@ case("host: the branch format rejects unknown variables and saves per repository
 	eq(row.defaultLabel, "{key}-{slug}", "and a reset says the default")
 	has(b.text(), "12-fix-login", "the preview shows the branch the default makes")
 	local function save(text: string)
-		b.event({ ev = "select", id = "layer.settings", item = "branch" })
+		b.event({ ev = "select", id = "layer.settings", item = "branch:o/r" })
 		b.press("enter")
 		for _ = 1, 40 do
 			b.press("backspace")
@@ -7622,37 +7521,37 @@ case("host: the branch format rejects unknown variables and saves per repository
 		b.press("enter")
 	end
 	save("{foo}")
-	eq(rowIn(b, "branch").warning, "Unknown variable {foo}.", "an unknown variable is refused by name")
-	eq(prefsOf(b).editing.row, "branch", "the draft stays for a correction")
+	eq(rowIn(b, "branch:o/r").warning, "Unknown variable {foo}.", "an unknown variable is refused by name")
+	eq(prefsOf(b).editing.row, "branch:o/r", "the draft stays for a correction")
 	b.press("escape")
 	save("x-{slug}")
-	eq(rowIn(b, "branch").warning, "Include {key}, so each issue gets its own branch.", "a format without {key} would give every issue one branch")
+	eq(rowIn(b, "branch:o/r").warning, "Include {key}, so each issue gets its own branch.", "a format without {key} would give every issue one branch")
 	b.press("escape")
-	same(w.kv.get("branches"), { ["github.com/x/y"] = "keep/{key}" }, "nothing was saved")
+	same(w.kv.get("branch-formats"), { ["x/y"] = "keep/{key}" }, "nothing was saved")
 	save("feat/{key}")
 	eq(prefsOf(b).editing, nil, "a good format closes the edit")
-	eq(w.kv.get("branches")["github.com/o/r"], "feat/{key}", "and is saved under the repository")
-	eq(w.kv.get("branches")["github.com/x/y"], "keep/{key}", "another repository's format is kept")
-	eq(rowIn(b, "branch").control.value, "feat/{key}", "the row shows it")
-	eq(rowIn(b, "branch").changed, true, "as changed")
+	eq(w.kv.get("branch-formats")["o/r"], "feat/{key}", "and is saved under the repository")
+	eq(w.kv.get("branch-formats")["x/y"], "keep/{key}", "another repository's format is kept")
+	eq(rowIn(b, "branch:o/r").control.value, "feat/{key}", "the row shows it")
+	eq(rowIn(b, "branch:o/r").changed, true, "as changed")
 	has(b.text(), "feat/12", "and the preview's branch follows")
 	save("")
-	eq(w.kv.get("branches")["github.com/o/r"], nil, "an empty format goes back to the default")
-	eq(w.kv.get("branches")["github.com/x/y"], "keep/{key}", "without touching the other repository")
+	eq(w.kv.get("branch-formats")["o/r"], nil, "an empty format goes back to the default")
+	eq(w.kv.get("branch-formats")["x/y"], "keep/{key}", "without touching the other repository")
 	save("{owner}/{key}")
-	eq(w.kv.get("branches")["github.com/o/r"], "{owner}/{key}", "saved again")
-	b.event({ ev = "change", id = "layer.settings", item = "branch" })
-	eq(w.kv.get("branches")["github.com/o/r"], nil, "Reset clears it")
-	eq(rowIn(b, "branch").control.value, "", "the row is empty again")
-	eq(rowIn(b, "branch").changed, false, "and unchanged")
+	eq(w.kv.get("branch-formats")["o/r"], "{owner}/{key}", "saved again")
+	b.event({ ev = "change", id = "layer.settings", item = "branch:o/r" })
+	eq(w.kv.get("branch-formats")["o/r"], nil, "Reset clears it")
+	eq(rowIn(b, "branch:o/r").control.value, "", "the row is empty again")
+	eq(rowIn(b, "branch:o/r").changed, false, "and unchanged")
 	-- a saved format that no longer holds, by hand, shows no branch; an unreadable map is never overwritten
-	w.kv.put("branches", { ["github.com/o/r"] = "{foo}" })
+	w.kv.put("branch-formats", { ["o/r"] = "{foo}" })
 	b.render()
 	eq(findKey(pickerNode(b), "branch"), nil, "the preview shows no branch the format cannot name")
-	w.kv.put("branches", "garbage")
+	w.kv.put("branch-formats", "garbage")
 	b.render()
 	save("feat/{key}")
-	eq(w.kv.get("branches"), "garbage", "an unreadable map is never overwritten")
+	eq(w.kv.get("branch-formats"), "garbage", "an unreadable map is never overwritten")
 	eq(findKey(findKey(pickerNode(b), "branch"), "v").p.spans[1].t, "12-fix-login", "and the default applies meanwhile")
 end)
 
@@ -7675,14 +7574,15 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 		return answerOf(block, "m" .. asked).items
 	end
 	same(menu(b), {
-		{ id = "p1", label = "Triage", detail = "Triage {url}", group = "All filters", send = "Triage {url}", worktree = true },
-		{ id = "p2", label = "Notes", detail = "Summarise {title}", group = "All filters", send = "Summarise {title}", worktree = false },
-		{ id = "p3", label = "Old", detail = "Old {url}", group = "All filters", send = "Old {url}", worktree = true },
+		{ id = "p1", label = "Triage", detail = "Triage {url}", group = "All prompts", send = "Triage {url}", worktree = true },
+		{ id = "p2", label = "Notes", detail = "Summarise {title}", group = "All prompts", send = "Summarise {title}", worktree = false },
+		{ id = "p3", label = "Old", detail = "Old {url}", group = "All prompts", send = "Old {url}", worktree = true },
 	}, "the issues block offers its own prompts, each saying where it runs; one saved without the field runs in a worktree")
 	same(menu(pr), {
-		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All filters", send = "Review {url}" },
+		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All prompts", send = "Review {url}" },
 	}, "the PR block offers its own, with no such field")
 	goToSettings(b, "prompts")
+	expand(b, "popen:p1")
 	local ids: { string } = {}
 	for _, section in prefsOf(b).sections do
 		if section.id == "prompt:p1" then
@@ -7691,31 +7591,34 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 			end
 		end
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pscope:p1", "pwhere:p1", "pdelete:p1" }, "Runs in follows Filters")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pwhere:p1", "pdelete:p1", "pclose:p1" }, "Runs in follows the shortcut")
 	local where = rowIn(b, "pwhere:p1")
 	eq(where.label, "Runs in", "label")
 	eq(where.hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.", "hint")
 	eq(where.control.k, "multi", "one chip")
 	same(where.control.values, { "worktree" }, "on for a prompt that runs in a worktree")
 	same(where.control.options, { { value = "worktree", label = "Worktree" } }, "the chip")
+	expand(b, "popen:p2")
 	same(rowIn(b, "pwhere:p2").control.values, array({}), "off for one that runs in the checkout")
+	expand(b, "popen:p3")
 	same(rowIn(b, "pwhere:p3").control.values, { "worktree" }, "and on for one saved without the field")
+	expand(b, "popen:p1")
 	local function chip(id: string, values: { any })
 		b.event({ ev = "change", id = "layer.settings", item = "pwhere:" .. id, value = array(values) })
 	end
 	chip("p1", {})
-	eq(w.kv.get("issue-prompts").items[1].worktree, false, "turning the chip off saves worktree = false")
+	eq(w.kv.get("prompts-issues").items[1].worktree, false, "turning the chip off saves worktree = false")
 	same(rowIn(b, "pwhere:p1").control.values, array({}), "the row shows it")
 	eq(menu(b)[1].worktree, false, "and the menu says so")
 	chip("p2", { "worktree" })
-	eq(w.kv.get("issue-prompts").items[2].worktree, true, "on again")
-	eq(w.kv.get("issue-prompts").items[1].name, "Triage", "the rest of the prompt is kept")
-	eq(w.kv.get("prompts").items[1].worktree, nil, "the PR prompts are untouched")
+	eq(w.kv.get("prompts-issues").items[2].worktree, true, "on again")
+	eq(w.kv.get("prompts-issues").items[1].name, "Triage", "the rest of the prompt is kept")
+	eq(w.kv.get("prompts-prs").items[1].worktree, nil, "the PR prompts are untouched")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd" })
-	local saved = w.kv.get("issue-prompts")
+	local saved = w.kv.get("prompts-issues")
 	eq(#saved.items, 4, "Add prompt saves a new one with the issue prompts")
 	eq(saved.items[4].worktree, true, "that runs in a worktree")
-	eq(#w.kv.get("prompts").items, 1, "and none with the PR prompts")
+	eq(#w.kv.get("prompts-prs").items, 1, "and none with the PR prompts")
 	b.press("escape")
 	b.press("escape")
 	b.typeText("?")
@@ -7743,7 +7646,7 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and one but
 		end
 		return out
 	end
-	same(bar(), { "settings", "retry", "repos", "worktree", "prompt-p1", "prompt-p2", "open" }, "Worktree, a button per prompt that has text, and Open last")
+	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "Worktree, a button per prompt that has text, and Open last")
 	eq(buttonLink(b, "open"), "plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12", "Open's link carries the issue's page, percent-encoded")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "Worktree's")
 	eq(buttonLink(b, "agent"), issueLink("agent", "o/r", "12"), "the Agent link for the a key and the palette command")
@@ -7767,72 +7670,423 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and one but
 	b.typeText("k")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12/src" })
 	b.render()
-	same(bar(), { "settings", "retry", "repos", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the issue's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the issue's worktree adds Go to tab before the prompts")
 	eq(buttonLink(b, "goto"), issueLink("goto", "o/r", "12"), "with its link")
 	b.typeText("g")
 	eq(w.opened[#w.opened], issueLink("goto", "o/r", "12"), "g opens it")
 	table.remove(w.panes)
 	forgetCheckouts(w)
 	b.render()
-	same(bar(), { "settings", "retry", "repos", "open" }, "without a saved checkout nothing makes a worktree: Worktree and the prompts go")
-	has(b.text(), "No local checkout of o/r", "and the heading says why")
-	local links: { string } = {}
-	for _, node in findKey(pickerNode(b), "buttons").c do
-		table.insert(links, node.p.key)
-	end
-	same(links, { "open" }, "and the window finds no worktree, agent or prompt link")
+	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
+	lacks(b.text(), "No local checkout", "and the heading says nothing of it")
 	local opened = #w.opened
 	b.typeText("w")
-	eq(prefsOf(b).page, "worktrees", "w opens Settings on the Worktrees page")
-	eq(prefsOf(b).editing.row, "checkout", "to enter the checkout")
-	eq(#w.opened, opened, "and opens no link")
+	eq(w.opened[#w.opened], issueLink("worktree", "o/r", "12"), "w opens the Worktree link")
+	eq(#w.opened, opened + 1, "and only that one")
 end)
 
 case("host: the issues block's Settings speak of issues, the PR queue's keep their own words", function(w: World)
 	issueHost(w)
-	newAcli(w) -- the Integration page asks whether acli starts
+	newAcli(w)
 	saveIssuePrompts(w, { issuePrompt("p1", "Triage", "Triage {url}", true) })
 	local b = openIssues(w)
 	local function page(name: string)
 		b.event({ ev = "action", id = "layer.settings", act = "page", value = name })
 	end
-	goToSettings(b, "filters")
-	eq(prefsOf(b).lead, "Saved searches for the issue list's filter column. They run inside o/r, so repo:, org:, user: and OR are not allowed.", "filters")
-	eq(rowIn(b, "name:f1").control.placeholder, "Assigned to me", "a filter's name field")
-	eq(rowIn(b, "query:f1").control.placeholder, "is:open assignee:@me", "and query field")
-	eq(rowIn(b, "add").hint, "Starts as every open issue.", "the new filter")
+	goToSettings(b, "views", true)
+	expand(b, "vopen:v1")
+	eq(prefsOf(b).lead, "Saved searches for the sidebar. GitHub views search every repository the view's login can see; Jira views search every project acli can see.", "views")
+	eq(rowIn(b, "name:v1").control.placeholder, "Assigned to me", "a view's name field")
+	eq(rowIn(b, "query:v1").control.placeholder, "is:open involves:@me", "and query field")
+	eq(rowIn(b, "add").hint, "Starts as GitHub: is:open involves:@me.", "the new view")
 	b.event({ ev = "select", id = "layer.settings", item = "add" })
 	b.press("enter")
-	eq(#w.kv.get("issue-filters").items, 3, "Add filter saves with the issue filters")
-	eq(w.kv.get("filters"), nil, "and not with the PR filters")
+	eq(#w.kv.get("views-issues").items, 3, "Add view saves with the issue views")
+	eq(w.kv.get("views-prs"), nil, "and not with the PR views")
 	b.press("escape")
 	page("prompts")
-	eq(prefsOf(b).lead, "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details.", "prompts")
-	eq(rowIn(b, "padd").hint, "Starts empty, runs in a worktree, offered under every filter.", "the new prompt")
-	page("source")
-	eq(prefsOf(b).lead, "Issues load through GitHub's GraphQL API with your gh login.", "integration")
-	page("worktrees")
-	eq(prefsOf(b).lead, "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the repository's local checkout.", "worktrees")
+	eq(prefsOf(b).lead, "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views.", "prompts")
+	eq(rowIn(b, "padd").hint, "Starts empty and runs in a worktree.", "the new prompt")
+	page("repos")
+	eq(prefsOf(b).lead, "Repositories you work in, each with its local checkout (used for worktrees and prompts), the branch format of its issue worktrees and setup commands. Opening Plotroom inside a checkout adds it.", "repositories")
+	page("jira")
+	eq(prefsOf(b).lead, "Jira projects and the repositories their issues are worked in: Worktree on a Jira issue makes its worktree in the project's repository.", "jira")
 	local pr = w.open(2, { "/work/r" })
 	w.flush()
-	goToSettings(pr, "filters")
-	eq(prefsOf(pr).lead, "Saved searches for the queue's filter column. They run inside o/r, so repo:, org:, user: and OR are not allowed.", "the PR queue's filters")
-	eq(rowIn(pr, "add").hint, "Starts as every open pull request.", "its new filter")
-	eq(rowIn(pr, "name:f1").control.placeholder, "My PRs", "its name field")
+	goToSettings(pr, "views")
+	eq(prefsOf(pr).lead, "Saved searches for the sidebar. GitHub views search every repository the view's login can see; Jira views search every project acli can see.", "the PR queue's views")
+	eq(rowIn(pr, "add").hint, "Starts as GitHub: is:open involves:@me.", "its new view")
+	expand(pr, "vopen:v1")
+	eq(rowIn(pr, "name:v1").control.placeholder, "My PRs", "its name field")
+	eq(rowIn(pr, "vint:v1"), nil, "and no integration to pick")
 end)
 
-case("host: a Jira issues block lists its project under Jira filters and saves its tracker", function(w: World)
+case("host: a collapsed view is one summary row; Edit expands its form, another's Edit collapses the first, and Done collapses", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	local summary = rowIn(b, "vopen:v1")
+	eq(summary.label, "My PRs · active", "the summary names the view and marks the active one")
+	has(summary.hint, "GitHub", "its hint names the integration")
+	has(summary.hint, "is:open author:@me", "and the query")
+	eq(summary.control.act, "expand", "its button expands the form")
+	eq(rowIn(b, "name:v1"), nil, "a collapsed view shows no form row")
+	eq(rowIn(b, "query:v1"), nil, "not the query")
+	eq(rowIn(b, "delete:v1"), nil, "nor Delete")
+	expand(b, "vopen:v1")
+	eq(rowIn(b, "vopen:v1"), nil, "an expanded view has no summary row")
+	yes(rowIn(b, "name:v1") ~= nil and rowIn(b, "query:v1") ~= nil and rowIn(b, "vgroup:v1") ~= nil, "its form shows")
+	eq(prefsOf(b).focus, "name:v1", "with the name focused")
+	expand(b, "vopen:v2")
+	yes(rowIn(b, "vopen:v1") ~= nil and rowIn(b, "name:v1") == nil, "expanding another view collapses the first")
+	yes(rowIn(b, "name:v2") ~= nil, "and shows the other's form")
+	b.event({ ev = "action", id = "layer.settings", act = "collapse", value = "vclose:v2" })
+	yes(rowIn(b, "vopen:v2") ~= nil and rowIn(b, "name:v2") == nil, "Done collapses it")
+	eq(prefsOf(b).focus, "vopen:v2", "and focuses its summary")
+	w.kv.put("prompts-prs", { version = 1, nextId = 3, items = array({ promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") }) })
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({ { id = "v1", name = "Mine", integration = "github", logins = array({ "work" }), query = "is:open", group = "repo", prompts = array({ "p2" }) } }) })
+	local other = openQueue(w, 2)
+	goToSettings(other, "views")
+	local hint = rowIn(other, "vopen:v1").hint
+	has(hint, "work", "a login shows in the summary")
+	has(hint, "by repository", "and the grouping")
+	has(hint, "1 prompt", "and how many prompts it offers")
+end)
+
+case("host: a collapsed prompt is one summary row; Edit expands it, another's Edit or Done collapses, and Add opens the new prompt expanded", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}", "r"), promptOf("p2", "Triage", "Triage {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	local summary = rowIn(b, "popen:p1")
+	eq(summary.label, "Review", "the summary names the prompt")
+	has(summary.hint, "Review {url}", "its hint shows the text")
+	eq(summary.control.act, "expand", "its button expands the form")
+	eq(rowIn(b, "pname:p1"), nil, "a collapsed prompt shows no form row")
+	eq(rowIn(b, "pdelete:p1"), nil, "nor Delete")
+	expand(b, "popen:p1")
+	eq(rowIn(b, "popen:p1"), nil, "an expanded prompt has no summary row")
+	yes(rowIn(b, "pname:p1") ~= nil and rowIn(b, "ptext:p1") ~= nil and rowIn(b, "pkey:p1") ~= nil, "its form shows")
+	expand(b, "popen:p2")
+	yes(rowIn(b, "popen:p1") ~= nil and rowIn(b, "pname:p1") == nil, "expanding another prompt collapses the first")
+	yes(rowIn(b, "pname:p2") ~= nil, "and shows the other's form")
+	b.event({ ev = "action", id = "layer.settings", act = "collapse", value = "pclose:p2" })
+	yes(rowIn(b, "popen:p2") ~= nil and rowIn(b, "pname:p2") == nil, "Done collapses it")
+	eq(prefsOf(b).focus, "popen:p2", "and focuses its summary")
+	expand(b, "popen:p1")
+	b.event({ ev = "select", id = "layer.settings", item = "padd" })
+	b.press("enter")
+	eq(#w.kv.get("prompts-prs").items, 3, "Add saved a prompt")
+	yes(rowIn(b, "pname:p3") ~= nil, "the new prompt opens expanded")
+	yes(rowIn(b, "popen:p1") ~= nil and rowIn(b, "pname:p1") == nil, "and the one that was open collapses")
+	eq(prefsOf(b).editing.row, "pname:p3", "with its name being edited")
+end)
+
+case("host: a view without a login sits under gh's active login in the sidebar, and moves when the active account changes", function(w: World)
+	local s = issueHost(w)
+	newAcli(w)
+	s.gh.active = "user-a"
+	s.gh.tokens["user-a"] = "tok-a"
+	s.gh.tokens["user-b"] = "tok-b"
+	w.kv.put("views-issues", { version = 1, nextId = 4, items = array({
+		{ id = "v1", name = "A's", integration = "github", query = "is:open", logins = array({ "user-a" }), group = "none", prompts = array({}) },
+		{ id = "v2", name = "B's", integration = "github", query = "is:open", logins = array({ "user-b" }), group = "none", prompts = array({}) },
+		{ id = "v3", name = "Plain", integration = "github", query = "is:open", group = "none", prompts = array({}) },
+	}) })
+	local b = openIssues(w)
+	-- The sidebar as "name @ group", in the order shown.
+	local function sidebar(): { string }
+		local out: { string } = {}
+		for _, scope in pickerOf(b).scopes do
+			table.insert(out, scope.label .. " @ " .. scope.group)
+		end
+		return out
+	end
+	same(sidebar(), { "A's @ GitHub - user-a", "Plain @ GitHub - user-a", "B's @ GitHub - user-b" }, "the view with no login sits with the active login's own view; user-b has its own group")
+	s.gh.active = "user-b"
+	w.advance(11 * 60 * 1000) -- past the cached list of logins
+	w.flush()
+	b.typeText("r")
+	w.flush()
+	same(sidebar(), { "A's @ GitHub - user-a", "B's @ GitHub - user-b", "Plain @ GitHub - user-b" }, "after the active account switched, the view with no login moved to user-b's group, after user-b's own view")
+end)
+
+-- A PR view that runs as the logins `who`, saved as the only one of the PR block.
+local function loginsView(w: World, who: { string })
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Both", integration = "github", query = "is:open author:@me", logins = array(who), group = "none", prompts = array({}) },
+	}) })
+end
+
+-- The sidebar as "name @ group = id", in the order shown.
+local function sidebarOf(b: Block): { string }
+	local out: { string } = {}
+	for _, scope in pickerOf(b).scopes do
+		table.insert(out, scope.label .. " @ " .. (scope.group or "-") .. " = " .. scope.id)
+	end
+	return out
+end
+
+-- Clicks sidebar scope `id` of `b`.
+local function pickScope(b: Block, id: string)
+	b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
+end
+
+case("host: a view of two logins is one scope in each login's group; each runs only as its login, and nothing is merged", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { checks = "SUCCESS" }), searchItem(2, "o/r", EPOCH - 120) }
+	s.gh.items.work = { searchItem(3, "o/r", EPOCH - 30, { checks = "SUCCESS" }) }
+	s.gh.checks["o/r#1"] = nodes(1)
+	s.gh.checks["o/r#3"] = nodes(1)
+	s.git.served["refs/pull/3/head"] = sha("b")
+	s.gh.meta["o/r#3"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	loginsView(w, { "octocat", "work" })
+	local b = openQueue(w)
+	same(sidebarOf(b), { "Both @ GitHub - octocat = v1@octocat", "Both @ GitHub - work = v1@work" }, "the view is listed once in each login's group")
+	eq(pickerOf(b).scope, "v1@octocat", "the first login's scope is the one shown")
+	local searches = requestsOf(s.gh, "search")
+	eq(#searches, 1, "one search")
+	eq(searches[1].login, "octocat", "as that login")
+	has(searches[1].fields.q, "is:open author:@me", "with the view's query")
+	same(listed(b), { "no_2fr_231", "no_2fr_232" }, "its PRs only")
+	w.advance(300)
+	eq(requestsOf(s.gh, "checks")[1].login, "octocat", "its checks load as it")
+	pickScope(b, "v1@work")
+	w.flush()
+	searches = requestsOf(s.gh, "search")
+	eq(#searches, 2, "the other scope searches on its own")
+	eq(searches[2].login, "work", "as its login")
+	same(listed(b), { "no_2fr_233" }, "and lists only what that login found, never a merge")
+	eq(pickerOf(b).scope, "v1@work", "the scope is the one clicked")
+	w.advance(300)
+	eq(requestsOf(s.gh, "checks")[2].login, "work", "its checks load as it")
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 3 })
+	w.flush()
+	eq(requestsOf(s.gh, "pr")[1].login, "work", "and its worktree reads the PR as it")
+	-- the keys walk the scopes in the order shown
+	b.press("tab")
+	b.press("up")
+	eq(pickerOf(b).scope, "v1@octocat", "Up moves to the scope above")
+	w.flush()
+	eq(requestsOf(s.gh, "search")[3].login, "octocat", "and runs as its login again")
+	same(listed(b), { "no_2fr_231", "no_2fr_232" }, "with its own list")
+	b.press("down")
+	eq(pickerOf(b).scope, "v1@work", "Down moves to the scope below")
+end)
+
+case("host: a login failing in one scope leaves the view's other scope alone", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and req.login == "work" then
+			return { status = 1, stderr = "gh: Resource not accessible by integration (HTTP 403)\n" }
+		end
+		return nil
+	end
+	loginsView(w, { "octocat", "work" })
+	local b = openQueue(w)
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the working login's scope lists its PRs")
+	pickScope(b, "v1@work")
+	w.flush()
+	eq(pickerOf(b).state, "error", "the failing login's scope shows the problem")
+	eq(#listed(b), 0, "and no list")
+	pickScope(b, "v1@octocat")
+	w.flush()
+	eq(pickerOf(b).state, "ready", "the other scope is not an error card")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and lists its PRs again")
+	local who: { string } = {}
+	for _, req in requestsOf(s.gh, "search") do
+		table.insert(who, req.login or "")
+	end
+	same(who, { "octocat", "work", "octocat" }, "each scope searched as its own login, and the failure stopped nothing else")
+end)
+
+case("host: a view sits in the group of each login it lists, and one with none follows gh's active login", function(w: World)
+	local s = issueHost(w)
+	newAcli(w)
+	s.gh.active = "user-a"
+	s.gh.tokens["user-a"] = "tok-a"
+	s.gh.tokens["user-b"] = "tok-b"
+	w.kv.put("views-issues", { version = 1, nextId = 4, items = array({
+		{ id = "v1", name = "Both", integration = "github", query = "is:open", logins = array({ "user-a", "user-b" }), group = "none", prompts = array({}) },
+		{ id = "v2", name = "Just b", integration = "github", query = "is:open", logins = array({ "user-b" }), group = "none", prompts = array({}) },
+		{ id = "v3", name = "Active", integration = "github", query = "is:open", logins = array({}), group = "none", prompts = array({}) },
+	}) })
+	local b = openIssues(w)
+	same(sidebarOf(b), {
+		"Both @ GitHub - user-a = v1@user-a",
+		"Active @ GitHub - user-a = v3",
+		"Both @ GitHub - user-b = v1@user-b",
+		"Just b @ GitHub - user-b = v2",
+	}, "Both is under each of its logins; the view with none is under the active account's group")
+	goToSettings(b, "views", true)
+	has(rowIn(b, "vopen:v1").hint, "GitHub - user-a, user-b", "the summary in Settings lists the logins together")
+	has(rowIn(b, "vopen:v3").hint, "GitHub - user-a", "and a view with none names the active account")
+	s.gh.active = "user-b"
+	w.advance(11 * 60 * 1000) -- past the cached list of logins
+	w.flush()
+	b.typeText("r")
+	w.flush()
+	same(sidebarOf(b), {
+		"Both @ GitHub - user-a = v1@user-a",
+		"Both @ GitHub - user-b = v1@user-b",
+		"Just b @ GitHub - user-b = v2",
+		"Active @ GitHub - user-b = v3",
+	}, "when the active account switches, the view with none follows it")
+end)
+
+case("host: removing the active scope's login from a view moves to its first remaining login", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60) }
+	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30) }
+	loginsView(w, { "octocat", "work" })
+	local b = openQueue(w)
+	pickScope(b, "v1@work")
+	w.flush()
+	same(listed(b), { "no_2fr_237" }, "the work scope is shown")
+	goToSettings(b, "views")
+	expand(b, "vopen:v1")
+	b.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "octocat" }) })
+	w.flush()
+	same(w.kv.get("views-prs").items[1].logins, { "octocat" }, "the list is saved without it")
+	same(sidebarOf(b), { "Both @ - = v1" }, "the view is one scope again, and the block's sidebar needs no groups")
+	same(listed(b), { "no_2fr_231" }, "and shows the login that is left")
+	local searches = requestsOf(s.gh, "search")
+	eq(searches[#searches].login, "octocat", "searched as it")
+	-- adding a login keeps the scope shown; emptying the list is gh's active account
+	b.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "octocat", "work" }) })
+	eq(pickerOf(b).scope, "v1@octocat", "a login added keeps the scope that was shown")
+	eq(#requestsOf(s.gh, "search"), #searches, "and searches nothing more")
+	b.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({}) })
+	w.flush()
+	eq(pickerOf(b).scope, "v1", "with no login the view is one scope")
+	eq(requestsOf(s.gh, "search")[#requestsOf(s.gh, "search")].login, "octocat", "run as gh's active account")
+end)
+
+case("host: the active login is saved with the block and restored; one the view no longer lists falls back to its first", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60) }
+	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30) }
+	loginsView(w, { "octocat", "work" })
+	local b = openQueue(w)
+	pickScope(b, "v1@work")
+	w.flush()
+	local saved = b.saved()
+	eq(saved.activeViewId, "v1", "the view is saved")
+	eq(saved.activeLogin, "work", "and the login of its scope")
+	local again = w.open(2, { "/work/r" }, saved)
+	w.flush()
+	eq(pickerOf(again).scope, "v1@work", "a restored block shows the same scope")
+	same(listed(again), { "no_2fr_237" }, "with that login's list")
+	local searches = requestsOf(s.gh, "search")
+	eq(searches[#searches].login, "work", "searched as it")
+	local stale = { version = 2, launchCwd = "/work/r", activeViewId = "v1", activeLogin = "gone" }
+	local third = w.open(3, { "/work/r" }, stale)
+	w.flush()
+	eq(pickerOf(third).scope, "v1@octocat", "a saved login the view does not list falls back to its first")
+	same(listed(third), { "no_2fr_231" }, "and shows that one's PRs")
+	eq(third.saved().activeLogin, "octocat", "which is what is saved from then on")
+end)
+
+case("host: the logins chips of a view add and remove logins, save them, and search again as them", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30) }
+	loginsView(w, {})
+	local fresh = openQueue(w)
+	same(listed(fresh), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "a view with no logins lists the active account's PRs")
+	goToSettings(fresh, "views")
+	expand(fresh, "vopen:v1")
+	local row = rowIn(fresh, "vlogins:v1")
+	eq(row.label, "GitHub logins", "the row")
+	eq(row.control.k, "multi", "is a chips row")
+	local options: { string } = {}
+	for _, o in row.control.options do
+		table.insert(options, o.value)
+	end
+	same(options, { "octocat", "work" }, "offering every signed-in login")
+	same(row.control.values, array({}), "none on by default")
+	-- the keys: Enter picks, Right moves, Space toggles
+	fresh.event({ ev = "select", id = "layer.settings", item = "vlogins:v1" })
+	fresh.press("enter")
+	fresh.press("right")
+	fresh.press("space")
+	same(w.kv.get("views-prs").items[1].logins, { "work" }, "Space turns a login on, saved at once")
+	w.flush()
+	same(listed(fresh), { "no_2fr_237" }, "the view searched again, as that login: the old account's list is gone")
+	eq(requestsOf(s.gh, "search")[#requestsOf(s.gh, "search")].login, "work", "its request ran as it")
+	fresh.press("left")
+	fresh.press("space")
+	same(w.kv.get("views-prs").items[1].logins, { "work", "octocat" }, "another login goes after it, in the order picked")
+	fresh.press("escape")
+	fresh.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "octocat" }) })
+	same(w.kv.get("views-prs").items[1].logins, { "octocat" }, "a changed list keeps what is still on and drops the rest")
+	fresh.event({ ev = "change", id = "layer.settings", item = "vlogins:v1", value = array({ "octocat", "OCTOCAT", "bad name" }) })
+	same(w.kv.get("views-prs").items[1].logins, { "octocat" }, "a repeat in another case and a name that is no login are dropped")
+	-- a saved login gh does not know stays an option, so it can be switched off
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Both", integration = "github", query = "is:open author:@me", logins = array({ "gone" }), group = "none", prompts = array({}) },
+	}) })
+	local third = w.open(3, { "/work/r" })
+	w.flush()
+	goToSettings(third, "views")
+	expand(third, "vopen:v1")
+	local known: { string } = {}
+	for _, o in rowIn(third, "vlogins:v1").control.options do
+		table.insert(known, o.value)
+	end
+	same(known, { "octocat", "work", "gone" }, "the signed-in logins, then the saved one gh does not list")
+end)
+
+case("host: a view saved with one login loads as a list of one; a malformed list is not overwritten; repeats collapse on the next save", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.work = { searchItem(7, "o/r", EPOCH - 30) }
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Old", integration = "github", query = "is:open", login = "work", group = "none", prompts = array({}) },
+	}) })
+	local b = openQueue(w)
+	same(listed(b), { "no_2fr_237" }, "the old login still decides who searches")
+	eq(requestsOf(s.gh, "search")[1].login, "work", "as that login")
+	goToSettings(b, "views")
+	same(rowIn(b, "vopen:v1").label, "Old · active", "the view")
+	expand(b, "vopen:v1")
+	same(rowIn(b, "vlogins:v1").control.values, { "work" }, "shows it in the chips")
+	b.press("enter")
+	b.typeText("!")
+	b.press("enter")
+	local saved = w.kv.get("views-prs").items[1]
+	same(saved.logins, { "work" }, "the next save writes a list")
+	eq(saved.login, nil, "and no longer the old field")
+	-- repeats of another case collapse
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Dups", integration = "github", query = "is:open", logins = array({ "work", "Work" }), group = "none", prompts = array({}) },
+	}) })
+	local again = openQueue(w, 2)
+	goToSettings(again, "views")
+	expand(again, "vopen:v1")
+	same(rowIn(again, "vlogins:v1").control.values, { "work" }, "the same login in another case is one")
+	-- a malformed list is refused whole
+	local bad = { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Bad", integration = "github", query = "is:open", logins = array({ "no good" }), group = "none", prompts = array({}) },
+	}) }
+	w.kv.put("views-prs", bad)
+	local third = openQueue(w, 3)
+	has(third.text(), "malformed", "a login with a space makes the saved views malformed")
+	same(w.kv.get("views-prs"), bad, "and they are not overwritten")
+end)
+
+case("host: a Jira issues block lists its view's issues and saves its active view", function(w: World)
 	local s = jiraHost(w)
 	local b = openJira(w)
-	same(w.kv.get("jira-filters"), {
-		version = 1,
-		nextId = 3,
-		items = {
-			{ id = "f1", name = "Assigned to me", query = "assignee = currentUser() AND statusCategory != Done" },
-			{ id = "f2", name = "Reported by me", query = "reporter = currentUser() AND statusCategory != Done" },
-		},
-	}, "the first run seeds the Jira filters")
-	eq(w.kv.get("issue-filters"), nil, "and leaves the GitHub issue filters alone")
+	eq(w.kv.get("views-prs"), nil, "the PR views are left alone")
 	-- How many searches acli was asked for.
 	local function searched(): number
 		local n = 0
@@ -7845,20 +8099,18 @@ case("host: a Jira issues block lists its project under Jira filters and saves i
 	end
 	eq(searched(), 1, "one search covers the project's issues")
 	for _, call in w.calls do
-		eq(call.argv[1] == "gh", false, "a Jira block never asks gh: " .. table.concat(call.argv, " "))
+		-- the sidebar's group labels learn gh's active login; nothing else may ask gh
+		eq(call.argv[1] == "gh" and call.argv[2] ~= "auth", false, "a Jira block never searches through gh: " .. table.concat(call.argv, " "))
+		eq(call.argv[1] == "gh" and call.argv[3] ~= "status", false, "nor reads a token: " .. table.concat(call.argv, " "))
 	end
-	same(listed(b), { "nABC-12", "nABC-13" }, "listed in acli's order")
-	eq(pickerOf(b).selected, "nABC-12", "the first issue is selected")
+	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
+	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	eq(b.title(), "Plotroom · Assigned to me (2)", "the title names the filter and counts the issues")
-	eq(pickerOf(b).scopes[1].label, "Assigned to me", "the filter list shows the Jira filters")
-	eq(pickerOf(b).scopes[2].label, "Reported by me", "both of them")
-	local title = pickerOf(b).title[1]
-	eq(title.t, "ABC", "the heading names the project")
-	eq(title.href, "plotroom://jira-projects", "and opens the Jira project picker")
-	eq(actionOf(b, "repos").label, "Project", "the action bar's button says Project")
+	eq(pickerOf(b).scopes[1].label, "Assigned to me", "the view list shows the Jira view")
+	eq(actionOf(b, "repos"), nil, "the action bar has no repository button")
 	b.typeText("o")
-	eq(w.opened[#w.opened], "plotroom://jira-projects", "as o does")
+	eq(#w.opened, 0, "and o opens nothing")
 	local function row(i: number): any
 		return pickerOf(b).items[i]
 	end
@@ -7870,35 +8122,34 @@ case("host: a Jira issues block lists its project under Jira filters and saves i
 		end
 		return table.concat(out, " ")
 	end
-	eq(row(1).id, "nABC-12", "the id is n and the issue's key")
+	eq(row(1).id, "nabc_23ABC-12", "the id is n and the issue's key, escaped")
 	eq(row(1).label, "Fix login", "the summary is the label")
-	eq(detailText(row(1)), "ABC-12 · Ann Lee · Bug · Bob Ray", "the key, the reporter, the type and the assignee; no age, as the search carries no dates")
-	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "an unassigned issue shows no assignee")
-	eq(badges(1), "In Progress/warning ui/-", "the workflow status is a badge toned by its category, then the labels")
-	eq(badges(2), "Done/success", "a done issue says Done")
+	eq(detailText(row(1)), "ABC-12 · Ann Lee · Bug", "the key, the reporter and the type: no repository, no age (the search carries no dates), no assignee")
+	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "the same for an unassigned issue")
+	eq(row(1).facts.assignee, nil, "no assignee column: the rows do not show assignees")
+	eq(row(2).facts.assignee, nil, "for any issue")
+	same(pickerOf(b).columns, { { id = "comments", format = "text", priority = 50 } }, "the only column is the comment count")
+	eq(badges(1), "Jira/accent In Progress/warning ui/-", "the integration comes first, accent for Jira, then the workflow status toned by its category, then the labels")
+	eq(badges(2), "Jira/accent Done/success", "a done issue says Done")
 	eq(row(1).facts.comments, nil, "the search carries no comment count")
 	eq(actionOf(b, "open").label, "Jira ↗", "the Open button names the tracker")
 	b.typeText("?")
-	local byKeys: { [string]: string } = {}
 	for _, r in helpRows(b.view().layer) do
-		byKeys[r.keys] = r.text
+		eq(r.keys == "o", false, "no shortcut for another project")
 	end
-	eq(byKeys.o, "Show another Jira project: a saved one, one acli lists, or type its key", "o shows another project")
 	b.press("escape")
 	local rerun = w.open(1, { "/work/r" }, nil, "issues")
 	w.flush()
-	same(listed(rerun), { "nABC-12", "nABC-13" }, "running init again for the live pane keeps its Jira list")
+	same(listed(rerun), { "nabc_23ABC-12", "nabc_23ABC-13" }, "running init again for the live pane keeps its Jira list")
 	eq(searched(), 1, "and does not search twice")
 	local saved = b.saved()
-	eq(saved.tracker, "jira", "the block saves the tracker it reads")
-	eq(saved.repo, "ABC", "and its project")
+	eq(saved.activeViewId, "v1", "the block saves its active view")
 	local again = w.open(2, { "/work/r" }, saved, "issues")
 	w.flush()
-	eq(pickerOf(again).title[1].t, "ABC", "a restored block shows the project")
-	eq(again.title(), "Plotroom · Assigned to me (2)", "under the Jira filters")
+	eq(again.title(), "Plotroom · Assigned to me (2)", "a restored block shows the same view")
 end)
 
-case("host: a Jira block's Settings speak of its project: JQL filters, the shared prompts, its checkout and its branch format", function(w: World)
+case("host: a Jira view's Settings speak of JQL, the shared prompts, the repositories its issues are worked in and its branch format", function(w: World)
 	local s = jiraHost(w)
 	saveIssuePrompts(w, { issuePrompt("p1", "Triage", "Triage {key} in {project}: {title}", true) })
 	local b = openJira(w)
@@ -7925,24 +8176,24 @@ case("host: a Jira block's Settings speak of its project: JQL filters, the share
 		end
 		return jql
 	end
-	goToSettings(b, "filters")
-	eq(prefsOf(b).lead, "Saved JQL searches for the issue list's filter column. Each runs as project = ABC AND (your query), newest update first, so it may not close that parenthesis or add ORDER BY.", "filters")
-	eq(rowIn(b, "query:f1").hint, "JQL.", "the query field names its syntax")
-	eq(rowIn(b, "query:f1").control.placeholder, "assignee = currentUser() AND statusCategory != Done", "and shows an example")
-	eq(rowIn(b, "add").hint, "Starts as every open issue.", "the new filter")
-	save("query:f1", "a = 1) OR (b = 2")
-	eq(rowIn(b, "query:f1").warning, "Unbalanced parentheses: a filter cannot close the project's scope.", "a query that closes the project's scope is refused")
-	eq(prefsOf(b).editing.row, "query:f1", "the draft stays for a correction")
+	goToSettings(b, "views", true)
+	expand(b, "vopen:v1")
+	eq(rowIn(b, "query:v1").hint, "JQL across every project, listed newest update first, so leave out ORDER BY.", "the query field names its syntax")
+	eq(rowIn(b, "query:v1").control.placeholder, "assignee = currentUser() AND statusCategory != Done", "and shows an example")
+	eq(rowIn(b, "vlogin:v1"), nil, "a Jira view has no gh login")
+	save("query:v1", "a = 1) OR (b = 2")
+	eq(rowIn(b, "query:v1").warning, "Unbalanced parentheses.", "a query that closes its own parenthesis is refused")
+	eq(prefsOf(b).editing.row, "query:v1", "the draft stays for a correction")
 	b.press("escape")
-	s.acli.searches['project = "ABC" AND (summary ~ "login") ORDER BY updated DESC'] = { jiraItem("ABC-12", "Fix login") }
-	save("query:f1", 'summary ~ "login"')
+	s.acli.searches['(summary ~ "login") ORDER BY updated DESC'] = { jiraItem("ABC-12", "Fix login") }
+	save("query:v1", 'summary ~ "login"')
 	w.flush()
-	eq(lastJql(), 'project = "ABC" AND (summary ~ "login") ORDER BY updated DESC', "a good query searches again inside the project, newest update first")
-	same(listed(b), { "nABC-12" }, "and lists what it finds")
+	eq(lastJql(), '(summary ~ "login") ORDER BY updated DESC', "a good query searches again, in parentheses, newest update first")
+	same(listed(b), { "nabc_23ABC-12" }, "and lists what it finds")
 	page("prompts")
-	eq(prefsOf(b).lead, "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the project's main checkout. Variables such as {url} fill in the issue's details.", "prompts")
+	expand(b, "popen:p1")
 	eq(rowIn(b, "pname:p1").control.value, "Triage", "the prompts saved for issues are shared with GitHub's")
-	eq(rowIn(b, "pwhere:p1").hint, "On: in the issue's worktree (made first if needed). Off: in the project's main checkout, in a new tab.", "where a prompt runs")
+	eq(rowIn(b, "pwhere:p1").hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.", "where a prompt runs")
 	b.event({ ev = "action", id = "layer.settings", act = "edit-prompt", value = "ptext:p1" })
 	local legend: { string } = {}
 	for _, item in findKey(editorCard(b), "list", "kv").p.items do
@@ -7950,201 +8201,115 @@ case("host: a Jira block's Settings speak of its project: JQL filters, the share
 	end
 	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}" }, "the variables of both trackers are listed")
 	b.press("escape")
-	page("worktrees")
-	eq(prefsOf(b).lead, "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the project's local checkout.", "worktrees")
-	eq(rowIn(b, "checkout").control.value, "/work/r", "the project's checkout")
-	eq(rowIn(b, "checkout").hint, "Worktrees of ABC are made from this git checkout, on a new branch from its first remote's default branch (origin, then upstream, then by name). The folder must already be a checkout; nothing is cloned for Jira.", "which must be a checkout already")
-	eq(rowIn(b, "branch").hint, "Variables {key} {slug} {project}. Empty: {key}-{slug}.", "the branch format offers Jira's variables")
-	save("branch", "{owner}-{key}")
-	eq(rowIn(b, "branch").warning, "Unknown variable {owner}.", "GitHub's owner is unknown to it")
-	b.press("escape")
-	save("branch", "{project}/{key}")
-	eq(w.kv.get("branches")["jira/ABC"], "{project}/{key}", "a good format is saved under the project")
+	page("jira")
+	eq(rowIn(b, "jrepos:ABC").control.values[1], "o/r", "the project's repository")
+	same(rowIn(b, "jrepos:ABC").control.options, { { value = "o/r", label = "o/r" } }, "chosen among the saved repositories")
+	page("repos")
+	eq(rowIn(b, "branch:o/r").hint, "Variables {key} {slug} {owner} {repo} {project}. Empty: {key}-{slug}.", "the branch format offers the Jira variable too")
+	save("branch:o/r", "{project}/{key}")
+	eq(w.kv.get("branch-formats")["o/r"], "{project}/{key}", "a good format is saved under the repository")
 	has(b.text(), "ABC/ABC-12", "and the preview's branch follows")
-	save("checkout", "/elsewhere")
-	w.flush()
-	has(rowIn(b, "checkout").warning, "A Jira project names no repository to clone", "a folder that is no checkout is refused: nothing is cloned for Jira")
-	eq(w.kv.get("repos")["jira/ABC"], "/work/r", "and the saved checkout stays")
-	page("filters")
+	page("views")
 	b.event({ ev = "select", id = "layer.settings", item = "add" })
 	b.press("enter")
-	eq(w.kv.get("jira-filters").items[3].query, "statusCategory != Done", "a new filter starts as the issues not done")
-	eq(w.kv.get("issue-filters"), nil, "and the GitHub issue filters are never written")
+	eq(w.kv.get("views-issues").items[2].query, "is:open involves:@me", "a new view starts as the GitHub one")
 end)
 
-case("host: Settings › Integration offers installed CLIs only and switches by picking a project", function(w: World)
-	local s = issueHost(w)
-	local acli = newAcli(w)
-	local missing = true
-	acli.override = function(req: AcliReq): Reply?
-		if req.kind == "version" and missing then
-			return { raise = "no such file or directory" } -- acli is not installed
-		end
-		return nil
-	end
-	acli.searches[JIRA_ASSIGNED] = { jiraItem("ABC-12", "Fix login") }
+case("host: removing a repository drops it from jira-repos, branch-formats and setup-commands", function(w: World)
+	issueHost(w)
+	w.kv.put("checkouts", { ["x/y"] = "/work/y" })
+	w.kv.put("branch-formats", { ["x/y"] = "keep/{key}", ["o/r"] = "{key}" })
+	w.kv.put("setup-commands", { ["x/y"] = array({ "make" }), ["o/r"] = array({ "pnpm install" }) })
+	w.kv.put("jira-repos", { ABC = array({ "o/r", "x/y" }), DEF = array({ "x/y" }) })
 	local b = openIssues(w)
-	local function page(name: string)
-		b.event({ ev = "action", id = "layer.settings", act = "page", value = name })
-	end
-	-- How often `program --version` was spawned.
-	local function probes(program: string): number
-		local n = 0
-		for _, call in w.calls do
-			if call.argv[1] == program and call.argv[2] == "--version" then
-				n += 1
-			end
-		end
-		return n
-	end
-	local function pageIds(): { string }
-		local ids: { string } = {}
-		for _, p in prefsOf(b).pages do
-			table.insert(ids, p.id)
-		end
-		return ids
-	end
-	local function sectionIds(): { string }
-		local ids: { string } = {}
-		for _, section in prefsOf(b).sections do
-			table.insert(ids, section.id)
-		end
-		return ids
-	end
-	goToSettings(b, "filters")
-	same(pageIds(), { "filters", "prompts", "source", "worktrees" }, "an issues block's Settings offer Integration where the PR queue offers GitHub")
-	eq(probes("gh") + probes("acli"), 0, "no CLI is looked up before the Integration page opens")
-	page("source")
-	eq(rowIn(b, "use:github").disabled, "Checking whether gh is installed…", "gh is being checked")
-	eq(rowIn(b, "use:jira").disabled, "Checking whether acli is installed…", "and so is acli")
-	w.flush()
-	eq(probes("gh"), 1, "gh was asked once")
-	eq(probes("acli"), 1, "and so was acli")
-	eq(prefsOf(b).lead, "Issues load through GitHub's GraphQL API with your gh login.", "a GitHub block's Integration page")
-	same(sectionIds(), { "sec-source", "sec-account", "status-line" }, "the integrations come first, then the gh account and Refresh")
-	eq(rowIn(b, "use:github").disabled, nil, "gh starts: GitHub can be chosen")
-	eq(rowIn(b, "use:github").control.label, "Change repository", "the one in use offers another repository")
-	eq(rowIn(b, "use:github").hint, "In use: o/r.", "and says what it shows")
-	eq(rowIn(b, "use:jira").disabled, "acli is not installed on this host. Install Atlassian's CLI (developer.atlassian.com/cloud/acli) and sign in with acli jira auth login to use Jira.", "acli does not start: Jira is disabled, and says how to get it")
-	eq(rowIn(b, "use:jira").control.label, "Use Jira", "the other offers to switch")
-	eq(rowIn(b, "use:jira").hint, "Issues of a Jira Cloud project, read with Atlassian's acli.", "and says what it is")
-	-- Refresh asks again; with acli answering, Jira can be chosen
-	missing = false
-	b.event({ ev = "action", id = "layer.settings", act = "refresh", value = "refresh" })
-	w.flush()
-	eq(probes("gh"), 2, "Refresh asks gh again")
-	eq(probes("acli"), 2, "and acli")
-	eq(rowIn(b, "use:jira").disabled, nil, "an acli that starts is offered")
-	b.event({ ev = "select", id = "layer.settings", item = "use:jira" })
+	goToSettings(b, "repos", true)
+	b.event({ ev = "select", id = "layer.settings", item = "rremove:x/y" })
 	b.press("enter")
-	eq(w.opened[#w.opened], "plotroom://jira-projects", "its action opens the Jira project picker")
-	eq(pickerOf(b).title[1].t, "o/r", "the block switches only once a project is picked")
-	b.event({ ev = "select", id = "layer.settings", item = "use:github" })
-	b.press("enter")
-	eq(w.opened[#w.opened], "plotroom://repos", "GitHub's opens the repository picker")
-	-- a project key that cannot be one is refused; a pull request queue has no Jira
-	b.event({ ev = "action", act = "show-jira", value = "a" })
-	eq(w.toasts[#w.toasts].text, "Not a Jira project key", "a key that cannot be one is refused")
-	eq(pickerOf(b).title[1].t, "o/r", "and changes nothing")
-	local pr = w.open(2, { "/work/r" })
-	w.flush()
-	pr.event({ ev = "action", act = "show-jira", value = "ABC" })
-	eq(pickerOf(pr).title[1].t, "o/r", "a pull request queue ignores a Jira project")
-	eq(w.kv.get("repos")["jira/ABC"], nil, "and saves nothing")
-	-- an issue request for a project of the other tracker is dropped
-	request(b, "x1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false })
-	eq(answerOf(b, "x1"), nil, "a Jira project's request to a GitHub block is dropped")
-	acli.projects = { { key = "ABC", name = "Alpha" } }
-	request(b, "x2", { op = "jira-projects" })
-	w.flush()
-	same(answerOf(b, "x2").items, { { key = "ABC", name = "Alpha", saved = false } }, "a GitHub block's picker lists the projects acli knows, none of them shown")
-	request(pr, "x3", { op = "jira-projects" })
-	w.flush()
-	eq(answerOf(pr, "x3"), nil, "a pull request queue has no Jira projects to list")
-	-- picking a project switches the block to Jira
-	local searches = #requestsOf(s.gh, "issue-search")
-	b.event({ ev = "action", act = "show-jira", value = "abc" })
-	w.flush()
-	eq(pickerOf(b).title[1].t, "ABC", "a typed key shows the project, upper-cased")
-	eq(pickerOf(b).title[1].href, "plotroom://jira-projects", "and the heading opens the Jira picker")
-	eq(w.kv.get("repos")["jira/ABC"], "", "the project is saved without a checkout")
-	same(listed(b), { "nABC-12" }, "its issues are listed")
-	eq(pickerOf(b).scopes[2].label, "Reported by me", "under the Jira filters")
-	eq(#requestsOf(s.gh, "issue-search"), searches, "gh was not asked for them")
-	eq(w.kv.get("issue-filters").items[2].name, "Created by me", "the GitHub issue filters are untouched")
-	eq(b.saved().tracker, "jira", "the block saves that it reads Jira")
-	eq(b.saved().repo, "ABC", "and its project")
-	eq(prefsOf(b).page, "source", "Settings stays on the Integration page")
-	eq(prefsOf(b).lead, "Issues load through Atlassian's acli as the account it is signed in to (acli jira auth login), the newest 100 per filter.", "now about Jira")
-	same(sectionIds(), { "sec-source", "status-line" }, "a Jira block has no gh account to set")
-	eq(rowIn(b, "use:jira").control.label, "Change project", "Jira now offers another project")
-	eq(rowIn(b, "use:jira").hint, "In use: ABC.", "and says what it shows")
-	eq(rowIn(b, "use:github").control.label, "Use GitHub", "GitHub offers to switch back")
-	has(rowIn(b, "refresh").hint, "Auto-refresh every 1m, next at ", "Jira refreshes every minute: it has no quota to pace")
-	local walked: { string } = {}
-	for _ = 1, 4 do
+	b.typeText("d")
+	eq(w.kv.get("checkouts")["x/y"], nil, "its checkout is forgotten")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the other repository's stays")
+	same(w.kv.get("branch-formats"), { ["o/r"] = "{key}" }, "so is its branch format")
+	same(w.kv.get("setup-commands"), { ["o/r"] = { "pnpm install" } }, "and its setup commands")
+	same(w.kv.get("jira-repos"), { ABC = { "o/r" }, DEF = array({}) }, "every Jira project drops it; one left with none stays listed")
+	eq(rowIn(b, "checkout:x/y"), nil, "its section is gone from the page")
+end)
+
+case("host: an issues block's Settings pages cycle with Tab: views, prompts, repositories, Jira, connection", function(w: World)
+	issueHost(w)
+	newAcli(w)
+	local b = openIssues(w)
+	goToSettings(b, "views", true)
+	local walked: { string } = { prefsOf(b).page }
+	for _ = 1, 5 do
 		b.press("tab")
 		table.insert(walked, prefsOf(b).page)
 	end
-	same(walked, { "worktrees", "filters", "prompts", "source" }, "Tab walks Integration's neighbours and around again")
-	-- picking a repository switches back to GitHub
-	b.event({ ev = "action", act = "show-repo", value = "o/r" })
+	same(walked, { "views", "prompts", "repos", "jira", "connection", "views" }, "Tab walks every page and around again")
+	local ids: { string } = {}
+	for _, p in prefsOf(b).pages do
+		table.insert(ids, p.id)
+	end
+	same(ids, { "views", "prompts", "repos", "jira", "connection" }, "an issues block offers the Jira page; the PR queue has none")
+	local pr = w.open(2, { "/work/r" })
 	w.flush()
-	eq(pickerOf(b).title[1].t, "o/r", "a picked repository shows GitHub again")
-	eq(pickerOf(b).title[1].href, "plotroom://repos", "whose heading opens the repository picker")
-	eq(pickerOf(b).scopes[2].label, "Created by me", "under the GitHub issue filters")
-	same(listed(b), { "n12", "n13", "n14" }, "with its issues")
-	eq(b.saved().tracker, "github", "the block saves that it reads GitHub")
-	same(sectionIds(), { "sec-source", "sec-account", "status-line" }, "the gh account is back")
-	eq(rowIn(b, "use:github").control.label, "Change repository", "GitHub offers another repository")
-	eq(rowIn(b, "use:jira").control.label, "Use Jira", "and Jira to switch")
-	-- a saved Jira project that is no key starts the block as GitHub issues from its launch directory
-	local invalid = w.open(3, { "/work/r" }, { version = 1, launchCwd = "/work/r", repo = "not a key", tracker = "jira" }, "issues")
-	w.flush()
-	eq(pickerOf(invalid).title[1].t, "o/r", "a restored block with no valid project shows the launch directory's repository")
-	eq(invalid.saved().tracker, "github", "as GitHub issues")
+	goToSettings(pr, "views")
+	local prIds: { string } = {}
+	for _, p in prefsOf(pr).pages do
+		table.insert(prIds, p.id)
+	end
+	same(prIds, { "views", "prompts", "repos", "connection" }, "the PR queue's pages")
 end)
 
-case("host: a Jira issue request makes its worktree from the project's checkout on any remote", function(w: World)
+case("host: a Jira issue request makes its worktree in the project's mapped GitHub repository", function(w: World)
 	local s = jiraHost(w)
-	w.kv.put("setup", { ["jira/ABC"] = array({ "pnpm install" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	local b = openJira(w)
-	local target = "/wt/plotroom-jira.abc-issue-ABC-12"
+	local target = "/wt/plotroom-o_r-issue-ABC-12"
 	eq(badgeOf(b), nil, "no badge before there is a worktree")
 	request(b, "j1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = true })
 	w.flush()
 	local a = answerOf(b, "j1")
-	eq(a.path, target, "the worktree is named after the project and the issue's key")
+	eq(a.path, target, "the worktree is named after the repository and the issue's key")
 	eq(a.created, true, "created")
 	eq(a.summary, "Created · ABC-12-fix-login at bbbbbbb · Clean", "on a branch of the key and the summary's slug, at the remote's default branch")
-	eq(a.setup, "pnpm install", "the project's saved setup commands run in a new worktree")
+	eq(a.setup, "pnpm install", "the repository's saved setup commands run in a new worktree")
 	same(a.vars, {
 		url = "https://acme.atlassian.net/browse/ABC-12",
 		key = "ABC-12",
 		title = "Fix login",
 		author = "Ann Lee",
 		labels = "ui",
+		owner = "o",
+		repo = "r",
 		project = "ABC",
 		status = "In Progress",
 		type = "Bug",
 		branch = "ABC-12-fix-login",
 	}, "the issue's Jira variables, with the branch")
-	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the first remote's default branch was fetched, though that remote is not GitHub")
+	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/o/r"), 1, "the repository's default branch was fetched into its own base ref")
 	eq(countLog(s.git, "worktree add -b ABC-12-fix-login " .. target .. " " .. sha("b")), 1, "and the worktree made once")
 	eq(w.opened[#w.opened], "plotroom://rpc/j1", "the window is told to read the answer")
 	eq(badgeOf(b).text, "Worktree", "a worktree puts a badge on the row")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
-	eq(pickerOf(b).items[1].badges[1].text, "In tab", "a tab in the worktree marks the issue: the directory keeps the key's case")
-	-- a format saved for the project applies, with its {project}
-	w.kv.put("branches", { ["jira/ABC"] = "{project}/{key}" })
+	eq(pickerOf(b).items[1].badges[1].text, "Jira", "the integration stays the first badge")
+	eq(pickerOf(b).items[1].badges[2].text, "In tab", "a tab in the worktree marks the issue after it: the directory keeps the key's case")
+	local titlerow: any = findKey(pickerNode(b), "titlerow")
+	yes(titlerow ~= nil, "the preview has a title row")
+	eq(titlerow.c[1].p.key, "title", "its first node is the title")
+	eq(titlerow.c[2].p.key, "integration", "followed by the integration badge")
+	eq(titlerow.c[2].p.text, "Jira", "naming the tracker")
+	eq(titlerow.c[2].p.tone, "accent", "accent for Jira")
+	eq(findKey(findKey(pickerNode(b), "head"), "integration"), nil, "and the head row no longer carries it")
+	-- a format saved for the repository applies, with its {project}
+	w.kv.put("branch-formats", { ["o/r"] = "{project}/{key}" })
 	request(b, "j2", { op = "issue", repo = "ABC", ref = "ABC-13", worktree = true })
 	w.flush()
 	eq(answerOf(b, "j2").vars.branch, "ABC/ABC-13", "the project's branch format names the branch")
 	-- the main checkout
 	request(b, "j3", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false })
 	local main = answerOf(b, "j3")
-	eq(main.path, "/work/r", "a prompt set to the main checkout runs in the project's checkout")
+	eq(main.path, "/work/r", "a prompt set to the main checkout runs in the repository's checkout")
 	eq(main.vars.branch, nil, "with no branch: there is no worktree")
 	eq(main.vars.project, "ABC", "but the project")
 	-- what is not for this block is dropped
@@ -8153,11 +8318,11 @@ case("host: a Jira issue request makes its worktree from the project's checkout 
 	request(b, "g2", { op = "issue", repo = "abc", ref = "ABC-12", worktree = false })
 	request(b, "g3", { op = "issue", repo = "ABC", ref = "ABC 12", worktree = false })
 	w.flush()
-	eq(answerOf(b, "g1"), nil, "a GitHub repository's request to a Jira block is dropped")
+	eq(answerOf(b, "g1").problem, "That issue is not loaded here any more; Refresh and try again.", "a GitHub issue the Jira list never had is refused")
 	eq(answerOf(b, "g2"), nil, "so is a project key that is not one")
 	eq(answerOf(b, "g3"), nil, "and a reference that cannot name a directory")
 	eq(#w.calls, ran, "nothing ran")
-	eq(#w.opened, told, "and the window was told nothing")
+	eq(#w.opened, told + 1, "and the window was told of that refusal only")
 end)
 
 case("host: the Jira preview shows the union rows and Jira's own", function(w: World)
@@ -8187,7 +8352,7 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 		end
 		return out
 	end
-	same(factKeys(), { "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
+	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
 	eq(factOf(b, "Reporter"), "Ann Lee", "the reporter is a name, not a login")
 	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
 	eq(factOf(b, "Type"), "Bug", "the type")
@@ -8199,7 +8364,7 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(s.acli.requests[3].kind, "view", "the details load once the cursor rests")
 	eq(factOf(b, "Parent"), "ABC-1 Auth epic", "the parent")
 	eq(factOf(b, "Sprint"), "Sprint 2", "the active sprint")
-	same(factKeys(), { "Reporter", "Assignees", "Type", "Priority", "Parent", "Sprint", "Fix versions", "Comments", "Opened", "Updated" }, "no components row without components")
+	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority", "Parent", "Sprint", "Fix versions", "Comments", "Opened", "Updated" }, "no components row without components")
 	eq(factOf(b, "Fix versions"), "v2", "the fix version")
 	eq(factOf(b, "Comments"), "2", "the comment count")
 	eq(factOf(b, "Opened"), "4h ago", "when it was opened")
@@ -8219,16 +8384,16 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(linked(1), "blocks ABC-3 Login API | circle-dot | success | https://acme.atlassian.net/browse/ABC-3", "a linked issue says how it relates")
 	eq(linked(2), "subtask ABC-14 Add test | circle-dot | success | https://acme.atlassian.net/browse/ABC-14", "and so does a subtask")
 	-- an issue whose details cannot be read says why
-	b.event({ ev = "select", id = "layer.queue", item = "nABC-13" })
+	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)
 	has(b.text(), "Could not load the details: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
 	has(b.text(), "Retry", "with a Retry button")
 	eq(factOf(b, "Comments"), nil, "and what only the details know stays hidden")
 end)
 
-case("host: the project pickers: Jira's list puts saved projects first, and GitHub's lists never name a Jira key", function(w: World)
+case("host: the project pickers: Jira's list puts saved projects first with their repositories, and the repository lists are GitHub's", function(w: World)
 	local s = jiraHost(w)
-	local gh = newGh(w)
+	local gh = s.gh
 	gh.tokens.octocat = "tok-octo"
 	s.acli.projects = {
 		{ key = "ABC", name = "Alpha" },
@@ -8236,18 +8401,19 @@ case("host: the project pickers: Jira's list puts saved projects first, and GitH
 		{ key = "XYZ", name = "Xylo" },
 		{ key = "lower", name = "Not a key" },
 	}
-	w.kv.put("repos", { ["jira/ABC"] = "/work/r", ["jira/DEF"] = "", ["jira/nope"] = "/x", ["github.com/o/r"] = "/work/o" })
+	w.kv.put("jira-repos", { ABC = array({ "o/r", "x/y" }), DEF = array({}), nope = array({ "o/r" }) })
+	w.kv.put("checkouts", { ["o/r"] = "/work/o", ["x/y"] = "" })
 	local b = openJira(w)
 	request(b, "p1", { op = "jira-projects" })
 	w.flush()
 	local answer = answerOf(b, "p1")
 	local want: { any } = {
-		{ key = "ABC", name = "Alpha", path = "/work/r", saved = true, current = true },
-		{ key = "DEF", saved = true, current = false },
+		{ key = "ABC", name = "Alpha", repos = "o/r, x/y", saved = true },
+		{ key = "DEF", repos = "", saved = true },
 		{ key = "LOW", name = "Lower", saved = false },
 		{ key = "XYZ", name = "Xylo", saved = false },
 	}
-	same(answer.items, want, "saved projects by key with their checkouts and the shown one marked, then the rest of acli's list; a key that is none is left out")
+	same(answer.items, want, "saved projects by key with their repositories, then the rest of acli's list; a key that is none is left out")
 	eq(answer.problem, nil, "nothing is wrong")
 	eq(w.opened[#w.opened], "plotroom://rpc/p1", "and the window is told to read the answer")
 	-- signed out: the saved projects, and why there are no more
@@ -8256,25 +8422,20 @@ case("host: the project pickers: Jira's list puts saved projects first, and GitH
 	w.flush()
 	local out = answerOf(b, "p2")
 	local saved: { any } = {
-		{ key = "ABC", path = "/work/r", saved = true, current = true },
-		{ key = "DEF", saved = true, current = false },
+		{ key = "ABC", repos = "o/r, x/y", saved = true },
+		{ key = "DEF", repos = "", saved = true },
 	}
 	same(out.items, saved, "signed out, only the saved projects are listed")
 	has(out.problem, "acli is not signed in to Jira", "and the problem says why")
-	-- the shown project is listed though nobody saved it
-	s.acli.site = "acme.atlassian.net"
-	forgetCheckouts(w)
-	request(b, "p3", { op = "jira-projects" })
-	w.flush()
-	same(answerOf(b, "p3").items[1], { key = "ABC", name = "Alpha", saved = true, current = true }, "a shown project that was never saved is listed with no checkout")
-	-- GitHub's pickers do not know the shown Jira key
-	w.kv.put("repos", { ["jira/ABC"] = "/work/r", ["github.com/o/r"] = "/work/o" })
+	-- the repository picker lists the saved repositories with their checkouts, then the gh logins
 	request(b, "r1", { op = "repos" })
 	w.flush()
-	same(answerOf(b, "r1").items, { { repo = "o/r", path = "/work/o", current = false } }, "the repository picker lists GitHub's repositories only, none of them shown")
+	local expectedRepos: { any } = { { repo = "o/r", path = "/work/o" }, { repo = "x/y" } }
+	same(answerOf(b, "r1").items, expectedRepos, "the repository picker lists the saved repositories, a folder only where one is set")
+	same(answerOf(b, "r1").accounts, { { login = "octocat", active = true } }, "and the gh logins")
 	request(b, "r2", { op = "profile", login = "octocat" })
 	w.flush()
-	eq(answerOf(b, "r2").current, nil, "and a login's list names no shown repository")
+	same(answerOf(b, "r2").repos, array({}), "a login's list holds the repositories it can open")
 end)
 
 windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotroom-o_r-issue-12", function(w: World)
@@ -8324,7 +8485,7 @@ local function jiraWindow(w: World): (JiraScene, Block)
 	return s, b
 end
 
-windowCase("window: the Jira project picker lists the saved projects and acli's, a typed key is shown", function(w: World)
+windowCase("window: the Jira project picker lists the saved projects and acli's; a typed key is added in Settings", function(w: World)
 	local s, b = jiraWindow(w)
 	s.acli.projects = { { key = "ABC", name = "Alpha" }, { key = "XYZ", name = "Xyz Project" } }
 	w.window.choose = "Other project…"
@@ -8334,18 +8495,19 @@ windowCase("window: the Jira project picker lists the saved projects and acli's,
 	local items = w.window.picks[1].items
 	eq(items[1].label, "ABC", "the saved project first")
 	eq(items[1].group, "Saved", "in its group")
-	eq(items[1].detail, "/work/r", "with its checkout")
-	eq(items[1].current, true, "checked as the shown one")
+	eq(items[1].detail, "o/r", "with its repositories")
 	eq(items[2].label, "XYZ", "then the one acli lists")
 	eq(items[2].group, "Jira projects", "in its group")
 	eq(items[2].detail, "Xyz Project", "with its name")
 	eq(items[3].label, "Other project…", "then a typed one")
-	eq(pickerOf(b).title[1].t, "XYZ", "a typed key is shown, upper-cased")
+	same(w.kv.get("jira-repos").XYZ, array({}), "a typed key is saved upper-cased, with no repository yet")
+	eq(prefsOf(b).page, "jira", "and Settings opens on the Jira page")
+	eq(prefsOf(b).focus, "jrepos:XYZ", "at its repositories")
 end)
 
 windowCase("window: Worktree on a Jira issue opens a tab named \"ABC-12\"", function(w: World)
 	local s, b = jiraWindow(w)
-	local target = "/wt/plotroom-jira.abc-issue-ABC-12"
+	local target = "/wt/plotroom-o_r-issue-ABC-12"
 	w.click(issueLink("worktree", "ABC", "ABC-12"))
 	w.flush()
 	eq(w.toasts[1].text, "Preparing worktree for ABC-12", "names the issue by its key")
@@ -8358,8 +8520,48 @@ windowCase("window: Worktree on a Jira issue opens a tab named \"ABC-12\"", func
 		named = name
 	end
 	eq(named, "ABC-12", "tab name")
-	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the base is fetched from the first remote")
+	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/o/r"), 1, "the base is fetched into the repository's own ref")
 	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+end)
+
+windowCase("window: Jira issue picks its repository: asked when none is mapped, among several, never with one", function(w: World)
+	local _, b = jiraWindow(w)
+	local target = "/wt/plotroom-o_r-issue-ABC-12"
+	-- none mapped: the pick maps the project, then the worktree is made there
+	w.kv.put("jira-repos", {})
+	w.window.choose = "o/r"
+	w.click(issueLink("worktree", "ABC", "ABC-12"))
+	w.flush()
+	local picks = w.window.picks
+	eq(#picks, 1, "one question")
+	eq(picks[1].placeholder, "Repository for Jira project ABC…", "it names the project")
+	eq(picks[1].items[1].label, "o/r", "offering the saved repositories")
+	eq(picks[1].items[#picks[1].items].label, "Other repository…", "and a typed one")
+	same(w.kv.get("jira-repos").ABC, { "o/r" }, "the pick is saved for the project")
+	local ops: { string } = {}
+	for _, q in requestsSent(w) do
+		table.insert(ops, q.op)
+	end
+	same(ops, { "issue", "map-jira", "issue" }, "the request is repeated once the project is mapped")
+	eq(requestsSent(w)[3].target, "o/r", "naming the repository picked")
+	eq(w.window.launches[1].cwd, target, "the tab opens in the worktree of the picked repository")
+	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	-- one mapped: no question at all
+	local asked, sent = #w.window.picks, #requestsSent(w)
+	w.click(issueLink("worktree", "ABC", "ABC-12"))
+	w.flush()
+	eq(#w.window.picks, asked, "a mapped project asks nothing")
+	eq(#requestsSent(w), sent + 1, "and sends one request")
+	-- several mapped: asked each time, nothing saved
+	w.kv.put("jira-repos", { ABC = array({ "o/r", "x/y" }) })
+	w.window.choose = "x/y"
+	w.click(issueLink("worktree", "ABC", "ABC-12"))
+	w.flush()
+	eq(w.window.picks[asked + 1].placeholder, "Which repository for ABC-12?", "several repositories are asked each time")
+	same(w.kv.get("jira-repos").ABC, { "o/r", "x/y" }, "and the map is left as it was")
+	local last = requestsSent(w)
+	eq(last[#last - 1].op, "issue", "the first request found several")
+	eq(last[#last].target, "x/y", "the second names the pick")
 end)
 
 windowCase("window: Go to tab on an issue focuses the pane working in its worktree", function(w: World)
@@ -8378,7 +8580,7 @@ end)
 windowCase("window: a prompt set to the main checkout starts its agent in a new tab at the checkout after consent, with no worktree made", function(w: World)
 	local s, b = issueWindow(w)
 	saveIssuePrompts(w, { issuePrompt("p1", "Review", "Review {title} ({url}) in {owner}/{repo}#{number}, branch {branch}", false) })
-	w.kv.put("setup", { ["github.com/o/r"] = array({ "pnpm install" }) })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	b.render()
 	cardSurface(w, b)
 	w.window.choose = { "Deny" }

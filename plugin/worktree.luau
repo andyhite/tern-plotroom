@@ -320,8 +320,7 @@ local function topLevel(path: string, done: Cb<string>)
 end
 
 -- The checkout at `path` (any subdirectory or linked worktree) whose remotes include `repo`; done(info, problem, cx).
--- cx is nil in the host. A Jira project names no repository, so any checkout with a remote is its checkout, and the
--- first remote (origin, then upstream, then by name) is the one to branch from.
+-- cx is nil in the host.
 function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 	local want = string.lower(repo)
 	topLevel(path, function(root, err, cx)
@@ -336,13 +335,6 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 			rankedRemotes(root, function(names, err3, cx3)
 				if not names then
 					return done(nil, err3, cx3)
-				end
-				if tracker.jiraProject(repo) then
-					-- no URL names a Jira project, so the checkout is the user's choice, whatever its host
-					if not names[1] then
-						return done(nil, root .. " has no git remote to branch from.", cx3)
-					end
-					return done({ root = root, commonDir = common, remote = names[1] }, nil, cx3)
 				end
 				local function try(i: number, cxi: WindowCx?)
 					if i > #names then
@@ -364,10 +356,10 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 end
 
 -- Makes `path` the checkout of `repo`: a folder inside a work tree of it is used as it is (`cloned` false); a folder that
--- is missing, or not inside any work tree, gets `gh repo clone` (git refuses a non-empty one, and that is the problem
--- reported); a work tree of another repository is refused. A Jira project names no repository to clone: a folder
--- outside a work tree is refused. done({ root, cloned }, problem, cx); cx is nil in the host.
-function M.claimCheckout(path: string, repo: string, done: Cb<{ root: string, cloned: boolean }>)
+-- is missing, or not inside any work tree, gets `gh repo clone` as `account` (git refuses a non-empty one, and that is
+-- the problem reported); a work tree of another repository is refused. done({ root, cloned }, problem, cx); cx is nil
+-- in the host.
+function M.claimCheckout(path: string, repo: string, account: string?, done: Cb<{ root: string, cloned: boolean }>)
 	local function resolved(cloned: boolean)
 		M.resolveRepository(path, repo, function(info, why, cx)
 			if not info then
@@ -377,13 +369,7 @@ function M.claimCheckout(path: string, repo: string, done: Cb<{ root: string, cl
 		end)
 	end
 	local function clone()
-		if tracker.jiraProject(repo) then
-			tern.timer(0, function(cx)
-				done(nil, "That folder is not a git checkout. A Jira project names no repository to clone, so enter the folder of an existing checkout.", cx)
-			end)
-			return
-		end
-		github.clone(repo, path, function(problem, cx)
+		github.clone(repo, path, account, function(problem, cx)
 			if problem then
 				return done(nil, problem.message, cx)
 			end
@@ -459,31 +445,69 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 	return "create", nil
 end
 
--- The PR number whose Plotroom worktree holds `path` (the worktree root or any directory inside it), nil otherwise:
--- `<omp worktrees>/plotroom-<owner>_<repo>-pr-N` as `M.open` creates it, or `<checkout>.plotroom/<owner>/<repo>/pr-N`
--- from earlier versions, lowercase.
-function M.prOfPath(path: string, repo: string): number?
-	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
-	if not owner or not name then
-		return nil
-	end
-	for _, mark in { "/plotroom-" .. owner .. "_" .. name .. "-pr-", ".plotroom/" .. owner .. "/" .. name .. "/pr-" } do
-		local _, e = string.find(path, mark, 1, true)
-		if e then
-			local n, rest = string.match(string.sub(path, e + 1), "^(%d+)(.*)$")
-			if n and rest and (rest == "" or string.sub(rest, 1, 1) == "/") then
-				return tonumber(n)
+-- The item whose Plotroom worktree holds `path` (the worktree root or any directory inside it), as (key, "pr" | "issue"),
+-- or nil: `plotroom-<owner>_<name>-pr-N` and `plotroom-<slot>-issue-<ref>` as `M.open`/`M.openIssue` create them (a Jira
+-- ref, whatever its slot, gives the Jira key), or `<checkout>.plotroom/<owner>/<repo>/pr-N` from earlier versions.
+function M.itemOfPath(path: string): (string?, string?)
+	local leaf = string.match(path, "/(plotroom%-[^/]*)")
+	if leaf then
+		local owner, name, n = string.match(leaf, "^plotroom%-([%w%-]+)_(.+)%-pr%-(%d+)$")
+		if owner and name and n then
+			return string.lower(owner .. "/" .. name) .. "#" .. n, "pr"
+		end
+		local slot, ref = string.match(leaf, "^plotroom%-(.+)%-issue%-([%w_%-]+)$")
+		if slot and ref then
+			local project = string.match(ref, "^([A-Z][A-Z0-9_]+)%-%d+$")
+			if project then
+				return string.lower(project) .. "#" .. ref, "issue"
+			end
+			local o, r = string.match(slot, "^([^_]+)_(.+)$")
+			if o and r then
+				return string.lower(o .. "/" .. r) .. "#" .. ref, "issue"
 			end
 		end
+		return nil, nil
 	end
-	return nil
+	local o, r, n = string.match(path, "%.plotroom/([^/]+)/([^/]+)/pr%-(%d+)")
+	if o and r and n then
+		return string.lower(o .. "/" .. r) .. "#" .. n, "pr"
+	end
+	return nil, nil
 end
 
--- omp's worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else
--- omp's `worktree.base` setting, else ~/.omp/wt. As in omp, a value that is neither absolute nor `~/` is ignored.
+-- lexically collapses `.`, `..` and repeated `/` of an absolute path.
+local function normalize(path: string): string
+	local out: { string } = {}
+	for seg in string.gmatch(path, "[^/]+") do
+		if seg == ".." then
+			table.remove(out)
+		elseif seg ~= "." then
+			table.insert(out, seg)
+		end
+	end
+	return "/" .. table.concat(out, "/")
+end
+
+-- The folder new worktrees go in; worktrees keep plotroom's leaf names (`plotroom-…`) whatever the folder. `place` ""
+-- is omp's worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else
+-- omp's `worktree.base` setting, else ~/.omp/wt (as in omp, a value that is neither absolute nor `~/` is ignored).
+-- An absolute or `~/` `place` is used as it is; any other is resolved against `checkoutRoot`, the repository's checkout.
 -- ponytail: omp profiles (OMP_PROFILE) are not followed; set worktree.base if you use one.
-function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
+function M.worktreesDir(place: string, checkoutRoot: string, done: (string?, string?, WindowCx?) -> ())
 	local home = tern.getenv("HOME")
+	place = trim(place)
+	if place ~= "" then
+		local dir, why
+		if string.sub(place, 1, 1) == "/" or string.sub(place, 1, 1) == "~" then
+			dir, why = M.expandPath(place, home)
+		else
+			dir = normalize(checkoutRoot .. "/" .. place)
+		end
+		tern.timer(0, function(cx)
+			done(dir, why, cx)
+		end)
+		return
+	end
 	local env = M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)
 	if env then
 		tern.timer(0, function(cx)
@@ -670,7 +694,7 @@ end
 
 -- once, even when a step raises. A worktree that already exists is only read, never changed or updated. Problem
 -- M.NO_REPO means `checkout` is not a checkout of `repo`.
-function M.open(checkout: string, repo: string, number: number, done: Cb<Result>)
+function M.open(checkout: string, repo: string, number: number, place: string, account: string?, done: Cb<Result>)
 	local lrepo = string.lower(repo)
 	local owner, name = string.match(lrepo, "^([^/]+)/([^/]+)$")
 	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
@@ -689,7 +713,7 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	local finish, attempt, run = s.finish, s.attempt, s.run
 	-- The pull request's current head and base, read from GitHub.
 	local function readPr(step: (github.PrMeta, WindowCx?) -> ())
-		github.pr(repo, number, function(meta, problem, cx)
+		github.pr(repo, number, account, function(meta, problem, cx)
 			if not meta then
 				return finish(nil, if problem then problem.message else "Could not read the pull request.", cx)
 			end
@@ -796,7 +820,7 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	end
 
 	local function proceed(info: Repo)
-		M.worktreesDir(function(base, why, cx0)
+		M.worktreesDir(place, info.root, function(base, why, cx0)
 			if not base then
 				return finish(nil, why, cx0)
 			end
@@ -839,31 +863,27 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	end)
 end
 
--- The directory slot and the base ref's path part of the issues of `repo`; nils when it is neither. A GitHub `owner/name`
--- gives `owner_name` and `owner/name` (lowercase), a Jira project key `jira.abc` and `jira/abc`: a GitHub owner holds
--- no `.`, so no two projects share a slot.
+-- The directory slot and the base ref's path part of the issues of `repo`; nils when it is not a GitHub `owner/name`.
 local function issueSlot(repo: string): (string?, string?)
 	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
 	if owner and name and M.validSegment(owner) and M.validSegment(name) then
 		return owner .. "_" .. name, refPart(owner) .. "/" .. refPart(name)
 	end
-	if tracker.jiraProject(repo) then
-		return "jira." .. string.lower(repo), "jira/" .. string.lower(repo)
-	end
 	return nil, nil
 end
 
--- Whether `repo` is a project Plotroom makes issue worktrees for: a GitHub `owner/name` or a Jira project key.
+-- Whether `repo` is a project issue links may name: a GitHub `owner/name` or a Jira project key.
 function M.validProject(repo: string): boolean
-	return issueSlot(repo) ~= nil
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	return (owner ~= nil and name ~= nil and M.validSegment(owner) and M.validSegment(name)) or tracker.jiraProject(repo)
 end
 
--- Creates or reuses the worktree of issue `key` of `repo` on `branch`, in `<omp worktrees>/plotroom-<slot>-issue-<key>`:
--- the slot is `<owner>_<repo>` (GitHub) or `jira.<project>` (Jira), lowercase; the key keeps its case, so `issueOfPath`
--- gives it back as it is. A worktree already at that directory is reused whatever its branch; an existing local branch
+-- Creates or reuses the worktree of issue `key` of the GitHub repository `repo` on `branch`, in
+-- `<worktrees folder>/plotroom-<owner>_<name>-issue-<key>` (lowercase slot; the key keeps its case, so `itemOfPath`
+-- gives it back as it is). A worktree already at that directory is reused whatever its branch; an existing local branch
 -- is attached, never moved; a new branch starts at the remote's default branch. done(result, problem, cx) runs exactly
 -- once. Problem M.NO_REPO means `checkout` is not a checkout of `repo`.
-function M.openIssue(checkout: string, repo: string, key: string, branch: string, done: Cb<IssueResult>)
+function M.openIssue(checkout: string, repo: string, key: string, branch: string, place: string, done: Cb<IssueResult>)
 	local slot, basePart = issueSlot(repo)
 	local bad: string? = nil
 	if not slot or not basePart then
@@ -928,14 +948,14 @@ function M.openIssue(checkout: string, repo: string, key: string, branch: string
 	end
 
 	local function proceed(info: Repo)
-		M.worktreesDir(function(base, why, cx0)
+		M.worktreesDir(place, info.root, function(base, why, cx0)
 			if not base then
 				return finish(nil, why, cx0)
 			end
 			git(info.root, { "check-ref-format", "--branch", branch }, LOCAL_MS, function(_, _, cx1, status)
 				attempt(cx1, function()
 					if status ~= 0 then
-						return finish(nil, "Branch name " .. branch .. " is not valid; change the branch format in Settings › Worktrees.", cx1)
+						return finish(nil, "Branch name " .. branch .. " is not valid; change the branch format in Settings › Repositories.", cx1)
 					end
 					run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
 						local recs = M.parseWorktrees(out)
@@ -993,22 +1013,6 @@ function M.cleanupIssue(r: IssueResult): { string }
 		at .. " worktree remove " .. shellWord(r.path),
 		at .. " branch -d " .. shellWord(r.branch),
 	}
-end
-
--- The issue ref whose Plotroom worktree holds `path` (the root or any directory inside it), nil otherwise.
-function M.issueOfPath(path: string, repo: string): string?
-	local slot = issueSlot(repo)
-	if not slot then
-		return nil
-	end
-	local _, e = string.find(path, "/plotroom-" .. slot .. "-issue-", 1, true)
-	if e then
-		local ref, rest = string.match(string.sub(path, e + 1), "^([%w_%-]+)(.*)$")
-		if ref and rest and (rest == "" or string.sub(rest, 1, 1) == "/") then
-			return ref
-		end
-	end
-	return nil
 end
 
 return M

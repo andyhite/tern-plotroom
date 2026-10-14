@@ -64,9 +64,9 @@ function M.run(cx: WindowCx)
 	end
 	local started, why = pcall(function()
 		if issue then
-			worktree.openIssue(request.checkout, request.repo, request.key, request.branch, finish)
+			worktree.openIssue(request.checkout, request.repo, request.key, request.branch, "", finish)
 		else
-			worktree.open(request.checkout, request.repo, request.number, finish)
+			worktree.open(request.checkout, request.repo, request.number, "", nil, finish)
 		end
 	end)
 	if not started then

@@ -24,7 +24,9 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "7" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "8" -- what host.luau's `main.rpc` node must say
+-- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
+local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
@@ -164,9 +166,10 @@ end
 
 -- A pane in a tab of this window working in the target's Plotroom worktree: pane, tab and session ids.
 local function targetPane(cx: WindowCx, t: Target): (number?, number?, number?)
+	local key = string.lower(t.repo) .. "#" .. t.ref
 	for _, p in cx.session:panes() do
-		local here = if t.kind == "pr" then worktree.prOfPath(p.cwd or "", t.repo) == tonumber(t.ref) else worktree.issueOfPath(p.cwd or "", t.repo) == t.ref
-		if p.tab and here then
+		local found, what = worktree.itemOfPath(p.cwd or "")
+		if p.tab and found == key and what == t.kind then
 			for _, tb in cx.session:tabs() do
 				if tb.id == p.tab then
 					return p.pane, tb.id, tb.session
@@ -443,12 +446,71 @@ end
 
 -- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
 -- worktree (noted on the block) and open its tab. `wt` false (issues only): the repository's main checkout, no worktree.
-local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: string?, wt: boolean)
+-- What the host still needs is asked in the palette, then this runs again: a checkout folder of the repository
+-- (`needCheckout`), the repository a Jira project's issue is worked in (`needRepo`, or `chooseRepo` among several, which
+-- `target` then names).
+local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: string?, wt: boolean, target: string?)
 	local function done(a: any, cx2: WindowCx)
 		if a.busy == true then
 			return cx2:toast("info", "A worktree for " .. t.label .. " is already being prepared")
-		elseif a.noRepo == true then
-			return cx2:toast("info", "No local checkout of " .. t.repo, "Enter its path in Plotroom, then try again.")
+		elseif type(a.needCheckout) == "string" then
+			local repo: string = a.needCheckout
+			cx2:prompt({ placeholder = "Folder of your checkout of " .. repo .. " (a new or empty folder gets a clone)", icon = "merge", action = "save" }):next(function(text, _, cx3)
+				if not cx3 or not text or not string.find(text, "%S") then
+					return
+				end
+				ask(cx3, pane, "checkout", { repo = repo, path = text }, CLONE_WAIT_MS, function(b: any, cx4: WindowCx)
+					if b.ok == true then
+						cx4:toast("success", if b.cloned == true then "Cloned " .. repo else "Checkout saved", if type(b.root) == "string" then b.root else nil)
+						return prepareTarget(cx4, pane, t, prompt, wt, target)
+					end
+					cx4:toast("error", "Checkout not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
+				end)
+			end)
+			return
+		elseif a.needRepo == true then
+			local project: string = if type(a.project) == "string" then a.project else t.repo
+			local items: { PickItem } = {}
+			for _, name in if type(a.repos) == "table" then a.repos else {} do
+				if type(name) == "string" then
+					table.insert(items, { label = name, group = "Repositories" })
+				end
+			end
+			table.insert(items, { label = "Other repository…", detail = "Type owner/name", typed = true })
+			local function map(cx3: WindowCx, repo: string)
+				ask(cx3, pane, "map-jira", { project = project, repo = repo }, MENU_MS, function(b: any, cx4: WindowCx)
+					if b.ok == true then
+						return prepareTarget(cx4, pane, t, prompt, wt, repo)
+					end
+					cx4:toast("error", "Repository not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
+				end)
+			end
+			cx2:pick({ items = items, placeholder = "Repository for Jira project " .. project .. "…", icon = "merge", action = "map" }):next(function(item, _, cx3)
+				if not item or not cx3 then
+					return
+				elseif item.typed then
+					return cx3:prompt({ placeholder = "owner/name", icon = "merge", action = "map" }):next(function(text, _, cx4)
+						if cx4 and text and string.find(text, "%S") then
+							map(cx4, text)
+						end
+					end)
+				end
+				map(cx3, item.label)
+			end)
+			return
+		elseif a.chooseRepo == true then
+			local items: { PickItem } = {}
+			for _, name in if type(a.repos) == "table" then a.repos else {} do
+				if type(name) == "string" then
+					table.insert(items, { label = name, group = "Repositories" })
+				end
+			end
+			cx2:pick({ items = items, placeholder = "Which repository for " .. t.label .. "?", icon = "merge", action = "open" }):next(function(item, _, cx3)
+				if item and cx3 then
+					prepareTarget(cx3, pane, t, prompt, wt, item.label)
+				end
+			end)
+			return
 		end
 		local r = readyOf(a)
 		if not r then
@@ -468,7 +530,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: stri
 	end
 	local sent = if t.kind == "pr"
 		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref) }, PREPARE_MS, done)
-		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt }, PREPARE_MS, done)
+		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = target }, PREPARE_MS, done)
 	if sent and wt then
 		cx:toast("info", "Preparing worktree for " .. t.label)
 	end
@@ -486,7 +548,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	end)
 end
 
--- Asks which saved prompt (Settings › Prompts, those offered under the block's filter) to run on the target, then
+-- Asks which saved prompt (Settings › Prompts, those the block's view offers) to run on the target, then
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
 local function pickAgent(cx: WindowCx, pane: number, t: Target)
@@ -548,38 +610,37 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 	end)
 end
 
--- Shows `repo` in the Plotroom block in `pane`; its host checks it.
-local function showRepo(cx: WindowCx, pane: number, repo: string)
-	cx.session:event(pane, { ev = "action", act = "show-repo", value = repo })
+-- Adds `repo` to Settings' repositories and opens its checkout row there; the block's host checks it.
+local function addRepo(cx: WindowCx, pane: number, repo: string)
+	cx.session:event(pane, { ev = "action", act = "add-repo", value = repo })
 end
 
 -- The repositories gh login `login` can access, listed by the block's host (its heading shows they are loading), to
--- pick the one the block shows.
+-- pick the one to add.
 local function pickProfile(cx: WindowCx, pane: number, login: string)
 	ask(cx, pane, "profile", { login = login }, REPOS_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
 			return cx2:toast("error", "The repositories of @" .. login .. " are not listed", a.problem)
 		end
-		local current = if type(a.current) == "string" then string.lower(a.current) else nil
 		local items: { PickItem } = {}
 		for _, name in if type(a.repos) == "table" then a.repos else {} do
 			if type(name) == "string" then
-				table.insert(items, { label = name, current = string.lower(name) == current })
+				table.insert(items, { label = name })
 			end
 		end
 		if #items == 0 then
 			return cx2:toast("info", "@" .. login .. " has no repositories")
 		end
-		cx2:pick({ items = items, placeholder = "Open repository of @" .. login .. "…", icon = "merge", action = "open" }):next(function(item, _, cx3)
+		cx2:pick({ items = items, placeholder = "Add repository of @" .. login .. "…", icon = "merge", action = "add" }):next(function(item, _, cx3)
 			if item and cx3 then
-				showRepo(cx3, pane, item.label)
+				addRepo(cx3, pane, item.label)
 			end
 		end)
 	end)
 end
 
--- Asks which repository the Plotroom block in `pane` shows: a saved one (its checkout as the detail), one of a signed-in
--- gh login's (picked next), or one typed as owner/name.
+-- Asks which repository to add to Settings: a saved one (its checkout as the detail), one of a signed-in gh login's
+-- (picked next), or one typed as owner/name.
 local function pickRepo(cx: WindowCx, pane: number)
 	ask(cx, pane, "repos", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
@@ -588,8 +649,8 @@ local function pickRepo(cx: WindowCx, pane: number)
 		local items: { PickItem } = {}
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and type(it.repo) == "string" then
-				local path = if type(it.path) == "string" then it.path else "No local checkout: no worktrees"
-				table.insert(items, { label = it.repo, detail = path, group = "Saved", current = it.current == true, repo = it.repo })
+				local path = if type(it.path) == "string" then it.path else "No local checkout yet"
+				table.insert(items, { label = it.repo, detail = path, group = "Saved", repo = it.repo })
 			end
 		end
 		for _, acc in if type(a.accounts) == "table" then a.accounts else {} do
@@ -598,25 +659,25 @@ local function pickRepo(cx: WindowCx, pane: number)
 			end
 		end
 		table.insert(items, { label = "Other repository…", detail = "Type owner/name", typed = true })
-		cx2:pick({ items = items, placeholder = "Open repository…", icon = "merge", action = "open" }):next(function(item, _, cx3)
+		cx2:pick({ items = items, placeholder = "Add repository…", icon = "merge", action = "add" }):next(function(item, _, cx3)
 			if not item or not cx3 then
 				return
 			elseif item.login then
 				return pickProfile(cx3, pane, item.login)
 			elseif item.typed then
-				return cx3:prompt({ placeholder = "owner/name", icon = "merge", action = "open" }):next(function(text, _, cx4)
+				return cx3:prompt({ placeholder = "owner/name", icon = "merge", action = "add" }):next(function(text, _, cx4)
 					if cx4 and text and string.find(text, "%S") then
-						showRepo(cx4, pane, text)
+						addRepo(cx4, pane, text)
 					end
 				end)
 			end
-			showRepo(cx3, pane, item.repo)
+			addRepo(cx3, pane, item.repo)
 		end)
 	end)
 end
 
--- Asks which Jira project the Plotroom block in `pane` shows: a saved one (its checkout as the detail), one acli lists,
--- or one typed by its key.
+-- Asks which Jira project to add to Settings: a saved one (its repositories as the detail), one acli lists, or one typed
+-- by its key.
 local function pickJira(cx: WindowCx, pane: number)
 	ask(cx, pane, "jira-projects", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
@@ -626,25 +687,25 @@ local function pickJira(cx: WindowCx, pane: number)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and type(it.key) == "string" then
 				if it.saved == true then
-					local path = if type(it.path) == "string" then it.path else "No local checkout: no worktrees"
-					table.insert(items, { label = it.key, detail = path, group = "Saved", current = it.current == true, key = it.key })
+					local repos = if type(it.repos) == "string" and it.repos ~= "" then it.repos else "No repositories yet"
+					table.insert(items, { label = it.key, detail = repos, group = "Saved", key = it.key })
 				else
 					table.insert(items, { label = it.key, detail = if type(it.name) == "string" then it.name else "", group = "Jira projects", key = it.key })
 				end
 			end
 		end
 		table.insert(items, { label = "Other project…", detail = "Type its key", typed = true })
-		cx2:pick({ items = items, placeholder = "Open Jira project…", icon = ISSUE_ICON, action = "open" }):next(function(item, _, cx3)
+		cx2:pick({ items = items, placeholder = "Add Jira project…", icon = ISSUE_ICON, action = "add" }):next(function(item, _, cx3)
 			if not item or not cx3 then
 				return
 			elseif item.typed then
-				return cx3:prompt({ placeholder = "Project key, such as ABC", icon = ISSUE_ICON, action = "open" }):next(function(text, _, cx4)
+				return cx3:prompt({ placeholder = "Project key, such as ABC", icon = ISSUE_ICON, action = "add" }):next(function(text, _, cx4)
 					if cx4 and text and string.find(text, "%S") then
-						cx4.session:event(pane, { ev = "action", act = "show-jira", value = text })
+						cx4.session:event(pane, { ev = "action", act = "add-jira", value = text })
 					end
 				end)
 			end
-			cx3.session:event(pane, { ev = "action", act = "show-jira", value = item.key })
+			cx3.session:event(pane, { ev = "action", act = "add-jira", value = item.key })
 		end)
 	end)
 end
@@ -665,16 +726,13 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	if rid then
 		answered(cx, rid)
 		return true
-	elseif url == "plotroom://repos" or url == "plotroom://checkout" or url == "plotroom://jira-projects" then
+	elseif url == "plotroom://repos" or url == "plotroom://jira-projects" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
-		elseif url == "plotroom://jira-projects" then
-			pickJira(cx, pane)
 		else
-			-- The heading's Set checkout button: the block opens Settings on its checkout row.
-			cx.session:event(pane, { ev = "action", act = "set-checkout" })
+			pickJira(cx, pane)
 		end
 		return true
 	end
@@ -877,19 +935,6 @@ tern.command({
 	available = available,
 	run = function(cx: WindowCx)
 		selected(cx, AGENT_NODE)
-	end,
-})
-
-tern.command({
-	id = "repo",
-	title = "Plotroom: Show another repository or project",
-	icon = "merge",
-	available = available,
-	run = function(cx: WindowCx)
-		local pane = cx.session:focused()
-		if pane then
-			cx.session:event(pane, { ev = "action", act = "pick-project" })
-		end
 	end,
 })
 

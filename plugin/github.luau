@@ -411,7 +411,6 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 		tracker = "github",
 		repo = o .. "/" .. r,
 		ref = tostring(n),
-		id = "n" .. n,
 		title = item.title,
 		url = item.url,
 		author = if type(item.author) == "string" then item.author else "ghost",
@@ -556,7 +555,7 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 		end
 		local token = string.match(r.stdout, "^%s*(%S+)%s*$")
 		if r.status ~= 0 or not token then
-			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or choose another account for this repository." }, cx, nil)
+			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx, nil)
 		end
 		local env: { [string]: string } = {}
 		for k, v in ENV do
@@ -571,14 +570,13 @@ local CLONE_MS = 10 * 60 * 1000
 
 -- Clones `repo` into the absolute `path` with `gh repo clone`, as the repository's saved gh account: gh's own protocol
 -- and credentials, so private repositories work. git makes the folder and refuses a non-empty one.
-function M.clone(repo: string, path: string, done: (Problem?, WindowCx?) -> ())
-	local login, why = M.account(repo)
-	if why then
-		return done(why)
+function M.clone(repo: string, path: string, account: string?, done: (Problem?, WindowCx?) -> ())
+	if account == "" then
+		account = nil
 	end
 	M.gh({ "repo", "clone", repo, path }, function(_, problem, cx)
 		done(problem, cx)
-	end, login, CLONE_MS)
+	end, account, CLONE_MS)
 end
 
 -- ---------------------------------------------------------------- search quota
@@ -723,118 +721,6 @@ function M.wait(now: number, account: string?): number
 	return M.cooldown(shared[account or ""], now)
 end
 
--- ------------------------------------------------------------- repo accounts
-
--- Which gh account a repository uses is saved explicitly (kv "accounts",
--- key "github.com/<lowercase owner/repo>"): an SSH alias does not identify a gh
--- login. Never `gh auth switch`: the account is applied per command through
--- GH_TOKEN. Fails closed: a store or an entry that cannot be trusted is a Problem
--- of kind "account" and nothing is sent; only a repository with no saved login
--- uses the active gh account.
-local function accountKey(repo: string): string
-	return "github.com/" .. string.lower(repo)
-end
-
-local MALFORMED = "Saved GitHub accounts are malformed: expected repositories mapped to logins."
-
--- Every saved entry as a copy (other repositories' values are kept exactly as
--- they are, malformed ones included); nil and why when the store cannot be read
--- as a map of repositories.
-local function readAccounts(): ({ [string]: any }?, string)
-	local ok, v = pcall(tern.kv.get, "accounts")
-	if not ok then
-		return nil, "Saved GitHub accounts could not be read: " .. tostring(v)
-	end
-	local map: { [string]: any } = {}
-	if v == nil then
-		return map, ""
-	end
-	if type(v) ~= "table" then
-		return nil, MALFORMED
-	end
-	for k, a in v do
-		if type(k) ~= "string" then
-			return nil, MALFORMED
-		end
-		map[k] = a
-	end
-	return map, ""
-end
-
--- The saved login of `repo`: (login, nil); (nil, nil) when none is saved, which
--- alone means the active gh account; (nil, problem) when the store or this
--- repository's entry cannot be trusted.
-function M.account(repo: string): (string?, Problem?)
-	local map, why = readAccounts()
-	if not map then
-		return nil, { kind = "account", message = why }
-	end
-	local login = map[accountKey(repo)]
-	if login == nil then
-		return nil, nil
-	end
-	if type(login) == "string" and string.match(login, "^[%w%-]+$") then
-		return login, nil
-	end
-	return nil, { kind = "account", message = "The saved GitHub login for " .. repo .. " is not a valid login." }
-end
-
--- Saves (or with nil/"" clears) the account; returns an error message or nil.
--- Nothing is written unless the saved accounts could be read: other repositories'
--- logins are never replaced, and another repository's malformed entry is kept.
-function M.setAccount(repo: string, login: string?): string?
-	if login == "" then
-		login = nil
-	end
-	if login and not string.match(login, "^[%w%-]+$") then
-		return "A GitHub login has letters, digits and hyphens only."
-	end
-	local map, why = readAccounts()
-	if not map then
-		return why
-	end
-	map[accountKey(repo)] = login
-	local ok, err = pcall(function()
-		tern.kv.set("accounts", map)
-		return nil
-	end)
-	if not ok then
-		return "Could not save: " .. tostring(err)
-	end
-	return nil
-end
-
--- Why `query` may not run inside one repository, or nil. Another repo:/org:/user:
--- or an OR would widen the request beyond the selected repository. repo:, org: and
--- user: are refused wherever they stand; an OR between a pair of double quotes is
--- a phrase or label value, not an operator (an unpaired quote protects nothing).
-function M.scopeProblem(query: string): string?
-	local function bare(word: string): string
-		word = string.gsub(word, "^[%-%(\"]+", "")
-		word = string.gsub(word, "[%)\"]+$", "")
-		return word
-	end
-	local function widens(word: string): string
-		return "Filters run inside the launch repository: remove `" .. word .. "` (repo:, org:, user: and OR are not allowed)."
-	end
-	for word in string.gmatch(query, "%S+") do
-		local plain = bare(word)
-		local low = string.lower(plain)
-		if string.match(low, "^repo:") or string.match(low, "^org:") or string.match(low, "^user:") then
-			return widens(plain)
-		end
-	end
-	local unquoted = string.gsub(query, '"[^"]*"', function(quoted)
-		return string.rep("_", #quoted)
-	end)
-	for word in string.gmatch(unquoted, "%S+") do
-		if bare(word) == "OR" then
-			return widens("OR")
-		end
-	end
-	return nil
-end
-
 -- Records the quota a `gh api --include` answer reports and returns its body. A rate
 -- limit that comes without usable headers (a secondary limit) backs the account off.
 local function observe(out: string?, raw: string?, problem: Problem?, account: string?): string
@@ -857,7 +743,7 @@ type Page = { total: number, next: string?, cost: number, raw: number, items: { 
 -- empty page, a cursor that did not advance) or ended with fewer items than counted
 -- is partial and keeps what arrived. `qualifier` closes the query (" is:pr sort:...").
 local function searchAll(
-	repo: string,
+	account: string?,
 	query: string,
 	qualifier: string,
 	gql: string,
@@ -869,25 +755,14 @@ local function searchAll(
 	query = string.match(query, "^%s*(.-)%s*$") or ""
 	if query == "" then
 		tern.timer(0, function()
-			done(nil, 0, false, { kind = "failed", message = "The filter query is empty." }, 0)
+			done(nil, 0, false, { kind = "failed", message = "The view's query is empty." }, 0)
 		end)
 		return
 	end
-	local widened = M.scopeProblem(query)
-	if widened then
-		tern.timer(0, function()
-			done(nil, 0, false, { kind = "failed", message = widened }, 0)
-		end)
-		return
+	if account == "" then
+		account = nil
 	end
-	local account, refused = M.account(repo)
-	if refused then
-		tern.timer(0, function()
-			done(nil, 0, false, refused, 0)
-		end)
-		return
-	end
-	query = "repo:" .. repo .. " " .. query .. qualifier
+	query = query .. qualifier
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local all: { any } = {}
 	local total = 0
@@ -943,12 +818,12 @@ end
 
 -- All pages of the PR search; one swap-ready SearchResult at the end (see searchAll).
 function M.search(
-	repo: string,
+	account: string?,
 	query: string,
 	shouldContinue: () -> boolean,
 	done: (SearchResult?, Problem?, number) -> ()
 )
-	searchAll(repo, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, function(body)
+	searchAll(account, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, function(body)
 		local pg, why = M.parsePage(body)
 		if not pg then
 			return nil, why
@@ -964,12 +839,12 @@ end
 
 -- All pages of the issue search; one swap-ready IssueResult at the end (see searchAll).
 function M.issues(
-	repo: string,
+	account: string?,
 	query: string,
 	shouldContinue: () -> boolean,
 	done: (tracker.IssueResult?, Problem?, number) -> ()
 )
-	searchAll(repo, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, function(body)
+	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, function(body)
 		local pg, why = M.parseIssuePage(body)
 		if not pg then
 			return nil, why
@@ -1043,7 +918,7 @@ end
 -- "account") or the account's quota is paused (kind "rate-limit"). `shouldContinue` (optional) is checked before every
 -- page and after every response; a false answer ends with kind="superseded". done never runs before this call
 -- returns, and nothing is cached here: what a failure is worth is the caller's call.
-function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem?, About?) -> (), shouldContinue: (() -> boolean)?)
+function M.checks(repo: string, number: number, account: string?, done: ({ Run }?, number, Problem?, About?) -> (), shouldContinue: (() -> boolean)?)
 	local superseded: Problem = { kind = "superseded", message = "" }
 	-- Every result passes here: a cancelled request reports "superseded" whatever it found.
 	local function finish(runs: { Run }?, total: number, problem: Problem?, about: About?)
@@ -1061,9 +936,8 @@ function M.checks(repo: string, number: number, done: ({ Run }?, number, Problem
 	if not owner or not name then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
 	end
-	local account, refused = M.account(repo)
-	if refused then
-		return fail(refused)
+	if account == "" then
+		account = nil
 	end
 	if shouldContinue and not shouldContinue() then
 		return fail(superseded)
@@ -1117,7 +991,7 @@ local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .mil
 
 -- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
 -- the rate-limit pause behave as in M.checks. done never runs before this call returns.
-function M.issue(repo: string, number: number, done: (tracker.IssueDetail?, Problem?) -> (), shouldContinue: (() -> boolean)?)
+function M.issue(repo: string, number: number, account: string?, done: (tracker.IssueDetail?, Problem?) -> (), shouldContinue: (() -> boolean)?)
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local function finish(detail: tracker.IssueDetail?, problem: Problem?)
 		if shouldContinue and not shouldContinue() then
@@ -1134,9 +1008,8 @@ function M.issue(repo: string, number: number, done: (tracker.IssueDetail?, Prob
 	if not owner or not name then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
 	end
-	local account, refused = M.account(repo)
-	if refused then
-		return fail(refused)
+	if account == "" then
+		account = nil
 	end
 	if shouldContinue and not shouldContinue() then
 		return fail(superseded)
@@ -1177,13 +1050,9 @@ end
 export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string }
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
-function M.pr(repo: string, number: number, done: (PrMeta?, Problem?, WindowCx?) -> ())
-	local account, refused = M.account(repo)
-	if refused then
-		tern.timer(0, function(cx)
-			done(nil, refused, cx)
-		end)
-		return
+function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
+	if account == "" then
+		account = nil
 	end
 	M.gh({ "api", "--hostname", "github.com", "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
 		if not out then

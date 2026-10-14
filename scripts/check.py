@@ -962,16 +962,16 @@ def sc_issue(s: Smoke) -> None:
 
 
 def sc_jira_issue(s: Smoke) -> None:
-    """A Jira issue's worktree: the directory keeps the key's case, the base comes from the checkout's first remote; opened again it is reused."""
-    root, wt, branch = s.checkout("r"), s.tmp / "omp-wt" / "plotroom-jira.abc-issue-ABC-7", "ABC-7-smoke"
+    """A Jira issue's worktree in a GitHub repository: the directory keeps the key's case, the base comes from the repository's remote; opened again it is reused."""
+    root, wt, branch = s.checkout("r"), s.tmp / "omp-wt" / "plotroom-o_r-issue-ABC-7", "ABC-7-smoke"
     base = s.out(s.repos["o/r"]["bare"], "rev-parse", "HEAD")  # type: ignore[arg-type]
-    r = s.opened(s.open_issue("ABC", "ABC-7", branch, root))
+    r = s.opened(s.open_issue("o/r", "ABC-7", branch, root))
     s.eq("created", True, r.get("created"))
     s.eq("head", base, r.get("head"))
     s.same_path("path", wt, r.get("path"))
     s.eq("git branch --show-current in the worktree", branch, s.out(wt, "branch", "--show-current"))
-    s.eq("refs/plotroom-base/jira/abc", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/jira/abc"))
-    again = s.opened(s.open_issue("ABC", "ABC-7", branch, root))
+    s.eq("refs/plotroom-base/o/r", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/o/r"))
+    again = s.opened(s.open_issue("o/r", "ABC-7", branch, root))
     s.eq("created (second open)", False, again.get("created"))
 
 
