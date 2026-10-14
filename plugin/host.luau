@@ -1492,6 +1492,8 @@ local ISSUES: Kind = {
 	seeds = {
 		{ id = "v1", name = "Assigned to me", integration = "github", query = "is:open assignee:@me", logins = {}, group = "none", prompts = {} },
 		{ id = "v2", name = "Created by me", integration = "github", query = "is:open author:@me", logins = {}, group = "none", prompts = {} },
+		{ id = "v3", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", logins = {}, group = "none", prompts = {} },
+		{ id = "v4", name = "Created by me", integration = "jira", query = "reporter = currentUser() AND statusCategory != Done", logins = {}, group = "none", prompts = {} },
 	},
 	keys = issueKeys(),
 	vars = ISSUE_VARS,

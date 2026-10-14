@@ -7133,12 +7133,14 @@ case("host: the issues block lists issues under its own seeded filters", functio
 	local b = openIssues(w)
 	same(w.kv.get("views-issues"), {
 		version = 1,
-		nextId = 3,
+		nextId = 5,
 		items = {
 			{ id = "v1", name = "Assigned to me", integration = "github", query = "is:open assignee:@me", logins = array({}), group = "none", prompts = array({}) },
 			{ id = "v2", name = "Created by me", integration = "github", query = "is:open author:@me", logins = array({}), group = "none", prompts = array({}) },
+			{ id = "v3", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", logins = array({}), group = "none", prompts = array({}) },
+			{ id = "v4", name = "Created by me", integration = "jira", query = "reporter = currentUser() AND statusCategory != Done", logins = array({}), group = "none", prompts = array({}) },
 		},
-	}, "the first run seeds the issue views")
+	}, "the first run seeds the same two issue views for GitHub and Jira")
 	eq(w.kv.get("views-prs"), nil, "and leaves the PR views alone")
 	local searches = requestsOf(s.gh, "issue-search")
 	eq(#searches, 1, "one request covers three issues")
@@ -7150,8 +7152,11 @@ case("host: the issues block lists issues under its own seeded filters", functio
 	eq(pickerOf(b).noun, "issues", "the picker counts issues")
 	eq(pickerOf(b).placeholder, "Filter the loaded issues", "and filters them")
 	yes(pickerOf(b).icon ~= "merge", "with an icon of its own")
-	eq(pickerOf(b).scopes[1].label, "Assigned to me", "the filter list shows the issue filters")
-	eq(pickerOf(b).scopes[2].label, "Created by me", "both of them")
+	local sidebar: { string } = {}
+	for _, scope in pickerOf(b).scopes do
+		table.insert(sidebar, scope.group .. ": " .. scope.label)
+	end
+	same(sidebar, { "GitHub - octocat: Assigned to me", "GitHub - octocat: Created by me", "Jira: Assigned to me", "Jira: Created by me" }, "the view list shows each integration's views under its own group")
 	eq(pickerOf(b).scopes[1].count, 3, "the loaded one with its count")
 	-- the local search reads titles, labels, assignees, authors and numbers
 	local function found(text: string): { string }
@@ -7701,7 +7706,7 @@ case("host: the issues block's Settings speak of issues, the PR queue's keep the
 	eq(rowIn(b, "add").hint, "Starts as GitHub: is:open involves:@me.", "the new view")
 	b.event({ ev = "select", id = "layer.settings", item = "add" })
 	b.press("enter")
-	eq(#w.kv.get("views-issues").items, 3, "Add view saves with the issue views")
+	eq(#w.kv.get("views-issues").items, 5, "Add view saves with the issue views")
 	eq(w.kv.get("views-prs"), nil, "and not with the PR views")
 	b.press("escape")
 	page("prompts")
