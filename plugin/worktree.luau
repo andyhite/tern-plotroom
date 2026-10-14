@@ -5,6 +5,7 @@
 
 local process = require("./process")
 local github = require("./github")
+local tracker = require("./tracker")
 
 local M = {}
 
@@ -318,8 +319,9 @@ local function topLevel(path: string, done: Cb<string>)
 	end)
 end
 
--- The checkout at `path` (any subdirectory or linked worktree) whose remotes
--- include `repo`; done(info, problem, cx). cx is nil in the host.
+-- The checkout at `path` (any subdirectory or linked worktree) whose remotes include `repo`; done(info, problem, cx).
+-- cx is nil in the host. A Jira project names no repository, so any checkout with a remote is its checkout, and the
+-- first remote (origin, then upstream, then by name) is the one to branch from.
 function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 	local want = string.lower(repo)
 	topLevel(path, function(root, err, cx)
@@ -334,6 +336,13 @@ function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
 			rankedRemotes(root, function(names, err3, cx3)
 				if not names then
 					return done(nil, err3, cx3)
+				end
+				if tracker.jiraProject(repo) then
+					-- no URL names a Jira project, so the checkout is the user's choice, whatever its host
+					if not names[1] then
+						return done(nil, root .. " has no git remote to branch from.", cx3)
+					end
+					return done({ root = root, commonDir = common, remote = names[1] }, nil, cx3)
 				end
 				local function try(i: number, cxi: WindowCx?)
 					if i > #names then
@@ -356,7 +365,8 @@ end
 
 -- Makes `path` the checkout of `repo`: a folder inside a work tree of it is used as it is (`cloned` false); a folder that
 -- is missing, or not inside any work tree, gets `gh repo clone` (git refuses a non-empty one, and that is the problem
--- reported); a work tree of another repository is refused. done({ root, cloned }, problem, cx); cx is nil in the host.
+-- reported); a work tree of another repository is refused. A Jira project names no repository to clone: a folder
+-- outside a work tree is refused. done({ root, cloned }, problem, cx); cx is nil in the host.
 function M.claimCheckout(path: string, repo: string, done: Cb<{ root: string, cloned: boolean }>)
 	local function resolved(cloned: boolean)
 		M.resolveRepository(path, repo, function(info, why, cx)
@@ -367,6 +377,12 @@ function M.claimCheckout(path: string, repo: string, done: Cb<{ root: string, cl
 		end)
 	end
 	local function clone()
+		if tracker.jiraProject(repo) then
+			tern.timer(0, function(cx)
+				done(nil, "That folder is not a git checkout. A Jira project names no repository to clone, so enter the folder of an existing checkout.", cx)
+			end)
+			return
+		end
 		github.clone(repo, path, function(problem, cx)
 			if problem then
 				return done(nil, problem.message, cx)
@@ -823,27 +839,46 @@ function M.open(checkout: string, repo: string, number: number, done: Cb<Result>
 	end)
 end
 
--- Creates or reuses the worktree of issue `key` of `repo` on `branch`, in `<omp worktrees>/plotroom-<owner>_<repo>-issue-<key>`.
--- A worktree already at that directory is reused whatever its branch; an existing local branch is attached, never
--- moved; a new branch starts at the remote's default branch. done(result, problem, cx) runs exactly once. Problem
--- M.NO_REPO means `checkout` is not a checkout of `repo`.
+-- The directory slot and the base ref's path part of the issues of `repo`; nils when it is neither. A GitHub `owner/name`
+-- gives `owner_name` and `owner/name` (lowercase), a Jira project key `jira.abc` and `jira/abc`: a GitHub owner holds
+-- no `.`, so no two projects share a slot.
+local function issueSlot(repo: string): (string?, string?)
+	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
+	if owner and name and M.validSegment(owner) and M.validSegment(name) then
+		return owner .. "_" .. name, refPart(owner) .. "/" .. refPart(name)
+	end
+	if tracker.jiraProject(repo) then
+		return "jira." .. string.lower(repo), "jira/" .. string.lower(repo)
+	end
+	return nil, nil
+end
+
+-- Whether `repo` is a project Plotroom makes issue worktrees for: a GitHub `owner/name` or a Jira project key.
+function M.validProject(repo: string): boolean
+	return issueSlot(repo) ~= nil
+end
+
+-- Creates or reuses the worktree of issue `key` of `repo` on `branch`, in `<omp worktrees>/plotroom-<slot>-issue-<key>`:
+-- the slot is `<owner>_<repo>` (GitHub) or `jira.<project>` (Jira), lowercase; the key keeps its case, so `issueOfPath`
+-- gives it back as it is. A worktree already at that directory is reused whatever its branch; an existing local branch
+-- is attached, never moved; a new branch starts at the remote's default branch. done(result, problem, cx) runs exactly
+-- once. Problem M.NO_REPO means `checkout` is not a checkout of `repo`.
 function M.openIssue(checkout: string, repo: string, key: string, branch: string, done: Cb<IssueResult>)
-	local lrepo = string.lower(repo)
-	local owner, name = string.match(lrepo, "^([^/]+)/([^/]+)$")
+	local slot, basePart = issueSlot(repo)
 	local bad: string? = nil
-	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+	if not slot or not basePart then
 		bad = "Invalid repository " .. repo
-	elseif not string.match(key, "^[%w%-]+$") or #key > 64 or branch == "" then
+	elseif not string.match(key, "^[%w_%-]+$") or #key > 64 or branch == "" then
 		bad = "Invalid issue " .. key .. " of " .. repo
 	end
-	if bad or not owner or not name then
+	if bad or not slot or not basePart then
 		tern.timer(0, function(cx)
 			done(nil, bad, cx)
 		end)
 		return
 	end
-	local dirName = "plotroom-" .. owner .. "_" .. name .. "-issue-" .. string.lower(key)
-	local baseRef = "refs/plotroom-base/" .. refPart(owner) .. "/" .. refPart(name)
+	local dirName = "plotroom-" .. slot .. "-issue-" .. key
+	local baseRef = "refs/plotroom-base/" .. basePart
 
 	local s = steps(done)
 	local finish, attempt, run = s.finish, s.attempt, s.run
@@ -962,13 +997,13 @@ end
 
 -- The issue ref whose Plotroom worktree holds `path` (the root or any directory inside it), nil otherwise.
 function M.issueOfPath(path: string, repo: string): string?
-	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
-	if not owner or not name then
+	local slot = issueSlot(repo)
+	if not slot then
 		return nil
 	end
-	local _, e = string.find(path, "/plotroom-" .. owner .. "_" .. name .. "-issue-", 1, true)
+	local _, e = string.find(path, "/plotroom-" .. slot .. "-issue-", 1, true)
 	if e then
-		local ref, rest = string.match(string.sub(path, e + 1), "^([%w%-]+)(.*)$")
+		local ref, rest = string.match(string.sub(path, e + 1), "^([%w_%-]+)(.*)$")
 		if ref and rest and (rest == "" or string.sub(rest, 1, 1) == "/") then
 			return ref
 		end

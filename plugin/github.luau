@@ -86,12 +86,17 @@ local function utc(year: number, month: number, day: number, hh: number, mm: num
 	return days * 86400 + hh * 3600 + mm * 60 + ss
 end
 
--- Seconds since the epoch of `2026-09-30T14:03:11Z`; nil unless `iso` starts with a timestamp of that shape.
+-- Seconds since the epoch of `2026-09-30T14:03:11Z` (or with an offset, `2026-05-27T09:38:49.512-0500`); nil unless `iso` starts with a timestamp of that shape.
 function M.epoch(iso: string): number?
-	local y, m, d, h, mi, s = string.match(iso, "^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)")
+	local y, m, d, h, mi, s, rest = string.match(iso, "^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)(.*)$")
 	local year, month, day, hh, mm, ss = tonumber(y), tonumber(m), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
-	if year and month and day and hh and mm and ss then
-		return utc(year, month, day, hh, mm, ss)
+	if year and month and day and hh and mm and ss and rest then
+		local t = utc(year, month, day, hh, mm, ss)
+		local sign, oh, om = string.match(rest, "^[%.%d]*([%+%-])(%d%d):?(%d%d)$")
+		if sign then
+			t -= (if sign == "-" then -1 else 1) * ((tonumber(oh) :: number) * 3600 + (tonumber(om) :: number) * 60)
+		end
+		return t
 	end
 	return nil
 end
@@ -1162,7 +1167,7 @@ function M.issue(repo: string, number: number, done: (tracker.IssueDetail?, Prob
 		local milestone = data.milestone
 		finish({
 			body = cleanBody(data.body),
-			milestone = if type(milestone) == "string" and milestone ~= "" then milestone else nil,
+			fields = { { label = "Milestone", value = if type(milestone) == "string" and milestone ~= "" then milestone else nil } },
 			linked = linked,
 		}, nil)
 	end, account)

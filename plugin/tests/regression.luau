@@ -16,6 +16,7 @@ export type Loader = (any, any) -> Require
 type Github = typeof(require("../github"))
 type Input = typeof(require("../input"))
 type Process = typeof(require("../process"))
+type Jira = typeof(require("../jira"))
 
 -- 2026-10-12T12:00:00Z: where every world's clock starts.
 local EPOCH = 1791806400
@@ -1603,6 +1604,9 @@ local function newGh(w: World): Gh
 		if argv[1] ~= "gh" then
 			return nil
 		end
+		if argv[2] == "--version" then
+			return { stdout = "gh version 2.98.0\n" }
+		end
 		local override = gh.override
 		if argv[2] == "auth" and argv[3] == "status" then
 			-- the active account and every one with a token, as `gh auth status --json hosts` lists them
@@ -1743,6 +1747,92 @@ local function newGh(w: World): Gh
 		return nil
 	end)
 	return gh
+end
+
+type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | view | projects | other
+type Acli = {
+	site: string?, -- the Jira site `acli jira auth status` names; nil: signed out, every jira command fails as unauthorized
+	searches: { [string]: { any } }, -- --jql value -> the work items it finds, newest update first; an unlisted query finds none
+	views: { [string]: any }, -- key -> the REST issue `workitem view` prints
+	projects: { any }, -- what `project list` prints
+	override: ((AcliReq) -> Reply?)?, -- answers first: a failure, a malformed page
+	requests: { AcliReq },
+}
+
+-- Atlassian's acli as far as the Jira module reads it: `--version`, `jira auth status`, `jira workitem search|view` and
+-- `jira project list`.
+local function newAcli(w: World): Acli
+	local acli: Acli = { site = "acme.atlassian.net", searches = {}, views = {}, projects = {}, override = nil, requests = {} }
+	w.respond(function(call: Call): Reply?
+		local argv = call.argv
+		if argv[1] ~= "acli" then
+			return nil
+		end
+		local kind = "other"
+		if argv[2] == "--version" then
+			kind = "version"
+		elseif argv[2] == "jira" and argv[3] == "auth" and argv[4] == "status" then
+			kind = "auth"
+		elseif argv[2] == "jira" and argv[3] == "workitem" and (argv[4] == "search" or argv[4] == "view") then
+			kind = argv[4]
+		elseif argv[2] == "jira" and argv[3] == "project" and argv[4] == "list" then
+			kind = "projects"
+		end
+		local req: AcliReq = { kind = kind, argv = argv }
+		table.insert(acli.requests, req)
+		local forced = if acli.override then acli.override(req) else nil
+		if forced then
+			return forced
+		end
+		if kind == "version" then
+			return { stdout = "acli version 1.3.36-stable\n" }
+		end
+		local site = acli.site
+		if not site then
+			return { status = 1, stderr = "✗ Error: unauthorized: use 'acli jira auth login' to authenticate\n" }
+		end
+		if kind == "auth" then
+			return { stdout = "✓ Authenticated\n  Site: " .. site .. "\n  Email: ann@example.com\n  Authentication Type: oauth_global\n" }
+		elseif kind == "search" then
+			local jql = ""
+			for i = 5, #argv - 1 do
+				if argv[i] == "--jql" then
+					jql = argv[i + 1]
+				end
+			end
+			local items = acli.searches[jql] or {}
+			return { stdout = if #items > 0 then jsonEncode(array(items)) .. "\n" else "[\n  null\n]\n" }
+		elseif kind == "view" then
+			local item = acli.views[argv[5] or ""]
+			if item == nil then
+				return { status = 1, stderr = "✗ Error: Issue does not exist or you do not have permission to see it.\n" }
+			end
+			return { stdout = jsonEncode(item) .. "\n" }
+		elseif kind == "projects" then
+			return { stdout = jsonEncode(array(acli.projects)) .. "\n" }
+		end
+		return nil
+	end)
+	return acli
+end
+
+-- A work item as `acli jira workitem search` prints it; `fields` replaces or adds members of its `fields`.
+local function jiraItem(key: string, summary: string, fields: { [string]: any }?): { [string]: any }
+	local f: { [string]: any } = {
+		summary = summary,
+		status = { name = "To Do", statusCategory = { key = "new" } },
+		issuetype = { name = "Task" },
+		priority = { name = "Medium" },
+		reporter = { displayName = "Ann Lee" },
+		assignee = NULL,
+		labels = array({}),
+	}
+	if fields then
+		for k, v in fields do
+			f[k] = v
+		end
+	end
+	return { key = key, fields = f }
 end
 
 -- git's refname rules, as far as generated names can break them (git check-ref-format).
@@ -2673,6 +2763,92 @@ windowCase("worktree.openIssue: a remote whose default branch cannot be read cre
 	eq(countLog(r.git, "worktree add"), 0, "git was never asked to add one")
 end)
 
+windowCase("worktree.openIssue: a Jira project's issue is made from the checkout's first remote on any host, in the project's own directory", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local r = issueRepo(w, "ABC-7")
+	r.git.remotes = { origin = { "git@gitlab.com:o/r.git" }, upstream = { "https://example.org/x/y.git" } }
+	local function open(key: string): Opened
+		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+		worktree.openIssue(r.launch, "ABC", key, key .. "-fix", function(result, problem, cx)
+			out.calls += 1
+			out.result, out.problem, out.cx = result, problem, cx
+		end)
+		w.flush()
+		return out
+	end
+	local out = open("ABC-7")
+	eq(out.calls, 1, "done calls")
+	eq(out.problem, nil, "problem")
+	eq(out.result.path, "/wt/plotroom-jira.abc-issue-ABC-7", "the project's slot, the key in its own case")
+	eq(out.result.remote, "origin", "origin, whatever its host")
+	eq(out.result.key, "ABC-7", "key")
+	eq(out.result.branch, "ABC-7-fix", "branch")
+	eq(out.result.created, true, "created")
+	eq(countLog(r.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the default branch is fetched into the project's own base ref")
+	eq(r.git.refs["refs/heads/ABC-7-fix"], sha("b"), "the branch starts at the remote's default branch")
+	eq(worktree.issueOfPath(out.result.path, "ABC"), "ABC-7", "the path maps back to the key")
+	eq(worktree.issueOfPath(out.result.path .. "/src", "ABC"), "ABC-7", "from a directory inside it too")
+	eq(worktree.issueOfPath(out.result.path, "o/r"), nil, "and no GitHub repository claims it")
+	local again = open("ABC-7")
+	eq(again.result.created, false, "the same issue again reuses its worktree")
+	eq(again.result.path, out.result.path, "at the same path")
+	-- without origin: upstream, then the remotes by name
+	r.git.remotes = { zeta = { "https://example.org/z.git" }, upstream = { "https://example.org/x/y.git" } }
+	eq(open("ABC-8").result.remote, "upstream", "upstream before the rest")
+	r.git.remotes = { zeta = { "https://example.org/z.git" }, beta = { "https://example.org/b.git" } }
+	eq(open("ABC-9").result.remote, "beta", "then by name")
+	-- a project or key it cannot use
+	local before = #w.calls
+	for _, bad in { { "abc", "ABC-1" }, { "A", "ABC-1" }, { "ABC", "ABC/1" }, { "ABC", "" } } do
+		local refused: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+		worktree.openIssue(r.launch, bad[1], bad[2], "x", function(result, problem, cx)
+			refused.calls += 1
+			refused.result, refused.problem, refused.cx = result, problem, cx
+		end)
+		w.flush()
+		eq(refused.calls, 1, "done calls: " .. bad[1] .. " " .. bad[2])
+		eq(refused.result, nil, "no result: " .. bad[1] .. " " .. bad[2])
+		has(refused.problem, "Invalid", "the reason: " .. bad[1] .. " " .. bad[2])
+	end
+	eq(#w.calls, before, "no process was started")
+end)
+
+windowCase("worktree: a Jira project is a valid project, its checkout is any work tree with a remote, and nothing is cloned for it", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local r = issueRepo(w, "ABC-7")
+	r.git.remotes = { origin = { "git@gitlab.com:o/r.git" } }
+	yes(worktree.validProject("ABC") and worktree.validProject("A1_B") and worktree.validProject("o/r"), "a Jira key and a GitHub repository are projects")
+	for _, bad in { "abc", "A", "o", "o/r/s", "" } do
+		yes(not worktree.validProject(bad), "not a project: " .. bad)
+	end
+	local function claim(path: string): Opened
+		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+		worktree.claimCheckout(path, "ABC", function(result, problem, cx)
+			out.calls += 1
+			out.result, out.problem, out.cx = result, problem, cx
+		end)
+		w.flush()
+		return out
+	end
+	local ok = claim("/work/r/src")
+	eq(ok.calls, 1, "done calls")
+	eq(ok.problem, nil, "problem")
+	eq(ok.result.root, "/work/r", "the checkout's root, found from a folder inside it")
+	eq(ok.result.cloned, false, "used as it is")
+	r.git.remotes = {}
+	local bare = claim("/work/r")
+	eq(bare.result, nil, "a checkout with no remote")
+	eq(bare.problem, "/work/r has no git remote to branch from.", "has nothing to branch from")
+	local refusal = "That folder is not a git checkout. A Jira project names no repository to clone, so enter the folder of an existing checkout."
+	w.fs.dirs["/work/plain"] = true
+	local plain = claim("/work/plain")
+	eq(plain.result, nil, "a folder that is no checkout")
+	eq(plain.problem, refusal, "is refused, not cloned")
+	local missing = claim("/work/missing")
+	eq(missing.result, nil, "a folder that does not exist")
+	eq(missing.problem, refusal, "is refused too")
+end)
+
 case("worktree: describeIssue and cleanupIssue say how the issue's worktree stands and how to remove it", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local function result(created: boolean, dirty: boolean?): any
@@ -3480,7 +3656,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "6", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "7", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -4248,7 +4424,7 @@ case("github.issue: reads body, milestone and linked pull requests", function(w:
 	eq(gh.requests[1].fields.r, "r", "repository")
 	eq(gh.requests[1].fields.n, "12", "number")
 	eq(out.detail.body, "Login fails.", "the body, without Cursor's generated summary")
-	eq(out.detail.milestone, "v2", "milestone")
+	same(out.detail.fields, { { label = "Milestone", value = "v2" } }, "the milestone is the one detail row GitHub fills")
 	same(out.detail.linked, {
 		{ ref = "45", title = "Fix login redirect", url = "https://github.com/o/r/pull/45", state = "draft" },
 		{ ref = "44", title = "Earlier attempt", url = "https://github.com/o/r/pull/44", state = "merged" },
@@ -4260,11 +4436,11 @@ case("github.issue: reads body, milestone and linked pull requests", function(w:
 	local none = runIssue(w, github, nil)
 	eq(none.problem, nil, "an issue the account cannot see is not a failed read")
 	eq(none.detail.body, "", "no body")
-	eq(none.detail.milestone, nil, "no milestone")
+	same(none.detail.fields, { { label = "Milestone" } }, "no milestone")
 	same(none.detail.linked, {}, "no linked pull requests")
 	gh.issueDetail["o/r#12"] = { body = string.rep("é", 20005), milestone = "", linked = array({}) }
 	local long = runIssue(w, github, nil)
-	eq(long.detail.milestone, nil, "an empty milestone is none")
+	same(long.detail.fields, { { label = "Milestone" } }, "an empty milestone is none")
 	eq(utf8.len(long.detail.body), 20003, "a long body is cut at 20000 characters, on a character boundary, and marked")
 	-- what gh printed must be a JSON object, and a failing call returns its problem
 	gh.override = function(req: GhReq): Reply?
@@ -4338,6 +4514,492 @@ case("github.issues and github.issue: with the saved accounts unreadable they re
 	w.flush()
 	same(seen, { "issues account 0", "issue account" }, "answers")
 	eq(#w.calls, 0, "no gh process was started")
+end)
+
+-- ---- jira.luau: acli's search, one work item's details and the project list
+
+local function runJira(w: World, jira: Jira, query: string, shouldContinue: (() -> boolean)?): SearchOut
+	local out: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
+	jira.issues("ABC", query, shouldContinue or always, function(result, problem, spent)
+		out.calls += 1
+		out.result = result
+		out.problem = problem
+		out.spent = spent
+	end)
+	eq(out.calls, 0, "never synchronous")
+	w.flush()
+	return out
+end
+
+local function runJiraIssue(w: World, jira: Jira, key: string, shouldContinue: (() -> boolean)?): IssueOut
+	local out: IssueOut = { detail = nil, problem = nil, calls = 0 }
+	jira.issue(key, function(detail, problem)
+		out.calls += 1
+		out.detail, out.problem = detail, problem
+	end, shouldContinue)
+	eq(out.calls, 0, "never synchronous")
+	w.flush()
+	return out
+end
+
+-- The value after option `name` of an acli call.
+local function acliOption(argv: { string }, name: string): string?
+	for i = 2, #argv - 1 do
+		if argv[i] == name then
+			return argv[i + 1]
+		end
+	end
+	return nil
+end
+
+-- How many acli calls of `kind` were made.
+local function acliCount(acli: Acli, kind: string): number
+	local n = 0
+	for _, req in acli.requests do
+		if req.kind == kind then
+			n += 1
+		end
+	end
+	return n
+end
+
+case("jira.issues: one search scoped to the project, newest update first, normalized", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	local query = "assignee = currentUser() AND statusCategory != Done"
+	local jql = 'project = "ABC" AND (' .. query .. ") ORDER BY updated DESC"
+	acli.searches[jql] = {
+		jiraItem("ABC-12", "Fix login", {
+			status = { name = "In Progress", statusCategory = { key = "indeterminate" } },
+			issuetype = { name = "Bug" },
+			priority = { name = "High" },
+			assignee = { displayName = "Bob Ray" },
+			labels = array({ "ui", "bug" }),
+		}),
+		jiraItem("ABC-13", "Old bug", { status = { name = "Done", statusCategory = { key = "done" } } }),
+	}
+	local out = runJira(w, jira, query, nil)
+	eq(out.calls, 1, "done calls")
+	eq(out.problem, nil, "problem")
+	eq(out.spent, 0, "Jira has no quota to spend")
+	eq(#acli.requests, 2, "the site, then one search")
+	eq(acli.requests[1].kind, "auth", "the site comes first")
+	eq(acli.requests[2].kind, "search", "then the search")
+	local argv = acli.requests[2].argv
+	eq(acliOption(argv, "--jql"), jql, "scoped to the project, the filter's query in parentheses, newest update first")
+	eq(acliOption(argv, "--limit"), "100", "the newest 100")
+	eq(acliOption(argv, "--fields"), "key,summary,status,issuetype,priority,assignee,reporter,labels", "only the fields acli's search allows")
+	yes(table.find(argv, "--json"), "as JSON")
+	eq(out.result.total, 2, "total")
+	eq(out.result.complete, true, "fewer than a page is complete")
+	local issues = out.result.issues
+	eq(#issues, 2, "issues, in acli's order")
+	local first = issues[1]
+	eq(first.key, "abc#ABC-12", "identity: the lowercase project, then the key")
+	eq(first.id, "nABC-12", "picker id")
+	eq(first.ref, "ABC-12", "ref")
+	eq(first.repo, "ABC", "the project")
+	eq(first.tracker, "jira", "tracker")
+	eq(first.url, "https://acme.atlassian.net/browse/ABC-12", "browse URL from the site acli is signed in to")
+	eq(first.title, "Fix login", "title")
+	eq(first.author, "Ann Lee", "the reporter")
+	eq(first.state, "open", "an unfinished status is open")
+	eq(first.reason, nil, "no close reason")
+	same(first.status, { text = "In Progress", tone = "warning" }, "the workflow status, toned by its category")
+	eq(first.type, "Bug", "type")
+	eq(first.priority, "High", "priority")
+	same(first.labels, { "ui", "bug" }, "labels")
+	same(first.assignees, { "Bob Ray" }, "the assignee")
+	eq(first.comments, 0, "the list has no comment count")
+	eq(first.created, 0, "and no creation date")
+	eq(first.updated, 0, "nor update date")
+	local second = issues[2]
+	eq(second.key, "abc#ABC-13", "key")
+	eq(second.state, "closed", "a done category is closed")
+	same(second.status, { text = "Done", tone = "success" }, "status")
+	same(second.assignees, {}, "a null assignee is none")
+	-- an empty search prints [null], [] or null
+	for i, text in { "[\n  null\n]\n", "[]\n", "null\n" } do
+		acli.override = function(req: AcliReq): Reply?
+			return if req.kind == "search" then { stdout = text } else nil
+		end
+		local none = runJira(w, jira, query, nil)
+		eq(none.problem, nil, "empty form " .. i .. ": problem")
+		eq(#none.result.issues, 0, "empty form " .. i .. ": issues")
+		eq(none.result.total, 0, "empty form " .. i .. ": total")
+		eq(none.result.complete, true, "empty form " .. i .. ": complete")
+	end
+	-- an update notice before the JSON and a null element inside it are skipped
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "search" then { stdout = "You're using an outdated version 1.3.36-stable. Update to the latest version 1.3.39-stable.\n[null," .. jsonEncode(jiraItem("ABC-5", "Five")) .. "]" } else nil
+	end
+	local noticed = runJira(w, jira, query, nil)
+	eq(noticed.problem, nil, "problem")
+	eq(#noticed.result.issues, 1, "the notice and the null are skipped")
+	eq(noticed.result.issues[1].ref, "ABC-5", "the work item")
+	-- a full page may have more behind it
+	acli.override = nil
+	local many: { any } = {}
+	for i = 1, 100 do
+		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
+	end
+	acli.searches[jql] = many
+	local full = runJira(w, jira, query, nil)
+	eq(#full.result.issues, 100, "a full page")
+	eq(full.result.complete, false, "a full page is not known to be complete")
+	eq(full.result.issues[1].ref, "ABC-1", "acli's order is kept")
+	eq(full.result.issues[100].ref, "ABC-100", "to the last item")
+	-- the site is read once per sign-in
+	eq(acliCount(acli, "auth"), 1, "the site is asked for once")
+	jira.reset()
+	runJira(w, jira, query, nil)
+	eq(acliCount(acli, "auth"), 2, "reset forgets it")
+end)
+
+case("jira.issues: acli's failures become problems, and a filter that would leave the project never reaches acli", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	local query = "assignee = currentUser()"
+	-- acli is not installed: the spawn raises and there is no shell to look in
+	acli.override = function(_req: AcliReq): Reply?
+		return { raise = "no such file or directory" }
+	end
+	local missing = runJira(w, jira, query, nil)
+	eq(missing.result, nil, "no result")
+	eq(missing.problem.kind, "missing", "acli cannot be started")
+	has(missing.problem.message, "acli could not be started", "and the message names the program")
+	-- signed out: the site lookup is refused
+	acli.override = nil
+	acli.site = nil
+	local signedOut = runJira(w, jira, query, nil)
+	eq(signedOut.problem.kind, "auth", "signed out")
+	eq(signedOut.problem.message, "acli is not signed in to Jira: unauthorized: use 'acli jira auth login' to authenticate", "in acli's words")
+	eq(acliCount(acli, "search"), 0, "no search was sent")
+	-- a sign-in that names no site
+	acli.site = "acme.atlassian.net"
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "auth" then { stdout = "✓ Authenticated\n" } else nil
+	end
+	local nameless = runJira(w, jira, query, nil)
+	eq(nameless.problem.kind, "auth", "no site named")
+	has(nameless.problem.message, "did not name a Jira site", "message")
+	eq(acliCount(acli, "search"), 0, "still no search")
+	-- the site is known now; what a search fails with
+	acli.override = nil
+	eq(runJira(w, jira, query, nil).problem, nil, "a working search")
+	local lookups = acliCount(acli, "auth")
+	local function searchReplies(reply: Reply): SearchOut
+		acli.override = function(req: AcliReq): Reply?
+			return if req.kind == "search" then reply else nil
+		end
+		local out = runJira(w, jira, query, nil)
+		eq(out.result, nil, "no result")
+		return out
+	end
+	local bogus = searchReplies({ status = 1, stderr = "✗ Error: failed to parse JQL query: field 'bogus' does not exist or you do not have permission to view it.\n" })
+	eq(bogus.problem.kind, "invalid", "a JQL error is terminal")
+	eq(bogus.problem.message, "failed to parse JQL query: field 'bogus' does not exist or you do not have permission to view it.", "in acli's words")
+	local gone = searchReplies({ status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" })
+	eq(gone.problem.kind, "not-found", "an unknown project is not found")
+	eq(searchReplies({ status = 1, stderr = "✗ Error: request failed: 429 Too Many Requests\n" }).problem.kind, "rate-limit", "a 429 is a rate limit")
+	local boom = searchReplies({ status = 1, stderr = "✗ Error: boom\n" })
+	eq(boom.problem.kind, "failed", "anything else")
+	eq(boom.problem.message, "boom", "with acli's message")
+	local slow = searchReplies({ timedOut = true })
+	eq(slow.problem.kind, "failed", "no answer in time")
+	eq(slow.problem.message, "acli did not answer within 60 seconds.", "message")
+	eq(searchReplies({ stdout = "not json" }).problem.message, "acli printed something other than a search result", "no JSON")
+	eq(searchReplies({ stdout = '{"issues":[]}' }).problem.message, "acli printed something other than a search result", "an object is no search result")
+	eq(searchReplies({ stdout = '[{"key":"ABC-1"}]' }).problem.message, "acli returned a work item without a key or summary", "an item with no summary")
+	eq(acliCount(acli, "auth"), lookups, "none of those forgot the site")
+	-- a search that ends signed out forgets the site: the next one asks again
+	eq(searchReplies({ status = 1, stderr = "✗ Error: unauthorized: use 'acli jira auth login' to authenticate\n" }).problem.kind, "auth", "signed out mid-way")
+	acli.override = nil
+	eq(runJira(w, jira, query, nil).problem, nil, "signed in again")
+	eq(acliCount(acli, "auth"), lookups + 1, "the site was looked up again")
+	-- a filter that cannot stay inside the project is refused without asking acli
+	local sent = #acli.requests
+	for _, bad in { "a = 1) OR (b = 2", "a = 1 ORDER BY created", "a = 1 order  by x", "x = 'open", "(a = 1" } do
+		local refused = runJira(w, jira, bad, nil)
+		eq(refused.result, nil, "no result: " .. bad)
+		eq(refused.problem.kind, "invalid", "refused: " .. bad)
+	end
+	eq(#acli.requests, sent, "none of them reached acli")
+	eq(jira.scopeProblem("a = 1) OR (b = 2"), "Unbalanced parentheses: a filter cannot close the project's scope.", "an extra closing parenthesis")
+	eq(jira.scopeProblem("(a = 1"), "Unbalanced quotes or parentheses.", "an open parenthesis")
+	eq(jira.scopeProblem("a = 1 ORDER BY x"), "Leave out ORDER BY: issues are listed newest update first.", "ordering is the search's")
+	local blank = runJira(w, jira, "  ", nil)
+	eq(blank.problem.kind, "failed", "a blank filter")
+	eq(blank.problem.message, "The filter query is empty.", "message")
+	eq(runJira(w, jira, 'summary ~ "a) ORDER BY (b"', nil).problem, nil, "quoted text may hold parentheses and ORDER BY")
+	-- cancellation wins everywhere
+	local searches = acliCount(acli, "search")
+	local cancelled = runJira(w, jira, query, function(): boolean
+		return false
+	end)
+	eq(cancelled.problem.kind, "superseded", "cancelled before the search")
+	eq(acliCount(acli, "search"), searches, "nothing was sent")
+	local go = true
+	acli.override = function(req: AcliReq): Reply?
+		if req.kind == "search" then
+			go = false
+		end
+		return nil
+	end
+	local during = runJira(w, jira, query, function(): boolean
+		return go
+	end)
+	eq(during.problem.kind, "superseded", "cancelled while the search was in flight")
+	acli.override = nil
+	local wrong: SearchOut = { result = nil, problem = nil, spent = nil, calls = 0 }
+	jira.issues("abc", query, always, function(result, problem, spent)
+		wrong.result, wrong.problem, wrong.spent = result, problem, spent
+	end)
+	w.flush()
+	eq(wrong.problem.kind, "failed", "a project key that is none")
+end)
+
+case("jira.issue: body as markdown, fields, links and dates", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local github = w.load("github") :: Github
+	local acli = newAcli(w)
+	local function ref(key: string, summary: string, category: string): any
+		return { key = key, fields = { summary = summary, status = { statusCategory = { key = category } } } }
+	end
+	local blocks: { any } = {
+		{ type = "heading", attrs = { level = 2 }, content = { { type = "text", text = "Steps" } } },
+		{
+			type = "paragraph",
+			content = {
+				{ type = "text", text = "See " },
+				{ type = "text", text = "the guide", marks = { { type = "strong" }, { type = "link", attrs = { href = "https://example.com/guide" } } } },
+				{ type = "text", text = "." },
+			},
+		},
+		{
+			type = "bulletList",
+			content = {
+				{ type = "listItem", content = { { type = "paragraph", content = { { type = "text", text = "Open /login" } } } } },
+				{ type = "listItem", content = { { type = "paragraph", content = { { type = "text", text = "Press " }, { type = "text", text = "Enter", marks = { { type = "code" } } } } } } },
+			},
+		},
+	}
+	local links: { any } = {
+		{ type = { inward = "is blocked by", outward = "blocks" }, outwardIssue = ref("ABC-3", "Login API", "done") },
+		{ type = { inward = "is blocked by", outward = "blocks" }, inwardIssue = ref("ABC-4", "Design", "new") },
+		{ type = { inward = "relates to", outward = "relates to" }, outwardIssue = { fields = { summary = "No key" } } },
+	}
+	acli.views["ABC-12"] = {
+		key = "ABC-12",
+		fields = {
+			summary = "Fix login",
+			description = { type = "doc", version = 1, content = blocks },
+			parent = { key = "ABC-1", fields = { summary = "Auth rework" } },
+			customfield_10020 = array({
+				{ boardId = 1, state = "closed", name = "Sprint 1" },
+				{ boardId = 1, state = "active", name = "Sprint 2" },
+				{ boardId = 1, state = "future", name = "Sprint 3" },
+			}),
+			customfield_10036 = array({ { id = "1", value = "not a sprint" } }),
+			components = array({ { name = "Web" }, { name = "API" } }),
+			fixVersions = array({ { name = "v2" } }),
+			issuelinks = array(links),
+			subtasks = array({ ref("ABC-13", "Add a test", "indeterminate") }),
+			comment = { total = 2 },
+			created = "2026-05-27T09:38:49.512-0500",
+			updated = "2026-05-28T10:00:00.000+0000",
+		},
+	}
+	local out = runJiraIssue(w, jira, "ABC-12", nil)
+	eq(out.calls, 1, "done calls")
+	eq(out.problem, nil, "problem")
+	eq(#acli.requests, 2, "the site, then the work item")
+	eq(acli.requests[2].kind, "view", "a view")
+	eq(acli.requests[2].argv[5], "ABC-12", "of the key")
+	eq(acliOption(acli.requests[2].argv, "--fields"), "*all", "with every field")
+	eq(out.detail.body, "## Steps\n\nSee [**the guide**](https://example.com/guide).\n\n- Open /login\n- Press `Enter`", "the description as markdown")
+	same(out.detail.fields, {
+		{ label = "Parent", value = "ABC-1 Auth rework" },
+		{ label = "Sprint", value = "Sprint 2" },
+		{ label = "Components", value = "Web, API" },
+		{ label = "Fix versions", value = "v2" },
+	}, "parent, the active sprint (the sprint field found by its shape), components and fix versions, in order")
+	same(out.detail.linked, {
+		{ ref = "ABC-3", title = "Login API", url = "https://acme.atlassian.net/browse/ABC-3", state = "done", relation = "blocks" },
+		{ ref = "ABC-4", title = "Design", url = "https://acme.atlassian.net/browse/ABC-4", state = "open", relation = "is blocked by" },
+		{ ref = "ABC-13", title = "Add a test", url = "https://acme.atlassian.net/browse/ABC-13", state = "open", relation = "subtask" },
+	}, "an outward link, an inward one, a subtask; a link with no key is dropped")
+	eq(out.detail.comments, 2, "comments")
+	eq(out.detail.created, github.epoch("2026-05-27T14:38:49Z"), "a -0500 offset is converted to UTC")
+	eq(out.detail.updated, github.epoch("2026-05-28T10:00:00Z"), "updated")
+	-- a work item with nothing set reads as empty
+	acli.views["ABC-14"] = { key = "ABC-14", fields = { summary = "Bare" } }
+	local bare = runJiraIssue(w, jira, "ABC-14", nil)
+	eq(bare.problem, nil, "problem")
+	eq(bare.detail.body, "", "no description")
+	same(bare.detail.fields, { { label = "Parent" }, { label = "Sprint" }, { label = "Components" }, { label = "Fix versions" } }, "every row, with no value")
+	same(bare.detail.linked, {}, "no links")
+	eq(bare.detail.comments, nil, "no comment count")
+	eq(bare.detail.created, nil, "no creation date")
+	-- a plain-text description, cut long
+	acli.views["ABC-15"] = { key = "ABC-15", fields = { summary = "Long", description = string.rep("é", 20005) } }
+	local long = runJiraIssue(w, jira, "ABC-15", nil)
+	eq(utf8.len(long.detail.body), 20001, "a long description is cut at 20000 characters, on a character boundary, and marked")
+	eq(string.sub(long.detail.body, -3), "…", "with an ellipsis")
+	-- what acli answers that is no work item
+	local requests = #acli.requests
+	local badKey = runJiraIssue(w, jira, "abc-1", nil)
+	eq(badKey.detail, nil, "no detail")
+	eq(badKey.problem.kind, "failed", "a key that is none")
+	eq(#acli.requests, requests, "and nothing was asked")
+	local gone = runJiraIssue(w, jira, "ABC-99", nil)
+	eq(gone.detail, nil, "an issue acli cannot see")
+	eq(gone.problem.kind, "failed", "is a failed read")
+	eq(gone.problem.message, "Issue does not exist or you do not have permission to see it.", "in acli's words")
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "view" then { stdout = "not json" } else nil
+	end
+	local junk = runJiraIssue(w, jira, "ABC-12", nil)
+	eq(junk.problem.kind, "failed", "no JSON")
+	eq(junk.problem.message, "acli printed unexpected issue data.", "message")
+	-- signed out mid-way forgets the site; cancellation wins
+	local lookups = acliCount(acli, "auth")
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "view" then { status = 1, stderr = "✗ Error: unauthorized: use 'acli jira auth login' to authenticate\n" } else nil
+	end
+	eq(runJiraIssue(w, jira, "ABC-12", nil).problem.kind, "auth", "signed out")
+	acli.override = nil
+	eq(runJiraIssue(w, jira, "ABC-12", nil).problem, nil, "signed in again")
+	eq(acliCount(acli, "auth"), lookups + 1, "the site was looked up again")
+	local views = acliCount(acli, "view")
+	local cancelled = runJiraIssue(w, jira, "ABC-12", function(): boolean
+		return false
+	end)
+	eq(cancelled.problem.kind, "superseded", "cancelled before the call")
+	eq(acliCount(acli, "view"), views, "nothing was sent")
+	local go = true
+	acli.override = function(req: AcliReq): Reply?
+		if req.kind == "view" then
+			go = false
+		end
+		return nil
+	end
+	local during = runJiraIssue(w, jira, "ABC-12", function(): boolean
+		return go
+	end)
+	eq(during.problem.kind, "superseded", "cancelled while the call was in flight")
+end)
+
+case("jira.adf: blocks, marks and inline nodes become markdown", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local function t(s: string, marks: { any }?): any
+		return { type = "text", text = s, marks = marks }
+	end
+	local function p(...: any): any
+		return { type = "paragraph", content = { ... } }
+	end
+	local function doc(...: any): any
+		return { type = "doc", version = 1, content = { ... } }
+	end
+	local function item(...: any): any
+		return { type = "listItem", content = { ... } }
+	end
+	local function row(kind: string, ...: string): any
+		local cells: { any } = {}
+		for _, s in { ... } do
+			table.insert(cells, { type = kind, content = { p(t(s)) } })
+		end
+		return { type = "tableRow", content = cells }
+	end
+	eq(jira.adf(doc(p(t("one")), p(t("two")))), "one\n\ntwo", "blocks are separated by a blank line")
+	eq(jira.adf(doc(p(t("a"), { type = "hardBreak" }, t("b")))), "a\nb", "a hard break is a line break")
+	eq(jira.adf(doc({ type = "heading", attrs = { level = 3 }, content = { t("Title") } })), "### Title", "a heading")
+	eq(jira.adf(doc({ type = "heading", attrs = { level = 9 }, content = { t("Deep") } })), "###### Deep", "at most six hashes")
+	eq(
+		jira.adf(doc(p(
+			t("a", { { type = "code" } }),
+			t(" "),
+			t("b ", { { type = "strong" } }),
+			t("c", { { type = "em" } }),
+			t(" "),
+			t("d", { { type = "strike" } }),
+			t(" "),
+			t("e", { { type = "link", attrs = { href = "https://x.test/e" } } })
+		))),
+		"`a` **b** *c* ~~d~~ [e](https://x.test/e)",
+		"marks; the space inside strong stays outside the asterisks"
+	)
+	eq(
+		jira.adf(doc({ type = "bulletList", content = { item(p(t("a"))), item(p(t("b")), { type = "bulletList", content = { item(p(t("c"))) } }) } })),
+		"- a\n- b\n  - c",
+		"a bullet list, a nested one under its item"
+	)
+	eq(
+		jira.adf(doc({ type = "orderedList", content = { item(p(t("one")), { type = "bulletList", content = { item(p(t("inner"))) } }), item(p(t("two"))) } })),
+		"1. one\n   - inner\n2. two",
+		"an ordered list counts, and a nested list sits under the marker's width"
+	)
+	eq(jira.adf(doc({ type = "orderedList", attrs = { order = 3 }, content = { item(p(t("x"))) } })), "3. x", "an ordered list starts at its order")
+	eq(jira.adf(doc({ type = "codeBlock", attrs = { language = "lua" }, content = { t("print(1)\nprint(2)") } })), "```lua\nprint(1)\nprint(2)\n```", "a fenced code block with its language")
+	eq(jira.adf(doc({ type = "codeBlock", content = { t("a ``` b") } })), "````\na ``` b\n````", "a fence longer than any run of backticks inside")
+	eq(jira.adf(doc({ type = "blockquote", content = { p(t("a")), p(t("b")) } })), "> a\n> \n> b", "a quote marks every line")
+	eq(jira.adf(doc(p(t("a")), { type = "rule" }, p(t("b")))), "a\n\n---\n\nb", "a rule")
+	eq(
+		jira.adf(doc({ type = "table", content = { row("tableHeader", "A", "B"), row("tableCell", "1", "x|y") } })),
+		"| A | B |\n| --- | --- |\n| 1 | x\\|y |",
+		"a table: the first row is the header, a pipe in a cell is escaped"
+	)
+	eq(jira.adf(doc({ type = "panel", attrs = { panelType = "info" }, content = { p(t("note")) } })), "note", "a panel shows its content")
+	eq(
+		jira.adf(doc(p(
+			t("hi "),
+			{ type = "mention", attrs = { text = "@Ann" } },
+			t(" "),
+			{ type = "emoji", attrs = { shortName = ":smile:" } },
+			t(" "),
+			{ type = "inlineCard", attrs = { url = "https://x.test/c" } },
+			t(" "),
+			{ type = "status", attrs = { text = "DONE" } },
+			{ type = "date", attrs = { timestamp = "1" } }
+		))),
+		"hi @Ann :smile: https://x.test/c DONE",
+		"mentions, emoji, smart links and statuses are text; a date draws nothing"
+	)
+	eq(jira.adf(doc(p(t("a")), { type = "mediaSingle", content = { { type = "media", attrs = { id = "1" } } } })), "a", "media draws nothing")
+	eq(jira.adf(doc({ type = "taskList", content = { { type = "taskItem", content = { t("do it") } } } })), "do it", "an unknown block shows what it holds")
+	eq(jira.adf(nil), "", "nothing is empty")
+end)
+
+case("jira.projects: lists the visible projects by key and leaves out what is no project key", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	acli.projects = { { key = "OXYGEN", name = "Oxygen" }, { key = "CAR", name = "CARBON" }, { key = "lower", name = "Not a Jira key" }, { key = "NONAME" } }
+	local got: any, why: any = nil, nil
+	local calls = 0
+	local function list()
+		calls, got, why = 0, nil, nil
+		jira.projects(function(projects, problem)
+			calls += 1
+			got, why = projects, problem
+		end)
+		w.flush()
+	end
+	list()
+	eq(calls, 1, "done calls")
+	eq(why, nil, "problem")
+	eq(#acli.requests, 1, "one call, no site needed")
+	eq(table.concat(acli.requests[1].argv, " "), "acli jira project list --paginate --json", "the project list")
+	same(got, { { key = "CAR", name = "CARBON" }, { key = "NONAME", name = "" }, { key = "OXYGEN", name = "Oxygen" } }, "sorted by key; a missing name is empty; a key that is no project key is left out")
+	acli.site = nil
+	list()
+	eq(got, nil, "no projects")
+	eq(why.kind, "auth", "signed out")
+	acli.site = "acme.atlassian.net"
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "projects" then { stdout = "not json" } else nil
+	end
+	list()
+	eq(why.kind, "failed", "output that is no project list")
 end)
 
 -- ---- host.luau: the `prs` block, driven through the def it registers with tern.block.define
@@ -6483,6 +7145,40 @@ local function issueWindow(w: World): (HostScene, Block)
 	return s, b
 end
 
+-- The Jira side of the issues block: project ABC checked out at /work/r (its origin is on GitLab: a Jira project names
+-- no repository) whose remote serves its default branch at sha("b"). acli is signed in to acme.atlassian.net and finds
+-- under "Assigned to me" ABC-12 "Fix login" (In Progress, a High-priority Bug of Bob Ray, labelled ui) and ABC-13 "Old
+-- bug" (Done), newest update first. There is no gh: a Jira block must never ask for it.
+type JiraScene = { git: Git, acli: Acli }
+local JIRA_ASSIGNED = 'project = "ABC" AND (assignee = currentUser() AND statusCategory != Done) ORDER BY updated DESC'
+
+local function jiraHost(w: World): JiraScene
+	w.load("host")
+	local g = newGit(w, "/work/r")
+	g.remotes.origin = { "git@gitlab.com:o/r.git" }
+	g.served["HEAD"] = sha("b")
+	local acli = newAcli(w)
+	acli.searches[JIRA_ASSIGNED] = {
+		jiraItem("ABC-12", "Fix login", {
+			status = { name = "In Progress", statusCategory = { key = "indeterminate" } },
+			issuetype = { name = "Bug" },
+			priority = { name = "High" },
+			assignee = { displayName = "Bob Ray" },
+			labels = array({ "ui" }),
+		}),
+		jiraItem("ABC-13", "Old bug", { status = { name = "Done", statusCategory = { key = "done" } } }),
+	}
+	w.kv.put("repos", { ["jira/ABC"] = "/work/r" })
+	return { git = g, acli = acli }
+end
+
+-- The issues block of `pane` restored on Jira project ABC, after its first search.
+local function openJira(w: World, pane: number?): Block
+	local b = w.open(pane or 1, { "/work/r" }, { version = 1, launchCwd = "/work/r", repo = "ABC", tracker = "jira" }, "issues")
+	w.flush()
+	return b
+end
+
 local function issueLink(kind: string, repo: string, ref: string): string
 	return "plotroom://issue/" .. kind .. "/" .. repo .. "/" .. ref
 end
@@ -6705,8 +7401,8 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	b.event({ ev = "select", id = "layer.queue", item = "n13" })
 	w.advance(300)
 	eq(#requestsOf(s.gh, "issue"), 2, "the next issue loads its own details")
-	eq(factOf(b, "Milestone"), "None", "no milestone")
-	eq(factOf(b, "Assignees"), "None", "no assignee")
+	eq(factOf(b, "Milestone"), nil, "no milestone row")
+	eq(factOf(b, "Assignees"), nil, "no assignee row")
 	eq(findKey(pickerNode(b), "pr1"), nil, "no linked pull request")
 	lacks(b.text(), "Linked pull requests", "and no heading for them")
 	eq(findKey(pickerNode(b), "description"), nil, "an empty body shows no card")
@@ -6898,6 +7594,7 @@ end)
 
 case("host: the branch format rejects unknown variables and saves per repository", function(w: World)
 	issueHost(w)
+	newAcli(w) -- the Tab cycle to Worktrees passes the Integration page, which asks whether acli starts
 	w.kv.put("branches", { ["github.com/x/y"] = "keep/{key}" })
 	local b = openIssues(w)
 	goToSettings(b, "worktrees")
@@ -7093,6 +7790,7 @@ end)
 
 case("host: the issues block's Settings speak of issues, the PR queue's keep their own words", function(w: World)
 	issueHost(w)
+	newAcli(w) -- the Integration page asks whether acli starts
 	saveIssuePrompts(w, { issuePrompt("p1", "Triage", "Triage {url}", true) })
 	local b = openIssues(w)
 	local function page(name: string)
@@ -7111,8 +7809,8 @@ case("host: the issues block's Settings speak of issues, the PR queue's keep the
 	page("prompts")
 	eq(prefsOf(b).lead, "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details.", "prompts")
 	eq(rowIn(b, "padd").hint, "Starts empty, runs in a worktree, offered under every filter.", "the new prompt")
-	page("github")
-	eq(prefsOf(b).lead, "Issues load through GitHub's GraphQL API with your gh login.", "github")
+	page("source")
+	eq(prefsOf(b).lead, "Issues load through GitHub's GraphQL API with your gh login.", "integration")
 	page("worktrees")
 	eq(prefsOf(b).lead, "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the repository's local checkout.", "worktrees")
 	local pr = w.open(2, { "/work/r" })
@@ -7121,6 +7819,462 @@ case("host: the issues block's Settings speak of issues, the PR queue's keep the
 	eq(prefsOf(pr).lead, "Saved searches for the queue's filter column. They run inside o/r, so repo:, org:, user: and OR are not allowed.", "the PR queue's filters")
 	eq(rowIn(pr, "add").hint, "Starts as every open pull request.", "its new filter")
 	eq(rowIn(pr, "name:f1").control.placeholder, "My PRs", "its name field")
+end)
+
+case("host: a Jira issues block lists its project under Jira filters and saves its tracker", function(w: World)
+	local s = jiraHost(w)
+	local b = openJira(w)
+	same(w.kv.get("jira-filters"), {
+		version = 1,
+		nextId = 3,
+		items = {
+			{ id = "f1", name = "Assigned to me", query = "assignee = currentUser() AND statusCategory != Done" },
+			{ id = "f2", name = "Reported by me", query = "reporter = currentUser() AND statusCategory != Done" },
+		},
+	}, "the first run seeds the Jira filters")
+	eq(w.kv.get("issue-filters"), nil, "and leaves the GitHub issue filters alone")
+	-- How many searches acli was asked for.
+	local function searched(): number
+		local n = 0
+		for _, req in s.acli.requests do
+			if req.kind == "search" then
+				n += 1
+			end
+		end
+		return n
+	end
+	eq(searched(), 1, "one search covers the project's issues")
+	for _, call in w.calls do
+		eq(call.argv[1] == "gh", false, "a Jira block never asks gh: " .. table.concat(call.argv, " "))
+	end
+	same(listed(b), { "nABC-12", "nABC-13" }, "listed in acli's order")
+	eq(pickerOf(b).selected, "nABC-12", "the first issue is selected")
+	eq(pickerOf(b).state, "ready", "the list is ready")
+	eq(b.title(), "Plotroom · Assigned to me (2)", "the title names the filter and counts the issues")
+	eq(pickerOf(b).scopes[1].label, "Assigned to me", "the filter list shows the Jira filters")
+	eq(pickerOf(b).scopes[2].label, "Reported by me", "both of them")
+	local title = pickerOf(b).title[1]
+	eq(title.t, "ABC", "the heading names the project")
+	eq(title.href, "plotroom://jira-projects", "and opens the Jira project picker")
+	eq(actionOf(b, "repos").label, "Project", "the action bar's button says Project")
+	b.typeText("o")
+	eq(w.opened[#w.opened], "plotroom://jira-projects", "as o does")
+	local function row(i: number): any
+		return pickerOf(b).items[i]
+	end
+	-- A row's badges as "text/tone", in order.
+	local function badges(i: number): string
+		local out: { string } = {}
+		for _, badge in row(i).badges or {} do
+			table.insert(out, badge.text .. "/" .. (badge.tone or "-"))
+		end
+		return table.concat(out, " ")
+	end
+	eq(row(1).id, "nABC-12", "the id is n and the issue's key")
+	eq(row(1).label, "Fix login", "the summary is the label")
+	eq(detailText(row(1)), "ABC-12 · Ann Lee · Bug · Bob Ray", "the key, the reporter, the type and the assignee; no age, as the search carries no dates")
+	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "an unassigned issue shows no assignee")
+	eq(badges(1), "In Progress/warning ui/-", "the workflow status is a badge toned by its category, then the labels")
+	eq(badges(2), "Done/success", "a done issue says Done")
+	eq(row(1).facts.comments, nil, "the search carries no comment count")
+	eq(actionOf(b, "open").label, "Jira ↗", "the Open button names the tracker")
+	b.typeText("?")
+	local byKeys: { [string]: string } = {}
+	for _, r in helpRows(b.view().layer) do
+		byKeys[r.keys] = r.text
+	end
+	eq(byKeys.o, "Show another Jira project: a saved one, one acli lists, or type its key", "o shows another project")
+	b.press("escape")
+	local rerun = w.open(1, { "/work/r" }, nil, "issues")
+	w.flush()
+	same(listed(rerun), { "nABC-12", "nABC-13" }, "running init again for the live pane keeps its Jira list")
+	eq(searched(), 1, "and does not search twice")
+	local saved = b.saved()
+	eq(saved.tracker, "jira", "the block saves the tracker it reads")
+	eq(saved.repo, "ABC", "and its project")
+	local again = w.open(2, { "/work/r" }, saved, "issues")
+	w.flush()
+	eq(pickerOf(again).title[1].t, "ABC", "a restored block shows the project")
+	eq(again.title(), "Plotroom · Assigned to me (2)", "under the Jira filters")
+end)
+
+case("host: a Jira block's Settings speak of its project: JQL filters, the shared prompts, its checkout and its branch format", function(w: World)
+	local s = jiraHost(w)
+	saveIssuePrompts(w, { issuePrompt("p1", "Triage", "Triage {key} in {project}: {title}", true) })
+	local b = openJira(w)
+	local function page(name: string)
+		b.event({ ev = "action", id = "layer.settings", act = "page", value = name })
+	end
+	-- Types `text` over what text row `row` holds and saves it.
+	local function save(row: string, text: string)
+		b.event({ ev = "select", id = "layer.settings", item = row })
+		b.press("enter")
+		for _ = 1, 80 do
+			b.press("backspace")
+		end
+		b.typeText(text)
+		b.press("enter")
+	end
+	-- The JQL of acli's latest search.
+	local function lastJql(): string
+		local jql = ""
+		for _, req in s.acli.requests do
+			if req.kind == "search" then
+				jql = req.argv[6]
+			end
+		end
+		return jql
+	end
+	goToSettings(b, "filters")
+	eq(prefsOf(b).lead, "Saved JQL searches for the issue list's filter column. Each runs as project = ABC AND (your query), newest update first, so it may not close that parenthesis or add ORDER BY.", "filters")
+	eq(rowIn(b, "query:f1").hint, "JQL.", "the query field names its syntax")
+	eq(rowIn(b, "query:f1").control.placeholder, "assignee = currentUser() AND statusCategory != Done", "and shows an example")
+	eq(rowIn(b, "add").hint, "Starts as every open issue.", "the new filter")
+	save("query:f1", "a = 1) OR (b = 2")
+	eq(rowIn(b, "query:f1").warning, "Unbalanced parentheses: a filter cannot close the project's scope.", "a query that closes the project's scope is refused")
+	eq(prefsOf(b).editing.row, "query:f1", "the draft stays for a correction")
+	b.press("escape")
+	s.acli.searches['project = "ABC" AND (summary ~ "login") ORDER BY updated DESC'] = { jiraItem("ABC-12", "Fix login") }
+	save("query:f1", 'summary ~ "login"')
+	w.flush()
+	eq(lastJql(), 'project = "ABC" AND (summary ~ "login") ORDER BY updated DESC', "a good query searches again inside the project, newest update first")
+	same(listed(b), { "nABC-12" }, "and lists what it finds")
+	page("prompts")
+	eq(prefsOf(b).lead, "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the project's main checkout. Variables such as {url} fill in the issue's details.", "prompts")
+	eq(rowIn(b, "pname:p1").control.value, "Triage", "the prompts saved for issues are shared with GitHub's")
+	eq(rowIn(b, "pwhere:p1").hint, "On: in the issue's worktree (made first if needed). Off: in the project's main checkout, in a new tab.", "where a prompt runs")
+	b.event({ ev = "action", id = "layer.settings", act = "edit-prompt", value = "ptext:p1" })
+	local legend: { string } = {}
+	for _, item in findKey(editorCard(b), "list", "kv").p.items do
+		table.insert(legend, item.k[1].t)
+	end
+	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}" }, "the variables of both trackers are listed")
+	b.press("escape")
+	page("worktrees")
+	eq(prefsOf(b).lead, "Worktree (w) makes the issue's branch from the remote's default branch with omp and opens it in a new tab, which runs the setup commands when the worktree is new. Agents run there or in the main checkout. Both need the project's local checkout.", "worktrees")
+	eq(rowIn(b, "checkout").control.value, "/work/r", "the project's checkout")
+	eq(rowIn(b, "checkout").hint, "Worktrees of ABC are made from this git checkout, on a new branch from its first remote's default branch (origin, then upstream, then by name). The folder must already be a checkout; nothing is cloned for Jira.", "which must be a checkout already")
+	eq(rowIn(b, "branch").hint, "Variables {key} {slug} {project}. Empty: {key}-{slug}.", "the branch format offers Jira's variables")
+	save("branch", "{owner}-{key}")
+	eq(rowIn(b, "branch").warning, "Unknown variable {owner}.", "GitHub's owner is unknown to it")
+	b.press("escape")
+	save("branch", "{project}/{key}")
+	eq(w.kv.get("branches")["jira/ABC"], "{project}/{key}", "a good format is saved under the project")
+	has(b.text(), "ABC/ABC-12", "and the preview's branch follows")
+	save("checkout", "/elsewhere")
+	w.flush()
+	has(rowIn(b, "checkout").warning, "A Jira project names no repository to clone", "a folder that is no checkout is refused: nothing is cloned for Jira")
+	eq(w.kv.get("repos")["jira/ABC"], "/work/r", "and the saved checkout stays")
+	page("filters")
+	b.event({ ev = "select", id = "layer.settings", item = "add" })
+	b.press("enter")
+	eq(w.kv.get("jira-filters").items[3].query, "statusCategory != Done", "a new filter starts as the issues not done")
+	eq(w.kv.get("issue-filters"), nil, "and the GitHub issue filters are never written")
+end)
+
+case("host: Settings › Integration offers installed CLIs only and switches by picking a project", function(w: World)
+	local s = issueHost(w)
+	local acli = newAcli(w)
+	local missing = true
+	acli.override = function(req: AcliReq): Reply?
+		if req.kind == "version" and missing then
+			return { raise = "no such file or directory" } -- acli is not installed
+		end
+		return nil
+	end
+	acli.searches[JIRA_ASSIGNED] = { jiraItem("ABC-12", "Fix login") }
+	local b = openIssues(w)
+	local function page(name: string)
+		b.event({ ev = "action", id = "layer.settings", act = "page", value = name })
+	end
+	-- How often `program --version` was spawned.
+	local function probes(program: string): number
+		local n = 0
+		for _, call in w.calls do
+			if call.argv[1] == program and call.argv[2] == "--version" then
+				n += 1
+			end
+		end
+		return n
+	end
+	local function pageIds(): { string }
+		local ids: { string } = {}
+		for _, p in prefsOf(b).pages do
+			table.insert(ids, p.id)
+		end
+		return ids
+	end
+	local function sectionIds(): { string }
+		local ids: { string } = {}
+		for _, section in prefsOf(b).sections do
+			table.insert(ids, section.id)
+		end
+		return ids
+	end
+	goToSettings(b, "filters")
+	same(pageIds(), { "filters", "prompts", "source", "worktrees" }, "an issues block's Settings offer Integration where the PR queue offers GitHub")
+	eq(probes("gh") + probes("acli"), 0, "no CLI is looked up before the Integration page opens")
+	page("source")
+	eq(rowIn(b, "use:github").disabled, "Checking whether gh is installed…", "gh is being checked")
+	eq(rowIn(b, "use:jira").disabled, "Checking whether acli is installed…", "and so is acli")
+	w.flush()
+	eq(probes("gh"), 1, "gh was asked once")
+	eq(probes("acli"), 1, "and so was acli")
+	eq(prefsOf(b).lead, "Issues load through GitHub's GraphQL API with your gh login.", "a GitHub block's Integration page")
+	same(sectionIds(), { "sec-source", "sec-account", "status-line" }, "the integrations come first, then the gh account and Refresh")
+	eq(rowIn(b, "use:github").disabled, nil, "gh starts: GitHub can be chosen")
+	eq(rowIn(b, "use:github").control.label, "Change repository", "the one in use offers another repository")
+	eq(rowIn(b, "use:github").hint, "In use: o/r.", "and says what it shows")
+	eq(rowIn(b, "use:jira").disabled, "acli is not installed on this host. Install Atlassian's CLI (developer.atlassian.com/cloud/acli) and sign in with acli jira auth login to use Jira.", "acli does not start: Jira is disabled, and says how to get it")
+	eq(rowIn(b, "use:jira").control.label, "Use Jira", "the other offers to switch")
+	eq(rowIn(b, "use:jira").hint, "Issues of a Jira Cloud project, read with Atlassian's acli.", "and says what it is")
+	-- Refresh asks again; with acli answering, Jira can be chosen
+	missing = false
+	b.event({ ev = "action", id = "layer.settings", act = "refresh", value = "refresh" })
+	w.flush()
+	eq(probes("gh"), 2, "Refresh asks gh again")
+	eq(probes("acli"), 2, "and acli")
+	eq(rowIn(b, "use:jira").disabled, nil, "an acli that starts is offered")
+	b.event({ ev = "select", id = "layer.settings", item = "use:jira" })
+	b.press("enter")
+	eq(w.opened[#w.opened], "plotroom://jira-projects", "its action opens the Jira project picker")
+	eq(pickerOf(b).title[1].t, "o/r", "the block switches only once a project is picked")
+	b.event({ ev = "select", id = "layer.settings", item = "use:github" })
+	b.press("enter")
+	eq(w.opened[#w.opened], "plotroom://repos", "GitHub's opens the repository picker")
+	-- a project key that cannot be one is refused; a pull request queue has no Jira
+	b.event({ ev = "action", act = "show-jira", value = "a" })
+	eq(w.toasts[#w.toasts].text, "Not a Jira project key", "a key that cannot be one is refused")
+	eq(pickerOf(b).title[1].t, "o/r", "and changes nothing")
+	local pr = w.open(2, { "/work/r" })
+	w.flush()
+	pr.event({ ev = "action", act = "show-jira", value = "ABC" })
+	eq(pickerOf(pr).title[1].t, "o/r", "a pull request queue ignores a Jira project")
+	eq(w.kv.get("repos")["jira/ABC"], nil, "and saves nothing")
+	-- an issue request for a project of the other tracker is dropped
+	request(b, "x1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false })
+	eq(answerOf(b, "x1"), nil, "a Jira project's request to a GitHub block is dropped")
+	acli.projects = { { key = "ABC", name = "Alpha" } }
+	request(b, "x2", { op = "jira-projects" })
+	w.flush()
+	same(answerOf(b, "x2").items, { { key = "ABC", name = "Alpha", saved = false } }, "a GitHub block's picker lists the projects acli knows, none of them shown")
+	request(pr, "x3", { op = "jira-projects" })
+	w.flush()
+	eq(answerOf(pr, "x3"), nil, "a pull request queue has no Jira projects to list")
+	-- picking a project switches the block to Jira
+	local searches = #requestsOf(s.gh, "issue-search")
+	b.event({ ev = "action", act = "show-jira", value = "abc" })
+	w.flush()
+	eq(pickerOf(b).title[1].t, "ABC", "a typed key shows the project, upper-cased")
+	eq(pickerOf(b).title[1].href, "plotroom://jira-projects", "and the heading opens the Jira picker")
+	eq(w.kv.get("repos")["jira/ABC"], "", "the project is saved without a checkout")
+	same(listed(b), { "nABC-12" }, "its issues are listed")
+	eq(pickerOf(b).scopes[2].label, "Reported by me", "under the Jira filters")
+	eq(#requestsOf(s.gh, "issue-search"), searches, "gh was not asked for them")
+	eq(w.kv.get("issue-filters").items[2].name, "Created by me", "the GitHub issue filters are untouched")
+	eq(b.saved().tracker, "jira", "the block saves that it reads Jira")
+	eq(b.saved().repo, "ABC", "and its project")
+	eq(prefsOf(b).page, "source", "Settings stays on the Integration page")
+	eq(prefsOf(b).lead, "Issues load through Atlassian's acli as the account it is signed in to (acli jira auth login), the newest 100 per filter.", "now about Jira")
+	same(sectionIds(), { "sec-source", "status-line" }, "a Jira block has no gh account to set")
+	eq(rowIn(b, "use:jira").control.label, "Change project", "Jira now offers another project")
+	eq(rowIn(b, "use:jira").hint, "In use: ABC.", "and says what it shows")
+	eq(rowIn(b, "use:github").control.label, "Use GitHub", "GitHub offers to switch back")
+	has(rowIn(b, "refresh").hint, "Auto-refresh every 1m, next at ", "Jira refreshes every minute: it has no quota to pace")
+	local walked: { string } = {}
+	for _ = 1, 4 do
+		b.press("tab")
+		table.insert(walked, prefsOf(b).page)
+	end
+	same(walked, { "worktrees", "filters", "prompts", "source" }, "Tab walks Integration's neighbours and around again")
+	-- picking a repository switches back to GitHub
+	b.event({ ev = "action", act = "show-repo", value = "o/r" })
+	w.flush()
+	eq(pickerOf(b).title[1].t, "o/r", "a picked repository shows GitHub again")
+	eq(pickerOf(b).title[1].href, "plotroom://repos", "whose heading opens the repository picker")
+	eq(pickerOf(b).scopes[2].label, "Created by me", "under the GitHub issue filters")
+	same(listed(b), { "n12", "n13", "n14" }, "with its issues")
+	eq(b.saved().tracker, "github", "the block saves that it reads GitHub")
+	same(sectionIds(), { "sec-source", "sec-account", "status-line" }, "the gh account is back")
+	eq(rowIn(b, "use:github").control.label, "Change repository", "GitHub offers another repository")
+	eq(rowIn(b, "use:jira").control.label, "Use Jira", "and Jira to switch")
+	-- a saved Jira project that is no key starts the block as GitHub issues from its launch directory
+	local invalid = w.open(3, { "/work/r" }, { version = 1, launchCwd = "/work/r", repo = "not a key", tracker = "jira" }, "issues")
+	w.flush()
+	eq(pickerOf(invalid).title[1].t, "o/r", "a restored block with no valid project shows the launch directory's repository")
+	eq(invalid.saved().tracker, "github", "as GitHub issues")
+end)
+
+case("host: a Jira issue request makes its worktree from the project's checkout on any remote", function(w: World)
+	local s = jiraHost(w)
+	w.kv.put("setup", { ["jira/ABC"] = array({ "pnpm install" }) })
+	local b = openJira(w)
+	local target = "/wt/plotroom-jira.abc-issue-ABC-12"
+	eq(badgeOf(b), nil, "no badge before there is a worktree")
+	request(b, "j1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = true })
+	w.flush()
+	local a = answerOf(b, "j1")
+	eq(a.path, target, "the worktree is named after the project and the issue's key")
+	eq(a.created, true, "created")
+	eq(a.summary, "Created · ABC-12-fix-login at bbbbbbb · Clean", "on a branch of the key and the summary's slug, at the remote's default branch")
+	eq(a.setup, "pnpm install", "the project's saved setup commands run in a new worktree")
+	same(a.vars, {
+		url = "https://acme.atlassian.net/browse/ABC-12",
+		key = "ABC-12",
+		title = "Fix login",
+		author = "Ann Lee",
+		labels = "ui",
+		project = "ABC",
+		status = "In Progress",
+		type = "Bug",
+		branch = "ABC-12-fix-login",
+	}, "the issue's Jira variables, with the branch")
+	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the first remote's default branch was fetched, though that remote is not GitHub")
+	eq(countLog(s.git, "worktree add -b ABC-12-fix-login " .. target .. " " .. sha("b")), 1, "and the worktree made once")
+	eq(w.opened[#w.opened], "plotroom://rpc/j1", "the window is told to read the answer")
+	eq(badgeOf(b).text, "Worktree", "a worktree puts a badge on the row")
+	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
+	b.render()
+	eq(pickerOf(b).items[1].badges[1].text, "In tab", "a tab in the worktree marks the issue: the directory keeps the key's case")
+	-- a format saved for the project applies, with its {project}
+	w.kv.put("branches", { ["jira/ABC"] = "{project}/{key}" })
+	request(b, "j2", { op = "issue", repo = "ABC", ref = "ABC-13", worktree = true })
+	w.flush()
+	eq(answerOf(b, "j2").vars.branch, "ABC/ABC-13", "the project's branch format names the branch")
+	-- the main checkout
+	request(b, "j3", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false })
+	local main = answerOf(b, "j3")
+	eq(main.path, "/work/r", "a prompt set to the main checkout runs in the project's checkout")
+	eq(main.vars.branch, nil, "with no branch: there is no worktree")
+	eq(main.vars.project, "ABC", "but the project")
+	-- what is not for this block is dropped
+	local ran, told = #w.calls, #w.opened
+	request(b, "g1", { op = "issue", repo = "o/r", ref = "12", worktree = false })
+	request(b, "g2", { op = "issue", repo = "abc", ref = "ABC-12", worktree = false })
+	request(b, "g3", { op = "issue", repo = "ABC", ref = "ABC 12", worktree = false })
+	w.flush()
+	eq(answerOf(b, "g1"), nil, "a GitHub repository's request to a Jira block is dropped")
+	eq(answerOf(b, "g2"), nil, "so is a project key that is not one")
+	eq(answerOf(b, "g3"), nil, "and a reference that cannot name a directory")
+	eq(#w.calls, ran, "nothing ran")
+	eq(#w.opened, told, "and the window was told nothing")
+end)
+
+case("host: the Jira preview shows the union rows and Jira's own", function(w: World)
+	local s = jiraHost(w)
+	s.acli.views["ABC-12"] = {
+		key = "ABC-12",
+		fields = {
+			description = { type = "doc", version = 1, content = { { type = "paragraph", content = { { type = "text", text = "Login fails." } } } } },
+			parent = { key = "ABC-1", fields = { summary = "Auth epic" } },
+			customfield_10020 = array({ { boardId = 3, state = "closed", name = "Sprint 1" }, { boardId = 3, state = "active", name = "Sprint 2" } }),
+			fixVersions = array({ { name = "v2" } }),
+			issuelinks = array({
+				{ type = { inward = "is blocked by", outward = "blocks" }, outwardIssue = { key = "ABC-3", fields = { summary = "Login API", status = { statusCategory = { key = "new" } } } } },
+			}),
+			subtasks = array({ { key = "ABC-14", fields = { summary = "Add test", status = { statusCategory = { key = "done" } } } } }),
+			comment = { total = 2, comments = array({}) },
+			created = "2026-10-12T08:00:00.000+0000",
+			updated = "2026-10-12T11:30:00.000+0000",
+		},
+	}
+	local b = openJira(w)
+	local function factKeys(): { string }
+		local out: { string } = {}
+		local facts: any = findKey(findKey(pickerNode(b), "about"), "facts", "kv")
+		for _, item in facts.p.items do
+			table.insert(out, item.k)
+		end
+		return out
+	end
+	same(factKeys(), { "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
+	eq(factOf(b, "Reporter"), "Ann Lee", "the reporter is a name, not a login")
+	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
+	eq(factOf(b, "Type"), "Bug", "the type")
+	eq(factOf(b, "Priority"), "High", "and the priority, which the search carries")
+	has(b.text(), "Linked issues", "the linked items' heading shimmers meanwhile")
+	has(b.text(), "Loading details…", "with the details loading")
+	eq(#s.acli.requests, 2, "only the sign-in and the search were asked: the details wait for the cursor to rest")
+	w.advance(300)
+	eq(s.acli.requests[3].kind, "view", "the details load once the cursor rests")
+	eq(factOf(b, "Parent"), "ABC-1 Auth epic", "the parent")
+	eq(factOf(b, "Sprint"), "Sprint 2", "the active sprint")
+	same(factKeys(), { "Reporter", "Assignees", "Type", "Priority", "Parent", "Sprint", "Fix versions", "Comments", "Opened", "Updated" }, "no components row without components")
+	eq(factOf(b, "Fix versions"), "v2", "the fix version")
+	eq(factOf(b, "Comments"), "2", "the comment count")
+	eq(factOf(b, "Opened"), "4h ago", "when it was opened")
+	eq(factOf(b, "Updated"), "30m ago", "and last updated")
+	local preview = pickerNode(b)
+	local head = findKey(preview, "head")
+	eq(findKey(head, "copy", "icon").p.href, "https://acme.atlassian.net/browse/ABC-12", "the head's copy icon takes the browse link")
+	eq(findKey(head, "copy", "icon").p.aria, "Copy link to issue ABC-12", "which names the key")
+	eq(findKey(head, "state", "badge").p.text, "In Progress", "the head's badge is the workflow status")
+	eq(findKey(head, "state", "badge").p.tone, "warning", "toned by its category")
+	eq(findKey(findKey(preview, "branch"), "v").p.spans[1].t, "ABC-12-fix-login", "the branch Worktree would make")
+	eq(findKey(findKey(preview, "description", "card"), "body", "md").p.text, "Login fails.", "the description from Jira's document format, as Markdown")
+	local function linked(i: number): string
+		local item: any = findKey(preview, "pr" .. i, "item")
+		return item.p.label .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title
+	end
+	eq(linked(1), "blocks ABC-3 Login API | circle-dot | success | https://acme.atlassian.net/browse/ABC-3", "a linked issue says how it relates")
+	eq(linked(2), "subtask ABC-14 Add test | circle-dot | success | https://acme.atlassian.net/browse/ABC-14", "and so does a subtask")
+	-- an issue whose details cannot be read says why
+	b.event({ ev = "select", id = "layer.queue", item = "nABC-13" })
+	w.advance(300)
+	has(b.text(), "Could not load the details: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
+	has(b.text(), "Retry", "with a Retry button")
+	eq(factOf(b, "Comments"), nil, "and what only the details know stays hidden")
+end)
+
+case("host: the project pickers: Jira's list puts saved projects first, and GitHub's lists never name a Jira key", function(w: World)
+	local s = jiraHost(w)
+	local gh = newGh(w)
+	gh.tokens.octocat = "tok-octo"
+	s.acli.projects = {
+		{ key = "ABC", name = "Alpha" },
+		{ key = "LOW", name = "Lower" },
+		{ key = "XYZ", name = "Xylo" },
+		{ key = "lower", name = "Not a key" },
+	}
+	w.kv.put("repos", { ["jira/ABC"] = "/work/r", ["jira/DEF"] = "", ["jira/nope"] = "/x", ["github.com/o/r"] = "/work/o" })
+	local b = openJira(w)
+	request(b, "p1", { op = "jira-projects" })
+	w.flush()
+	local answer = answerOf(b, "p1")
+	local want: { any } = {
+		{ key = "ABC", name = "Alpha", path = "/work/r", saved = true, current = true },
+		{ key = "DEF", saved = true, current = false },
+		{ key = "LOW", name = "Lower", saved = false },
+		{ key = "XYZ", name = "Xylo", saved = false },
+	}
+	same(answer.items, want, "saved projects by key with their checkouts and the shown one marked, then the rest of acli's list; a key that is none is left out")
+	eq(answer.problem, nil, "nothing is wrong")
+	eq(w.opened[#w.opened], "plotroom://rpc/p1", "and the window is told to read the answer")
+	-- signed out: the saved projects, and why there are no more
+	s.acli.site = nil
+	request(b, "p2", { op = "jira-projects" })
+	w.flush()
+	local out = answerOf(b, "p2")
+	local saved: { any } = {
+		{ key = "ABC", path = "/work/r", saved = true, current = true },
+		{ key = "DEF", saved = true, current = false },
+	}
+	same(out.items, saved, "signed out, only the saved projects are listed")
+	has(out.problem, "acli is not signed in to Jira", "and the problem says why")
+	-- the shown project is listed though nobody saved it
+	s.acli.site = "acme.atlassian.net"
+	forgetCheckouts(w)
+	request(b, "p3", { op = "jira-projects" })
+	w.flush()
+	same(answerOf(b, "p3").items[1], { key = "ABC", name = "Alpha", saved = true, current = true }, "a shown project that was never saved is listed with no checkout")
+	-- GitHub's pickers do not know the shown Jira key
+	w.kv.put("repos", { ["jira/ABC"] = "/work/r", ["github.com/o/r"] = "/work/o" })
+	request(b, "r1", { op = "repos" })
+	w.flush()
+	same(answerOf(b, "r1").items, { { repo = "o/r", path = "/work/o", current = false } }, "the repository picker lists GitHub's repositories only, none of them shown")
+	request(b, "r2", { op = "profile", login = "octocat" })
+	w.flush()
+	eq(answerOf(b, "r2").current, nil, "and a login's list names no shown repository")
 end)
 
 windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotroom-o_r-issue-12", function(w: World)
@@ -7157,6 +8311,55 @@ windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotr
 	has(w.toasts[#w.toasts].sub, "Reused", "reuses it")
 	eq(countLog(s.git, "worktree add"), 1, "made once")
 	eq(#w.window.launches, 2, "and opens its tab again")
+end)
+
+-- A window whose pane 1 is the issues block of `jiraHost` on project ABC, linked.
+local function jiraWindow(w: World): (JiraScene, Block)
+	local s = jiraHost(w)
+	w.load("window")
+	w.window.panes[1].block = "plugin.plotroom.issues"
+	local b = openJira(w)
+	w.link(b)
+	cardSurface(w, b)
+	return s, b
+end
+
+windowCase("window: the Jira project picker lists the saved projects and acli's, a typed key is shown", function(w: World)
+	local s, b = jiraWindow(w)
+	s.acli.projects = { { key = "ABC", name = "Alpha" }, { key = "XYZ", name = "Xyz Project" } }
+	w.window.choose = "Other project…"
+	w.window.typed = "xyz"
+	w.click("plotroom://jira-projects")
+	w.flush()
+	local items = w.window.picks[1].items
+	eq(items[1].label, "ABC", "the saved project first")
+	eq(items[1].group, "Saved", "in its group")
+	eq(items[1].detail, "/work/r", "with its checkout")
+	eq(items[1].current, true, "checked as the shown one")
+	eq(items[2].label, "XYZ", "then the one acli lists")
+	eq(items[2].group, "Jira projects", "in its group")
+	eq(items[2].detail, "Xyz Project", "with its name")
+	eq(items[3].label, "Other project…", "then a typed one")
+	eq(pickerOf(b).title[1].t, "XYZ", "a typed key is shown, upper-cased")
+end)
+
+windowCase("window: Worktree on a Jira issue opens a tab named \"ABC-12\"", function(w: World)
+	local s, b = jiraWindow(w)
+	local target = "/wt/plotroom-jira.abc-issue-ABC-12"
+	w.click(issueLink("worktree", "ABC", "ABC-12"))
+	w.flush()
+	eq(w.toasts[1].text, "Preparing worktree for ABC-12", "names the issue by its key")
+	eq(w.toasts[2].level, "success", "level")
+	eq(w.toasts[2].sub, "Created · ABC-12-fix-login at bbbbbbb · Clean", "a new worktree on the issue's branch")
+	eq(requestsSent(w)[1].repo, "ABC", "the request names the project")
+	eq(w.window.launches[1].cwd, target, "the new tab opens in the worktree")
+	local named = ""
+	for _, name in w.window.tabNames do
+		named = name
+	end
+	eq(named, "ABC-12", "tab name")
+	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +HEAD:refs/plotroom-base/jira/abc"), 1, "the base is fetched from the first remote")
+	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
 end)
 
 windowCase("window: Go to tab on an issue focuses the pane working in its worktree", function(w: World)

@@ -5,6 +5,7 @@
 
 local github = require("../github")
 local input = require("../input")
+local jira = require("../jira")
 local process = require("../process")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -79,6 +80,7 @@ function M.run()
 	local bare = github.parsePage(tern.json.encode({ total = 0, items = tern.json.array({}) }))
 	assert(bare and bare.cost == 1 and bare.next == nil, "cost and next default")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
+	assert(github.epoch("2026-05-27T09:38:49.512-0500") == github.epoch("2026-05-27T14:38:49Z"), "an offset moves the time to UTC")
 	local runs = ghRuns({
 		{ name = "ok", status = "COMPLETED", conclusion = "SUCCESS", startedAt = "2026-01-01T00:00:00Z", completedAt = "2026-01-01T00:02:31Z" },
 		{ name = "skip", status = "COMPLETED", conclusion = "SKIPPED" },
@@ -106,6 +108,8 @@ function M.run()
 	for _, bad in { "is:open repo:x/y", "is:open -org:x", "(user:x OR is:open)", "is:open Repo:x/y", "is:open a OR b" } do
 		assert(github.scopeProblem(bad) ~= nil, "scope-widening filter is rejected: " .. bad)
 	end
+	assert(jira.scopeProblem('summary ~ "a) OR (b"') == nil, "parentheses inside quotes are text")
+	assert(jira.scopeProblem("a = 1) OR (b = 2") ~= nil, "a filter cannot close the project's scope")
 	local p422 = github.classify({ status = 1, stderr = "gh: Validation Failed (HTTP 422)\n", stdout = "", timed_out = false })
 	assert(p422.kind == "invalid" and string.find(p422.message, "Validation Failed", 1, true), "HTTP 422 is terminal and keeps gh's text")
 	assert(github.classify({ status = 1, stderr = "gh: API rate limit exceeded for user ID 1.", stdout = "", timed_out = false }).kind == "rate-limit", "graphql rate limit")
@@ -276,14 +280,21 @@ function M.run()
 	assert(tracker.slug("  --Hello__World--  ") == "hello-world", "a run of other characters is one dash, none at the ends")
 	assert(tracker.slug(string.rep("abcdefghi ", 6)) == "abcdefghi-abcdefghi-abcdefghi-abcdefghi", "a long title is cut at 40 bytes, with no dash left at the end")
 	assert(tracker.slug("¡¿") == "issue", "a title with no ASCII letter or digit is just issue")
-	assert(tracker.branchName("{key}-{slug}", { key = "12", slug = "x" }) == "12-x", "a format fills in its variables")
-	assert(tracker.branchName("{owner}/{repo}#{key}", { key = "12", slug = "x", owner = "o", repo = "r" }) == "o/r#12", "any variable, anywhere")
-	local nobranch, nobranchWhy = tracker.branchName("{slug}", { slug = "x" })
+	assert(tracker.branchName("{key}-{slug}", "github", { key = "12", slug = "x" }) == "12-x", "a format fills in its variables")
+	assert(tracker.branchName("{owner}/{repo}#{key}", "github", { key = "12", slug = "x", owner = "o", repo = "r" }) == "o/r#12", "any variable, anywhere")
+	local nobranch, nobranchWhy = tracker.branchName("{slug}", "github", { slug = "x" })
 	assert(nobranch == nil and nobranchWhy == "Include {key}, so each issue gets its own branch.", "a format without {key} names no branch")
-	assert(tracker.formatProblem("   ") == "A format is required.", "a blank format is refused")
-	assert(tracker.formatProblem("{foo}-{key}") == "Unknown variable {foo}.", "an unknown variable is named")
-	assert(tracker.formatProblem("x-{slug}") == "Include {key}, so each issue gets its own branch.", "{key} is required")
-	assert(tracker.formatProblem("feat/{owner}-{repo}-{key}-{slug}") == nil, "every variable is accepted")
+	assert(tracker.formatProblem("   ", "github") == "A format is required.", "a blank format is refused")
+	assert(tracker.formatProblem("{foo}-{key}", "github") == "Unknown variable {foo}.", "an unknown variable is named")
+	assert(tracker.formatProblem("x-{slug}", "github") == "Include {key}, so each issue gets its own branch.", "{key} is required")
+	assert(tracker.formatProblem("feat/{owner}-{repo}-{key}-{slug}", "github") == nil, "every variable is accepted")
+	assert(tracker.formatProblem("{project}-{key}", "jira") == nil, "a Jira format may name the project")
+	assert(tracker.formatProblem("{owner}-{key}", "jira") == "Unknown variable {owner}.", "and not a GitHub owner")
+	assert(tracker.refLabel("12") == "#12" and tracker.refLabel("ABC-12") == "ABC-12", "a number reads #12, a Jira key as it is")
+	assert(tracker.jiraProject("ABC") and tracker.jiraProject("A1_B"), "a Jira project key is capitals, digits and underscores")
+	for _, p in { "abc", "A", "o/r", "1AB", "" } do
+		assert(not tracker.jiraProject(p), "not a Jira project key: " .. p)
+	end
 	local ip = github.normalizeIssue({ number = 12, title = "Fix 😀 login", url = "https://github.com/a/b/issues/12", author = "octo", state = "OPEN", labels = tern.json.array({ "bug" }), assignees = tern.json.array({ "ann" }) })
 	assert(ip, "the issue fixture normalizes")
 	assert(ip.key == "a/b#12" and ip.ref == "12" and ip.id == "n12" and ip.tracker == "github" and ip.state == "open", "an issue's identity and state")
@@ -313,6 +324,9 @@ function M.run()
 	for _, p in { "/wt/plotroom-o_r-issue-12.bak", "/wt/plotroom-o_rr-issue-1", "/wt/xplotroom-o_r-issue-1", "/r/o/r/issue-1", "" } do
 		assert(worktree.issueOfPath(p, "o/r") == nil, "not an issue worktree: " .. p)
 	end
+	assert(worktree.issueOfPath("/wt/plotroom-jira.abc-issue-ABC-12/src", "ABC") == "ABC-12", "a Jira issue's worktree maps to its key, case kept")
+	assert(worktree.issueOfPath("/wt/plotroom-jira.abc-issue-ABC-12", "o/r") == nil, "a GitHub repository does not claim a Jira worktree")
+	assert(worktree.issueOfPath("/wt/plotroom-jira.a_b-issue-A_B-12/src", "A_B") == "A_B-12", "a Jira project key and issue key may hold an underscore")
 
 	-- PATH probe output
 	assert(process.extractPath("banner\0PLOTROOM_PATH\0/a b:/c\n\0PLOTROOM_END\0tail") == "/a b:/c", "markers carry the PATH, spaces intact")

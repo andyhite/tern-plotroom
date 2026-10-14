@@ -24,23 +24,26 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "6" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "7" -- what host.luau's `main.rpc` node must say
 local RECENT_CAP = 5
 local RISK = "Project config can run code"
 
 -- A worktree the host prepared, as its answer says.
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
-type Target = { kind: "pr" | "issue", owner: string, name: string, repo: string, ref: string, label: string, tab: string }
+type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
-	return { kind = "pr", owner = owner, name = name, repo = repo, ref = tostring(n), label = repo .. "#" .. n, tab = "PR #" .. n .. " · " .. name }
+	return { kind = "pr", repo = repo, ref = tostring(n), label = repo .. "#" .. n, tab = "PR #" .. n .. " · " .. name }
 end
 
-local function issueTarget(owner: string, name: string, ref: string): Target
-	local repo = owner .. "/" .. name
-	return { kind = "issue", owner = owner, name = name, repo = repo, ref = ref, label = repo .. "#" .. ref, tab = "#" .. ref .. " · " .. name }
+local function issueTarget(repo: string, ref: string): Target
+	local name = string.match(repo, "/([^/]+)$")
+	if name then
+		return { kind = "issue", repo = repo, ref = ref, label = repo .. "#" .. ref, tab = "#" .. ref .. " · " .. name }
+	end
+	return { kind = "issue", repo = repo, ref = ref, label = ref, tab = ref }
 end
 -- Requests to a block's host waiting for their answer, by id.
 type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle }
@@ -456,7 +459,8 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: stri
 			if not prompt then
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
-				startAgent(cx2, pane, t, ready, fill(prompt, t.owner, t.name, tonumber(t.ref) :: number, a), wt)
+				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
+				startAgent(cx2, pane, t, ready, fill(prompt, owner or "", name or "", tonumber(t.ref) :: number, a), wt)
 			else
 				startAgent(cx2, pane, t, ready, fillVars(prompt, a.vars), wt)
 			end
@@ -611,6 +615,40 @@ local function pickRepo(cx: WindowCx, pane: number)
 	end)
 end
 
+-- Asks which Jira project the Plotroom block in `pane` shows: a saved one (its checkout as the detail), one acli lists,
+-- or one typed by its key.
+local function pickJira(cx: WindowCx, pane: number)
+	ask(cx, pane, "jira-projects", {}, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.problem) == "string" then
+			cx2:toast("error", "Your Jira projects are not listed", a.problem)
+		end
+		local items: { PickItem } = {}
+		for _, it in if type(a.items) == "table" then a.items else {} do
+			if type(it) == "table" and type(it.key) == "string" then
+				if it.saved == true then
+					local path = if type(it.path) == "string" then it.path else "No local checkout: no worktrees"
+					table.insert(items, { label = it.key, detail = path, group = "Saved", current = it.current == true, key = it.key })
+				else
+					table.insert(items, { label = it.key, detail = if type(it.name) == "string" then it.name else "", group = "Jira projects", key = it.key })
+				end
+			end
+		end
+		table.insert(items, { label = "Other project…", detail = "Type its key", typed = true })
+		cx2:pick({ items = items, placeholder = "Open Jira project…", icon = ISSUE_ICON, action = "open" }):next(function(item, _, cx3)
+			if not item or not cx3 then
+				return
+			elseif item.typed then
+				return cx3:prompt({ placeholder = "Project key, such as ABC", icon = ISSUE_ICON, action = "open" }):next(function(text, _, cx4)
+					if cx4 and text and string.find(text, "%S") then
+						cx4.session:event(pane, { ev = "action", act = "show-jira", value = text })
+					end
+				end)
+			end
+			cx3.session:event(pane, { ev = "action", act = "show-jira", value = item.key })
+		end)
+	end)
+end
+
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
 	for _, list in CHECK_LISTS do
@@ -627,11 +665,13 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	if rid then
 		answered(cx, rid)
 		return true
-	elseif url == "plotroom://repos" or url == "plotroom://checkout" then
+	elseif url == "plotroom://repos" or url == "plotroom://checkout" or url == "plotroom://jira-projects" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
+		elseif url == "plotroom://jira-projects" then
+			pickJira(cx, pane)
 		else
 			-- The heading's Set checkout button: the block opens Settings on its checkout row.
 			cx.session:event(pane, { ev = "action", act = "set-checkout" })
@@ -664,15 +704,12 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		return true
 	end
 	if string.sub(url, 1, 15) == "plotroom://issu" then
-		local act, io, ir, ref = string.match(url, "^plotroom://issue/(%a+)/([^/]+)/([^/]+)/([%w%-]+)$")
-		local rid2: string? = nil
-		if act == "run" then
-			act = nil
-		elseif not act then
-			io, ir, ref, rid2 = string.match(url, "^plotroom://issue/run/([^/]+)/([^/]+)/([%w%-]+)/(%w+)$")
-			act = if rid2 then "run" else nil
+		local repo, ref, rid2 = string.match(url, "^plotroom://issue/run/(.+)/([%w_%-]+)/(%w+)$")
+		local act: string? = if rid2 then "run" else nil
+		if not act then
+			act, repo, ref = string.match(url, "^plotroom://issue/(%a+)/(.+)/([%w_%-]+)$")
 		end
-		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "run") or not io or not ir or not ref or not worktree.validSegment(io) or not worktree.validSegment(ir) or #ref > 64 then
+		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
 			cx:toast("error", "Plotroom: malformed link")
 			return true
 		end
@@ -685,7 +722,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 			return true
 		end
-		local t = issueTarget(io, ir, ref)
+		local t = issueTarget(repo, ref)
 		if act == "goto" then
 			gotoTarget(cx, t)
 		elseif act == "agent" then
@@ -791,7 +828,7 @@ tern.command({
 
 tern.command({
 	id = "open-issues",
-	title = "Plotroom: Open GitHub Issues",
+	title = "Plotroom: Open Issues",
 	icon = ISSUE_ICON,
 	run = function(cx: WindowCx)
 		launch(cx, "plotroom.issues")
@@ -845,13 +882,13 @@ tern.command({
 
 tern.command({
 	id = "repo",
-	title = "Plotroom: Show another repository",
+	title = "Plotroom: Show another repository or project",
 	icon = "merge",
 	available = available,
 	run = function(cx: WindowCx)
 		local pane = cx.session:focused()
 		if pane then
-			pickRepo(cx, pane)
+			cx.session:event(pane, { ev = "action", act = "pick-project" })
 		end
 	end,
 })
