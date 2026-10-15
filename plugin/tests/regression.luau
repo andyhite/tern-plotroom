@@ -1553,6 +1553,7 @@ type Gh = {
 	tokens: { [string]: string }, -- login -> what `gh auth token --user` prints
 	items: { [string]: { { [string]: any } } }, -- login -> search results, newest first
 	issueItems: { [string]: { { [string]: any } } }, -- login -> issue search results, newest first
+	pulls: { [string]: { [string]: any } }, -- PR URL -> the item `resource(url:)` finds there; any other URL finds none
 	issueDetail: { [string]: { [string]: any } }, -- "owner/repo#N" -> the detail ISSUE_DETAIL_JQ prints
 	total: { [string]: number }, -- login -> issueCount when it differs from #items
 	meta: { [string]: { base: string, sha: string, ref: string, state: string, baseRef: string?, title: string?, author: string? } }, -- "owner/repo#N" -> pulls/N
@@ -1573,6 +1574,7 @@ local function newGh(w: World): Gh
 		items = {},
 		issueItems = {},
 		issueDetail = {},
+		pulls = {},
 		total = {},
 		meta = {},
 		checks = {},
@@ -1671,6 +1673,8 @@ local function newGh(w: World): Gh
 		local kind = "other"
 		if argv[2] == "repo" and argv[3] == "clone" then
 			kind = "clone"
+		elseif string.find(fields.query or "", "resource(url: $q)", 1, true) then
+			kind = "pull"
 		elseif fields.q then
 			kind = if string.find(fields.q, " is:issue ", 1, true) then "issue-search" else "search"
 		elseif fields.o and fields.r and fields.n then
@@ -1705,7 +1709,7 @@ local function newGh(w: World): Gh
 		end
 		local key = login or ""
 		local lim = gh.limits[key]
-		if kind == "search" or kind == "issue-search" or kind == "checks" or kind == "issue" then
+		if kind == "search" or kind == "issue-search" or kind == "checks" or kind == "issue" or kind == "pull" then
 			if lim and lim.remaining <= 0 then
 				return { status = 1, stdout = headers(lim), stderr = "gh: API rate limit already exceeded for user ID 1. (HTTP 403)\n" }
 			end
@@ -1717,6 +1721,10 @@ local function newGh(w: World): Gh
 			local list = gh.items[key] or {}
 			local slice, cursor = page(list, fields.after)
 			local body = jsonEncode({ total = gh.total[key] or #list, next = cursor, cost = 1, items = slice })
+			return { stdout = headers(lim) .. body }
+		elseif kind == "pull" then
+			local item = gh.pulls[fields.q]
+			local body = jsonEncode({ total = if item then 1 else 0, next = NULL, cost = 1, items = array(if item then { item } else {}) })
 			return { stdout = headers(lim) .. body }
 		elseif kind == "checks" then
 			local id = (fields.o or "") .. "/" .. (fields.r or "") .. "#" .. (fields.n or "")
@@ -7315,6 +7323,37 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	eq(findKey(findKey(pickerNode(b), "head"), "state", "badge").p.text, "Not planned", "a closed issue says why in the head's badge")
 end)
 
+case("host: a PR block told to show a pull request selects it where its view lists it, else looks it up alone in a pinned scope", function(w: World)
+	local s = hostScene(w, 3)
+	local url = "https://github.com/o/r/pull/45"
+	s.gh.pulls[url] = searchItem(45, "o/r", EPOCH - 600, { title = "Fix the login redirect" })
+	local b = openQueue(w)
+	b.typeText("s")
+	b.event({ ev = "action", act = "show-pr", value = "https://github.com/o/r/pull/2" })
+	eq(pickerOf(b).selected, "no_2fr_232", "a PR the view lists is selected in it")
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "Settings closes to show it")
+	eq(#requestsOf(s.gh, "pull"), 0, "nothing is looked up")
+	eq(pickerOf(b).scopes[1].label, "My PRs", "and nothing is pinned")
+	b.event({ ev = "action", act = "show-pr", value = url })
+	w.flush()
+	eq(requestsOf(s.gh, "pull")[1].fields.q, url, "one the view does not list is looked up by its URL")
+	same(listed(b), { "no_2fr_2345" }, "and listed alone")
+	eq(pickerOf(b).selected, "no_2fr_2345", "selected")
+	eq(pickerOf(b).scopes[1].label, "o/r#45", "under a scope named after it, first in the sidebar")
+	eq(pickerOf(b).scope, pickerOf(b).scopes[1].id, "which is the active one")
+	eq(b.title(), "Plotroom · o/r#45 (1)", "the block's title names it")
+	b.event({ ev = "action", act = "show-pr", value = "https://example.com/o/r/pull/1" })
+	eq(#requestsOf(s.gh, "pull"), 1, "anything but a pull request URL is ignored")
+	eq(pickerOf(b).scopes[1].label, "o/r#45", "and keeps the pin")
+	local restored = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	eq(pickerOf(restored).selected, "no_2fr_2345", "a restored block shows its pin again")
+	local launched = w.open(3, { "/work/r", url })
+	w.flush()
+	eq(pickerOf(launched).selected, "no_2fr_2345", "a block launched on a pull request starts on it")
+	eq(pickerOf(launched).scope, "pin", "in its pinned scope")
+end)
+
 case("host: an issue's details that fail to load show the error and a Retry that asks again", function(w: World)
 	local s = issueHost(w)
 	local failing = true
@@ -8671,6 +8710,34 @@ windowCase("window: Open on an issue docks a Browser at its URL", function(w: Wo
 	w.command("open-selected")
 	w.flush()
 	eq(#w.window.browser, 2, "the palette command follows the same link")
+end)
+
+windowCase("window: a linked pull request in an issue's sidebar shows it in a GitHub PRs block: this tab's, else another tab's, else a new one beside the issues", function(w: World)
+	local s, b = issueWindow(w)
+	local url = "https://github.com/o/r/pull/45"
+	s.gh.issueDetail["o/r#12"] = { body = "x", linked = array({ { number = 45, title = "Fix the login redirect", url = url, state = "OPEN", isDraft = false } }) }
+	w.advance(300)
+	cardSurface(w, b)
+	local show = "plotroom://github/show/o/r/45"
+	eq(findKey(pickerNode(b), "pr1", "item").p.href, show, "the linked row links to showing it")
+	w.click(show)
+	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/r", args = { "/work/r", url } } }, "no PRs block yet: one is launched on the pull request")
+	eq(w.window.panes[11].tab, 1, "split beside the issues")
+	w.click(show)
+	eq(#w.window.launches, 1, "a second click opens no other block")
+	same(w.window.events[#w.window.events], { pane = 11, ev = { ev = "action", act = "show-pr", value = url } }, "it tells the tab's PRs block to show the pull request")
+	eq(w.window.focused, 11, "and focuses it")
+	w.window.panes[11] = nil
+	w.window.panes[20] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 2 }
+	table.insert(w.window.tabs, { id = 2, session = 2 })
+	w.click(show)
+	eq(w.window.events[#w.window.events].pane, 20, "a PRs block in another tab is used")
+	eq(w.window.switches[#w.window.switches], 2, "its session is shown")
+	eq(w.window.focused, 20, "and the block focused")
+	local said, sent = #w.toasts, #w.window.events
+	w.click("plotroom://github/show/o/r/46")
+	eq(w.toasts[said + 1].text, "Plotroom: that pull request is no longer listed", "a pull request the sidebar does not link is refused")
+	eq(#w.window.events, sent, "and no block is told anything")
 end)
 
 windowCase("window: a forged issue link not shown by the block is refused before anything is asked", function(w: World)

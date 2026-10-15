@@ -8,11 +8,13 @@
 
 local worktree = require("./worktree")
 
-local BLOCKS = { "plotroom.prs", "plotroom.issues" }
+local PRS_BLOCK = "plotroom.prs"
+local BLOCKS = { PRS_BLOCK, "plotroom.issues" }
 local ISSUE_ICON = "circle-dot"
 local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
+local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 -- The lists a check row can sit in (required, the others); ".run<i>" follows.
 local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
@@ -67,13 +69,15 @@ local function readRecent(): { string }
 	return out
 end
 
-local function isPlotroom(cx: WindowCx, pane: number): boolean
+-- Whether `pane` runs a Plotroom block, or one of `kinds` when given.
+local function isPlotroom(cx: WindowCx, pane: number, kinds: { string }?): boolean
 	local info = cx.session:pane(pane)
 	local block = if info then info.block else nil
 	if type(block) ~= "string" then
 		return false
 	end
-	for _, b in BLOCKS do
+	local list: { string } = kinds or BLOCKS
+	for _, b in list do
 		if string.sub(block, -#b) == b then
 			return true
 		end
@@ -123,8 +127,8 @@ local function nodeProp(node: any, prop: string): any?
 	return nil
 end
 
--- `plotroom://github/<open|worktree|goto|agent>/<owner>/<repo>/<n>`, or `…/run/<owner>/<repo>/<n>/<prompt id>`: the kind,
--- the PR, and for `run` the saved prompt's id.
+-- `plotroom://github/<open|worktree|goto|agent|show>/<owner>/<repo>/<n>`, or `…/run/<owner>/<repo>/<n>/<prompt id>`:
+-- the kind, the PR, and for `run` the saved prompt's id.
 local function parseLink(url: string): (string?, string?, string?, number?, string?)
 	local kind, owner, repo, n = string.match(url, "^plotroom://github/(%a+)/([^/]+)/([^/]+)/(%d+)$")
 	local id: string? = nil
@@ -135,7 +139,7 @@ local function parseLink(url: string): (string?, string?, string?, number?, stri
 		kind = if id then "run" else nil
 	end
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -210,8 +214,31 @@ local function openUrl(cx: WindowCx, pane: number, url: string, what: string)
 	end)
 end
 
-local function openPr(cx: WindowCx, pane: number, owner: string, repo: string, n: number)
-	openUrl(cx, pane, "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n, "the pull request")
+-- Shows the pull request at `url` in a GitHub PRs block: the one in the tab of `pane` (the issues block), else one in
+-- another tab, else a new one split right of `pane` and launched on it (host.luau's `showPr` and pin).
+local function showPr(cx: WindowCx, pane: number, url: string)
+	local tab = cx.session:tab_of(pane)
+	local target: PaneInfo? = nil
+	for _, p in cx.session:panes() do
+		if p.tab and (target == nil or p.tab == tab) and isPlotroom(cx, p.pane, { PRS_BLOCK }) then
+			target = p
+		end
+	end
+	if target then
+		cx.session:event(target.pane, { ev = "action", act = "show-pr", value = url })
+		for _, t in cx.session:tabs() do
+			if t.id == target.tab then
+				cx.sessions:switch(t.session)
+			end
+		end
+		cx.layout:focus(target.pane)
+		return
+	end
+	local info = cx.session:pane(pane)
+	local cwd = if info and info.cwd and info.cwd ~= "" then info.cwd else nil
+	if not cx.layout:split(pane, "right", { block = PRS_BLOCK, cwd = cwd, args = { cwd or "", url } }) then
+		cx:toast("error", "Plotroom: could not open a GitHub PRs block")
+	end
 end
 
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
@@ -720,6 +747,17 @@ local function checkListed(cx: WindowCx, pane: number, index: number, url: strin
 	return false
 end
 
+-- Whether a linked pull request row of the pane's live issue sidebar carries exactly `url`.
+local function linkedListed(cx: WindowCx, pane: number, url: string): boolean
+	local list = readNode(cx, pane, LINKED_NODE)
+	for _, row in if type(list) == "table" and type(list.c) == "table" then list.c else {} do
+		if nodeProp(row, "href") == url then
+			return true
+		end
+	end
+	return false
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it.
 local function handle(cx: WindowCx, url: string, pane: number): boolean
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
@@ -807,14 +845,17 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		elseif kind == "agent" then AGENT_NODE
 		elseif kind == "run" then PROMPT_NODE .. (id or "")
 		else WORKTREE_NODE
-	local present = nodeProp(readNode(cx, pane, node), "href") == url
+	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == url
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
 		return true
 	end
 	local t = prTarget(owner, repo, n)
+	local page = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
 	if kind == "open" then
-		openPr(cx, pane, owner, repo, n)
+		openUrl(cx, pane, page, "the pull request")
+	elseif kind == "show" then
+		showPr(cx, pane, page)
 	elseif kind == "goto" then
 		gotoTarget(cx, t)
 	elseif kind == "agent" then

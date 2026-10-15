@@ -130,6 +130,7 @@ type State = {
 	activeId: string?,
 	activeLogin: string?, -- the gh login of the active scope when the view lists several: each login is its own scope in the sidebar (nil: the first)
 	store: Views,
+	pin: View?, -- one pull request shown on its own (showPr), the sidebar's first scope; never saved with the views
 	writable: boolean,
 	storeError: string?,
 	snaps: { [string]: Snap },
@@ -619,6 +620,10 @@ local function probeClis()
 end
 
 local function activeView(state: State): View?
+	local pin = state.pin
+	if pin and pin.id == state.activeId then
+		return pin
+	end
 	for _, v in state.store.items do
 		if v.id == state.activeId then
 			return v
@@ -657,10 +662,15 @@ end
 -- group or, with none, under gh's active one. `shown` is the login its group names ("" for Jira, or while unknown).
 type Scope = { id: string, view: View, login: string?, shown: string }
 
--- The scopes as the sidebar lists them: a block with several integrations groups them, each integration's views in
--- store order within the group of the login they run as; groups by login, sorted by name.
+-- The scopes as the sidebar lists them: the pinned pull request first, as gh's active login runs it; then, grouped by
+-- integration in a block with several, each integration's views in store order within the group of the login they
+-- run as; groups by login, sorted by name.
 local function orderedViews(state: State): { Scope }
 	local out: { Scope } = {}
+	local pin = state.pin
+	if pin then
+		table.insert(out, { id = pin.id, view = pin, login = nil, shown = ghActive.login or "" })
+	end
 	for _, id in state.kind.integrations do
 		local keys: { string } = {}
 		local groups: { [string]: { Scope } } = {}
@@ -1115,6 +1125,8 @@ refresh = function(state: State)
 	end
 	if issues then
 		TRACKERS[integration].search(login(state), query, current, landed)
+	elseif v == state.pin then
+		github.pull(login(state), query, current, landed) -- the pin's query is its PR's URL
 	else
 		github.search(login(state), query, current, landed)
 	end
@@ -2698,7 +2710,6 @@ local function addJira(state: State, raw: any)
 	openSettings(state, "jira", "jrepos:" .. key, false)
 end
 
-
 local function openSelected(state: State, act: string, rerender: boolean)
 	local item = selected(state)
 	if item then
@@ -3825,8 +3836,8 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 end
 
 -- The items that go with an issue, once its details loaded (Tern's shimmer meanwhile): the pull requests that close a
--- GitHub issue, the issues linked to a Jira one. Or why the details did not load, with a Retry button; nothing when
--- there are none.
+-- GitHub issue, each a link that shows it in a GitHub PRs block (window.luau's `showPr`), the issues linked to a Jira
+-- one. Or why the details did not load, with a Retry button; nothing when there are none.
 local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
 	local head = ui.node("text", { key = "linked-head", spans = { ui.span(INTEGRATIONS[tr].linked, "strong") } })
 	if detail then
@@ -3837,7 +3848,12 @@ local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: Detai
 		for i, l in detail.linked do
 			local badge = STATE_BADGE[l.state] or STATE_BADGE.open
 			local label = (if l.relation then l.relation .. " " else "") .. tracker.refLabel(l.ref) .. " " .. l.title
-			table.insert(rows, ui.node("item", { key = "pr" .. i, label = label, icon = if tr == "jira" then ISSUE_ICON else "merge", tone = badge.tone, title = l.url }))
+			local props: { [string]: any } = { key = "pr" .. i, label = label, icon = if tr == "jira" then ISSUE_ICON else "merge", tone = badge.tone, title = l.url }
+			local o, r, n = github.parsePrUrl(l.url)
+			if tr == "github" and o and r and n then
+				props.href, props.actions = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }
+			end
+			table.insert(rows, ui.node("item", props))
 		end
 		return { head, ui.node("list", { key = "linked" }, rows) }
 	elseif loading then
@@ -4263,6 +4279,34 @@ end)
 
 -- One base kind's block: both run this engine, which takes its views, prompts and wording from the kind.
 local function blockDef(base: Kind): BlockDef<State>
+	-- Kept in here: the module is at Luau's 200-local limit.
+	-- The pinned scope of the pull request at `url` (untrusted: anything but a canonical PR URL is nil). Its name is
+	-- "owner/name#N"; lowercased, that is the PR's key. Its id is no saved view's (theirs are "v<n>").
+	local function pinView(url: any): View?
+		local o, r, n = github.parsePrUrl(url)
+		if not o or not r or not n then
+			return nil
+		end
+		return { id = "pin", name = o .. "/" .. r .. "#" .. n, integration = "github", query = url, logins = {}, group = "none", prompts = {} }
+	end
+	-- The window shows the pull request at `url` (an issue's linked PR) in this block: selected in the active scope
+	-- when it lists the PR, else in the pinned scope, which replaces any earlier pin.
+	-- ponytail: the pin runs as gh's active login; pass the issue view's login along if a private repository needs another.
+	local function showPr(state: State, url: any)
+		local pin = pinView(url)
+		if state.kind.id ~= "prs" or not pin then
+			return
+		end
+		local key = string.lower(pin.name)
+		discardEdit(state)
+		state.settings, state.help, state.query, state.focus = nil, false, nil, "list"
+		local snap = state.snap
+		if not snap or indexOf(snap.items, key) == 0 then
+			state.pin = pin
+			switchView(state, pin.id)
+		end
+		state.cursor = key
+	end
 	return {
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
@@ -4303,6 +4347,8 @@ local function blockDef(base: Kind): BlockDef<State>
 				launchCwd = cwd,
 				activeId = active,
 				store = store,
+				-- A block launched to show one pull request (window.luau's `showPr`) starts on it; a restored one keeps its pin.
+				pin = pinView(if mine then saved.pin else args[2]),
 				writable = writable,
 				storeError = err,
 				snaps = {},
@@ -4335,7 +4381,9 @@ local function blockDef(base: Kind): BlockDef<State>
 				replies = {},
 				listing = 0,
 			}
-			if not activeView(state) then
+			if state.pin and not mine then
+				state.activeId, state.cursor = state.pin.id, string.lower(state.pin.name)
+			elseif not activeView(state) then
 				state.activeId = if store.items[1] then store.items[1].id else nil
 			end
 			-- What the first scope runs as is the identity from the start, so a restored pause survives identify. A saved
@@ -4558,6 +4606,8 @@ local function blockDef(base: Kind): BlockDef<State>
 				end
 			elseif act == "rpc" then
 				rpc(state, ev.value)
+			elseif act == "show-pr" then
+				showPr(state, ev.value)
 			elseif act == "add-repo" and ev.id ~= SETTINGS_ID then
 				addRepo(state, ev.value)
 			elseif act == "add-jira" and ev.id ~= SETTINGS_ID then
@@ -4666,7 +4716,8 @@ local function blockDef(base: Kind): BlockDef<State>
 			if p and TERMINAL[p.kind] then
 				pause = { kind = p.kind, message = p.message }
 			end
-			return { version = 2, launchCwd = state.launchCwd, activeViewId = state.activeId, activeLogin = state.activeLogin, pause = pause }
+			local pin = state.pin
+			return { version = 2, launchCwd = state.launchCwd, activeViewId = state.activeId, activeLogin = state.activeLogin, pause = pause, pin = if pin then pin.query else nil }
 		end,
 	}
 end

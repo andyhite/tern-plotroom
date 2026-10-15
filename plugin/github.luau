@@ -59,8 +59,14 @@ local function checkNodes(extra: string): string
 	return "nodes { __typename ... on CheckRun { " .. RUN_FIELDS .. extra .. " } ... on StatusContext { " .. STATUS_FIELDS .. extra .. " } }"
 end
 
-local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } } } } } }"
-local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}]}"
+-- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
+local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
+-- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
+local PULL_GQL = "query($q: URI!) { rateLimit { cost } resource(url: $q) { ... on PullRequest { " .. PR_FIELDS .. " } } }"
+local PULL_JQ = "[.data.resource | select(.number != null) | " .. PR_ITEM_JQ .. "] as $items | {total:($items | length),next:null,cost:.data.rateLimit.cost,items:$items}"
 local ISSUE_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }"
 local ISSUE_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]}]}"
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
@@ -816,14 +822,9 @@ local function searchAll(
 	fetch(nil, 1)
 end
 
--- All pages of the PR search; one swap-ready SearchResult at the end (see searchAll).
-function M.search(
-	account: string?,
-	query: string,
-	shouldContinue: () -> boolean,
-	done: (SearchResult?, Problem?, number) -> ()
-)
-	searchAll(account, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, function(body)
+-- searchAll over pull requests; one swap-ready SearchResult at the end.
+local function searchPrs(account: string?, query: string, qualifier: string, gql: string, jq: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
+	searchAll(account, query, qualifier, gql, jq, function(body)
 		local pg, why = M.parsePage(body)
 		if not pg then
 			return nil, why
@@ -835,6 +836,16 @@ function M.search(
 		end
 		done({ prs = M.reconcile(items :: { Pr }), total = total, complete = complete }, nil, spent)
 	end)
+end
+
+-- All pages of the PR search (see searchAll).
+function M.search(account: string?, query: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
+	searchPrs(account, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, shouldContinue, done)
+end
+
+-- The pull request at `url` alone, in the shape M.search answers: none when the login sees no PR there.
+function M.pull(account: string?, url: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
+	searchPrs(account, url, "", PULL_GQL, PULL_JQ, shouldContinue, done)
 end
 
 -- All pages of the issue search; one swap-ready IssueResult at the end (see searchAll).
