@@ -17,6 +17,7 @@ export type Issue = {
 	state: string, -- "open" | "closed"
 	reason: string?, -- GitHub, closed: "completed" | "not-planned" | "duplicate"
 	status: { text: string, tone: string }?, -- Jira: the workflow status as a badge, toned by its category
+	category: string?, -- Jira: the status category key, one of CATEGORIES (GitHub: by state, see category)
 	type: string?, -- Jira issue type
 	priority: string?, -- Jira priority
 	labels: { string },
@@ -25,7 +26,7 @@ export type Issue = {
 	created: number, -- Jira: 0 (unknown); the details carry it
 	updated: number, -- Jira: 0 (unknown); the details carry it
 }
-export type Linked = { ref: string, title: string, url: string, state: string, relation: string? } -- state "open"|"draft"|"merged"|"closed"|"done"; relation (Jira) "blocks", "is blocked by", "subtask", ...
+export type Linked = { ref: string, title: string, url: string, state: string, relation: string?, status: { text: string, tone: string }? } -- state "open"|"draft"|"merged"|"closed"|"done"; relation (Jira) "blocks", "is blocked by", "subtask", ...; status (Jira) its workflow status as a badge
 export type Field = { label: string, value: string? } -- nil value: shown as None
 export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }
 export type IssueResult = { issues: { Issue }, total: number, complete: boolean }
@@ -95,6 +96,58 @@ function M.match(issue: Issue, needle: string): (boolean, { number }?)
 	end
 	local hay = M.refLabel(issue.ref) .. " " .. issue.author .. " " .. table.concat(issue.labels, " ") .. " " .. table.concat(issue.assignees, " ")
 	return string.find(string.lower(hay), q, 1, true) ~= nil, nil
+end
+
+-- Jira's status categories, fixed across every site, in the default sort order: what is being worked on first.
+M.CATEGORIES = { "indeterminate", "new", "done" }
+M.CATEGORY_LABEL = { indeterminate = "In Progress", new = "To Do", done = "Done" }
+
+-- The status category `issue` sorts under: Jira's own, else open GitHub issues are to do and closed ones done.
+function M.category(issue: Issue): string
+	return issue.category or (if issue.state == "closed" then "done" else "new")
+end
+
+-- The status order kv "status-order" holds, given pcall(tern.kv.get, ...)'s answer: every category once, saved ones
+-- first (unknown keys dropped, missing ones appended in default order). An unreadable or malformed value gives the
+-- default and why, so nothing overwrites it.
+function M.statusOrder(ok: boolean, v: any): ({ string }, string?)
+	local out: { string } = {}
+	if not ok or (v ~= nil and type(v) ~= "table") then
+		return table.clone(M.CATEGORIES), "The saved status order could not be read; not overwriting it."
+	end
+	for _, key in v or {} do
+		if type(key) ~= "string" then
+			return table.clone(M.CATEGORIES), "The saved status order could not be read; not overwriting it."
+		end
+		if M.CATEGORY_LABEL[key] and not table.find(out, key) then
+			table.insert(out, key)
+		end
+	end
+	for _, key in M.CATEGORIES do
+		if not table.find(out, key) then
+			table.insert(out, key)
+		end
+	end
+	return out, nil
+end
+
+-- Sorts `issues` in place by status category in `order` (others last), keeping their order within a category: the
+-- tracker's own (Jira: priority, then newest update; GitHub: newest update).
+function M.byStatus(issues: { Issue }, order: { string })
+	local at: { [Issue]: number } = {}
+	for i, issue in issues do
+		at[issue] = i
+	end
+	local function rank(issue: Issue): number
+		return table.find(order, M.category(issue)) or #order + 1
+	end
+	table.sort(issues, function(a, b)
+		local x, y = rank(a), rank(b)
+		if x ~= y then
+			return x < y
+		end
+		return at[a] < at[b]
+	end)
 end
 
 -- Deduplicated by identity, newest update first, identity as the tie-break.

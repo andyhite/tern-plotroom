@@ -1760,7 +1760,7 @@ end
 type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | view | projects | other
 type Acli = {
 	site: string?, -- the Jira site `acli jira auth status` names; nil: signed out, every jira command fails as unauthorized
-	searches: { [string]: { any } }, -- --jql value -> the work items it finds, newest update first; an unlisted query finds none
+	searches: { [string]: { any } }, -- --jql value -> the work items it finds, in the order acli prints them; an unlisted query finds none
 	views: { [string]: any }, -- key -> the REST issue `workitem view` prints
 	projects: { any }, -- what `project list` prints
 	override: ((AcliReq) -> Reply?)?, -- answers first: a failure, a malformed page
@@ -4505,11 +4505,11 @@ local function acliCount(acli: Acli, kind: string): number
 	return n
 end
 
-case("jira.issues: one search of the view's query, newest update first, normalized", function(w: World)
+case("jira.issues: one search of the view's query, highest priority then newest update first, normalized", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
 	local query = "assignee = currentUser() AND statusCategory != Done"
-	local jql = "(" .. query .. ") ORDER BY updated DESC"
+	local jql = "(" .. query .. ") ORDER BY priority DESC, updated DESC"
 	acli.searches[jql] = {
 		jiraItem("ABC-12", "Fix login", {
 			status = { name = "In Progress", statusCategory = { key = "indeterminate" } },
@@ -4528,7 +4528,7 @@ case("jira.issues: one search of the view's query, newest update first, normaliz
 	eq(acli.requests[1].kind, "auth", "the site comes first")
 	eq(acli.requests[2].kind, "search", "then the search")
 	local argv = acli.requests[2].argv
-	eq(acliOption(argv, "--jql"), jql, "the view's query in parentheses, newest update first, no project clause")
+	eq(acliOption(argv, "--jql"), jql, "the view's query in parentheses, highest priority then newest update first, no project clause")
 	eq(acliOption(argv, "--limit"), "100", "the newest 100")
 	eq(acliOption(argv, "--fields"), "key,summary,status,issuetype,priority,assignee,reporter,labels", "only the fields acli's search allows")
 	yes(table.find(argv, "--json"), "as JSON")
@@ -4668,7 +4668,7 @@ case("jira.issues: acli's failures become problems, and a query that cannot be w
 	eq(#acli.requests, sent, "none of them reached acli")
 	eq(jira.scopeProblem("a = 1) OR (b = 2"), "Unbalanced parentheses.", "an extra closing parenthesis")
 	eq(jira.scopeProblem("(a = 1"), "Unbalanced quotes or parentheses.", "an open parenthesis")
-	eq(jira.scopeProblem("a = 1 ORDER BY x"), "Leave out ORDER BY: issues are listed newest update first.", "ordering is the search's")
+	eq(jira.scopeProblem("a = 1 ORDER BY x"), "Leave out ORDER BY: issues are listed by status, then priority.", "ordering is the search's")
 	local blank = runJira(w, jira, "  ", nil)
 	eq(blank.problem.kind, "failed", "a blank filter")
 	eq(blank.problem.message, "The view's query is empty.", "message")
@@ -4759,10 +4759,10 @@ case("jira.issue: body as markdown, fields, links and dates", function(w: World)
 		{ label = "Fix versions", value = "v2" },
 	}, "parent, the active sprint (the sprint field found by its shape), components and fix versions, in order")
 	same(out.detail.linked, {
-		{ ref = "ABC-3", title = "Login API", url = "https://acme.atlassian.net/browse/ABC-3", state = "done", relation = "blocks" },
-		{ ref = "ABC-4", title = "Design", url = "https://acme.atlassian.net/browse/ABC-4", state = "open", relation = "is blocked by" },
-		{ ref = "ABC-13", title = "Add a test", url = "https://acme.atlassian.net/browse/ABC-13", state = "open", relation = "subtask" },
-	}, "an outward link, an inward one, a subtask; a link with no key is dropped")
+		{ ref = "ABC-3", title = "Login API", url = "https://acme.atlassian.net/browse/ABC-3", state = "done", relation = "blocks", status = { text = "Done", tone = "success" } },
+		{ ref = "ABC-4", title = "Design", url = "https://acme.atlassian.net/browse/ABC-4", state = "open", relation = "is blocked by", status = { text = "To Do", tone = "muted" } },
+		{ ref = "ABC-13", title = "Add a test", url = "https://acme.atlassian.net/browse/ABC-13", state = "open", relation = "subtask", status = { text = "In Progress", tone = "warning" } },
+	}, "an outward link, an inward one, a subtask, each with its status (here its category's name: no status name); a link with no key is dropped")
 	eq(out.detail.comments, 2, "comments")
 	eq(out.detail.created, github.epoch("2026-05-27T14:38:49Z"), "a -0500 offset is converted to UTC")
 	eq(out.detail.updated, github.epoch("2026-05-28T10:00:00Z"), "updated")
@@ -7044,9 +7044,9 @@ end
 -- The Jira side of the issues block: project ABC checked out at /work/r (its origin is on GitLab: a Jira project names
 -- no repository) whose remote serves its default branch at sha("b"). acli is signed in to acme.atlassian.net and finds
 -- under "Assigned to me" ABC-12 "Fix login" (In Progress, a High-priority Bug of Bob Ray, labelled ui) and ABC-13 "Old
--- bug" (Done), newest update first. There is no gh: a Jira block must never ask for it.
+-- bug" (Done), in that order. There is no gh: a Jira block must never ask for it.
 type JiraScene = { git: Git, acli: Acli, gh: Gh }
-local JIRA_ASSIGNED = "(assignee = currentUser() AND statusCategory != Done) ORDER BY updated DESC"
+local JIRA_ASSIGNED = "(assignee = currentUser() AND statusCategory != Done) ORDER BY priority DESC, updated DESC"
 
 local function jiraHost(w: World): JiraScene
 	w.load("host")
@@ -7284,13 +7284,14 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	local linked: { string } = {}
 	for i = 1, 3 do
 		local item: any = findKey(preview, "pr" .. i, "item")
-		table.insert(linked, item.p.label .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title)
+		table.insert(linked, item.p.label .. " | " .. item.p.value .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title)
 	end
 	same(linked, {
-		"#45 Fix the login redirect | merge | success | https://github.com/o/r/pull/45",
-		"#44 A first try | merge | muted | https://github.com/o/r/pull/44",
-		"#43 An older fix | merge | accent | https://github.com/o/r/pull/43",
-	}, "each linked pull request, toned by its state, with its link as the tooltip")
+		"Fix the login redirect | #45 | merge | success | #45 · Open",
+		"A first try | #44 | merge | muted | #44 · Draft",
+		"An older fix | #43 | merge | accent | #43 · Merged",
+	}, "each linked pull request: its title, its number at the right, the icon toned by its state, which the tooltip names")
+	eq(findKey(preview, "linked-head1"), nil, "pull requests have no relation heading")
 	has(b.text(), "12-fix-login", "the branch is on screen")
 	has(b.text(), "#45", "and so is a linked pull request")
 	eq(card().p.collapsed, true, "the description starts folded")
@@ -8193,6 +8194,47 @@ case("host: a Jira issues block lists its view's issues and saves its active vie
 	eq(again.title(), "Plotroom · Assigned to me (2)", "a restored block shows the same view")
 end)
 
+case("host: issues list In Progress, then To Do, then Done, in acli's priority order within each; Settings moves a category up and every list re-sorts", function(w: World)
+	local s = jiraHost(w)
+	local function status(name: string, category: string): any
+		return { status = { name = name, statusCategory = { key = category } } }
+	end
+	s.acli.searches[JIRA_ASSIGNED] = {
+		jiraItem("ABC-1", "Shipped", status("Done", "done")),
+		jiraItem("ABC-2", "Next", status("Proposed", "new")),
+		jiraItem("ABC-3", "Review", status("In Review", "indeterminate")),
+		jiraItem("ABC-4", "Later", status("Proposed", "new")),
+		jiraItem("ABC-5", "Coding", status("In Development", "indeterminate")),
+	}
+	local b = openJira(w)
+	same(listed(b), { "nabc_23ABC-3", "nabc_23ABC-5", "nabc_23ABC-2", "nabc_23ABC-4", "nabc_23ABC-1" }, "by status category, acli's order within one")
+	local views: any = w.kv.get("views-issues")
+	views.items[1].group = "status"
+	w.kv.put("views-issues", views)
+	local grouped = openJira(w, 2)
+	-- group headers by label, items by id
+	local function shown(blk: Block): { string }
+		local out: { string } = {}
+		for _, id in pickerOf(blk).order do
+			table.insert(out, if type(id) == "table" then id.label else id)
+		end
+		return out
+	end
+	same(shown(grouped), { "In Review", "nabc_23ABC-3", "In Development", "nabc_23ABC-5", "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "Done", "nabc_23ABC-1" }, "status groups follow the list, not the alphabet")
+	goToSettings(b, "views", true)
+	eq(rowIn(b, "sorder:indeterminate").disabled, "Listed first.", "the first category cannot move up")
+	b.event({ ev = "action", id = "layer.settings", act = "move-up", value = "sorder:new" })
+	same(w.kv.get("status-order"), array({ "new", "indeterminate", "done" }), "the order is saved")
+	eq(prefsOf(b).focus, "sorder:indeterminate", "the focus moves to the row that can still move up")
+	same(shown(grouped), { "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "In Review", "nabc_23ABC-3", "In Development", "nabc_23ABC-5", "Done", "nabc_23ABC-1" }, "every issues block re-sorts")
+	w.kv.put("status-order", "garbage")
+	b.event({ ev = "action", id = "layer.settings", act = "move-up", value = "sorder:done" })
+	eq(rowIn(b, "sorder:done").warning, "The saved status order could not be read; not overwriting it.", "an unreadable order says so")
+	eq(w.kv.get("status-order"), "garbage", "and is not overwritten")
+	b.press("escape")
+	same(listed(b), { "nabc_23ABC-2", "nabc_23ABC-4", "nabc_23ABC-3", "nabc_23ABC-5", "nabc_23ABC-1" }, "the block that moved it re-sorts too")
+end)
+
 case("host: a Jira view's Settings speak of JQL, the shared prompts, the repositories its issues are worked in and its branch format", function(w: World)
 	local s = jiraHost(w)
 	saveIssuePrompts(w, { issuePrompt("p1", "Triage", "Triage {key} in {project}: {title}", true) })
@@ -8222,17 +8264,17 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	end
 	goToSettings(b, "views", true)
 	expand(b, "vopen:v1")
-	eq(rowIn(b, "query:v1").hint, "JQL across every project, listed newest update first, so leave out ORDER BY.", "the query field names its syntax")
+	eq(rowIn(b, "query:v1").hint, "JQL across every project, listed by status, then priority, so leave out ORDER BY.", "the query field names its syntax")
 	eq(rowIn(b, "query:v1").control.placeholder, "assignee = currentUser() AND statusCategory != Done", "and shows an example")
 	eq(rowIn(b, "vlogin:v1"), nil, "a Jira view has no gh login")
 	save("query:v1", "a = 1) OR (b = 2")
 	eq(rowIn(b, "query:v1").warning, "Unbalanced parentheses.", "a query that closes its own parenthesis is refused")
 	eq(prefsOf(b).editing.row, "query:v1", "the draft stays for a correction")
 	b.press("escape")
-	s.acli.searches['(summary ~ "login") ORDER BY updated DESC'] = { jiraItem("ABC-12", "Fix login") }
+	s.acli.searches['(summary ~ "login") ORDER BY priority DESC, updated DESC'] = { jiraItem("ABC-12", "Fix login") }
 	save("query:v1", 'summary ~ "login"')
 	w.flush()
-	eq(lastJql(), '(summary ~ "login") ORDER BY updated DESC', "a good query searches again, in parentheses, newest update first")
+	eq(lastJql(), '(summary ~ "login") ORDER BY priority DESC, updated DESC', "a good query searches again, in parentheses, highest priority first")
 	same(listed(b), { "nabc_23ABC-12" }, "and lists what it finds")
 	page("prompts")
 	expand(b, "popen:p1")
@@ -8380,6 +8422,8 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 			fixVersions = array({ { name = "v2" } }),
 			issuelinks = array({
 				{ type = { inward = "is blocked by", outward = "blocks" }, outwardIssue = { key = "ABC-3", fields = { summary = "Login API", status = { statusCategory = { key = "new" } } } } },
+				{ type = { inward = "relates to", outward = "relates to" }, inwardIssue = { key = "ABC-6", fields = { summary = "Old notes", status = { name = "Backlog", statusCategory = { key = "new" } } } } },
+				{ type = { inward = "is blocked by", outward = "blocks" }, outwardIssue = { key = "ABC-5", fields = { summary = "Review copy", status = { name = "In Review", statusCategory = { key = "indeterminate" } } } } },
 			}),
 			subtasks = array({ { key = "ABC-14", fields = { summary = "Add test", status = { statusCategory = { key = "done" } } } } }),
 			comment = { total = 2, comments = array({}) },
@@ -8421,12 +8465,31 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(findKey(head, "state", "badge").p.tone, "warning", "toned by its category")
 	eq(findKey(findKey(preview, "branch"), "v").p.spans[1].t, "ABC-12-fix-login", "the branch Worktree would make")
 	eq(findKey(findKey(preview, "description", "card"), "body", "md").p.text, "Login fails.", "the description from Jira's document format, as Markdown")
-	local function linked(i: number): string
-		local item: any = findKey(preview, "pr" .. i, "item")
-		return item.p.label .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title
+	-- The linked section as lines: each relation's heading, then its rows.
+	local function linked(): { string }
+		local out: { string } = {}
+		local g = 1
+		while findKey(preview, "linked" .. g) do
+			local h: any = findKey(preview, "linked-head" .. g)
+			if h then
+				table.insert(out, h.p.spans[1].t)
+			end
+			for _, item in (findKey(preview, "linked" .. g) :: any).c do
+				table.insert(out, "  " .. item.p.label .. " | " .. item.p.value .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title)
+			end
+			g += 1
+		end
+		return out
 	end
-	eq(linked(1), "blocks ABC-3 Login API | circle-dot | success | https://acme.atlassian.net/browse/ABC-3", "a linked issue says how it relates")
-	eq(linked(2), "subtask ABC-14 Add test | circle-dot | success | https://acme.atlassian.net/browse/ABC-14", "and so does a subtask")
+	same(linked(), {
+		"Blocks · 2",
+		"  Login API | ABC-3 | circle-dot | muted | ABC-3 · To Do",
+		"  Review copy | ABC-5 | circle-dot | warning | ABC-5 · In Review",
+		"Relates to · 1",
+		"  Old notes | ABC-6 | circle-dot | muted | ABC-6 · Backlog",
+		"Subtasks · 1",
+		"  Add test | ABC-14 | check | success | ABC-14 · Done",
+	}, "linked issues under one heading per relation, in the order Jira first names it; the icon and tone are the status category, the key at the right, the status in the tooltip")
 	-- an issue whose details cannot be read says why
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)

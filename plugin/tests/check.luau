@@ -305,6 +305,14 @@ function M.run()
 	})
 	assert(#irec == 3 and irec[1].key == "a/b#2" and irec[2].key == "a/b#3" and irec[3].key == "a/b#1", "duplicates fold by lowercase identity: updated desc, key tie-break")
 	assert(irec[3].repo == "A/B", "display spelling preserved")
+	local order, why = tracker.statusOrder(true, { "done", "x", "done" })
+	assert(table.concat(order, ",") == "done,indeterminate,new" and why == nil, "saved categories first, unknown and repeated dropped, missing appended")
+	assert(table.concat(tracker.statusOrder(true, nil), ",") == "indeterminate,new,done", "nothing saved: in progress, to do, done")
+	assert(select(2, tracker.statusOrder(true, { 1 })) ~= nil and select(2, tracker.statusOrder(false, nil)) ~= nil, "malformed or unreadable says why")
+	local gone, open1, open2 = { state = "closed" } :: any, { state = "open" } :: any, { state = "open" } :: any
+	local mixed = { gone, open1, open2 }
+	tracker.byStatus(mixed, order)
+	assert(mixed[1] == gone and mixed[2] == open1 and mixed[3] == open2, "a GitHub issue sorts by its state; ties keep their order")
 	assert(worktree.itemOfPath("/x/plotroom-o_r-pr-12/sub") == "o/r#12", "a PR worktree maps to its key")
 	assert(select(2, worktree.itemOfPath("/x/plotroom-o_r-pr-12/sub")) == "pr", "and its kind")
 	for _, p in { "/x/plotroom-o_r-issue-ABC-7", "/x/plotroom-jira.abc-issue-ABC-7" } do

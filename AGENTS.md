@@ -19,7 +19,7 @@ Two Luau runtimes talk through Tern:
   - `worktree.luau`: repo resolution (`currentRepository` also finds the main checkout), worktree create/reuse (`M.open` from the saved checkout), `prOfPath`, ref validation.
   - `process.luau`: the single process runner `M.run(argv, opts, done)`; recovers PATH via login shell, always calls `done`, never throws.
   - `input.luau`: pure text model, single-line or `multi` (UTF-16 offsets for the SDK).
-- Persistence: `tern.kv` keys `filters`, `prompts`, `repos`, `setup`, `accounts` (host, per machine), `agent-recent` (window). Store changes fan out to other live blocks via `propagate`.
+- Persistence: `tern.kv` keys `filters`, `prompts`, `repos`, `setup`, `accounts` (host, per machine), `agent-recent` (window), `status-order` (host: the status-category order issues sort by, Settings › Views; Jira search adds `ORDER BY priority DESC, updated DESC` for order within a category). Store changes fan out to other live blocks via `propagate`.
 - Settings multi-line text: Tern 0.8.3 `prefs` has no multi-line control, so a prompt's text is an `editor` node inside a `col` child with `role = "omp.prefs.editor"`, which `prefs` draws as a card over the page; keys still reach the block's `key` handler.
 
 ## Key Directories

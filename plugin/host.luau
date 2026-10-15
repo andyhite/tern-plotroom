@@ -79,8 +79,9 @@ type Snap = {
 }
 -- What the local search lets through: computed once per snapshot and search text.
 type Visible = { snap: Snap, needle: string, group: string, items: { any }, order: { any }, hits: { [string]: any }? }
--- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in.
-type Group = { value: string, label: string, of: (any) -> string }
+-- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in. `keep`: the
+-- groups follow the list's order (status, sorted by its category) instead of their labels'.
+type Group = { value: string, label: string, of: (any) -> string, keep: boolean? }
 -- What each kind can group each integration's items by; assigned below, once the badges it reads are defined.
 local GROUPS: { [string]: { [string]: { Group } } }
 local function groupsOf(kindId: string, integration: string): { Group }
@@ -843,13 +844,15 @@ local function filtered(state: State): Visible?
 			end
 			table.insert(bucket, item)
 		end
-		table.sort(labels, function(a: string, b: string): boolean
-			local x, y = string.lower(a), string.lower(b)
-			if x ~= y then
-				return x < y
-			end
-			return a < b
-		end)
+		if not spec.keep then
+			table.sort(labels, function(a: string, b: string): boolean
+				local x, y = string.lower(a), string.lower(b)
+				if x ~= y then
+					return x < y
+				end
+				return a < b
+			end)
+		end
 		for _, label in labels do
 			local bucket = buckets[label]
 			table.insert(order, { group = label, label = label, count = #bucket })
@@ -1095,6 +1098,10 @@ refresh = function(state: State)
 			return
 		end
 		if result then
+			if issues then
+				-- The status category order of Settings › Views (kv "status-order").
+				tracker.byStatus(result.issues, (tracker.statusOrder(pcall(tern.kv.get, "status-order"))))
+			end
 			local snap: Snap = { items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
 			state.snaps[key] = snap
 			state.snap = snap
@@ -1364,7 +1371,7 @@ local INTEGRATIONS: { [string]: Integration } = {
 	jira = {
 		label = "Jira",
 		newQuery = "assignee = currentUser() AND statusCategory != Done",
-		hint = "JQL across every project, listed newest update first, so leave out ORDER BY.",
+		hint = "JQL across every project, listed by status, then priority, so leave out ORDER BY.",
 		linked = "Linked issues",
 	},
 }
@@ -1554,12 +1561,12 @@ GROUPS = {
 		github = {
 			{ value = "repo", label = "Repository", of = function(issue: any): string return issue.repo end },
 			{ value = "author", label = "Author", of = function(issue: any): string return issue.author end },
-			{ value = "state", label = "State", of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "state", label = "State", keep = true, of = function(issue: any): string return issueBadge(issue).text end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
 		},
 		jira = {
 			{ value = "project", label = "Project", of = function(issue: any): string return issue.repo end },
-			{ value = "status", label = "Status", of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "status", label = "Status", keep = true, of = function(issue: any): string return issueBadge(issue).text end },
 			{ value = "type", label = "Type", of = function(issue: any): string return issue.type or "No type" end },
 			{ value = "priority", label = "Priority", of = function(issue: any): string return issue.priority or "No priority" end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
@@ -1719,6 +1726,20 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				},
 			},
 		})
+		if issues then
+			local order, broken = tracker.statusOrder(pcall(tern.kv.get, "status-order"))
+			local rows: { Row } = {}
+			for i, key in order do
+				table.insert(rows, {
+					id = "sorder:" .. key,
+					label = tracker.CATEGORY_LABEL[key],
+					hint = if i == 1 then "Every view lists issues by status category in this order, then by priority (Jira), then newest update." else nil,
+					disabled = broken or (if i == 1 then "Listed first." else nil),
+					control = { k = "action", act = "move-up", label = "Move up" },
+				})
+			end
+			table.insert(sections, { id = "status-order", title = "Status order", rows = rows })
+		end
 	elseif s.page == "prompts" then
 		lead = if issues
 			then "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views."
@@ -2448,6 +2469,35 @@ local function runAction(state: State, act: string, row: string)
 		state.cx:open(REPOS_HREF)
 	elseif act == "add-jira" then
 		state.cx:open(JIRA_HREF)
+	elseif act == "move-up" then
+		-- Row "sorder:<key>" one place up the status order; every loaded issue list of this runtime re-sorts. Fails closed
+		-- when the saved order cannot be read.
+		local order, broken = tracker.statusOrder(pcall(tern.kv.get, "status-order"))
+		local at = table.find(order, string.match(row, "^sorder:(.+)$") or "")
+		if broken or not at or at == 1 then
+			s.errors[row] = broken
+			return
+		end
+		order[at], order[at - 1] = order[at - 1], order[at]
+		local err = kvSet("status-order", tern.json.array(order))
+		s.errors[row] = if err then "Could not save: " .. err else nil
+		if err then
+			return
+		end
+		-- The first row cannot move up, so the focus stays on the row that just left it.
+		s.focus = "sorder:" .. order[if at == 2 then 2 else at - 1]
+		for _, other in running do
+			if other.kind.id == "issues" and alive(other) then
+				for _, snap in other.snaps do
+					tracker.byStatus(snap.items, order)
+					snap.rows = nil
+				end
+				other.vis = nil
+				if other ~= state then
+					other.cx:render()
+				end
+			end
+		end
 	end
 end
 
@@ -3837,25 +3887,51 @@ end
 
 -- The items that go with an issue, once its details loaded (Tern's shimmer meanwhile): the pull requests that close a
 -- GitHub issue, each a link that shows it in a GitHub PRs block (window.luau's `showPr`), the issues linked to a Jira
--- one. Or why the details did not load, with a Retry button; nothing when there are none.
+-- one. Or why the details did not load, with a Retry button; nothing when there are none. Like the checks: one row per
+-- item, its title with the number or key at the right, the icon and its tone the state (the tooltip names it); Jira's
+-- under a muted heading per relation ("Blocks · 1"), in the order Jira first names each. Items without a relation
+-- (GitHub's) are the one list keyed "linked", which window.luau reads.
 local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
 	local head = ui.node("text", { key = "linked-head", spans = { ui.span(INTEGRATIONS[tr].linked, "strong") } })
 	if detail then
 		if #detail.linked == 0 then
 			return {}
 		end
-		local rows: { Node } = {}
+		local groups: { { relation: string?, rows: { Node } } } = {}
+		local at: { [string]: number } = {} -- relation ("" for none) -> its group
 		for i, l in detail.linked do
-			local badge = STATE_BADGE[l.state] or STATE_BADGE.open
-			local label = (if l.relation then l.relation .. " " else "") .. tracker.refLabel(l.ref) .. " " .. l.title
-			local props: { [string]: any } = { key = "pr" .. i, label = label, icon = if tr == "jira" then ISSUE_ICON else "merge", tone = badge.tone, title = l.url }
+			local look = l.status or STATE_BADGE[l.state] or STATE_BADGE.open
+			local what = tracker.refLabel(l.ref) .. " · " .. look.text
+			local props: { [string]: any } = {
+				key = "pr" .. i,
+				label = l.title,
+				value = tracker.refLabel(l.ref),
+				icon = if l.state == "done" then "check" elseif l.state == "closed" then "x" elseif tr == "jira" then ISSUE_ICON else "merge",
+				tone = look.tone,
+				title = what,
+				aria = l.title .. ", " .. what,
+			}
 			local o, r, n = github.parsePrUrl(l.url)
 			if tr == "github" and o and r and n then
 				props.href, props.actions = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }
 			end
-			table.insert(rows, ui.node("item", props))
+			local k = l.relation or ""
+			if not at[k] then
+				table.insert(groups, { relation = l.relation, rows = {} })
+				at[k] = #groups
+			end
+			table.insert(groups[at[k]].rows, ui.node("item", props))
 		end
-		return { head, ui.node("list", { key = "linked" }, rows) }
+		local out: { Node } = { head }
+		for g, group in groups do
+			local relation = group.relation
+			if relation then
+				local name = if relation == "subtask" then "Subtasks" else string.upper(string.sub(relation, 1, 1)) .. string.sub(relation, 2)
+				table.insert(out, ui.node("text", { key = "linked-head" .. g, spans = { ui.span(name .. " · " .. #group.rows, "muted") } }))
+			end
+			table.insert(out, ui.node("list", { key = if relation then "linked" .. g else "linked" }, group.rows))
+		end
+		return out
 	elseif loading then
 		return { head, ui.node("shimmer", { key = "linked-loading", text = "Loading details…" }) }
 	elseif fail then
@@ -4649,7 +4725,7 @@ local function blockDef(base: Kind): BlockDef<State>
 					else
 						discardEdit(state)
 					end
-				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" then
+				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" or act == "move-up" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)

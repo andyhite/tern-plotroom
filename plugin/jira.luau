@@ -180,7 +180,7 @@ function M.scopeProblem(query: string): string?
 		return "Unbalanced quotes or parentheses."
 	end
 	if string.find(string.lower(table.concat(outside)), "order%s+by") then
-		return "Leave out ORDER BY: issues are listed newest update first."
+		return "Leave out ORDER BY: issues are listed by status, then priority."
 	end
 	return nil
 end
@@ -213,6 +213,7 @@ function M.normalize(item: any, siteUrl: string): (tracker.Issue?, string?)
 		state = if category == "done" then "closed" else "open",
 		reason = nil,
 		status = if statusName then { text = statusName, tone = (if type(category) == "string" then TONE[category] else nil) or "muted" } else nil,
+		category = if type(category) == "string" then category else nil,
 		type = nonEmpty(field(fields, "issuetype", "name")),
 		priority = nonEmpty(field(fields, "priority", "name")),
 		labels = labels,
@@ -223,8 +224,9 @@ function M.normalize(item: any, siteUrl: string): (tracker.Issue?, string?)
 	}, nil
 end
 
--- The newest work items that `query` (JQL) finds across every project; one swap-ready IssueResult, in acli's order. Spent is
--- always 0: Jira has no quota to account for. done never runs before this call returns.
+-- The work items that `query` (JQL) finds across every project, highest priority (the site's own order) then newest update
+-- first; one swap-ready IssueResult, in acli's order. Spent is always 0: Jira has no quota to account for. done never runs
+-- before this call returns.
 function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.IssueResult?, Problem?, number) -> ())
 	local superseded: Problem = { kind = "superseded", message = "" }
 	-- Every result passes here: a cancelled request reports "superseded" whatever it found.
@@ -253,7 +255,7 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 		if not shouldContinue() then
 			return fail(superseded)
 		end
-		local jql = "(" .. query .. ") ORDER BY updated DESC"
+		local jql = "(" .. query .. ") ORDER BY priority DESC, updated DESC"
 		acli({ "jira", "workitem", "search", "--jql", jql, "--limit", tostring(M.LIMIT), "--json", "--fields", SEARCH_FIELDS }, function(out, problem2)
 			if not out then
 				return finish(nil, noted(problem2))
@@ -499,12 +501,16 @@ local function detailOf(fields: any, base: string): tracker.IssueDetail
 	local function add(other: any, relation: any)
 		local ref, title = field(other, "key"), field(other, "fields", "summary")
 		if type(ref) == "string" and string.match(ref, KEY) and type(title) == "string" then
+			local category = field(other, "fields", "status", "statusCategory", "key")
+			local key = if type(category) == "string" then category else ""
+			local name = nonEmpty(field(other, "fields", "status", "name")) or tracker.CATEGORY_LABEL[key] or "Open"
 			table.insert(linked, {
 				ref = ref,
 				title = title,
 				url = base .. "/browse/" .. ref,
-				state = if field(other, "fields", "status", "statusCategory", "key") == "done" then "done" else "open",
+				state = if category == "done" then "done" else "open",
 				relation = nonEmpty(relation),
+				status = { text = name, tone = TONE[key] or "muted" },
 			})
 		end
 	end
