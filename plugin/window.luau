@@ -8,8 +8,7 @@
 local worktree = require("./worktree")
 
 local PRS_BLOCK = "plotroom.prs"
-local BLOCKS = { PRS_BLOCK, "plotroom.issues" }
-local ISSUE_ICON = "circle-dot"
+local ISSUE_ICON = "list-checks"
 local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
@@ -25,7 +24,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "11" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "12" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -70,20 +69,11 @@ local function readRecent(): { string }
 	return out
 end
 
--- Whether `pane` runs a Plotroom block, or one of `kinds` when given.
-local function isPlotroom(cx: WindowCx, pane: number, kinds: { string }?): boolean
+-- Whether `pane` runs the Plotroom block.
+local function isPlotroom(cx: WindowCx, pane: number): boolean
 	local info = cx.session:pane(pane)
 	local block = if info then info.block else nil
-	if type(block) ~= "string" then
-		return false
-	end
-	local list: { string } = kinds or BLOCKS
-	for _, b in list do
-		if string.sub(block, -#b) == b then
-			return true
-		end
-	end
-	return false
+	return type(block) == "string" and string.sub(block, -#PRS_BLOCK) == PRS_BLOCK
 end
 
 local function findNode(node: any, id: string): any?
@@ -204,31 +194,10 @@ local function openUrl(cx: WindowCx, pane: number, url: string, what: string)
 	end)
 end
 
--- Shows the pull request at `url` in a GitHub PRs block: the one in the tab of `pane` (the issues block), else one in
--- another tab, else a new one split right of `pane` and launched on it (host.luau's `showPr` and pin).
+-- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host.luau's `showPr`).
 local function showPr(cx: WindowCx, pane: number, url: string)
-	local tab = cx.session:tab_of(pane)
-	local target: PaneInfo? = nil
-	for _, p in cx.session:panes() do
-		if p.tab and (target == nil or p.tab == tab) and isPlotroom(cx, p.pane, { PRS_BLOCK }) then
-			target = p
-		end
-	end
-	if target then
-		cx.session:event(target.pane, { ev = "action", act = "show-pr", value = url })
-		for _, t in cx.session:tabs() do
-			if t.id == target.tab then
-				cx.sessions:switch(t.session)
-			end
-		end
-		cx.layout:focus(target.pane)
-		return
-	end
-	local info = cx.session:pane(pane)
-	local cwd = if info and info.cwd and info.cwd ~= "" then info.cwd else nil
-	if not cx.layout:split(pane, "right", { block = PRS_BLOCK, cwd = cwd, args = { cwd or "", url } }) then
-		cx:toast("error", "Plotroom: could not open a GitHub PRs block")
-	end
+	cx.session:event(pane, { ev = "action", act = "show-pr", value = url })
+	cx.layout:focus(pane)
 end
 
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
@@ -935,7 +904,7 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	end
 end)
 
-local function launch(cx: WindowCx, block: string)
+local function launch(cx: WindowCx)
 	local source = cx.session:focused()
 	local cwd: string? = nil
 	if source then
@@ -944,7 +913,7 @@ local function launch(cx: WindowCx, block: string)
 			cwd = info.cwd
 		end
 	end
-	local spec: Launch = { block = block, cwd = cwd, args = if cwd then { cwd } else nil }
+	local spec: Launch = { block = PRS_BLOCK, cwd = cwd, args = if cwd then { cwd } else nil }
 	local pane = if source then cx.layout:split(source, "right", spec) else cx.layout:new_tab(spec)
 	if not pane then
 		cx:toast("error", "Plotroom is not loaded on this host")
@@ -953,20 +922,9 @@ end
 
 tern.command({
 	id = "open",
-	title = "Plotroom: Open GitHub PRs",
+	title = "Plotroom: Open",
 	icon = "merge",
-	run = function(cx: WindowCx)
-		launch(cx, "plotroom.prs")
-	end,
-})
-
-tern.command({
-	id = "open-issues",
-	title = "Plotroom: Open Issues",
-	icon = ISSUE_ICON,
-	run = function(cx: WindowCx)
-		launch(cx, "plotroom.issues")
-	end,
+	run = launch,
 })
 
 local function available(cx: WindowCx): boolean

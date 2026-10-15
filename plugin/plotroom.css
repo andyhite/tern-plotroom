@@ -5,34 +5,29 @@
 
 /* Tern draws a Close (esc) button on every picker, but the queue is the block itself: there is nothing to close, and
    its close only clears the search, which the search field's own clear button does. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc,
-[data-surface='plugin.plotroom.issues'] .sf-picker .pk-esc {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {
 	display: none;
 }
 
 /* The heading's repository name opens the repository picker; it keeps the title's color, not the link's. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-title .sf-link,
-[data-surface='plugin.plotroom.issues'] .sf-picker .pk-title .sf-link {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-title .sf-link {
 	color: inherit;
 }
 
 /* Tern's primary button (GitHub ↗) is 30px tall with 12px padding; every other action is 28px with 8px. Same size. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn.primary,
-[data-surface='plugin.plotroom.issues'] .sf-picker .pk-btn.primary {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn.primary {
 	height: 28px;
 	padding: 0 8px;
 }
 
 /* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds,
-[data-surface='plugin.plotroom.issues'] .sf-picker .pk-btn .kbds {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds {
 	display: inline-flex;
 	gap: 2px;
 }
 
 /* Tern's keycap is 20px, nearly the 28px button's height; 16px sits inside it like a label. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbd,
-[data-surface='plugin.plotroom.issues'] .sf-picker .pk-btn .kbd {
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbd {
 	min-width: 16px;
 	height: 16px;
 	padding: 0 4px;
@@ -41,31 +36,26 @@
 }
 
 /* The PR description is a folded card only for its native clamp and "N more lines" button: no head row, no indent. */
-[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-head,
-[data-surface='plugin.plotroom.issues'] .sf-card[data-role='plotroom.description'] > .sf-card-head {
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-head {
 	display: none;
 }
 
-[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-body,
-[data-surface='plugin.plotroom.issues'] .sf-card[data-role='plotroom.description'] > .sf-card-body {
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-body {
 	padding-left: 0;
 }
 
-[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-more,
-[data-surface='plugin.plotroom.issues'] .sf-card[data-role='plotroom.description'] > .sf-more {
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-more {
 	margin-left: 0;
 }
 
 /* Tern's side preview is a fixed 340px: too tight for the worktree card and the checks. Keep it at least 460px; under
    980px Tern moves it below the list (.pv-below-auto), which this leaves alone. */
-[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv,
-[data-surface='plugin.plotroom.issues'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv {
+[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv {
 	min-width: 460px;
 }
 
 /* The worktree card's buttons are items (Tern has no button kind) sized to their label: give them a button's ring. */
-[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'],
-[data-surface='plugin.plotroom.issues'] .sf-item[data-role='plotroom.button'] {
+[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'] {
 	border: 1px solid var(--l3);
 	border-radius: var(--r-ctl);
 	padding: 0 8px;
@@ -77,24 +67,19 @@
    strip does the same for its code and mono spans (.pk-strip-l). */
 [data-surface='plugin.plotroom.prs'] [data-role='plotroom.ref'] .sf-t-code,
 [data-surface='plugin.plotroom.prs'] .pk-detail .sf-t-code,
-[data-surface='plugin.plotroom.prs'] .pk-detail .sf-t-mono,
-[data-surface='plugin.plotroom.issues'] [data-role='plotroom.ref'] .sf-t-code,
-[data-surface='plugin.plotroom.issues'] .pk-detail .sf-t-code,
-[data-surface='plugin.plotroom.issues'] .pk-detail .sf-t-mono {
+[data-surface='plugin.plotroom.prs'] .pk-detail .sf-t-mono {
 	font-family: var(--mono);
 	font-size: 12px;
 }
 
 /* A comment bubble before a row's comment count (spans carry no icons, and Tern drops url() from plugin CSS): a
    rounded box, then (order) a triangle tail pulled back under its left side. c0 is the queue's only column. */
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty),
-[data-surface='plugin.plotroom.issues'] .pk-row .pk-fact.c0:not(:empty) {
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty) {
 	display: flex;
 	justify-content: flex-end;
 	align-items: center;
 }
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::before,
-[data-surface='plugin.plotroom.issues'] .pk-row .pk-fact.c0:not(:empty)::before {
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::before {
 	content: "";
 	order: -2;
 	box-sizing: border-box;
@@ -103,8 +88,7 @@
 	border: 1.5px solid currentColor;
 	border-radius: 3px;
 }
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::after,
-[data-surface='plugin.plotroom.issues'] .pk-row .pk-fact.c0:not(:empty)::after {
+[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::after {
 	content: "";
 	order: -1;
 	position: relative;
@@ -115,21 +99,18 @@
 }
 
 /* Too few settings to need search. */
-[data-surface='plugin.plotroom.prs'] .sf-prefs .pf-search,
-[data-surface='plugin.plotroom.issues'] .sf-prefs .pf-search {
+[data-surface='plugin.plotroom.prs'] .sf-prefs .pf-search {
 	display: none;
 }
 
 /* Settings is Tern's side sheet in the layer, which narrows nothing in a plugin block; make room for it with its own
    width (Tern's `.sf-layer .sf-prefs` rule), so the queue doesn't show through the sheet's glass. */
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue.aside'],
-[data-surface='plugin.plotroom.issues'] .sf-picker[data-role^='plotroom.queue.aside'] {
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue.aside'] {
 	margin-right: calc(var(--tv-aside, 440px) / var(--sf-zoom, 1));
 }
 
 /* A prompt's editor card over the Settings sheet: the card's width, up to 640px, so a narrow sheet never clips it. */
-[data-surface='plugin.plotroom.prs'] .pf-editor > .sf-col,
-[data-surface='plugin.plotroom.issues'] .pf-editor > .sf-col {
+[data-surface='plugin.plotroom.prs'] .pf-editor > .sf-col {
 	width: 100%;
 	max-width: 640px;
 	box-sizing: border-box;
@@ -138,29 +119,25 @@
 
 /* In the narrow sheet a text field wraps under its label at a fixed 260px, right-aligned; ask for more than the row
    so it takes the whole line instead. */
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-in,
-[data-surface='plugin.plotroom.issues'] .pf.sheet .pf-in {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-in {
 	flex: 1 1 auto;
 	width: 1000px;
 }
 
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-ctl,
-[data-surface='plugin.plotroom.issues'] .pf.sheet .pf-ctl {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-ctl {
 	max-width: 100%;
 }
 
 /* A changed row's hover-only Reset sits before its control and would indent a full-line field; pin it to the row's
    top-right corner, beside the label. */
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-reset,
-[data-surface='plugin.plotroom.issues'] .pf.sheet .pf-reset {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-reset {
 	position: absolute;
 	top: 8px;
 	right: 18px;
 }
 
 /* Tern pads a multi row (.stack) 4px less than the others, so its label sat left of theirs. */
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row.stack,
-[data-surface='plugin.plotroom.issues'] .pf.sheet .pf-row.stack {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row.stack {
 	padding-left: 18px;
 	padding-right: 18px;
 }
