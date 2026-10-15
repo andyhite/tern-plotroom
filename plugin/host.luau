@@ -138,11 +138,11 @@ type Note = {
 -- worktree holds what it should (a PR's head; an issue's branch always does). `ref`: a pull request's fetched ref.
 type Report = { root: string, path: string, branch: string, ref: string?, current: boolean, dirty: boolean?, summary: string, update: { string } }
 type Settings = {
-	page: string, -- "views" | "prompts" | "keys" | "repos" | "jira" | "connection"
+	page: string, -- "views" | "prompts" | "keys" | "worktrees" | "repos" | "jira" | "connection"
 	focus: string?, -- focused prefs row id
 	open: string?, -- id ("<kind id>:<saved id>") of the view or prompt whose form is expanded; every other one shows as a one-row summary
-	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text
-	pick: { row: string, option: string? }?, -- a chips row the keys drive
+	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text; a shortcut row ("key:", "pkey:") takes the next key
+	pick: { row: string, option: string? }?, -- a choice or chips row the keys drive, `option` highlighted
 	errors: { [string]: string? }, -- row id -> warning under the row
 	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") awaiting confirmation; view and prompt ids are qualified by their kind
 }
@@ -186,6 +186,7 @@ type State = {
 	scanned: Snap?, -- the snapshot whose checkouts the last scan was started for; nil: a scan is due (a worktree was made or removed)
 	scanning: boolean, -- a scan of the shown items' checkouts is running
 	settings: Settings?,
+	settingsPage: string?, -- the Settings page last shown: Settings opens on it again
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
 	listing: number, -- repository picker lists still waiting on GitHub: the heading shows a loader meanwhile
 }
@@ -201,7 +202,7 @@ local probing: { [string]: boolean } = {} -- tracker id -> its check is running
 local ghActive: {
 	login: string?,
 	accounts: { string },
-	note: (State) -> (),
+	note: (State, boolean?) -> (),
 	shown: (View) -> string,
 	isActive: (State, Scope) -> boolean,
 } = {
@@ -634,8 +635,8 @@ end
 
 -- Learns gh's active login (cached by github.accounts) and redraws when it changed, so views without a login of their own
 -- sit under whichever account is active.
-function ghActive.note(state: State)
-	local any = false
+function ghActive.note(state: State, always: boolean?)
+	local any = always == true
 	for _, v in state.views do
 		any = any or v.integration == "github"
 	end
@@ -1175,8 +1176,7 @@ refresh = function(state: State)
 		end
 		if result then
 			if issues then
-				-- The status category order of Settings › Views (kv "status-order").
-				tracker.byStatus(result.issues, (tracker.statusOrder(pcall(tern.kv.get, "status-order"))))
+				tracker.byStatus(result.issues)
 			end
 			local snap: Snap = { kind = kind, items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
 			state.snaps[key] = snap
@@ -1420,30 +1420,31 @@ local SETTINGS_ID = "layer.settings"
 -- The Settings pages, in order: the same whatever the active kind.
 local PAGE_DEFS: { { id: string, label: string, group: string, icon: string } } = {
 	{ id = "views", label = "Views", group = "Queue", icon = "funnel" },
-	{ id = "prompts", label = "Prompts", group = "Queue", icon = "app-omp" },
-	{ id = "keys", label = "Keys", group = "Queue", icon = "key" },
-	{ id = "repos", label = "Repositories", group = "Code", icon = "tree" },
-	{ id = "jira", label = "Jira projects", group = "Code", icon = "globe" },
-	{ id = "connection", label = "Connection", group = "Connection", icon = "globe" },
+	{ id = "prompts", label = "Prompts", group = "Queue", icon = "prompt" },
+	{ id = "keys", label = "Keys", group = "Queue", icon = "keyboard" },
+	{ id = "worktrees", label = "Worktrees", group = "Code", icon = "tree" },
+	{ id = "repos", label = "Repositories", group = "Code", icon = "folder" },
+	{ id = "jira", label = "Jira projects", group = "Code", icon = "kanban" },
+	{ id = "connection", label = "Refresh", group = "Connection", icon = "gauge" },
 }
 -- The pickers the window opens for Settings' add rows (window.luau's `pickRepo` and `pickJira`).
 local REPOS_HREF = "plotroom://repos"
 local JIRA_HREF = "plotroom://jira-projects"
 
--- What each integration is called, what a new view of it starts as, how its query is written, and the heading of an
--- issue's linked items.
-type Integration = { label: string, newQuery: string, hint: string, linked: string }
+-- What each integration is called, what a new view of it starts as, what its query row is labelled, and the heading of
+-- an issue's linked items.
+type Integration = { label: string, newQuery: string, query: string, linked: string }
 local INTEGRATIONS: { [string]: Integration } = {
 	github = {
 		label = "GitHub",
 		newQuery = "is:open involves:@me",
-		hint = "GitHub search syntax, across every repository the login can see; repo:, org: and user: narrow it.",
+		query = "Search query",
 		linked = "Linked pull requests",
 	},
 	jira = {
 		label = "Jira",
 		newQuery = "assignee = currentUser() AND statusCategory != Done",
-		hint = "JQL across every project, listed by status, then priority, so leave out ORDER BY.",
+		query = "JQL",
 		linked = "Linked issues",
 	},
 }
@@ -1587,10 +1588,11 @@ KINDS = {
 
 local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
-	{ keys = { "Enter" }, text = "Edit a text row or press its button; while editing, Enter saves" },
+	{ keys = { "Enter" }, text = "Edit a text row, press its button, switch a choice to its next option or open its menu; while editing, Enter saves" },
 	{ keys = { "⌘↵" }, text = "Save a prompt's text (Enter there starts a new line)" },
-	{ keys = { "←", "→", "Space" }, text = "On a chips row after Enter: move between options and turn one on or off (a single-choice row switches to the option)" },
-	{ keys = { "Esc" }, text = "Cancel the edit without saving; with nothing being edited, close Settings" },
+	{ keys = { "←", "→", "Space" }, text = "In an open choice, move and pick; on chips, move and turn one on or off" },
+	{ keys = { "⌫" }, text = "On a shortcut row after Enter: remove the shortcut (any other key becomes it)" },
+	{ keys = { "Esc" }, text = "Cancel the edit or close the choice; with nothing open, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
 	{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
 }
@@ -1666,14 +1668,29 @@ local function cliOff(id: string): string?
 	return nil
 end
 
--- sections, lead and extra children of the open settings page.
-local function pageContent(state: State): ({ any }, string, { Node })
+-- sections and extra children of the open settings page.
+local function pageContent(state: State): ({ any }, { Node })
 	local s = state.settings :: Settings
 	local sections: { any } = {}
 	local extra: { Node } = {}
-	local lead = ""
+	-- `section` starts a card (under `title`), `row` adds to the last one started; prefs skips a card left empty.
+	local function section(id: string, title: string?)
+		table.insert(sections, { id = id, title = title, rows = {} })
+	end
+	local function row(r: Row)
+		table.insert(sections[#sections].rows, r)
+	end
+	-- The open view's or prompt's form is a card of its own ("form:<id>") where it sits in its list, its first row the
+	-- one that closes it (Edit turns Done in place); the list goes on in a card after it. First in its group, the form
+	-- takes over the group's card, title and all.
+	local function openCard(id: string)
+		if #sections[#sections].rows > 0 then
+			section("form:" .. id)
+		else
+			sections[#sections].id = "form:" .. id
+		end
+	end
 	if s.page == "views" then
-		lead = "Saved searches for the sidebar. GitHub views search every repository the view's login can see; Jira views search every project acli can see."
 		-- The saved prompts of each kind, read once: a view offers those of its own kind.
 		local promptLists: { [string]: { Prompt } } = {}
 		local kindOptions: { any } = {}
@@ -1682,238 +1699,190 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			promptLists[kind.id] = if prompts then prompts.items else {}
 			table.insert(kindOptions, { value = kind.id, label = kind.label })
 		end
-		local integrationOptions: { any } = {}
-		for _, id in KINDS.issues.integrations do
-			table.insert(integrationOptions, { value = id, label = INTEGRATIONS[id].label })
+		-- The groups, in the sidebar's order: one for each signed-in gh login and one for Jira while acli is installed (or a
+		-- Jira view is saved), each ending in an Add button for a view of its own (`add`: "<integration>:<login>", addView);
+		-- and one for each other group a saved view sits in (a login no longer signed in, several logins, gh's active one
+		-- while unknown), without one. A view of several logins, in each one's group in the sidebar, has its own here.
+		local groups: { { label: string, integration: string, add: string?, views: { View } } } = {}
+		local byLabel: { [string]: { label: string, integration: string, add: string?, views: { View } } } = {}
+		local function groupOf(label: string, integration: string, add: string?): { label: string, integration: string, add: string?, views: { View } }
+			local key = string.lower(label)
+			local found = byLabel[key]
+			if found then
+				return found
+			end
+			local g = { label = label, integration = integration, add = add, views = {} }
+			byLabel[key] = g
+			table.insert(groups, g)
+			return g
 		end
-		local anyIssues = state.kind.id == "issues"
-		for _, v in state.views do
-			anyIssues = anyIssues or v.kind == "issues"
-			local kind = KINDS[v.kind]
-			local list = promptLists[v.kind]
-			local locked = state.locked[v.kind]
-			local active = v.id == state.activeId
-			if s.open ~= v.id then
-				local parts: { string } = { kind.label, groupLabel(v) }
-				table.insert(parts, v.query)
-				if v.group ~= "none" then
-					for _, g in groupsOf(v.kind, v.integration) do
-						if g.value == v.group then
-							table.insert(parts, "by " .. string.lower(g.label))
-						end
-					end
+		for _, who in ghActive.accounts do
+			groupOf(INTEGRATIONS.github.label .. " - " .. who, "github", "github:" .. who)
+		end
+		if installed.jira then
+			groupOf(INTEGRATIONS.jira.label, "jira", "jira:")
+		end
+		for _, scope in orderedViews(state) do
+			local v = scope.view
+			if v ~= state.pin then
+				local g = groupOf(groupLabel(v), v.integration, if v.integration == "jira" then "jira:" else nil)
+				if not table.find(g.views, v) then
+					table.insert(g.views, v)
 				end
-				local n = #livePrompts(v, list)
-				if n > 0 then
-					table.insert(parts, n .. (if n == 1 then " prompt" else " prompts"))
-				end
-				table.insert(sections, {
-					id = "view:" .. v.id,
-					rows = { {
+			end
+		end
+		if not byLabel[string.lower(INTEGRATIONS.jira.label)] and installed.jira == nil then
+			probeClis() -- whether Jira's group shows: answers render again
+		end
+		table.sort(groups, function(a, b)
+			if a.integration ~= b.integration then
+				return a.integration == "github"
+			end
+			return string.lower(a.label) < string.lower(b.label)
+		end)
+		for _, g in groups do
+			if #g.views > 0 then
+				section("group:" .. string.lower(g.label), g.label)
+			end
+			for _, v in g.views do
+				local kind = KINDS[v.kind]
+				local list = promptLists[v.kind]
+				local locked = state.locked[v.kind]
+				local name = v.name .. (if v.id == state.activeId then " · active" else "")
+				if s.open ~= v.id then
+					row({
 						id = "vopen:" .. v.id,
-						label = v.name .. (if active then " · active" else ""),
-						hint = clip(printable(table.concat(parts, " · ")), 120),
+						label = name,
+						hint = clip(printable(kind.label .. " · " .. v.query), 120),
 						control = { k = "action", act = "expand", label = "Edit" },
-					} },
-				})
-				continue
-			end
-			local info = INTEGRATIONS[v.integration]
-			local promptOptions: { any } = {}
-			for _, p in list do
-				table.insert(promptOptions, { value = p.id, label = p.name })
-			end
-			local rows: { Row } = {
-				{ id = "name:" .. v.id, label = "Name", disabled = locked, control = { k = "text", value = v.name, placeholder = if v.kind == "issues" then "Assigned to me" else "My PRs" } },
-				{
-					id = "vkind:" .. v.id,
-					label = "Type",
-					hint = "What the view lists. Moving it to the other type keeps its name, and its query where that still holds, but not the prompts offered under it.",
-					-- A move writes both kinds' saved views.
-					disabled = locked or state.locked[if v.kind == "prs" then "issues" else "prs"],
-					control = { k = "multi", values = tern.json.array({ v.kind }), options = tern.json.array(kindOptions) },
-				},
-			}
-			if #kind.integrations > 1 then
-				table.insert(rows, {
-					id = "vint:" .. v.id,
-					label = "Integration",
-					disabled = locked,
-					control = { k = "multi", values = tern.json.array({ v.integration }), options = tern.json.array(integrationOptions) },
-				})
-			end
-			table.insert(rows, {
-				id = "query:" .. v.id,
-				label = "Query",
-				hint = info.hint,
-				disabled = locked,
-				control = { k = "text", value = v.query, placeholder = info.newQuery, mono = true },
-			})
-			if v.integration == "github" then
-				-- The signed-in logins, then any saved one gh does not know (so it can still be removed).
-				local loginOptions: { any } = {}
-				local listed: { [string]: boolean } = {}
-				for _, who in ghActive.accounts do
-					listed[string.lower(who)] = true
-					table.insert(loginOptions, { value = who, label = who })
+					})
+					continue
 				end
-				for _, who in v.logins do
-					if not listed[string.lower(who)] then
-						table.insert(loginOptions, { value = who, label = who })
-					end
+				openCard(v.id)
+				row({ id = "vopen:" .. v.id, label = name, control = { k = "action", act = "collapse", label = "Done" } })
+				-- Right after Done in key order; plotroom.css draws its button left of Done, on the summary row.
+				row({ id = "delete:" .. v.id, label = "Delete view", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
+				row({ id = "name:" .. v.id, label = "Name", disabled = locked, control = { k = "text", value = v.name, placeholder = if v.kind == "issues" then "Assigned to me" else "My PRs" } })
+				-- Its integration and logins are its group's; Type only where the other kind has its integration.
+				local other = if v.kind == "prs" then "issues" else "prs"
+				if table.find(KINDS[other].integrations, v.integration) then
+					row({
+						id = "vkind:" .. v.id,
+						label = "Type",
+						-- A move writes both kinds' saved views.
+						disabled = locked or state.locked[other],
+						control = { k = "choice", style = "segmented", value = v.kind, options = tern.json.array(kindOptions) },
+					})
 				end
-				table.insert(rows, {
-					id = "vlogins:" .. v.id,
-					label = "GitHub logins",
-					hint = "Each login you pick is its own entry in the sidebar, searching as that login, so @me means it. None: gh's active account.",
+				local info = INTEGRATIONS[v.integration]
+				row({
+					id = "query:" .. v.id,
+					label = info.query,
 					disabled = locked,
-					control = { k = "multi", values = tern.json.array(v.logins), options = tern.json.array(loginOptions) },
-					changed = #v.logins > 0,
-					defaultLabel = "Active gh account",
+					control = { k = "text", value = v.query, placeholder = info.newQuery, mono = true },
 				})
-			end
-			local groupOptions: { any } = { { value = "none", label = "None" } }
-			for _, g in groupsOf(v.kind, v.integration) do
-				table.insert(groupOptions, { value = g.value, label = g.label })
-			end
-			table.insert(rows, {
-				id = "vgroup:" .. v.id,
-				label = "Group by",
-				disabled = locked,
-				control = { k = "multi", values = tern.json.array({ v.group }), options = tern.json.array(groupOptions) },
-			})
-			table.insert(rows, {
-				id = "vprompts:" .. v.id,
-				label = "Prompts",
-				hint = "Offered under this view. None: every prompt.",
-				disabled = locked,
-				control = { k = "multi", values = tern.json.array(livePrompts(v, list)), options = tern.json.array(promptOptions) },
-			})
-			table.insert(rows, { id = "delete:" .. v.id, label = "Delete view", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
-			table.insert(rows, { id = "vclose:" .. v.id, label = "Done", control = { k = "action", act = "collapse", label = "Done" } })
-			table.insert(sections, {
-				id = "view:" .. v.id,
-				title = v.name .. (if active then " · active" else ""),
-				rows = rows,
-			})
-		end
-		-- A new view is of the active kind; its form has the Type row.
-		local kind = state.kind
-		local first = INTEGRATIONS[kind.integrations[1]]
-		table.insert(sections, {
-			id = "new",
-			rows = {
-				{
-					id = "add",
-					label = "New view",
-					hint = "Starts as " .. first.label .. " " .. kind.many .. ": " .. first.newQuery .. ".",
-					disabled = state.locked[kind.id],
-					control = { k = "action", act = "add", label = "Add view" },
-				},
-			},
-		})
-		if anyIssues then
-			local order, broken = tracker.statusOrder(pcall(tern.kv.get, "status-order"))
-			local rows: { Row } = {}
-			for i, key in order do
-				table.insert(rows, {
-					id = "sorder:" .. key,
-					label = tracker.CATEGORY_LABEL[key],
-					hint = if i == 1 then "Every view lists issues by status category in this order, then by priority (Jira), then newest update." else nil,
-					disabled = broken or (if i == 1 then "Listed first." else nil),
-					control = { k = "action", act = "move-up", label = "Move up" },
+				local groupOptions: { any } = { { value = "none", label = "None" } }
+				for _, by in groupsOf(v.kind, v.integration) do
+					table.insert(groupOptions, { value = by.value, label = by.label })
+				end
+				row({
+					id = "vgroup:" .. v.id,
+					label = "Group by",
+					disabled = locked,
+					control = { k = "choice", style = "menu", value = v.group, options = tern.json.array(groupOptions) },
 				})
+				local promptOptions: { any } = {}
+				for _, p in list do
+					table.insert(promptOptions, { value = p.id, label = p.name })
+				end
+				row({
+					id = "vprompts:" .. v.id,
+					label = "Prompts offered",
+					disabled = locked or (if #list == 0 then "No " .. kind.one .. " prompts yet" else nil),
+					control = { k = "multi", values = tern.json.array(livePrompts(v, list)), options = tern.json.array(promptOptions) },
+				})
+				section("after:" .. v.id)
 			end
-			table.insert(sections, { id = "status-order", title = "Status order", rows = rows })
+			local add = g.add
+			if add then
+				-- prefs draws no section without rows, so an empty group's title goes on its Add button's.
+				local kind = if table.find(state.kind.integrations, g.integration) then state.kind else KINDS.issues
+				section((if #g.views > 0 then "add:" else "add-to:") .. add, if #g.views > 0 then nil else g.label)
+				row({ id = "vadd:" .. add, label = "", disabled = state.locked[kind.id], control = { k = "action", act = "add", label = "Add view" } })
+			end
 		end
 	elseif s.page == "prompts" then
-		local agent = (keys.load()).agent
-		local picker = "the agent picker" .. (if agent ~= "" then " (" .. agent .. ")" else "")
-		lead = "Run a prompt on a pull request or an issue from the queue's action bar or " .. picker .. ", in its worktree or the repository's main checkout. Pull requests and issues each keep their own prompts. Variables such as {url} fill in the item's details. Offer a prompt under particular views from Settings › Views."
 		for _, kind in { KINDS.prs, KINDS.issues } do
 			local prompts, unreadable = loadPrompts(kind)
 			local list: { Prompt } = if prompts then prompts.items else {}
+			section("prompts:" .. kind.id, if kind.id == "prs" then "Pull request prompts" else "Issue prompts")
 			for _, p in list do
 				local qid = kind.id .. ":" .. p.id
 				local first = string.match(p.text, "^%s*([^\n]*)") or ""
 				if s.open ~= qid then
-					local parts: { string } = { kind.label, if first ~= "" then first else "Empty" }
+					local parts: { string } = { if first ~= "" then first else "Empty" }
 					if p.key and p.key ~= "" then
 						table.insert(parts, "key " .. p.key)
 					end
 					if p.model then
 						table.insert(parts, p.model)
 					end
-					table.insert(sections, {
-						id = "prompt:" .. qid,
-						rows = { {
-							id = "popen:" .. qid,
-							label = p.name,
-							hint = clip(printable(table.concat(parts, " · ")), 120),
-							control = { k = "action", act = "expand", label = "Edit" },
-						} },
+					row({
+						id = "popen:" .. qid,
+						label = p.name,
+						hint = clip(printable(table.concat(parts, " · ")), 120),
+						control = { k = "action", act = "expand", label = "Edit" },
 					})
 					continue
 				end
-				local rows: { Row } = {
-					{ id = "pname:" .. qid, label = "Name", control = { k = "text", value = p.name, placeholder = "Review" } },
-					{
-						id = "ptext:" .. qid,
-						label = "Prompt",
-						hint = if first ~= "" then clip(printable(first), 80) else "Empty",
-						control = { k = "action", act = "edit-prompt", label = "Edit…" },
-					},
-					{
-						id = "pkey:" .. qid,
-						label = "Shortcut",
-						hint = "Key that runs it on the selected " .. kind.one .. ".",
-						control = { k = "text", value = p.key or "", placeholder = "None" },
-					},
-					{
-						id = "pmodel:" .. qid,
-						label = "Model",
-						hint = "What omp runs it with: a role such as @slow or @smol, or a model such as opus or anthropic/claude-opus-4-5. Empty: omp's default.",
-						control = { k = "text", value = p.model or "", placeholder = "omp's default", mono = true },
-						changed = p.model ~= nil,
-						defaultLabel = "omp's default",
-					},
-				}
-				local runs: { string } = if p.worktree ~= false then { "worktree" } else {}
-				table.insert(rows, {
+				openCard(qid)
+				row({ id = "popen:" .. qid, label = p.name, control = { k = "action", act = "collapse", label = "Done" } })
+				row({ id = "pname:" .. qid, label = "Name", control = { k = "text", value = p.name, placeholder = "Review" } })
+				row({
+					id = "ptext:" .. qid,
+					label = "Prompt",
+					hint = if first ~= "" then clip(printable(first), 80) else "Empty",
+					control = { k = "action", act = "edit-prompt", label = "Edit…" },
+				})
+				row({ id = "pkey:" .. qid, label = "Shortcut", control = { k = "text", value = p.key or "", placeholder = "None" } })
+				row({
+					id = "pmodel:" .. qid,
+					label = "Model",
+					control = { k = "text", value = p.model or "", placeholder = "omp's default", mono = true },
+					changed = p.model ~= nil,
+					defaultLabel = "omp's default",
+				})
+				row({
 					id = "pwhere:" .. qid,
 					label = "Runs in",
-					hint = "On: in the " .. kind.one .. "'s worktree (made first if needed). Off: in the repository's main checkout.",
-					control = { k = "multi", values = tern.json.array(runs), options = tern.json.array({ { value = "worktree", label = "Worktree" } }) },
+					control = {
+						k = "choice",
+						style = "segmented",
+						value = if p.worktree ~= false then "worktree" else "checkout",
+						options = tern.json.array({ { value = "worktree", label = "Worktree" }, { value = "checkout", label = "Main checkout" } }),
+					},
 				})
-				table.insert(rows, {
+				row({
 					id = "psplit:" .. qid,
 					label = "Opens in",
-					hint = "On: a block beside the queue, in its tab. Off: a tab of its own (the worktree's open tab, when there is one).",
-					control = { k = "multi", values = tern.json.array(if p.split then { "split" } else {}), options = tern.json.array({ { value = "split", label = "This tab" } }) },
-				})
-				table.insert(rows, { id = "pdelete:" .. qid, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } })
-				table.insert(rows, { id = "pclose:" .. qid, label = "Done", control = { k = "action", act = "collapse", label = "Done" } })
-				table.insert(sections, { id = "prompt:" .. qid, title = p.name, rows = rows })
-			end
-			table.insert(sections, {
-				id = "pnew:" .. kind.id,
-				rows = {
-					{
-						id = "padd:" .. kind.id,
-						label = "New " .. kind.one .. " prompt",
-						hint = "Starts empty and runs in a worktree.",
-						disabled = unreadable,
-						control = { k = "action", act = "add-prompt", label = "Add prompt" },
+					control = {
+						k = "choice",
+						style = "segmented",
+						value = if p.split then "split" else "tab",
+						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
 					},
-				},
-			})
+				})
+				row({ id = "pdelete:" .. qid, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } })
+				section("after:" .. qid)
+			end
+			section("add:" .. kind.id)
+			row({ id = "padd:" .. kind.id, label = "", disabled = unreadable, control = { k = "action", act = "add-prompt", label = "Add prompt" } })
 		end
 	elseif s.page == "keys" then
-		lead = "One key for each action of the queue, the same for pull requests and issues. The arrow keys, Enter, Esc, Tab, Page Up/Down, Home and End cannot be changed. Empty a row to remove its shortcut."
 		local map, unreadable = keys.load()
-		local rows: { Row } = {}
+		section("keys")
 		for _, a in keys.ACTIONS do
-			table.insert(rows, {
+			row({
 				id = "key:" .. a.id,
 				label = a.label,
 				disabled = unreadable,
@@ -1922,36 +1891,33 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				defaultLabel = a.default,
 			})
 		end
-		table.insert(sections, { id = "keys", rows = rows })
-	elseif s.page == "repos" then
-		lead = "Repositories you work in, each with its local checkout (used for worktrees and prompts), the branch format of its issue worktrees and setup commands. Opening Plotroom inside a checkout adds it."
+	elseif s.page == "worktrees" then
 		local root = readWorktreeRoot()
-		local wtRows: { Row } = {
-			{
-				id = "wtroot",
-				label = "Folder",
-				hint = "Where new worktrees go. A relative path is resolved against each repository's checkout, such as ../worktrees. Empty: omp's folder.",
-				control = { k = "text", value = root, placeholder = "omp's worktree folder", mono = true },
-				changed = root ~= "",
-				defaultLabel = "omp's folder",
-			},
-		}
+		section("sec-wtroot")
+		row({
+			id = "wtroot",
+			label = "Worktree folder",
+			control = { k = "text", value = root, placeholder = "omp's worktree folder", mono = true },
+			changed = root ~= "",
+			defaultLabel = "omp's folder",
+		})
+		section("sec-names", "Names")
 		for _, f in {
-			{ id = "branch", label = "Branch (new issue branches)", vars = tracker.VARS, also = " A repository's own format below wins." },
-			{ id = "prdir", label = "Folder name (pull requests)", vars = tracker.DIR_VARS, also = " {key} is the number." },
-			{ id = "issuedir", label = "Folder name (issues)", vars = tracker.DIR_VARS, also = "" },
+			{ id = "branch", label = "Issue branch name", vars = tracker.VARS },
+			{ id = "prdir", label = "Pull request folder name", vars = tracker.DIR_VARS },
+			{ id = "issuedir", label = "Issue folder name", vars = tracker.DIR_VARS },
 		} do
 			local saved = formats.saved(f.id)
-			table.insert(wtRows, {
+			row({
 				id = "fmt:" .. f.id,
 				label = f.label,
-				hint = "Variables {" .. table.concat(f.vars, "} {") .. "}." .. f.also .. " Empty: " .. formats.DEFAULTS[f.id] .. ".",
+				hint = "{" .. table.concat(f.vars, "} {") .. "}",
 				control = { k = "text", value = saved, placeholder = formats.DEFAULTS[f.id], mono = true },
 				changed = saved ~= "",
 				defaultLabel = formats.DEFAULTS[f.id],
 			})
 		end
-		table.insert(sections, { id = "sec-wtroot", title = "Worktrees", rows = wtRows })
+	elseif s.page == "repos" then
 		local checkouts = readCheckouts()
 		local names: { string } = {}
 		for name in checkouts do
@@ -1970,8 +1936,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			local rows: { Row } = {
 				{
 					id = "checkout:" .. repo,
-					label = "Checkout",
-					hint = "Worktrees are made from it. A folder holding the repository is used as it is; a new or empty folder gets a clone (gh repo clone); another repository's folder is refused.",
+					label = "Local checkout",
 					control = { k = "text", value = mapped or "", placeholder = "~/Code/" .. (string.match(repo, "/(.+)$") or repo), mono = true },
 					changed = mapped ~= nil,
 					defaultLabel = "Not set",
@@ -1979,45 +1944,33 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				},
 				{
 					id = "branch:" .. repo,
-					label = "Branch (new issue branches)",
-					hint = "Variables {" .. table.concat(tracker.VARS, "} {") .. "}. Empty: the Worktrees format above.",
+					label = "Issue branch name",
 					control = { k = "text", value = fmt or "", placeholder = formats.of("branch"), mono = true },
 					changed = fmt ~= nil,
-					defaultLabel = "Worktrees format",
+					defaultLabel = "the Worktrees page's format",
 					disabled = formatsOff,
 				},
 			}
 			for i, c in cmds do
 				table.insert(rows, {
 					id = "setup:" .. repo .. ":" .. i,
-					label = "Command " .. i,
+					label = "Setup command " .. i,
 					disabled = setupsOff,
 					control = { k = "text", value = c, placeholder = "Empty removes it", mono = true },
 				})
 			end
 			table.insert(rows, {
 				id = "setup:" .. repo .. ":new",
-				label = "Add a command",
-				hint = "Run in order in the new worktree's tab, stopping at the first failure.",
+				label = "Add setup command",
 				disabled = setupsOff,
 				control = { k = "text", value = "", placeholder = if #cmds == 0 then "pnpm install" else "cp ../repo/.env .", mono = true },
 			})
 			table.insert(rows, { id = "rremove:" .. repo, label = "Remove repository", control = { k = "action", act = "delete", label = "Remove" } })
 			table.insert(sections, { id = "repo:" .. repo, title = repo, rows = rows })
 		end
-		table.insert(sections, {
-			id = "rnew",
-			rows = {
-				{
-					id = "radd",
-					label = "New repository",
-					hint = "Pick one of yours, or type owner/name.",
-					control = { k = "action", act = "add-repo", label = "Add repository" },
-				},
-			},
-		})
+		-- Add repository and Add project open the window's pickers.
+		table.insert(sections, { id = "add:repo", rows = { { id = "radd", label = "", control = { k = "action", act = "add-repo", label = "Add repository" } } } })
 	elseif s.page == "jira" then
-		lead = "Jira projects and the repositories their issues are worked in: Worktree on a Jira issue makes its worktree in the project's repository."
 		local map, unreadable = readJiraRepos()
 		local keys: { string } = {}
 		local saved: { [string]: any } = map or {}
@@ -2043,7 +1996,6 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "jrepos:" .. key,
 					label = "Repositories",
-					hint = "Asked on first use when none is set; asked each time when several are.",
 					disabled = unreadable or (if #options == 0 then "Add a repository first." else nil),
 					control = { k = "multi", values = tern.json.array(jiraReposOf(key)), options = tern.json.array(options) },
 				},
@@ -2052,30 +2004,20 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			table.insert(sections, { id = "project:" .. key, title = key, rows = rows })
 		end
 		table.insert(sections, {
-			id = "jnew",
-			rows = {
-				{
-					id = "jadd",
-					label = "New project",
-					hint = "Pick one acli lists, or type its key.",
-					disabled = unreadable or cliOff("jira"),
-					control = { k = "action", act = "add-jira", label = "Add project" },
-				},
-			},
+			id = "add:jira",
+			rows = { { id = "jadd", label = "", disabled = unreadable or cliOff("jira"), control = { k = "action", act = "add-jira", label = "Add project" } } },
 		})
 	else
-		lead = "Views refresh every minute; GitHub views pace themselves to the login's API quota."
 		local now = os.time()
 		local wait = waitOf(state)
 		table.insert(sections, {
 			-- prefs draws its one in-section slot (a child with role omp.prefs.preview.status) only after this id.
 			id = "status-line",
-			title = "Refresh",
 			rows = {
 				{
 					id = "refresh",
 					label = "Refresh now",
-					hint = paceLine(state) or (if trackerOf(state) == "jira" then "Auto-refresh every minute." else "Auto-refresh every minute while quota allows."),
+					hint = paceLine(state),
 					control = { k = "action", act = "refresh", label = "Refresh" },
 					disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", now + wait) else nil,
 				},
@@ -2097,15 +2039,20 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			)
 		end
 	end
+	local capture = if s.edit and string.match(s.edit.row, "^p?key:") then s.edit.row else nil
 	for _, sec in sections do
-		for _, row in sec.rows do
-			local err = s.errors[row.id]
+		for _, r in sec.rows do
+			local err = s.errors[r.id]
 			if err then
-				row.warning = err
+				r.warning = err
+			end
+			if r.id == capture then
+				r.hint = "Backspace removes it; Esc cancels."
+				r.control.placeholder = "Press a key"
 			end
 		end
 	end
-	return sections, lead, extra
+	return sections, extra
 end
 
 -- Ids of the page's rows the keys can reach, in order.
@@ -2157,7 +2104,9 @@ local function beginEdit(state: State, row: string, initial: string?)
 	end
 	s.focus, s.pick = row, nil
 	s.errors[row] = nil
-	s.edit = { row = row, model = if p then input.new(initial or p.text, true) else input.new(initial or def.control.value) }
+	-- A shortcut row starts empty: the next key pressed is the shortcut (the block's key handler).
+	local draft = initial or (if string.match(row, "^p?key:") then "" else def.control.value)
+	s.edit = { row = row, model = if p then input.new(initial or p.text, true) else input.new(draft) }
 	if p then
 		focusPrompt(state, true)
 	end
@@ -2285,29 +2234,32 @@ local function updateView(state: State, id: string, fn: (View) -> ()): string?
 	return nil
 end
 
--- Adds a view of the active kind (the Type row of its form moves it to the other).
-local function addView(state: State)
+-- Adds a view from a group's Add row `row` ("vadd:<integration>:<login>", the login empty for Jira) and opens its form
+-- on the name: a view of that integration running as that login, of the active kind where the integration has it, else
+-- an issue view.
+local function addView(state: State, row: string)
 	local s = state.settings
-	if not s then
+	local integration, login = string.match(row, "^vadd:(%a+):(.*)$")
+	if not s or not integration or not INTEGRATIONS[integration] or not string.match(login or "", "^[%w%-]*$") then
 		return
 	end
-	local kind = state.kind
+	local kind = if table.find(state.kind.integrations, integration) then state.kind else KINDS.issues
+	local logins: { string } = if login and login ~= "" then { login } else {}
 	local store, writable, err = loadViews(kind)
 	if not writable then
 		loadAll(state)
-		s.errors.add = err or "Views cannot be saved."
+		s.errors[row] = err or "Views cannot be saved."
 		return
 	end
 	local id = kind.id .. ":v" .. store.nextId
 	store.nextId += 1
-	local first = kind.integrations[1]
-	table.insert(store.items, { id = id, kind = kind.id, name = "New view", integration = first, query = INTEGRATIONS[first].newQuery, logins = {}, group = "none", prompts = {} })
+	table.insert(store.items, { id = id, kind = kind.id, name = "New view", integration = integration, query = INTEGRATIONS[integration].newQuery, logins = logins, group = "none", prompts = {} })
 	local werr = writeViews(kind, store)
 	if werr then
-		s.errors.add = "Could not save: " .. werr
+		s.errors[row] = "Could not save: " .. werr
 		return
 	end
-	s.errors.add = nil
+	s.errors[row] = nil
 	loadAll(state)
 	switchView(state, id)
 	propagate(state)
@@ -2321,7 +2273,7 @@ local function deleteView(state: State, id: string)
 		return
 	end
 	s.confirm = nil
-	local rowId = "delete:" .. id
+	local rowId = "vopen:" .. id -- the summary row shows why: the Delete row draws no label
 	local view = viewOf(state, id)
 	if not view then
 		return
@@ -2356,11 +2308,11 @@ local function deleteView(state: State, id: string)
 	end
 	s.errors[rowId] = nil
 	loadAll(state)
+	local nextV = state.views[math.min(place, #state.views)]
 	if id == state.activeId then
-		local nextV = state.views[math.min(place, #state.views)]
 		switchView(state, if nextV then nextV.id else nil)
 	end
-	s.focus = "add"
+	s.focus = if nextV then "vopen:" .. nextV.id else nil
 	propagate(state)
 end
 
@@ -2450,20 +2402,24 @@ local function deleteJira(state: State, key: string)
 	end
 end
 
--- Saves chips row `row` with the options `values` now has on. A prompt's one-chip rows say where it runs
--- ("pwhere:<id>", chip "worktree") and where its agent opens ("psplit:<id>", chip "split"). The single-choice rows (a
--- view's type, integration and group-by) take the first value that differs from the saved one and ignore a list that has
--- none.
-local function setMulti(state: State, row: string, values: { any })
+-- Saves row `row`'s new value as its control sends it: a choice row's option (a string: a view's type and group-by,
+-- where a prompt runs and opens) or a chips row's options now on (an array).
+-- A value of another shape, or an option the row does not offer, changes nothing.
+local function setValue(state: State, row: string, value: any)
 	local s = state.settings
+	if not s then
+		return
+	end
+	local choice: string? = if type(value) == "string" then value else nil
+	local values: { any } = if isTable(value) then value else {}
 	local kind, id = string.match(row, "^(%a+):(.+)$")
-	if not s or not kind or not id then
+	if not kind or not id then
 		return
 	end
 	if kind == "pwhere" or kind == "psplit" then
-		local on = table.find(values, if kind == "pwhere" then "worktree" else "split") ~= nil
+		local on = choice == (if kind == "pwhere" then "worktree" else "split")
 		local pk, pid = kindAndId(id)
-		if not pk then
+		if not pk or not (on or choice == (if kind == "pwhere" then "checkout" else "tab")) then
 			return
 		end
 		s.errors[row] = editPrompts(pk, function(store: Prompts): string?
@@ -2477,30 +2433,23 @@ local function setMulti(state: State, row: string, values: { any })
 			end
 			return nil
 		end)
-	elseif kind == "vint" or kind == "vgroup" or kind == "vkind" then
+	elseif kind == "vgroup" or kind == "vkind" then
 		local view = viewOf(state, id)
-		if not view then
+		if not view or not choice then
 			return
 		end
-		local current = if kind == "vint" then view.integration elseif kind == "vkind" then view.kind else view.group
-		local pick: string? = nil
-		for _, x in values do
-			if type(x) == "string" and x ~= current then
-				pick = x
-				break
-			end
-		end
-		if not pick then
+		local current = if kind == "vkind" then view.kind else view.group
+		if choice == current then
 			return
 		end
-		local chosen: string = pick
+		local chosen: string = choice
 		if kind == "vkind" then
 			-- The view moves to the other kind's kv store, under a new id there; it is written there first, so a failure
-			-- leaves the original. Its integration stays when the new kind allows it (pull requests are GitHub's alone: a Jira
-			-- view starts again as a GitHub one), and so do its query, logins and group-by while they still hold. The prompts
-			-- it offered are ids of the other kind's prompts: none.
+			-- leaves the original. Its integration, logins and query stay, and so does its group-by while it still holds;
+			-- the prompts it offered are ids of the other kind's prompts: none. Pull requests are GitHub's alone, so a Jira
+			-- view has no Type row and does not move.
 			local to: Kind? = KINDS[chosen]
-			if not to then
+			if not to or not table.find(to.integrations, view.integration) then
 				return
 			end
 			local from = KINDS[view.kind]
@@ -2522,16 +2471,14 @@ local function setMulti(state: State, row: string, values: { any })
 				return
 			end
 			local old = src.items[at]
-			local kept = table.find(to.integrations, old.integration) ~= nil
-			local integration = if kept then old.integration else to.integrations[1]
 			local moved: View = {
 				id = to.id .. ":v" .. dst.nextId,
 				kind = to.id,
 				name = old.name,
-				integration = integration,
-				query = if kept then old.query else INTEGRATIONS[integration].newQuery,
-				logins = if kept then old.logins else {},
-				group = if kept and groupKnown(to, integration, old.group) then old.group else "none",
+				integration = old.integration,
+				query = old.query,
+				logins = old.logins,
+				group = if groupKnown(to, old.integration, old.group) then old.group else "none",
 				prompts = {},
 			}
 			dst.nextId += 1
@@ -2560,11 +2507,7 @@ local function setMulti(state: State, row: string, values: { any })
 			return
 		end
 		s.errors[row] = updateView(state, id, function(v: View)
-			if kind == "vint" then
-				if chosen ~= v.integration and table.find(KINDS[v.kind].integrations, chosen) then
-					v.integration, v.query, v.logins, v.group = chosen, INTEGRATIONS[chosen].newQuery, {}, "none"
-				end
-			elseif groupKnown(KINDS[v.kind], v.integration, chosen) then
+			if groupKnown(KINDS[v.kind], v.integration, chosen) then
 				v.group = chosen
 			end
 		end)
@@ -2587,29 +2530,6 @@ local function setMulti(state: State, row: string, values: { any })
 		s.errors[row] = updateView(state, id, function(v: View)
 			v.prompts = keep
 		end)
-	elseif kind == "vlogins" then
-		-- The saved order stays; a login newly on goes last. A name that is no login is dropped, a repeat too.
-		local view = viewOf(state, id)
-		if not view then
-			return
-		end
-		local keep: { string } = {}
-		local seen: { [string]: boolean } = {}
-		local function add(who: any)
-			if type(who) == "string" and string.match(who, "^[%w%-]+$") and not seen[string.lower(who)] and table.find(values, who) then
-				seen[string.lower(who)] = true
-				table.insert(keep, who)
-			end
-		end
-		for _, who in view.logins do
-			add(who)
-		end
-		for _, who in values do
-			add(who)
-		end
-		s.errors[row] = updateView(state, id, function(v: View)
-			v.logins = keep
-		end)
 	elseif kind == "jrepos" then
 		local have = readCheckouts()
 		local keep: { string } = {}
@@ -2626,25 +2546,31 @@ local function setMulti(state: State, row: string, values: { any })
 	end
 end
 
--- Turns `option` on or off on chips row `row` of setMulti (a single-choice one switches to `option`).
-local function toggleScope(state: State, row: string, option: string)
+-- Enter or Space on option `option` of row `row` while the keys drive it: a choice row takes it (and closes), a chips
+-- row turns it on or off.
+local function pressOption(state: State, row: string, option: string)
+	local s = state.settings
 	local def = rowById(state, row)
-	if not def then
+	if not s or not def then
+		return
+	end
+	local c = def.control
+	if c.k == "choice" then
+		s.pick = nil
+		setValue(state, row, option)
 		return
 	end
 	local values: { any } = {}
-	local on = false
-	for _, v in def.control.values do -- a tern.json.array: table.clone refuses its protected metatable
-		if v == option then
-			on = true
-		else
-			table.insert(values, v)
-		end
+	for _, v in c.values do -- a tern.json.array: table.clone refuses its protected metatable
+		table.insert(values, v)
 	end
-	if not on then
+	local at = table.find(values, option)
+	if at then
+		table.remove(values, at)
+	else
 		table.insert(values, option)
 	end
-	setMulti(state, row, values)
+	setValue(state, row, values)
 end
 
 -- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>" or
@@ -2666,13 +2592,31 @@ local function confirmDelete(state: State)
 	end
 end
 
+-- What the window's palette asks before Delete or Remove row `row` acts (hidden node `main.confirm`, read by
+-- window.luau's `confirmDelete`): the question, the destructive choice and what it does.
+local function deleteQuestion(state: State, row: string): { [string]: string }
+	local kind, id = string.match(row, "^(%a+):(.+)$")
+	if kind == "pdelete" then
+		local pk, pid = kindAndId(id or "")
+		local prompts = if pk then loadPrompts(pk) else nil
+		local p = if prompts then promptById(prompts, pid) else nil
+		return { row = row, head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?", label = "Delete prompt", detail = "Gone from every Plotroom pane" }
+	elseif kind == "rremove" then
+		return { row = row, head = "Remove repository “" .. (id or "") .. "”?", label = "Remove repository", detail = "Forgets its checkout and settings; no folder is touched" }
+	elseif kind == "jremove" then
+		return { row = row, head = "Remove Jira project “" .. (id or "") .. "”?", label = "Remove project", detail = "Forgets its repositories" }
+	end
+	local view = viewOf(state, id or "")
+	return { row = row, head = "Delete view “" .. (if view then view.name else "this view") .. "”?", label = "Delete view", detail = "Gone from every Plotroom pane" }
+end
+
 local function runAction(state: State, act: string, row: string)
 	local s = state.settings
 	if not s then
 		return
 	end
 	if act == "add" then
-		addView(state)
+		addView(state, row)
 	elseif act == "add-prompt" then
 		addPrompt(state, row)
 	elseif act == "expand" or act == "collapse" then
@@ -2692,66 +2636,50 @@ local function runAction(state: State, act: string, row: string)
 	elseif act == "edit-prompt" then
 		beginEdit(state, row)
 	elseif act == "delete" then
+		-- The window's palette asks (window.luau's `confirmDelete`); its answer comes back as confirm-delete for this row.
 		s.confirm = row
+		state.cx:render() -- the question is on screen before the window is told to read it
+		state.cx:open("plotroom://confirm")
 	elseif act == "refresh" then
 		retry(state)
 	elseif act == "add-repo" then
 		state.cx:open(REPOS_HREF)
 	elseif act == "add-jira" then
 		state.cx:open(JIRA_HREF)
-	elseif act == "move-up" then
-		-- Row "sorder:<key>" one place up the status order; every loaded issue list of this runtime re-sorts. Fails closed
-		-- when the saved order cannot be read.
-		local order, broken = tracker.statusOrder(pcall(tern.kv.get, "status-order"))
-		local at = table.find(order, string.match(row, "^sorder:(.+)$") or "")
-		if broken or not at or at == 1 then
-			s.errors[row] = broken
-			return
-		end
-		order[at], order[at - 1] = order[at - 1], order[at]
-		local err = kvSet("status-order", tern.json.array(order))
-		s.errors[row] = if err then "Could not save: " .. err else nil
-		if err then
-			return
-		end
-		-- The first row cannot move up, so the focus stays on the row that just left it.
-		s.focus = "sorder:" .. order[if at == 2 then 2 else at - 1]
-		for _, other in running do
-			if alive(other) then
-				local sorted = false
-				for _, snap in other.snaps do
-					if snap.kind == "issues" then
-						tracker.byStatus(snap.items, order)
-						snap.rows = nil
-						sorted = true
-					end
-				end
-				if sorted then
-					other.vis = nil
-					if other ~= state then
-						other.cx:render()
-					end
-				end
-			end
-		end
 	end
 end
 
+-- Enter on a row, or a click on its field or popup: edits a text row, presses a button, switches a segmented choice to
+-- its next option (its segments show no keyboard highlight), or hands the keys to a menu choice (opened on the current
+-- option) or chips row (on its first option).
 local function runRow(state: State, row: string?)
 	local s = state.settings
-	if not row or not s then
-		return
+	if not row or not s or (s.edit and s.edit.row == row) then
+		return -- a click inside the field being edited keeps its draft
 	end
 	local def = rowById(state, row)
 	if not def or def.disabled then
 		return
 	end
-	if def.control.k == "text" then
+	local c = def.control
+	if c.k == "text" then
 		beginEdit(state, row)
-	elseif def.control.k == "action" then
-		runAction(state, def.control.act, row)
-	elseif def.control.k == "multi" and def.control.options[1] then
-		s.pick = { row = row, option = def.control.options[1].value }
+	elseif c.k == "action" then
+		runAction(state, c.act, row)
+	elseif c.k == "choice" and c.style == "segmented" then
+		local at = 0
+		for i, o in c.options do
+			if o.value == c.value then
+				at = i
+			end
+		end
+		local nextOption = c.options[at % #c.options + 1]
+		s.focus = row
+		setValue(state, row, nextOption.value)
+	elseif c.k == "choice" then
+		s.focus, s.pick = row, { row = row, option = c.value }
+	elseif c.k == "multi" and c.options[1] then
+		s.focus, s.pick = row, { row = row, option = c.options[1].value }
 	end
 end
 
@@ -2972,10 +2900,11 @@ end
 local function showPage(state: State, s: Settings, page: string)
 	discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
+	state.settingsPage = page
 	if page == "jira" then
 		probeClis()
 	elseif page == "views" then
-		ghActive.note(state) -- the logins a view's chips offer
+		ghActive.note(state, true) -- the signed-in logins: a group each
 	end
 end
 
@@ -2986,11 +2915,7 @@ local function resetRow(state: State, row: string)
 	end
 	local kind, id = string.match(row, "^(%a+):(.+)$")
 	local err: string? = nil
-	if kind == "vlogins" and id then
-		err = updateView(state, id, function(v: View)
-			v.logins = {}
-		end)
-	elseif kind == "checkout" and id then
+	if kind == "checkout" and id then
 		err = clearCheckout(state, id)
 	elseif kind == "branch" and id then
 		err = formats.saveRepo(id, nil)
@@ -3021,13 +2946,15 @@ local function resetRow(state: State, row: string)
 	end
 end
 
-local function openSettings(state: State, page: string, row: string?, edit: boolean?)
+-- Opens Settings on `page`, else the page it last showed, else Views.
+local function openSettings(state: State, page: string?, row: string?, edit: boolean?)
 	discardEdit(state) -- releases the prompt editor's caret, if one was open
-	state.settings = { page = page, focus = row, errors = {} }
-	if page == "jira" then
+	local shown = page or state.settingsPage or "views"
+	state.settings, state.settingsPage = { page = shown, focus = row, errors = {} }, shown
+	if shown == "jira" then
 		probeClis()
-	elseif page == "views" then
-		ghActive.note(state) -- the logins a view's chips offer
+	elseif shown == "views" then
+		ghActive.note(state, true) -- the signed-in logins: a group each
 	end
 	if edit and row then
 		beginEdit(state, row)
@@ -3377,7 +3304,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "12"
+local RPC_PROTOCOL = "13"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -3408,6 +3335,10 @@ local function rpcNodes(state: State): { Node }
 	local out: { Node } = { ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }) }
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
+	end
+	local s = state.settings
+	if s and s.confirm then
+		table.insert(out, ui.node("text", { key = "confirm", text = tern.json.encode(deleteQuestion(state, s.confirm)), hidden = true }))
 	end
 	return out
 end
@@ -3462,17 +3393,13 @@ end
 -- `{github.user}` and `{jira.user}`: who you are on GitHub and Jira, for branch formats and prompts.
 local me = {}
 
--- As last read: `github` per gh account (key "" for the active one). The issue sidebar's Branch row shows them without
--- starting a read.
-me.known = { github = {} } :: { github: { [string]: string }, jira: string? }
-
 -- Reads `{github.user}` (the login the active view's gh account is, else gh's active one) and, `jiraToo`, `{jira.user}`;
 -- done(users), "" for one that could not be read.
 function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) -> ())
 	local account = login(state)
 	github.login(account, function(gh)
-		if gh then
-			me.known.github[account or ""] = gh
+		if gh and not account then
+			ghActive.login = gh
 		end
 		local users: { [string]: string } = { ["github.user"] = gh or "", ["jira.user"] = "" }
 		if not jiraToo then
@@ -3480,7 +3407,6 @@ function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) ->
 		end
 		jira.user(function(ju)
 			if ju then
-				me.known.jira = ju
 				users["jira.user"] = ju
 			end
 			done(users)
@@ -3493,11 +3419,14 @@ function me.named(text: string): boolean
 	return string.find(text, "{github.user}", 1, true) ~= nil or string.find(text, "{jira.user}", 1, true) ~= nil
 end
 
--- The users me.read last found for `issue` (a Jira user only for a Jira issue); a missing one is left out.
+-- The users known without asking for `issue` (a Jira user only for a Jira issue); an unknown one is left out. The active
+-- view's own gh login is its user; else gh's active login, once ghActive.note or me.read found it. The Jira user is
+-- known once a Jira search found the site.
 function me.of(state: State, issue: tracker.Issue): { [string]: string }
-	local users: { [string]: string } = { ["jira.user"] = if issue.tracker == "jira" then me.known.jira else "" }
-	users["github.user"] = me.known.github[login(state) or ""]
-	return users
+	return {
+		["github.user"] = login(state) or ghActive.login,
+		["jira.user"] = if issue.tracker == "jira" then jira.known() else "",
+	}
 end
 
 -- The branch format an issue's new branch in `code` gets: the repository's own, else the Worktrees one.
@@ -4616,7 +4545,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 		table.insert(facts, { k = "Updated", v = github.age(updated) .. " ago" })
 	end
 	-- The Branch row shows the branch a new worktree would make (a linked PR's is taken instead); without one (a saved
-	-- format is unusable) there is none. A user not read yet shows as its variable.
+	-- format is unusable) there is none. A user not known yet (me.of) shows as its variable.
 	local about: { Node } = {}
 	local code = codeRepoOf(issue)
 	local branch = if code then (formats.issue(issue, code, me.of(state, issue))) else nil
@@ -4680,8 +4609,10 @@ local function helpOverlay(state: State): Node
 			table.insert(rows, { keys = { o.prompt.key }, text = "Run the prompt “" .. printable(o.prompt.name) .. "” on the selected " .. state.kind.one })
 		end
 	end
-	local items: { { [string]: any } } = {}
-	for _, h in rows do
+	-- Each row its keycaps in a column of their own, never narrower than they are, then what they do in the body font: a
+	-- kv's key column is measured as text, so four keycaps ran into the description.
+	local lines: { Node } = {}
+	for n, h in rows do
 		local caps: { Span | string } = {}
 		for i, label in h.keys do
 			if i > 1 then
@@ -4689,10 +4620,16 @@ local function helpOverlay(state: State): Node
 			end
 			table.insert(caps, ui.span(label, "key"))
 		end
-		table.insert(items, { k = caps, v = h.text })
+		table.insert(
+			lines,
+			ui.node("row", { key = "r" .. n, gap = "md", align = "start" }, {
+				ui.node("text", { key = "caps", spans = caps, wrap = "none", basis = "content", min = { w = "13ch" } }),
+				ui.node("text", { key = "text", spans = { ui.span(h.text) }, grow = 1 }),
+			})
+		)
 	end
 	return ui.node("overlay", { key = "help", modal = true, size = "md", head = "Keyboard shortcuts" }, {
-		ui.node("kv", { key = "keys", items = items }),
+		ui.node("col", { key = "keys", gap = "xs" }, lines),
 		ui.node("list", { key = "buttons" }, {
 			ui.node("item", { key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
 		}),
@@ -4850,75 +4787,39 @@ local function queuePicker(state: State): Node
 	return ui.node("picker", props, preview)
 end
 
-local function confirmOverlay(state: State, row: string): Node
-	local kind, id = string.match(row, "^(%a+):(.+)$")
-	local head, body
-	local extra: { Node } = {} -- between the text and the buttons
-	local remove = kind == "wremove"
-	if remove then
-		-- A worktree's removal, asked from its card (state.removing): where it is, and a warning while a tab works in it.
-		local note = if id then state.notes[id] else nil
-		head = "Remove worktree?"
-		body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes."
-		local facts: { { [string]: any } } = {}
-		if note and note.path then
-			table.insert(facts, { k = "Path", v = { ui.span(note.path, "code") } })
-		end
-		if note and note.branch then
-			table.insert(facts, { k = "Branch", v = { ui.span(note.branch, "code") } })
-		end
-		table.insert(extra, ui.node("kv", { key = "facts", items = facts }))
-		if id and openItems(state)[id] then
-			table.insert(extra, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
-		end
-	elseif kind == "pdelete" then
-		local pk, pid = kindAndId(id or "")
-		local prompts = if pk then loadPrompts(pk) else nil
-		local p = if prompts then promptById(prompts, pid) else nil
-		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
-		body = "The action bar and the agent picker stop offering it, in every Plotroom pane on this machine."
-	elseif kind == "rremove" then
-		head = "Remove repository “" .. (id or "") .. "”?"
-		body = "Its checkout, branch format, setup commands and Jira mappings are forgotten, in every Plotroom pane on this machine. No folder is touched."
-	elseif kind == "jremove" then
-		head = "Remove Jira project “" .. (id or "") .. "”?"
-		body = "Its repositories are forgotten; Plotroom asks again the first time one of its issues needs a worktree."
-	else
-		local name = "this view"
-		for _, v in state.views do
-			if v.id == id then
-				name = v.name
-			end
-		end
-		head = "Delete view “" .. name .. "”?"
-		body = "Every Plotroom pane loses this saved search."
-	end
-	local kids: { Node } = {
-		ui.node("text", {
-			key = "body",
-			spans = { ui.span(body .. " Press d to " .. (if remove then "remove" else "delete") .. " it; Enter or Esc keeps it.", "muted") },
-		}),
-	}
-	table.move(extra, 1, #extra, #kids + 1, kids)
-	table.insert(kids, ui.node("list", { key = "buttons" }, {
-		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = if remove then "cancel-remove" else "cancel-delete" } }),
-		ui.node("item", {
-			key = "delete",
-			label = if remove then "Remove" else "Delete",
-			icon = "trash",
-			tone = "error",
-			hint = { "d" },
-			actions = { click = if remove then "confirm-remove" else "confirm-delete" },
-		}),
-	}))
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
-end
-
 local function queueView(state: State): BlockView
 	local layer: { Node } = { queuePicker(state) }
 	local removing = state.removing
-	if removing and state.notes[removing] then
-		table.insert(layer, confirmOverlay(state, "wremove:" .. removing))
+	local note = if removing then state.notes[removing] else nil
+	if removing and note then
+		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
+		local facts: { { [string]: any } } = {}
+		if note.path then
+			table.insert(facts, { k = "Path", v = { ui.span(note.path, "code") } })
+		end
+		if note.branch then
+			table.insert(facts, { k = "Branch", v = { ui.span(note.branch, "code") } })
+		end
+		local kids: { Node } = {
+			ui.node("text", {
+				key = "body",
+				spans = {
+					ui.span(
+						"Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it.",
+						"muted"
+					),
+				},
+			}),
+			ui.node("kv", { key = "facts", items = facts }),
+		}
+		if openItems(state)[removing] then
+			table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
+		end
+		table.insert(kids, ui.node("list", { key = "buttons" }, {
+			ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = "cancel-remove" } }),
+			ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = "confirm-remove" } }),
+		}))
+		table.insert(layer, ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = "Remove worktree?" }, kids))
 	elseif state.help then
 		table.insert(layer, helpOverlay(state))
 	end
@@ -4927,14 +4828,13 @@ end
 
 local function settingsView(state: State): BlockView
 	local s = state.settings :: Settings
-	local sections, lead, extra = pageContent(state)
+	local sections, extra = pageContent(state)
 	local pages: { any } = table.clone(PAGE_DEFS)
 	local props: { [string]: any } = {
 		key = "settings",
 		title = "Plotroom",
 		pages = tern.json.array(pages),
 		page = s.page,
-		lead = lead,
 		sections = sections,
 		focus = s.focus,
 	}
@@ -4991,9 +4891,7 @@ local function settingsView(state: State): BlockView
 	end
 	-- In the layer, prefs is Tern's side sheet docked at the right, over the queue.
 	local layer: { Node } = { queuePicker(state), ui.node("prefs", props, extra) }
-	if s.confirm then
-		table.insert(layer, confirmOverlay(state, s.confirm))
-	elseif state.help then
+	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
 	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
@@ -5481,19 +5379,26 @@ local function blockDef(): BlockDef<State>
 				return false
 			end
 			if s then
-				if s.confirm then
-					-- Enter keeps it: deleting takes a deliberate `d` or a click.
-					if name == "enter" or name == "escape" then
-						s.confirm = nil
-					elseif plain and k == "d" then
-						confirmDelete(state)
-					else
-						return false
+				local e = s.edit
+				if e and string.match(e.row, "^p?key:") then
+					-- A shortcut row takes the next key as the shortcut: Backspace or Delete removes it, Esc or Enter keeps it.
+					if name == "escape" or name == "enter" then
+						discardEdit(state)
+					elseif name == "backspace" or name == "delete" then
+						e.model = input.new("")
+						commitEdit(state)
+					elseif plain and key.text and key.text ~= "" then
+						-- Checked before commitEdit, which trims: a Space would otherwise save as no shortcut.
+						local bad = keys.shape(key.text)
+						if bad then
+							s.errors[e.row] = bad
+						else
+							e.model = input.new(key.text)
+							commitEdit(state)
+						end
 					end
 					return true
-				end
-				local e = s.edit
-				if e then
+				elseif e then
 					if name == "escape" then
 						discardEdit(state)
 					elseif name == "enter" and (not e.model.multi or key.meta or key.ctrl) then
@@ -5508,19 +5413,20 @@ local function blockDef(): BlockDef<State>
 				local pick = s.pick
 				local pdef = if pick then rowById(state, pick.row) else nil
 				if pick and pdef then
-					local options = pdef.control.options
-					if name == "left" or name == "right" then
-						local at = 0
-						for i, o in options do
-							if o.value == pick.option then
-								at = i
-							end
+					local c = pdef.control
+					-- A choice's menu runs down the sheet, chips across it.
+					local vertical = c.k == "choice" and (name == "up" or name == "down")
+					if name == "left" or name == "right" or vertical then
+						local list: { any } = {}
+						for _, o in c.options do
+							table.insert(list, o.value)
 						end
-						local o = options[math.clamp(at + (if name == "left" then -1 else 1), 1, math.max(#options, 1))]
-						pick.option = if o then o.value else nil
+						local at = table.find(list, pick.option) or 0
+						local back = name == "left" or name == "up"
+						pick.option = list[math.clamp(at + (if back then -1 else 1), 1, math.max(#list, 1))]
 						return true
 					elseif (name == "enter" or name == "space") and pick.option then
-						toggleScope(state, pick.row, pick.option)
+						pressOption(state, pick.row, pick.option)
 						return true
 					elseif name == "escape" then
 						s.pick = nil
@@ -5617,7 +5523,7 @@ local function blockDef(): BlockDef<State>
 			elseif act == "refresh" then
 				retry(state)
 			elseif act == "settings" then
-				openSettings(state, "views")
+				openSettings(state)
 			elseif act == "worktree" then
 				openSelected(state, "worktree", false)
 			elseif act == "goto" then
@@ -5675,13 +5581,14 @@ local function blockDef(): BlockDef<State>
 				state.descOpen = if chosen and ev.collapsed == false then chosen.key else nil
 			elseif act == "close-help" then
 				state.help = false
-			elseif act == "confirm-delete" then
-				if s and s.confirm then
-					confirmDelete(state)
-				end
-			elseif act == "cancel-delete" then
-				if s then
-					s.confirm = nil
+			elseif act == "confirm-delete" or act == "cancel-delete" then
+				-- The window palette's answer, acted on only for the row this block asked about.
+				if s and s.confirm and s.confirm == ev.value then
+					if act == "confirm-delete" then
+						confirmDelete(state)
+					else
+						s.confirm = nil
+					end
 				end
 			elseif act == "remove-worktree" then
 				if not s then
@@ -5707,6 +5614,25 @@ local function blockDef(): BlockDef<State>
 				if ev.id ~= SETTINGS_ID then
 					return
 				end
+				-- A click on another row or button (a menu, a field, Done, Delete...) first saves the line being typed:
+				-- a refused draft keeps its row open with the warning, an empty one (a new view's untouched name) is
+				-- dropped, and so is a shortcut being captured. A menu option under the pointer ("<row>=<value>") is no
+				-- click.
+				local e = s.edit
+				local target: string? = if ev.ev == "action" and act ~= "page" and act ~= "close" and type(ev.value) == "string"
+					then ev.value
+					elseif ev.ev ~= "action" and item and not string.find(item, "=", 1, true) then item
+					else nil
+				if e and not e.model.multi and target and target ~= e.row then
+					local capture = string.match(e.row, "^p?key:") ~= nil
+					if not capture then
+						commitEdit(state)
+					end
+					if s.edit and not capture and trim(s.edit.model.text) ~= "" then
+						return
+					end
+					discardEdit(state)
+				end
 				if act == "page" then
 					for _, p in PAGE_DEFS do
 						if p.id == ev.value then
@@ -5714,26 +5640,36 @@ local function blockDef(): BlockDef<State>
 						end
 					end
 				elseif act == "close" then
+					discardEdit(state)
 					if ev.value == nil then
-						discardEdit(state)
 						state.settings = nil
 					else
-						discardEdit(state)
+						s.pick = nil -- a click outside an open choice's menu, or away from a text being edited
 					end
-				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" or act == "move-up" then
+				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)
 					end
 				elseif ev.ev == "activate" and item then
-					beginEdit(state, item)
+					runRow(state, item) -- a click on a text field or a choice's popup
 				elseif ev.ev == "select" and item then
-					s.focus = item
+					-- The pointer on an open menu's option ("<row>=<value>") moves the keys' highlight there; a click on a row
+					-- off its control focuses it.
+					local menu, option = string.match(item, "^(.-)=(.*)$")
+					if menu and s.pick and s.pick.row == menu then
+						s.pick.option = option
+					elseif not menu then
+						s.focus, s.pick = item, nil
+					end
 				elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
 					resetRow(state, item)
-				elseif ev.ev == "change" and item and isTable(ev.value) then
+				elseif ev.ev == "change" and item then
 					s.focus = item
-					setMulti(state, item, ev.value)
+					if type(ev.value) == "string" then
+						s.pick = nil -- a choice made closes its menu
+					end
+					setValue(state, item, ev.value)
 				end
 			elseif ev.id == QUEUE_ID then
 				if ev.ev == "select" or ev.ev == "activate" then
@@ -5760,7 +5696,7 @@ local function blockDef(): BlockDef<State>
 					state.query = nil
 					ensureCursor(state)
 				elseif act == "settings" then
-					openSettings(state, "views")
+					openSettings(state)
 				elseif act == "retry" then
 					retry(state)
 				elseif act then

@@ -141,3 +141,85 @@
 	padding-left: 18px;
 	padding-right: 18px;
 }
+
+/* A shortcut is one key: its field stays on the label's line, keycap-narrow, with Reset beside it rather than pinned. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='key:'] .pf-in,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pkey:'] .pf-in {
+	flex: none;
+	width: 120px;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='key:'] .pf-reset,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pkey:'] .pf-reset {
+	position: static;
+}
+
+/* Delete and Remove are the sheet's only destructive buttons; prefs has no danger tone, so color them. */
+[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='delete:'] .pf-ctl .btn,
+[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='pdelete:'] .pf-ctl .btn,
+[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='rremove:'] .pf-ctl .btn,
+[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='jremove:'] .pf-ctl .btn {
+	color: var(--bad);
+}
+
+/* An open view's Delete sits left of its Done. prefs has one control per row, so the Delete row (right after the
+   summary row) is lifted onto the summary row, and the summary's label stops short of it.
+   ponytail: `right` is Done's width plus a gap and both rows are one line tall; a prefs row with several actions
+   would replace this. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'] {
+	position: absolute;
+	top: 0;
+	right: 59px;
+	padding-left: 0;
+	background: none;
+	box-shadow: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'] .pf-lbl {
+	display: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='vopen:'] .pf-lbl {
+	padding-right: 66px;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus {
+	background: none;
+	box-shadow: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus .btn {
+	box-shadow:
+		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
+		0 0 0 3px rgb(from var(--accent) r g b/13%);
+}
+
+/* An Add row (section id add:… right under its list, or add-to:… under an empty group's title) is a bare button rather
+   than a card of its own: its label is empty, so what shows beside the button is only a warning or why it is locked. */
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add:'] {
+	margin-top: 10px;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-rows {
+	background: none;
+	box-shadow: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row {
+	flex-direction: row-reverse;
+	justify-content: flex-end;
+	gap: 12px;
+	min-height: 0;
+	padding: 0;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus {
+	background: none;
+	box-shadow: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus .btn {
+	box-shadow:
+		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
+		0 0 0 3px rgb(from var(--accent) r g b/13%);
+}

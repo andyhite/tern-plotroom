@@ -119,6 +119,11 @@ function M.user(done: (string?, Problem?) -> ())
 	end)
 end
 
+-- The signed-in Jira user once a search or M.user found the site, without asking; nil before then.
+function M.known(): string?
+	return if site then user else nil
+end
+
 -- A search or view that ends signed out forgets the site too: the next one asks again.
 local function noted(problem: Problem?): Problem?
 	if problem and problem.kind == "auth" then

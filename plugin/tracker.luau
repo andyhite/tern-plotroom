@@ -122,39 +122,15 @@ function M.category(issue: Issue): string
 	return issue.category or (if issue.state == "closed" then "done" else "new")
 end
 
--- The status order kv "status-order" holds, given pcall(tern.kv.get, ...)'s answer: every category once, saved ones
--- first (unknown keys dropped, missing ones appended in default order). An unreadable or malformed value gives the
--- default and why, so nothing overwrites it.
-function M.statusOrder(ok: boolean, v: any): ({ string }, string?)
-	local out: { string } = {}
-	if not ok or (v ~= nil and type(v) ~= "table") then
-		return table.clone(M.CATEGORIES), "The saved status order could not be read; not overwriting it."
-	end
-	for _, key in v or {} do
-		if type(key) ~= "string" then
-			return table.clone(M.CATEGORIES), "The saved status order could not be read; not overwriting it."
-		end
-		if M.CATEGORY_LABEL[key] and not table.find(out, key) then
-			table.insert(out, key)
-		end
-	end
-	for _, key in M.CATEGORIES do
-		if not table.find(out, key) then
-			table.insert(out, key)
-		end
-	end
-	return out, nil
-end
-
--- Sorts `issues` in place by status category in `order` (others last), keeping their order within a category: the
+-- Sorts `issues` in place by status category in CATEGORIES order, keeping their order within a category: the
 -- tracker's own (Jira: priority, then newest update; GitHub: newest update).
-function M.byStatus(issues: { Issue }, order: { string })
+function M.byStatus(issues: { Issue })
 	local at: { [Issue]: number } = {}
 	for i, issue in issues do
 		at[issue] = i
 	end
 	local function rank(issue: Issue): number
-		return table.find(order, M.category(issue)) or #order + 1
+		return table.find(M.CATEGORIES, M.category(issue)) or #M.CATEGORIES + 1
 	end
 	table.sort(issues, function(a, b)
 		local x, y = rank(a), rank(b)

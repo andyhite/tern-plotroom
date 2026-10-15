@@ -24,7 +24,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "12" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "13" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -200,12 +200,20 @@ local function showPr(cx: WindowCx, pane: number, url: string)
 	cx.layout:focus(pane)
 end
 
+-- Whether the block in `pane` speaks this window's protocol; says so when it does not.
+local function sameVersion(cx: WindowCx, pane: number): boolean
+	if nodeProp(readNode(cx, pane, "main.rpc"), "text") == PROTOCOL then
+		return true
+	end
+	cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
+	return false
+end
+
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
 -- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
 -- so instead. False when nothing was sent.
 local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> ()): boolean
-	if nodeProp(readNode(cx, pane, "main.rpc"), "text") ~= PROTOCOL then
-		cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
+	if not sameVersion(cx, pane) then
 		return false
 	end
 	requests += 1
@@ -741,6 +749,30 @@ local function pickJira(cx: WindowCx, pane: number)
 	end)
 end
 
+-- plotroom://confirm: asks in the palette before the Plotroom block in `pane` deletes what its hidden `main.confirm`
+-- node names (host.luau's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
+-- which acts only on the row it asked about.
+local function confirmDelete(cx: WindowCx, pane: number)
+	if not sameVersion(cx, pane) then
+		return
+	end
+	local text = nodeProp(readNode(cx, pane, "main.confirm"), "text")
+	local ok, q = pcall(tern.json.decode, if type(text) == "string" then text else "")
+	if not ok or type(q) ~= "table" or type(q.row) ~= "string" or type(q.head) ~= "string" or type(q.label) ~= "string" then
+		return cx:toast("error", "Plotroom: nothing to delete", "Press Delete again.")
+	end
+	local row: string = q.row
+	local items: { PickItem } = {
+		{ label = "Cancel", icon = "x" },
+		{ label = q.label, detail = if type(q.detail) == "string" then q.detail else nil, icon = "trash", confirm = true },
+	}
+	cx:pick({ items = items, placeholder = q.head, icon = "trash" }):next(function(item, _, cx2)
+		if cx2 then
+			cx2.session:event(pane, { ev = "action", act = if item and item.confirm then "confirm-delete" else "cancel-delete", value = row })
+		end
+	end)
+end
+
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
 	for _, list in CHECK_LISTS do
@@ -768,13 +800,15 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	if rid then
 		answered(cx, rid)
 		return true
-	elseif url == "plotroom://repos" or url == "plotroom://jira-projects" then
+	elseif url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
-		else
+		elseif url == "plotroom://jira-projects" then
 			pickJira(cx, pane)
+		else
+			confirmDelete(cx, pane)
 		end
 		return true
 	end
