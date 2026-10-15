@@ -10,6 +10,10 @@ local tracker = require("./tracker")
 local M = {}
 
 M.NO_REPO = "no-local-repository"
+-- openIssue's questions back: whether the issue gets a new branch or a linked PR's (UNDECIDED), and, for a new branch,
+-- which remote branch it starts from (NEED_BASE).
+M.UNDECIDED = "undecided"
+M.NEED_BASE = "need-base"
 
 export type Repo = { root: string, commonDir: string, remote: string }
 export type Record = {
@@ -28,7 +32,7 @@ export type Result = {
 	path: string,
 	root: string, -- the main worktree, for `git -C`
 	remote: string,
-	branch: string,
+	branch: string, -- the PR's head branch, a fork's as `<fork owner>/<branch>`
 	ref: string, -- the ref the PR head was fetched into
 	number: number,
 	created: boolean, -- this call made the worktree; false = one already existed
@@ -41,6 +45,7 @@ export type Result = {
 	dirty: boolean?,
 }
 
+-- `ref` and `number` when the worktree is on a linked pull request's branch.
 export type IssueResult = {
 	path: string,
 	root: string,
@@ -50,16 +55,28 @@ export type IssueResult = {
 	created: boolean,
 	head: string,
 	dirty: boolean?,
+	ref: string?,
+	number: number?,
 }
 
 -- A worktree Plotroom made, as `scan` finds it: `root` the checkout's main worktree, `branch` its short name, `head` its
--- HEAD, `ref` a pull request's fetched ref, `remote` the remote `open` configured for a pull request's branch (nil when
--- git does not say).
-export type Found = { root: string, path: string, branch: string, head: string, ref: string?, remote: string? }
--- What `scan` read of one checkout: its main worktree and Plotroom's usable worktrees of one kind by item key (`itemOfPath`).
+-- HEAD, `ref` a pull request's fetched ref.
+export type Found = { root: string, path: string, branch: string, head: string, ref: string? }
+-- What `scan` read of one checkout: its main worktree and the worktrees it found, by item key.
 export type Scan = { root: string, found: { [string]: Found } }
+-- How `scan` knows an item's worktree: by its branch (a pull request's head branch, an issue's new branch) or its folder
+-- name (as the folder format names it now); `ref` is a pull request's fetched ref.
+export type Want = { branches: { string }, dirs: { string }, ref: string? }
 
-type Plan = { info: Repo, meta: github.PrMeta, root: string, target: string }
+-- What `openIssue` is asked for: the worktree's folder name, and the branch it is on: PR `pr`'s head branch, or (`fresh`)
+-- `branch`, made from remote branch `base` when it does not exist yet. Neither `pr` nor `fresh`: undecided.
+export type IssuePlan = { dir: string, branch: string, pr: number?, fresh: boolean, base: string? }
+
+-- Where a worktree goes: the repository, its main worktree, the worktree records and the target folder.
+type Spot = { info: Repo, root: string, recs: { Record }, target: string }
+
+-- A pull request checkout: the worktree, its local branch and HEAD, whether this call made it, its changes.
+type Opened = { path: string, branch: string, head: string, created: boolean, dirty: boolean?, ref: string }
 
 local LOCAL_MS = 10 * 1000
 local NET_MS = 120 * 1000
@@ -136,11 +153,21 @@ local function refPart(s: string): string
 	return s
 end
 
--- The local branch and the fetched ref of PR `number`; lowercase, like the worktree directory.
-function M.refNames(owner: string, name: string, number: number): (string, string)
-	local part = refPart(string.lower(owner)) .. "/" .. refPart(string.lower(name)) .. "/pr-" .. number
-	-- Not under refs/plotroom/: the branch's short name would then also match the fetched ref, and Git warns it is ambiguous.
-	return "plotroom/" .. part, "refs/plotroom-pr/" .. part
+-- The ref PR `number`'s head is fetched into; lowercase. Not a branch: removing the worktree compares the branch with
+-- it to tell whether the branch holds commits the pull request does not.
+function M.prRef(owner: string, name: string, number: number): string
+	return "refs/plotroom-pr/" .. refPart(string.lower(owner)) .. "/" .. refPart(string.lower(name)) .. "/pr-" .. number
+end
+
+-- The local branch a pull request is checked out on: its head branch `ref`, a fork's as `<fork owner>/<ref>` so a fork's
+-- `main` never meets the repository's own.
+function M.prBranch(ref: string, fork: string?): string
+	return if fork then fork .. "/" .. ref else ref
+end
+
+-- A worktree folder name as a format renders it: one path segment, printable.
+function M.validLeaf(s: string): boolean
+	return s ~= "" and s ~= "." and s ~= ".." and #s <= 200 and not string.find(s, "[/%c]")
 end
 
 -- Transport host (lowercase), "owner/repo" and whether it is an SSH form of a
@@ -446,11 +473,14 @@ function M.currentRepository(path: string, done: Cb<{ id: string, checkout: stri
 	end)
 end
 
--- "reuse" with the live record, "error" with a message, or "create".
+-- "reuse" with the live record, "error" with a message, or "create". `recs[1]` is the main worktree: a branch checked
+-- out there is never reused (it is no item's worktree, and git will not check it out twice).
 function M.reconcile(recs: { Record }, branch: string, target: string): (string, any)
-	for _, r in recs do
+	for i, r in recs do
 		if r.branch == "refs/heads/" .. branch then
-			if r.locked or r.prunable or not tern.fs.exists(r.path) then
+			if i == 1 then
+				return "error", "Branch " .. branch .. " is checked out in your main checkout at " .. r.path .. "; switch that checkout to another branch, then choose Worktree again."
+			elseif r.locked or r.prunable or not tern.fs.exists(r.path) then
 				return "error", "The worktree of " .. branch .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune)."
 			end
 			return "reuse", r
@@ -467,53 +497,19 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 	return "create", nil
 end
 
--- The item whose Plotroom worktree holds `path` (the worktree root or any directory inside it), as (key, "pr" | "issue"),
--- or nil: `plotroom-<owner>_<name>-pr-N` and `plotroom-<slot>-issue-<ref>` as `M.open`/`M.openIssue` create them (a Jira
--- ref, whatever its slot, gives the Jira key), or `<checkout>.plotroom/<owner>/<repo>/pr-N` from earlier versions. The
--- first folder named like one of those counts: a parent that merely starts with `plotroom-` is no worktree.
-function M.itemOfPath(path: string): (string?, string?)
-	for leaf in string.gmatch(path, "/(plotroom%-[^/]*)") do
-		local owner, name, n = string.match(leaf, "^plotroom%-([%w%-]+)_(.+)%-pr%-(%d+)$")
-		if owner and name and n then
-			return string.lower(owner .. "/" .. name) .. "#" .. n, "pr"
-		end
-		local slot, ref = string.match(leaf, "^plotroom%-(.+)%-issue%-([%w_%-]+)$")
-		if slot and ref then
-			local project = string.match(ref, "^([A-Z][A-Z0-9_]+)%-%d+$")
-			if project then
-				return string.lower(project) .. "#" .. ref, "issue"
-			end
-			local o, r = string.match(slot, "^([^_]+)_(.+)$")
-			if o and r then
-				return string.lower(o .. "/" .. r) .. "#" .. ref, "issue"
-			end
-		end
-	end
-	local o, r, n = string.match(path, "%.plotroom/([^/]+)/([^/]+)/pr%-(%d+)")
-	if o and r and n then
-		return string.lower(o .. "/" .. r) .. "#" .. n, "pr"
-	end
-	return nil, nil
+-- Whether `path` is the worktree at `root` or a directory inside it.
+function M.within(path: string, root: string): boolean
+	return root ~= "" and (path == root or string.sub(path, 1, #root + 1) == root .. "/")
 end
 
--- The branch `open` makes for the pull request of item `key` ("owner/name#N", lowercase) and the ref it fetches the
--- head into; nils for any other key.
-local function prNames(key: string): (string?, string?)
-	local owner, name, n = string.match(key, "^([^/]+)/([^#]+)#(%d+)$")
-	if owner and name and n then
-		return M.refNames(owner, name, tonumber(n) :: number)
-	end
-	return nil, nil
-end
-
--- The Plotroom worktrees of `kind` ("pr" | "issue") in the checkout at `checkout` (any folder of it), by item key, read
--- from git's own list: what `open` and `openIssue` made in this session or an earlier one. Left out, as nothing Plotroom
--- can use or remove: a locked or prunable record, one whose folder is gone, a detached one, and a pull request's on any
--- branch but the one `open` makes for it. One `worktree list`, plus, when it holds a pull request's worktree, one
--- `config` read (the remote its update commands fetch from). Local git only, nothing written. done(scan, problem): on a
--- problem nothing is known, so the caller changes nothing.
--- ponytail: a detached issue worktree is skipped (its card would have no branch to take with it); the user made it so.
-function M.scan(checkout: string, kind: string, done: (Scan?, string?) -> ())
+-- The worktrees of the items `wants` names (by item key) in the checkout at `checkout` (any folder of it), read from
+-- git's own list: a worktree is an item's when its branch is one of the item's `branches` or its folder name one of its
+-- `dirs`, a branch match first. Left out, as nothing Plotroom can use or remove: the main worktree, a locked or
+-- prunable record, one whose folder is gone and a detached one. One `worktree list`, local git only, nothing written.
+-- done(scan, problem): on a problem nothing is known, so the caller changes nothing.
+-- ponytail: an issue worktree whose branch and folder both differ from what the formats name now (a format changed
+-- since it was made) is not found; match on `git config` notes if formats change often.
+function M.scan(checkout: string, wants: { [string]: Want }, done: (Scan?, string?) -> ())
 	git(checkout, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, err)
 		if not out then
 			return done(nil, err or "git worktree list failed")
@@ -523,40 +519,30 @@ function M.scan(checkout: string, kind: string, done: (Scan?, string?) -> ())
 		if not main or string.sub(main.path, 1, 1) ~= "/" then
 			return done(nil, "Could not find this repository's main worktree.")
 		end
+		local byBranch: { [string]: string } = {}
+		local byDir: { [string]: string } = {}
+		for key, want in wants do
+			for _, b in want.branches do
+				byBranch[b] = key
+			end
+			for _, d in want.dirs do
+				byDir[d] = key
+			end
+		end
 		local result: Scan = { root = (string.gsub(main.path, "/+$", "")), found = {} }
-		local prs: { Found } = {}
 		for i = 2, #recs do
 			local r = recs[i]
-			local key, what = M.itemOfPath(r.path)
 			local branch = if r.branch then string.match(r.branch, "^refs/heads/(.+)$") else nil
-			if key and what == kind and branch and r.head and not r.locked and not r.prunable and result.found[key] == nil then
+			local key = if branch then (byBranch[branch] or byDir[string.match(r.path, "([^/]+)/*$") or ""]) else nil
+			if key and branch and r.head and not r.locked and not r.prunable and result.found[key] == nil then
 				-- A folder the runtime cannot even look at is as good as gone.
 				local here, there = pcall(tern.fs.exists, r.path)
-				local want, ref = prNames(key)
-				if here and there and (kind == "issue" or branch == want) then
-					local f: Found = { root = result.root, path = r.path, branch = branch, head = r.head, ref = if kind == "pr" then ref else nil, remote = nil }
-					result.found[key] = f
-					if kind == "pr" then
-						table.insert(prs, f)
-					end
+				if here and there then
+					result.found[key] = { root = result.root, path = r.path, branch = branch, head = r.head, ref = wants[key].ref }
 				end
 			end
 		end
-		if #prs == 0 then
-			return done(result, nil)
-		end
-		-- `open` configured branch.<name>.remote; git exits 1 when no branch has one, and the remote stays unknown.
-		git(checkout, { "config", "--get-regexp", "^branch\\..*\\.remote$" }, LOCAL_MS, function(cfg)
-			for _, line in lines(cfg or "") do
-				local name, remote = string.match(line, "^branch%.(.+)%.remote (.+)$")
-				for _, f in prs do
-					if name and f.branch == name then
-						f.remote = remote
-					end
-				end
-			end
-			done(result, nil)
-		end)
+		done(result, nil)
 	end)
 end
 
@@ -573,7 +559,7 @@ local function normalize(path: string): string
 	return "/" .. table.concat(out, "/")
 end
 
--- The folder new worktrees go in; worktrees keep plotroom's leaf names (`plotroom-…`) whatever the folder. `place` ""
+-- The folder new worktrees go in, each a direct child (`omp worktree clear` deletes nested directories there). `place` ""
 -- is omp's worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else
 -- omp's `worktree.base` setting, else ~/.omp/wt (as in omp, a value that is neither absolute nor `~/` is ignored).
 -- An absolute or `~/` `place` is used as it is; any other is resolved against `checkoutRoot`, the repository's checkout.
@@ -641,18 +627,14 @@ function M.describe(r: { created: boolean, head: string, prHead: string, prRef: 
 	return origin .. " · " .. fresh .. " · " .. changes
 end
 
--- Commands that bring the PR's newer commits into a worktree that is not at its head; none when it is. Only shown
--- to the user: `--ff-only` refuses rather than rewrite local commits, and merge refuses to overwrite local changes.
--- Reads only these fields, as `describe` does.
-function M.update(r: { path: string, remote: string, number: number, head: string, prHead: string }): { string }
+-- The command that brings the PR's newer commits into a worktree that is not at its head; none when it is. Only shown
+-- to the user: the branch tracks the PR's head branch, `--ff-only` refuses rather than rewrite local commits, and a
+-- pull refuses to overwrite local changes. Reads only these fields, as `describe` does.
+function M.update(r: { path: string, head: string, prHead: string }): { string }
 	if r.head == r.prHead then
 		return {}
 	end
-	local at = "git -C " .. shellWord(r.path)
-	return {
-		at .. " fetch " .. shellWord(r.remote) .. " refs/pull/" .. r.number .. "/head",
-		at .. " merge --ff-only FETCH_HEAD",
-	}
+	return { "git -C " .. shellWord(r.path) .. " pull --ff-only" }
 end
 
 -- What `remove` takes of a worktree: where it is and what Plotroom made for it. `ref` is a pull request's fetched ref.
@@ -672,9 +654,9 @@ end
 
 -- Removes the worktree of `t`, then its branch, and forces nothing: git itself stops at uncommitted changes (then
 -- nothing is done: done(nil, why, dirty), `dirty` when that was the reason) and `branch -d` at commits merged nowhere.
--- A pull request's branch is Plotroom's own copy, so `-D` takes it when `merge-base --is-ancestor` says the fetched
--- ref already holds every commit of it, and the fetched ref goes with it. A branch git keeps stays with its ref, and
--- the Removal says so. Host only: git runs where the checkout is, so there is no window cx.
+-- A pull request's branch goes with `-D` when `merge-base --is-ancestor` says the fetched ref already holds every commit
+-- of it (nothing only the branch has is lost), and the fetched ref goes with it. A branch git keeps stays with its ref,
+-- and the Removal says so. Host only: git runs where the checkout is, so there is no window cx.
 function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
 	local branch, ref = t.branch, t.ref
 	local function finish(said: string)
@@ -830,253 +812,124 @@ local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch:
 	end)
 end
 
--- once, even when a step raises. A worktree that already exists is only read, never changed or updated. Problem
--- M.NO_REPO means `checkout` is not a checkout of `repo`.
-function M.open(checkout: string, repo: string, number: number, place: string, account: string?, done: Cb<Result>)
-	local lrepo = string.lower(repo)
-	local owner, name = string.match(lrepo, "^([^/]+)/([^/]+)$")
-	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+-- Resolves `checkout` as a checkout of `repo`, the worktrees folder and the main worktree, then runs `step` with where
+-- the worktree named `dir` goes. Ends the request with M.NO_REPO when `checkout` is not one of `repo`.
+local function locate<T>(s: Steps<T>, checkout: string, repo: string, place: string, dir: string, step: (Spot, WindowCx?) -> ())
+	if not M.validLeaf(dir) then
 		tern.timer(0, function(cx)
-			done(nil, "Invalid repository " .. repo, cx)
+			s.finish(nil, "Worktree folder name " .. dir .. " is not usable; change its format in Settings › Repositories.", cx)
 		end)
 		return
 	end
-	-- A direct child of omp's worktrees directory: `omp worktree clear` treats nested directories there as stray and
-	-- deletes them. GitHub owners hold no `_`, so the name is unambiguous; it keeps the names as they are, while the
-	-- branch and the ref encode what Git refuses.
-	local dirName = "plotroom-" .. owner .. "_" .. name .. "-pr-" .. number
-	local branch, ref = M.refNames(owner, name, number)
-
-	local s = steps(done)
-	local finish, attempt, run = s.finish, s.attempt, s.run
-	-- The pull request's current head and base, read from GitHub.
-	local function readPr(step: (github.PrMeta, WindowCx?) -> ())
-		github.pr(repo, number, account, function(meta, problem, cx)
-			if not meta then
-				return finish(nil, if problem then problem.message else "Could not read the pull request.", cx)
+	M.resolveRepository(checkout, repo, function(info, _, cx)
+		s.attempt(cx, function()
+			if not info then
+				return s.finish(nil, M.NO_REPO, cx)
 			end
-			attempt(cx, function()
-				step(meta, cx)
-			end)
-		end)
-	end
-
-	-- Confirms `path` is a work tree of this repository, then reports its HEAD and whether it has changes. A worktree
-	-- made just now must sit at the PR head; it is read for changes too, since a checkout hook may have written some.
-	local function inspect(plan: Plan, path: string, created: boolean)
-		inspectPath(s, path, plan.info.commonDir, if created then plan.meta.sha else nil, function(head, dirty, cx)
-			local result: Result = {
-				path = path,
-				root = plan.root,
-				remote = plan.info.remote,
-				branch = branch,
-				ref = ref,
-				number = number,
-				created = created,
-				head = head,
-				prHead = plan.meta.sha,
-				prRef = plan.meta.ref,
-				prBase = plan.meta.baseRef,
-				title = plan.meta.title,
-				author = plan.meta.author,
-				dirty = dirty,
-			}
-			s.finish(result, nil, cx)
-		end)
-	end
-
-	-- Best effort, before the worktree is reported: an upstream of refs/pull/N/head lets `gh pr view` (and so
-	-- /review and the like) inside the worktree find the PR, although the branch is not the PR's head branch.
-	local function ready(plan: Plan, path: string, created: boolean)
-		git(plan.info.root, { "config", "branch." .. branch .. ".remote", plan.info.remote }, LOCAL_MS, function(_, _, cx)
-			git(plan.info.root, { "config", "branch." .. branch .. ".merge", "refs/pull/" .. number .. "/head" }, LOCAL_MS, function(_, _, cx2)
-				attempt(cx2 or cx, function()
-					inspect(plan, path, created)
-				end)
-			end)
-		end)
-	end
-
-	-- Adds the worktree: on a new branch at `sha`, or on the branch that already sits there.
-	local function add(plan: Plan, sha: string, attach: boolean, cx: WindowCx?)
-		addWorktree(s, plan.info.root, plan.target, branch, if attach then nil else sha, function(path, created)
-			ready(plan, path, created)
-		end, cx)
-	end
-
-	-- The branch exists but not at the PR head and no worktree has it: left alone, with the ways forward spelled out.
-	local function branchConflict(plan: Plan, tip: string, sha: string): string
-		local at = "git -C " .. shellWord(plan.root)
-		return "Local branch " .. branch .. " is at " .. short(tip) .. ", not at the pull request head " .. short(sha)
-			.. ", and no worktree has it checked out, so it was left untouched. To reopen it as it is: "
-			.. at .. " worktree add " .. shellWord(plan.target) .. " " .. shellWord(branch)
-			.. ". To start over from the PR head instead: " .. at .. " branch -D " .. shellWord(branch)
-			.. " (it drops commits only that branch holds), then choose Worktree again."
-	end
-
-	-- With the PR head `sha` fetched: use the branch if it already sits there, refuse it if it is elsewhere, else make it.
-	local function afterFetch(plan: Plan, sha: string, cx4: WindowCx?)
-		git(plan.info.root, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }, LOCAL_MS, function(tip, _, cx5, status)
-			attempt(cx5 or cx4, function()
-				if tip then
-					if trim(tip) ~= sha then
-						return finish(nil, branchConflict(plan, trim(tip), sha), cx5)
-					end
-					return add(plan, sha, true, cx5)
-				elseif status ~= 1 then
-					return finish(nil, "Could not inspect branch " .. branch .. ".", cx5 or cx4)
+			M.worktreesDir(place, info.root, function(base, why, cx0)
+				if not base then
+					return s.finish(nil, why, cx0)
 				end
-				add(plan, sha, false, cx5)
-			end)
-		end)
-	end
-
-	-- Fetches the PR head into our own ref and carries on with the commit that ref holds.
-	local function fetch(plan: Plan)
-		git(plan.info.root, { "fetch", "--no-tags", "--no-write-fetch-head", plan.info.remote, "+refs/pull/" .. number .. "/head:" .. ref }, NET_MS, function(_, ferr, cx3)
-			attempt(cx3, function()
-				-- Another window fetching the same ref can hold Git's lock: what counts is the commit the ref holds.
-				git(plan.info.root, { "rev-parse", "--verify", "--quiet", ref }, LOCAL_MS, function(out, _, cx4)
-					attempt(cx4 or cx3, function()
-						local sha = if out then trim(out) else ""
-						if sha == "" or (ferr and sha ~= plan.meta.sha) then
-							return finish(nil, ferr or ("Could not read " .. ref .. " after fetching it."), cx4 or cx3)
-						elseif sha == plan.meta.sha then
-							return afterFetch(plan, sha, cx4)
-						end
-						-- The PR moved between the metadata read and the fetch: accept only an exact match on a second read.
-						readPr(function(again, cx5)
-							if again.sha ~= sha then
-								return finish(nil, "The pull request changed while it was being fetched; Retry.", cx5)
-							end
-							afterFetch({ info = plan.info, meta = again, root = plan.root, target = plan.target }, sha, cx5)
-						end)
-					end)
-				end)
-			end)
-		end)
-	end
-
-	local function proceed(info: Repo)
-		M.worktreesDir(place, info.root, function(base, why, cx0)
-			if not base then
-				return finish(nil, why, cx0)
-			end
-			readPr(function(meta, cx1)
-				if string.lower(meta.base) ~= lrepo then
-					return finish(nil, "The pull request's base is " .. meta.base .. ", not " .. repo .. ".", cx1)
-				end
-				run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
+				s.run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx1)
 					local recs = M.parseWorktrees(out)
 					local main = recs[1]
 					if not main or string.sub(main.path, 1, 1) ~= "/" then
-						return finish(nil, "Could not find this repository's main worktree.", cx2)
+						return s.finish(nil, "Could not find this repository's main worktree.", cx1)
 					end
-					local plan: Plan = {
-						info = info,
-						meta = meta,
-						root = (string.gsub(main.path, "/+$", "")),
-						target = base .. "/" .. dirName,
-					}
-					local verdict, what = M.reconcile(recs, branch, plan.target)
-					if verdict == "error" then
-						return finish(nil, what :: string, cx2)
-					elseif verdict == "reuse" then
-						return ready(plan, (what :: Record).path, false)
-					end
-					fetch(plan)
+					step({ info = info, root = (string.gsub(main.path, "/+$", "")), recs = recs, target = base .. "/" .. dir }, cx1)
 				end)
 			end)
-		end)
-	end
-
-	M.resolveRepository(checkout, repo, function(info, _, cx)
-		attempt(cx, function()
-			if info then
-				proceed(info)
-			else
-				finish(nil, M.NO_REPO, cx)
-			end
 		end)
 	end)
 end
 
--- The directory slot and the base ref's path part of the issues of `repo`; nils when it is not a GitHub `owner/name`.
-local function issueSlot(repo: string): (string?, string?)
-	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
-	if owner and name and M.validSegment(owner) and M.validSegment(name) then
-		return owner .. "_" .. name, refPart(owner) .. "/" .. refPart(name)
-	end
-	return nil, nil
-end
-
--- Whether `repo` is a project issue links may name: a GitHub `owner/name` or a Jira project key.
-function M.validProject(repo: string): boolean
+-- Checks out pull request `number` of `repo` (as `meta` read it) at `spot.target` on its own head branch (prBranch): the
+-- worktree that already has that branch is reused, an existing local branch is attached whatever its commit (it is the
+-- user's), and a new one starts at the PR head, tracking the head branch (a fork's through its URL) so `git pull`,
+-- `git push` and `gh pr view` work there. A worktree that already exists is only read.
+local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: number, meta: github.PrMeta, account: string?, cx0: WindowCx?, step: (Opened, github.PrMeta, WindowCx?) -> ())
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
-	return (owner ~= nil and name ~= nil and M.validSegment(owner) and M.validSegment(name)) or tracker.jiraProject(repo)
-end
+	local ref = M.prRef(owner or "", name or "", number)
+	local branch = M.prBranch(meta.ref, meta.fork)
+	local info = spot.info
 
--- Creates or reuses the worktree of issue `key` of the GitHub repository `repo` on `branch`, in
--- `<worktrees folder>/plotroom-<owner>_<name>-issue-<key>` (lowercase slot; the key keeps its case, so `itemOfPath`
--- gives it back as it is). A worktree already at that directory is reused whatever its branch; an existing local branch
--- is attached, never moved; a new branch starts at the remote's default branch. done(result, problem, cx) runs exactly
--- once. Problem M.NO_REPO means `checkout` is not a checkout of `repo`.
-function M.openIssue(checkout: string, repo: string, key: string, branch: string, place: string, done: Cb<IssueResult>)
-	local slot, basePart = issueSlot(repo)
-	local bad: string? = nil
-	if not slot or not basePart then
-		bad = "Invalid repository " .. repo
-	elseif not string.match(key, "^[%w_%-]+$") or #key > 64 or branch == "" then
-		bad = "Invalid issue " .. key .. " of " .. repo
-	end
-	if bad or not slot or not basePart then
-		tern.timer(0, function(cx)
-			done(nil, bad, cx)
-		end)
-		return
-	end
-	local dirName = "plotroom-" .. slot .. "-issue-" .. key
-	local baseRef = "refs/plotroom-base/" .. basePart
-
-	local s = steps(done)
-	local finish, attempt, run = s.finish, s.attempt, s.run
-
-	local function inspect(info: Repo, root: string, path: string, created: boolean, want: string?, rbranch: string)
+	local function inspect(m: github.PrMeta, path: string, created: boolean, want: string?, onBranch: string?)
 		inspectPath(s, path, info.commonDir, want, function(head, dirty, cx)
-			finish({
-				path = path,
-				root = root,
-				remote = info.remote,
-				branch = rbranch,
-				key = key,
-				created = created,
-				head = head,
-				dirty = dirty,
-			}, nil, cx)
+			step({ path = path, branch = onBranch or branch, head = head, created = created, dirty = dirty, ref = ref }, m, cx)
 		end)
 	end
 
-	local function create(info: Repo, root: string, target: string)
-		git(info.root, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }, LOCAL_MS, function(tip, _, cx, status)
-			attempt(cx, function()
+	-- Only a branch made here gets an upstream: an existing one keeps the user's.
+	local function track(m: github.PrMeta, path: string)
+		local remote = if m.forkRepo then "https://github.com/" .. m.forkRepo .. ".git" else info.remote
+		-- A deleted fork took its branch along; the pull request's own ref still holds the head.
+		local merge = if m.fork and not m.forkRepo then "refs/pull/" .. number .. "/head" else "refs/heads/" .. m.ref
+		git(info.root, { "config", "branch." .. branch .. ".remote", remote }, LOCAL_MS, function(_, _, cx)
+			git(info.root, { "config", "branch." .. branch .. ".merge", merge }, LOCAL_MS, function(_, _, cx2)
+				s.attempt(cx2 or cx, function()
+					inspect(m, path, true, m.sha)
+				end)
+			end)
+		end)
+	end
+
+	local function afterFetch(m: github.PrMeta, cx: WindowCx?)
+		git(info.root, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }, LOCAL_MS, function(tip, _, cx1, status)
+			s.attempt(cx1 or cx, function()
 				if tip then
-					return addWorktree(s, root, target, branch, nil, function(path, created)
-						inspect(info, root, path, created, trim(tip), branch)
-					end, cx)
+					local at = trim(tip)
+					return addWorktree(s, spot.root, spot.target, branch, nil, function(path, created)
+						inspect(m, path, created, if created then at else nil)
+					end, cx1)
 				elseif status ~= 1 then
-					return finish(nil, "Could not inspect branch " .. branch .. ".", cx)
+					return s.finish(nil, "Could not inspect branch " .. branch .. ".", cx1 or cx)
 				end
-				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+HEAD:" .. baseRef }, NET_MS, function(_, ferr, cx3)
-					attempt(cx3, function()
-						git(info.root, { "rev-parse", "--verify", "--quiet", baseRef }, LOCAL_MS, function(out, _, cx4)
-							attempt(cx4 or cx3, function()
-								local sha = if out then trim(out) else ""
-								if sha == "" then
-									return finish(nil, ferr or ("Could not read the default branch of " .. repo .. "."), cx4 or cx3)
+				addWorktree(s, spot.root, spot.target, branch, m.sha, function(path, created)
+					if created then
+						return track(m, path)
+					end
+					inspect(m, path, false, nil)
+				end, cx1)
+			end)
+		end)
+	end
+
+	-- A same-repository head branch into its remote-tracking ref, best effort (a merged PR's branch may be deleted), so
+	-- the new branch's upstream is known at once.
+	local function onward(m: github.PrMeta, cx: WindowCx?)
+		if m.fork then
+			return afterFetch(m, cx)
+		end
+		local tracking = "+refs/heads/" .. m.ref .. ":refs/remotes/" .. info.remote .. "/" .. m.ref
+		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, tracking }, NET_MS, function(_, _, cx1)
+			s.attempt(cx1 or cx, function()
+				afterFetch(m, cx1 or cx)
+			end)
+		end)
+	end
+
+	-- The PR head into our own ref (removal compares the branch with it), then on with the commit that ref holds.
+	local function fetch(m: github.PrMeta)
+		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/pull/" .. number .. "/head:" .. ref }, NET_MS, function(_, ferr, cx)
+			s.attempt(cx, function()
+				-- Another window fetching the same ref can hold Git's lock: what counts is the commit the ref holds.
+				git(info.root, { "rev-parse", "--verify", "--quiet", ref }, LOCAL_MS, function(out, _, cx1)
+					s.attempt(cx1 or cx, function()
+						local sha = if out then trim(out) else ""
+						if sha == "" or (ferr and sha ~= m.sha) then
+							return s.finish(nil, ferr or ("Could not read " .. ref .. " after fetching it."), cx1 or cx)
+						elseif sha == m.sha then
+							return onward(m, cx1)
+						end
+						-- The PR moved between the metadata read and the fetch: accept only an exact match on a second read.
+						github.pr(repo, number, account, function(again, problem, cx2)
+							s.attempt(cx2, function()
+								if not again then
+									return s.finish(nil, if problem then problem.message else "Could not read the pull request.", cx2)
+								elseif again.sha ~= sha then
+									return s.finish(nil, "The pull request changed while it was being fetched; Retry.", cx2)
 								end
-								addWorktree(s, root, target, branch, sha, function(path, created)
-									inspect(info, root, path, created, sha, branch)
-								end, cx4 or cx3)
+								onward(again, cx2)
 							end)
 						end)
 					end)
@@ -1085,54 +938,227 @@ function M.openIssue(checkout: string, repo: string, key: string, branch: string
 		end)
 	end
 
-	local function proceed(info: Repo)
-		M.worktreesDir(place, info.root, function(base, why, cx0)
-			if not base then
-				return finish(nil, why, cx0)
+	-- A worktree already at the PR's folder is its own whatever its branch (an earlier version's `plotroom/…/pr-N`).
+	for i = 2, #spot.recs do
+		local r = spot.recs[i]
+		local on = if r.branch then string.match(r.branch, "^refs/heads/(.+)$") else nil
+		if r.path == spot.target and on and r.branch ~= "refs/heads/" .. branch and not r.locked and not r.prunable and tern.fs.exists(r.path) then
+			return inspect(meta, r.path, false, nil, on)
+		end
+	end
+	local verdict, what = M.reconcile(spot.recs, branch, spot.target)
+	if verdict == "error" then
+		return s.finish(nil, what :: string, cx0)
+	elseif verdict == "reuse" then
+		return inspect(meta, (what :: Record).path, false, nil)
+	end
+	fetch(meta)
+end
+
+-- Creates or reuses the worktree of pull request `number` of `repo` (checkoutPr) in the worktrees folder, under the
+-- folder name `naming` gives the PR (nil and why when it cannot). done(result, problem, cx) runs exactly once, even
+-- when a step raises. Problem M.NO_REPO means `checkout` is not a checkout of `repo`.
+function M.open(checkout: string, repo: string, number: number, naming: (github.PrMeta) -> (string?, string?), place: string, account: string?, done: Cb<Result>)
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+		tern.timer(0, function(cx)
+			done(nil, "Invalid repository " .. repo, cx)
+		end)
+		return
+	end
+	local s = steps(done)
+	github.pr(repo, number, account, function(meta, problem, cx)
+		s.attempt(cx, function()
+			if not meta then
+				return s.finish(nil, if problem then problem.message else "Could not read the pull request.", cx)
+			elseif string.lower(meta.base) ~= string.lower(repo) then
+				return s.finish(nil, "The pull request's base is " .. meta.base .. ", not " .. repo .. ".", cx)
 			end
-			git(info.root, { "check-ref-format", "--branch", branch }, LOCAL_MS, function(_, _, cx1, status)
-				attempt(cx1, function()
-					if status ~= 0 then
-						return finish(nil, "Branch name " .. branch .. " is not valid; change the branch format in Settings › Repositories.", cx1)
-					end
-					run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx2)
-						local recs = M.parseWorktrees(out)
-						local main = recs[1]
-						if not main or string.sub(main.path, 1, 1) ~= "/" then
-							return finish(nil, "Could not find this repository's main worktree.", cx2)
-						end
-						local root = (string.gsub(main.path, "/+$", ""))
-						local target = base .. "/" .. dirName
-						for _, r in recs do
-							if r.path == target then
-								local rb = if r.branch then string.gsub(r.branch, "^refs/heads/", "") else branch
-								if r.locked or r.prunable or not tern.fs.exists(r.path) then
-									return finish(nil, "The worktree of " .. rb .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune).", cx2)
+			local found: github.PrMeta = meta
+			local dir, why = naming(found)
+			if not dir then
+				return s.finish(nil, why, cx)
+			end
+			locate(s, checkout, repo, place, dir, function(spot, cx1)
+				checkoutPr(s, spot, repo, number, found, account, cx1, function(o, m, cx2)
+					s.finish({
+						path = o.path,
+						root = spot.root,
+						remote = spot.info.remote,
+						branch = o.branch,
+						ref = o.ref,
+						number = number,
+						created = o.created,
+						head = o.head,
+						prHead = m.sha,
+						prRef = m.ref,
+						prBase = m.baseRef,
+						title = m.title,
+						author = m.author,
+						dirty = o.dirty,
+					}, nil, cx2)
+				end)
+			end)
+		end)
+	end)
+end
+
+-- The branches of `repo`'s remote, its default branch first, then by name; done(names, problem, cx). Problem M.NO_REPO
+-- means `checkout` is not a checkout of `repo`.
+function M.remoteBranches(checkout: string, repo: string, done: Cb<{ string }>)
+	M.resolveRepository(checkout, repo, function(info, _, cx)
+		if not info then
+			return done(nil, M.NO_REPO, cx)
+		end
+		git(info.root, { "ls-remote", "--symref", info.remote, "HEAD", "refs/heads/*" }, NET_MS, function(out, err, cx1)
+			if not out then
+				return done(nil, err, cx1)
+			end
+			local default = string.match(out, "ref: refs/heads/(%S+)%s+HEAD")
+			local names: { string } = {}
+			for name in string.gmatch(out, "%x+\trefs/heads/([^\n]+)") do
+				if name ~= default then
+					table.insert(names, name)
+				end
+			end
+			table.sort(names)
+			if default then
+				table.insert(names, 1, default)
+			end
+			done(names, nil, cx1)
+		end)
+	end)
+end
+
+-- Whether `repo` is a project issue links may name: a GitHub `owner/name` or a Jira project key.
+function M.validProject(repo: string): boolean
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	return (owner ~= nil and name ~= nil and M.validSegment(owner) and M.validSegment(name)) or tracker.jiraProject(repo)
+end
+
+-- Creates or reuses the worktree of issue `key` of the GitHub repository `repo`, in the worktrees folder as `plan.dir`.
+-- A worktree already there is reused whatever its branch. Otherwise it is on PR `plan.pr`'s branch (checkoutPr), or
+-- (`plan.fresh`) on `plan.branch`: attached when that local branch exists (never moved), else made from remote branch
+-- `plan.base`, fetched first. done(result, problem, cx) runs exactly once. Problems M.NO_REPO (`checkout` is not one of
+-- `repo`), M.UNDECIDED (no worktree yet, and neither `pr` nor `fresh`) and M.NEED_BASE (a new branch and no `base`)
+-- ask the caller for more.
+function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePlan, place: string, account: string?, done: Cb<IssueResult>)
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	local bad: string? = nil
+	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+		bad = "Invalid repository " .. repo
+	elseif not string.match(key, "^[%w_%-]+$") or #key > 64 or (plan.fresh and plan.branch == "") then
+		bad = "Invalid issue " .. key .. " of " .. repo
+	end
+	if bad then
+		local why: string = bad
+		tern.timer(0, function(cx)
+			done(nil, why, cx)
+		end)
+		return
+	end
+	local branch = plan.branch
+	local s = steps(done)
+	local finish, attempt = s.finish, s.attempt
+
+	local function inspect(spot: Spot, path: string, created: boolean, want: string?, rbranch: string)
+		inspectPath(s, path, spot.info.commonDir, want, function(head, dirty, cx)
+			finish({ path = path, root = spot.root, remote = spot.info.remote, branch = rbranch, key = key, created = created, head = head, dirty = dirty }, nil, cx)
+		end)
+	end
+
+	-- A new branch at remote branch `base`, fetched into its remote-tracking ref first.
+	local function create(spot: Spot, base: string, cx: WindowCx?)
+		local info = spot.info
+		local tracking = "refs/remotes/" .. info.remote .. "/" .. base
+		git(info.root, { "check-ref-format", "--branch", base }, LOCAL_MS, function(_, _, cx1, status)
+			attempt(cx1 or cx, function()
+				if status ~= 0 then
+					return finish(nil, "Base branch " .. base .. " is not a valid branch name.", cx1 or cx)
+				end
+				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, ferr, cx2)
+					attempt(cx2, function()
+						git(info.root, { "rev-parse", "--verify", "--quiet", tracking }, LOCAL_MS, function(out, _, cx3)
+							attempt(cx3 or cx2, function()
+								local sha = if out then trim(out) else ""
+								if ferr or sha == "" then
+									return finish(nil, ferr or ("Could not read " .. base .. " of " .. repo .. "."), cx3 or cx2)
 								end
-								return inspect(info, root, r.path, false, nil, rb)
-							end
-						end
-						local verdict, what = M.reconcile(recs, branch, target)
-						if verdict == "error" then
-							return finish(nil, what :: string, cx2)
-						elseif verdict == "reuse" then
-							return inspect(info, root, (what :: Record).path, false, nil, branch)
-						end
-						create(info, root, target)
+								addWorktree(s, spot.root, spot.target, branch, sha, function(path, created)
+									inspect(spot, path, created, if created then sha else nil, branch)
+								end, cx3 or cx2)
+							end)
+						end)
 					end)
 				end)
 			end)
 		end)
 	end
 
-	M.resolveRepository(checkout, repo, function(info, _, cx)
-		attempt(cx, function()
-			if info then
-				proceed(info)
-			else
-				finish(nil, M.NO_REPO, cx)
-			end
+	-- The issue's own branch: reused where a worktree has it, attached when it exists, else made from `plan.base`.
+	local function fresh(spot: Spot, cx: WindowCx?)
+		local info = spot.info
+		git(info.root, { "check-ref-format", "--branch", branch }, LOCAL_MS, function(_, _, cx1, status)
+			attempt(cx1 or cx, function()
+				if status ~= 0 then
+					return finish(nil, "Branch name " .. branch .. " is not valid; change the branch format in Settings › Repositories.", cx1 or cx)
+				end
+				local verdict, what = M.reconcile(spot.recs, branch, spot.target)
+				if verdict == "error" then
+					return finish(nil, what :: string, cx1 or cx)
+				elseif verdict == "reuse" then
+					return inspect(spot, (what :: Record).path, false, nil, branch)
+				end
+				git(info.root, { "rev-parse", "--verify", "--quiet", "refs/heads/" .. branch }, LOCAL_MS, function(tip, _, cx2, st)
+					attempt(cx2 or cx1, function()
+						local base = plan.base
+						if tip then
+							local at = trim(tip)
+							return addWorktree(s, spot.root, spot.target, branch, nil, function(path, created)
+								inspect(spot, path, created, if created then at else nil, branch)
+							end, cx2)
+						elseif st ~= 1 then
+							return finish(nil, "Could not inspect branch " .. branch .. ".", cx2 or cx1)
+						elseif not base then
+							return finish(nil, M.NEED_BASE, cx2 or cx1)
+						end
+						create(spot, base, cx2)
+					end)
+				end)
+			end)
 		end)
+	end
+
+	locate(s, checkout, repo, place, plan.dir, function(spot, cx)
+		for _, r in spot.recs do
+			if r.path == spot.target then
+				local rb = if r.branch then string.gsub(r.branch, "^refs/heads/", "") else branch
+				if r.locked or r.prunable or not tern.fs.exists(r.path) then
+					return finish(nil, "The worktree of " .. rb .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune).", cx)
+				end
+				return inspect(spot, r.path, false, nil, rb)
+			end
+		end
+		local pr = plan.pr
+		if pr then
+			local n: number = pr
+			github.pr(repo, n, account, function(meta, problem, cx1)
+				attempt(cx1, function()
+					if not meta then
+						return finish(nil, if problem then problem.message else "Could not read the pull request.", cx1)
+					elseif string.lower(meta.base) ~= string.lower(repo) then
+						return finish(nil, "Pull request #" .. n .. " merges into " .. meta.base .. ", not " .. repo .. ".", cx1)
+					end
+					checkoutPr(s, spot, repo, n, meta, account, cx1, function(o, _, cx2)
+						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ref = o.ref, number = n }, nil, cx2)
+					end)
+				end)
+			end)
+			return
+		elseif not plan.fresh then
+			return finish(nil, M.UNDECIDED, cx)
+		end
+		fresh(spot, cx)
 	end)
 end
 

@@ -25,7 +25,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "9" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "10" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -168,12 +168,10 @@ local function parseCheck(url: string): (number?, string?)
 	return index, target
 end
 
--- A pane in a tab of this window working in the target's Plotroom worktree: pane, tab and session ids.
-local function targetPane(cx: WindowCx, t: Target): (number?, number?, number?)
-	local key = string.lower(t.repo) .. "#" .. t.ref
+-- A pane in a tab of this window working in the worktree at `path`: pane, tab and session ids.
+local function targetPane(cx: WindowCx, path: string): (number?, number?, number?)
 	for _, p in cx.session:panes() do
-		local found, what = worktree.itemOfPath(p.cwd or "")
-		if p.tab and found == key and what == t.kind then
+		if p.tab and worktree.within(p.cwd or "", path) then
 			for _, tb in cx.session:tabs() do
 				if tb.id == p.tab then
 					return p.pane, tb.id, tb.session
@@ -182,15 +180,6 @@ local function targetPane(cx: WindowCx, t: Target): (number?, number?, number?)
 		end
 	end
 	return nil, nil, nil
-end
-
-local function gotoTarget(cx: WindowCx, t: Target)
-	local pane, _, session = targetPane(cx, t)
-	if not pane or not session then
-		return cx:toast("info", "No tab is open for " .. t.label)
-	end
-	cx.sessions:switch(session)
-	cx.layout:focus(pane)
 end
 
 -- Opens `url` in a Browser block docked right of `pane`.
@@ -292,6 +281,18 @@ local function answered(cx: WindowCx, id: string)
 	p.done(answer, cx)
 end
 
+-- Focuses the tab working in the target's worktree, wherever the block's host noted it.
+local function gotoTarget(cx: WindowCx, pane: number, t: Target)
+	ask(cx, pane, "where", { kind = t.kind, key = string.lower(t.repo) .. "#" .. t.ref }, MENU_MS, function(a: any, cx2: WindowCx)
+		local found, _, session = targetPane(cx2, if type(a.path) == "string" then a.path else "")
+		if not found or not session then
+			return cx2:toast("info", "No tab is open for " .. t.label)
+		end
+		cx2.sessions:switch(session)
+		cx2.layout:focus(found)
+	end)
+end
+
 -- The session holding `pane`'s tab, when it still exists.
 local function sourceSession(cx: WindowCx, pane: number): number?
 	local tab = cx.session:tab_of(pane)
@@ -351,7 +352,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local found: number? = nil
 	if join then
 		local _pane
-		_pane, tab, found = targetPane(cx, t)
+		_pane, tab, found = targetPane(cx, path)
 	end
 	local session = found or sourceSession(cx, pane)
 	if not session then
@@ -414,6 +415,9 @@ local function readyOf(a: any): Ready?
 	}
 end
 
+-- A `{name}` variable in a prompt: letters, dots between words (`{github.user}`), as tracker.VAR spells it.
+local VAR = "{([%a%.]+)}"
+
 -- `{name}` variables a prompt may use, from the PR's coordinates and the host's fresh read of it; others stay as typed.
 local function fill(prompt: string, owner: string, repo: string, n: number, a: any): string
 	local vars: { [string]: string } = {
@@ -422,12 +426,12 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 		repo = repo,
 		number = tostring(n),
 	}
-	for _, k in { "title", "author", "branch", "base" } do
+	for _, k in { "title", "author", "branch", "base", "github.user" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end
 	end
-	return (string.gsub(prompt, "{(%a+)}", vars))
+	return (string.gsub(prompt, VAR, vars))
 end
 
 -- An issue's prompt variables: the host's `vars` (strings only); others stay as typed.
@@ -435,18 +439,34 @@ local function fillVars(prompt: string, vars: any): string
 	if type(vars) ~= "table" then
 		return prompt
 	end
-	return (string.gsub(prompt, "{(%a+)}", function(k: string): string
+	return (string.gsub(prompt, VAR, function(k: string): string
 		local v = vars[k]
 		return if type(v) == "string" then v else "{" .. k .. "}"
 	end))
 end
 
+-- What prepareTarget's earlier answers settled: the repository a Jira issue is worked in (`target`), and for a new issue
+-- worktree the linked PR to check out (`pr`) or a new branch (`fresh`) from remote branch `base`.
+type Settled = { target: string?, pr: number?, fresh: boolean?, base: string? }
+
+local function settle(more: Settled?, add: Settled): Settled
+	local out: Settled = if more then table.clone(more) else {}
+	for k, v in add :: { [string]: any } do
+		(out :: any)[k] = v
+	end
+	return out
+end
+
 -- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
 -- worktree (noted on the block) and open its tab. `wt` false (issues only): the repository's main checkout, no worktree.
--- What the host still needs is asked in the palette, then this runs again: a checkout folder of the repository
--- (`needCheckout`), the repository a Jira project's issue is worked in (`needRepo`, or `chooseRepo` among several, which
--- `target` then names).
-local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?, wt: boolean, target: string?)
+-- What the host still needs is asked in the palette, then this runs again with `more`: a checkout folder of the
+-- repository (`needCheckout`), the repository a Jira project's issue is worked in (`needRepo`, or `chooseRepo` among
+-- several), which of an issue's linked pull requests to check out or a new branch (`choosePr`), and the base branch a
+-- new branch starts from (`chooseBase`).
+local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?, wt: boolean, more: Settled?)
+	local function again(cx3: WindowCx, add: Settled)
+		prepareTarget(cx3, pane, t, prompt, wt, settle(more, add))
+	end
 	local function done(a: any, cx2: WindowCx)
 		if a.busy == true then
 			return cx2:toast("info", "A worktree for " .. t.label .. " is already being prepared")
@@ -459,7 +479,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				ask(cx3, pane, "checkout", { repo = repo, path = text }, CLONE_WAIT_MS, function(b: any, cx4: WindowCx)
 					if b.ok == true then
 						cx4:toast("success", if b.cloned == true then "Cloned " .. repo else "Checkout saved", if type(b.root) == "string" then b.root else nil)
-						return prepareTarget(cx4, pane, t, prompt, wt, target)
+						return again(cx4, {})
 					end
 					cx4:toast("error", "Checkout not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
 				end)
@@ -477,7 +497,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			local function map(cx3: WindowCx, repo: string)
 				ask(cx3, pane, "map-jira", { project = project, repo = repo }, MENU_MS, function(b: any, cx4: WindowCx)
 					if b.ok == true then
-						return prepareTarget(cx4, pane, t, prompt, wt, repo)
+						return again(cx4, { target = repo })
 					end
 					cx4:toast("error", "Repository not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
 				end)
@@ -504,7 +524,36 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			end
 			cx2:pick({ items = items, placeholder = "Which repository for " .. t.label .. "?", icon = "merge", action = "open" }):next(function(item, _, cx3)
 				if item and cx3 then
-					prepareTarget(cx3, pane, t, prompt, wt, item.label)
+					again(cx3, { target = item.label })
+				end
+			end)
+			return
+		elseif a.choosePr == true then
+			local items: { PickItem } = {}
+			for _, p in if type(a.prs) == "table" then a.prs else {} do
+				if type(p) == "table" and type(p.number) == "number" and type(p.title) == "string" then
+					table.insert(items, { label = "#" .. p.number .. " " .. p.title, detail = if type(p.branch) == "string" then p.branch else nil, group = "Linked pull requests", pr = p.number })
+				end
+			end
+			table.insert(items, { label = "New branch…", detail = "Starts from a base branch you pick next", group = "Or", fresh = true })
+			cx2:pick({ items = items, placeholder = "Which branch for " .. t.label .. "?", icon = "merge", action = "open" }):next(function(item, _, cx3)
+				if not item or not cx3 then
+					return
+				end
+				again(cx3, if item.fresh == true then { fresh = true } else { pr = item.pr })
+			end)
+			return
+		elseif a.chooseBase == true then
+			local items: { PickItem } = {}
+			for i, name in if type(a.branches) == "table" then a.branches else {} do
+				if type(name) == "string" then
+					table.insert(items, { label = name, group = if i == 1 then "Default branch" else "Branches" })
+				end
+			end
+			local branch = if type(a.branch) == "string" then a.branch else "the new branch"
+			cx2:pick({ items = items, placeholder = "Start " .. branch .. " from…", icon = "merge", action = "open" }):next(function(item, _, cx3)
+				if item and cx3 then
+					again(cx3, { fresh = true, base = item.label })
 				end
 			end)
 			return
@@ -525,10 +574,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			end
 		end)
 	end
+	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one.
+	local users = prompt ~= nil and (string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
+	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
-		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref) }, PREPARE_MS, done)
-		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = target }, PREPARE_MS, done)
-	if sent and wt then
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), users = users }, PREPARE_MS, done)
+		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done)
+	if sent and wt and not more then
 		cx:toast("info", "Preparing worktree for " .. t.label)
 	end
 end
@@ -791,7 +843,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		end
 		local t = issueTarget(repo, ref)
 		if act == "goto" then
-			gotoTarget(cx, t)
+			gotoTarget(cx, pane, t)
 		elseif act == "agent" then
 			pickAgent(cx, pane, t)
 		elseif act == "run" and rid2 then
@@ -828,7 +880,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	elseif kind == "show" then
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
-		gotoTarget(cx, t)
+		gotoTarget(cx, pane, t)
 	elseif kind == "agent" then
 		pickAgent(cx, pane, t)
 	elseif kind == "run" and id then

@@ -373,9 +373,12 @@ local function setupOf(map: { [string]: any }, repo: string): { string }
 	return stringList(map[string.lower(repo)])
 end
 
+-- Branch and worktree folder name formats (Settings › Repositories). One table: host.luau is at Luau's 200-local limit.
+local formats = {}
+
 -- Saved branch name formats per repository (kv "branch-formats", keyed like "checkouts"), or nil and why when
 -- unreadable: a write then fails closed rather than overwrite them.
-local function branchMap(): ({ [string]: any }?, string?)
+function formats.repoMap(): ({ [string]: any }?, string?)
 	local ok, stored = pcall(tern.kv.get, "branch-formats")
 	if not ok or (stored ~= nil and not isTable(stored)) then
 		return nil, "Saved branch formats could not be read."
@@ -383,9 +386,9 @@ local function branchMap(): ({ [string]: any }?, string?)
 	return if stored ~= nil then stored else {}, nil
 end
 
--- The branch name format saved for `repo`; nil when none is (tracker.FORMAT_DEFAULT applies) or they cannot be read.
-local function branchFormatOf(repo: string): string?
-	local map = branchMap()
+-- The branch name format saved for `repo`; nil when none is (the Worktrees format applies) or they cannot be read.
+function formats.repoOf(repo: string): string?
+	local map = formats.repoMap()
 	local fmt = if map then map[string.lower(repo)] else nil
 	return if type(fmt) == "string" and fmt ~= "" then fmt else nil
 end
@@ -435,6 +438,21 @@ end
 local function readWorktreeRoot(): string
 	local ok, v = pcall(tern.kv.get, "worktree-root")
 	return if ok and type(v) == "string" then v else ""
+end
+
+-- Name formats for every repository (Settings › Repositories › Worktrees): the branch of an issue's worktree, and the
+-- folder names of PR and issue worktrees. Kept under kv formats.KEYS; "" or unset is the default.
+formats.KEYS = { branch = "branch-format", prdir = "pr-dir-format", issuedir = "issue-dir-format" } :: { [string]: string }
+formats.DEFAULTS = { branch = tracker.BRANCH_DEFAULT, prdir = tracker.PR_DIR_DEFAULT, issuedir = tracker.ISSUE_DIR_DEFAULT } :: { [string]: string }
+
+function formats.saved(which: string): string
+	local ok, v = pcall(tern.kv.get, formats.KEYS[which])
+	return if ok and type(v) == "string" then v else ""
+end
+
+function formats.of(which: string): string
+	local f = formats.saved(which)
+	return if f ~= "" then f else formats.DEFAULTS[which]
 end
 
 -- Deletes `repo` from the checkouts, branch formats, setup commands and every Jira project's repositories. A map is
@@ -749,16 +767,25 @@ local function selected(state: State): any
 	return nil
 end
 
--- Keys ("owner/repo#n", "abc#ABC-12") of the items whose Plotroom worktree holds some pane's cwd on this host.
+-- Keys ("owner/repo#n", "abc#ABC-12") of the items whose worktree (as its note has it) holds some pane's cwd on this host.
 local function openItems(state: State): { [string]: boolean }
 	local open: { [string]: boolean } = {}
-	local want = if state.kind.id == "issues" then "issue" else "pr"
+	local mine: { [string]: string } = {}
+	for key, note in state.notes do
+		if note.ok and note.path then
+			mine[key] = note.path
+		end
+	end
+	if next(mine) == nil then
+		return open
+	end
 	for _, p in tern.pane.list() do
 		local cwd = p.cwd
 		if cwd then
-			local key, what = worktree.itemOfPath(cwd)
-			if key and what == want then
-				open[key] = true
+			for key, path in mine do
+				if worktree.within(cwd, path) then
+					open[key] = true
+				end
 			end
 		end
 	end
@@ -1481,6 +1508,7 @@ local PRS: Kind = {
 		{ k = { ui.span("{author}", "code") }, v = "Author's login" },
 		{ k = { ui.span("{branch}", "code") }, v = "Head branch on GitHub" },
 		{ k = { ui.span("{base}", "code") }, v = "Branch it merges into" },
+		{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 	},
 }
 
@@ -1489,7 +1517,7 @@ local function issueKeys(): { KeyHelp }
 	return {
 		{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
 		{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
-		{ keys = {}, actions = { "worktree" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (Plotroom asks for the repository, and its checkout, the first time)" },
+		{ keys = {}, actions = { "worktree" }, text = "Create or reuse the selected issue's worktree and open it in a new tab: on its linked pull request's branch (Plotroom asks which when several have one), else on a new branch from the base you pick (Plotroom asks for the repository, and its checkout, the first time)" },
 		{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected issue's worktree" },
 		{ keys = {}, actions = { "agent" }, text = "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)" },
 		{ keys = {}, actions = { "search" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
@@ -1515,6 +1543,8 @@ local ISSUE_VARS = {
 	{ k = { ui.span("{project}", "code") }, v = "Project key (Jira)" },
 	{ k = { ui.span("{status}", "code") }, v = "Status (Jira)" },
 	{ k = { ui.span("{type}", "code") }, v = "Issue type (Jira)" },
+	{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
+	{ k = { ui.span("{jira.user}", "code") }, v = "Your Jira sign-in's email before the @ (Jira)" },
 }
 
 local ISSUES: Kind = {
@@ -1854,20 +1884,32 @@ local function pageContent(state: State): ({ any }, string, { Node })
 	elseif s.page == "repos" then
 		lead = "Repositories you work in, each with its local checkout (used for worktrees and prompts), the branch format of its issue worktrees and setup commands. Opening Plotroom inside a checkout adds it."
 		local root = readWorktreeRoot()
-		table.insert(sections, {
-			id = "sec-wtroot",
-			title = "Worktrees",
-			rows = {
-				{
-					id = "wtroot",
-					label = "Folder",
-					hint = "Where new worktrees go. A relative path is resolved against each repository's checkout, such as ../worktrees. Empty: omp's folder.",
-					control = { k = "text", value = root, placeholder = "omp's worktree folder", mono = true },
-					changed = root ~= "",
-					defaultLabel = "omp's folder",
-				},
+		local wtRows: { Row } = {
+			{
+				id = "wtroot",
+				label = "Folder",
+				hint = "Where new worktrees go. A relative path is resolved against each repository's checkout, such as ../worktrees. Empty: omp's folder.",
+				control = { k = "text", value = root, placeholder = "omp's worktree folder", mono = true },
+				changed = root ~= "",
+				defaultLabel = "omp's folder",
 			},
-		})
+		}
+		for _, f in {
+			{ id = "branch", label = "Branch (new issue branches)", vars = tracker.VARS, also = " A repository's own format below wins." },
+			{ id = "prdir", label = "Folder name (pull requests)", vars = tracker.DIR_VARS, also = " {key} is the number." },
+			{ id = "issuedir", label = "Folder name (issues)", vars = tracker.DIR_VARS, also = "" },
+		} do
+			local saved = formats.saved(f.id)
+			table.insert(wtRows, {
+				id = "fmt:" .. f.id,
+				label = f.label,
+				hint = "Variables {" .. table.concat(f.vars, "} {") .. "}." .. f.also .. " Empty: " .. formats.DEFAULTS[f.id] .. ".",
+				control = { k = "text", value = saved, placeholder = formats.DEFAULTS[f.id], mono = true },
+				changed = saved ~= "",
+				defaultLabel = formats.DEFAULTS[f.id],
+			})
+		end
+		table.insert(sections, { id = "sec-wtroot", title = "Worktrees", rows = wtRows })
 		local checkouts = readCheckouts()
 		local names: { string } = {}
 		for name in checkouts do
@@ -1876,12 +1918,12 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			end
 		end
 		table.sort(names)
-		local formats, formatsOff = branchMap()
+		local repoFormats, formatsOff = formats.repoMap()
 		local setups, setupsOff = setupMap()
 		for _, repo in names do
 			local path = checkouts[repo]
 			local mapped = if type(path) == "string" and path ~= "" then path else nil
-			local fmt = if formats then branchFormatOf(repo) else nil
+			local fmt = if repoFormats then formats.repoOf(repo) else nil
 			local cmds: { string } = if setups then setupOf(setups, repo) else {}
 			local rows: { Row } = {
 				{
@@ -1895,11 +1937,11 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				},
 				{
 					id = "branch:" .. repo,
-					label = "Format (issue worktrees)",
-					hint = "Variables {" .. table.concat(tracker.VARS, "} {") .. "}. Empty: " .. tracker.FORMAT_DEFAULT .. ".",
-					control = { k = "text", value = fmt or "", placeholder = tracker.FORMAT_DEFAULT, mono = true },
+					label = "Branch (new issue branches)",
+					hint = "Variables {" .. table.concat(tracker.VARS, "} {") .. "}. Empty: the Worktrees format above.",
+					control = { k = "text", value = fmt or "", placeholder = formats.of("branch"), mono = true },
 					changed = fmt ~= nil,
-					defaultLabel = tracker.FORMAT_DEFAULT,
+					defaultLabel = "Worktrees format",
 					disabled = formatsOff,
 				},
 			}
@@ -2116,8 +2158,8 @@ end
 
 -- Saves `fmt` as `repo`'s branch name format (nil: back to the default). Fails closed when the saved formats cannot
 -- be read.
-local function saveBranchFormat(repo: string, fmt: string?): string?
-	local map, err = branchMap()
+function formats.saveRepo(repo: string, fmt: string?): string?
+	local map, err = formats.repoMap()
 	if not map then
 		return err
 	end
@@ -2129,6 +2171,12 @@ end
 -- Saves the folder worktrees go in ("" is omp's own).
 local function saveWorktreeRoot(path: string): string?
 	local err = kvSet("worktree-root", path)
+	return if err then "Could not save: " .. err else nil
+end
+
+-- Saves name format `which` (a formats.KEYS key; "" is the default).
+function formats.save(which: string, fmt: string): string?
+	local err = kvSet(formats.KEYS[which], fmt)
 	return if err then "Could not save: " .. err else nil
 end
 
@@ -2714,7 +2762,10 @@ local function commitEdit(state: State)
 		end
 	elseif kind == "branch" and id then
 		-- Empty goes back to the default format; anything else must be a format that can name a branch.
-		settle(s, row, if text == "" then saveBranchFormat(id, nil) else (tracker.formatProblem(text) or saveBranchFormat(id, text)))
+		settle(s, row, if text == "" then formats.saveRepo(id, nil) else (tracker.formatProblem(text) or formats.saveRepo(id, text)))
+	elseif kind == "fmt" and id and formats.KEYS[id] then
+		-- Empty goes back to the default; anything else must be a format that can name a branch (or folder).
+		settle(s, row, if text == "" then formats.save(id, "") else (tracker.formatProblem(text, id ~= "branch") or formats.save(id, text)))
 	elseif row == "wtroot" then
 		settle(s, row, saveWorktreeRoot(text))
 	elseif kind == "checkout" and id then
@@ -2791,7 +2842,9 @@ local function resetRow(state: State, row: string)
 	elseif kind == "checkout" and id then
 		err = clearCheckout(state, id)
 	elseif kind == "branch" and id then
-		err = saveBranchFormat(id, nil)
+		err = formats.saveRepo(id, nil)
+	elseif kind == "fmt" and id and formats.KEYS[id] then
+		err = formats.save(id, "")
 	elseif row == "wtroot" then
 		err = saveWorktreeRoot("")
 	elseif kind == "pmodel" and id then
@@ -3171,7 +3224,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "9"
+local RPC_PROTOCOL = "10"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -3253,18 +3306,107 @@ local function codeRepoOf(issue: tracker.Issue): string?
 	return if #mapped == 1 then mapped[1] else nil
 end
 
--- The branch an issue's worktree in `code` gets: the repository's saved format (tracker.FORMAT_DEFAULT without one)
--- over the issue's variables. nil and why when the format cannot name one.
-local function issueBranch(issue: tracker.Issue, code: string): (string?, string?)
-	local vars = issueVars(issue, code)
-	local names: { [string]: string } = {
-		key = vars.key,
-		slug = tracker.slug(issue.title),
-		owner = vars.owner,
-		repo = vars.repo,
+-- `{github.user}` and `{jira.user}`: who you are on GitHub and Jira, for branch formats and prompts.
+local me = {}
+
+-- As last read: `github` per gh account (key "" for the active one). The issue sidebar's Branch row shows them without
+-- starting a read.
+me.known = { github = {} } :: { github: { [string]: string }, jira: string? }
+
+-- Reads `{github.user}` (the login the active view's gh account is, else gh's active one) and, `jiraToo`, `{jira.user}`;
+-- done(users), "" for one that could not be read.
+function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) -> ())
+	local account = login(state)
+	github.login(account, function(gh)
+		if gh then
+			me.known.github[account or ""] = gh
+		end
+		local users: { [string]: string } = { ["github.user"] = gh or "", ["jira.user"] = "" }
+		if not jiraToo then
+			return done(users)
+		end
+		jira.user(function(ju)
+			if ju then
+				me.known.jira = ju
+				users["jira.user"] = ju
+			end
+			done(users)
+		end)
+	end)
+end
+
+-- Whether `text` names `{github.user}` or `{jira.user}`.
+function me.named(text: string): boolean
+	return string.find(text, "{github.user}", 1, true) ~= nil or string.find(text, "{jira.user}", 1, true) ~= nil
+end
+
+-- The users me.read last found for `issue` (a Jira user only for a Jira issue); a missing one is left out.
+function me.of(state: State, issue: tracker.Issue): { [string]: string }
+	local users: { [string]: string } = { ["jira.user"] = if issue.tracker == "jira" then me.known.jira else "" }
+	users["github.user"] = me.known.github[login(state) or ""]
+	return users
+end
+
+-- The branch format an issue's new branch in `code` gets: the repository's own, else the Worktrees one.
+function formats.issueBranch(code: string): string
+	return formats.repoOf(code) or formats.of("branch")
+end
+
+-- The branch a new worktree of `issue` in `code` gets (formats.issueBranch over its variables and `users`; a user not
+-- in `users` stays as its variable), and its worktree's folder name. nil and why when a format cannot name one.
+function formats.issue(issue: tracker.Issue, code: string, users: { [string]: string }): (string?, string?, string?)
+	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
+	local slug = tracker.slug(issue.title)
+	local vars: { [string]: string } = {
+		key = issue.ref,
+		slug = slug,
+		owner = owner or "",
+		repo = name or "",
 		project = if issue.tracker == "jira" then issue.repo else "",
+		["github.user"] = users["github.user"] or "{github.user}",
+		["jira.user"] = users["jira.user"] or "{jira.user}",
 	}
-	return tracker.branchName(branchFormatOf(code) or tracker.FORMAT_DEFAULT, names)
+	local branch, why = tracker.render(formats.issueBranch(code), vars)
+	if not branch then
+		return nil, nil, why
+	end
+	local dir, dirWhy = tracker.render(formats.of("issuedir"), { key = issue.ref, slug = slug, owner = string.lower(owner or ""), repo = string.lower(name or "") }, true)
+	if not dir then
+		return nil, nil, dirWhy
+	end
+	return branch, dir, nil
+end
+
+-- The folder name pull request `n` of `repo` ("owner/name") titled `title` gets, or nil and why.
+function formats.prDir(repo: string, n: number, title: string): (string?, string?)
+	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
+	return tracker.render(formats.of("prdir"), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
+end
+
+-- How worktree.scan knows `item`'s worktree (a github.Pr, or a tracker.Issue worked in one of `codes`): a pull
+-- request's by its head branch, an issue's by the branch the format names now; either by the folder name the format
+-- names now.
+function formats.want(state: State, item: any, codes: { string }): worktree.Want
+	local want: worktree.Want = { branches = {}, dirs = {} }
+	if state.kind.id ~= "issues" then
+		local owner, name = string.match(item.repo, "^([^/]+)/([^/]+)$")
+		table.insert(want.branches, worktree.prBranch(item.head, item.fork))
+		want.ref = worktree.prRef(owner or "", name or "", item.number)
+		local dir = formats.prDir(item.repo, item.number, item.title)
+		if dir then
+			table.insert(want.dirs, dir)
+		end
+		return want
+	end
+	local users = me.of(state, item)
+	for _, code in codes do
+		local branch, dir = formats.issue(item, code, users)
+		if branch and dir then
+			table.insert(want.branches, branch)
+			table.insert(want.dirs, dir)
+		end
+	end
+	return want
 end
 
 -- The issue with identity `key` (lowercase "owner/repo#ref") as the freshest cached snapshot lists it; nil when none does.
@@ -3330,9 +3472,10 @@ local function menu(state: State, id: string, only: string?)
 	reply(state, id, { items = tern.json.array(items), problem = problem })
 end
 
--- Creates or reuses the worktree of `repo`#`n` and notes the outcome. Without a checkout of `repo` the answer asks the
--- window for one.
-local function prepare(state: State, id: string, repo: string, n: number)
+-- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
+-- notes the outcome. Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries
+-- `{github.user}` too, for the prompt that runs there.
+local function prepare(state: State, id: string, repo: string, n: number, users: boolean)
 	local key = string.lower(repo) .. "#" .. n
 	if preparing[key] then
 		return reply(state, id, { busy = true })
@@ -3341,59 +3484,81 @@ local function prepare(state: State, id: string, repo: string, n: number)
 	if not checkout then
 		return reply(state, id, { needCheckout = string.lower(repo) })
 	end
-	preparing[key] = true
-	local started, err = pcall(function()
-		process.reset()
-		worktree.open(checkout, repo, n, readWorktreeRoot(), login(state), function(r, problem)
-			preparing[key] = nil
-			if not alive(state) then
-				return
-			end
-			if problem == worktree.NO_REPO then
-				return reply(state, id, { needCheckout = string.lower(repo) })
-			end
-			if not r then
-				local why = problem or "Worktree failed"
-				noteWorktree(state, key, nil, why)
-				return reply(state, id, { problem = why })
-			end
-			local current = r.head == r.prHead
-			local summary = worktree.describe(r)
-			noteWorktree(state, key, {
-				root = r.root,
-				path = r.path,
-				branch = r.branch,
-				ref = r.ref,
-				current = current,
-				dirty = r.dirty,
-				summary = summary,
-				update = worktree.update(r),
-			}, nil)
-			reply(state, id, {
-				path = r.path,
-				created = r.created,
-				current = current,
-				dirty = r.dirty,
-				summary = summary,
-				setup = if r.created then setupLine(repo) else nil,
-				branch = r.prRef,
-				base = r.prBase,
-				title = r.title,
-				author = r.author,
-			})
-		end)
-	end)
-	if not started then
-		preparing[key] = nil
-		reply(state, id, { problem = tostring(err) })
+	local function naming(meta: github.PrMeta): (string?, string?)
+		return formats.prDir(repo, n, meta.title)
 	end
+	preparing[key] = true
+	local function open(found: { [string]: string })
+		local started, err = pcall(function()
+			process.reset()
+			worktree.open(checkout, repo, n, naming, readWorktreeRoot(), login(state), function(r, problem)
+				preparing[key] = nil
+				if not alive(state) then
+					return
+				end
+				if problem == worktree.NO_REPO then
+					return reply(state, id, { needCheckout = string.lower(repo) })
+				end
+				if not r then
+					local why = problem or "Worktree failed"
+					noteWorktree(state, key, nil, why)
+					return reply(state, id, { problem = why })
+				end
+				local current = r.head == r.prHead
+				local summary = worktree.describe(r)
+				noteWorktree(state, key, {
+					root = r.root,
+					path = r.path,
+					branch = r.branch,
+					ref = r.ref,
+					current = current,
+					dirty = r.dirty,
+					summary = summary,
+					update = worktree.update(r),
+				}, nil)
+				reply(state, id, {
+					path = r.path,
+					created = r.created,
+					current = current,
+					dirty = r.dirty,
+					summary = summary,
+					setup = if r.created then setupLine(repo) else nil,
+					branch = r.prRef,
+					base = r.prBase,
+					title = r.title,
+					author = r.author,
+					["github.user"] = found["github.user"],
+				})
+			end)
+		end)
+		if not started then
+			preparing[key] = nil
+			reply(state, id, { problem = tostring(err) })
+		end
+	end
+	if not users then
+		return open({})
+	end
+	me.read(state, false, function(found)
+		if alive(state) then
+			open(found)
+		else
+			preparing[key] = nil
+		end
+	end)
 end
 
--- Answers the window's request for issue `ref`'s checkout: its worktree on its own branch (made first if needed), or,
--- with `wt` false, the repository's main checkout. Either way `vars` fill in the prompt that runs there. The
--- repository is the GitHub issue's own; a Jira issue's is `target` (a repository of its project), the project's only
--- one, or asked for: the answer is needRepo (none mapped yet), chooseRepo (several) or needCheckout.
-local function prepareIssue(state: State, id: string, repo: string, ref: string, wt: boolean, target: string?)
+-- How the window answered an issue worktree's questions: a linked PR to check out, or a new branch (`fresh`) from `base`.
+type IssueChoice = { pr: number?, fresh: boolean, base: string? }
+
+-- Answers the window's request for issue `ref`'s checkout: its worktree (made first if needed), or, with `wt` false,
+-- the repository's main checkout. Either way `vars` fill in the prompt that runs there (with `users`, `{github.user}`
+-- and `{jira.user}` too). The repository is the GitHub issue's own; a Jira issue's is `target` (a repository of its
+-- project), the project's only one, or asked for: the answer is needRepo (none mapped yet), chooseRepo (several) or
+-- needCheckout. A new worktree is on the branch of the issue's linked PR when exactly one still has its branch
+-- (choosePr asks among several: `choice.pr`, or `choice.fresh` for a new branch), else on a new branch from the base
+-- chooseBase asks for (`choice.base`).
+local function prepareIssue(state: State, id: string, repo: string, ref: string, wt: boolean, target: string?, choice: IssueChoice, users: boolean)
 	local key = string.lower(repo) .. "#" .. ref
 	local issue = loadedIssue(state, key)
 	if not issue then
@@ -3437,55 +3602,146 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 		return reply(state, id, { needCheckout = string.lower(code) })
 	end
 	local vars = issueVars(issue, code)
-	if not wt then
-		return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars })
-	end
-	local branch, why = issueBranch(issue, code)
-	if not branch then
-		return reply(state, id, { problem = why })
-	end
-	preparing[key] = true
-	local started, err = pcall(function()
-		process.reset()
-		worktree.openIssue(checkout, code, ref, branch, readWorktreeRoot(), function(r, problem)
-			preparing[key] = nil
+	local fmt = formats.issueBranch(code)
+	local need = users or (wt and me.named(fmt))
+
+	-- No worktree yet and nothing chosen: the linked PRs whose branch is still there decide.
+	local function undecided()
+		github.linkedPrs(code, issue.ref, login(state), function(prs, problem)
+			preparing[key] = nil -- the read is over: what it found is asked or acted on next
 			if not alive(state) then
 				return
 			end
-			if problem == worktree.NO_REPO then
+			if not prs then
+				return reply(state, id, { problem = "The pull requests linked to " .. tracker.refLabel(issue.ref) .. " could not be read: " .. (if problem then problem.message else "gh failed") })
+			end
+			local live: { any } = {}
+			for _, p in prs do
+				if p.branch then
+					table.insert(live, { number = p.number, title = clip(printable(p.title), 160), branch = p.branch })
+				end
+			end
+			if #live == 0 then
+				return prepareIssue(state, id, repo, ref, wt, target, { fresh = true }, users)
+			elseif #live == 1 then
+				return prepareIssue(state, id, repo, ref, wt, target, { pr = live[1].number, fresh = false }, users)
+			end
+			reply(state, id, { choosePr = true, prs = tern.json.array(live) })
+		end)
+	end
+
+	-- A new branch that does not exist yet: the remote's branches to start it from.
+	local function needBase(branch: string)
+		worktree.remoteBranches(checkout, code, function(names, why)
+			preparing[key] = nil -- the read is over: its answer is the question
+			if not alive(state) then
+				return
+			end
+			if why == worktree.NO_REPO then
 				return reply(state, id, { needCheckout = string.lower(code) })
 			end
-			if not r then
-				local failed = problem or "Worktree failed"
-				noteWorktree(state, key, nil, failed)
-				return reply(state, id, { problem = failed })
+			if not names then
+				return reply(state, id, { problem = why or "The remote's branches could not be listed." })
 			end
-			local summary = worktree.describeIssue(r)
-			noteWorktree(state, key, {
-				root = r.root,
-				path = r.path,
-				branch = r.branch,
-				current = true,
-				dirty = r.dirty,
-				summary = summary,
-				update = {},
-			}, nil)
-			vars.branch = r.branch
-			reply(state, id, {
-				path = r.path,
-				created = r.created,
-				current = true,
-				dirty = r.dirty,
-				summary = summary,
-				setup = if r.created then setupLine(code) else nil,
-				vars = vars,
-			})
+			local list: { string } = {}
+			local size = 0
+			for _, b in names do
+				size += #b + 3
+				if size > MENU_BUDGET then
+					break
+				end
+				table.insert(list, b)
+			end
+			reply(state, id, { chooseBase = true, branch = branch, branches = tern.json.array(list) })
 		end)
-	end)
-	if not started then
-		preparing[key] = nil
-		reply(state, id, { problem = tostring(err) })
 	end
+
+	local function go(found: { [string]: string })
+		if need then
+			vars["github.user"] = found["github.user"] or ""
+			vars["jira.user"] = found["jira.user"] or ""
+		end
+		if not wt then
+			return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars })
+		end
+		local branch, dir, why = formats.issue(issue, code, found)
+		if not branch or not dir then
+			preparing[key] = nil -- marked busy while the users were read
+			return reply(state, id, { problem = why })
+		end
+		for _, u in { "github.user", "jira.user" } do
+			if found[u] == "" and string.find(fmt, "{" .. u .. "}", 1, true) and (u == "github.user" or issue.tracker == "jira") then
+				preparing[key] = nil
+				return reply(state, id, { problem = "The branch format names {" .. u .. "}, which could not be read: sign in with " .. (if u == "github.user" then "gh auth login" else "acli jira auth login") .. ", or change the format in Settings › Repositories." })
+			end
+		end
+		local made: string = branch
+		preparing[key] = true
+		local started, err = pcall(function()
+			process.reset()
+			local plan: worktree.IssuePlan = { dir = dir, branch = made, pr = choice.pr, fresh = choice.fresh, base = choice.base }
+			worktree.openIssue(checkout, code, ref, plan, readWorktreeRoot(), login(state), function(r, problem)
+				if not alive(state) then
+					preparing[key] = nil
+					return
+				end
+				-- Still busy while gh or git is read for the question (undecided, needBase clear it when they answer).
+				if problem == worktree.UNDECIDED then
+					return undecided()
+				elseif problem == worktree.NEED_BASE then
+					return needBase(made)
+				end
+				preparing[key] = nil
+				if problem == worktree.NO_REPO then
+					return reply(state, id, { needCheckout = string.lower(code) })
+				end
+				if not r then
+					local failed = problem or "Worktree failed"
+					noteWorktree(state, key, nil, failed)
+					return reply(state, id, { problem = failed })
+				end
+				local summary = worktree.describeIssue(r)
+				noteWorktree(state, key, {
+					root = r.root,
+					path = r.path,
+					branch = r.branch,
+					ref = r.ref,
+					current = true,
+					dirty = r.dirty,
+					summary = summary,
+					update = {},
+				}, nil)
+				vars.branch = r.branch
+				reply(state, id, {
+					path = r.path,
+					created = r.created,
+					current = true,
+					dirty = r.dirty,
+					summary = summary,
+					setup = if r.created then setupLine(code) else nil,
+					vars = vars,
+				})
+			end)
+		end)
+		if not started then
+			preparing[key] = nil
+			reply(state, id, { problem = tostring(err) })
+		end
+	end
+
+	if not need then
+		return go({})
+	end
+	if wt then
+		preparing[key] = true -- the users are read first: a repeat meanwhile is busy too
+	end
+	me.read(state, issue.tracker == "jira", function(found)
+		if alive(state) then
+			go(found)
+		elseif wt then
+			preparing[key] = nil
+		end
+	end)
 end
 
 -- The repository picker's first page: every saved repository with its checkout, sorted by name, and the gh logins
@@ -3636,7 +3892,7 @@ local function rpc(state: State, raw: any)
 		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
 			return
 		end
-		prepare(state, id, repo, n)
+		prepare(state, id, repo, n, q.users == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
@@ -3669,7 +3925,19 @@ local function rpc(state: State, raw: any)
 				return
 			end
 		end
-		prepareIssue(state, id, repo, ref, q.worktree, target)
+		local pr, base = q.pr, q.base
+		if pr ~= nil and (type(pr) ~= "number" or pr < 1 or pr > 2147483647 or pr ~= math.floor(pr)) then
+			return
+		end
+		-- git checks the name itself; this only keeps options and odd bytes out of its argv.
+		if base ~= nil and (type(base) ~= "string" or #base > 255 or string.find(base, "^%-") or string.find(base, "[%c%s]")) then
+			return
+		end
+		prepareIssue(state, id, repo, ref, q.worktree, target, { pr = pr, fresh = q.fresh == true, base = base }, q.users == true)
+	elseif q.op == "where" and (q.kind == "pr" or q.kind == "issue") and type(q.key) == "string" and #q.key <= 200 then
+		-- The worktree folder of an item as its note has it (git's list or the last attempt), for the window's Go to tab.
+		local note = state.notes[q.key]
+		reply(state, id, { path = if note and note.ok then note.path else nil })
 	end
 end
 
@@ -4150,10 +4418,11 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	if updated then
 		table.insert(facts, { k = "Updated", v = github.age(updated) .. " ago" })
 	end
-	-- The Branch row shows the branch Worktree would make; without one (the saved format is unusable) there is none.
+	-- The Branch row shows the branch a new worktree would make (a linked PR's is taken instead); without one (a saved
+	-- format is unusable) there is none. A user not read yet shows as its variable.
 	local about: { Node } = {}
 	local code = codeRepoOf(issue)
-	local branch = if code then issueBranch(issue, code) else nil
+	local branch = if code then (formats.issue(issue, code, me.of(state, issue))) else nil
 	if branch then
 		table.insert(about, refRow("branch", "Branch", branch))
 	end
@@ -4644,7 +4913,6 @@ local function blockDef(base: Kind): BlockDef<State>
 		for key, f in pick do
 			local item = listed[key]
 			local sha: string? = if item and not issues then item.headSha else nil
-			local remote = f.remote
 			local note = state.notes[key]
 			if note and note.ok and note.path == f.path then
 				local current = if sha then f.head == sha else note.current
@@ -4654,8 +4922,8 @@ local function blockDef(base: Kind): BlockDef<State>
 					note.current = current
 					if current then
 						note.update = {}
-					elseif remote and sha then
-						note.update = worktree.update({ path = f.path, remote = remote, number = item.number, head = f.head, prHead = sha })
+					elseif sha then
+						note.update = worktree.update({ path = f.path, head = f.head, prHead = sha })
 					end
 					note.summary = summaryOf(issues, note, item) or note.summary
 					changed = true
@@ -4675,7 +4943,7 @@ local function blockDef(base: Kind): BlockDef<State>
 					summary = nil,
 					message = nil,
 					refused = nil,
-					update = if not current and remote and sha then worktree.update({ path = f.path, remote = remote, number = item.number, head = f.head, prHead = sha }) else {},
+					update = if not current and sha then worktree.update({ path = f.path, head = f.head, prHead = sha }) else {},
 					git = true,
 					head = f.head,
 					checked = nil,
@@ -4702,41 +4970,43 @@ local function blockDef(base: Kind): BlockDef<State>
 		state.scanned = snap
 		local issues = state.kind.id == "issues"
 		local paths: { string } = {}
-		local seen: { [string]: boolean } = {}
+		local wants: { [string]: { [string]: worktree.Want } } = {} -- checkout -> item key -> how its worktree is known
 		local saved = readCheckouts() -- one read, not one per repository
-		local function want(repo: string)
-			local path = saved[string.lower(repo)]
-			if type(path) == "string" and path ~= "" and not seen[path] then
-				seen[path] = true
-				table.insert(paths, path)
-			end
-		end
-		local done: { [string]: boolean } = {}
 		for _, item in snap.items do
-			local repo: string = item.repo
-			if not done[repo] then
-				done[repo] = true
-				if issues and item.tracker == "jira" then
-					for _, r in jiraReposOf(repo) do
-						want(r)
+			local codes: { string } = if issues and item.tracker == "jira" then jiraReposOf(item.repo) else { item.repo }
+			for _, code in codes do
+				local path = saved[string.lower(code)]
+				if type(path) == "string" and path ~= "" then
+					if not wants[path] then
+						wants[path] = {}
+						table.insert(paths, path)
 					end
-				else
-					want(repo)
+					wants[path][item.key] = formats.want(state, item, { code })
 				end
 			end
 		end
 		if #paths == 0 then
 			return
 		end
+		-- A noted worktree is still known by what it was in its own checkout, though its item left the list or a format
+		-- changed since.
+		for key, note in state.notes do
+			local root = note.root
+			if note.ok and note.branch and note.path and root and wants[root] then
+				local w = wants[root][key] or { branches = {}, dirs = {}, ref = note.ref }
+				table.insert(w.branches, note.branch)
+				table.insert(w.dirs, string.match(note.path, "([^/]+)/*$") or "")
+				wants[root][key] = w
+			end
+		end
 		state.scanning = true
 		local rev = state.noteSeq
-		local kind = if issues then "issue" else "pr"
 		local scans: { [number]: worktree.Scan? } = {}
 		-- One checkout at a time: a list of many repositories must not start a git process for each at once.
 		local function step(i: number)
 			if i <= #paths and alive(state) then
 				local once = false
-				worktree.scan(paths[i], kind, function(scan)
+				worktree.scan(paths[i], wants[paths[i]], function(scan)
 					if not once then
 						once = true
 						scans[i] = scan -- nil for a scan that failed

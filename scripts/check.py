@@ -19,8 +19,8 @@ types   luau-lsp analyze --platform standard against scripts/tern-0.8.3.d.luau (
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
 smoke   `tern serve` headless on temporary directories only (never the live daemon or plugin registry):
         the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
-        through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, scan) with a
-        fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
+        through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
+        with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
@@ -367,16 +367,17 @@ def check_bench() -> str:
 
 # --------------------------------------------------------------------------- smoke
 # One isolated headless `tern serve` (everything under a temp dir), a fake gh and ssh, real git repositories.
-# plugin.plotroom.smoke (plugin/tests/runtime.luau) runs worktree.open (a PR's) or worktree.openIssue (an issue's) for each scenario; git is the oracle.
+# plugin.plotroom.smoke (plugin/tests/runtime.luau) runs worktree.open (a PR's), worktree.openIssue (an issue's), worktree.remoteBranches or
+# worktree.scan for each scenario; git is the oracle.
 
 SMOKE_TOAST = "Plotroom self-test passed"
 GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
-# Fake gh: the canned pull request file, or the 404 gh prints for a pull request it cannot see; a search answers with the
-# canned list in search.json (none: empty), a checks load with no checks, `auth status` with one signed-in login (the
-# repository picker's list, warmed after a search). Header is prepended.
+# Fake gh: the canned pull request file (the answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a
+# pull request it cannot see; a search answers with the canned list in search.json (none: empty), a checks load with no
+# checks, `auth status` with one signed-in login (the repository picker's list, warmed after a search). Header is prepended.
 FAKE_GH = r'''
 import json, os, re, sys
 a = sys.argv[1:]
@@ -554,8 +555,9 @@ class Smoke:
             self.fail("git -C %s %s" % (cwd, " ".join(args)), "exit 0", "exit %d: %s" % (done.returncode, done.stderr.strip()))
         return done.stdout.rstrip("\n")
 
-    def repo(self, owner: str, name: str, dirname: str, prs: Tuple[int, ...]) -> None:
-        """Bare remote with main and refs/pull/N/head, plus a checkout whose origin reads as github.com but goes through fake ssh."""
+    def repo(self, owner: str, name: str, dirname: str, prs: Tuple[int, ...], deleted: Tuple[int, ...] = ()) -> None:
+        """Bare remote with main and, for each PR, refs/pull/N/head and its head branch refs/heads/feature-N (not for `deleted`: merged, then the branch was
+        deleted), plus a checkout (cloned first, so it knows none of them) whose origin reads as github.com but goes through fake ssh."""
         key = "%s/%s" % (owner, name)
         scratch = self.tmp / "scratch" / ("%s__%s" % (owner, name))
         bare = self.smoke / "remotes" / owner / ("%s.git" % name)
@@ -571,11 +573,12 @@ class Smoke:
         self.out(checkout, "remote", "set-url", "origin", "git@github.com:%s/%s.git" % (owner, name))
         self.repos[key] = {"scratch": scratch, "bare": bare, "count": 0}
         for n in prs:
-            self.shas[(key, n)] = self.push_pr(key, n, "main")
+            self.shas[(key, n)] = self.push_pr(key, n, "main", branch=n not in deleted)
             self.canned(key, n, self.shas[(key, n)])
 
-    def push_pr(self, key: str, n: int, base: str) -> str:
-        """A new commit on top of `base` (a scratch ref), pushed (forced) to the bare remote's refs/pull/n/head."""
+    def push_pr(self, key: str, n: int, base: str, branch: bool = True) -> str:
+        """A new commit on top of `base` (a scratch ref), pushed (forced) to the bare remote's refs/pull/n/head and, as the PR's head branch, to
+        refs/heads/feature-n (`branch` False: the head lives in a fork, not here)."""
         r = self.repos[key]
         scratch, bare = r["scratch"], r["bare"]
         r["count"] = int(r["count"]) + 1  # type: ignore[arg-type]
@@ -584,25 +587,79 @@ class Smoke:
         self.out(scratch, "add", "-A")  # type: ignore[arg-type]
         self.out(scratch, "commit", "-q", "-m", "pr %d #%d" % (n, r["count"]))  # type: ignore[arg-type]
         sha = self.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
-        self.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/pull/%d/head" % (sha, n))  # type: ignore[arg-type]
+        heads = ["%s:refs/heads/feature-%d" % (sha, n)] if branch else []
+        self.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/pull/%d/head" % (sha, n), *heads)  # type: ignore[arg-type]
         self.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
         return sha
 
-    def canned(self, key: str, n: int, sha: str) -> None:
+    def advance(self, key: str) -> str:
+        """A new commit on the bare remote's main, so a checkout's remote-tracking main is behind it until something fetches."""
+        r = self.repos[key]
+        scratch, bare = r["scratch"], r["bare"]
+        r["count"] = int(r["count"]) + 1  # type: ignore[arg-type]
+        self.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
+        (scratch / ("main-%d.txt" % r["count"])).write_text("main moved, commit %d\n" % r["count"], encoding="utf-8")  # type: ignore[operator,index]
+        self.out(scratch, "add", "-A")  # type: ignore[arg-type]
+        self.out(scratch, "commit", "-q", "-m", "main #%d" % r["count"])  # type: ignore[arg-type]
+        self.out(scratch, "push", "-q", str(bare), "main")  # type: ignore[arg-type]
+        return self.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
+
+    def canned(self, key: str, n: int, sha: str, fork: str = "", gone: bool = False) -> None:
+        """What the fake gh prints for PR n of `key` (the --jq answer): head `sha` on branch feature-n of the repository itself, of `fork`'s copy of it,
+        or (`gone`) of that copy after it was deleted (no head repository then, only its owner)."""
         owner, name = key.split("/")
-        meta = {"base": key, "sha": sha, "ref": "feature-%d" % n, "state": "open"}
+        who = fork or owner
+        meta = {"base": key, "sha": sha, "ref": "feature-%d" % n, "headRepo": None if gone else "%s/%s" % (who, name), "headOwner": who, "state": "open",
+                "baseRef": "main", "title": "Smoke PR %d" % n, "author": "octo"}
         (self.smoke / "pr" / ("%s__%s__%d.json" % (owner, name, n))).write_text(json.dumps(meta), encoding="utf-8")
+
+    def fork_pr(self, key: str, n: int, gone: bool = False) -> None:
+        """PR n of `key` from forkowner's copy of it: the remote holds only refs/pull/n/head for it (its branch lives in the fork); gh names the fork or,
+        once it was deleted (`gone`), only its owner. The repository has a branch of its own called feature-n, at main: not the fork's."""
+        self.shas[(key, n)] = self.push_pr(key, n, "main", branch=False)
+        self.out(self.repos[key]["scratch"], "push", "-q", str(self.bare(key)), "main:refs/heads/feature-%d" % n)  # type: ignore[arg-type]
+        self.canned(key, n, self.shas[(key, n)], fork="forkowner", gone=gone)
 
     def checkout(self, dirname: str) -> Path:
         return self.work / dirname
 
+    def bare(self, key: str) -> Path:
+        return self.repos[key]["bare"]  # type: ignore[return-value]
+
+    def ref(self, cwd: Path, name: str) -> Optional[str]:
+        """The commit `name` names in `cwd`'s repository, or None when there is no such ref."""
+        done = self.git(cwd, "rev-parse", "--verify", "--quiet", name)
+        if done.returncode not in (0, 1):
+            self.fail("git -C %s rev-parse --verify --quiet %s" % (cwd, name), "exit 0 or 1", "exit %d: %s" % (done.returncode, done.stderr.strip()))
+        return done.stdout.strip() if done.returncode == 0 else None
+
+    def config(self, cwd: Path, key: str) -> Optional[str]:
+        """The value of git config `key` in `cwd`'s repository, or None when it is not set."""
+        done = self.git(cwd, "config", "--get", key)
+        if done.returncode not in (0, 1):
+            self.fail("git -C %s config --get %s" % (cwd, key), "exit 0 or 1", "exit %d: %s" % (done.returncode, done.stderr.strip()))
+        return done.stdout.strip() if done.returncode == 0 else None
+
+    def folders(self) -> List[str]:
+        """What omp's worktrees folder holds, sorted."""
+        base = self.tmp / "omp-wt"
+        return sorted(p.name for p in base.iterdir()) if base.is_dir() else []
+
+    def pr_dir(self, key: str, n: int) -> str:
+        """The folder name the default PR format gives: plotroom-<owner>_<repo>-pr-N, owner and repo lowercase."""
+        return "plotroom-%s-pr-%d" % (key.lower().replace("/", "_", 1), n)
+
+    def issue_dir(self, key: str, ref: str) -> str:
+        """The default issue format's: plotroom-<owner>_<repo>-issue-<ref>; the ref keeps its case (Jira's ABC-7)."""
+        return "plotroom-%s-issue-%s" % (key.lower().replace("/", "_", 1), ref)
+
     def wt(self, key: str, n: int) -> Path:
-        """Where Plotroom puts the worktree: <omp worktrees>/plotroom-<owner>_<repo as named>-pr-N, lowercase."""
-        return self.tmp / "omp-wt" / ("plotroom-%s-pr-%d" % (key.lower().replace("/", "_", 1), n))
+        """Where Plotroom puts PR n's worktree: a direct child of omp's worktrees folder, named by the default PR format."""
+        return self.tmp / "omp-wt" / self.pr_dir(key, n)
 
     def issue_wt(self, key: str, ref: str) -> Path:
-        """Where Plotroom puts an issue's worktree: <omp worktrees>/plotroom-<owner>_<repo as named>-issue-<ref>, lowercase."""
-        return self.tmp / "omp-wt" / ("plotroom-%s-issue-%s" % (key.lower().replace("/", "_", 1), ref.lower()))
+        """Where Plotroom puts an issue's worktree under the default issue format."""
+        return self.tmp / "omp-wt" / self.issue_dir(key, ref)
 
     # ----- the Tern session
 
@@ -691,23 +748,41 @@ class Smoke:
         seen = [l.strip() for l in tree.splitlines() if re.search(r"plotroom|plugin|error|fail", l, re.I)]
         self.fail("UI tree text after plugins run plugin.plotroom.selftest", "a text node %r" % SMOKE_TOAST, seen[-10:] or "no Plotroom/plugin text at all")
 
-    def open(self, repo: str, number: int, checkout: Path) -> Dict[str, object]:
-        request = {"op": "open", "repo": repo, "number": number, "checkout": str(checkout)}
+    def open(self, repo: str, number: int, checkout: Path, pr_dir: Optional[str] = None) -> Dict[str, object]:
+        """worktree.open; `pr_dir` is the folder-name format that names the worktree (default: Plotroom's own)."""
+        request: Dict[str, object] = {"op": "open", "repo": repo, "number": number, "checkout": str(checkout)}
+        if pr_dir is not None:
+            request["prDir"] = pr_dir
         return self.run_request(request, "open %s#%d" % (repo, number))
 
-    def open_issue(self, repo: str, key: str, branch: str, checkout: Path) -> Dict[str, object]:
-        request = {"op": "issue", "repo": repo, "key": key, "branch": branch, "checkout": str(checkout)}
+    def open_issue(self, repo: str, key: str, plan: Dict[str, object], checkout: Path) -> Dict[str, object]:
+        """worktree.openIssue with `plan` (see issue_plan)."""
+        request = {"op": "issue", "repo": repo, "key": key, "plan": plan, "checkout": str(checkout)}
         return self.run_request(request, "open issue %s#%s" % (repo, key))
 
-    def scan(self, checkout: Path, kind: str) -> Dict[str, Dict[str, object]]:
-        """What worktree.scan reads of the checkout (its main worktree is the checkout): the worktrees of `kind` ("pr" or "issue") by item key."""
-        data = self.run_request({"op": "scan", "kind": kind, "checkout": str(checkout)}, "scan %s worktrees of %s" % (kind, checkout))
+    def scan(self, root: Path, wants: Dict[str, Dict[str, object]], at: Optional[Path] = None) -> Dict[str, Dict[str, object]]:
+        """worktree.scan of the checkout whose main worktree is `root`, asked from `at` (default: `root`), for `wants` (item key -> see `want`): what it
+        finds, by item key."""
+        data = self.run_request({"op": "scan", "checkout": str(at or root), "wants": wants}, "scan %s for %d item(s)" % (at or root, len(wants)))
         self.eq("ok (problem: %r)" % data.get("problem"), True, data.get("ok"))
         scan = data.get("scan")
-        if not isinstance(scan, dict) or not isinstance(scan.get("found"), dict):
+        if not isinstance(scan, dict):
             self.fail("scan", "an object with root and found", repr(scan))
-        self.same_path("root", checkout, scan.get("root"))
-        return scan["found"]
+        self.same_path("root (the main worktree, whichever folder was asked)", root, scan.get("root"))
+        found = scan.get("found")
+        if found == []:  # Tern writes a table with nothing in it as a list
+            found = {}
+        if not isinstance(found, dict):
+            self.fail("scan", "found: an object", repr(found))
+        return found  # type: ignore[return-value]
+
+    def remote_branches(self, repo: str, checkout: Path) -> List[str]:
+        """worktree.remoteBranches: the branches of `repo`'s remote, as Plotroom lists them."""
+        request = {"op": "branches", "repo": repo, "checkout": str(checkout)}
+        names = self.opened(self.run_request(request, "branches of %s" % repo)).get("branches")
+        if not isinstance(names, list):
+            self.fail("branches", "a list", repr(names))
+        return names  # type: ignore[return-value]
 
     def run_request(self, request: Dict[str, object], what: str) -> Dict[str, object]:
         result, dup = self.smoke / "result.json", self.smoke / "duplicate.json"
@@ -805,23 +880,36 @@ class Smoke:
 
 def sc_create(s: Smoke) -> None:
     root, wt, sha = s.checkout("r"), s.wt("o/r", 1), s.shas[("o/r", 1)]
+    ref = "refs/plotroom-pr/o/r/pr-1"
+    s.eq("refs/remotes/origin/feature-1 before (the checkout predates the branch)", None, s.ref(root, "refs/remotes/origin/feature-1"))
     r = s.opened(s.open("o/r", 1, root))
     s.eq("created", True, r.get("created"))
     s.eq("head", sha, r.get("head"))
     s.eq("prHead", sha, r.get("prHead"))
     s.eq("dirty", False, r.get("dirty"))
-    s.eq("branch", "plotroom/o/r/pr-1", r.get("branch"))
-    s.eq("ref", "refs/plotroom-pr/o/r/pr-1", r.get("ref"))
+    s.eq("branch (the PR's own head branch)", "feature-1", r.get("branch"))
+    s.eq("ref", ref, r.get("ref"))
+    s.eq("prRef", "feature-1", r.get("prRef"))
+    s.eq("prBase", "main", r.get("prBase"))
+    s.eq("number", 1, r.get("number"))
+    s.eq("title", "Smoke PR 1", r.get("title"))
+    s.eq("author", "octo", r.get("author"))
     s.same_path("path", wt, r.get("path"))
     s.same_path("root", root, r.get("root"))
     s.eq("worktree directory exists", True, wt.is_dir())
     s.eq("git rev-parse --show-toplevel in the worktree", os.path.realpath(str(wt)), os.path.realpath(s.out(wt, "rev-parse", "--show-toplevel")))
-    s.eq("refs/plotroom-pr/o/r/pr-1", sha, s.out(root, "rev-parse", "--verify", "refs/plotroom-pr/o/r/pr-1"))
-    s.eq("refs/heads/plotroom/o/r/pr-1", sha, s.out(root, "rev-parse", "--verify", "refs/heads/plotroom/o/r/pr-1"))
-    short = s.git(root, "rev-parse", "plotroom/o/r/pr-1")
-    s.eq("rev-parse plotroom/o/r/pr-1 exit status", 0, short.returncode)
-    s.eq("rev-parse plotroom/o/r/pr-1 stderr has no 'ambiguous'", False, "ambiguous" in short.stderr.lower())
-    s.eq("rev-parse plotroom/o/r/pr-1 stdout", sha, short.stdout.strip())
+    s.eq("git branch --show-current in the worktree", "feature-1", s.out(wt, "branch", "--show-current"))
+    s.eq(ref, sha, s.ref(root, ref))
+    s.eq("refs/heads/feature-1", sha, s.ref(root, "refs/heads/feature-1"))
+    s.eq("refs/remotes/origin/feature-1 (fetched for the upstream)", sha, s.ref(root, "refs/remotes/origin/feature-1"))
+    s.eq("branch.feature-1.remote", "origin", s.config(root, "branch.feature-1.remote"))
+    s.eq("branch.feature-1.merge", "refs/heads/feature-1", s.config(root, "branch.feature-1.merge"))
+    s.eq("the worktree's upstream", "origin/feature-1", s.out(wt, "rev-parse", "--abbrev-ref", "@{upstream}"))
+    short = s.git(root, "rev-parse", "feature-1")
+    s.eq("rev-parse feature-1 exit status", 0, short.returncode)
+    s.eq("rev-parse feature-1 stderr has no 'ambiguous'", False, "ambiguous" in short.stderr.lower())
+    s.eq("rev-parse feature-1 stdout", sha, short.stdout.strip())
+    s.eq("branches in the old plotroom/ namespace", "", s.out(root, "for-each-ref", "refs/heads/plotroom"))
     s.eq("update", [], s.last.get("update"))  # type: ignore[union-attr]
 
 
@@ -831,7 +919,9 @@ def sc_reuse(s: Smoke) -> None:
     s.eq("created", False, r.get("created"))
     s.eq("head", sha, r.get("head"))
     s.eq("dirty", False, r.get("dirty"))
-    s.eq("refs/plotroom-pr/o/r/pr-1 untouched", sha, s.out(root, "rev-parse", "refs/plotroom-pr/o/r/pr-1"))
+    s.eq("branch", "feature-1", r.get("branch"))
+    s.same_path("path", wt, r.get("path"))
+    s.eq("refs/plotroom-pr/o/r/pr-1 untouched", sha, s.ref(root, "refs/plotroom-pr/o/r/pr-1"))
     s.eq("worktree HEAD untouched", sha, s.out(wt, "rev-parse", "HEAD"))
 
 
@@ -863,12 +953,11 @@ def sc_advanced(s: Smoke) -> None:
     s.eq("head", old, r.get("head"))
     s.eq("prHead", new, r.get("prHead"))
     s.eq("dirty", True, r.get("dirty"))
-    update = s.last.get("update")  # type: ignore[union-attr]
-    s.eq("update command count", 2, len(update) if isinstance(update, list) else update)
-    s.contains("update[1]", " fetch ", update[0])  # type: ignore[index]
-    s.contains("update[2]", "merge --ff-only", update[1])  # type: ignore[index]
+    s.eq("update (one pull: the branch tracks the PR's head branch)", ["git -C %s pull --ff-only" % wt], s.last.get("update"))  # type: ignore[union-attr]
     s.eq("worktree HEAD still old", old, s.out(wt, "rev-parse", "HEAD"))
     s.eq("refs/plotroom-pr/o/r/pr-1 still old (no fetch on reuse)", old, s.out(root, "rev-parse", "refs/plotroom-pr/o/r/pr-1"))
+    s.eq("refs/heads/feature-1 still old (never moved)", old, s.ref(root, "refs/heads/feature-1"))
+    s.eq("refs/remotes/origin/feature-1 still old (no fetch on reuse)", old, s.ref(root, "refs/remotes/origin/feature-1"))
     s.eq("untracked bytes, tracked bytes and status after", before, local_changes(s, wt))
 
 
@@ -888,31 +977,61 @@ def sc_hook(s: Smoke) -> None:
     s.eq("dirty reflects the post-hook state", True, r.get("dirty"))
 
 
-def sc_branch_elsewhere(s: Smoke) -> None:
-    root, wt = s.checkout("r"), s.wt("o/r", 3)
+def sc_existing_branch(s: Smoke) -> None:
+    """The PR's head branch exists already, at another commit: the worktree attaches to it at ITS commit; the branch is never moved and gets no upstream."""
+    root, wt, sha = s.checkout("r"), s.wt("o/r", 3), s.shas[("o/r", 3)]
     main = s.out(root, "rev-parse", "main")
-    s.out(root, "branch", "plotroom/o/r/pr-3", main)
-    listed = s.out(root, "worktree", "list", "--porcelain")
-    s.refused(s.open("o/r", 3, root))
-    s.eq("branch plotroom/o/r/pr-3 still at main", main, s.out(root, "rev-parse", "refs/heads/plotroom/o/r/pr-3"))
-    s.eq("worktree directory for pr-3 exists", False, wt.exists())
-    s.eq("git worktree list", listed, s.out(root, "worktree", "list", "--porcelain"))
+    s.out(root, "branch", "feature-3", main)
+    r = s.opened(s.open("o/r", 3, root))
+    s.eq("created", True, r.get("created"))
+    s.eq("branch", "feature-3", r.get("branch"))
+    s.eq("head (the branch's own commit)", main, r.get("head"))
+    s.eq("prHead", sha, r.get("prHead"))
+    s.eq("head is not the PR's head", True, r.get("head") != r.get("prHead"))
+    s.same_path("path", wt, r.get("path"))
+    s.eq("worktree directory exists", True, wt.is_dir())
+    s.eq("worktree HEAD", main, s.out(wt, "rev-parse", "HEAD"))
+    s.eq("git branch --show-current in the worktree", "feature-3", s.out(wt, "branch", "--show-current"))
+    s.eq("refs/heads/feature-3 untouched", main, s.ref(root, "refs/heads/feature-3"))
+    s.eq("refs/plotroom-pr/o/r/pr-3 (the PR's head, fetched all the same)", sha, s.ref(root, "refs/plotroom-pr/o/r/pr-3"))
+    s.eq("branch.feature-3.remote (the user's branch gets no upstream)", None, s.config(root, "branch.feature-3.remote"))
+    s.eq("branch.feature-3.merge", None, s.config(root, "branch.feature-3.merge"))
+    s.contains("describe", "Different", s.last.get("describe"))  # type: ignore[union-attr]
+    s.eq("update (catching up is the user's)", ["git -C %s pull --ff-only" % wt], s.last.get("update"))  # type: ignore[union-attr]
+
+
+def sc_deleted_branch(s: Smoke) -> None:
+    """A PR whose head branch is gone from the remote (merged, then deleted) still opens, from its refs/pull/N/head: the fetch of the branch fails quietly and
+    the new branch records its upstream all the same."""
+    root, wt, sha = s.checkout("r"), s.wt("o/r", 10), s.shas[("o/r", 10)]
+    s.eq("refs/heads/feature-10 of the remote", None, s.ref(s.bare("o/r"), "refs/heads/feature-10"))
+    r = s.opened(s.open("o/r", 10, root))
+    s.eq("created", True, r.get("created"))
+    s.eq("branch", "feature-10", r.get("branch"))
+    s.eq("head", sha, r.get("head"))
+    s.same_path("path", wt, r.get("path"))
+    s.eq("worktree directory exists", True, wt.is_dir())
+    s.eq("refs/heads/feature-10", sha, s.ref(root, "refs/heads/feature-10"))
+    s.eq("refs/remotes/origin/feature-10 (nothing to fetch)", None, s.ref(root, "refs/remotes/origin/feature-10"))
+    s.eq("branch.feature-10.remote", "origin", s.config(root, "branch.feature-10.remote"))
+    s.eq("branch.feature-10.merge", "refs/heads/feature-10", s.config(root, "branch.feature-10.merge"))
 
 
 def sc_dot_github(s: Smoke) -> None:
     root, wt, sha = s.checkout("dotgithub"), s.wt("github/.github", 1), s.shas[("github/.github", 1)]
-    branch, ref = "plotroom/github/%2Egithub/pr-1", "refs/plotroom-pr/github/%2Egithub/pr-1"
+    ref = "refs/plotroom-pr/github/%2Egithub/pr-1"
     r = s.opened(s.open("github/.github", 1, root))
     s.eq("created", True, r.get("created"))
-    s.eq("branch", branch, r.get("branch"))
+    s.eq("branch", "feature-1", r.get("branch"))
     s.eq("ref", ref, r.get("ref"))
     s.eq("head", sha, r.get("head"))
     s.same_path("path", wt, r.get("path"))
     s.eq("worktree directory exists", True, wt.is_dir())
-    s.eq("git check-ref-format --branch", 0, s.git(root, "check-ref-format", "--branch", branch).returncode)
+    s.eq("the worktrees folder holds the folder with the repository's leading dot", True, "plotroom-github_.github-pr-1" in s.folders())
     s.eq("git check-ref-format (ref)", 0, s.git(root, "check-ref-format", ref).returncode)
-    s.eq(ref, sha, s.out(root, "rev-parse", "--verify", ref))
-    s.eq("refs/heads/" + branch, sha, s.out(root, "rev-parse", "--verify", "refs/heads/" + branch))
+    s.eq(ref, sha, s.ref(root, ref))
+    s.eq("refs/heads/feature-1", sha, s.ref(root, "refs/heads/feature-1"))
+    s.eq("branch.feature-1.remote", "origin", s.config(root, "branch.feature-1.remote"))
 
 
 def sc_recovery(s: Smoke) -> None:
@@ -920,7 +1039,8 @@ def sc_recovery(s: Smoke) -> None:
     listed = s.out(root, "worktree", "list", "--porcelain")
     s.refused(s.open("o/r", 9, root))
     s.eq("(a) worktree directory for pr-9 exists", False, wt.exists())
-    s.eq("(a) refs/plotroom-pr/o/r/pr-9 exists", False, s.git(root, "rev-parse", "--verify", "--quiet", "refs/plotroom-pr/o/r/pr-9").returncode == 0)
+    s.eq("(a) refs/plotroom-pr/o/r/pr-9", None, s.ref(root, "refs/plotroom-pr/o/r/pr-9"))
+    s.eq("(a) refs/heads/feature-9", None, s.ref(root, "refs/heads/feature-9"))
     s.eq("(a) git worktree list", listed, s.out(root, "worktree", "list", "--porcelain"))
     sha = s.push_pr("o/r", 9, "main")
     s.canned("o/r", 9, sha)
@@ -937,79 +1057,265 @@ def sc_recovery(s: Smoke) -> None:
     s.contains("(b) problem names the blocking path", str(blocker), problem)
     s.eq("(b) git worktree list", listed, s.out(q, "worktree", "list", "--porcelain"))
     s.eq("(b) blocker still a regular file", True, blocker.is_file())
+    s.eq("(b) refs/heads/feature-1", None, s.ref(q, "refs/heads/feature-1"))
     blocker.unlink()
     r = s.opened(s.open("p/q", 1, q))
     s.eq("(b, retry) created", True, r.get("created"))
     s.eq("(b, retry) worktree directory exists", True, qwt.is_dir())
 
 
-def sc_issue(s: Smoke) -> None:
-    """An issue's worktree is a new branch at the remote's default branch, no upstream configured; opened again it is reused."""
-    root, wt, branch = s.checkout("r"), s.issue_wt("o/r", "7"), "7-smoke-issue"
-    base = s.out(s.repos["o/r"]["bare"], "rev-parse", "HEAD")  # type: ignore[arg-type]
-    r = s.opened(s.open_issue("o/r", "7", branch, root))
+def sc_fork(s: Smoke) -> None:
+    """A fork's PR is checked out on `<fork owner>/<head branch>`, made from the commit the repository's own refs/pull/N/head holds. The branch tracks the
+    fork's branch by URL, or, when the fork was deleted, the PR's own ref; the repository's own branch of the same name is neither used nor fetched."""
+    root = s.checkout("r")
+    for n, remote, merge in (
+        (4, "https://github.com/forkowner/r.git", "refs/heads/feature-4"),
+        (5, "origin", "refs/pull/5/head"),
+    ):
+        sha, wt, branch, ref = s.shas[("o/r", n)], s.wt("o/r", n), "forkowner/feature-%d" % n, "refs/plotroom-pr/o/r/pr-%d" % n
+        r = s.opened(s.open("o/r", n, root))
+        s.eq("#%d created" % n, True, r.get("created"))
+        s.eq("#%d branch" % n, branch, r.get("branch"))
+        s.eq("#%d ref" % n, ref, r.get("ref"))
+        s.eq("#%d prRef (the head branch on GitHub)" % n, "feature-%d" % n, r.get("prRef"))
+        s.eq("#%d head" % n, sha, r.get("head"))
+        s.same_path("#%d path" % n, wt, r.get("path"))
+        s.eq("#%d worktree directory exists" % n, True, wt.is_dir())
+        s.eq("#%d git branch --show-current in the worktree" % n, branch, s.out(wt, "branch", "--show-current"))
+        s.eq("#%d %s" % (n, ref), sha, s.ref(root, ref))
+        s.eq("#%d refs/heads/%s" % (n, branch), sha, s.ref(root, "refs/heads/" + branch))
+        s.eq("#%d branch.%s.remote" % (n, branch), remote, s.config(root, "branch.%s.remote" % branch))
+        s.eq("#%d branch.%s.merge" % (n, branch), merge, s.config(root, "branch.%s.merge" % branch))
+        s.eq("#%d refs/heads/feature-%d (the fork's branch name is not made here)" % (n, n), None, s.ref(root, "refs/heads/feature-%d" % n))
+        s.eq("#%d refs/remotes/origin/feature-%d (the repository's own branch of that name is not fetched)" % (n, n), None, s.ref(root, "refs/remotes/origin/feature-%d" % n))
+
+
+def sc_pr_dir(s: Smoke) -> None:
+    """The worktree's folder is what `naming` makes of the PR (or what an issue's plan names), a direct child of omp's worktrees folder: a format that
+    cannot name one stops the open before anything is made, and so does a name that is not one path segment; once another name was used the default one
+    is never made, and the next open, whatever the format, finds the worktree where it is."""
+    root, sha, leaf = s.checkout("r"), s.shas[("o/r", 7)], "smoke-o_r-7-smoke-pr-7"  # {slug} of the title "Smoke PR 7"
+    wt, plain = s.tmp / "omp-wt" / leaf, s.wt("o/r", 7)
+    before, listed = s.folders(), s.out(root, "worktree", "list", "--porcelain")
+    problem = s.refused(s.open("o/r", 7, root, pr_dir="smoke-{slug}"))
+    s.contains("(no {key}) problem", "{key}", problem)
+    s.eq("(no {key}) worktrees folder", before, s.folders())
+    s.eq("(no {key}) git worktree list", listed, s.out(root, "worktree", "list", "--porcelain"))
+    s.eq("(no {key}) refs/heads/feature-7", None, s.ref(root, "refs/heads/feature-7"))
+    s.eq("(no {key}) refs/plotroom-pr/o/r/pr-7", None, s.ref(root, "refs/plotroom-pr/o/r/pr-7"))
+    problem = s.refused(s.open_issue("o/r", "9", issue_plan("../escape-9", "smoke/9", fresh=True, base="main"), root))
+    s.contains("(not one path segment) problem", "not usable", problem)
+    s.eq("(not one path segment) worktrees folder", before, s.folders())
+    s.eq("(not one path segment) next to the worktrees folder", False, (s.tmp / "escape-9").exists())
+    s.eq("(not one path segment) refs/heads/smoke/9", None, s.ref(root, "refs/heads/smoke/9"))
+    r = s.opened(s.open("o/r", 7, root, pr_dir="smoke-{owner}_{repo}-{key}-{slug}"))
     s.eq("created", True, r.get("created"))
-    s.eq("head", base, r.get("head"))
+    s.eq("branch", "feature-7", r.get("branch"))
+    s.eq("head", sha, r.get("head"))
+    s.same_path("path", wt, r.get("path"))
+    s.eq("worktrees folder (the new one is a direct child)", sorted(before + [leaf]), s.folders())
+    s.eq("the default folder is not made", False, plain.exists())
+    again = s.opened(s.open("o/r", 7, root))
+    s.eq("created (reopened under the default format)", False, again.get("created"))
+    s.same_path("path (reopened under the default format)", wt, again.get("path"))
+    s.eq("worktrees folder (reopened)", sorted(before + [leaf]), s.folders())
+
+
+def issue_plan(dirname: str, branch: str, fresh: bool = False, pr: Optional[int] = None, base: Optional[str] = None) -> Dict[str, object]:
+    """A worktree.IssuePlan as the request spells it: the worktree's folder name, the issue's own branch, whether that is made new (`fresh`) or a linked
+    PR's branch (`pr`) is used instead, and the remote branch a new one starts from (`base`)."""
+    plan: Dict[str, object] = {"dir": dirname, "branch": branch, "fresh": fresh}
+    if pr is not None:
+        plan["pr"] = pr
+    if base is not None:
+        plan["base"] = base
+    return plan
+
+
+def issue_flow(s: Smoke, ref: str, branch: str) -> Path:
+    """An issue's new-branch worktree, as its caller walks it: with no worktree and nothing decided the answer is "undecided", with a new branch and no base
+    "need-base", and neither makes anything (nor fetches); with a base the branch starts at the remote's freshly fetched branch, no upstream configured;
+    opened again, even by a plan that decides nothing and names another branch, the worktree is reused as it is. Returns the worktree."""
+    root, wt, dirname = s.checkout("r"), s.issue_wt("o/r", ref), s.issue_dir("o/r", ref)
+    listed = s.out(root, "worktree", "list", "--porcelain")
+    base = s.advance("o/r")  # the checkout's refs/remotes/origin/main is behind the remote's main until something fetches it
+    stale = s.ref(root, "refs/remotes/origin/main")
+    s.eq("refs/remotes/origin/main is behind the remote's main", True, stale != base)
+
+    def nothing_made(step: str) -> None:
+        s.eq("(%s) worktree directory exists" % step, False, wt.exists())
+        s.eq("(%s) refs/heads/%s" % (step, branch), None, s.ref(root, "refs/heads/" + branch))
+        s.eq("(%s) git worktree list" % step, listed, s.out(root, "worktree", "list", "--porcelain"))
+        s.eq("(%s) refs/remotes/origin/main (nothing fetched)" % step, stale, s.ref(root, "refs/remotes/origin/main"))
+
+    s.eq("(undecided) problem", "undecided", s.refused(s.open_issue("o/r", ref, issue_plan(dirname, branch), root)))
+    nothing_made("undecided")
+    s.eq("(need-base) problem", "need-base", s.refused(s.open_issue("o/r", ref, issue_plan(dirname, branch, fresh=True), root)))
+    nothing_made("need-base")
+    problem = s.refused(s.open_issue("o/r", ref, issue_plan(dirname, branch, fresh=True, base="no-such-branch"), root))
+    s.contains("(missing base) problem", "no-such-branch", problem)
+    nothing_made("missing base")
+    r = s.opened(s.open_issue("o/r", ref, issue_plan(dirname, branch, fresh=True, base="main"), root))
+    s.eq("created", True, r.get("created"))
+    s.eq("head (the remote's main, fetched)", base, r.get("head"))
     s.eq("branch", branch, r.get("branch"))
-    s.eq("key", "7", r.get("key"))
+    s.eq("key", ref, r.get("key"))
     s.eq("dirty", False, r.get("dirty"))
+    s.eq("ref (only a linked PR's worktree has one)", None, r.get("ref"))
+    s.eq("number (likewise)", None, r.get("number"))
     s.same_path("path", wt, r.get("path"))
     s.same_path("root", root, r.get("root"))
     s.eq("worktree directory exists", True, wt.is_dir())
     s.eq("git rev-parse --show-toplevel in the worktree", os.path.realpath(str(wt)), os.path.realpath(s.out(wt, "rev-parse", "--show-toplevel")))
     s.eq("git branch --show-current in the worktree", branch, s.out(wt, "branch", "--show-current"))
-    s.eq("refs/heads/" + branch, base, s.out(root, "rev-parse", "--verify", "refs/heads/" + branch))
-    s.eq("refs/plotroom-base/o/r", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/o/r"))
-    s.eq("git config branch.%s.merge exit status (no upstream)" % branch, 1, s.git(root, "config", "branch.%s.merge" % branch).returncode)
+    s.eq("refs/heads/" + branch, base, s.ref(root, "refs/heads/" + branch))
+    s.eq("refs/remotes/origin/main (fetched)", base, s.ref(root, "refs/remotes/origin/main"))
+    s.eq("refs/plotroom-base (gone)", "", s.out(root, "for-each-ref", "refs/plotroom-base"))
+    s.eq("branch.%s.remote (no upstream)" % branch, None, s.config(root, "branch.%s.remote" % branch))
+    s.eq("branch.%s.merge (no upstream)" % branch, None, s.config(root, "branch.%s.merge" % branch))
     s.contains("describe", branch, s.last.get("describe"))  # type: ignore[union-attr]
-    again = s.opened(s.open_issue("o/r", "7", branch, root))
+    other = branch + "-renamed"
+    again = s.opened(s.open_issue("o/r", ref, issue_plan(dirname, other), root))
     s.eq("created (second open)", False, again.get("created"))
+    s.eq("branch (second open: the worktree's own, not the plan's)", branch, again.get("branch"))
     s.eq("head (second open)", base, again.get("head"))
     s.eq("worktree HEAD untouched", base, s.out(wt, "rev-parse", "HEAD"))
+    s.eq("refs/heads/" + other, None, s.ref(root, "refs/heads/" + other))
+    return wt
+
+
+def sc_issue(s: Smoke) -> None:
+    """A GitHub issue's worktree: a new branch from a remote branch the caller picks, in the folder the plan names. The branch outlives the worktree: with
+    it removed, a new-branch plan with no base attaches the branch at its own commit."""
+    root, branch = s.checkout("r"), "smoke/7-smoke-issue"
+    wt = issue_flow(s, "7", branch)
+    own = s.ref(root, "refs/heads/" + branch)
+    s.out(root, "worktree", "remove", str(wt))
+    s.advance("o/r")  # a base fetched now would be a newer commit than the branch's
+    r = s.opened(s.open_issue("o/r", "7", issue_plan(s.issue_dir("o/r", "7"), branch, fresh=True), root))
+    s.eq("(branch kept) created", True, r.get("created"))
+    s.eq("(branch kept) head (the branch's own commit)", own, r.get("head"))
+    s.eq("(branch kept) refs/heads/%s untouched" % branch, own, s.ref(root, "refs/heads/" + branch))
+    s.eq("(branch kept) worktree directory exists", True, wt.is_dir())
 
 
 def sc_jira_issue(s: Smoke) -> None:
-    """A Jira issue's worktree in a GitHub repository: the directory keeps the key's case, the base comes from the repository's remote; opened again it is reused."""
-    root, wt, branch = s.checkout("r"), s.tmp / "omp-wt" / "plotroom-o_r-issue-ABC-7", "ABC-7-smoke"
-    base = s.out(s.repos["o/r"]["bare"], "rev-parse", "HEAD")  # type: ignore[arg-type]
-    r = s.opened(s.open_issue("o/r", "ABC-7", branch, root))
+    """A Jira issue's worktree in a GitHub repository goes the same way; its folder keeps the key's case."""
+    issue_flow(s, "ABC-7", "ABC-7-smoke")
+    s.eq("the worktrees folder holds the key's own case", True, "plotroom-o_r-issue-ABC-7" in s.folders())
+
+
+def sc_issue_pr(s: Smoke) -> None:
+    """An issue's worktree on a linked PR: the folder is the issue's, the branch the PR's own (tracking it, as a PR's worktree does); the branch the plan
+    names is never made. Opened again, it is reused."""
+    root, sha, wt, mine = s.checkout("r"), s.shas[("o/r", 6)], s.issue_wt("o/r", "8"), "smoke/8-own-branch"
+    dirname = s.issue_dir("o/r", "8")
+    r = s.opened(s.open_issue("o/r", "8", issue_plan(dirname, mine, pr=6), root))
     s.eq("created", True, r.get("created"))
-    s.eq("head", base, r.get("head"))
+    s.eq("branch (the PR's)", "feature-6", r.get("branch"))
+    s.eq("number", 6, r.get("number"))
+    s.eq("ref", "refs/plotroom-pr/o/r/pr-6", r.get("ref"))
+    s.eq("key", "8", r.get("key"))
+    s.eq("head", sha, r.get("head"))
     s.same_path("path", wt, r.get("path"))
-    s.eq("git branch --show-current in the worktree", branch, s.out(wt, "branch", "--show-current"))
-    s.eq("refs/plotroom-base/o/r", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/o/r"))
-    again = s.opened(s.open_issue("o/r", "ABC-7", branch, root))
+    s.same_path("root", root, r.get("root"))
+    s.eq("worktree directory exists", True, wt.is_dir())
+    s.eq("git branch --show-current in the worktree", "feature-6", s.out(wt, "branch", "--show-current"))
+    s.eq("refs/plotroom-pr/o/r/pr-6", sha, s.ref(root, "refs/plotroom-pr/o/r/pr-6"))
+    s.eq("refs/heads/feature-6", sha, s.ref(root, "refs/heads/feature-6"))
+    s.eq("refs/remotes/origin/feature-6 (fetched for the upstream)", sha, s.ref(root, "refs/remotes/origin/feature-6"))
+    s.eq("branch.feature-6.remote", "origin", s.config(root, "branch.feature-6.remote"))
+    s.eq("branch.feature-6.merge", "refs/heads/feature-6", s.config(root, "branch.feature-6.merge"))
+    s.eq("refs/heads/" + mine + " (the plan's branch is not made)", None, s.ref(root, "refs/heads/" + mine))
+    s.contains("describe", "feature-6", s.last.get("describe"))  # type: ignore[union-attr]
+    again = s.opened(s.open_issue("o/r", "8", issue_plan(dirname, mine), root))
     s.eq("created (second open)", False, again.get("created"))
+    s.eq("branch (second open)", "feature-6", again.get("branch"))
+    s.eq("head (second open)", sha, again.get("head"))
+
+
+def sc_remote_branches(s: Smoke) -> None:
+    """worktree.remoteBranches lists the remote's branches with `git ls-remote --symref`: its default branch first, then the rest sorted."""
+    bare = s.bare("o/r")
+    default = s.out(bare, "symbolic-ref", "--short", "HEAD")
+    rest = sorted(b for b in s.out(bare, "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads").split("\n") if b != default)
+    s.eq("a branch sorts before the default one (else its being first proves nothing)", True, bool(rest) and rest[0] < default)
+    s.eq("branches of o/r", [default] + rest, s.remote_branches("o/r", s.checkout("r")))
+
+
+def want(branch: str, dirname: str, ref: Optional[str] = None) -> Dict[str, object]:
+    """A worktree.Want as the scan request spells it: an item's worktree is the one on `branch` (matched first) or in the folder `dirname`; `ref` is the ref
+    a PR's head was fetched into."""
+    out: Dict[str, object] = {"branches": [branch], "dirs": [dirname]}
+    if ref is not None:
+        out["ref"] = ref
+    return out
 
 
 def sc_scan(s: Smoke) -> None:
-    """What the worktree card reads from git: the worktrees the scenarios before made, found by item with the branch,
-    head, fetched ref and remote git gives them; a PR's worktree on a branch Plotroom did not name is left out."""
-    root = s.checkout("r")
-    prs = s.scan(root, "pr")
-    s.eq("pull requests found", ["o/r#1", "o/r#2", "o/r#9"], sorted(prs))
-    one = prs["o/r#1"]
-    s.same_path("path", s.wt("o/r", 1), one.get("path"))
-    s.same_path("root", root, one.get("root"))
-    s.eq("branch", "plotroom/o/r/pr-1", one.get("branch"))
-    s.eq("head (the worktree's, not the PR's)", s.out(s.wt("o/r", 1), "rev-parse", "HEAD"), one.get("head"))
-    s.eq("ref", "refs/plotroom-pr/o/r/pr-1", one.get("ref"))
-    s.eq("remote the branch tracks", "origin", one.get("remote"))
-    issues = s.scan(root, "issue")
-    s.eq("issues found", ["abc#ABC-7", "o/r#7"], sorted(issues))
+    """What the worktree card reads from git: each item's worktree among the ones the scenarios before made, found by the branch or the folder name the item
+    wants (a branch first), with the branch it is on, its head and a PR's fetched ref; the main checkout, a detached or locked worktree and one no item wants
+    are left out."""
+    root, omp = s.checkout("r"), s.tmp / "omp-wt"
+    # Where each PR's worktree is and the branch it is on: PR 7's folder was named by another format, the forks' branches are their owner's.
+    places = {n: s.wt("o/r", n) for n in (1, 2, 3, 4, 5, 9, 10)}
+    places[7] = omp / "smoke-o_r-7-smoke-pr-7"
+    branches = {n: "feature-%d" % n for n in (1, 2, 3, 7, 9, 10)}
+    branches.update({4: "forkowner/feature-4", 5: "forkowner/feature-5"})
+
+    def pr(n: int, branch: str) -> Dict[str, object]:
+        return want(branch, s.pr_dir("o/r", n), "refs/plotroom-pr/o/r/pr-%d" % n)
+
+    wants = {"o/r#%d" % n: pr(n, branches.get(n, "feature-%d" % n)) for n in (1, 2, 3, 4, 5, 6, 7, 9, 10)}
+    found = s.scan(root, wants)
+    s.eq("pull requests found (6 has no worktree yet)", sorted("o/r#%d" % n for n in places), sorted(found))
+    for n, path in places.items():
+        one = found["o/r#%d" % n]
+        s.same_path("#%d path" % n, path, one.get("path"))
+        s.same_path("#%d root" % n, root, one.get("root"))
+        s.eq("#%d branch" % n, branches[n], one.get("branch"))
+        s.eq("#%d head (the worktree's, not the PR's)" % n, s.out(path, "rev-parse", "HEAD"), one.get("head"))
+        s.eq("#%d ref" % n, "refs/plotroom-pr/o/r/pr-%d" % n, one.get("ref"))
+    s.eq("#3 is on a commit of its own", True, found["o/r#3"].get("head") != s.shas[("o/r", 3)])
+    s.eq("asked from a linked worktree, the same are found", sorted(found), sorted(s.scan(root, wants, at=places[1])))
+    # The folder of a PR is its own whatever branch it is on; a detached or locked worktree, a branch no item wants and the main checkout itself are no item's.
+    own, detached, locked, elsewhere = (omp / s.pr_dir("o/r", 8), omp / s.pr_dir("o/r", 11), omp / s.pr_dir("o/r", 12), omp / "elsewhere")
+    s.out(root, "worktree", "add", "-q", "-b", "my-own-work", str(own))
+    s.out(root, "worktree", "add", "-q", "--detach", str(detached))
+    s.out(root, "worktree", "add", "-q", "-b", "feature-12", str(locked))
+    s.out(root, "worktree", "lock", str(locked))
+    s.out(root, "worktree", "add", "-q", "-b", "unrelated-work", str(elsewhere))
+    wants.update({"o/r#%d" % n: pr(n, "feature-%d" % n) for n in (8, 11, 12)})
+    wants["o/r#99"] = want("main", root.name)
+    more = s.scan(root, wants)
+    s.eq("found: PR 8's folder holds a worktree on the user's own branch; 11 is detached, 12 locked, 99 is the main checkout", sorted(list(found) + ["o/r#8"]), sorted(more))
+    s.same_path("#8 path", own, more["o/r#8"].get("path"))
+    s.eq("#8 branch (the user's own)", "my-own-work", more["o/r#8"].get("branch"))
+    s.out(root, "worktree", "unlock", str(locked))
+    for path in (own, detached, locked, elsewhere):
+        s.out(root, "worktree", "remove", str(path))
+    s.out(root, "branch", "-D", "my-own-work", "feature-12", "unrelated-work")
+    issues = s.scan(root, {
+        "o/r#7": want("smoke/7-smoke-issue", s.issue_dir("o/r", "7")),
+        "abc#ABC-7": want("ABC-7-smoke", s.issue_dir("o/r", "ABC-7")),
+        "o/r#8": want("smoke/8-own-branch", s.issue_dir("o/r", "8")),
+    })
+    s.eq("issues found (8 has no worktree yet)", ["abc#ABC-7", "o/r#7"], sorted(issues))
     seven = issues["o/r#7"]
-    s.same_path("path", s.issue_wt("o/r", "7"), seven.get("path"))
-    s.eq("branch", "7-smoke-issue", seven.get("branch"))
+    s.same_path("#7 path", s.issue_wt("o/r", "7"), seven.get("path"))
+    s.eq("#7 branch", "smoke/7-smoke-issue", seven.get("branch"))
+    s.eq("#7 head", s.out(s.issue_wt("o/r", "7"), "rev-parse", "HEAD"), seven.get("head"))
     s.eq("an issue has no fetched ref", None, seven.get("ref"))
-    s.eq("and no remote read", None, seven.get("remote"))
-    s.same_path("a Jira issue's path", s.tmp / "omp-wt" / "plotroom-o_r-issue-ABC-7", issues["abc#ABC-7"].get("path"))
-    dot = s.scan(s.checkout("dotgithub"), "pr")
+    s.same_path("a Jira issue's path (the key keeps its case)", s.issue_wt("o/r", "ABC-7"), issues["abc#ABC-7"].get("path"))
+    # A format changed since the worktrees were made: the branch alone, or the folder alone, still finds one.
+    moved = s.scan(root, {"o/r#7": want("renamed-by-a-format", s.issue_dir("o/r", "7")), "abc#ABC-7": want("ABC-7-smoke", "named-by-another-format")})
+    s.eq("found by the folder alone, or by the branch alone", ["abc#ABC-7", "o/r#7"], sorted(moved))
+    s.eq("#7 says the branch it is on, not the one wanted", "smoke/7-smoke-issue", moved["o/r#7"].get("branch"))
+    s.eq("no item wanted, none found", {}, s.scan(root, {}))
+    dot = s.scan(s.checkout("dotgithub"), {"github/.github#1": want("feature-1", s.pr_dir("github/.github", 1), "refs/plotroom-pr/github/%2Egithub/pr-1")})
     s.eq(".github found", ["github/.github#1"], sorted(dot))
-    s.eq(".github branch", "plotroom/github/%2Egithub/pr-1", dot["github/.github#1"].get("branch"))
+    s.eq(".github branch", "feature-1", dot["github/.github#1"].get("branch"))
     s.eq(".github ref", "refs/plotroom-pr/github/%2Egithub/pr-1", dot["github/.github#1"].get("ref"))
-    stray = s.tmp / "omp-wt" / "plotroom-o_r-pr-5"
-    s.out(root, "worktree", "add", "-q", "-b", "my-own-work", str(stray))
-    s.eq("a worktree of PR 5 on the user's own branch is left out", ["o/r#1", "o/r#2", "o/r#9"], sorted(s.scan(root, "pr")))
 
 
 def sc_remote_host(s: Smoke) -> None:
@@ -1046,6 +1352,8 @@ def sc_remote_host(s: Smoke) -> None:
     st = s.state()
     s.eq("current host", "devbox", st["hosts"]["current"])  # type: ignore[index]
     s.eq("worktree HEAD", sha, s.out(wt, "rev-parse", "HEAD"))
+    s.eq("worktree branch (the PR's own)", "feature-1", s.out(wt, "branch", "--show-current"))
+    s.eq("worktree upstream", "origin/feature-1", s.out(wt, "rev-parse", "--abbrev-ref", "@{upstream}"))
     s.eq("the PR's tab", True, any(t.get("title") == "PR #1 · remote" for t in st["tabs"]))  # type: ignore[union-attr,attr-defined]
     s.eq("its pane is in the worktree", os.path.realpath(str(wt)), os.path.realpath(str(st["focused"].get("cwd") or "")))  # type: ignore[union-attr]
 
@@ -1056,12 +1364,17 @@ SCENARIOS = [
     ("dirty reuse", sc_dirty_reuse),
     ("advanced PR head", sc_advanced),
     ("post-checkout hook", sc_hook),
-    ("branch elsewhere", sc_branch_elsewhere),
+    ("existing branch", sc_existing_branch),
+    ("deleted head branch", sc_deleted_branch),
     (".github", sc_dot_github),
     ("recovery", sc_recovery),
+    ("fork PRs", sc_fork),
+    ("folder names", sc_pr_dir),
     ("issue worktree", sc_issue),
     ("jira issue worktree", sc_jira_issue),
     ("scan", sc_scan),
+    ("issue on a linked PR", sc_issue_pr),
+    ("remote branches", sc_remote_branches),
     ("remote host", sc_remote_host),
 ]
 
@@ -1072,7 +1385,9 @@ def check_smoke() -> str:
     tmp = Path(tempfile.mkdtemp(prefix="plotroom-smoke-", dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()
     s = Smoke(tern, git, omp, tmp)
     try:
-        s.repo("o", "r", "r", (1, 2, 3))
+        s.repo("o", "r", "r", (1, 2, 3, 6, 7, 10), deleted=(10,))
+        s.fork_pr("o/r", 4)
+        s.fork_pr("o/r", 5, gone=True)
         s.repo("github", ".github", "dotgithub", (1,))
         s.repo("p", "q", "q", (1,))
         s.repo("o", "remote", "remote", (1,))

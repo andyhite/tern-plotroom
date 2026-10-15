@@ -84,8 +84,9 @@ local function acli(args: { string }, done: (string?, Problem?) -> ())
 end
 
 -- The browse URL base ("https://<site>"): the issues' own `self` URLs name internal API hosts, so it comes from
--- `acli jira auth status`, once per sign-in.
+-- `acli jira auth status`, once per sign-in, with the signed-in email's local part (`{jira.user}`; "" when unnamed).
 local site: string? = nil
+local user = ""
 
 -- Forgets the site, so a changed sign-in is found without restarting Tern. The host's Retry calls this.
 function M.reset()
@@ -106,7 +107,15 @@ local function withSite(done: (string?, Problem?) -> ())
 			return done(nil, { kind = "auth", message = "acli did not name a Jira site; run acli jira auth login." })
 		end
 		site = "https://" .. host
+		user = string.match(out, "Email:%s*([%w%.%-_+]+)@") or ""
 		done(site, nil)
+	end)
+end
+
+-- The signed-in Jira user as `{jira.user}` names it: the email before the `@`; done(user, problem).
+function M.user(done: (string?, Problem?) -> ())
+	withSite(function(found, problem)
+		done(if found then user else nil, problem)
 	end)
 end
 

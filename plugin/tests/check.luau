@@ -253,32 +253,54 @@ function M.run()
 	local recs = worktree.parseWorktrees(
 		"worktree /r/main\0HEAD aaa\0branch refs/heads/main\0\0"
 			.. "worktree /r/with space\nnewline\0HEAD bbb\0detached\0locked reason\0\0"
-			.. "worktree /r/gone\0HEAD ccc\0branch refs/heads/plotroom/a/b/pr-1\0prunable gitdir file points to non-existent location\0\0"
+			.. "worktree /r/gone\0HEAD ccc\0branch refs/heads/feature\0prunable gitdir file points to non-existent location\0\0"
 	)
 	assert(#recs == 3 and recs[1].path == "/r/main" and recs[1].branch == "refs/heads/main", "main record")
 	assert(recs[2].path == "/r/with space\nnewline" and recs[2].detached and recs[2].locked, "path with space and newline")
-	assert(recs[3].prunable and recs[3].branch == "refs/heads/plotroom/a/b/pr-1", "prunable branch record")
-	local verdict = worktree.reconcile(recs, "plotroom/a/b/pr-1", "/r.plotroom/a/b/pr-1")
+	assert(recs[3].prunable and recs[3].branch == "refs/heads/feature", "prunable branch record")
+	local verdict = worktree.reconcile(recs, "feature", "/wt/feature")
 	assert(verdict == "error", "prunable record for the branch is an error")
-	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/r/gone") == "error", "a record on the target path collides")
-	assert(worktree.reconcile(recs, "plotroom/a/b/pr-2", "/nonexistent/plotroom/target") == "create", "unrelated records do not block")
+	assert(worktree.reconcile(recs, "other", "/r/gone") == "error", "a record on the target path collides")
+	assert(worktree.reconcile(recs, "other", "/nonexistent/wt/other") == "create", "unrelated records do not block")
 	assert(worktree.expandPath("~/x", "/home/u") == "/home/u/x" and worktree.expandPath("rel", "/h") == nil, "path expansion")
-	assert(worktree.itemOfPath("/wt/plotroom-a_b-pr-12x") == nil, "not a PR worktree")
-	assert(worktree.itemOfPath("/wt/plotroom-a_bc-pr-1") == "a/bc#1", "another repository's worktree maps to its own key")
+	assert(worktree.within("/wt/p", "/wt/p") and worktree.within("/wt/p/src", "/wt/p"), "a worktree and any folder inside it are within it")
+	assert(not worktree.within("/wt/p2", "/wt/p") and not worktree.within("/wt", "/wt/p") and not worktree.within("/wt/p", ""), "a sibling sharing the prefix, a parent and an empty root are not")
+	assert(worktree.prRef("O", "R", 5) == "refs/plotroom-pr/o/r/pr-5", "a pull request's fetched ref is lowercase")
+	assert(worktree.prRef("github", ".github", 1) == "refs/plotroom-pr/github/%2Egithub/pr-1", "with the dots git refuses spelled out")
+	assert(worktree.prBranch("feature") == "feature", "a pull request is checked out on its head branch")
+	assert(worktree.prBranch("feature", "bob") == "bob/feature", "a fork's under its owner")
+	assert(worktree.validLeaf("plotroom-o_r-pr-5") and worktree.validLeaf("pr 5"), "a folder name is one printable segment")
+	for _, bad in { "", ".", "..", "a/b", "a\nb", string.rep("x", 201) } do
+		assert(not worktree.validLeaf(bad), "not a folder name: " .. bad)
+	end
 
 	-- issues: slugs, branch formats, matching, ordering and worktree paths
 	assert(tracker.slug("Fix: Login → redirect!!") == "fix-login-redirect", "a title becomes ASCII words joined by dashes")
 	assert(tracker.slug("  --Hello__World--  ") == "hello-world", "a run of other characters is one dash, none at the ends")
 	assert(tracker.slug(string.rep("abcdefghi ", 6)) == "abcdefghi-abcdefghi-abcdefghi-abcdefghi", "a long title is cut at 40 bytes, with no dash left at the end")
 	assert(tracker.slug("¡¿") == "issue", "a title with no ASCII letter or digit is just issue")
-	assert(tracker.branchName("{key}-{slug}", { key = "12", slug = "x" }) == "12-x", "a format fills in its variables")
-	assert(tracker.branchName("{owner}/{repo}#{key}", { key = "12", slug = "x", owner = "o", repo = "r" }) == "o/r#12", "any variable, anywhere")
-	local nobranch, nobranchWhy = tracker.branchName("{slug}", { slug = "x" })
+	assert(tracker.render("{key}-{slug}", { key = "12", slug = "x" }) == "12-x", "a format fills in its variables")
+	assert(tracker.render("{owner}/{repo}#{key}", { key = "12", slug = "x", owner = "o", repo = "r" }) == "o/r#12", "any variable, anywhere")
+	assert(tracker.render("{github.user}/{key}-{slug}", { ["github.user"] = "octocat", key = "12", slug = "x" }) == "octocat/12-x", "a dotted variable names a user")
+	assert(tracker.render("{jira.user}/{key}", { key = "12" }) == "/12", "a variable the caller has no value for is empty")
+	local nobranch, nobranchWhy = tracker.render("{slug}", { slug = "x" })
 	assert(nobranch == nil and nobranchWhy == "Include {key}, so each issue gets its own branch.", "a format without {key} names no branch")
 	assert(tracker.formatProblem("   ") == "A format is required.", "a blank format is refused")
 	assert(tracker.formatProblem("{foo}-{key}") == "Unknown variable {foo}.", "an unknown variable is named")
+	assert(tracker.formatProblem("{foo.bar}-{key}") == "Unknown variable {foo.bar}.", "a dotted one is named whole")
 	assert(tracker.formatProblem("x-{slug}") == "Include {key}, so each issue gets its own branch.", "{key} is required")
 	assert(tracker.formatProblem("feat/{owner}-{repo}-{key}-{slug}-{project}") == nil, "every variable is accepted")
+	assert(tracker.formatProblem("{github.user}/{jira.user}-{key}") == nil, "so are both users")
+	-- worktree folder names: the same formats in dir mode
+	assert(tracker.render(tracker.PR_DIR_DEFAULT, { key = "5", owner = "o", repo = "r" }, true) == "plotroom-o_r-pr-5", "the default folder of a pull request is the name earlier versions gave")
+	assert(tracker.render(tracker.ISSUE_DIR_DEFAULT, { key = "ABC-7", owner = "o", repo = "r" }, true) == "plotroom-o_r-issue-ABC-7", "and of an issue")
+	assert(tracker.formatProblem(tracker.BRANCH_DEFAULT) == nil and tracker.formatProblem(tracker.PR_DIR_DEFAULT, true) == nil and tracker.formatProblem(tracker.ISSUE_DIR_DEFAULT, true) == nil, "every default is a usable format")
+	assert(tracker.formatProblem("a/{key}", true) == "A folder name holds no /.", "a folder name is one path segment")
+	assert(tracker.formatProblem("pr-{slug}", true) == "Include {key}, so each worktree gets its own folder.", "{key} is required, in the folder's words")
+	assert(tracker.formatProblem("{github.user}-{key}", true) == "Unknown variable {github.user}.", "a folder name names no user")
+	assert(tracker.formatProblem("{project}-{key}", true) == "Unknown variable {project}.", "nor a Jira project")
+	local slashed, slashedWhy = tracker.render("a/{key}", { key = "1" }, true)
+	assert(slashed == nil and slashedWhy == "A folder name holds no /." and tracker.render("a/{key}", { key = "1" }) == "a/1", "the same format names a branch but no folder")
 	assert(tracker.refLabel("12") == "#12" and tracker.refLabel("ABC-12") == "ABC-12", "a number reads #12, a Jira key as it is")
 	assert(tracker.jiraProject("ABC") and tracker.jiraProject("A1_B"), "a Jira project key is capitals, digits and underscores")
 	for _, p in { "abc", "A", "o/r", "1AB", "" } do
@@ -314,22 +336,6 @@ function M.run()
 	local mixed = { gone, open1, open2 }
 	tracker.byStatus(mixed, order)
 	assert(mixed[1] == gone and mixed[2] == open1 and mixed[3] == open2, "a GitHub issue sorts by its state; ties keep their order")
-	assert(worktree.itemOfPath("/x/plotroom-o_r-pr-12/sub") == "o/r#12", "a PR worktree maps to its key")
-	assert(select(2, worktree.itemOfPath("/x/plotroom-o_r-pr-12/sub")) == "pr", "and its kind")
-	for _, p in { "/x/plotroom-o_r-issue-ABC-7", "/x/plotroom-jira.abc-issue-ABC-7" } do
-		local k, kind = worktree.itemOfPath(p)
-		assert(k == "abc#ABC-7" and kind == "issue", "a Jira issue worktree in any slot maps to its project key: " .. p)
-	end
-	local ik, ikind = worktree.itemOfPath("/x/plotroom-o_r-issue-7/src")
-	assert(ik == "o/r#7" and ikind == "issue", "a GitHub issue worktree")
-	local lk, lkind = worktree.itemOfPath("/r/x.plotroom/a/b/pr-7")
-	assert(lk == "a/b#7" and lkind == "pr", "a worktree from an earlier version still maps")
-	assert(worktree.itemOfPath("/home/u/plotroom-notes/wt/plotroom-o_r-pr-12/sub") == "o/r#12", "a parent folder that merely starts with plotroom- is no worktree: the real one is found below it")
-	assert(worktree.itemOfPath("/home/u/plotroom-notes/wt") == nil, "and a path with no worktree in it maps to nothing")
-	assert(worktree.itemOfPath("/home/u/plotroom-notes/r.plotroom/a/b/pr-7") == "a/b#7", "nor does it hide a folder an earlier version made")
-	for _, p in { "/x/plotroom-o_r-prx", "/wt/xplotroom-o_r-issue-1", "/r/o/r/issue-1", "" } do
-		assert(worktree.itemOfPath(p) == nil, "not an item worktree: " .. p)
-	end
 
 	-- queue keys: which action a typed key triggers, and which keys an action may have
 	local queue: keys.Map = {}

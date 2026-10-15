@@ -31,8 +31,15 @@ export type Field = { label: string, value: string? } -- nil value: shown as Non
 export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }
 export type IssueResult = { issues: { Issue }, total: number, complete: boolean }
 
-M.FORMAT_DEFAULT = "{key}-{slug}"
-M.VARS = { "key", "slug", "owner", "repo", "project" }
+-- Name formats (Settings › Repositories): an issue's new branch, and the folder name of a PR's or an issue's worktree.
+-- `{github.user}` is the gh login the repository is worked with, `{jira.user}` the Jira sign-in's email before the `@`.
+M.BRANCH_DEFAULT = "{github.user}/{key}-{slug}"
+M.VARS = { "key", "slug", "owner", "repo", "project", "github.user", "jira.user" }
+-- Worktree folders keep the names of earlier versions by default, so worktrees made then are still found. `{key}` is
+-- the PR number or the issue key; `{owner}` and `{repo}` are lowercase there.
+M.PR_DIR_DEFAULT = "plotroom-{owner}_{repo}-pr-{key}"
+M.ISSUE_DIR_DEFAULT = "plotroom-{owner}_{repo}-issue-{key}"
+M.DIR_VARS = { "key", "slug", "owner", "repo" }
 -- The detail rows each tracker fills, in order.
 M.FIELDS = { github = { "Milestone" }, jira = { "Parent", "Sprint", "Components", "Fix versions" } }
 
@@ -46,30 +53,38 @@ function M.slug(title: string): string
 	return if s == "" then "issue" else s
 end
 
--- Why `fmt` cannot name branches, or nil.
-function M.formatProblem(fmt: string): string?
+-- A `{name}` variable as formats and prompts spell it: letters, dots between words (`{github.user}`).
+M.VAR = "{([%a%.]+)}"
+
+-- Why `fmt` cannot name branches (or, `dir`, worktree folders), or nil.
+function M.formatProblem(fmt: string, dir: boolean?): string?
 	if string.match(fmt, "^%s*$") then
 		return "A format is required."
 	end
-	local known = M.VARS
-	for name in string.gmatch(fmt, "{(%a+)}") do
+	local known = if dir then M.DIR_VARS else M.VARS
+	for name in string.gmatch(fmt, M.VAR) do
 		if not table.find(known, name) then
 			return "Unknown variable {" .. name .. "}."
 		end
 	end
+	if dir and string.find(fmt, "/", 1, true) then
+		return "A folder name holds no /."
+	end
 	if not string.find(fmt, "{key}", 1, true) then
-		return "Include {key}, so each issue gets its own branch."
+		return if dir then "Include {key}, so each worktree gets its own folder." else "Include {key}, so each issue gets its own branch."
 	end
 	return nil
 end
 
--- The branch `fmt` makes of `vars`, or nil and why.
-function M.branchName(fmt: string, vars: { [string]: string }): (string?, string?)
-	local why = M.formatProblem(fmt)
+-- The name `fmt` makes of `vars` (a missing one is empty), or nil and why.
+function M.render(fmt: string, vars: { [string]: string }, dir: boolean?): (string?, string?)
+	local why = M.formatProblem(fmt, dir)
 	if why then
 		return nil, why
 	end
-	local name = string.gsub(fmt, "{(%a+)}", vars)
+	local name = string.gsub(fmt, M.VAR, function(k: string): string
+		return vars[k] or ""
+	end)
 	return name, nil
 end
 

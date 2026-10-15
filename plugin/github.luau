@@ -27,6 +27,7 @@ export type Pr = {
 	created: number,
 	head: string,
 	headSha: string?, -- the commit the pull request's head branch is at (40 hex); nil when GitHub did not say
+	fork: string?, -- the owner of the fork the head branch lives in; nil for a branch of the repository itself
 	base: string,
 	additions: number,
 	deletions: number,
@@ -61,8 +62,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -73,7 +74,7 @@ local ISSUE_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
-local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,state:.state,baseRef:.base.ref,title:.title,author:.user.login}"
+local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,headRepo:.head.repo.full_name,headOwner:.head.user.login,state:.state,baseRef:.base.ref,title:.title,author:.user.login}"
 local MERGE: { [string]: string } =
 	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
 local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
@@ -342,6 +343,7 @@ function M.normalize(item: any): (Pr?, string?)
 		created = M.epoch(str(item.createdAt)) or 0,
 		head = str(item.head),
 		headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil,
+		fork = if type(item.fork) == "string" and string.match(item.fork, "^[%w%-]+$") then item.fork else nil,
 		base = str(item.base),
 		additions = count(item.additions),
 		deletions = count(item.deletions),
@@ -1059,8 +1061,10 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 	end, account)
 end
 
--- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read.
-export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string }
+-- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read. `fork` is the
+-- owner of the repository the head branch lives in when that is not `base` (a fork), and `forkRepo` that repository
+-- ("owner/name"; nil when it was deleted).
+export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string, fork: string?, forkRepo: string? }
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
@@ -1086,6 +1090,14 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		local function text(v: any): string
 			return if type(v) == "string" then v else ""
 		end
+		local headRepo = text(data.headRepo)
+		local forkRepo = if string.match(headRepo, "^[%w%-_%.]+/[%w%-_%.]+$") and string.lower(headRepo) ~= string.lower(data.base) then headRepo else nil
+		local fork: string? = nil
+		if forkRepo or headRepo == "" then
+			-- A deleted fork's owner is still the head's user.
+			local owner = if forkRepo then string.match(forkRepo, "^([^/]+)/") else text(data.headOwner)
+			fork = if owner and string.match(owner, "^[%w%-]+$") then owner else text(data.author)
+		end
 		done({
 			base = data.base,
 			sha = string.lower(data.sha),
@@ -1094,7 +1106,54 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 			baseRef = text(data.baseRef),
 			title = text(data.title),
 			author = text(data.author),
+			fork = if fork ~= "" then fork else nil,
+			forkRepo = forkRepo,
 		}, nil, cx)
+	end, account)
+end
+
+-- A pull request an issue may be worked on: its number, title, and head branch while that branch still exists.
+export type LinkedPr = { number: number, title: string, branch: string? }
+
+local PR_LINK = "number title headRefName headRef { name } baseRepository { nameWithOwner }"
+local PR_LINK_JQ = "{number, title, head: .headRefName, branch: .headRef.name, base: .baseRepository.nameWithOwner}"
+local CLOSING_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { closedByPullRequestsReferences(first: 25, includeClosedPrs: true) { nodes { " .. PR_LINK .. " } } } } }"
+local CLOSING_JQ = "[(.data.repository.issue.closedByPullRequestsReferences.nodes // [])[] | " .. PR_LINK_JQ .. "]"
+local MENTION_GQL = "query($q: String!) { search(query: $q, type: ISSUE, first: 50) { nodes { ... on PullRequest { " .. PR_LINK .. " } } } }"
+local MENTION_JQ = "[(.data.search.nodes // [])[] | select(.number != null) | " .. PR_LINK_JQ .. "]"
+
+-- The pull requests of `repo` ("owner/name") issue `ref` is worked on: for a GitHub issue number those that close it,
+-- for a Jira key those whose title or head branch names it. done(prs, problem).
+function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ LinkedPr }?, Problem?) -> ())
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if account == "" then
+		account = nil
+	end
+	local mention = string.match(ref, "^%d+$") == nil
+	local args = if mention
+		then { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. repo .. " is:pr " .. ref, "--jq", MENTION_JQ }
+		else { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. CLOSING_GQL, "-f", "o=" .. (owner or ""), "-f", "r=" .. (name or ""), "-F", "n=" .. ref, "--jq", CLOSING_JQ }
+	-- The key as a whole word: ABC-12 is not ABC-123.
+	local word = "%f[%w]" .. string.gsub(string.lower(ref), "%p", "%%%0") .. "%f[^%w]"
+	M.gh(args, function(out, problem)
+		if not out then
+			return done(nil, problem)
+		end
+		local ok, data = pcall(tern.json.decode, out)
+		if not ok or type(data) ~= "table" then
+			return done(nil, { kind = "failed", message = "gh printed unexpected pull request data." })
+		end
+		local list: { LinkedPr } = {}
+		for i = 1, #data do
+			local n = data[i]
+			local num, title, head, branch, base = field(n, "number"), field(n, "title"), field(n, "head"), field(n, "branch"), field(n, "base")
+			local names = mention and (string.find(string.lower(tostring(title)), word) or (type(head) == "string" and string.find(string.lower(head), word)))
+			-- A pull request into another repository is no checkout of this one.
+			if type(num) == "number" and type(title) == "string" and type(base) == "string" and string.lower(base) == string.lower(repo) and (names or not mention) then
+				table.insert(list, { number = num, title = title, branch = if type(branch) == "string" and branch ~= "" then branch else nil })
+			end
+		end
+		done(list, nil)
 	end, account)
 end
 
@@ -1162,6 +1221,24 @@ function M.accounts(done: ({ Account }?, Problem?) -> ())
 			finish(list, nil)
 		end)
 	end, done)
+end
+
+-- `account` when it names one, else gh's active login; done(login, problem). done never runs before this returns.
+function M.login(account: string?, done: (string?, Problem?) -> ())
+	if account and account ~= "" then
+		local who: string = account
+		tern.timer(0, function()
+			done(who, nil)
+		end)
+		return
+	end
+	M.accounts(function(list, problem)
+		local first = if list then list[1] else nil
+		if first and first.active then
+			return done(first.login, nil)
+		end
+		done(nil, problem or { kind = "auth", message = "gh has no active account; run gh auth login." })
+	end)
 end
 
 -- "owner/name" of every repository gh login `account` can access (owned, collaborator, org member), most recently
