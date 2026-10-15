@@ -1,7 +1,7 @@
 --!strict
 -- Local repository resolution and PR worktrees. Every command Plotroom runs is an argv array run through
--- process.luau; nothing is ever interpolated into a shell. (`update` and `cleanup` only format commands for the
--- user to run themselves.)
+-- process.luau; nothing is ever interpolated into a shell. (`update` only formats commands for the user to run
+-- themselves; `remove` deletes a worktree and its branch only as far as plain git allows; `scan` and `dirty` only read.)
 
 local process = require("./process")
 local github = require("./github")
@@ -52,10 +52,18 @@ export type IssueResult = {
 	dirty: boolean?,
 }
 
+-- A worktree Plotroom made, as `scan` finds it: `root` the checkout's main worktree, `branch` its short name, `head` its
+-- HEAD, `ref` a pull request's fetched ref, `remote` the remote `open` configured for a pull request's branch (nil when
+-- git does not say).
+export type Found = { root: string, path: string, branch: string, head: string, ref: string?, remote: string? }
+-- What `scan` read of one checkout: its main worktree and Plotroom's usable worktrees of one kind by item key (`itemOfPath`).
+export type Scan = { root: string, found: { [string]: Found } }
+
 type Plan = { info: Repo, meta: github.PrMeta, root: string, target: string }
 
 local LOCAL_MS = 10 * 1000
 local NET_MS = 120 * 1000
+local REMOVE_MS = 120 * 1000 -- deleting a worktree's whole folder (node_modules and all) takes a while
 -- No prompts; status never takes the index lock, so reading a worktree cannot make the user's own git command fail.
 local ENV = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0" }
 
@@ -110,6 +118,12 @@ end
 -- A GitHub owner or repository name, as repository links and Git operations accept it.
 function M.validSegment(s: string): boolean
 	return s ~= "" and s ~= "." and s ~= ".." and string.match(s, "^[%w%-_%.]+$") ~= nil
+end
+
+-- A prompt's model as `omp --model` takes it: a model pattern ("opus", "anthropic/claude-opus-4-5", "gpt-5.2:high")
+-- or an omp role alias ("@slow"). The window puts it on a shell command line, so only these characters pass.
+function M.validModel(s: string): boolean
+	return #s <= 100 and string.match(s, "^@?[%w][%w%._:/%-]*$") ~= nil
 end
 
 -- One name as a ref component. Git refuses a component that starts with a dot, holds `..` or ends in `.lock`, all
@@ -281,6 +295,14 @@ function M.expandPath(p: string, home: string?): (string?, string?)
 	return p, nil
 end
 
+-- `path` with its leading `home` folder written `~`, as expandPath reads it back; unchanged anywhere else.
+function M.tilde(path: string, home: string?): string
+	if home and home ~= "" and (path == home or string.sub(path, 1, #home + 1) == home .. "/") then
+		return "~" .. string.sub(path, #home + 1)
+	end
+	return path
+end
+
 -- Remote names of the checkout at `root`, origin first, then upstream, then lexical.
 local function rankedRemotes(root: string, done: (({ string }?, string?, WindowCx?) -> ()))
 	git(root, { "remote" }, LOCAL_MS, function(rem, err, cx)
@@ -447,10 +469,10 @@ end
 
 -- The item whose Plotroom worktree holds `path` (the worktree root or any directory inside it), as (key, "pr" | "issue"),
 -- or nil: `plotroom-<owner>_<name>-pr-N` and `plotroom-<slot>-issue-<ref>` as `M.open`/`M.openIssue` create them (a Jira
--- ref, whatever its slot, gives the Jira key), or `<checkout>.plotroom/<owner>/<repo>/pr-N` from earlier versions.
+-- ref, whatever its slot, gives the Jira key), or `<checkout>.plotroom/<owner>/<repo>/pr-N` from earlier versions. The
+-- first folder named like one of those counts: a parent that merely starts with `plotroom-` is no worktree.
 function M.itemOfPath(path: string): (string?, string?)
-	local leaf = string.match(path, "/(plotroom%-[^/]*)")
-	if leaf then
+	for leaf in string.gmatch(path, "/(plotroom%-[^/]*)") do
 		local owner, name, n = string.match(leaf, "^plotroom%-([%w%-]+)_(.+)%-pr%-(%d+)$")
 		if owner and name and n then
 			return string.lower(owner .. "/" .. name) .. "#" .. n, "pr"
@@ -466,13 +488,76 @@ function M.itemOfPath(path: string): (string?, string?)
 				return string.lower(o .. "/" .. r) .. "#" .. ref, "issue"
 			end
 		end
-		return nil, nil
 	end
 	local o, r, n = string.match(path, "%.plotroom/([^/]+)/([^/]+)/pr%-(%d+)")
 	if o and r and n then
 		return string.lower(o .. "/" .. r) .. "#" .. n, "pr"
 	end
 	return nil, nil
+end
+
+-- The branch `open` makes for the pull request of item `key` ("owner/name#N", lowercase) and the ref it fetches the
+-- head into; nils for any other key.
+local function prNames(key: string): (string?, string?)
+	local owner, name, n = string.match(key, "^([^/]+)/([^#]+)#(%d+)$")
+	if owner and name and n then
+		return M.refNames(owner, name, tonumber(n) :: number)
+	end
+	return nil, nil
+end
+
+-- The Plotroom worktrees of `kind` ("pr" | "issue") in the checkout at `checkout` (any folder of it), by item key, read
+-- from git's own list: what `open` and `openIssue` made in this session or an earlier one. Left out, as nothing Plotroom
+-- can use or remove: a locked or prunable record, one whose folder is gone, a detached one, and a pull request's on any
+-- branch but the one `open` makes for it. One `worktree list`, plus, when it holds a pull request's worktree, one
+-- `config` read (the remote its update commands fetch from). Local git only, nothing written. done(scan, problem): on a
+-- problem nothing is known, so the caller changes nothing.
+-- ponytail: a detached issue worktree is skipped (its card would have no branch to take with it); the user made it so.
+function M.scan(checkout: string, kind: string, done: (Scan?, string?) -> ())
+	git(checkout, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, err)
+		if not out then
+			return done(nil, err or "git worktree list failed")
+		end
+		local recs = M.parseWorktrees(out)
+		local main = recs[1]
+		if not main or string.sub(main.path, 1, 1) ~= "/" then
+			return done(nil, "Could not find this repository's main worktree.")
+		end
+		local result: Scan = { root = (string.gsub(main.path, "/+$", "")), found = {} }
+		local prs: { Found } = {}
+		for i = 2, #recs do
+			local r = recs[i]
+			local key, what = M.itemOfPath(r.path)
+			local branch = if r.branch then string.match(r.branch, "^refs/heads/(.+)$") else nil
+			if key and what == kind and branch and r.head and not r.locked and not r.prunable and result.found[key] == nil then
+				-- A folder the runtime cannot even look at is as good as gone.
+				local here, there = pcall(tern.fs.exists, r.path)
+				local want, ref = prNames(key)
+				if here and there and (kind == "issue" or branch == want) then
+					local f: Found = { root = result.root, path = r.path, branch = branch, head = r.head, ref = if kind == "pr" then ref else nil, remote = nil }
+					result.found[key] = f
+					if kind == "pr" then
+						table.insert(prs, f)
+					end
+				end
+			end
+		end
+		if #prs == 0 then
+			return done(result, nil)
+		end
+		-- `open` configured branch.<name>.remote; git exits 1 when no branch has one, and the remote stays unknown.
+		git(checkout, { "config", "--get-regexp", "^branch\\..*\\.remote$" }, LOCAL_MS, function(cfg)
+			for _, line in lines(cfg or "") do
+				local name, remote = string.match(line, "^branch%.(.+)%.remote (.+)$")
+				for _, f in prs do
+					if name and f.branch == name then
+						f.remote = remote
+					end
+				end
+			end
+			done(result, nil)
+		end)
+	end)
 end
 
 -- lexically collapses `.`, `..` and repeated `/` of an absolute path.
@@ -542,8 +627,9 @@ local function short(sha: string): string
 	return string.sub(sha, 1, 7)
 end
 
--- How a worktree stands against its pull request, on one line for the toast and the queue preview.
-function M.describe(r: Result): string
+-- How a worktree stands against its pull request, on one line for the toast and the queue preview. It reads only
+-- these fields, so a worktree `scan` found describes itself the same way once its pull request is known.
+function M.describe(r: { created: boolean, head: string, prHead: string, prRef: string, dirty: boolean? }): string
 	local origin = if r.created then "Created" else "Reused"
 	local fresh = if r.head == r.prHead
 		then "Current (PR head " .. short(r.head) .. " on " .. r.prRef .. ")"
@@ -557,7 +643,8 @@ end
 
 -- Commands that bring the PR's newer commits into a worktree that is not at its head; none when it is. Only shown
 -- to the user: `--ff-only` refuses rather than rewrite local commits, and merge refuses to overwrite local changes.
-function M.update(r: Result): { string }
+-- Reads only these fields, as `describe` does.
+function M.update(r: { path: string, remote: string, number: number, head: string, prHead: string }): { string }
 	if r.head == r.prHead then
 		return {}
 	end
@@ -568,16 +655,59 @@ function M.update(r: Result): { string }
 	}
 end
 
--- Commands that remove the worktree, then its branch, then the ref fetched for it. Only shown to the user: the
--- first two refuse to discard local changes or unmerged commits (`--force` and `-D` stay the user's own decision),
--- the last drops only the ref Plotroom fetched.
-function M.cleanup(r: Result): { string }
-	local at = "git -C " .. shellWord(r.root)
-	return {
-		at .. " worktree remove " .. shellWord(r.path),
-		at .. " branch -d " .. shellWord(r.branch),
-		at .. " update-ref -d " .. shellWord(r.ref),
-	}
+-- What `remove` takes of a worktree: where it is and what Plotroom made for it. `ref` is a pull request's fetched ref.
+export type Target = { root: string, path: string, branch: string, ref: string? }
+
+-- What `remove` did besides removing the worktree: `branch` says in a sentence what became of its branch.
+export type Removal = { branch: string }
+
+-- Git's reason as a sentence out of a failed `git` step: "git branch -d failed: error: the branch is not fully merged"
+-- gives "The branch is not fully merged.".
+local function reasonOf(problem: string?): string
+	local why = string.match(problem or "", "^git [^:]* failed: (.*)$") or problem or "git could not be started"
+	why = string.gsub(why, "^%a+: ", "")
+	why = string.gsub(why, "^%l", string.upper)
+	return if string.find(why, "[%.!%?]$") then why else why .. "."
+end
+
+-- Removes the worktree of `t`, then its branch, and forces nothing: git itself stops at uncommitted changes (then
+-- nothing is done: done(nil, why, dirty), `dirty` when that was the reason) and `branch -d` at commits merged nowhere.
+-- A pull request's branch is Plotroom's own copy, so `-D` takes it when `merge-base --is-ancestor` says the fetched
+-- ref already holds every commit of it, and the fetched ref goes with it. A branch git keeps stays with its ref, and
+-- the Removal says so. Host only: git runs where the checkout is, so there is no window cx.
+function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
+	local branch, ref = t.branch, t.ref
+	local function finish(said: string)
+		done({ branch = said }, nil, nil)
+	end
+	local function dropRef(said: string)
+		if not ref then
+			return finish(said)
+		end
+		git(t.root, { "update-ref", "-d", ref }, LOCAL_MS, function(_, err, _, status)
+			finish(if status == 0 then said else said .. " Its fetched ref " .. ref .. " was kept. " .. reasonOf(err))
+		end)
+	end
+	local function dropBranch(flag: string)
+		git(t.root, { "branch", flag, branch }, LOCAL_MS, function(_, err, _, status)
+			if status ~= 0 then
+				return finish("Branch " .. branch .. " was kept. " .. reasonOf(err))
+			end
+			dropRef("Branch " .. branch .. " was deleted too.")
+		end)
+	end
+	git(t.root, { "worktree", "remove", t.path }, REMOVE_MS, function(_, err, _, status)
+		if status ~= 0 then
+			local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
+			return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
+		end
+		if not ref then
+			return dropBranch("-d")
+		end
+		git(t.root, { "merge-base", "--is-ancestor", branch, ref }, LOCAL_MS, function(_, _, _, merged)
+			dropBranch(if merged == 0 then "-D" else "-d")
+		end)
+	end)
 end
 
 -- Shared by `open` and `openIssue`: `finish` reports the result exactly once; `attempt` runs fn and fails the request
@@ -622,6 +752,14 @@ local function steps<T>(done: Cb<T>): Steps<T>
 	return { finish = finish, attempt = attempt, run = run }
 end
 
+-- Whether the worktree at `path` has uncommitted changes (what `git status` lists, untracked files too); nil when git
+-- could not tell: a failed or slow status is never reported as clean. done(dirty, cx): cx is nil in the host.
+function M.dirty(path: string, done: (boolean?, WindowCx?) -> ())
+	git(path, { "status", "--porcelain", "--untracked-files=normal" }, LOCAL_MS, function(status, _, cx)
+		done(if status then status ~= "" else nil, cx)
+	end)
+end
+
 -- Confirms `path` is a work tree of the repository whose git common dir is `commonDir`, then reports its HEAD and
 -- whether it has changes. A worktree made just now must sit at `want`; it is read for changes too, since a checkout
 -- hook may have written some.
@@ -640,9 +778,9 @@ local function inspectPath<T>(s: Steps<T>, path: string, commonDir: string, want
 					return s.finish(nil, "The new worktree is not at " .. want .. ".", cx3)
 				end
 				-- A failed or slow status leaves `dirty` unknown instead of failing the open.
-				git(path, { "status", "--porcelain", "--untracked-files=normal" }, LOCAL_MS, function(status, _, cx4)
+				M.dirty(path, function(dirty, cx4)
 					s.attempt(cx4, function()
-						step(head, if status then status ~= "" else nil, cx4)
+						step(head, dirty, cx4)
 					end)
 				end)
 			end)
@@ -998,21 +1136,13 @@ function M.openIssue(checkout: string, repo: string, key: string, branch: string
 	end)
 end
 
-function M.describeIssue(r: IssueResult): string
+-- How an issue's worktree stands, on one line; like `describe`, it reads only these fields.
+function M.describeIssue(r: { created: boolean, branch: string, head: string, dirty: boolean? }): string
 	local changes = if r.dirty == true
 		then "Modified (uncommitted changes kept)"
 		elseif r.dirty == false then "Clean"
 		else "Changes unchecked"
 	return (if r.created then "Created" else "Reused") .. " · " .. r.branch .. " at " .. short(r.head) .. " · " .. changes
-end
-
--- Commands that remove the worktree, then its branch. Only shown to the user, as `cleanup`.
-function M.cleanupIssue(r: IssueResult): { string }
-	local at = "git -C " .. shellWord(r.root)
-	return {
-		at .. " worktree remove " .. shellWord(r.path),
-		at .. " branch -d " .. shellWord(r.branch),
-	}
 end
 
 return M

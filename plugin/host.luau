@@ -4,6 +4,7 @@
 local github = require("./github")
 local input = require("./input")
 local jira = require("./jira")
+local keys = require("./keys")
 local process = require("./process")
 local tracker = require("./tracker")
 local worktree = require("./worktree")
@@ -12,10 +13,10 @@ local ui = tern.ui
 
 local POLL_MS = 60 * 1000
 local COST_GUESS = 10
-local DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on a PR before its checks load
+local DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
 local DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
 local DETAIL_RETRY_MAX_S = 300
-local NOTE_CAP = 20 -- worktree reports kept per block
+local NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
 local ISSUE_ICON = "circle-dot" -- the issues block's icon, as in plugin.toml and window.luau
 -- How the issues block lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
 type TrackerApi = {
@@ -47,10 +48,13 @@ type View = { id: string, name: string, integration: string, query: string, logi
 type Views = { version: number, nextId: number, items: { View } }
 -- An agent prompt from Settings › Prompts; the views list which of them they offer. `key` runs it on the selected
 -- item from the queue. `worktree` (issue prompts; nil means true) says where it runs: in the issue's worktree, or in
--- the repository's main checkout.
-type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean? }
+-- the repository's main checkout. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or
+-- a role alias such as @slow.
+type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, model: string? }
 type Prompts = { version: number, nextId: number, items: { Prompt } }
-type KeyHelp = { keys: { string }, text: string }
+-- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keys; a removed
+-- one adds none), and what they do. A row left with no key is not listed.
+type KeyHelp = { keys: { string }, actions: { string }?, text: string }
 -- What tells the blocks apart; the rest is one engine.
 type Kind = {
 	id: string, -- the block id: "prs" | "issues"
@@ -75,7 +79,7 @@ type Snap = {
 	rows: { any }?,
 	rowsRev: number?,
 	rowsMin: number?,
-	rowsOpen: string?, -- the ids of the items open in a tab, comma-joined
+	rowsOpen: string?, -- the key that goes to a tab, then the ids of the items open in a tab, comma-joined
 }
 -- What the local search lets through: computed once per snapshot and search text.
 type Visible = { snap: Snap, needle: string, group: string, items: { any }, order: { any }, hits: { [string]: any }? }
@@ -96,26 +100,38 @@ type Detail = { runs: { github.Run }, total: number, round: number, about: githu
 type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
 type Attempt = { key: string, timer: TimerHandle? }
--- The outcome of the last worktree attempt for an item; kept in memory only.
+-- What the worktree card and the row's badge say of an item's worktree. Nothing is saved: git is the source, so a fresh
+-- block (or one after a plugin reload) shows the worktrees that exist. Every scan of the listed items' checkouts (`git
+-- worktree list`, after each refresh, Worktree attempt and removal) gives a worktree its `root`, `path`, `branch`, `ref`
+-- (what removing it takes), `head` and, for a pull request, `current` (its head is the PR's head the last refresh saw)
+-- and the `update` commands; it takes the note of a worktree git no longer lists. `dirty` is read with `git status`
+-- for the selected item only: nil until then (`checked`: in which State.round; `checking`: that read is on its way). A
+-- note also starts as the outcome of a Worktree attempt (a report, or why there is none), which the next scan confirms
+-- (`git`). `refused` is why the last removal did not go through.
 type Note = {
 	seq: number,
 	at: number,
 	ok: boolean,
-	created: boolean,
 	current: boolean,
 	dirty: boolean?,
+	root: string?,
 	path: string?,
 	branch: string?,
+	ref: string?,
 	summary: string?,
 	message: string?,
+	refused: string?,
 	update: { string },
-	cleanup: { string },
+	git: boolean?,
+	head: string?,
+	checked: number?,
+	checking: boolean?,
 }
 -- What a worktree attempt found, as the preview notes it: the same for pull requests and issues. `current`: the
--- worktree holds what it should (a PR's head; an issue's branch always does).
-type Report = { path: string, branch: string, created: boolean, current: boolean, dirty: boolean?, summary: string, update: { string }, cleanup: { string } }
+-- worktree holds what it should (a PR's head; an issue's branch always does). `ref`: a pull request's fetched ref.
+type Report = { root: string, path: string, branch: string, ref: string?, current: boolean, dirty: boolean?, summary: string, update: { string } }
 type Settings = {
-	page: string, -- "views" | "prompts" | "repos" | "jira" | "connection"
+	page: string, -- "views" | "prompts" | "keys" | "repos" | "jira" | "connection"
 	focus: string?, -- focused prefs row id
 	open: string?, -- id of the view or prompt whose form is expanded; every other one shows as a one-row summary
 	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text
@@ -157,9 +173,12 @@ type State = {
 	detailBusy: { [string]: boolean }, -- checks loads running
 	detailAttempt: Attempt?,
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
-	notes: { [string]: Note }, -- worktree reports by item key
+	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
-	noteSeq: number,
+	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
+	noteSeq: number, -- moves whenever a note changes: the picker's cached rows carry the Worktree badges
+	scanned: Snap?, -- the snapshot whose checkouts the last scan was started for; nil: a scan is due (a worktree was made or removed)
+	scanning: boolean, -- a scan of the shown items' checkouts is running
 	settings: Settings?,
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
 	listing: number, -- repository picker lists still waiting on GitHub: the heading shows a loader meanwhile
@@ -448,8 +467,6 @@ end
 
 local PROMPTS_BAD = "Saved prompts are malformed; not overwriting them."
 local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
--- Keys the queue uses itself, so no prompt may take them as its shortcut.
-local QUEUE_TAKEN = { "j", "k", "w", "g", "a", "/", "?", "r", "s" }
 
 -- Saved agent prompts (kv prompts-prs / prompts-issues; absent is none), or nil and why when unreadable or malformed:
 -- a write then fails closed rather than overwrite them.
@@ -473,10 +490,11 @@ local function loadPrompts(kind: Kind): (Prompts?, string?)
 			or type(p.text) ~= "string"
 			or (p.key ~= nil and type(p.key) ~= "string")
 			or (p.worktree ~= nil and type(p.worktree) ~= "boolean")
+			or (p.model ~= nil and type(p.model) ~= "string")
 		then
 			return nil, PROMPTS_BAD
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, model = p.model })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -493,7 +511,7 @@ local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, model = p.model })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
@@ -1350,6 +1368,7 @@ local SETTINGS_ID = "layer.settings"
 local PAGE_DEFS: { [string]: { id: string, label: string, group: string, icon: string } } = {
 	views = { id = "views", label = "Views", group = "Queue", icon = "funnel" },
 	prompts = { id = "prompts", label = "Prompts", group = "Queue", icon = "app-omp" },
+	keys = { id = "keys", label = "Keys", group = "Queue", icon = "key" },
 	repos = { id = "repos", label = "Repositories", group = "Code", icon = "tree" },
 	jira = { id = "jira", label = "Jira projects", group = "Code", icon = "globe" },
 	connection = { id = "connection", label = "Connection", group = "Connection", icon = "globe" },
@@ -1432,7 +1451,7 @@ local PRS: Kind = {
 	one = "pull request",
 	many = "pull requests",
 	icon = "merge",
-	pages = { "views", "prompts", "repos", "connection" },
+	pages = { "views", "prompts", "keys", "repos", "connection" },
 	viewsKey = "views-prs",
 	promptsKey = "prompts-prs",
 	integrations = { "github" },
@@ -1441,16 +1460,16 @@ local PRS: Kind = {
 		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", logins = {}, group = "none", prompts = {} },
 	},
 	keys = {
-		{ keys = { "↑", "↓" }, text = "Move through the pull requests (j and k too; Page Up/Down jump ten, Home/End the ends)" },
+		{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },
 		{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
-		{ keys = { "w" }, text = "Check it out in a worktree and open that in a new tab (Plotroom asks for the repository's checkout the first time)" },
-		{ keys = { "g" }, text = "Go to the tab working in the selected pull request's worktree" },
-		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
-		{ keys = { "/" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
+		{ keys = {}, actions = { "worktree" }, text = "Check it out in a worktree and open that in a new tab (Plotroom asks for the repository's checkout the first time)" },
+		{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected pull request's worktree" },
+		{ keys = {}, actions = { "agent" }, text = "Pick a saved prompt, or type one, and run it on the selected pull request in its worktree" },
+		{ keys = {}, actions = { "search" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
 		{ keys = { "Tab" }, text = "Switch between the view list and the pull requests" },
-		{ keys = { "r" }, text = "Refresh now" },
-		{ keys = { "s" }, text = "Settings" },
-		{ keys = { "?" }, text = "Show or hide this list" },
+		{ keys = {}, actions = { "refresh" }, text = "Refresh now" },
+		{ keys = {}, actions = { "settings" }, text = "Settings" },
+		{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
 	},
 	-- The variables window.luau's `fill` replaces in a prompt; keep the two in step.
 	vars = {
@@ -1468,16 +1487,16 @@ local PRS: Kind = {
 -- The `?` list of the issues queue.
 local function issueKeys(): { KeyHelp }
 	return {
-		{ keys = { "↑", "↓" }, text = "Move through the issues (j and k too; Page Up/Down jump ten, Home/End the ends)" },
+		{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
 		{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
-		{ keys = { "w" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (Plotroom asks for the repository, and its checkout, the first time)" },
-		{ keys = { "g" }, text = "Go to the tab working in the selected issue's worktree" },
-		{ keys = { "a" }, text = "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)" },
-		{ keys = { "/" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
+		{ keys = {}, actions = { "worktree" }, text = "Create or reuse the selected issue's worktree on its own branch and open it in a new tab (Plotroom asks for the repository, and its checkout, the first time)" },
+		{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected issue's worktree" },
+		{ keys = {}, actions = { "agent" }, text = "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)" },
+		{ keys = {}, actions = { "search" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
 		{ keys = { "Tab" }, text = "Switch between the view list and the issues" },
-		{ keys = { "r" }, text = "Refresh now" },
-		{ keys = { "s" }, text = "Settings" },
-		{ keys = { "?" }, text = "Show or hide this list" },
+		{ keys = {}, actions = { "refresh" }, text = "Refresh now" },
+		{ keys = {}, actions = { "settings" }, text = "Settings" },
+		{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
 	}
 end
 
@@ -1504,7 +1523,7 @@ local ISSUES: Kind = {
 	one = "issue",
 	many = "issues",
 	icon = ISSUE_ICON,
-	pages = { "views", "prompts", "repos", "jira", "connection" },
+	pages = { "views", "prompts", "keys", "repos", "jira", "connection" },
 	viewsKey = "views-issues",
 	promptsKey = "prompts-issues",
 	integrations = { "github", "jira" },
@@ -1525,7 +1544,7 @@ local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "←", "→", "Space" }, text = "On a chips row after Enter: move between options and turn one on or off (a single-choice row switches to the option)" },
 	{ keys = { "Esc" }, text = "Cancel the edit without saving; with nothing being edited, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
-	{ keys = { "?" }, text = "Show or hide this list" },
+	{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
 }
 
 local function stateKind(pr: github.Pr): string
@@ -1741,9 +1760,11 @@ local function pageContent(state: State): ({ any }, string, { Node })
 			table.insert(sections, { id = "status-order", title = "Status order", rows = rows })
 		end
 	elseif s.page == "prompts" then
+		local agent = (keys.load()).agent
+		local picker = "the agent picker" .. (if agent ~= "" then " (" .. agent .. ")" else "")
 		lead = if issues
-			then "Run a prompt on an issue from the action bar or the agent picker (a), in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views."
-			else "Run a prompt on a pull request in its worktree from the queue's action bar or the agent picker (a). Variables such as {url} fill in the pull request's details. Offer a prompt under particular views from Settings › Views."
+			then "Run a prompt on an issue from the action bar or " .. picker .. ", in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views."
+			else "Run a prompt on a pull request in its worktree from the queue's action bar or " .. picker .. ". Variables such as {url} fill in the pull request's details. Offer a prompt under particular views from Settings › Views."
 		local prompts, unreadable = loadPrompts(state.kind)
 		local list: { Prompt } = if prompts then prompts.items else {}
 		for _, p in list do
@@ -1752,6 +1773,9 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				local parts: { string } = { if first ~= "" then first else "Empty" }
 				if p.key and p.key ~= "" then
 					table.insert(parts, "key " .. p.key)
+				end
+				if p.model then
+					table.insert(parts, p.model)
 				end
 				table.insert(sections, {
 					id = "prompt:" .. p.id,
@@ -1777,6 +1801,14 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					label = "Shortcut",
 					hint = "Key that runs it on the selected " .. state.kind.one .. ".",
 					control = { k = "text", value = p.key or "", placeholder = "None" },
+				},
+				{
+					id = "pmodel:" .. p.id,
+					label = "Model",
+					hint = "What omp runs it with: a role such as @slow or @smol, or a model such as opus or anthropic/claude-opus-4-5. Empty: omp's default.",
+					control = { k = "text", value = p.model or "", placeholder = "omp's default", mono = true },
+					changed = p.model ~= nil,
+					defaultLabel = "omp's default",
 				},
 			}
 			if issues then
@@ -1804,6 +1836,21 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				},
 			},
 		})
+	elseif s.page == "keys" then
+		lead = "One key for each action of the queue, the same in the pull request and issue blocks. The arrow keys, Enter, Esc, Tab, Page Up/Down, Home and End cannot be changed. Empty a row to remove its shortcut."
+		local map, unreadable = keys.load()
+		local rows: { Row } = {}
+		for _, a in keys.ACTIONS do
+			table.insert(rows, {
+				id = "key:" .. a.id,
+				label = a.label,
+				disabled = unreadable,
+				control = { k = "text", value = map[a.id], placeholder = "None" },
+				changed = map[a.id] ~= a.default,
+				defaultLabel = a.default,
+			})
+		end
+		table.insert(sections, { id = "keys", rows = rows })
 	elseif s.page == "repos" then
 		lead = "Repositories you work in, each with its local checkout (used for worktrees and prompts), the branch format of its issue worktrees and setup commands. Opening Plotroom inside a checkout adds it."
 		local root = readWorktreeRoot()
@@ -2553,13 +2600,27 @@ local function commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
-	elseif kind == "pkey" and id then
+	elseif kind == "pmodel" and id then
 		local err: string? = nil
-		if text ~= "" and (utf8.len(text) ~= 1 or string.find(text, "%s")) then
-			err = "One key: a single letter, digit or symbol."
-		elseif table.find(QUEUE_TAKEN, text) then
-			err = "The queue already uses " .. text .. "."
+		if text ~= "" and not worktree.validModel(text) then
+			err = "A model such as opus or provider/model-id, or a role such as @slow."
 		else
+			err = editPrompts(state.kind, function(store: Prompts): string?
+				local p = promptById(store, id)
+				if not p then
+					return "That prompt was deleted elsewhere."
+				end
+				p.model = if text ~= "" then text else nil
+				return nil
+			end)
+		end
+		settle(s, row, err)
+	elseif kind == "pkey" and id then
+		local err: string? = keys.shape(text)
+		if not err and keys.action((keys.load()), text) then
+			err = "The queue already uses " .. text .. "."
+		end
+		if not err then
 			err = editPrompts(state.kind, function(store: Prompts): string?
 				local p = promptById(store, id)
 				if not p then
@@ -2575,6 +2636,32 @@ local function commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
+	elseif kind == "key" and id then
+		-- A key some saved prompt of either block runs cannot also be an action's: the keys are shared by both blocks.
+		local function promptKey(): string?
+			for _, other in { PRS, ISSUES } do
+				local prompts, bad = loadPrompts(other)
+				if not prompts then
+					return bad
+				end
+				for _, p in prompts.items do
+					if p.key == text then
+						return "Already the shortcut of the " .. other.one .. " prompt “" .. printable(p.name) .. "”."
+					end
+				end
+			end
+			return nil
+		end
+		local map, unreadable = keys.load()
+		local err = unreadable or keys.problem(map, id, text)
+		if not err and text ~= "" then
+			err = promptKey()
+		end
+		err = err or keys.save(id, text)
+		settle(s, row, err)
+		if not err then
+			propagate(state)
+		end
 	elseif (kind == "pname" or kind == "ptext") and id then
 		local err: string? = nil
 		local empty = false
@@ -2653,6 +2740,7 @@ local function commitEdit(state: State)
 			if not err then
 				s.errors[row] = nil
 				local cloned = claimed ~= nil and claimed.cloned
+				state.scanned = nil -- the new checkout may already hold worktrees: the next render scans it
 				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", root)
 			elseif state.settings == s and s.page == "repos" then
 				beginEdit(state, row, text) -- the draft stays for a correction; this clears the row's warning, so set it after
@@ -2706,6 +2794,19 @@ local function resetRow(state: State, row: string)
 		err = saveBranchFormat(id, nil)
 	elseif row == "wtroot" then
 		err = saveWorktreeRoot("")
+	elseif kind == "pmodel" and id then
+		err = editPrompts(state.kind, function(store: Prompts): string?
+			local p = promptById(store, id)
+			if p then
+				p.model = nil
+			end
+			return nil
+		end)
+	elseif kind == "key" and id then
+		err = keys.save(id, nil)
+		if not err then
+			propagate(state)
+		end
 	end
 	s.errors[row] = err
 	if not err and s.edit and s.edit.row == row then
@@ -2770,19 +2871,23 @@ local function openSelected(state: State, act: string, rerender: boolean)
 	end
 end
 
--- How a worktree report stands: success only for a current, clean worktree; anything else deserves a look.
-local function noteTone(note: Note): string
+-- How a worktree report stands: success only for a current, clean worktree; a stale or changed one deserves a look.
+-- nil (no tone) while its changes are unread, as for a worktree the last scan found: git has not been asked yet.
+local function noteTone(note: Note): string?
 	if not note.ok then
 		return "error"
+	elseif not note.current or note.dirty == true then
+		return "warning"
 	end
-	return if note.current and note.dirty == false then "success" else "warning"
+	return if note.dirty == false then "success" else nil
 end
 
--- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip.
-local function tabBadges(one: string, note: Note?, open: boolean): { any }
+-- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip, `go` is the key that
+-- goes to the tab ("": none).
+local function tabBadges(one: string, note: Note?, open: boolean, go: string): { any }
 	local badges: { any } = {}
 	if open then
-		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree (g goes there)" })
+		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree" .. (if go ~= "" then " (" .. go .. " goes there)" else "") })
 	end
 	if note and note.ok then
 		table.insert(badges, {
@@ -2794,10 +2899,10 @@ local function tabBadges(one: string, note: Note?, open: boolean): { any }
 	return badges
 end
 
-local function pickerItem(pr: github.Pr, note: Note?, open: boolean): { [string]: any }
+local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string): { [string]: any }
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local kind = stateKind(pr)
-	local badges = tabBadges("pull request", note, open)
+	local badges = tabBadges("pull request", note, open, go)
 	if kind ~= "open" then
 		table.insert(badges, STATE_BADGE[kind])
 	end
@@ -2838,8 +2943,8 @@ end
 
 -- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its integration, workflow
 -- status or, once closed, its state, and its labels as badges. The preview lists the assignees; the rows do not.
-local function issueRow(issue: tracker.Issue, note: Note?, open: boolean): { [string]: any }
-	local badges = tabBadges("issue", note, open)
+local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string): { [string]: any }
+	local badges = tabBadges("issue", note, open, go)
 	if issue.status or issue.state == "closed" then
 		table.insert(badges, issueBadge(issue))
 	end
@@ -2873,15 +2978,16 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean): { [st
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
--- ages) or the set of items open in a tab changes.
+-- ages), the set of items open in a tab changes or so does the key that goes to a tab.
 local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { any }
 	local minute = os.time() // 60
+	local go = (keys.load())["goto"]
 	local ids: { string } = {}
 	for id in open do
 		table.insert(ids, id)
 	end
 	table.sort(ids)
-	local openKey = table.concat(ids, ",")
+	local openKey = go .. "|" .. table.concat(ids, ",")
 	local cached = snap.rows
 	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsOpen == openKey then
 		return cached
@@ -2890,7 +2996,7 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	local issues = state.kind.id == "issues"
 	for _, item in snap.items do
 		local isOpen = open[item.key] == true
-		table.insert(rows, if issues then issueRow(item, state.notes[item.key], isOpen) else pickerItem(item, state.notes[item.key], isOpen))
+		table.insert(rows, if issues then issueRow(item, state.notes[item.key], isOpen, go) else pickerItem(item, state.notes[item.key], isOpen, go))
 	end
 	tern.json.array(rows)
 	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
@@ -3021,30 +3127,36 @@ local function wantDetails(state: State, item: any)
 end
 
 -- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike
--- a toast. `key` is the item's key (lowercase "owner/repo#n").
+-- a toast. `key` is the item's key (lowercase "owner/repo#n"). The next render scans the checkouts again, so git
+-- confirms a report. Only the attempts git has not confirmed count against NOTE_CAP: a block may hold more worktrees
+-- than that.
 local function noteWorktree(state: State, key: string, r: Report?, problem: string?)
 	local note: Note = {
 		seq = state.noteSeq + 1,
 		at = os.time(),
 		ok = r ~= nil,
-		created = r ~= nil and r.created,
 		current = r ~= nil and r.current,
 		dirty = if r then r.dirty else nil,
+		root = if r then r.root else nil,
 		path = if r then r.path else nil,
 		branch = if r then r.branch else nil,
+		ref = if r then r.ref else nil,
 		summary = if r then r.summary else nil,
 		message = if problem then clip(printable(problem), 1500) else nil,
 		update = if r then r.update else {},
-		cleanup = if r then r.cleanup else {},
+		checked = if r and r.dirty ~= nil then state.round else nil, -- the attempt has just read `git status`
 	}
 	state.notes[key] = note
 	state.noteSeq = note.seq
+	state.scanned = nil
 	local count, oldest = 0, nil :: string?
 	local oldestSeq = math.huge
-	for key, n in state.notes do
-		count += 1
-		if n.seq < oldestSeq then
-			oldest, oldestSeq = key, n.seq
+	for other, n in state.notes do
+		if not n.git then
+			count += 1
+			if n.seq < oldestSeq then
+				oldest, oldestSeq = other, n.seq
+			end
 		end
 	end
 	if count > NOTE_CAP and oldest then
@@ -3059,13 +3171,13 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "8"
+local RPC_PROTOCOL = "9"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
 
--- Pull requests and issues whose worktree is being prepared on this host ("owner/repo#n", lowercase): one at a time,
--- whichever window asks.
+-- Pull requests and issues whose worktree is being prepared or removed on this host ("owner/repo#n", lowercase): one
+-- at a time, whichever window asks.
 local preparing: { [string]: boolean } = {}
 
 local function reply(state: State, id: string, body: { [string]: any })
@@ -3199,9 +3311,10 @@ local function menu(state: State, id: string, only: string?)
 		table.insert(mine, {
 			id = p.id,
 			label = clip(printable(p.name), 120),
-			detail = clip(printable(string.match(p.text, "^%s*([^\n]*)") or ""), 160),
+			detail = clip(printable((if p.model then p.model .. " · " else "") .. (string.match(p.text, "^%s*([^\n]*)") or "")), 160),
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All prompts",
 			send = p.text,
+			model = p.model,
 			worktree = if issues then p.worktree ~= false else nil, -- where it runs; a PR prompt always runs in its worktree
 		})
 	end
@@ -3247,14 +3360,14 @@ local function prepare(state: State, id: string, repo: string, n: number)
 			local current = r.head == r.prHead
 			local summary = worktree.describe(r)
 			noteWorktree(state, key, {
+				root = r.root,
 				path = r.path,
 				branch = r.branch,
-				created = r.created,
+				ref = r.ref,
 				current = current,
 				dirty = r.dirty,
 				summary = summary,
 				update = worktree.update(r),
-				cleanup = worktree.cleanup(r),
 			}, nil)
 			reply(state, id, {
 				path = r.path,
@@ -3349,14 +3462,13 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 			end
 			local summary = worktree.describeIssue(r)
 			noteWorktree(state, key, {
+				root = r.root,
 				path = r.path,
 				branch = r.branch,
-				created = r.created,
 				current = true,
 				dirty = r.dirty,
 				summary = summary,
 				update = {},
-				cleanup = worktree.cleanupIssue(r),
 			}, nil)
 			vars.branch = r.branch
 			reply(state, id, {
@@ -3479,6 +3591,7 @@ local function claim(state: State, id: string, repo: string, raw: string)
 		if err then
 			return reply(state, id, { problem = err })
 		end
+		state.scanned = nil -- the new checkout may already hold worktrees: the reply's render scans it
 		reply(state, id, { ok = true, root = root, cloned = claimed ~= nil and claimed.cloned })
 	end)
 end
@@ -3560,48 +3673,6 @@ local function rpc(state: State, raw: any)
 	end
 end
 
--- The worktree report of the item with key `key`: persistent, with what Plotroom found and the commands the user may run.
-local function worktreeNodes(state: State, key: string): { Node }
-	local note = state.notes[key]
-	if not note then
-		return {}
-	end
-	local tone = noteTone(note)
-	local body: { Node } = {}
-	if note.ok then
-		local text = note.summary or (if note.created then "Created" else "Reused")
-		table.insert(body, ui.node("text", { key = "summary", spans = { ui.span(text) } }))
-		local facts: { { [string]: any } } = {}
-		if note.path then
-			table.insert(facts, { k = "Path", v = note.path })
-		end
-		if note.branch then
-			table.insert(facts, { k = "Branch", v = note.branch })
-		end
-		table.insert(body, ui.node("kv", { key = "facts", items = facts }))
-		local function commands(id: string, title: string, list: { string })
-			if #list == 0 then
-				return
-			end
-			-- A shell fence: Tern draws it with its own Copy button. The fence outgrows any backtick run in a path.
-			local text = table.concat(list, "\n")
-			local fence = "```"
-			while string.find(text, fence, 1, true) do
-				fence ..= "`"
-			end
-			local kids = { ui.node("md", { key = "commands", text = fence .. "sh\n" .. text .. "\n" .. fence }) }
-			table.insert(body, ui.node("section", { key = id, head = { ui.span(title, "muted") }, collapsible = true, collapsed = true }, kids))
-		end
-		commands("update", "Take the pull request's newer commits", note.update)
-		commands("cleanup", "Remove this worktree when you are done", note.cleanup)
-		table.insert(body, ui.node("text", { key = "never", spans = { ui.span("Plotroom never updates or removes a worktree; run these yourself.", "muted") } }))
-	else
-		table.insert(body, ui.node("text", { key = "message", spans = { ui.span(note.message or "The worktree could not be prepared.", "error") } }))
-	end
-	local head = spans(ui.span("Worktree", "strong"), ui.span("  checked " .. os.date("%H:%M", note.at), "muted"))
-	return { ui.node("card", { key = "worktree", tone = tone, head = head }, body) }
-end
-
 -- The checks of the selected PR once loaded (Tern's shimmer meanwhile), with an error, its retry time and a Retry
 -- button when the load failed.
 local function checksNodes(state: State, pr: github.Pr): { Node }
@@ -3678,24 +3749,26 @@ end
 -- The selected item's action-bar buttons, each with the link it opens: Open, Worktree, Go to tab while a tab works in
 -- it, and one per saved prompt offered under this view (it runs that prompt in the item's worktree, or in the
 -- repository's main checkout for an issue prompt set that way). A missing repository or checkout is asked for in the
--- window's palette when one is needed.
+-- window's palette when one is needed. A button's `keys` are its keycap: the configured key of Worktree and Go to tab
+-- (Settings › Keys; none once removed), the shortcut of a prompt.
 type Action = { id: string, label: string, keys: { string }?, href: string, primary: boolean? }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
 	local tr: string = if state.kind.id == "issues" then item.tracker else "github"
+	local map = keys.load()
 	-- ↗, not a Nerd Font icon: an action label is plain text in Tern's sans face. No keycap: Enter is the queue's default.
 	local out: { Action } = {
 		{ id = "open", label = INTEGRATIONS[tr].label .. " ↗", href = hrefOf(state, item, "open"), primary = true },
-		{ id = "worktree", label = "Worktree", keys = { "w" }, href = hrefOf(state, item, "worktree") },
+		{ id = "worktree", label = "Worktree", keys = keys.caps(map, "worktree"), href = hrefOf(state, item, "worktree") },
 	}
 	if open[item.key] then
-		table.insert(out, { id = "goto", label = "Go to tab", keys = { "g" }, href = hrefOf(state, item, "goto") })
+		table.insert(out, { id = "goto", label = "Go to tab", keys = keys.caps(map, "goto"), href = hrefOf(state, item, "goto") })
 	end
 	local prompts: { { prompt: Prompt, here: boolean } } = offered(state)
 	for _, o in prompts do
 		local p = o.prompt
 		if string.match(p.id, "^%w+$") then
-			local keys = if p.key then { p.key } else nil
-			table.insert(out, { id = "prompt-" .. p.id, label = clip(printable(p.name), 40), keys = keys, href = runHrefOf(state, item, p.id) })
+			local caps = if p.key then { p.key } else nil
+			table.insert(out, { id = "prompt-" .. p.id, label = clip(printable(p.name), 40), keys = caps, href = runHrefOf(state, item, p.id) })
 		end
 	end
 	return out
@@ -3724,21 +3797,94 @@ local function addPart(out: { Node }, key: string, nodes: { Node })
 end
 
 -- A kv value is spans only, so a copy icon cannot sit in one: Branch and Base are rows of their own, spaced like
--- the kv's rows they head.
-local function refRow(key: string, label: string, name: string): Node
+-- the kv's rows they head. `full` is what the tooltip shows and the copy icon copies when `name` is a shortened form.
+local function refRow(key: string, label: string, name: string, full: string?): Node
+	local whole = full or name
 	return ui.node("row", { key = key, role = "plotroom.ref", gap = "xs", align = "center" }, {
 		ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
 		-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
-		ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, spans = { ui.span(name, "code") } }),
+		ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, title = full, spans = { ui.span(name, "code") } }),
 		ui.node("icon", {
 			key = "copy",
 			name = "copy",
-			href = name,
+			href = whole,
 			actions = { click = "copy" },
 			title = "Copy " .. string.lower(label),
-			aria = "Copy the " .. string.lower(label) .. " " .. name,
+			aria = "Copy the " .. string.lower(label) .. " " .. whole,
 		}),
 	})
+end
+
+-- The worktree card of the item with key `key`: persistent, with what Plotroom found (whether the worktree is at the
+-- pull request's head and has uncommitted changes, where it is) and what to do with it: go to or open its tab, remove
+-- it. acts: itemActions(...) of that item, whose keycaps the rows show. A failed attempt is its message alone.
+local function worktreeNodes(state: State, key: string, acts: { Action }): { Node }
+	local note = state.notes[key]
+	if not note then
+		return {}
+	end
+	local head = spans(ui.span("Worktree", "strong"), ui.span("  checked " .. os.date("%H:%M", note.at), "muted"))
+	if not note.ok then
+		local why = ui.node("text", { key = "message", spans = { ui.span(note.message or "The worktree could not be prepared.", "error") } })
+		return { ui.node("card", { key = "worktree", tone = "error", head = head }, { why }) }
+	end
+	-- The badges are the answer; the attempt's one-line summary is their tooltip.
+	local chips: { Node } = {}
+	if state.kind.id == "prs" then
+		table.insert(chips, ui.node("badge", {
+			key = "sync",
+			text = if note.current then "Up to date" else "Not at PR head",
+			tone = if note.current then "success" else "warning",
+			title = note.summary,
+		}))
+	end
+	table.insert(chips, ui.node("badge", {
+		key = "changes",
+		text = if note.dirty == true then "Uncommitted changes" elseif note.dirty == false then "Clean" else "Changes unchecked",
+		tone = if note.dirty == true then "warning" elseif note.dirty == false then "success" else "muted",
+		title = note.summary,
+	}))
+	local body: { Node } = { ui.node("row", { key = "status", gap = "xs", wrap = true }, chips) }
+	if note.refused then
+		table.insert(body, ui.node("text", { key = "refused", spans = { ui.span("Not removed. " .. note.refused, "error") } }))
+	end
+	if note.branch then
+		table.insert(body, refRow("wbranch", "Branch", note.branch))
+	end
+	if note.path then
+		table.insert(body, refRow("wpath", "Path", worktree.tilde(note.path, tern.getenv("HOME")), note.path))
+	end
+	if #note.update > 0 then
+		-- A shell fence: Tern draws it with its own Copy button. The fence outgrows any backtick run in a path.
+		local text = table.concat(note.update, "\n")
+		local fence = "```"
+		while string.find(text, fence, 1, true) do
+			fence ..= "`"
+		end
+		local commands = ui.node("md", { key = "commands", text = fence .. "sh\n" .. text .. "\n" .. fence })
+		local fold: { [string]: any } = { key = "update", head = { ui.span("Take the pull request's newer commits", "muted") }, collapsible = true, collapsed = true }
+		table.insert(body, ui.node("section", fold, { commands }))
+	end
+	-- itemActions offers Go to tab only while a tab works in the worktree; otherwise Worktree opens one.
+	local tab: Action? = nil
+	local fresh: Action? = nil
+	for _, a in acts do
+		if a.id == "goto" then
+			tab = a
+		elseif a.id == "worktree" then
+			fresh = a
+		end
+	end
+	local rows: { Node } = {}
+	if tab then
+		table.insert(rows, ui.node("item", { key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
+	else
+		table.insert(rows, ui.node("item", { key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
+	end
+	table.insert(rows, ui.node("item", { key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
+	table.insert(body, ui.node("rule", { key = "sep" }))
+	table.insert(body, ui.node("list", { key = "actions" }, rows))
+	return { ui.node("card", { key = "worktree", tone = noteTone(note), head = head }, body) }
 end
 
 -- The description card of the item with key `key`, with no rule: it reads as part of the head. A folded bare card
@@ -3835,7 +3981,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
-	addPart(out, "worktree", worktreeNodes(state, pr.key))
+	addPart(out, "worktree", worktreeNodes(state, pr.key, acts))
 	if about and string.find(about.body, "%S") then
 		addDescription(out, state, pr.key, about.body)
 	end
@@ -4040,14 +4186,28 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	if detail and string.find(detail.body, "%S") then
 		addDescription(out, state, issue.key, detail.body)
 	end
-	addPart(out, "worktree", worktreeNodes(state, issue.key))
+	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
 	addPart(out, "linked", linkedNodes(issue.tracker, detail, fail, loading))
 	return out
 end
 
 local function helpOverlay(state: State): Node
-	local rows: { KeyHelp } = table.clone(if state.settings then SETTINGS_KEYS else state.kind.keys)
+	local map = keys.load()
+	local listed: { KeyHelp } = if state.settings then SETTINGS_KEYS else state.kind.keys
+	local rows: { KeyHelp } = {}
+	for _, h in listed do
+		local caps = table.clone(h.keys)
+		local actions: { string } = h.actions or {}
+		for _, id in actions do
+			if map[id] ~= "" then
+				table.insert(caps, map[id])
+			end
+		end
+		if #caps > 0 then
+			table.insert(rows, { keys = caps, text = h.text })
+		end
+	end
 	local shortcuts: { { prompt: Prompt, here: boolean } } = if state.settings then {} else offered(state)
 	for _, o in shortcuts do
 		if o.prompt.key then
@@ -4152,15 +4312,16 @@ local function queuePicker(state: State): Node
 	end
 
 	local wait = waitOf(state)
+	local map = keys.load()
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
 	-- Settings and Refresh on the left;
 	-- the selected item's buttons on the right, Open last in the corner.
 	local actions: { any } = {
-		{ id = "settings", label = "Settings", keys = { "s" } },
+		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
 		{
 			id = "retry",
 			label = "Refresh",
-			keys = { "r" },
+			keys = keys.caps(map, "refresh"),
 			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
 		},
 	}
@@ -4189,7 +4350,7 @@ local function queuePicker(state: State): Node
 		placeholder = "Filter the loaded " .. state.kind.many,
 		state = if not snap and problem then "error" elseif not snap and view then "loading" else "ready",
 		empty = {
-			ui.span(if view then "No " .. state.kind.many .. " match " .. view.name .. "." else "No saved views yet. Press s to add one.", "muted"),
+			ui.span(if view then "No " .. state.kind.many .. " match " .. view.name .. "." else "No saved views yet. " .. (if map.settings ~= "" then "Press " .. map.settings .. " to add one." else "Open Settings to add one."), "muted"),
 		},
 		items = items,
 		order = order,
@@ -4213,18 +4374,28 @@ local function queuePicker(state: State): Node
 	return ui.node("picker", props, preview)
 end
 
-local function queueView(state: State): BlockView
-	local layer: { Node } = { queuePicker(state) }
-	if state.help then
-		table.insert(layer, helpOverlay(state))
-	end
-	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
-end
-
 local function confirmOverlay(state: State, row: string): Node
 	local kind, id = string.match(row, "^(%a+):(.+)$")
 	local head, body
-	if kind == "pdelete" then
+	local extra: { Node } = {} -- between the text and the buttons
+	local remove = kind == "wremove"
+	if remove then
+		-- A worktree's removal, asked from its card (state.removing): where it is, and a warning while a tab works in it.
+		local note = if id then state.notes[id] else nil
+		head = "Remove worktree?"
+		body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes."
+		local facts: { { [string]: any } } = {}
+		if note and note.path then
+			table.insert(facts, { k = "Path", v = { ui.span(note.path, "code") } })
+		end
+		if note and note.branch then
+			table.insert(facts, { k = "Branch", v = { ui.span(note.branch, "code") } })
+		end
+		table.insert(extra, ui.node("kv", { key = "facts", items = facts }))
+		if id and openItems(state)[id] then
+			table.insert(extra, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
+		end
+	elseif kind == "pdelete" then
 		local prompts = loadPrompts(state.kind)
 		local p = if prompts and id then promptById(prompts, id) else nil
 		head = "Delete prompt “" .. (if p then p.name else "this prompt") .. "”?"
@@ -4245,16 +4416,36 @@ local function confirmOverlay(state: State, row: string): Node
 		head = "Delete view “" .. name .. "”?"
 		body = "Every Plotroom pane loses this saved search."
 	end
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, {
+	local kids: { Node } = {
 		ui.node("text", {
 			key = "body",
-			spans = { ui.span(body .. " Press d to delete it; Enter or Esc keeps it.", "muted") },
+			spans = { ui.span(body .. " Press d to " .. (if remove then "remove" else "delete") .. " it; Enter or Esc keeps it.", "muted") },
 		}),
-		ui.node("list", { key = "buttons" }, {
-			ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = "cancel-delete" } }),
-			ui.node("item", { key = "delete", label = "Delete", icon = "trash", tone = "error", hint = { "d" }, actions = { click = "confirm-delete" } }),
+	}
+	table.move(extra, 1, #extra, #kids + 1, kids)
+	table.insert(kids, ui.node("list", { key = "buttons" }, {
+		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = if remove then "cancel-remove" else "cancel-delete" } }),
+		ui.node("item", {
+			key = "delete",
+			label = if remove then "Remove" else "Delete",
+			icon = "trash",
+			tone = "error",
+			hint = { "d" },
+			actions = { click = if remove then "confirm-remove" else "confirm-delete" },
 		}),
-	})
+	}))
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
+end
+
+local function queueView(state: State): BlockView
+	local layer: { Node } = { queuePicker(state) }
+	local removing = state.removing
+	if removing and state.notes[removing] then
+		table.insert(layer, confirmOverlay(state, "wremove:" .. removing))
+	elseif state.help then
+		table.insert(layer, helpOverlay(state))
+	end
+	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
 end
 
 local function settingsView(state: State): BlockView
@@ -4383,6 +4574,282 @@ local function blockDef(base: Kind): BlockDef<State>
 		end
 		state.cursor = key
 	end
+	-- The button `id` of the selected item (itemActions' ids): opens its link, as the button's key does.
+	local function openAction(state: State, id: string)
+		local chosen = selected(state)
+		local acts: { Action } = if chosen then itemActions(state, chosen, openItems(state)) else {}
+		for _, a in acts do
+			if a.id == id then
+				state.cx:open(a.href)
+			end
+		end
+	end
+	-- One line for the badges' tooltip on where the worktree of `note` stands (`item`: the listed item it is of); nil
+	-- when that cannot be said: its head is unread, or a pull request's head is unknown.
+	local function summaryOf(issues: boolean, note: Note, item: any): string?
+		local head = note.head
+		if not head then
+			return nil
+		elseif issues then
+			return worktree.describeIssue({ created = false, branch = note.branch or "", head = head, dirty = note.dirty })
+		end
+		local prHead = if item then item.headSha else nil
+		if not prHead then
+			return nil
+		end
+		return worktree.describe({ created = false, head = head, prHead = prHead, prRef = item.head, dirty = note.dirty })
+	end
+	-- Brings the notes into line with what the scans read, `scans[1..count]` (a failed scan is absent): the note of a
+	-- worktree that is listed follows its head; a listed worktree of a listed item with no note of it, or only a note of
+	-- another worktree, gets one (root, path, branch, ref and, for a pull request, whether it is at the head the last
+	-- refresh saw; `dirty` is unread); the ok note of a worktree its checkout no longer lists goes. A report of a worktree
+	-- attempt stands until a later scan confirms it: the refresh's head may predate it. A failed attempt's note stays as
+	-- it is: it answers the last Worktree press, and it names no worktree to ask git about. true when anything changed.
+	-- ponytail: `current` follows the head the last refresh saw, so a pull request pushed since then reads as it was until
+	-- the next refresh; a card that must be exact needs the PR read again.
+	local function applyScans(state: State, scans: { [number]: worktree.Scan? }, count: number): boolean
+		local issues = state.kind.id == "issues"
+		local listed: { [string]: any } = {} -- every listed item by key: its freshest listing
+		for _, snap in state.snaps do
+			for _, item in snap.items do
+				local seen = listed[item.key]
+				if not seen or item.updated > seen.updated then
+					listed[item.key] = item
+				end
+			end
+		end
+		local lists: { [string]: { [string]: worktree.Found } } = {} -- main worktree -> what git lists there
+		local pick: { [string]: worktree.Found } = {} -- one worktree per item: the one its note is about, else the first
+		for i = 1, count do
+			local scan = scans[i]
+			if scan then
+				lists[scan.root] = scan.found
+				for key, f in scan.found do
+					local note = state.notes[key]
+					if pick[key] == nil or (note ~= nil and note.path == f.path) then
+						pick[key] = f
+					end
+				end
+			end
+		end
+		local changed = false
+		for key, note in state.notes do
+			local at = if note.ok and note.root then lists[note.root] else nil
+			if at and at[key] == nil then
+				state.notes[key] = nil
+				changed = true
+			end
+		end
+		local now = os.time()
+		for key, f in pick do
+			local item = listed[key]
+			local sha: string? = if item and not issues then item.headSha else nil
+			local remote = f.remote
+			local note = state.notes[key]
+			if note and note.ok and note.path == f.path then
+				local current = if sha then f.head == sha else note.current
+				local moved = note.git == true and (f.head ~= note.head or current ~= note.current)
+				note.git, note.head, note.at = true, f.head, now
+				if moved then
+					note.current = current
+					if current then
+						note.update = {}
+					elseif remote and sha then
+						note.update = worktree.update({ path = f.path, remote = remote, number = item.number, head = f.head, prHead = sha })
+					end
+					note.summary = summaryOf(issues, note, item) or note.summary
+					changed = true
+				end
+			elseif item and (not note or note.ok) then
+				local current = if sha then f.head == sha else true
+				local fresh: Note = {
+					seq = state.noteSeq + 1,
+					at = now,
+					ok = true,
+					current = current,
+					dirty = nil,
+					root = f.root,
+					path = f.path,
+					branch = f.branch,
+					ref = f.ref,
+					summary = nil,
+					message = nil,
+					refused = nil,
+					update = if not current and remote and sha then worktree.update({ path = f.path, remote = remote, number = item.number, head = f.head, prHead = sha }) else {},
+					git = true,
+					head = f.head,
+					checked = nil,
+					checking = nil,
+				}
+				fresh.summary = summaryOf(issues, fresh, item)
+				state.notes[key] = fresh
+				changed = true
+			end
+		end
+		return changed
+	end
+	-- Scans the checkouts of the shown items (a pull request's repository, an issue's, a Jira project's repositories:
+	-- the saved checkout of each) with one `worktree list` apiece and applies what they read. Idempotent, as every render
+	-- asks: it runs for a snapshot it has not scanned yet, or when `state.scanned` was reset (a worktree attempt, a
+	-- removal, a checkout saved), one at a time. A scan that failed changes nothing, and so does one that a note changed
+	-- under: it may predate that attempt or removal, so it is dropped and made again.
+	local scanWorktrees: (State) -> ()
+	scanWorktrees = function(state: State)
+		local snap = state.snap
+		if not snap or state.scanning or state.scanned == snap or not alive(state) then
+			return
+		end
+		state.scanned = snap
+		local issues = state.kind.id == "issues"
+		local paths: { string } = {}
+		local seen: { [string]: boolean } = {}
+		local saved = readCheckouts() -- one read, not one per repository
+		local function want(repo: string)
+			local path = saved[string.lower(repo)]
+			if type(path) == "string" and path ~= "" and not seen[path] then
+				seen[path] = true
+				table.insert(paths, path)
+			end
+		end
+		local done: { [string]: boolean } = {}
+		for _, item in snap.items do
+			local repo: string = item.repo
+			if not done[repo] then
+				done[repo] = true
+				if issues and item.tracker == "jira" then
+					for _, r in jiraReposOf(repo) do
+						want(r)
+					end
+				else
+					want(repo)
+				end
+			end
+		end
+		if #paths == 0 then
+			return
+		end
+		state.scanning = true
+		local rev = state.noteSeq
+		local kind = if issues then "issue" else "pr"
+		local scans: { [number]: worktree.Scan? } = {}
+		-- One checkout at a time: a list of many repositories must not start a git process for each at once.
+		local function step(i: number)
+			if i <= #paths and alive(state) then
+				local once = false
+				worktree.scan(paths[i], kind, function(scan)
+					if not once then
+						once = true
+						scans[i] = scan -- nil for a scan that failed
+						step(i + 1)
+					end
+				end)
+				return
+			end
+			state.scanning = false
+			if not alive(state) then
+				return
+			end
+			if state.noteSeq ~= rev then
+				state.scanned = nil
+			elseif applyScans(state, scans, #paths) then
+				state.noteSeq += 1
+				state.cx:render()
+			end
+			scanWorktrees(state) -- the shown snapshot may have changed meanwhile
+		end
+		step(1)
+	end
+	-- Reads `git status` of the selected item's worktree once the cursor has rested on it (never one per row), and
+	-- again after each refresh: the card's Clean / Uncommitted changes badge and the row's tone follow. Idempotent: every
+	-- render asks.
+	local function inspectSelected(state: State)
+		local item = selected(state)
+		local note = if item then state.notes[item.key] else nil
+		local path = if note then note.path else nil
+		if not item or not note or not note.ok or not path or note.checking or note.checked == state.round then
+			return
+		end
+		local key, round = item.key, state.round
+		note.checking = true
+		tern.timer(DETAIL_DEBOUNCE_MS, function()
+			local at = selected(state)
+			if not alive(state) or state.notes[key] ~= note or not at or at.key ~= key then
+				note.checking = nil
+				return -- the cursor moved on or the note went: a render asks again if it still matters
+			end
+			worktree.dirty(path, function(dirty)
+				note.checking = nil
+				note.checked = round
+				if not alive(state) or state.notes[key] ~= note or dirty == nil or dirty == note.dirty then
+					return
+				end
+				note.dirty = dirty
+				note.summary = summaryOf(state.kind.id == "issues", note, item) or note.summary
+				state.noteSeq += 1
+				state.cx:render()
+			end)
+		end)
+	end
+	-- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
+	local function askRemove(state: State)
+		local chosen = selected(state)
+		local note = if chosen then state.notes[chosen.key] else nil
+		if not chosen or not note or not note.ok then
+			return
+		end
+		if preparing[chosen.key] then
+			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
+		end
+		state.removing = chosen.key
+	end
+	-- Removes the worktree whose removal was confirmed, on this host where git runs (never in a window). A removal drops
+	-- the note in every block of this host, and the row's Worktree badge with it; a refusal keeps the note, with the
+	-- reason on its card. Either way the next render scans the checkouts again, so git has the last word.
+	local function removeNow(state: State)
+		local key = state.removing
+		state.removing = nil
+		local note = if key then state.notes[key] else nil
+		if not key or not note or not note.ok then
+			return
+		end
+		local root, path, branch = note.root, note.path, note.branch
+		if not root or not path or not branch then
+			return
+		end
+		if preparing[key] then
+			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
+		end
+		preparing[key] = true
+		state.cx:toast("info", "Removing the worktree of " .. key .. "…")
+		worktree.remove({ root = root, path = path, branch = branch, ref = note.ref }, function(removal, why, dirty)
+			preparing[key] = nil
+			if not alive(state) then
+				return
+			end
+			if removal then
+				for _, s in running do
+					if s.notes[key] then
+						s.notes[key] = nil
+						s.noteSeq += 1
+						s.scanned = nil
+						if s ~= state and alive(s) then
+							s.cx:render()
+						end
+					end
+				end
+				state.cx:toast("success", "Worktree removed", removal.branch)
+			else
+				note.refused = why
+				if dirty then
+					note.dirty = true
+				end
+				state.cx:toast("error", "Worktree not removed", why)
+			end
+			state.noteSeq += 1 -- the picker's cached rows carry the Worktree badge
+			state.scanned = nil
+			state.cx:render()
+		end)
+	end
 	return {
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
@@ -4452,7 +4919,10 @@ local function blockDef(base: Kind): BlockDef<State>
 				round = 0,
 				notes = {},
 				descOpen = nil,
+				removing = nil,
 				noteSeq = 0,
+				scanned = nil,
+				scanning = false,
 				settings = nil,
 				replies = {},
 				listing = 0,
@@ -4476,6 +4946,9 @@ local function blockDef(base: Kind): BlockDef<State>
 				worktree.currentRepository(cwd, function(found)
 					if found and alive(state) and checkoutOf(found.id) == nil then
 						saveCheckout(found.id, found.checkout)
+						-- A checkout that is new may already hold worktrees, and the first refresh may have landed without it.
+						state.scanned = nil
+						scanWorktrees(state)
 					end
 				end)
 			end
@@ -4491,6 +4964,8 @@ local function blockDef(base: Kind): BlockDef<State>
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView
+			scanWorktrees(state)
+			inspectSelected(state)
 			return if state.settings then settingsView(state) else queueView(state)
 		end,
 
@@ -4499,8 +4974,22 @@ local function blockDef(base: Kind): BlockDef<State>
 			local name = key.name
 			local k = key.text or name
 			local s = state.settings
+			if state.removing and not state.notes[state.removing] then
+				state.removing = nil -- its note was evicted: nothing left to ask about
+			end
+			if state.removing and not s then
+				-- Like a delete: Enter keeps the worktree, only a deliberate `d` or a click removes it.
+				if name == "enter" or name == "escape" then
+					state.removing = nil
+				elseif plain and k == "d" then
+					removeNow(state)
+				else
+					return false
+				end
+				return true
+			end
 			if state.help then
-				if name == "escape" or name == "enter" or (plain and k == "?") then
+				if name == "escape" or name == "enter" or (plain and keys.action((keys.load()), k) == "help") then
 					state.help = false
 					return true
 				end
@@ -4560,7 +5049,7 @@ local function blockDef(base: Kind): BlockDef<State>
 					local pages = state.kind.pages
 					local at = table.find(pages, s.page) or 1
 					showPage(state, s, pages[((at - 1 + (if key.shift then -1 else 1)) % #pages) + 1])
-				elseif plain and k == "?" then
+				elseif plain and keys.action((keys.load()), k) == "help" then
 					state.help = true
 				elseif name == "up" or name == "down" then
 					local rows = focusRows(state)
@@ -4580,6 +5069,8 @@ local function blockDef(base: Kind): BlockDef<State>
 
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"
+			-- The queue action the key is (Settings › Keys). While searching it is text, and with ctrl, alt or meta it is no shortcut.
+			local act = if plain and not searching then keys.action((keys.load()), k) else nil
 			if name == "tab" and plain then
 				state.focus = if scopes then "list" else "scopes"
 			elseif name == "escape" then
@@ -4592,13 +5083,13 @@ local function blockDef(base: Kind): BlockDef<State>
 				else
 					return false
 				end
-			elseif name == "up" or (not searching and plain and k == "k") then
+			elseif name == "up" or act == "up" then
 				if scopes then
 					moveView(state, -1)
 				else
 					moveCursor(state, -1)
 				end
-			elseif name == "down" or (not searching and plain and k == "j") then
+			elseif name == "down" or act == "down" then
 				if scopes then
 					moveView(state, 1)
 				else
@@ -4630,23 +5121,23 @@ local function blockDef(base: Kind): BlockDef<State>
 				if q.text ~= before then
 					ensureCursor(state)
 				end
-			elseif plain and k == "/" then
+			elseif act == "search" then
 				state.query = input.new("")
-			elseif plain and k == "?" then
+			elseif act == "help" then
 				state.help = true
-			elseif plain and k == "r" then
+			elseif act == "refresh" then
 				retry(state)
-			elseif plain and k == "s" then
+			elseif act == "settings" then
 				openSettings(state, "views")
-			elseif plain and k == "w" then
+			elseif act == "worktree" then
 				openSelected(state, "worktree", false)
-			elseif plain and k == "g" then
+			elseif act == "goto" then
 				local chosen = selected(state)
 				if not chosen or not openItems(state)[chosen.key] then
 					return false
 				end
 				openSelected(state, "goto", false)
-			elseif plain and k == "a" then
+			elseif act == "agent" then
 				openSelected(state, "agent", false)
 			else
 				-- A saved prompt's own key runs it, through its button's link (the window honours only links shown).
@@ -4703,6 +5194,19 @@ local function blockDef(base: Kind): BlockDef<State>
 				if s then
 					s.confirm = nil
 				end
+			elseif act == "remove-worktree" then
+				if not s then
+					askRemove(state)
+				end
+			elseif act == "confirm-remove" then
+				if state.removing then
+					removeNow(state)
+				end
+			elseif act == "cancel-remove" then
+				state.removing = nil
+			elseif (act == "goto" or act == "worktree") and not s then
+				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
+				openAction(state, act)
 			elseif act == "save-prompt" or act == "cancel-prompt" then
 				-- The editor card's buttons: their own ids, not the prefs node's.
 				if s and act == "save-prompt" then
@@ -4775,13 +5279,7 @@ local function blockDef(base: Kind): BlockDef<State>
 					retry(state)
 				elseif act then
 					-- An item's button in the action bar: open its link, as its key does.
-					local chosen = selected(state)
-					local acts: { Action } = if chosen then itemActions(state, chosen, openItems(state)) else {}
-					for _, a in acts do
-						if a.id == act then
-							state.cx:open(a.href)
-						end
-					end
+					openAction(state, act)
 				end
 			end
 		end,

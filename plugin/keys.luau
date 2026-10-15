@@ -1,0 +1,123 @@
+--!strict
+-- The queue's one-key shortcuts, shared by the pull request and issue blocks: each action's default key, and kv "keys",
+-- which holds the keys this machine changed (action id -> key; "" removes the shortcut, an absent id keeps its default).
+
+local M = {}
+
+export type Action = { id: string, label: string, default: string }
+export type Map = { [string]: string } -- action id -> its key, "" when removed
+
+local KV = "keys"
+local BAD = "Saved keys are malformed; not overwriting them."
+
+-- In the order the Keys page lists them and `action` tries them.
+M.ACTIONS = {
+	{ id = "down", label = "Move down", default = "j" },
+	{ id = "up", label = "Move up", default = "k" },
+	{ id = "worktree", label = "Worktree", default = "w" },
+	{ id = "goto", label = "Go to tab", default = "g" },
+	{ id = "agent", label = "Agent picker", default = "a" },
+	{ id = "search", label = "Search", default = "/" },
+	{ id = "refresh", label = "Refresh", default = "r" },
+	{ id = "settings", label = "Settings", default = "s" },
+	{ id = "help", label = "Shortcut list", default = "?" },
+} :: { Action }
+
+local function actionOf(id: string): Action?
+	for _, a in M.ACTIONS do
+		if a.id == id then
+			return a
+		end
+	end
+	return nil
+end
+
+-- Why `text` cannot be a shortcut at all, or nil: one character that is not a gap ("" is no key, so it is fine).
+function M.shape(text: string): string?
+	if text ~= "" and (utf8.len(text) ~= 1 or string.find(text, "%s")) then
+		return "One key: a single letter, digit or symbol."
+	end
+	return nil
+end
+
+-- The action key `k` triggers, if any.
+function M.action(map: Map, k: string): string?
+	if k ~= "" then
+		for _, a in M.ACTIONS do
+			if map[a.id] == k then
+				return a.id
+			end
+		end
+	end
+	return nil
+end
+
+-- What kv holds, given pcall(tern.kv.get, ...)'s answer: the saved keys by action id, or nil and why when they cannot be
+-- read or trusted (nothing may overwrite them then).
+local function saved(ok: boolean, v: any): ({ [string]: string? }?, string?)
+	if not ok then
+		return nil, "Saved keys could not be read: " .. tostring(v)
+	end
+	local out: { [string]: string? } = {}
+	if v == nil then
+		return out, nil
+	end
+	if type(v) ~= "table" then
+		return nil, BAD
+	end
+	for id, key in v do
+		if type(id) ~= "string" or type(key) ~= "string" or M.shape(key) then
+			return nil, BAD
+		end
+		out[id] = key
+	end
+	return out, nil
+end
+
+-- The key of every action as it works now, and why the saved ones are not in use: with a problem, every action has
+-- its default. ponytail: read from kv on every use (a few small reads per key or render), so another block's change
+-- needs no notice; cache it in the block's State if that ever shows up in a profile.
+function M.load(): (Map, string?)
+	local mine, why = saved(pcall(tern.kv.get, KV))
+	local map: Map = {}
+	for _, a in M.ACTIONS do
+		local own = if mine then mine[a.id] else nil
+		map[a.id] = own or a.default
+	end
+	return map, why
+end
+
+-- Saves action `id`'s key ("" removes the shortcut, nil restores the default); an error message or nil. Rereads what is
+-- saved and fails closed: unreadable or malformed keys are never overwritten.
+function M.save(id: string, key: string?): string?
+	local a = actionOf(id)
+	local mine, why = saved(pcall(tern.kv.get, KV))
+	if not a or not mine then
+		return why or "That is no shortcut of the queue."
+	end
+	mine[id] = if key == a.default then nil else key
+	-- tern.kv.set raises on failure and returns nothing.
+	local ok, err = pcall(function(): string?
+		tern.kv.set(KV, mine)
+		return nil
+	end)
+	return if ok then nil else "Could not save: " .. tostring(err)
+end
+
+-- Why `text` cannot be action `id`'s key given the keys in `map` (load's), or nil; "" removes it.
+function M.problem(map: Map, id: string, text: string): string?
+	local why = M.shape(text)
+	if why then
+		return why
+	end
+	local other = M.action(map, text)
+	local a = if other and other ~= id then actionOf(other) else nil
+	return if a then "Already the shortcut of " .. a.label .. "." else nil
+end
+
+-- The keycaps of action `id`'s button: its key, none when removed.
+function M.caps(map: Map, id: string): { string }?
+	return if map[id] ~= "" then { map[id] } else nil
+end
+
+return M

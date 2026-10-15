@@ -3,8 +3,7 @@
 -- running a saved or typed prompt) and their keyboard-accessible palette commands.
 -- This half runs on the machine showing the window; the block may run on a remote host. Whatever touches the checkout
 -- or the saved prompts (git, gh, omp, kv) is asked of the block's host half (host.luau, "requests from window.luau");
--- this half only asks the user and arranges tabs. Starting an agent runs omp where project config can run code, so it
--- asks first.
+-- this half only asks the user and arranges tabs.
 
 local worktree = require("./worktree")
 
@@ -26,16 +25,17 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "8" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "9" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
-local RISK = "Project config can run code"
 
 -- A worktree the host prepared, as its answer says.
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
+-- A prompt to run: its text, and the model omp runs it with (`omp --model`; nil: the agent command's default).
+type Job = { text: string, model: string? }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -338,11 +338,14 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 	cx:toast(level, "Worktree ready for " .. t.label, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
--- Starts an agent at `r.path` with `prompt`. `join` (a worktree): in the target's open tab when there is one, else in
--- a new tab, a new worktree's setup commands running first in a shell tab the agent joins. Not `join` (the main
--- checkout): always a new tab, no setup. ponytail: the agent starts without waiting for the setup commands; poll the
--- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, join: boolean)
+-- Starts an agent at `r.path` with `prompt`, as `omp --model <model>` when the prompt names one. `join` (a worktree):
+-- in the target's open tab when there is one, else in a new tab, a new worktree's setup commands running first in a
+-- shell tab the agent joins. Not `join` (the main checkout): always a new tab, no setup. ponytail: the agent starts
+-- without waiting for the setup commands; poll the shell's `last` status if agents trip over a half-done setup.
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, model: string?, join: boolean)
+	if model and not worktree.validModel(model) then
+		return cx:toast("error", "Agent not started for " .. t.label, "The prompt's model is not one omp takes: " .. model)
+	end
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
@@ -367,7 +370,8 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		end
 	end
 	local ok, agent = pcall(function()
-		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab" })
+		-- Omitted, the command is the agent setting's (omp); a model needs its own command line.
+		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
 	end)
 	if not ok or type(agent) ~= "number" then
 		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -393,40 +397,6 @@ local function afterReady(cx: WindowCx, r: Ready, step: () -> ())
 	if not ok then
 		cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · " .. tostring(why))
 	end
-end
-
--- Consent before omp runs where project config can run code: a native picker whose first row, the one ↵ takes, is
--- Deny. `question` is the short placeholder; `where` (the full path) and `stays` are the rows' details. A dismissed
--- picker, Deny or a callback without a window context ends it; `no` only runs with a context.
-local function confirm(cx: WindowCx, question: string, where: string, stays: string, yes: (WindowCx) -> (), no: ((WindowCx) -> ())?)
-	local items: { PickItem } = {
-		{ label = "Deny", detail = stays, group = RISK },
-		{ label = "Allow", detail = where, group = RISK, go = true },
-	}
-	cx:pick({ items = items, placeholder = question, icon = "merge" }):next(function(item, _, cx2)
-		if not cx2 then
-			return
-		end
-		if item and item.go == true then
-			return yes(cx2)
-		end
-		if no then
-			no(cx2)
-		end
-	end)
-end
-
--- With the directory ready, the agent starts once the user agrees to run omp there, where project config can run
--- code; setup commands and the agent come after.
-local function startAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, wt: boolean)
-	local question = "Start an agent for " .. t.label .. "?"
-	confirm(cx, question, "Runs omp in " .. r.path, if wt then "The worktree stays; no agent starts" else "Nothing changes; no agent starts", function(cx2: WindowCx)
-		afterReady(cx2, r, function()
-			finishAgent(cx2, pane, t, r, prompt, wt)
-		end)
-	end, function(cx2: WindowCx)
-		cx2:toast("info", "Agent not started for " .. t.label, (if wt then "The worktree is ready at " else "The checkout is at ") .. r.path)
-	end)
 end
 
 -- The host's answer about a ready worktree; nil when it is not one.
@@ -476,7 +446,7 @@ end
 -- What the host still needs is asked in the palette, then this runs again: a checkout folder of the repository
 -- (`needCheckout`), the repository a Jira project's issue is worked in (`needRepo`, or `chooseRepo` among several, which
 -- `target` then names).
-local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: string?, wt: boolean, target: string?)
+local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?, wt: boolean, target: string?)
 	local function done(a: any, cx2: WindowCx)
 		if a.busy == true then
 			return cx2:toast("info", "A worktree for " .. t.label .. " is already being prepared")
@@ -549,9 +519,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: stri
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
 				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				startAgent(cx2, pane, t, ready, fill(prompt, owner or "", name or "", tonumber(t.ref) :: number, a), wt)
+				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt.model, wt)
 			else
-				startAgent(cx2, pane, t, ready, fillVars(prompt, a.vars), wt)
+				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt.model, wt)
 			end
 		end)
 	end
@@ -568,7 +538,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, it.send, it.worktree ~= false)
+				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil }, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -579,8 +549,8 @@ end
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
 local function pickAgent(cx: WindowCx, pane: number, t: Target)
-	local function run(cx2: WindowCx, text: string, wt: boolean)
-		prepareTarget(cx2, pane, t, text, wt)
+	local function run(cx2: WindowCx, job: Job, wt: boolean)
+		prepareTarget(cx2, pane, t, job, wt)
 	end
 	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
@@ -594,6 +564,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 					detail = if type(it.detail) == "string" then it.detail else nil,
 					group = if type(it.group) == "string" then it.group else nil,
 					send = it.send,
+					model = if type(it.model) == "string" then it.model else nil,
 					worktree = it.worktree ~= false,
 				})
 			end
@@ -609,7 +580,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 				end
 			end
 		end
-		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save prompts in Settings › Prompts (s)" else "Send your own text", typed = true })
+		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save prompts in Settings › Prompts" else "Send your own text", typed = true })
 		for _, c in all do
 			table.insert(items, c)
 		end
@@ -620,7 +591,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 			if item.typed then
 				return cx3:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx4)
 					if cx4 and text and string.find(text, "%S") then
-						run(cx4, text, true)
+						run(cx4, { text = text }, true)
 					end
 				end)
 			end
@@ -632,7 +603,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			run(cx3, item.send, item.worktree ~= false)
+			run(cx3, { text = item.send, model = item.model }, item.worktree ~= false)
 		end)
 	end)
 end

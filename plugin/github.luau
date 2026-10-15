@@ -26,6 +26,7 @@ export type Pr = {
 	updated: number,
 	created: number,
 	head: string,
+	headSha: string?, -- the commit the pull request's head branch is at (40 hex); nil when GitHub did not say
 	base: string,
 	additions: number,
 	deletions: number,
@@ -60,8 +61,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -340,6 +341,7 @@ function M.normalize(item: any): (Pr?, string?)
 		updated = M.epoch(str(item.updatedAt)) or 0,
 		created = M.epoch(str(item.createdAt)) or 0,
 		head = str(item.head),
+		headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil,
 		base = str(item.base),
 		additions = count(item.additions),
 		deletions = count(item.deletions),

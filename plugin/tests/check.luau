@@ -6,6 +6,7 @@
 local github = require("../github")
 local input = require("../input")
 local jira = require("../jira")
+local keys = require("../keys")
 local process = require("../process")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -323,9 +324,26 @@ function M.run()
 	assert(ik == "o/r#7" and ikind == "issue", "a GitHub issue worktree")
 	local lk, lkind = worktree.itemOfPath("/r/x.plotroom/a/b/pr-7")
 	assert(lk == "a/b#7" and lkind == "pr", "a worktree from an earlier version still maps")
+	assert(worktree.itemOfPath("/home/u/plotroom-notes/wt/plotroom-o_r-pr-12/sub") == "o/r#12", "a parent folder that merely starts with plotroom- is no worktree: the real one is found below it")
+	assert(worktree.itemOfPath("/home/u/plotroom-notes/wt") == nil, "and a path with no worktree in it maps to nothing")
+	assert(worktree.itemOfPath("/home/u/plotroom-notes/r.plotroom/a/b/pr-7") == "a/b#7", "nor does it hide a folder an earlier version made")
 	for _, p in { "/x/plotroom-o_r-prx", "/wt/xplotroom-o_r-issue-1", "/r/o/r/issue-1", "" } do
 		assert(worktree.itemOfPath(p) == nil, "not an item worktree: " .. p)
 	end
+
+	-- queue keys: which action a typed key triggers, and which keys an action may have
+	local queue: keys.Map = {}
+	for _, a in keys.ACTIONS do
+		queue[a.id] = a.default
+	end
+	assert(keys.action(queue, "w") == "worktree" and keys.action(queue, "?") == "help" and keys.action(queue, "x") == nil, "a typed key triggers the action that has it")
+	assert(keys.shape("") == nil and keys.shape("é") == nil and keys.shape("ab") ~= nil and keys.shape("a b") ~= nil and keys.shape(" ") ~= nil, "a key is one character that is not a gap, and empty is no key")
+	assert(keys.problem(queue, "goto", "g") == nil, "an action keeps its own key")
+	assert(keys.problem(queue, "worktree", "g") == "Already the shortcut of Go to tab.", "another action's key is refused, naming the action")
+	queue.worktree = ""
+	assert(keys.action(queue, "w") == nil and keys.action(queue, "") == nil, "a removed action has no key, and no key is its empty one")
+	assert(keys.problem(queue, "goto", "w") == nil and keys.problem(queue, "goto", "") == nil, "a key nobody has is free, and empty removes the shortcut")
+	assert(keys.caps(queue, "worktree") == nil and (keys.caps(queue, "goto") or {})[1] == "g", "a button shows its key, none once removed")
 
 	-- PATH probe output
 	assert(process.extractPath("banner\0PLOTROOM_PATH\0/a b:/c\n\0PLOTROOM_END\0tail") == "/a b:/c", "markers carry the PATH, spaces intact")

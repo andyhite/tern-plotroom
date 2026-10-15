@@ -1871,8 +1871,11 @@ type Git = {
 	remotes: { [string]: { string } }, -- name -> urls: `remote get-url --all` lists them, fetch uses the first
 	served: { [string]: string }, -- what the remote serves (refs/pull/N/head) -> sha
 	refs: { [string]: string }, -- local refs -> sha
+	config: { [string]: string }, -- `git config` keys (branch.<name>.remote, ...) -> value
 	worktrees: { GitWorktree }, -- [1] is the main worktree
 	dirty: { [string]: string }, -- worktree path -> `status --porcelain` output
+	ahead: { [string]: boolean }, -- branch -> it holds commits its fetched ref lacks: `merge-base --is-ancestor` says no
+	unmerged: { [string]: boolean }, -- branch -> `branch -d` refuses it: its commits are merged nowhere
 	fail: { [string]: Reply }, -- "fetch", "status", "worktree add", "rev-parse HEAD"... -> the answer instead of the model's
 	lockFetch: { winner: string? }?, -- another window holds the ref's lock; `winner` is the sha it leaves there
 	onFetch: (() -> ())?, -- runs inside every fetch: the remote moves
@@ -1883,14 +1886,32 @@ type Git = {
 
 local gitFallback: { [any]: boolean } = {}
 
+-- `git worktree list --porcelain -z` of the model as it stands: one record per worktree, the main one first.
+local function porcelain(g: Git): string
+	local out: { string } = {}
+	for _, t in g.worktrees do
+		table.insert(out, "worktree " .. t.path .. "\0")
+		table.insert(out, "HEAD " .. t.head .. "\0")
+		table.insert(out, if t.branch then "branch " .. t.branch .. "\0" else "detached\0")
+		if t.locked then
+			table.insert(out, "locked\0")
+		end
+		table.insert(out, "\0")
+	end
+	return table.concat(out)
+end
+
 local function newGit(w: World, root: string): Git
 	local g: Git = {
 		root = root,
 		remotes = {},
 		served = {},
 		refs = { ["refs/heads/main"] = sha("1") },
+		config = {},
 		worktrees = { { path = root, branch = "refs/heads/main", head = sha("1"), locked = false } },
 		dirty = {},
+		ahead = {},
+		unmerged = {},
 		fail = {},
 		lockFetch = nil,
 		onFetch = nil,
@@ -2005,17 +2026,27 @@ local function newGit(w: World, root: string): Git
 			end
 			return { status = 128, stderr = "fatal: '" .. name .. "' is not a valid branch name\n" }
 		elseif sub == "worktree" and args[2] == "list" then
-			local out: { string } = {}
-			for _, t in g.worktrees do
-				table.insert(out, "worktree " .. t.path .. "\0")
-				table.insert(out, "HEAD " .. t.head .. "\0")
-				table.insert(out, if t.branch then "branch " .. t.branch .. "\0" else "detached\0")
-				if t.locked then
-					table.insert(out, "locked\0")
+			return { stdout = porcelain(g) }
+		elseif sub == "config" then
+			if args[2] == "--get-regexp" then
+				-- "key value" lines of the keys the pattern matches, exit 1 when none; of git's regular expressions only `\.` (a dot) is read
+				local pattern = string.gsub(args[3] or "", "\\%.", "%%.")
+				local names: { string } = {}
+				for name in g.config do
+					if string.find(name, pattern) then
+						table.insert(names, name)
+					end
 				end
-				table.insert(out, "\0")
+				table.sort(names)
+				local out: { string } = {}
+				for _, name in names do
+					table.insert(out, name .. " " .. g.config[name] .. "\n")
+				end
+				return if #out > 0 then { stdout = table.concat(out) } else { status = 1 }
+			elseif args[2] and args[3] then
+				g.config[args[2]] = args[3]
+				return {}
 			end
-			return { stdout = table.concat(out) }
 		elseif sub == "fetch" then
 			local onFetch = g.onFetch
 			if onFetch then
@@ -2094,6 +2125,54 @@ local function newGit(w: World, root: string): Git
 				hook(target)
 			end
 			return { stderr = "Preparing worktree\n" }
+		elseif sub == "worktree" and args[2] == "remove" then
+			-- never forced: git refuses a worktree with changes, a main one and an unknown one
+			local target = cleanPath(args[3] or "")
+			local at = 0
+			for i, t in g.worktrees do
+				if t.path == target then
+					at = i
+				end
+			end
+			if at == 0 then
+				return { status = 128, stderr = "fatal: '" .. target .. "' is not a working tree\n" }
+			elseif at == 1 then
+				return { status = 128, stderr = "fatal: '" .. target .. "' is a main working tree\n" }
+			elseif (g.dirty[target] or "") ~= "" then
+				return { status = 128, stderr = "fatal: '" .. target .. "' contains modified or untracked files, use --force to delete it\n" }
+			end
+			table.remove(g.worktrees, at)
+			for folder in w.fs.dirs do
+				if folder == target or string.sub(folder, 1, #target + 1) == target .. "/" then
+					w.fs.dirs[folder] = nil
+				end
+			end
+			return {}
+		elseif sub == "merge-base" and args[2] == "--is-ancestor" then
+			-- exit 0: yes, 1: no, 128: a name that is no commit
+			local branch, ref = args[3] or "", args[4] or ""
+			if not g.refs["refs/heads/" .. branch] or not g.refs[ref] then
+				return { status = 128, stderr = "fatal: Not a valid object name " .. (if g.refs[ref] then branch else ref) .. "\n" }
+			end
+			return { status = if g.ahead[branch] then 1 else 0 }
+		elseif sub == "branch" and (args[2] == "-d" or args[2] == "-D") then
+			local name = args[3] or ""
+			if not g.refs["refs/heads/" .. name] then
+				return { status = 1, stderr = "error: branch '" .. name .. "' not found\n" }
+			end
+			for _, t in g.worktrees do
+				if t.branch == "refs/heads/" .. name then
+					return { status = 1, stderr = "error: cannot delete branch '" .. name .. "' used by worktree at '" .. t.path .. "'\n" }
+				end
+			end
+			if args[2] == "-d" and g.unmerged[name] then
+				return { status = 1, stderr = "error: the branch '" .. name .. "' is not fully merged\nhint: If you are sure you want to delete it, run 'git branch -D " .. name .. "'\n" }
+			end
+			g.refs["refs/heads/" .. name] = nil
+			return { stdout = "Deleted branch " .. name .. "\n" }
+		elseif sub == "update-ref" and args[2] == "-d" then
+			g.refs[args[3] or ""] = nil
+			return {}
 		end
 		return nil
 	end)
@@ -2113,6 +2192,15 @@ local function countLog(g: Git, prefix: string, from: number?): number
 		end
 	end
 	return n
+end
+
+-- The logged commands from entry `from`+1 on.
+local function logFrom(g: Git, from: number): { string }
+	local out: { string } = {}
+	for i = from + 1, #g.log do
+		table.insert(out, g.log[i])
+	end
+	return out
 end
 
 -- ---- worktree.luau: names, remotes, wording
@@ -2223,7 +2311,7 @@ case("worktree: describe says whether the worktree is current, different, modifi
 	has(worktree.describe(resultOf(false, sha("b"), sha("b"), nil) :: any), "unchecked", "status unknown is never Clean")
 end)
 
-case("worktree: update and cleanup are single-line shell words, quoted for spaces, quotes and control characters", function(w: World)
+case("worktree: update commands are single-line shell words, quoted for spaces, quotes and control characters", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local current = resultOf(false, sha("b"), sha("b"), false)
 	same(worktree.update(current :: any), {}, "nothing to update when current")
@@ -2232,11 +2320,6 @@ case("worktree: update and cleanup are single-line shell words, quoted for space
 		"git -C /work/r.plotroom/o/r/pr-5 fetch origin refs/pull/5/head",
 		"git -C /work/r.plotroom/o/r/pr-5 merge --ff-only FETCH_HEAD",
 	}, "update")
-	same(worktree.cleanup(behind :: any), {
-		"git -C /work/r worktree remove /work/r.plotroom/o/r/pr-5",
-		"git -C /work/r branch -d plotroom/o/r/pr-5",
-		"git -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5",
-	}, "cleanup")
 	local odd = resultOf(false, sha("b"), sha("c"), false)
 	odd.path = "/tmp/a b/it's"
 	eq(worktree.update(odd :: any)[1], "git -C '/tmp/a b/it'\\''s' fetch origin refs/pull/5/head", "spaces and quotes")
@@ -2244,9 +2327,16 @@ case("worktree: update and cleanup are single-line shell words, quoted for space
 	local entries = worktree.update(odd :: any)
 	eq(entries[1], "git -C $'/tmp/a\\x0ab' fetch origin refs/pull/5/head", "a newline")
 	lacks(entries[1], "\n", "a command stays on one line")
-	local encoded = resultOf(false, sha("b"), sha("c"), false)
-	encoded.branch = "plotroom/github/%2Egithub/pr-1"
-	eq(worktree.cleanup(encoded :: any)[2], "git -C /work/r branch -d plotroom/github/%2Egithub/pr-1", "an encoded branch is a plain word")
+end)
+
+case("worktree: tilde writes the home folder as ~ and leaves every other path as it is", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	eq(worktree.tilde("/home/u/.omp/wt/plotroom-o_r-pr-5", "/home/u"), "~/.omp/wt/plotroom-o_r-pr-5", "under home")
+	eq(worktree.tilde("/home/u", "/home/u"), "~", "home itself")
+	eq(worktree.tilde("/home/user/wt", "/home/u"), "/home/user/wt", "a folder whose name only starts like home's")
+	eq(worktree.tilde("/wt/x", "/home/u"), "/wt/x", "elsewhere")
+	eq(worktree.tilde("/home/u/x", nil), "/home/u/x", "without a home")
+	eq(worktree.tilde("/home/u/x", ""), "/home/u/x", "or with an empty one")
 end)
 
 -- ---- worktree.open against the git and gh models
@@ -2598,6 +2688,125 @@ windowCase("worktree: worktree root is omp's directory when empty, an absolute p
 	eq(pathFor("../wt"), "/work/wt/plotroom-o_r-pr-1", "a relative root is resolved against the checkout /work/r")
 end)
 
+-- ---- worktree.remove against the git model
+
+type Removed = { removal: any, problem: string?, dirty: boolean?, calls: number }
+
+-- Removes the worktree `t` names (a worktree.Target) and returns the one answer remove gave.
+local function removeWt(w: World, worktree: Worktree, t: { [string]: any }): Removed
+	local out: Removed = { removal = nil, problem = nil, dirty = nil, calls = 0 }
+	worktree.remove(t :: any, function(removal, problem, dirty)
+		out.calls += 1
+		out.removal = removal
+		out.problem = problem
+		out.dirty = dirty
+	end)
+	w.flush()
+	return out
+end
+
+-- The commands spawned after entry `from` of the world's calls, every argument joined by spaces.
+local function ranSince(w: World, from: number): { string }
+	local out: { string } = {}
+	for i = from + 1, #w.calls do
+		table.insert(out, table.concat(w.calls[i].argv, " "))
+	end
+	return out
+end
+
+-- PR 5 of o/r with its worktree made, and what remove takes of it.
+local function madeWt(w: World, worktree: Worktree): (Scene, { [string]: any })
+	local s = scene(w, worktree, "o", "r", 5)
+	local r = openWt(w, worktree, s).result
+	return s, { root = r.root, path = r.path, branch = r.branch, ref = r.ref }
+end
+
+case("worktree: remove takes a clean pull request worktree, its branch once the fetched ref holds all of it, and that ref", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	local mark = #w.calls
+	local out = removeWt(w, worktree, t)
+	eq(out.calls, 1, "answered once")
+	eq(out.problem, nil, "no problem")
+	eq(out.removal.branch, "Branch plotroom/o/r/pr-5 was deleted too.", "the branch went with it")
+	same(ranSince(w, mark), {
+		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
+		"git -C /work/r merge-base --is-ancestor plotroom/o/r/pr-5 refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r branch -D plotroom/o/r/pr-5",
+		"git -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5",
+	}, "the worktree without --force, then -D only after the ancestry check, then the ref")
+	eq(#s.git.worktrees, 1, "only the main worktree is left")
+	eq(s.git.refs["refs/heads/plotroom/o/r/pr-5"], nil, "the branch is gone")
+	eq(s.git.refs["refs/plotroom-pr/o/r/pr-5"], nil, "and the ref it was fetched into")
+	eq(w.fs.dirs["/wt/plotroom-o_r-pr-5"], nil, "and the folder")
+end)
+
+case("worktree: remove keeps a pull request branch that holds commits of its own, with its ref, and says why", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.ahead["plotroom/o/r/pr-5"] = true
+	s.git.unmerged["plotroom/o/r/pr-5"] = true
+	local mark = #w.calls
+	local out = removeWt(w, worktree, t)
+	eq(out.problem, nil, "the worktree itself was removed")
+	eq(out.removal.branch, "Branch plotroom/o/r/pr-5 was kept. The branch 'plotroom/o/r/pr-5' is not fully merged.", "the branch stays, with git's reason")
+	same(ranSince(w, mark), {
+		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
+		"git -C /work/r merge-base --is-ancestor plotroom/o/r/pr-5 refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r branch -d plotroom/o/r/pr-5",
+	}, "-d, never -D, and the ref is not dropped")
+	eq(#s.git.worktrees, 1, "the worktree is gone")
+	eq(s.git.refs["refs/heads/plotroom/o/r/pr-5"], sha("b"), "the branch keeps its commits")
+	eq(s.git.refs["refs/plotroom-pr/o/r/pr-5"], sha("b"), "beside the ref")
+end)
+
+case("worktree: remove deletes a pull request branch that is ahead of its ref when git finds it merged, and the ref with it", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.ahead["plotroom/o/r/pr-5"] = true -- merged into the checkout's HEAD: `unmerged` stays unset
+	local mark = #w.calls
+	local out = removeWt(w, worktree, t)
+	eq(out.removal.branch, "Branch plotroom/o/r/pr-5 was deleted too.", "the branch goes")
+	same(ranSince(w, mark), {
+		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
+		"git -C /work/r merge-base --is-ancestor plotroom/o/r/pr-5 refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r branch -d plotroom/o/r/pr-5",
+		"git -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5",
+	}, "through -d, which git allows, and then the ref")
+	eq(s.git.refs["refs/plotroom-pr/o/r/pr-5"], nil, "the ref is gone")
+end)
+
+case("worktree: remove stops at uncommitted changes, which git refuses to discard, and does nothing else", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.dirty["/wt/plotroom-o_r-pr-5"] = " M src/a.lua\n"
+	local before = snapshot(s.git)
+	local mark = #w.calls
+	local out = removeWt(w, worktree, t)
+	eq(out.calls, 1, "answered once")
+	eq(out.removal, nil, "nothing was removed")
+	eq(out.problem, "It has uncommitted changes; commit, stash or remove it yourself.", "the user is told what to do")
+	eq(out.dirty, true, "and that the changes were why")
+	same(ranSince(w, mark), { "git -C /work/r worktree remove /wt/plotroom-o_r-pr-5" }, "git was asked once, without --force")
+	eq(snapshot(s.git), before, "no worktree, branch or ref changed")
+end)
+
+case("worktree: remove relays any other refusal of git, and says when a ref could not be dropped", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.fail["worktree remove"] = { status = 128, stderr = "fatal: cannot remove a locked working tree, lock reason: moving\nuse 'remove -f -f' to override or unlock first\n" }
+	local before = snapshot(s.git)
+	local locked = removeWt(w, worktree, t)
+	eq(locked.removal, nil, "nothing was removed")
+	eq(locked.problem, "Cannot remove a locked working tree, lock reason: moving.", "git's first line, as a sentence")
+	eq(locked.dirty, false, "which is not about changes")
+	eq(snapshot(s.git), before, "nothing changed")
+	s.git.fail["worktree remove"] = nil
+	s.git.fail["update-ref"] = { status = 1, stderr = "error: cannot lock ref 'refs/plotroom-pr/o/r/pr-5'\n" }
+	local out = removeWt(w, worktree, t)
+	eq(out.removal.branch, "Branch plotroom/o/r/pr-5 was deleted too. Its fetched ref refs/plotroom-pr/o/r/pr-5 was kept. Cannot lock ref 'refs/plotroom-pr/o/r/pr-5'.", "a ref that stays is reported")
+end)
+
 -- ---- worktree.openIssue against the git model
 
 type IssueRepo = { git: Git, target: string, launch: string }
@@ -2890,7 +3099,7 @@ windowCase("worktree: a project is a Jira key or a GitHub repository, and a chec
 	has(plain.problem, "not an empty directory", "gh's reason is the problem")
 end)
 
-case("worktree: describeIssue and cleanupIssue say how the issue's worktree stands and how to remove it", function(w: World)
+case("worktree: describeIssue says how the issue's worktree stands", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local function result(created: boolean, dirty: boolean?): any
 		return {
@@ -2907,13 +3116,109 @@ case("worktree: describeIssue and cleanupIssue say how the issue's worktree stan
 	eq(worktree.describeIssue(result(true, false)), "Created · 12-fix-login at bbbbbbb · Clean", "a new, clean one")
 	eq(worktree.describeIssue(result(false, true)), "Reused · 12-fix-login at bbbbbbb · Modified (uncommitted changes kept)", "a reused one with local changes")
 	eq(worktree.describeIssue(result(false, nil)), "Reused · 12-fix-login at bbbbbbb · Changes unchecked", "a status that could not be read is never Clean")
-	same(worktree.cleanupIssue(result(true, false)), {
+end)
+
+case("worktree: remove takes an issue's worktree, and its branch only when git agrees it is merged", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local repo = issueRepo(w, "12")
+	local r = openIssueWt(w, worktree, repo, "12", "12-fix-login", nil).result
+	repo.git.unmerged["12-fix-login"] = true
+	local mark = #w.calls
+	local kept = removeWt(w, worktree, { root = r.root, path = r.path, branch = r.branch })
+	eq(kept.problem, nil, "the worktree is removed")
+	eq(kept.removal.branch, "Branch 12-fix-login was kept. The branch '12-fix-login' is not fully merged.", "a branch with commits merged nowhere stays, and the user is told")
+	same(ranSince(w, mark), {
 		"git -C /work/r worktree remove /wt/plotroom-o_r-issue-12",
 		"git -C /work/r branch -d 12-fix-login",
-	}, "the commands that remove the worktree, then its branch")
-	local odd = result(false, false)
-	odd.path = "/tmp/a b/it's"
-	eq(worktree.cleanupIssue(odd)[1], "git -C /work/r worktree remove '/tmp/a b/it'\\''s'", "a path with spaces and quotes is one shell word")
+	}, "-d only: no ancestry check, no -D, and no ref to drop")
+	eq(repo.git.refs["refs/heads/12-fix-login"], sha("b"), "the branch keeps its commits")
+	repo.git.unmerged["12-fix-login"] = nil
+	local again = openIssueWt(w, worktree, repo, "12", "12-fix-login", nil).result
+	mark = #w.calls
+	local gone = removeWt(w, worktree, { root = again.root, path = again.path, branch = again.branch })
+	eq(gone.removal.branch, "Branch 12-fix-login was deleted too.", "a merged one goes with the next removal")
+	same(ranSince(w, mark), {
+		"git -C /work/r worktree remove /wt/plotroom-o_r-issue-12",
+		"git -C /work/r branch -d 12-fix-login",
+	}, "by -d")
+	eq(repo.git.refs["refs/heads/12-fix-login"], nil, "the branch is gone")
+end)
+
+case("worktree: scan lists the worktrees of one kind by item, as git lists them, and leaves out what Plotroom cannot use or remove", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = newGit(w, "/work/r")
+	local function add(path: string, branch: string?, head: string, locked: boolean?, folder: boolean?)
+		table.insert(g.worktrees, { path = path, branch = if branch then "refs/heads/" .. branch else nil, head = head, locked = locked == true })
+		if folder ~= false then
+			w.fs.dirs[path] = true
+		end
+	end
+	add("/wt/plotroom-o_r-pr-5", "plotroom/o/r/pr-5", sha("b"))
+	add("/wt/plotroom-o_r-pr-6", "plotroom/o/r/pr-6", sha("b"), true)
+	add("/wt/plotroom-o_r-pr-7", "feature", sha("b"))
+	add("/wt/plotroom-o_r-pr-8", nil, sha("b"))
+	add("/wt/plotroom-o_r-pr-9", "plotroom/o/r/pr-9", sha("b"), false, false)
+	add("/wt/plotroom-o_r-issue-12", "12-fix-login", sha("c"))
+	add("/wt/plotroom-o_r-issue-13", nil, sha("c"))
+	add("/wt/plotroom-o_r-issue-ABC-7", "ABC-7-fix", sha("d"))
+	add("/wt/elsewhere", "other", sha("e"))
+	add("/work/r.plotroom/o/r/pr-3", "plotroom/o/r/pr-3", sha("f"))
+	add("/home/u/plotroom-notes/wt/plotroom-o_r-pr-4", "plotroom/o/r/pr-4", sha("a"))
+	g.config["branch.plotroom/o/r/pr-5.remote"] = "origin"
+	g.config["branch.other.remote"] = "fork"
+	local function scan(checkout: string, kind: string): (any, string?)
+		local got: any = nil
+		local why: string? = nil
+		local calls = 0
+		worktree.scan(checkout, kind, function(result, problem)
+			calls += 1
+			got, why = result, problem
+		end)
+		w.flush()
+		eq(calls, 1, "scan reports once")
+		return got, why
+	end
+	local function keysOf(found: any): { string }
+		local keys: { string } = {}
+		for key in found do
+			table.insert(keys, key)
+		end
+		table.sort(keys)
+		return keys
+	end
+	local prs, why = scan("/work/r/src", "pr")
+	eq(why, nil, "problem")
+	eq(prs.root, "/work/r", "the main worktree, whichever folder of the checkout was asked")
+	same(keysOf(prs.found), { "o/r#3", "o/r#4", "o/r#5" }, "the pull requests': a locked one, one on another branch, a detached one, one whose folder is gone and one that is no Plotroom's are left out")
+	same(prs.found["o/r#5"], { root = "/work/r", path = "/wt/plotroom-o_r-pr-5", branch = "plotroom/o/r/pr-5", head = sha("b"), ref = "refs/plotroom-pr/o/r/pr-5", remote = "origin" }, "its branch, the ref it was fetched into and the remote its branch tracks")
+	eq(prs.found["o/r#3"].path, "/work/r.plotroom/o/r/pr-3", "a folder an earlier version made counts")
+	eq(prs.found["o/r#4"].path, "/home/u/plotroom-notes/wt/plotroom-o_r-pr-4", "so does one below a folder that merely starts with plotroom-")
+	eq(prs.found["o/r#3"].remote, nil, "a branch with no remote configured has none")
+	eq(countLog(g, "worktree list"), 1, "one read of the checkout")
+	eq(countLog(g, "config --get-regexp ^branch\\..*\\.remote$"), 1, "and one of the remotes, because a pull request's worktree is there")
+	local issues = scan("/work/r/src", "issue")
+	same(keysOf(issues.found), { "abc#ABC-7", "o/r#12" }, "the issues': a Jira issue's is keyed by its project and key, a detached one is left out")
+	same(issues.found["o/r#12"], { root = "/work/r", path = "/wt/plotroom-o_r-issue-12", branch = "12-fix-login", head = sha("c") }, "on whatever branch it holds, with no fetched ref and no remote")
+	eq(countLog(g, "worktree list"), 2, "another read of the checkout")
+	eq(countLog(g, "config --get-regexp ^branch\\..*\\.remote$"), 1, "and no read of the remotes: only a pull request's branch needs one")
+	for _, never in { "worktree add", "worktree remove", "status", "fetch", "branch", "merge" } do
+		eq(countLog(g, never), 0, "git " .. never .. " was not run: scanning only reads")
+	end
+	eq(scan("/wt/plotroom-o_r-pr-5", "pr").root, "/work/r", "asked from a linked worktree, it still names the main one")
+	local y = newGit(w, "/work/y")
+	table.insert(y.worktrees, { path = "/wt/plotroom-x_y-pr-4", branch = "refs/heads/plotroom/x/y/pr-4", head = sha("c"), locked = false })
+	w.fs.dirs["/wt/plotroom-x_y-pr-4"] = true
+	eq(scan("/work/y", "pr").found["x/y#4"].remote, nil, "a pull request's worktree whose branch tracks nothing is listed without a remote")
+	same(keysOf(scan("/work/y", "issue").found), {}, "and is no issue's")
+	g.fail["worktree list"] = { status = 128, stderr = "fatal: unable to read the worktrees\n" }
+	local none, problem = scan("/work/r", "pr")
+	eq(none, nil, "a checkout git cannot list gives no scan")
+	has(problem, "unable to read the worktrees", "and git's reason")
+	g.fail["worktree list"] = nil
+	w.sdk.fs.exists = function(_path: string): boolean
+		error("fs gone", 0)
+	end
+	same(scan("/work/r", "pr").found, {}, "a runtime that cannot look at folders finds none, and still answers")
 end)
 
 -- The first node of a view (itself included) whose props carry `key`, and `kind` when given.
@@ -3015,11 +3320,44 @@ local function cardText(b: Block): string
 	return table.concat(out, "\n")
 end
 
--- The shell commands the worktree card offers under `which` ("update" or "cleanup"), one per line; nil when none.
+-- The shell commands the worktree card offers under `which` (its section's key: "update"), one per line; nil when none.
 local function commandsOf(b: Block, which: string): string?
 	local section = findKey(cardOf(b), which, "section")
 	local md: any = if section then findKey(section, "commands", "md") else nil
 	return if md then string.match(md.p.text, "^```sh\n(.-)\n```$") else nil
+end
+
+-- The text of the badges in the worktree card's status row, in order.
+local function chipsOf(b: Block): { string }
+	local out: { string } = {}
+	local row: any = findKey(cardOf(b), "status", "row")
+	local chips: { any } = if row then row.c else {}
+	for _, chip in chips do
+		table.insert(out, chip.p.text)
+	end
+	return out
+end
+
+-- The worktree card's buttons as "key:label", in order; none for a failed attempt.
+local function buttonsOf(b: Block): { string }
+	local out: { string } = {}
+	local list: any = findKey(cardOf(b), "actions", "list")
+	local rows: { any } = if list then list.c else {}
+	for _, row in rows do
+		table.insert(out, row.p.key .. ":" .. row.p.label)
+	end
+	return out
+end
+
+-- A click on the card's button `key`, as Tern sends it: the button's own id, with the action it was given.
+local function pressCard(b: Block, key: string)
+	local item: any = findKey(cardOf(b), key, "item")
+	b.event({ ev = "action", id = "layer.queue.worktree.actions." .. key, act = item.p.actions.click })
+end
+
+-- The confirm overlay the block shows over the queue; nil when it shows none.
+local function confirmOf(b: Block): any
+	return findKey(b.view().layer, "confirm", "overlay")
 end
 
 -- The Worktree badge of queue row `row` (the first by default); nil when it has none.
@@ -3074,49 +3412,15 @@ local function savePrompts(w: World, list: { { [string]: any } })
 	w.kv.put("prompts-prs", { version = 1, nextId = #list + 1, items = array(list) })
 end
 
--- The picks the agent flow has asked: "consent" is the two-row question, asked once the worktree is ready, whose first
--- row, Deny, is what ↵ takes; "prompts" is the picker of saved prompts.
-local function picksOf(w: World, kind: string): { any }
+-- The pickers of saved prompts the agent flow opened.
+local function promptPicks(w: World): { any }
 	local out: { any } = {}
 	for _, p in w.window.picks do
-		local consent = #p.items == 2 and p.items[2].go == true
-		if consent == (kind == "consent") then
+		if string.find(p.placeholder or "", "^Run on ") then
 			table.insert(out, p)
 		end
 	end
 	return out
-end
-
--- How the user answers an agent run: the picker (`pick`, a row's label) and the question about starting the agent in
--- the worktree (`start`). "Allow" or "Deny"; nil dismisses. `onPick` runs when the picker is answered, so the world
--- changes between listing and choosing.
-local function answering(w: World, pick: string?, start: string?, onPick: (() -> ())?)
-	w.window.decide = function(opts: any): (string?, boolean?)
-		if #opts.items == 2 and opts.items[2].go == true then
-			return start, false
-		end
-		if onPick then
-			onPick()
-		end
-		return pick, false
-	end
-end
-
--- Pull request `n` of the scene's repository, at the head the scene's own has.
-local function addPr(s: Scene, n: number)
-	s.git.served["refs/pull/" .. n .. "/head"] = sha("b")
-	s.gh.meta[s.repo .. "#" .. n] = { base = s.repo, sha = sha("b"), ref = "feature", state = "open" }
-end
-
--- The block lists PRs `s.number` to `last` of the scene's repository, the first the newest, as a refresh finds them.
-local function listPrs(w: World, s: Scene, b: Block, last: number)
-	local items: { { [string]: any } } = {}
-	for n = s.number, last do
-		table.insert(items, searchItem(n, s.repo, EPOCH - 60 * (n - s.number + 1)))
-	end
-	s.gh.items.octocat = items
-	b.typeText("r")
-	w.flush()
 end
 
 -- A window whose Plotroom pane (a linked block opened in the checkout's src directory) lists o/r#5.
@@ -3203,11 +3507,17 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 	has(w.toasts[6].sub, "Reused", "the second run reuses")
 	has(w.toasts[6].sub, "Current", "and is current")
 	has(w.toasts[6].sub, "Clean", "and clean")
-	has(commandsOf(b, "cleanup") or "", "worktree remove " .. s.target, "the block offers the cleanup commands")
-	eq(commandsOf(b, "update"), nil, "and no update commands: the worktree is current")
+	eq(commandsOf(b, "update"), nil, "no update commands: the worktree is current")
+	yes(findKey(cardOf(b), "remove", "item") ~= nil, "the card offers to remove it")
+	-- the card's Open in new tab is the Worktree button: its click reaches the window's flow, which opens another tab
+	local tabs = #w.window.launches
+	pressCard(b, "open")
+	w.flush()
+	eq(#w.window.launches, tabs + 1, "a tab opens in the worktree")
+	eq(w.window.launches[tabs + 1].cwd, s.target, "at the worktree's path")
 end)
 
-windowCase("window: Agent lists the saved prompts of the active filter first, runs the pick with {url} replaced in the PR's worktree once allowed, recent first next time", function(w: World)
+windowCase("window: Agent lists the saved prompts of the active filter first, runs the pick with {url} replaced in the PR's worktree without asking, recent first next time", function(w: World)
 	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
 		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2" }) },
 	}) })
@@ -3219,10 +3529,10 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 		promptOf("p4", "Blank", ""),
 		promptOf("p5", "Orphan", "Look into {url}"),
 	})
-	w.window.choose = { "Allow", "Review" }
+	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	local items = picksOf(w, "prompts")[1].items
+	local items = promptPicks(w)[1].items
 	local labels: { string } = {}
 	for _, item in items do
 		table.insert(labels, item.label)
@@ -3232,33 +3542,30 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	eq(items[2].group, "For My PRs", "a prompt of a restricted view has that view's group")
 	eq(items[2].detail, "Review {url}", "and its first line as its detail")
 	eq(items[3].group, "For My PRs", "so does the next")
-	local asked = picksOf(w, "consent")
-	eq(#asked, 1, "the one question comes once the worktree is ready")
-	eq(asked[1].placeholder, "Start an agent for o/r#5?", "it names the pull request")
-	eq(asked[1].items[1].label, "Deny", "the row ↵ takes declines")
-	eq(asked[1].items[2].detail, "Runs omp in " .. s.target, "and Allow names the worktree")
+	eq(#w.window.picks, 1, "nothing but the picker is asked")
 	eq(#w.window.agents, 1, "one agent")
+	eq(w.window.agents[1].command, nil, "a prompt without a model runs the agent setting's command")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5\nthen summarise", "the pick runs with {url} replaced by the PR's link")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
 	eq(countLog(s.git, "config branch.plotroom/o/r/pr-5.merge refs/pull/5/head"), 1, "its branch tracks the PR's ref, so gh there finds the PR")
 	same(w.kv.get("agent-recent"), { "Review" }, "the pick is kept in kv, which outlives a plugin VM reboot")
-	w.window.choose = { "Allow" }
+	w.window.choose = nil
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	local again = picksOf(w, "prompts")[2].items
+	local again = promptPicks(w)[2].items
 	eq(again[1].label, "Review", "the last pick comes first")
 	eq(again[1].group, "Recent", "under Recent")
 	eq(#w.window.agents, 1, "a dismissed picker runs nothing")
-	w.window.choose = { "Allow", "Triage" }
+	w.window.choose = "Triage"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[2].prompt, "Triage https://github.com/o/r/pull/5, then triage https://github.com/o/r/pull/5 again", "every {url} is replaced")
 	same(w.kv.get("agent-recent"), { "Triage", "Review" }, "the newest pick leads")
-	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "Fix the flaky test in {url}"
+	w.window.choose, w.window.typed = "Type a prompt…", "Fix the flaky test in {url}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[3].prompt, "Fix the flaky test in https://github.com/o/r/pull/5", "typed text gets {url} replaced too")
-	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "{owner}/{repo}#{number} {title} by {author}: {branch} into {base}, {nope}"
+	w.window.choose, w.window.typed = "Type a prompt…", "{owner}/{repo}#{number} {title} by {author}: {branch} into {base}, {nope}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main, {nope}", "every variable is filled from a fresh read of the PR; an unknown one stays")
@@ -3267,10 +3574,10 @@ end)
 windowCase("window: Recent lists only prompts that are still saved, and with none saved the picker says where to write them", function(w: World)
 	agentScene(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
-	w.window.choose = { "Allow", "Review" }
+	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	w.window.choose = { "Allow", "Triage" }
+	w.window.choose = "Triage"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	same(w.kv.get("agent-recent"), { "Triage", "Review" }, "two picks are remembered")
@@ -3278,7 +3585,7 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 	w.window.choose = nil
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	local rows = picksOf(w, "prompts")[3].items
+	local rows = promptPicks(w)[3].items
 	local labels: { string } = {}
 	local groups: { string } = {}
 	for _, item in rows do
@@ -3290,35 +3597,33 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 	savePrompts(w, {})
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	local none = picksOf(w, "prompts")[4].items
+	local none = promptPicks(w)[4].items
 	eq(#none, 1, "with nothing saved only typing is offered")
 	eq(none[1].label, "Type a prompt…", "typing")
-	eq(none[1].detail, "Save prompts in Settings › Prompts (s)", "which says where to write prompts")
+	eq(none[1].detail, "Save prompts in Settings › Prompts", "which says where to write prompts")
 end)
 
 windowCase("window: saved prompts the host cannot read are reported, and a prompt can still be typed", function(w: World)
 	agentScene(w)
 	w.kv.put("prompts-prs", "garbage")
-	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "Look at {url}"
+	w.window.choose, w.window.typed = "Type a prompt…", "Look at {url}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.toasts[1].level, "error", "the user is told")
 	eq(w.toasts[1].text, "Saved prompts are not listed", "what is missing")
 	has(w.toasts[1].sub, "malformed", "and why")
-	eq(#picksOf(w, "prompts")[1].items, 1, "the picker still opens")
+	eq(#promptPicks(w)[1].items, 1, "the picker still opens")
 	eq(w.window.agents[1].prompt, "Look at https://github.com/o/r/pull/5", "to type a prompt")
 	eq(w.kv.get("prompts-prs"), "garbage", "and the saved prompts are untouched")
 end)
 
-windowCase("window: a card button's run link runs its prompt with every {url} replaced in the PR's worktree once allowed, as the prompt is saved now", function(w: World)
+windowCase("window: a card button's run link runs its prompt with every {url} replaced in the PR's worktree, with its model, as the prompt is saved now", function(w: World)
 	local s, b = agentScene(w)
-	savePrompts(w, {
-		promptOf("p1", "Review", "Review {url}\nthen summarise {url}"),
-		promptOf("p2", "Triage", "Triage {url}"),
-	})
+	local review = promptOf("p1", "Review", "Review {url}\nthen summarise {url}")
+	review.model = "@slow"
+	savePrompts(w, { review, promptOf("p2", "Triage", "Triage {url}") })
 	b.render()
 	cardSurface(w, b)
-	w.window.choose = { "Allow" }
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
 	local ops: { string } = {}
@@ -3327,23 +3632,23 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	end
 	same(ops, { "menu", "worktree" }, "the host is asked what the prompt is, then for the worktree")
 	eq(requestsSent(w)[1].only, "p1", "and the request for the prompt names it")
-	eq(#picksOf(w, "prompts"), 0, "no picker: the button names its prompt")
-	local asked = picksOf(w, "consent")
-	eq(#asked, 1, "the one question comes once the worktree is ready")
-	eq(asked[1].placeholder, "Start an agent for o/r#5?", "it names the pull request")
-	eq(asked[1].items[2].detail, "Runs omp in " .. s.target, "and Allow names the worktree")
-	eq(#w.window.agents, 1, "Allow starts the agent")
+	eq(#w.window.picks, 0, "nothing is asked: the button names its prompt")
+	eq(#w.window.agents, 1, "the agent starts")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5\nthen summarise https://github.com/o/r/pull/5", "with every {url} replaced by the PR's link")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
+	eq(w.window.agents[1].command, "omp --model @slow", "as omp with the prompt's model, a role alias here")
 	savePrompts(w, { promptOf("p1", "Review", "Review quickly: {url}") })
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
 	eq(w.window.agents[2].prompt, "Review quickly: https://github.com/o/r/pull/5", "a prompt edited since the card was drawn runs as it is saved now")
-	w.window.choose = { "Deny" }
+	eq(w.window.agents[2].command, nil, "its model removed, the agent setting's command runs it")
+	local bad = promptOf("p1", "Review", "Review {url}")
+	bad.model = "opus; rm -rf ~"
+	savePrompts(w, { bad })
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
-	eq(#w.window.agents, 2, "Deny starts nothing")
-	eq(w.toasts[#w.toasts].text, "Agent not started for o/r#5", "and says so")
+	eq(#w.window.agents, 2, "a model that is no model name starts nothing, as it would go on a command line")
+	eq(w.toasts[#w.toasts].level, "error", "the user is told")
 end)
 
 windowCase("window: a card button of a prompt the picker's size budget would cut still runs it, the request naming the prompt", function(w: World)
@@ -3358,7 +3663,6 @@ windowCase("window: a card button of a prompt the picker's size budget would cut
 	cardSurface(w, b)
 	request(b, "all", { op = "menu" })
 	yes(#answerOf(b, "all").items < 8, "the whole list does not fit one answer")
-	w.window.choose = { "Allow" }
 	w.click(runLink("o/r", 5, "p8"))
 	w.flush()
 	local sent = requestsSent(w)[1]
@@ -3399,17 +3703,15 @@ windowCase("window: a prompt no longer offered once the card was drawn gives a t
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
 	b.render()
 	cardSurface(w, b)
-	w.window.choose = { "Allow" }
 	-- Saves `list` instead, then clicks the first prompt's button on the card as it was drawn.
 	local function gone(what: string, list: { { [string]: any } })
 		savePrompts(w, list)
-		local asked, said = #picksOf(w, "consent"), #w.toasts
+		local said = #w.toasts
 		w.click(runLink("o/r", 5, "p1"))
 		w.flush()
 		eq(#w.toasts, said + 1, what .. ": the user is told once")
 		eq(w.toasts[#w.toasts].level, "error", what .. ": as an error")
 		eq(w.toasts[#w.toasts].text, "That prompt is no longer offered here", what .. ": what is wrong")
-		eq(#picksOf(w, "consent"), asked, what .. ": nothing is asked")
 		eq(#w.window.agents, 0, what .. ": no agent")
 		eq(cardOf(b), nil, what .. ": and no worktree was prepared")
 	end
@@ -3422,10 +3724,10 @@ windowCase("window: the palette command Run an agent follows the card's unseen A
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
 	b.render()
 	cardSurface(w, b)
-	w.window.choose = { "Allow", "Review" }
+	w.window.choose = "Review"
 	w.command("agent-selected")
 	w.flush()
-	eq(#picksOf(w, "prompts"), 1, "the picker opens")
+	eq(#promptPicks(w), 1, "the picker opens")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5", "and the pick runs")
 end)
 
@@ -3449,7 +3751,7 @@ end)
 windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)
 	local s = agentScene(w)
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
-	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "go"
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(#w.window.runs, 1, "setup runs")
@@ -3465,53 +3767,8 @@ windowCase("window: an agent on a new worktree joins the tab where its setup run
 	eq(inTab, 2, "and joins the setup shell's tab")
 end)
 
-type Way = { what: string, pick: string, start: string? }
-
-windowCase("window: declining the question about the agent leaves the worktree ready and starts nothing, however the prompt was picked", function(w: World)
-	local s, b = agentScene(w)
-	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
-	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
-	w.window.typed = "go"
-	local ways: { Way } = {
-		{ what = "typed prompt", pick = "Type a prompt…", start = "Deny" },
-		{ what = "saved prompt", pick = "Review", start = "Deny" },
-		{ what = "recent prompt", pick = "Review", start = nil },
-	}
-	local lastPr = 5 + #ways + 1
-	listPrs(w, s, b, lastPr)
-	for i, way in ways do
-		local n = 5 + i
-		addPr(s, n)
-		listPr(w, "o/r", n)
-		answering(w, way.pick, way.start)
-		w.click(prLink("agent", "o/r", n))
-		w.flush()
-		local target = "/wt/plotroom-o_r-pr-" .. n
-		eq(#w.window.agents, 0, way.what .. ": no agent")
-		eq(#w.window.runs, 0, way.what .. ": no setup, though the worktree is new")
-		showPr(b, n)
-		has(cardText(b), target, way.what .. ": the worktree was prepared and noted on the block")
-		local told = w.toasts[#w.toasts]
-		eq(told.level, "info", way.what .. ": toast level")
-		eq(told.text, "Agent not started for o/r#" .. n, way.what .. ": toast")
-		has(told.sub, target, way.what .. ": it says where the worktree is")
-	end
-	eq(picksOf(w, "prompts")[3].items[1].group, "Recent", "the last way was picked from Recent")
-	addPr(s, lastPr)
-	listPr(w, "o/r", lastPr)
-	answering(w, "Type a prompt…", "Allow")
-	w.click(prLink("agent", "o/r", lastPr))
-	w.flush()
-	eq(#w.window.agents, 1, "Allow starts the agent")
-	eq(#w.window.runs, 1, "after the setup of its new worktree")
-	listPr(w, "o/r", 6)
-	w.click(prLink("agent", "o/r", 6))
-	w.flush()
-	eq(#w.window.agents, 2, "and a pull request whose agent was declined can be tried again")
-end)
-
 windowCase("window: an answer that arrives without a window context starts nothing", function(w: World)
-	local s, b = agentScene(w)
+	agentScene(w)
 	local ran = #w.calls
 	w.window.typed = "go"
 	w.window.decide = function(_opts: any): (string?, boolean?)
@@ -3522,17 +3779,6 @@ windowCase("window: an answer that arrives without a window context starts nothi
 	eq(#w.calls, ran, "the picker, answered without a context, ran nothing")
 	eq(#requestsSent(w), 1, "and asked the host for nothing beyond the prompts")
 	eq(#w.toasts, 0, "or said anything")
-	w.window.decide = function(opts: any): (string?, boolean?)
-		if #opts.items == 2 and opts.items[2].go == true then
-			return "Allow", string.find(opts.placeholder, "^Start an agent") ~= nil
-		end
-		return "Type a prompt…", false
-	end
-	w.click(prLink("agent", "o/r", 5))
-	w.flush()
-	eq(#w.window.agents + #w.window.runs, 0, "the question about the agent, answered without a context, ended with no agent and no setup")
-	has(cardText(b), s.target, "though the worktree it prepared is noted on the block")
-	eq(#w.toasts, 1, "and nothing is said but that it was being prepared")
 end)
 
 windowCase("window: a failing mkdir reports the failure, releases the PR, and the next click works", function(w: World)
@@ -3716,7 +3962,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "8", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "9", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -3980,6 +4226,39 @@ case("github.search: complete means every counted PR arrived", function(w: World
 	local empty = runSearch(w, github, nil)
 	eq(#empty.result.prs, 0, "no PRs")
 	eq(empty.result.complete, true, "an empty search is complete")
+end)
+
+case("github.search: a pull request carries the commit its head branch is at: asked of GitHub, kept lowercase, and only when it is 40 hex digits", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local function item(n: number, head: any): { [string]: any }
+		return searchItem(n, "o/r", EPOCH - n * 60, { headSha = head })
+	end
+	gh.items.octocat = {
+		item(1, sha("a")),
+		item(2, string.rep("AB", 20)),
+		item(3, string.rep("a", 39)),
+		item(4, string.rep("g", 40)),
+		item(5, 12345),
+		item(6, NULL),
+		searchItem(7, "o/r", EPOCH - 7 * 60),
+	}
+	local out = runSearch(w, github, nil)
+	local argv = gh.requests[1].call.argv
+	has(gh.requests[1].fields.query, "headRefOid", "the search selects the head commit")
+	has(argv[(table.find(argv, "--jq") :: number) + 1], "headSha:.headRefOid", "and the filter hands it over as headSha")
+	local got: { string? } = {}
+	for i, pr in out.result.prs do
+		got[i] = pr.headSha
+	end
+	eq(got[1], sha("a"), "a full commit id")
+	eq(got[2], string.rep("ab", 20), "is lowercased")
+	eq(got[3], nil, "too short")
+	eq(got[4], nil, "not hexadecimal")
+	eq(got[5], nil, "not text")
+	eq(got[6], nil, "null")
+	eq(got[7], nil, "absent")
+	eq(#out.result.prs, 7, "none of them is lost for it")
 end)
 
 case("github.search: an empty page with a cursor, or a cursor that did not advance, stops the scan as partial", function(w: World)
@@ -5006,7 +5285,7 @@ end
 -- Opens Settings on `page` with its first row focused.
 local function goToSettings(b: Block, page: string, issues: boolean?)
 	b.typeText("s")
-	local pages = if issues then { "views", "prompts", "repos", "jira", "connection" } else { "views", "prompts", "repos", "connection" }
+	local pages = if issues then { "views", "prompts", "keys", "repos", "jira", "connection" } else { "views", "prompts", "keys", "repos", "connection" }
 	local turns = (table.find(pages, page) or 1) - 1
 	for _ = 1, turns do
 		b.press("tab")
@@ -5017,6 +5296,21 @@ end
 -- Expands the view or prompt whose summary row is `row` ("vopen:<id>" / "popen:<id>"), as its Edit button does.
 local function expand(b: Block, row: string)
 	b.event({ ev = "action", id = "layer.settings", act = "expand", value = row })
+end
+
+-- Types `text` into the Keys row of action `id` and presses Enter: the warning under the row afterwards. A refused key
+-- leaves the edit open, and the next call types over its draft.
+local function bindKey(b: Block, id: string, text: string): string?
+	local row = "key:" .. id
+	if prefsOf(b).editing == nil then
+		b.event({ ev = "select", id = "layer.settings", item = row })
+		b.press("enter")
+	end
+	b.press("a", "c")
+	b.press("backspace")
+	b.typeText(text)
+	b.press("enter")
+	return rowIn(b, row).warning
 end
 
 -- The lowercased key labels of a shortcut list overlay found under `node`.
@@ -5192,6 +5486,196 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	b.typeText("s")
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "s opens Settings")
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
+end)
+
+case("host: Settings › Keys moves an action to another key: the new key works and the old one does nothing, ? and the action bar show it, and Reset brings the default back", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	local page: any = nil
+	for _, p in prefsOf(b).pages do
+		if p.id == "keys" then
+			page = p
+		end
+	end
+	same(page, { id = "keys", label = "Keys", group = "Queue", icon = "key" }, "Keys is a page of the Queue group")
+	local ids: { string } = {}
+	for _, r in prefsOf(b).sections[1].rows do
+		table.insert(ids, r.id)
+	end
+	same(ids, { "key:down", "key:up", "key:worktree", "key:goto", "key:agent", "key:search", "key:refresh", "key:settings", "key:help" }, "one row for each action of the queue")
+	local row = rowIn(b, "key:worktree")
+	eq(row.label, "Worktree", "named for its action")
+	eq(row.control.value, "w", "showing its key")
+	eq(row.control.placeholder, "None", "and None when it has none")
+	eq(row.changed, false, "the default is no change")
+	eq(row.defaultLabel, "w", "and is what Reset goes back to")
+	eq(bindKey(b, "worktree", "W"), nil, "a free key is accepted")
+	eq(prefsOf(b).editing, nil, "and closes the edit")
+	same(w.kv.get("keys"), { worktree = "W" }, "it is saved as the one difference from the defaults")
+	row = rowIn(b, "key:worktree")
+	eq(row.control.value, "W", "the row shows it")
+	eq(row.changed, true, "as a change")
+	eq(bindKey(b, "down", "n"), nil, "a move key moves too")
+	eq(bindKey(b, "help", "h"), nil, "and so does the list's own")
+	same(w.kv.get("keys"), { down = "n", help = "h", worktree = "W" }, "each is saved beside the others")
+	b.press("escape")
+	local opened = #w.opened
+	eq(b.press("w", nil, "w"), false, "the old worktree key is left to the pane")
+	eq(#w.opened, opened, "and opens nothing")
+	eq(b.press("w", "s", "W"), true, "the new one is handled")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and makes the selected pull request's worktree")
+	b.typeText("j")
+	eq(pickerOf(b).selected, "no_2fr_231", "j no longer moves down")
+	b.typeText("n")
+	eq(pickerOf(b).selected, "no_2fr_232", "the new key does")
+	b.press("down")
+	eq(pickerOf(b).selected, "no_2fr_233", "and the arrow still does")
+	b.typeText("k")
+	eq(pickerOf(b).selected, "no_2fr_232", "an action nobody changed keeps its key")
+	same(actionOf(b, "worktree").keys, { "W" }, "the action bar's button shows the new key")
+	b.typeText("?")
+	eq(findKey(b.view().layer, "help"), nil, "the old list key opens nothing")
+	b.typeText("h")
+	local shown: { string } = {}
+	for _, r in helpRows(b.view().layer) do
+		table.insert(shown, r.keys)
+	end
+	same(shown, { "↑ ↓ n k", "Enter", "W", "g", "a", "/", "Tab", "r", "s", "h" }, "the list shows every key as it is now")
+	eq(b.press("?", nil, "?"), false, "the old key does not close the list")
+	eq(b.press("h", nil, "h"), true, "the new one does")
+	eq(findKey(b.view().layer, "help"), nil, "and it is gone")
+	b.typeText("s")
+	b.typeText("?")
+	eq(findKey(b.view().layer, "help"), nil, "in Settings the old key opens nothing either")
+	b.typeText("h")
+	local inSettings = helpRows(b.view().layer)
+	eq(inSettings[#inSettings].keys, "h", "and Settings' own list shows the new one")
+	b.press("escape")
+	b.press("tab")
+	b.press("tab")
+	eq(prefsOf(b).page, "keys", "back on the Keys page")
+	b.event({ ev = "change", id = "layer.settings", item = "key:worktree" })
+	same(w.kv.get("keys"), { down = "n", help = "h" }, "Reset drops that one change")
+	row = rowIn(b, "key:worktree")
+	eq(row.control.value, "w", "the row shows the default again")
+	eq(row.changed, false, "as no change")
+	b.event({ ev = "change", id = "layer.settings", item = "key:down" })
+	b.event({ ev = "change", id = "layer.settings", item = "key:help" })
+	same(w.kv.get("keys"), {}, "Reset on the others leaves nothing changed")
+	eq(bindKey(b, "refresh", "R"), nil, "a key can change again")
+	same(w.kv.get("keys"), { refresh = "R" }, "and is saved")
+	eq(bindKey(b, "refresh", "r"), nil, "typing the default back")
+	same(w.kv.get("keys"), {}, "is no change: nothing stays saved")
+	b.press("escape")
+	eq(b.press("w", nil, "w"), true, "the default key works again")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 2), "on the selected pull request")
+	eq(b.press("w", "s", "W"), false, "and the one it was moved to is the pane's")
+end)
+
+case("host: an empty Keys row removes the shortcut: no key does it, ? and the action bar leave it out, and Reset brings it back", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	for _, id in { "worktree", "agent", "search", "down", "up" } do
+		eq(bindKey(b, id, ""), nil, "an empty row is accepted: " .. id)
+	end
+	same(w.kv.get("keys"), { agent = "", down = "", search = "", up = "", worktree = "" }, "each is saved as removed")
+	local row = rowIn(b, "key:worktree")
+	eq(row.control.value, "", "the row is empty")
+	eq(row.changed, true, "and changed")
+	eq(row.defaultLabel, "w", "so Reset can bring the key back")
+	b.press("tab", "s")
+	eq(prefsOf(b).page, "prompts", "the Prompts page is before Keys")
+	has(prefsOf(b).lead, "or the agent picker. Variables", "it no longer names the agent key")
+	b.press("escape")
+	local opened = #w.opened
+	for _, k in { "w", "a" } do
+		eq(b.press(k, nil, k), false, k .. " is left to the pane")
+	end
+	eq(#w.opened, opened, "nothing was opened")
+	b.typeText("/")
+	eq(pickerOf(b).query, nil, "/ opens no search")
+	b.typeText("j")
+	eq(pickerOf(b).selected, "no_2fr_231", "j moves nowhere")
+	b.press("down")
+	eq(pickerOf(b).selected, "no_2fr_232", "the arrow does")
+	b.typeText("k")
+	eq(pickerOf(b).selected, "no_2fr_232", "k does not move up")
+	b.press("up")
+	eq(pickerOf(b).selected, "no_2fr_231", "the arrow does")
+	eq(actionOf(b, "worktree").keys, nil, "the action bar's button shows no key")
+	b.typeText("?")
+	local shown: { string } = {}
+	for _, r in helpRows(b.view().layer) do
+		table.insert(shown, r.keys)
+	end
+	same(shown, { "↑ ↓", "Enter", "g", "Tab", "r", "s", "?" }, "the list leaves out what has no key")
+	b.press("escape")
+	goToSettings(b, "keys")
+	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
+	eq(bindKey(b, "settings", ""), nil, "and Settings'")
+	b.press("escape")
+	b.typeText("?")
+	eq(findKey(b.view().layer, "help"), nil, "no key opens the list")
+	b.typeText("s")
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "no key opens Settings")
+	eq(actionOf(b, "settings").keys, nil, "and its button shows none")
+	b.event({ ev = "action", id = "layer.queue", act = "settings" })
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "the button still does")
+	b.typeText("?")
+	eq(findKey(b.view().layer, "help"), nil, "Settings has no key for its list either")
+	b.press("tab")
+	b.press("tab")
+	for _, id in { "worktree", "agent", "search", "down", "up", "help", "settings" } do
+		b.event({ ev = "change", id = "layer.settings", item = "key:" .. id })
+	end
+	same(w.kv.get("keys"), {}, "Reset brings every key back")
+	b.press("escape")
+	eq(b.press("w", nil, "w"), true, "the default worktree key works again")
+	b.typeText("?")
+	local back: { string } = {}
+	for _, r in helpRows(b.view().layer) do
+		table.insert(back, r.keys)
+	end
+	same(back, { "↑ ↓ j k", "Enter", "w", "g", "a", "/", "Tab", "r", "s", "?" }, "and the list shows them all")
+end)
+
+case("host: the empty queue's hint names the Settings key, or just Settings when it has none", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("views-prs", { version = 1, nextId = 1, items = array({}) })
+	local b = openQueue(w)
+	eq(pickerOf(b).empty[1].t, "No saved views yet. Press s to add one.", "the hint names the key")
+	w.kv.put("keys", { settings = "S" })
+	b.render()
+	eq(pickerOf(b).empty[1].t, "No saved views yet. Press S to add one.", "as it is now")
+	w.kv.put("keys", { settings = "" })
+	b.render()
+	eq(pickerOf(b).empty[1].t, "No saved views yet. Open Settings to add one.", "or just Settings once it is removed")
+end)
+
+case("host: the In tab tooltip names the key that goes to the tab, or none once it is removed", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1/src" })
+	b.render()
+	local function tip(): string?
+		for _, badge in pickerOf(b).items[1].badges do
+			if badge.text == "In tab" then
+				return badge.title
+			end
+		end
+		return nil
+	end
+	eq(tip(), "A tab works in this pull request's worktree (g goes there)", "the tooltip names the key")
+	w.kv.put("keys", { ["goto"] = "G" })
+	b.render()
+	eq(tip(), "A tab works in this pull request's worktree (G goes there)", "as it is now, the rows rebuilt")
+	same(actionOf(b, "goto").keys, { "G" }, "like the button's keycap")
+	w.kv.put("keys", { ["goto"] = "" })
+	b.render()
+	eq(tip(), "A tab works in this pull request's worktree", "and not at all once it is removed")
+	eq(actionOf(b, "goto").keys, nil, "nor on the button")
 end)
 
 case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
@@ -5391,16 +5875,16 @@ case("host: a first run saves the two default views, Add creates one, and Delete
 	has(b.title(), "My PRs", "the view that took its place is shown")
 end)
 
-case("host: Tab cycles the Settings pages in order, Views, Prompts, Repositories, Connection, and Shift+Tab goes back", function(w: World)
+case("host: Tab cycles the Settings pages in order, Views, Prompts, Keys, Repositories, Connection, and Shift+Tab goes back", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	b.typeText("s")
 	local pages: { string } = { prefsOf(b).page }
-	for _ = 1, 4 do
+	for _ = 1, 5 do
 		b.press("tab")
 		table.insert(pages, prefsOf(b).page)
 	end
-	same(pages, { "views", "prompts", "repos", "connection", "views" }, "Tab walks the pages and wraps around")
+	same(pages, { "views", "prompts", "keys", "repos", "connection", "views" }, "Tab walks the pages and wraps around")
 	b.press("tab", "s")
 	eq(prefsOf(b).page, "connection", "Shift+Tab goes back, wrapping the other way")
 end)
@@ -6004,7 +6488,7 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pdelete:p1", "pclose:p1" }, "a prompt has its name, text, shortcut, Delete and Done, in that order")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pdelete:p1", "pclose:p1" }, "a prompt has its name, text, shortcut, model, Delete and Done, in that order")
 	local row = rowIn(b, "pkey:p1")
 	eq(row.label, "Shortcut", "the row is the Shortcut")
 	eq(row.control.value, "", "empty while the prompt has none")
@@ -6043,6 +6527,160 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 	eq(try(""), nil, "an empty shortcut is accepted")
 	eq(w.kv.get("prompts-prs").items[1].key, nil, "and removes the key")
 	eq(rowIn(b, "pkey:p1").control.value, "", "which the row shows")
+end)
+
+case("host: a Keys row refuses a key another action or a saved prompt of either block has, and a prompt's shortcut refuses the keys the queue uses now", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}", "m") })
+	w.kv.put("prompts-issues", { version = 1, nextId = 2, items = array({ promptOf("p1", "Triage", "Triage {url}", "i") }) })
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	eq(bindKey(b, "worktree", "g"), "Already the shortcut of Go to tab.", "another action's key is refused, naming the action")
+	eq(prefsOf(b).editing.draft, "g", "with the draft kept for a correction")
+	local one = "One key: a single letter, digit or symbol."
+	eq(bindKey(b, "worktree", "ab"), one, "more than one character is refused")
+	eq(bindKey(b, "worktree", "a b"), one, "and so is a gap")
+	eq(bindKey(b, "worktree", "m"), "Already the shortcut of the pull request prompt “Review”.", "a pull request prompt's key is refused, naming the prompt")
+	eq(bindKey(b, "worktree", "i"), "Already the shortcut of the issue prompt “Triage”.", "and an issue prompt's")
+	eq(w.kv.store["keys"], nil, "nothing was saved")
+	b.press("escape")
+	eq(bindKey(b, "goto", "G"), nil, "an action's key is free once it has moved")
+	eq(bindKey(b, "worktree", "g"), nil, "and another action can have it")
+	same(w.kv.get("keys"), { ["goto"] = "G", worktree = "g" }, "both are saved")
+	b.press("tab", "s")
+	eq(prefsOf(b).page, "prompts", "on the Prompts page")
+	expand(b, "popen:p1")
+	b.event({ ev = "select", id = "layer.settings", item = "pkey:p1" })
+	-- Tries `text` as the prompt's shortcut: the warning under its row afterwards.
+	local function try(text: string): string?
+		if prefsOf(b).editing == nil then
+			b.press("enter")
+		end
+		b.press("a", "c")
+		b.press("backspace")
+		b.typeText(text)
+		b.press("enter")
+		return rowIn(b, "pkey:p1").warning
+	end
+	eq(try("G"), "The queue already uses G.", "a prompt cannot take the key an action moved to")
+	eq(try("w"), nil, "but takes the one the action gave up")
+	eq(w.kv.get("prompts-prs").items[1].key, "w", "and it is saved")
+	b.press("escape")
+	b.typeText("w")
+	eq(w.opened[#w.opened], runLink("o/r", 1, "p1"), "the prompt's key runs it")
+	b.typeText("g")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and the action's new key makes the worktree")
+end)
+
+case("host: unreadable or malformed saved keys lock the Keys rows with the reason, the default keys keep working, and nothing is written over them", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	-- Tries every way to write the keys while they cannot be loaded: `why` is what the rows must say.
+	local function locked(what: string, why: string)
+		b.render()
+		local stored = w.kv.store["keys"]
+		for _, r in prefsOf(b).sections[1].rows do
+			has(r.disabled, why, what .. ": " .. r.id .. " is locked, with the reason")
+		end
+		b.event({ ev = "activate", id = "layer.settings", item = "key:worktree" })
+		eq(prefsOf(b).editing, nil, what .. ": no edit opens")
+		b.event({ ev = "change", id = "layer.settings", item = "key:worktree" })
+		has(rowIn(b, "key:worktree").warning, why, what .. ": Reset says why")
+		eq(w.kv.store["keys"], stored, what .. ": nothing was written over it")
+	end
+	local malformed: { any } = { "garbage", { worktree = 5 }, { worktree = "ww" }, { worktree = "a b" }, array({ "w" }) }
+	for i, value in malformed do
+		w.kv.put("keys", value)
+		locked("malformed value " .. i, "malformed")
+	end
+	w.kv.put("keys", { worktree = "W" })
+	w.kv.failGet["keys"] = "disk offline"
+	locked("an unreadable store", "disk offline")
+	b.press("escape")
+	eq(b.press("w", "s", "W"), false, "the saved key is not in use while the keys cannot be read")
+	eq(b.press("w", nil, "w"), true, "the default one is")
+	w.kv.failGet["keys"] = nil
+	eq(b.press("w", "s", "W"), true, "readable again, the saved key works")
+	goToSettings(b, "keys")
+	b.event({ ev = "select", id = "layer.settings", item = "key:goto" })
+	b.press("enter")
+	b.press("a", "c")
+	b.press("backspace")
+	b.typeText("G")
+	w.kv.put("keys", "garbage")
+	local stored = w.kv.store["keys"]
+	b.press("enter")
+	has(rowIn(b, "key:goto").warning, "malformed", "a key committed after the keys went bad is refused")
+	eq(w.kv.store["keys"], stored, "and nothing is written over them")
+	eq(prefsOf(b).editing.draft, "G", "the draft stays")
+	w.kv.put("keys", { worktree = "W" })
+	w.kv.failSet["keys"] = "read-only file system"
+	b.press("enter")
+	eq(rowIn(b, "key:goto").warning, "Could not save: read-only file system", "a failed write is reported under the row")
+	eq(prefsOf(b).editing.draft, "G", "with the draft kept")
+	same(w.kv.get("keys"), { worktree = "W" }, "and the saved keys as they were")
+	w.kv.failSet["keys"] = nil
+	b.press("enter")
+	eq(rowIn(b, "key:goto").warning, nil, "the retry clears the warning")
+	same(w.kv.get("keys"), { ["goto"] = "G", worktree = "W" }, "and saves the key beside the other")
+end)
+
+case("host: a key changed in one block reaches the other live blocks, and a closed pane is skipped", function(w: World)
+	hostScene(w, 3)
+	local a = w.open(1, { "/work/r" })
+	local c = w.open(2, { "/work/r" })
+	local gone = w.open(3, { "/work/r" })
+	w.flush()
+	gone.close()
+	goToSettings(a, "keys")
+	local drawn, closed = c.renders(), gone.renders()
+	eq(bindKey(a, "worktree", "W"), nil, "the key is saved")
+	yes(c.renders() > drawn, "the other block is drawn again")
+	same(actionOf(c, "worktree").keys, { "W" }, "and shows the new key")
+	eq(gone.renders(), closed, "a closed pane is not drawn")
+	eq(c.press("w", nil, "w"), false, "the other block's old key is its pane's again")
+	eq(c.press("w", "s", "W"), true, "and the new one works there")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "on its selected pull request")
+	a.event({ ev = "change", id = "layer.settings", item = "key:worktree" })
+	same(actionOf(c, "worktree").keys, { "w" }, "Reset reaches it too")
+end)
+
+case("host: a prompt's model is a model pattern or omp role: the row refuses anything else, the menu sends it, reset clears it", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:p1")
+	eq(rowIn(b, "pmodel:p1").control.value, "", "empty while the prompt has none")
+	b.event({ ev = "select", id = "layer.settings", item = "pmodel:p1" })
+	local function try(text: string): string?
+		if prefsOf(b).editing == nil then
+			b.press("enter")
+		end
+		b.press("a", "c")
+		b.press("backspace")
+		b.typeText(text)
+		b.press("enter")
+		return rowIn(b, "pmodel:p1").warning
+	end
+	local bad = "A model such as opus or provider/model-id, or a role such as @slow."
+	eq(try("opus; rm -rf ~"), bad, "shell syntax is refused: the window puts it on a command line")
+	eq(try("@"), bad, "a bare @ is no role")
+	eq(try("a b"), bad, "so is a gap")
+	eq(w.kv.get("prompts-prs").items[1].model, nil, "nothing was saved")
+	for _, ok in { "@slow", "opus", "anthropic/claude-opus-4-5", "gpt-5.2:high", "openrouter/x-ai/grok-4" } do
+		eq(try(ok), nil, ok .. " is accepted")
+		eq(w.kv.get("prompts-prs").items[1].model, ok, ok .. " is saved")
+	end
+	eq(rowIn(b, "pmodel:p1").changed, true, "the row offers a reset")
+	request(b, "m1", { op = "menu" })
+	local item = answerOf(b, "m1").items[1]
+	eq(item.model, "openrouter/x-ai/grok-4", "the menu sends the model")
+	eq(item.detail, "openrouter/x-ai/grok-4 · Review {url}", "and names it before the first line")
+	b.event({ ev = "change", id = "layer.settings", item = "pmodel:p1", value = nil })
+	eq(w.kv.get("prompts-prs").items[1].model, nil, "reset clears it")
+	eq(try(""), nil, "an empty model is accepted")
 end)
 
 case("host: ? adds a row for each prompt offered under the view that has a key, in the queue only", function(w: World)
@@ -6192,7 +6830,7 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 	eq(w.toasts[1].text, "Checkout not saved", "that says what happened")
 	has(w.toasts[1].sub, "not an empty directory", "with gh's reason")
 	eq(prefsOf(b).page, "connection", "the page the user is on is left alone")
-	for _ = 1, 3 do -- Views, Prompts, Repositories
+	for _ = 1, 4 do -- Views, Prompts, Keys, Repositories
 		b.press("tab")
 	end
 	eq(prefsOf(b).page, "repos", "back on the Repositories page")
@@ -6203,7 +6841,7 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 	eq(w.toasts[2].text, "Checkout not saved", "with the same toast")
 	goToSettings(b, "repos")
 	submit()
-	for _ = 1, 4 do
+	for _ = 1, 5 do
 		b.press("tab")
 	end
 	eq(prefsOf(b).page, "repos", "a user who is back on the page before gh answers")
@@ -6858,7 +7496,7 @@ case("host: selecting and activating rows follows the picker, and a row that is 
 	eq(pickerOf(b).selected, "no_2fr_233", "and so is an event for another surface")
 end)
 
-case("host: a worktree request becomes a badge and a card that shows its commands, and nothing is ever run", function(w: World)
+case("host: a worktree request becomes a badge and a card with its status, place and update commands, and removes nothing", function(w: World)
 	local s = hostScene(w, 2)
 	for n = 1, 2 do
 		s.git.served["refs/pull/" .. n .. "/head"] = sha("b")
@@ -6900,7 +7538,6 @@ case("host: a worktree request becomes a badge and a card that shows its command
 	ask(1)
 	eq(badgeOf(b).tone, "warning", "so does a worktree behind its PR")
 	local ran = #w.calls
-	eq(commandsOf(b, "cleanup"), "git -C /work/r worktree remove " .. target .. "\ngit -C /work/r branch -d plotroom/o/r/pr-1\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-1", "the cleanup commands, one per line, in a shell block Tern copies")
 	eq(commandsOf(b, "update"), "git -C " .. target .. " fetch origin refs/pull/1/head\ngit -C " .. target .. " merge --ff-only FETCH_HEAD", "the update commands too")
 	eq(#w.calls, ran, "showing them ran nothing")
 	s.gh.meta["o/r#1"].sha = sha("b")
@@ -6911,7 +7548,7 @@ case("host: a worktree request becomes a badge and a card that shows its command
 	yes(type(ask(1).problem) == "string", "a PR that cannot be read is answered with the reason")
 	eq(badgeOf(b), nil, "a failed attempt shows no badge")
 	eq(cardOf(b).p.tone, "error", "but an error card")
-	eq(commandsOf(b, "cleanup"), nil, "with no commands to run")
+	eq(findKey(cardOf(b), "actions"), nil, "with no buttons: there is no worktree to go to or remove")
 	w.fs.denyMkdir["/wt"] = "mkdir denied"
 	showPr(b, 2)
 	ask(2)
@@ -6921,6 +7558,563 @@ case("host: a worktree request becomes a badge and a card that shows its command
 	for _, never in { "worktree remove", "branch", "update-ref", "merge" } do
 		eq(countLog(s.git, never), 0, "git " .. never .. " was never run")
 	end
+end)
+
+case("host: the worktree card is two badges, the branch and the path, then the buttons that go to its tab, open one or remove it", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	w.env.HOME = "/wt"
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	local function ask()
+		request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+		w.flush()
+	end
+	ask()
+	same(chipsOf(b), { "Up to date", "Clean" }, "at the PR head and clean: two badges")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "success", "a good state")
+	has(findKey(cardOf(b), "sync", "badge").p.title, "Created", "with the one-line summary of the attempt as the tooltip")
+	for _, gone in { "summary", "never", "facts" } do
+		eq(findKey(cardOf(b), gone), nil, "no " .. gone .. " line: the summary sentence, the footer and the kv are gone")
+	end
+	eq(findKey(cardOf(b), "cleanup", "section"), nil, "nor cleanup commands")
+	eq(findKey(cardOf(b), "update", "section"), nil, "and no update commands: it is at the PR head")
+	local branch = findKey(cardOf(b), "wbranch")
+	eq(findKey(branch, "v").p.spans[1].t, "plotroom/o/r/pr-1", "the branch")
+	eq(findKey(branch, "copy", "icon").p.href, "plotroom/o/r/pr-1", "copied as it is")
+	local path = findKey(cardOf(b), "wpath")
+	eq(findKey(path, "v").p.spans[1].t, "~/plotroom-o_r-pr-1", "the path, home written ~")
+	eq(findKey(path, "v").p.truncate, "middle", "cut in the middle when it is long")
+	eq(findKey(path, "v").p.title, target, "the tooltip has all of it")
+	eq(findKey(path, "copy", "icon").p.href, target, "and so does the copy icon")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "no tab works in it: open one, or remove it")
+	local open: any = findKey(cardOf(b), "open", "item")
+	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
+	eq(open.p.actions.click, "worktree", "and is the Worktree button")
+	local remove: any = findKey(cardOf(b), "remove", "item")
+	eq(remove.p.tone, "error", "Remove is red")
+	eq(remove.p.icon, "trash", "with a trash can")
+	eq(remove.p.hint, nil, "and no key")
+	pressCard(b, "open")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "a click opens the Worktree link, as the key does")
+	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
+	b.render()
+	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree" }, "while a tab works in it, the button goes there instead")
+	same(findKey(cardOf(b), "go", "item").p.hint, { "g" }, "wearing the Go to tab key")
+	pressCard(b, "go")
+	eq(w.opened[#w.opened], prLink("goto", "o/r", 1), "and its click opens the Go to tab link")
+	table.remove(w.panes)
+	s.gh.meta["o/r#1"].sha = sha("c")
+	s.git.dirty[target] = " M src/a.lua\n"
+	ask()
+	same(chipsOf(b), { "Not at PR head", "Uncommitted changes" }, "behind its PR and modified")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "both are warnings")
+	eq(findKey(cardOf(b), "changes", "badge").p.tone, "warning", "")
+	eq(cardOf(b).p.tone, "warning", "and so is the card")
+	eq(findKey(cardOf(b), "update", "section").p.collapsed, true, "the update commands are folded away")
+	eq(commandsOf(b, "update"), "git -C " .. target .. " fetch origin refs/pull/1/head\ngit -C " .. target .. " merge --ff-only FETCH_HEAD", "and complete")
+	s.gh.meta["o/r#1"].sha = sha("b")
+	s.git.dirty[target] = nil
+	s.git.fail["status"] = { status = 128, stderr = "fatal: unable to read the index\n" }
+	ask()
+	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "a status git could not read is never Clean")
+	eq(findKey(cardOf(b), "changes", "badge").p.tone, "muted", "and is no warning either")
+	s.git.fail["status"] = nil
+	s.gh.meta["o/r#1"] = nil
+	ask()
+	eq(cardOf(b).p.tone, "error", "a failed attempt is a red card")
+	eq(findKey(cardOf(b), "status"), nil, "with no badges")
+	same(buttonsOf(b), {}, "and no buttons: there is no worktree to go to or remove")
+end)
+
+case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove button takes it away, on the host, with its card and badge", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	local b = openQueue(w)
+	local target, branch, ref = "/wt/plotroom-o_r-pr-1", "plotroom/o/r/pr-1", "refs/plotroom-pr/o/r/pr-1"
+	local function ask()
+		request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+		w.flush()
+	end
+	ask()
+	eq(confirmOf(b), nil, "nothing is asked yet")
+	pressCard(b, "remove")
+	local box = confirmOf(b)
+	yes(box ~= nil, "Remove worktree asks")
+	eq(box.p.head, "Remove worktree?", "with its question")
+	eq(box.p.modal, true, "over everything")
+	same(findKey(box, "facts", "kv").p.items, {
+		{ k = "Path", v = { { t = target, s = "code" } } },
+		{ k = "Branch", v = { { t = branch, s = "code" } } },
+	}, "naming the worktree's path and branch")
+	eq(findKey(box, "tab"), nil, "no tab works in it: no warning")
+	eq(b.press("j"), false, "other keys are not taken while it asks")
+	eq(b.press("escape"), true, "Esc keeps it")
+	eq(confirmOf(b), nil, "the question closes")
+	pressCard(b, "remove")
+	eq(b.press("enter"), true, "Enter keeps it too")
+	eq(confirmOf(b), nil, "and closes it")
+	table.insert(w.panes, { pane = 9, cwd = target })
+	pressCard(b, "remove")
+	has(findKey(confirmOf(b), "tab", "text").p.spans[1].t, "A tab works in it", "while a tab works in it, the question warns that it is left in a folder that is gone")
+	b.press("escape")
+	table.remove(w.panes)
+	pressCard(b, "remove")
+	local keep: any = findKey(confirmOf(b), "keep", "item")
+	b.event({ ev = "action", id = "layer.confirm.buttons.keep", act = keep.p.actions.click })
+	eq(confirmOf(b), nil, "the Keep button keeps it")
+	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed so far")
+	local mark = #s.git.log
+	local told = #w.toasts
+	pressCard(b, "remove")
+	b.typeText("d")
+	eq(confirmOf(b), nil, "d closes the question")
+	eq(w.toasts[told + 1].level, "info", "and starts the removal")
+	has(w.toasts[told + 1].text, "o/r#1", "naming the pull request")
+	request(b, "a2", { op = "worktree", repo = "o/r", number = 1 })
+	eq(answerOf(b, "a2").busy, true, "no request for the worktree is served while it is removed")
+	w.flush()
+	same(logFrom(s.git, mark), {
+		"worktree remove " .. target,
+		"merge-base --is-ancestor " .. branch .. " " .. ref,
+		"branch -D " .. branch,
+		"update-ref -d " .. ref,
+		"worktree list --porcelain -z",
+	}, "the worktree without --force, then -D only after the ancestry check, then the ref, then a read of the checkout")
+	eq(cardOf(b), nil, "its card is gone")
+	eq(badgeOf(b), nil, "and the row's badge")
+	eq(w.toasts[#w.toasts].level, "success", "the removal is reported")
+	eq(w.toasts[#w.toasts].text, "Worktree removed", "")
+	eq(w.toasts[#w.toasts].sub, "Branch plotroom/o/r/pr-1 was deleted too.", "with what became of the branch")
+	eq(#s.git.worktrees, 1, "only the main worktree is left")
+	ask()
+	eq(answerOf(b, "a1").created, true, "asking again makes a new worktree: the old one is really gone")
+	pressCard(b, "remove")
+	local remove: any = findKey(confirmOf(b), "delete", "item")
+	eq(remove.p.label, "Remove", "the question's button says what it does")
+	b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = remove.p.actions.click })
+	w.flush()
+	eq(cardOf(b), nil, "its Remove button removes it as d does")
+	ask()
+	b.typeText("s")
+	b.event({ ev = "action", id = "layer.queue.worktree.actions.remove", act = "remove-worktree" })
+	b.press("escape")
+	eq(confirmOf(b), nil, "with Settings open the queue's buttons do nothing, here as on the action bar")
+end)
+
+case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	eq(badgeOf(b).tone, "success", "a clean worktree starts as a success")
+	s.git.dirty[target] = " M src/a.lua\n"
+	local before = snapshot(s.git)
+	local mark = #s.git.log
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	same(logFrom(s.git, mark), {
+		"worktree remove " .. target,
+		"worktree list --porcelain -z",
+		"config --get-regexp ^branch\\..*\\.remote$",
+	}, "git was asked once, without --force, and only read the checkout afterwards")
+	eq(snapshot(s.git), before, "no worktree, branch or ref changed")
+	yes(cardOf(b) ~= nil, "the card stays")
+	has(cardText(b), "Not removed. It has uncommitted changes; commit, stash or remove it yourself.", "and says why")
+	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "with what git found")
+	eq(cardOf(b).p.tone, "warning", "so it is a warning now")
+	eq(badgeOf(b).tone, "warning", "and so is the row's badge")
+	eq(w.toasts[#w.toasts].level, "error", "the refusal is toasted too")
+	eq(w.toasts[#w.toasts].text, "Worktree not removed", "")
+	eq(w.toasts[#w.toasts].sub, "It has uncommitted changes; commit, stash or remove it yourself.", "with the same reason")
+	s.git.dirty[target] = nil
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	eq(cardOf(b), nil, "once the changes are dealt with, it goes")
+end)
+
+case("host: removing a worktree whose branch holds commits of its own keeps the branch, and says so", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	local b = openQueue(w)
+	local target, branch, ref = "/wt/plotroom-o_r-pr-1", "plotroom/o/r/pr-1", "refs/plotroom-pr/o/r/pr-1"
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	s.git.ahead[branch] = true
+	s.git.unmerged[branch] = true
+	local mark = #s.git.log
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	same(logFrom(s.git, mark), {
+		"worktree remove " .. target,
+		"merge-base --is-ancestor " .. branch .. " " .. ref,
+		"branch -d " .. branch,
+		"worktree list --porcelain -z",
+	}, "-d, never -D, and the ref stays with its branch; then a read of the checkout")
+	eq(cardOf(b), nil, "the worktree is gone, and so is its card")
+	eq(w.toasts[#w.toasts].level, "success", "removing it worked")
+	eq(w.toasts[#w.toasts].sub, "Branch plotroom/o/r/pr-1 was kept. The branch 'plotroom/o/r/pr-1' is not fully merged.", "and the branch that stayed is named")
+	eq(s.git.refs["refs/heads/" .. branch], sha("b"), "it holds its commits")
+end)
+
+case("host: Remove worktree is refused while the worktree is being prepared, at the button and at the question", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	local b = openQueue(w)
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	local told = #w.toasts
+	request(b, "a2", { op = "worktree", repo = "o/r", number = 1 }) -- in flight: its git commands are not answered yet
+	pressCard(b, "remove")
+	eq(confirmOf(b), nil, "no question while it is being prepared")
+	eq(w.toasts[told + 1].text, "Worktree is busy", "the button says why")
+	w.flush()
+	pressCard(b, "remove")
+	yes(confirmOf(b) ~= nil, "idle again, it asks")
+	request(b, "a3", { op = "worktree", repo = "o/r", number = 1 })
+	b.typeText("d")
+	eq(confirmOf(b), nil, "the question closes")
+	eq(w.toasts[#w.toasts].text, "Worktree is busy", "and d is refused the same")
+	w.flush()
+	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
+	yes(cardOf(b) ~= nil, "and the card is still there")
+end)
+
+-- ---- the worktree card, read from git
+-- Nothing about a worktree is remembered between runs: after each refresh, Worktree attempt and removal the block lists
+-- its checkouts' worktrees with git, so a block that never made one shows the ones that exist, and one removed outside
+-- Plotroom goes.
+
+-- Leaves PR `n` of o/r a worktree in the checkout of `hostScene`, as `omp worktree add` does and an earlier session of
+-- Plotroom would have: its folder, its branch (and the ref it was fetched into) at `at` (sha("b") unless given) and the
+-- remote `open` configured for the branch. Its path.
+local function leaveWt(w: World, s: HostScene, n: number, at: string?): string
+	local path, branch = "/wt/plotroom-o_r-pr-" .. n, "plotroom/o/r/pr-" .. n
+	table.insert(s.git.worktrees, { path = path, branch = "refs/heads/" .. branch, head = at or sha("b"), locked = false })
+	s.git.refs["refs/heads/" .. branch] = at or sha("b")
+	s.git.refs["refs/plotroom-pr/o/r/pr-" .. n] = at or sha("b")
+	s.git.config["branch." .. branch .. ".remote"] = "origin"
+	w.fs.dirs[path] = true
+	return path
+end
+
+-- Refreshes `b` as its `r` key does and lets everything that starts finish.
+local function refreshNow(w: World, b: Block)
+	b.typeText("r")
+	w.flush()
+end
+
+case("host: a fresh block shows the card and the row badge of a worktree its checkout already has, read from git with no Worktree press", function(w: World)
+	local s = hostScene(w, 2)
+	local path = leaveWt(w, s, 1)
+	s.gh.items.octocat[1].headSha = sha("b")
+	local b = openQueue(w)
+	yes(badgeOf(b) ~= nil, "the PR's row wears the Worktree badge")
+	eq(badgeOf(b).tone, nil, "with no tone while its changes are unread")
+	eq(badgeOf(b, 2), nil, "the PR with no worktree wears none")
+	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "the card: at the PR's head, its changes unread")
+	eq(cardOf(b).p.tone, nil, "no tone either")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "with the buttons that open a tab in it or remove it")
+	has(cardText(b), "plotroom/o/r/pr-1", "its branch")
+	has(cardText(b), path, "and where it is")
+	eq(countLog(s.git, "worktree list"), 1, "git listed the checkout once")
+	eq(countLog(s.git, "config --get-regexp"), 1, "and read the remotes its branches track once")
+	eq(countLog(s.git, "status"), 0, "no worktree's changes were read yet")
+	eq(countLog(s.git, "worktree add"), 0, "nothing was made")
+	w.advance(300)
+	same(chipsOf(b), { "Up to date", "Clean" }, "the selected PR's changes are read once the cursor has rested on it")
+	eq(badgeOf(b).tone, "success", "and the row follows")
+	eq(cardOf(b).p.tone, "success", "and the card")
+	eq(countLog(s.git, "status"), 1, "by one status")
+	eq(countLog(s.git, "worktree list"), 1, "the checkout was not listed again for it")
+	eq(#w.toasts, 0, "nothing was said")
+end)
+
+case("host: a block opened after another made a worktree shows its card at once, though it made nothing", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	s.gh.items.octocat[1].headSha = sha("b")
+	local first = openQueue(w)
+	request(first, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	eq(answerOf(first, "a1").created, true, "the first block made the worktree")
+	w.advance(300)
+	eq(countLog(s.git, "status"), 1, "the attempt read the worktree's changes: its card does not read them again")
+	first.close()
+	local fresh = openQueue(w, 2)
+	yes(badgeOf(fresh) ~= nil, "a block that never made one wears its row badge")
+	same(chipsOf(fresh), { "Up to date", "Changes unchecked" }, "and shows its card, read from git: at the PR's head, its changes unread")
+	has(cardText(fresh), "/wt/plotroom-o_r-pr-1", "where it is")
+	eq(countLog(s.git, "worktree add"), 1, "the worktree was made once, by the first block")
+	request(fresh, "b1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	eq(answerOf(fresh, "b1").created, false, "and the second block reuses it")
+end)
+
+case("host: a worktree removed outside Plotroom leaves its card and badge at the next refresh, and a scan that fails changes nothing", function(w: World)
+	local s = hostScene(w, 2)
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	local one = leaveWt(w, s, 1)
+	leaveWt(w, s, 2)
+	local b = openQueue(w)
+	yes(badgeOf(b, 1) ~= nil and badgeOf(b, 2) ~= nil, "both rows wear the badge")
+	-- git removes the first behind Plotroom's back
+	table.remove(s.git.worktrees, 2)
+	w.fs.dirs[one] = nil
+	b.render()
+	yes(cardOf(b) ~= nil, "a render asks git nothing: the card stays")
+	local mark = #s.git.log
+	s.git.fail["worktree list"] = { status = 128, stderr = "fatal: unable to read the worktrees\n" }
+	refreshNow(w, b)
+	yes(cardOf(b) ~= nil, "a scan that fails changes nothing")
+	yes(badgeOf(b, 1) ~= nil and badgeOf(b, 2) ~= nil, "not the badges either")
+	eq(#w.toasts, 0, "and says nothing")
+	s.git.fail["worktree list"] = nil
+	refreshNow(w, b)
+	eq(cardOf(b), nil, "the next scan that works finds it gone, and the card goes")
+	eq(badgeOf(b, 1), nil, "and the row's badge")
+	yes(badgeOf(b, 2) ~= nil, "the other worktree stays")
+	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"worktree list --porcelain -z",
+		"config --get-regexp ^branch\\..*\\.remote$",
+	}, "one list per refresh, and the remotes only while a pull request's worktree is there")
+	showPr(b, 2)
+	yes(cardOf(b) ~= nil, "the other PR's card is there")
+	-- git moves it: the card follows
+	s.git.worktrees[2].path = "/moved/plotroom-o_r-pr-2"
+	w.fs.dirs["/moved/plotroom-o_r-pr-2"] = true
+	refreshNow(w, b)
+	has(cardText(b), "/moved/plotroom-o_r-pr-2", "git moves the worktree: the card names where it is now")
+	lacks(cardText(b), "/wt/plotroom-o_r-pr-2", "and no longer where it was")
+end)
+
+case("host: the card says Up to date or Not at PR head by the head the last refresh saw, with the commands to catch up", function(w: World)
+	local s = hostScene(w, 1)
+	local path = leaveWt(w, s, 1)
+	local function head(at: string?)
+		s.gh.items.octocat[1].headSha = at
+	end
+	head(sha("b"))
+	local b = openQueue(w)
+	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "the worktree is at the PR's head")
+	eq(commandsOf(b, "update"), nil, "nothing to catch up on")
+	head(sha("c"))
+	refreshNow(w, b)
+	same(chipsOf(b), { "Not at PR head", "Changes unchecked" }, "the PR moved on: the worktree is behind it")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "a warning")
+	eq(badgeOf(b).tone, "warning", "as is the row's badge")
+	eq(findKey(cardOf(b), "sync", "badge").p.title, "Reused · Different (local bbbbbbb, PR head ccccccc on branch-1; not updated) · Changes unchecked", "the tooltip says how")
+	eq(commandsOf(b, "update"), "git -C " .. path .. " fetch origin refs/pull/1/head\ngit -C " .. path .. " merge --ff-only FETCH_HEAD", "and the commands to catch up name the remote its branch tracks")
+	local ran = #w.calls
+	b.render()
+	eq(#w.calls, ran, "showing them ran nothing")
+	s.git.worktrees[2].head = sha("c") -- the user caught up
+	refreshNow(w, b)
+	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "its head is the PR's again")
+	eq(commandsOf(b, "update"), nil, "and there is nothing to run")
+	eq(badgeOf(b).tone, nil, "the row's badge is calm again")
+	s.git.worktrees[2].head = sha("d") -- a commit of its own
+	refreshNow(w, b)
+	same(chipsOf(b), { "Not at PR head", "Changes unchecked" }, "a worktree on commits of its own is not at the PR's head either")
+	head(nil)
+	refreshNow(w, b)
+	same(chipsOf(b), { "Not at PR head", "Changes unchecked" }, "a refresh that does not say where the PR's head is leaves the last verdict")
+	local fresh = openQueue(w, 2)
+	same(chipsOf(fresh), { "Up to date", "Changes unchecked" }, "and a block that has no verdict yet takes the worktree as current")
+	eq(badgeOf(fresh).title, "Worktree ready · " .. path, "with nothing to say of its head")
+end)
+
+case("host: a worktree's changes are read for the selected item only, once the cursor has rested, and again after each refresh", function(w: World)
+	local s = hostScene(w, 4)
+	leaveWt(w, s, 1)
+	local two = leaveWt(w, s, 2)
+	leaveWt(w, s, 3)
+	s.git.dirty[two] = " M src/a.lua\n"
+	local b = openQueue(w)
+	eq(countLog(s.git, "status"), 0, "no status is read as the list is shown")
+	w.advance(299)
+	eq(countLog(s.git, "status"), 0, "nor before the cursor has rested")
+	w.advance(1)
+	eq(countLog(s.git, "status"), 1, "then the selected PR's worktree is read")
+	same(chipsOf(b), { "Up to date", "Clean" }, "and its card says what git found")
+	eq(badgeOf(b, 1).tone, "success", "its row too")
+	eq(badgeOf(b, 2).tone, nil, "the others are not read: their badges have no tone yet")
+	eq(badgeOf(b, 3).tone, nil, "")
+	showPr(b, 2)
+	w.advance(100)
+	showPr(b, 3)
+	w.advance(100)
+	showPr(b, 4)
+	w.advance(1000)
+	eq(countLog(s.git, "status"), 1, "a cursor that moves on before it has rested reads nothing")
+	showPr(b, 2)
+	w.advance(299)
+	eq(countLog(s.git, "status"), 1, "one that rests...")
+	w.advance(1)
+	eq(countLog(s.git, "status"), 2, "...on a worktree reads it")
+	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "its card shows the changes")
+	eq(badgeOf(b, 2).tone, "warning", "and its row")
+	showPr(b, 4)
+	w.advance(1000)
+	eq(countLog(s.git, "status"), 2, "an item with no worktree has nothing to read")
+	showPr(b, 1)
+	w.advance(1000)
+	showPr(b, 2)
+	w.advance(1000)
+	eq(countLog(s.git, "status"), 2, "and a worktree read since the last refresh is not read again")
+	s.git.dirty[two] = nil
+	local mark = #s.git.log
+	refreshNow(w, b)
+	eq(countLog(s.git, "worktree list", mark), 1, "a refresh lists the checkout once...")
+	eq(countLog(s.git, "status", mark), 0, "...and reads no status by itself")
+	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "the card keeps what it knew")
+	w.advance(300)
+	eq(countLog(s.git, "status", mark), 1, "it reads the selected worktree again once the cursor rests")
+	same(chipsOf(b), { "Up to date", "Clean" }, "and shows what changed")
+	eq(badgeOf(b, 2).tone, "success", "in its row too")
+	eq(countLog(s.git, "config --get-regexp", mark), 1, "reading the remotes once more, not once per worktree")
+end)
+
+case("host: a scan that began before a worktree attempt or a removal ended cannot undo it", function(w: World)
+	local s = hostScene(w, 2)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", state = "open" }
+	leaveWt(w, s, 2)
+	local b = openQueue(w)
+	eq(cardOf(b), nil, "the selected PR has no worktree")
+	-- The next listing git gives is `porcelain(s.git)` as it stands now, and comes `ms` late.
+	local function slowly(ms: number)
+		s.git.fail["worktree list"] = { stdout = porcelain(s.git), delay = ms }
+	end
+	-- A refresh starts a scan; its answer was read before the worktree existed and comes late.
+	slowly(5000)
+	refreshNow(w, b)
+	s.git.fail["worktree list"] = nil
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	eq(answerOf(b, "a1").created, true, "the worktree is made while the scan is out")
+	yes(cardOf(b) ~= nil, "and its card shown")
+	slowly(1000) -- the listing made again once the late answer is dropped is slow as well
+	w.advance(5000)
+	yes(cardOf(b) ~= nil, "the late answer does not list the worktree, and does not take its card away")
+	w.advance(1000)
+	yes(cardOf(b) ~= nil and badgeOf(b, 1) ~= nil and badgeOf(b, 2) ~= nil, "the listing made again confirms it")
+	eq(countLog(s.git, "worktree list"), 4, "the first scan, the refresh's, the attempt's own and the one made again")
+	-- The same for a removal: a scan that listed the worktree before it went cannot bring it back.
+	slowly(5000)
+	refreshNow(w, b)
+	s.git.fail["worktree list"] = nil
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	eq(cardOf(b), nil, "the worktree is removed")
+	slowly(1000)
+	w.advance(5000)
+	eq(cardOf(b), nil, "the late answer still lists it, and cannot bring its card back")
+	eq(badgeOf(b, 1), nil, "nor its badge")
+	w.advance(1000)
+	eq(cardOf(b), nil, "the listing made again agrees")
+	yes(badgeOf(b, 2) ~= nil, "the other worktree stays")
+end)
+
+case("host: every worktree git lists keeps its card, however many there are; only remembered attempts git has not confirmed are capped", function(w: World)
+	local s = hostScene(w, 50)
+	for n = 1, 25 do
+		leaveWt(w, s, n)
+	end
+	local b = openQueue(w)
+	for n = 1, 25 do
+		yes(badgeOf(b, n) ~= nil, "PR " .. n .. " wears its badge: there are more worktrees than the cap")
+	end
+	-- 22 attempts that fail, none of those PRs being known to GitHub: two more than the cap
+	for n = 26, 47 do
+		request(b, "f" .. n, { op = "worktree", repo = "o/r", number = n })
+		w.flush()
+	end
+	for n = 1, 25 do
+		yes(badgeOf(b, n) ~= nil, "PR " .. n .. " still wears it")
+	end
+	showPr(b, 26)
+	eq(cardOf(b), nil, "the oldest failed attempt was forgotten")
+	showPr(b, 27)
+	eq(cardOf(b), nil, "and the next")
+	showPr(b, 28)
+	eq(cardOf(b).p.tone, "error", "the rest are kept")
+	showPr(b, 47)
+	eq(cardOf(b).p.tone, "error", "the newest too")
+	showPr(b, 25)
+	yes(cardOf(b) ~= nil, "and a worktree git lists keeps its card")
+end)
+
+case("host: each saved checkout of the listed repositories is listed once per refresh, however many rows there are, and one with no checkout is left alone", function(w: World)
+	local s = hostScene(w, 0)
+	local other = newGit(w, "/work/y")
+	other.remotes.origin = { "https://github.com/x/y.git" }
+	w.kv.put("checkouts", { ["o/r"] = "/work/r", ["x/y"] = "/work/y", ["z/w"] = "" })
+	local items: { { [string]: any } } = {}
+	for i = 1, 6 do
+		table.insert(items, searchItem(i, if i <= 2 then "o/r" elseif i <= 4 then "x/y" else "z/w", EPOCH - i * 60))
+	end
+	s.gh.items.octocat = items
+	leaveWt(w, s, 1)
+	table.insert(other.worktrees, { path = "/wt/plotroom-x_y-pr-3", branch = "refs/heads/plotroom/x/y/pr-3", head = sha("b"), locked = false })
+	other.config["branch.plotroom/x/y/pr-3.remote"] = "origin"
+	w.fs.dirs["/wt/plotroom-x_y-pr-3"] = true
+	local b = openQueue(w)
+	yes(badgeOf(b, 1) ~= nil and badgeOf(b, 3) ~= nil, "the worktrees of both repositories show")
+	yes(badgeOf(b, 2) == nil and badgeOf(b, 4) == nil and badgeOf(b, 5) == nil and badgeOf(b, 6) == nil, "and no other row wears a badge")
+	eq(countLog(s.git, "worktree list"), 1, "o/r's checkout was listed once")
+	eq(countLog(other, "worktree list"), 1, "x/y's once")
+	refreshNow(w, b)
+	eq(countLog(s.git, "worktree list"), 2, "each again at the next refresh, and not once more for the six rows")
+	eq(countLog(other, "worktree list"), 2, "")
+	eq(countLog(s.git, "config --get-regexp"), 2, "with one read of the remotes each")
+	eq(countLog(other, "config --get-regexp"), 2, "")
+end)
+
+case("host: a checkout the window gives after the list is shown is read at once: the worktrees it holds show with no refresh", function(w: World)
+	local s = hostScene(w, 2)
+	leaveWt(w, s, 1)
+	local b = w.open(1, { "/nowhere" }) -- a launch folder that is gone maps no checkout
+	w.flush()
+	eq(#listed(b), 2, "the list is shown")
+	eq(cardOf(b), nil, "with no checkout there is no worktree to show")
+	eq(countLog(s.git, "worktree list"), 0, "and none was looked for")
+	request(b, "c1", { op = "checkout", repo = "o/r", path = "/work/r" })
+	w.flush()
+	eq(answerOf(b, "c1").ok, true, "the window gives the checkout")
+	yes(cardOf(b) ~= nil, "its worktree shows")
+	eq(countLog(s.git, "worktree list"), 1, "after one listing")
+end)
+
+case("host: a checkout typed in Settings is read once git confirms it: the worktrees it holds show with no refresh", function(w: World)
+	local s = hostScene(w, 2)
+	leaveWt(w, s, 1)
+	local b = w.open(1, { "/nowhere" })
+	w.flush()
+	eq(cardOf(b), nil, "with no checkout there is no worktree to show")
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	goToSettings(b, "repos")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	b.typeText("/work/r")
+	b.press("enter")
+	w.flush()
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the checkout is saved once git confirms it")
+	yes(cardOf(b) ~= nil, "and its worktree shows")
+	eq(countLog(s.git, "worktree list"), 1, "after one listing")
 end)
 
 case("host: a malformed request from a window gets no answer and starts nothing", function(w: World)
@@ -6962,8 +8156,7 @@ end)
 
 windowCase("window: an agent run notes its worktree on the block as the Worktree key does, and the card replaces the failure before it", function(w: World)
 	local s, b = agentScene(w)
-	w.window.typed = "go"
-	answering(w, "Type a prompt…", "Allow")
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
 	w.fs.denyMkdir["/wt"] = "permission denied"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -6985,7 +8178,7 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	lacks(cardText(b), "permission denied", "the failure is gone")
 	has(cardText(b), s.target, "and the card shows where the worktree is")
 	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
-	eq(commandsOf(b, "cleanup"), "git -C /work/r worktree remove /wt/plotroom-o_r-pr-5\ngit -C /work/r branch -d plotroom/o/r/pr-5\ngit -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5", "the cleanup commands are the real ones, for the user to run")
+	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "plotroom/o/r/pr-5", "and the worktree's branch")
 	s.gh.meta["o/r#5"].sha = sha("c")
 	s.git.served["refs/pull/5/head"] = sha("c")
 	w.click(prLink("agent", "o/r", 5))
@@ -7198,6 +8391,25 @@ case("host: the issues block lists issues under its own seeded filters", functio
 	has(b.title(), "Created by me", "the title follows")
 end)
 
+case("host: the issues block and the pull request block share one set of keys, and the issues block's Keys page refuses a pull request prompt's shortcut", function(w: World)
+	local s = issueHost(w)
+	s.gh.items.octocat = manyItems("o/r", 3)
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ promptOf("p1", "Review", "Review {url}", "m") }) })
+	local issues = openIssues(w, 1)
+	local prs = openQueue(w, 2)
+	goToSettings(issues, "keys", true)
+	eq(bindKey(issues, "agent", "m"), "Already the shortcut of the pull request prompt “Review”.", "a pull request prompt's key is refused in the issues block too")
+	issues.press("escape")
+	eq(bindKey(issues, "worktree", "W"), nil, "a free key is accepted")
+	issues.press("escape")
+	eq(issues.press("w", nil, "w"), false, "the issues block's old key is left to the pane")
+	eq(issues.press("w", "s", "W"), true, "the new one works")
+	eq(w.opened[#w.opened], issueLink("worktree", "o/r", "12"), "on the selected issue")
+	eq(prs.press("w", nil, "w"), false, "the pull request block follows")
+	eq(prs.press("w", "s", "W"), true, "with the same key")
+	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "on its selected pull request")
+end)
+
 case("host: an issue row names its number, repository, author and age, wears its labels, shows no assignee, and says why a closed issue closed", function(w: World)
 	local s = issueHost(w)
 	s.gh.issueItems.octocat = {
@@ -7407,7 +8619,7 @@ case("host: a prompt set to the main checkout answers with the checkout and spaw
 	eq(cardOf(b), nil, "or in the preview")
 end)
 
-case("host: an issue request makes its worktree once, notes it on the block with the commands that remove it, and refuses a repeat while it runs", function(w: World)
+case("host: an issue request makes its worktree once, notes it on the block, and refuses a repeat while it runs", function(w: World)
 	local s = issueHost(w)
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	local b = openIssues(w)
@@ -7433,7 +8645,9 @@ case("host: an issue request makes its worktree once, notes it on the block with
 	eq(badgeOf(b).tone, "success", "a current, clean worktree is a success")
 	eq(cardOf(b).p.tone, "success", "and a card in the preview")
 	has(cardText(b), target, "that says where it is")
-	eq(commandsOf(b, "cleanup"), "git -C /work/r worktree remove " .. target .. "\ngit -C /work/r branch -d 12-fix-login", "the cleanup commands, one per line")
+	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "12-fix-login", "the card shows its branch")
+	same(chipsOf(b), { "Clean" }, "and one badge: an issue has no pull request head to be at")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "with the buttons to open its tab or remove it")
 	eq(commandsOf(b, "update"), nil, "and none to update it: the issue has no head to follow")
 	request(b, "a3", { op = "issue", repo = "o/r", ref = "12", worktree = true })
 	w.flush()
@@ -7459,6 +8673,42 @@ case("host: an issue request makes its worktree once, notes it on the block with
 	for _, never in { "worktree remove", "branch", "update-ref", "merge", "config" } do
 		eq(countLog(s.git, never), 0, "git " .. never .. " was never run")
 	end
+end)
+
+case("host: an issue's worktree is removed with its branch only when git agrees, and a branch git keeps is named", function(w: World)
+	local s = issueHost(w)
+	local b = openIssues(w)
+	local target = "/wt/plotroom-o_r-issue-12"
+	local function ask()
+		request(b, "a1", { op = "issue", repo = "o/r", ref = "12", worktree = true })
+		w.flush()
+	end
+	ask()
+	s.git.unmerged["12-fix-login"] = true
+	local mark = #s.git.log
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	same(logFrom(s.git, mark), { "worktree remove " .. target, "branch -d 12-fix-login", "worktree list --porcelain -z" }, "-d only: no ancestry check, no -D, no ref; then a read of the checkout")
+	eq(cardOf(b), nil, "the card goes")
+	eq(badgeOf(b), nil, "and the row's badge")
+	eq(w.toasts[#w.toasts].sub, "Branch 12-fix-login was kept. The branch '12-fix-login' is not fully merged.", "the branch git kept is named")
+	eq(s.git.refs["refs/heads/12-fix-login"], sha("b"), "with its commits")
+	s.git.unmerged["12-fix-login"] = nil
+	ask()
+	eq(answerOf(b, "a1").created, true, "a new worktree attaches the branch that stayed")
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	eq(w.toasts[#w.toasts].sub, "Branch 12-fix-login was deleted too.", "merged now, it goes with the next removal")
+	eq(s.git.refs["refs/heads/12-fix-login"], nil, "and is gone")
+	ask()
+	s.git.dirty[target] = " M src/a.lua\n"
+	pressCard(b, "remove")
+	b.typeText("d")
+	w.flush()
+	has(cardText(b), "Not removed. It has uncommitted changes; commit, stash or remove it yourself.", "changes git refuses to lose keep the card, with the reason")
+	same(chipsOf(b), { "Uncommitted changes" }, "and the badge learns of them")
 end)
 
 case("host: an issue request is dropped unless it is well formed and meant for an issues block", function(w: World)
@@ -7636,7 +8886,7 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 			end
 		end
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pwhere:p1", "pdelete:p1", "pclose:p1" }, "Runs in follows the shortcut")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pwhere:p1", "pdelete:p1", "pclose:p1" }, "Runs in follows the model")
 	local where = rowIn(b, "pwhere:p1")
 	eq(where.label, "Runs in", "label")
 	eq(where.hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.", "hint")
@@ -8320,22 +9570,22 @@ case("host: removing a repository drops it from jira-repos, branch-formats and s
 	eq(rowIn(b, "checkout:x/y"), nil, "its section is gone from the page")
 end)
 
-case("host: an issues block's Settings pages cycle with Tab: views, prompts, repositories, Jira, connection", function(w: World)
+case("host: an issues block's Settings pages cycle with Tab: views, prompts, keys, repositories, Jira, connection", function(w: World)
 	issueHost(w)
 	newAcli(w)
 	local b = openIssues(w)
 	goToSettings(b, "views", true)
 	local walked: { string } = { prefsOf(b).page }
-	for _ = 1, 5 do
+	for _ = 1, 6 do
 		b.press("tab")
 		table.insert(walked, prefsOf(b).page)
 	end
-	same(walked, { "views", "prompts", "repos", "jira", "connection", "views" }, "Tab walks every page and around again")
+	same(walked, { "views", "prompts", "keys", "repos", "jira", "connection", "views" }, "Tab walks every page and around again")
 	local ids: { string } = {}
 	for _, p in prefsOf(b).pages do
 		table.insert(ids, p.id)
 	end
-	same(ids, { "views", "prompts", "repos", "jira", "connection" }, "an issues block offers the Jira page; the PR queue has none")
+	same(ids, { "views", "prompts", "keys", "repos", "jira", "connection" }, "an issues block offers the Jira page; the PR queue has none")
 	local pr = w.open(2, { "/work/r" })
 	w.flush()
 	goToSettings(pr, "views")
@@ -8343,7 +9593,7 @@ case("host: an issues block's Settings pages cycle with Tab: views, prompts, rep
 	for _, p in prefsOf(pr).pages do
 		table.insert(prIds, p.id)
 	end
-	same(prIds, { "views", "prompts", "repos", "connection" }, "the PR queue's pages")
+	same(prIds, { "views", "prompts", "keys", "repos", "connection" }, "the PR queue's pages")
 end)
 
 case("host: a Jira issue request makes its worktree in the project's mapped GitHub repository", function(w: World)
@@ -8409,6 +9659,48 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	eq(answerOf(b, "g3"), nil, "and a reference that cannot name a directory")
 	eq(#w.calls, ran, "nothing ran")
 	eq(#w.opened, told + 1, "and the window was told of that refusal only")
+end)
+
+case("host: the issues block shows the card of an issue's worktree that git lists, with no pull request head to be at", function(w: World)
+	local s = issueHost(w)
+	local path = "/wt/plotroom-o_r-issue-12"
+	table.insert(s.git.worktrees, { path = path, branch = "refs/heads/12-fix-login", head = sha("b"), locked = false })
+	table.insert(s.git.worktrees, { path = "/wt/plotroom-o_r-pr-13", branch = "refs/heads/plotroom/o/r/pr-13", head = sha("b"), locked = false })
+	w.fs.dirs[path] = true
+	w.fs.dirs["/wt/plotroom-o_r-pr-13"] = true
+	s.git.dirty[path] = " M src/a.lua\n"
+	local b = openIssues(w)
+	yes(badgeOf(b, 1) ~= nil, "the issue's row wears the badge")
+	eq(badgeOf(b, 2), nil, "an issue with no worktree wears none, though a pull request of that number has one")
+	same(chipsOf(b), { "Changes unchecked" }, "its card: only its changes, an issue has no head to be at")
+	has(cardText(b), "12-fix-login", "its branch")
+	has(cardText(b), path, "and where it is")
+	eq(countLog(s.git, "config"), 0, "no remote is read: only a pull request's branch needs one")
+	w.advance(300)
+	same(chipsOf(b), { "Uncommitted changes" }, "its changes are read once the cursor has rested")
+	eq(badgeOf(b).tone, "warning", "and the row follows")
+	table.remove(s.git.worktrees, 2)
+	w.fs.dirs[path] = nil
+	table.remove(s.git.worktrees, 2)
+	refreshNow(w, b)
+	eq(cardOf(b), nil, "removed outside Plotroom, it leaves the next refresh")
+end)
+
+case("host: a Jira issue's worktree in a repository mapped to its project shows on its card, and a project with none mapped reads nothing", function(w: World)
+	local s = jiraHost(w)
+	local path = "/wt/plotroom-o_r-issue-ABC-12"
+	table.insert(s.git.worktrees, { path = path, branch = "refs/heads/ABC-12-fix-login", head = sha("b"), locked = false })
+	w.fs.dirs[path] = true
+	local b = openJira(w)
+	yes(badgeOf(b, 1) ~= nil, "ABC-12's row wears the badge")
+	eq(badgeOf(b, 2), nil, "ABC-13's does not")
+	same(chipsOf(b), { "Changes unchecked" }, "its card")
+	has(cardText(b), "ABC-12-fix-login", "names the branch")
+	eq(countLog(s.git, "worktree list"), 1, "from one list of the repository the project is mapped to")
+	w.kv.put("jira-repos", {})
+	local unmapped = openJira(w, 2)
+	eq(cardOf(unmapped), nil, "a project mapped to no repository shows none")
+	eq(countLog(s.git, "worktree list"), 1, "and looked in none")
 end)
 
 case("host: the Jira preview shows the union rows and Jira's own", function(w: World)
@@ -8684,33 +9976,22 @@ windowCase("window: Go to tab on an issue focuses the pane working in its worktr
 	eq(#w.toasts, 0, "with nothing said")
 end)
 
-windowCase("window: a prompt set to the main checkout starts its agent in a new tab at the checkout after consent, with no worktree made", function(w: World)
+windowCase("window: a prompt set to the main checkout starts its agent in a new tab at the checkout, with no worktree made", function(w: World)
 	local s, b = issueWindow(w)
 	saveIssuePrompts(w, { issuePrompt("p1", "Review", "Review {title} ({url}) in {owner}/{repo}#{number}, branch {branch}", false) })
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	b.render()
 	cardSurface(w, b)
-	w.window.choose = { "Deny" }
-	w.click(issueRunLink("o/r", "12", "p1"))
-	w.flush()
-	eq(#w.window.agents, 0, "Deny starts nothing")
-	eq(w.toasts[#w.toasts].text, "Agent not started for o/r#12", "and says so")
-	has(w.toasts[#w.toasts].sub, "The checkout is at /work/r", "naming the checkout")
-	w.window.choose = { "Allow" }
 	w.click(issueRunLink("o/r", "12", "p1"))
 	w.flush()
 	local ops: { string } = {}
 	for _, q in requestsSent(w) do
 		table.insert(ops, q.op)
 	end
-	same(ops, { "menu", "issue", "menu", "issue" }, "the host is asked what the prompt is, then for the checkout")
-	eq(requestsSent(w)[4].worktree, false, "and the request says no worktree")
-	local asked = picksOf(w, "consent")
-	eq(#asked, 2, "the one question comes once per run")
-	eq(asked[2].placeholder, "Start an agent for o/r#12?", "it names the issue")
-	eq(asked[2].items[1].detail, "Nothing changes; no agent starts", "Deny leaves everything as it is")
-	eq(asked[2].items[2].detail, "Runs omp in /work/r", "and Allow names the checkout")
-	eq(#w.window.agents, 1, "Allow starts the agent")
+	same(ops, { "menu", "issue" }, "the host is asked what the prompt is, then for the checkout")
+	eq(requestsSent(w)[2].worktree, false, "and the request says no worktree")
+	eq(#w.window.picks, 0, "nothing is asked")
+	eq(#w.window.agents, 1, "the agent starts")
 	eq(w.window.agents[1].cwd, "/work/r", "in the main checkout")
 	eq(w.window.agents[1].how, "tab", "in a new tab")
 	eq(w.window.agents[1].prompt, "Review Fix login (https://github.com/o/r/issues/12) in o/r#12, branch {branch}", "with the issue's variables filled in; {branch} stays as written: there is no worktree")
@@ -8734,25 +10015,24 @@ windowCase("window: the Agent picker on an issue runs typed text in its worktree
 	})
 	b.render()
 	cardSurface(w, b)
-	w.window.choose, w.window.typed = { "Allow", "Type a prompt…" }, "Fix {title} ({key}) on {branch}; {nope}"
+	w.window.choose, w.window.typed = "Type a prompt…", "Fix {title} ({key}) on {branch}; {nope}"
 	w.click(issueLink("agent", "o/r", "12"))
 	w.flush()
-	local rows = picksOf(w, "prompts")[1].items
+	local rows = promptPicks(w)[1].items
 	same({ rows[1].label, rows[2].label, rows[3].label }, { "Type a prompt…", "Here", "There" }, "typing, then the saved prompts")
 	eq(rows[2].worktree, true, "a prompt that runs in a worktree says so")
 	eq(rows[3].worktree, false, "and one that runs in the checkout")
 	eq(#w.window.agents, 1, "the typed prompt started an agent")
 	eq(w.window.agents[1].cwd, "/wt/plotroom-o_r-issue-12", "in the issue's worktree")
 	eq(w.window.agents[1].prompt, "Fix Fix login (12) on 12-fix-login; {nope}", "with the issue's variables and the worktree's branch filled in; an unknown one stays")
-	eq(picksOf(w, "consent")[1].items[1].detail, "The worktree stays; no agent starts", "its Deny leaves the worktree")
 	eq(countLog(s.git, "worktree add -b 12-fix-login /wt/plotroom-o_r-issue-12 " .. sha("b")), 1, "the worktree was made for it")
-	w.window.choose = { "Allow", "There" }
+	w.window.choose = "There"
 	w.click(issueLink("agent", "o/r", "12"))
 	w.flush()
 	eq(#w.window.agents, 2, "a saved prompt starts one too")
 	eq(w.window.agents[2].cwd, "/work/r", "in the main checkout, as the prompt says")
 	eq(w.window.agents[2].prompt, "In the checkout, branch {branch}, labels bug, ui", "with no branch to fill in")
-	w.window.choose = { "Allow", "Here" }
+	w.window.choose = "Here"
 	w.click(issueLink("agent", "o/r", "12"))
 	w.flush()
 	eq(#w.window.agents, 3, "and another")

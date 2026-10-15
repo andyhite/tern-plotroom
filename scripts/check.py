@@ -19,8 +19,9 @@ types   luau-lsp analyze --platform standard against scripts/tern-0.8.3.d.luau (
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
 smoke   `tern serve` headless on temporary directories only (never the live daemon or plugin registry):
         the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
-        through plugin.plotroom.smoke (plugin/tests/runtime.luau) with a fake gh on PATH, and a
-        Plotroom block on an attached loopback host making its worktree through the real link flow.
+        through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, scan) with a
+        fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
+        before it (read from git), then makes its worktree through the real link flow.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
@@ -698,6 +699,16 @@ class Smoke:
         request = {"op": "issue", "repo": repo, "key": key, "branch": branch, "checkout": str(checkout)}
         return self.run_request(request, "open issue %s#%s" % (repo, key))
 
+    def scan(self, checkout: Path, kind: str) -> Dict[str, Dict[str, object]]:
+        """What worktree.scan reads of the checkout (its main worktree is the checkout): the worktrees of `kind` ("pr" or "issue") by item key."""
+        data = self.run_request({"op": "scan", "kind": kind, "checkout": str(checkout)}, "scan %s worktrees of %s" % (kind, checkout))
+        self.eq("ok (problem: %r)" % data.get("problem"), True, data.get("ok"))
+        scan = data.get("scan")
+        if not isinstance(scan, dict) or not isinstance(scan.get("found"), dict):
+            self.fail("scan", "an object with root and found", repr(scan))
+        self.same_path("root", checkout, scan.get("root"))
+        return scan["found"]
+
     def run_request(self, request: Dict[str, object], what: str) -> Dict[str, object]:
         result, dup = self.smoke / "result.json", self.smoke / "duplicate.json"
         if result.exists():
@@ -812,8 +823,6 @@ def sc_create(s: Smoke) -> None:
     s.eq("rev-parse plotroom/o/r/pr-1 stderr has no 'ambiguous'", False, "ambiguous" in short.stderr.lower())
     s.eq("rev-parse plotroom/o/r/pr-1 stdout", sha, short.stdout.strip())
     s.eq("update", [], s.last.get("update"))  # type: ignore[union-attr]
-    cleanup = s.last.get("cleanup")  # type: ignore[union-attr]
-    s.eq("cleanup command count", 3, len(cleanup) if isinstance(cleanup, list) else cleanup)
 
 
 def sc_reuse(s: Smoke) -> None:
@@ -953,8 +962,6 @@ def sc_issue(s: Smoke) -> None:
     s.eq("refs/plotroom-base/o/r", base, s.out(root, "rev-parse", "--verify", "refs/plotroom-base/o/r"))
     s.eq("git config branch.%s.merge exit status (no upstream)" % branch, 1, s.git(root, "config", "branch.%s.merge" % branch).returncode)
     s.contains("describe", branch, s.last.get("describe"))  # type: ignore[union-attr]
-    cleanup = s.last.get("cleanup")  # type: ignore[union-attr]
-    s.eq("cleanup command count", 2, len(cleanup) if isinstance(cleanup, list) else cleanup)
     again = s.opened(s.open_issue("o/r", "7", branch, root))
     s.eq("created (second open)", False, again.get("created"))
     s.eq("head (second open)", base, again.get("head"))
@@ -975,15 +982,51 @@ def sc_jira_issue(s: Smoke) -> None:
     s.eq("created (second open)", False, again.get("created"))
 
 
+def sc_scan(s: Smoke) -> None:
+    """What the worktree card reads from git: the worktrees the scenarios before made, found by item with the branch,
+    head, fetched ref and remote git gives them; a PR's worktree on a branch Plotroom did not name is left out."""
+    root = s.checkout("r")
+    prs = s.scan(root, "pr")
+    s.eq("pull requests found", ["o/r#1", "o/r#2", "o/r#9"], sorted(prs))
+    one = prs["o/r#1"]
+    s.same_path("path", s.wt("o/r", 1), one.get("path"))
+    s.same_path("root", root, one.get("root"))
+    s.eq("branch", "plotroom/o/r/pr-1", one.get("branch"))
+    s.eq("head (the worktree's, not the PR's)", s.out(s.wt("o/r", 1), "rev-parse", "HEAD"), one.get("head"))
+    s.eq("ref", "refs/plotroom-pr/o/r/pr-1", one.get("ref"))
+    s.eq("remote the branch tracks", "origin", one.get("remote"))
+    issues = s.scan(root, "issue")
+    s.eq("issues found", ["abc#ABC-7", "o/r#7"], sorted(issues))
+    seven = issues["o/r#7"]
+    s.same_path("path", s.issue_wt("o/r", "7"), seven.get("path"))
+    s.eq("branch", "7-smoke-issue", seven.get("branch"))
+    s.eq("an issue has no fetched ref", None, seven.get("ref"))
+    s.eq("and no remote read", None, seven.get("remote"))
+    s.same_path("a Jira issue's path", s.tmp / "omp-wt" / "plotroom-o_r-issue-ABC-7", issues["abc#ABC-7"].get("path"))
+    dot = s.scan(s.checkout("dotgithub"), "pr")
+    s.eq(".github found", ["github/.github#1"], sorted(dot))
+    s.eq(".github branch", "plotroom/github/%2Egithub/pr-1", dot["github/.github#1"].get("branch"))
+    s.eq(".github ref", "refs/plotroom-pr/github/%2Egithub/pr-1", dot["github/.github#1"].get("ref"))
+    stray = s.tmp / "omp-wt" / "plotroom-o_r-pr-5"
+    s.out(root, "worktree", "add", "-q", "-b", "my-own-work", str(stray))
+    s.eq("a worktree of PR 5 on the user's own branch is left out", ["o/r#1", "o/r#2", "o/r#9"], sorted(s.scan(root, "pr")))
+
+
 def sc_remote_host(s: Smoke) -> None:
-    """A Plotroom block on another host (an attached loopback daemon) gets its worktree from its own host half, run
-    where the block runs: the window half only asks, then opens the PR's tab on that host."""
+    """A Plotroom block on another host (an attached loopback daemon) shows a worktree that was made before it existed
+    on its card from git alone, then gets its worktree from its own host half, run where the block runs: the window half
+    only asks, then opens the PR's tab on that host."""
     root, wt, sha = s.checkout("remote"), s.wt("o/remote", 1), s.shas[("o/remote", 1)]
     stamp = "2026-01-01T00:00:00Z"
     pr = {"number": 1, "title": "Remote PR 1", "url": "https://github.com/o/remote/pull/1", "author": "octo", "state": "OPEN",
           "isDraft": False, "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1,
           "deletions": 0, "changedFiles": 1, "comments": 0, "labels": [], "runs": [], "runTotal": 0}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    # What an earlier session (or omp itself) left: the host half lists the checkout from its own view, so the card needs no press.
+    branch, ref = "plotroom/o/remote/pr-1", "refs/plotroom-pr/o/remote/pr-1"
+    s.out(root, "fetch", "-q", "origin", "+refs/pull/1/head:" + ref)
+    s.out(root, "worktree", "add", "-q", "-b", branch, str(wt), ref)
+    s.out(root, "config", "branch.%s.remote" % branch, "origin")
     s.ctl_ok("remote", "loopback", "u@devbox")
     # The shell reports its directory (OSC 7), so Plotroom opens in the checkout.
     s.ctl_ok("run", json.dumps("cd %s && printf '\\033]7;file://localhost%%s\\033\\\\' \"$PWD\"" % root))
@@ -994,6 +1037,10 @@ def sc_remote_host(s: Smoke) -> None:
         time.sleep(0.2)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
     s.wait_text("the remote block lists the PR", "Remote PR 1")
+    s.wait_text("the row of the worktree made before the block, with its place read from git", str(wt))
+    s.out(root, "worktree", "remove", str(wt))
+    s.out(root, "branch", "-D", branch)
+    s.out(root, "update-ref", "-d", ref)
     s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
     s.wait_text("the worktree toast", "Worktree ready for o/remote#1")
     st = s.state()
@@ -1014,6 +1061,7 @@ SCENARIOS = [
     ("recovery", sc_recovery),
     ("issue worktree", sc_issue),
     ("jira issue worktree", sc_jira_issue),
+    ("scan", sc_scan),
     ("remote host", sc_remote_host),
 ]
 
