@@ -25,7 +25,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "10" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "11" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -34,8 +34,9 @@ local RECENT_CAP = 5
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
--- A prompt to run: its text, and the model omp runs it with (`omp --model`; nil: the agent command's default).
-type Job = { text: string, model: string? }
+-- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
+-- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own.
+type Job = { text: string, model: string?, split: boolean? }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -339,18 +340,19 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 	cx:toast(level, "Worktree ready for " .. t.label, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
--- Starts an agent at `r.path` with `prompt`, as `omp --model <model>` when the prompt names one. `join` (a worktree):
--- in the target's open tab when there is one, else in a new tab, a new worktree's setup commands running first in a
--- shell tab the agent joins. Not `join` (the main checkout): always a new tab, no setup. ponytail: the agent starts
--- without waiting for the setup commands; poll the shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, model: string?, join: boolean)
+-- Starts an agent at `r.path` with `prompt`, as `omp --model <model>` when the prompt names one. `split`: as a block
+-- beside the queue (pane `pane`), in its tab. Else `join` (a worktree): in the target's open tab when there is one,
+-- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
+-- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
+-- shell's `last` status if agents trip over a half-done setup.
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, model: string?, join: boolean, split: boolean)
 	if model and not worktree.validModel(model) then
 		return cx:toast("error", "Agent not started for " .. t.label, "The prompt's model is not one omp takes: " .. model)
 	end
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
-	if join then
+	if join and not split then
 		local _pane
 		_pane, tab, found = targetPane(cx, path)
 	end
@@ -365,7 +367,9 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		if shell then
 			cx:run(shell, setup .. "\r")
 			nameTab(cx, shell, t)
-			tab = cx.session:tab_of(shell)
+			if not split then
+				tab = cx.session:tab_of(shell)
+			end
 		else
 			cx:toast("error", "Setup did not run for " .. t.label, "Its tab did not open.")
 		end
@@ -376,6 +380,13 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end)
 	if not ok or type(agent) ~= "number" then
 		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
+	end
+	if split then
+		if cx.layout:move(agent, pane, "right") then
+			return cx:toast("success", "Agent started beside the queue for " .. t.label, prompt)
+		end
+		nameTab(cx, agent, t)
+		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not open beside the queue.")
 	end
 	if tab then
 		local moved, why = cx.layout:move_to_tab(agent, tab)
@@ -458,7 +469,7 @@ local function settle(more: Settled?, add: Settled): Settled
 end
 
 -- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
--- worktree (noted on the block) and open its tab. `wt` false (issues only): the repository's main checkout, no worktree.
+-- worktree (noted on the block) and open its tab. `wt` false: the repository's main checkout, no worktree.
 -- What the host still needs is asked in the palette, then this runs again with `more`: a checkout folder of the
 -- repository (`needCheckout`), the repository a Jira project's issue is worked in (`needRepo`, or `chooseRepo` among
 -- several), which of an issue's linked pull requests to check out or a new branch (`choosePr`), and the base branch a
@@ -568,9 +579,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
 				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt.model, wt)
+				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt.model, wt, prompt.split == true)
 			else
-				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt.model, wt)
+				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt.model, wt, prompt.split == true)
 			end
 		end)
 	end
@@ -578,7 +589,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	local users = prompt ~= nil and (string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
-		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), users = users }, PREPARE_MS, done)
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users }, PREPARE_MS, done)
 		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done)
 	if sent and wt and not more then
 		cx:toast("info", "Preparing worktree for " .. t.label)
@@ -590,7 +601,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil }, it.worktree ~= false)
+				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true }, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -618,6 +629,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 					send = it.send,
 					model = if type(it.model) == "string" then it.model else nil,
 					worktree = it.worktree ~= false,
+					split = it.split == true,
 				})
 			end
 		end
@@ -655,7 +667,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			run(cx3, { text = item.send, model = item.model }, item.worktree ~= false)
+			run(cx3, { text = item.send, model = item.model, split = item.split == true }, item.worktree ~= false)
 		end)
 	end)
 end

@@ -56,6 +56,22 @@
 	margin-left: 0;
 }
 
+/* Tern's side preview is a fixed 340px: too tight for the worktree card and the checks. Keep it at least 460px; under
+   980px Tern moves it below the list (.pv-below-auto), which this leaves alone. */
+[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv,
+[data-surface='plugin.plotroom.issues'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv {
+	min-width: 460px;
+}
+
+/* The worktree card's buttons are items (Tern has no button kind) sized to their label: give them a button's ring. */
+[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'],
+[data-surface='plugin.plotroom.issues'] .sf-item[data-role='plotroom.button'] {
+	border: 1px solid var(--l3);
+	border-radius: var(--r-ctl);
+	padding: 0 8px;
+	gap: 6px;
+}
+
 /* Identifiers (author, branch) are set like Tern's preview kv values, 12px --mono, wherever they show: Branch and Base
    sit outside the kv (for their copy icons) so they miss that rule, and a picker row's detail is --sans. Tern's own
    strip does the same for its code and mono spans (.pk-strip-l). */

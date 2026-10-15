@@ -47,10 +47,11 @@ local TRACKERS: { [string]: TrackerApi } = {
 type View = { id: string, name: string, integration: string, query: string, logins: { string }, group: string, prompts: { string } }
 type Views = { version: number, nextId: number, items: { View } }
 -- An agent prompt from Settings › Prompts; the views list which of them they offer. `key` runs it on the selected
--- item from the queue. `worktree` (issue prompts; nil means true) says where it runs: in the issue's worktree, or in
--- the repository's main checkout. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or
--- a role alias such as @slow.
-type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, model: string? }
+-- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
+-- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
+-- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
+-- alias such as @slow.
+type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string? }
 type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keys; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -508,11 +509,12 @@ local function loadPrompts(kind: Kind): (Prompts?, string?)
 			or type(p.text) ~= "string"
 			or (p.key ~= nil and type(p.key) ~= "string")
 			or (p.worktree ~= nil and type(p.worktree) ~= "boolean")
+			or (p.split ~= nil and type(p.split) ~= "boolean")
 			or (p.model ~= nil and type(p.model) ~= "string")
 		then
 			return nil, PROMPTS_BAD
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, model = p.model })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -529,7 +531,7 @@ local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, model = p.model })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
@@ -1794,7 +1796,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 		local picker = "the agent picker" .. (if agent ~= "" then " (" .. agent .. ")" else "")
 		lead = if issues
 			then "Run a prompt on an issue from the action bar or " .. picker .. ", in its worktree or the repository's main checkout. Variables such as {url} fill in the issue's details. Offer a prompt under particular views from Settings › Views."
-			else "Run a prompt on a pull request in its worktree from the queue's action bar or " .. picker .. ". Variables such as {url} fill in the pull request's details. Offer a prompt under particular views from Settings › Views."
+			else "Run a prompt on a pull request from the queue's action bar or " .. picker .. ", in its worktree or the repository's main checkout. Variables such as {url} fill in the pull request's details. Offer a prompt under particular views from Settings › Views."
 		local prompts, unreadable = loadPrompts(state.kind)
 		local list: { Prompt } = if prompts then prompts.items else {}
 		for _, p in list do
@@ -1841,15 +1843,19 @@ local function pageContent(state: State): ({ any }, string, { Node })
 					defaultLabel = "omp's default",
 				},
 			}
-			if issues then
-				local runs: { string } = if p.worktree ~= false then { "worktree" } else {}
-				table.insert(rows, {
-					id = "pwhere:" .. p.id,
-					label = "Runs in",
-					hint = "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.",
-					control = { k = "multi", values = tern.json.array(runs), options = tern.json.array({ { value = "worktree", label = "Worktree" } }) },
-				})
-			end
+			local runs: { string } = if p.worktree ~= false then { "worktree" } else {}
+			table.insert(rows, {
+				id = "pwhere:" .. p.id,
+				label = "Runs in",
+				hint = "On: in the " .. state.kind.one .. "'s worktree (made first if needed). Off: in the repository's main checkout.",
+				control = { k = "multi", values = tern.json.array(runs), options = tern.json.array({ { value = "worktree", label = "Worktree" } }) },
+			})
+			table.insert(rows, {
+				id = "psplit:" .. p.id,
+				label = "Opens in",
+				hint = "On: a block beside the queue, in its tab. Off: a tab of its own (the worktree's open tab, when there is one).",
+				control = { k = "multi", values = tern.json.array(if p.split then { "split" } else {}), options = tern.json.array({ { value = "split", label = "This tab" } }) },
+			})
 			table.insert(rows, { id = "pdelete:" .. p.id, label = "Delete prompt", control = { k = "action", act = "delete", label = "Delete" } })
 			table.insert(rows, { id = "pclose:" .. p.id, label = "Done", control = { k = "action", act = "collapse", label = "Done" } })
 			table.insert(sections, { id = "prompt:" .. p.id, title = p.name, rows = rows })
@@ -1860,7 +1866,7 @@ local function pageContent(state: State): ({ any }, string, { Node })
 				{
 					id = "padd",
 					label = "New prompt",
-					hint = if issues then "Starts empty and runs in a worktree." else "Starts empty.",
+					hint = "Starts empty and runs in a worktree.",
 					disabled = unreadable,
 					control = { k = "action", act = "add-prompt", label = "Add prompt" },
 				},
@@ -2381,31 +2387,30 @@ local function deleteJira(state: State, key: string)
 	end
 end
 
--- Saves where an issue prompt runs: in the issue's worktree (`on`), or in the repository's main checkout.
-local function setWhere(state: State, id: string, on: boolean)
-	local s = state.settings
-	if not s then
-		return
-	end
-	s.errors["pwhere:" .. id] = editPrompts(state.kind, function(store: Prompts): string?
-		local p = promptById(store, id)
-		if not p then
-			return "That prompt was deleted elsewhere."
-		end
-		p.worktree = on
-		return nil
-	end)
-end
-
--- Saves chips row `row` with the options `values` now has on. The single-choice rows (a view's integration and
--- group-by) take the first value that differs from the saved one and ignore a list that has none.
+-- Saves chips row `row` with the options `values` now has on. A prompt's one-chip rows say where it runs
+-- ("pwhere:<id>", chip "worktree") and where its agent opens ("psplit:<id>", chip "split"). The single-choice rows (a
+-- view's integration and group-by) take the first value that differs from the saved one and ignore a list that has
+-- none.
 local function setMulti(state: State, row: string, values: { any })
 	local s = state.settings
 	local kind, id = string.match(row, "^(%a+):(.+)$")
 	if not s or not kind or not id then
 		return
 	end
-	if kind == "vint" or kind == "vgroup" then
+	if kind == "pwhere" or kind == "psplit" then
+		local on = table.find(values, if kind == "pwhere" then "worktree" else "split") ~= nil
+		s.errors[row] = editPrompts(state.kind, function(store: Prompts): string?
+			local p = promptById(store, id)
+			if not p then
+				return "That prompt was deleted elsewhere."
+			elseif kind == "pwhere" then
+				p.worktree = on
+			else
+				p.split = on
+			end
+			return nil
+		end)
+	elseif kind == "vint" or kind == "vgroup" then
 		local view = viewOf(state, id)
 		if not view then
 			return
@@ -2485,14 +2490,12 @@ local function setMulti(state: State, row: string, values: { any })
 	end
 end
 
--- Turns `option` on or off on a multi row `row`: where an issue prompt runs ("pwhere:<id>"), or a chips row of
--- setMulti (a single-choice one switches to `option`).
+-- Turns `option` on or off on chips row `row` of setMulti (a single-choice one switches to `option`).
 local function toggleScope(state: State, row: string, option: string)
 	local def = rowById(state, row)
 	if not def then
 		return
 	end
-	local where = string.match(row, "^pwhere:(.+)$")
 	local values: { any } = {}
 	local on = false
 	for _, v in def.control.values do -- a tern.json.array: table.clone refuses its protected metatable
@@ -2505,11 +2508,7 @@ local function toggleScope(state: State, row: string, option: string)
 	if not on then
 		table.insert(values, option)
 	end
-	if where then
-		setWhere(state, where, table.find(values, "worktree") ~= nil)
-	else
-		setMulti(state, row, values)
-	end
+	setMulti(state, row, values)
 end
 
 -- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>" or
@@ -3224,7 +3223,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "10"
+local RPC_PROTOCOL = "11"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -3443,7 +3442,6 @@ end
 local function menu(state: State, id: string, only: string?)
 	local list, problem = offered(state)
 	local active = activeView(state)
-	local issues = state.kind.id == "issues"
 	local mine: { any } = {}
 	for _, o in list do
 		local p = o.prompt
@@ -3457,7 +3455,8 @@ local function menu(state: State, id: string, only: string?)
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All prompts",
 			send = p.text,
 			model = p.model,
-			worktree = if issues then p.worktree ~= false else nil, -- where it runs; a PR prompt always runs in its worktree
+			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
+			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 		})
 	end
 	local items: { any } = {}
@@ -3473,11 +3472,12 @@ local function menu(state: State, id: string, only: string?)
 end
 
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
--- notes the outcome. Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries
--- `{github.user}` too, for the prompt that runs there.
-local function prepare(state: State, id: string, repo: string, n: number, users: boolean)
+-- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
+-- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
+-- for the prompt that runs there.
+local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean)
 	local key = string.lower(repo) .. "#" .. n
-	if preparing[key] then
+	if wt and preparing[key] then
 		return reply(state, id, { busy = true })
 	end
 	local checkout = checkoutOf(repo)
@@ -3487,7 +3487,29 @@ local function prepare(state: State, id: string, repo: string, n: number, users:
 	local function naming(meta: github.PrMeta): (string?, string?)
 		return formats.prDir(repo, n, meta.title)
 	end
-	preparing[key] = true
+	local function main(found: { [string]: string })
+		github.pr(repo, n, login(state), function(meta, problem)
+			if not alive(state) then
+				return
+			elseif not meta then
+				return reply(state, id, { problem = if problem then problem.message else "Could not read the pull request." })
+			end
+			reply(state, id, {
+				path = checkout,
+				summary = "Main checkout",
+				created = false,
+				current = true,
+				branch = meta.ref,
+				base = meta.baseRef,
+				title = meta.title,
+				author = meta.author,
+				["github.user"] = found["github.user"],
+			})
+		end)
+	end
+	if wt then
+		preparing[key] = true
+	end
 	local function open(found: { [string]: string })
 		local started, err = pcall(function()
 			process.reset()
@@ -3536,13 +3558,14 @@ local function prepare(state: State, id: string, repo: string, n: number, users:
 			reply(state, id, { problem = tostring(err) })
 		end
 	end
+	local go: ({ [string]: string }) -> () = if wt then open else main
 	if not users then
-		return open({})
+		return go({})
 	end
 	me.read(state, false, function(found)
 		if alive(state) then
-			open(found)
-		else
+			go(found)
+		elseif wt then
 			preparing[key] = nil
 		end
 	end)
@@ -3892,7 +3915,10 @@ local function rpc(state: State, raw: any)
 		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
 			return
 		end
-		prepare(state, id, repo, n, q.users == true)
+		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
+			return
+		end
+		prepare(state, id, repo, n, q.worktree ~= false, q.users == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
@@ -4091,10 +4117,20 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	if not note then
 		return {}
 	end
-	local head = spans(ui.span("Worktree", "strong"), ui.span("  checked " .. os.date("%H:%M", note.at), "muted"))
+	-- No card head: Tern indents a headed card's body 36px to line up with a role icon this card has none of. The
+	-- heading is the body's first row instead, so every row starts at the same edge.
+	local checked = ui.node("text", { key = "checked", basis = "content", spans = { ui.span("checked " .. os.date("%H:%M", note.at), "muted") } })
+	local function heading(extra: Node?): Node
+		return ui.node("row", { key = "head", gap = "sm", align = "center" }, {
+			ui.node("text", { key = "title", basis = "content", spans = { ui.span("Worktree", "strong") } }),
+			extra or ui.node("row", { key = "none" }),
+			ui.node("row", { key = "fill", grow = 1 }),
+			checked,
+		})
+	end
 	if not note.ok then
 		local why = ui.node("text", { key = "message", spans = { ui.span(note.message or "The worktree could not be prepared.", "error") } })
-		return { ui.node("card", { key = "worktree", tone = "error", head = head }, { why }) }
+		return { ui.node("card", { key = "worktree", tone = "error" }, { heading(), why }) }
 	end
 	-- The badges are the answer; the attempt's one-line summary is their tooltip.
 	local chips: { Node } = {}
@@ -4112,7 +4148,7 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 		tone = if note.dirty == true then "warning" elseif note.dirty == false then "success" else "muted",
 		title = note.summary,
 	}))
-	local body: { Node } = { ui.node("row", { key = "status", gap = "xs", wrap = true }, chips) }
+	local body: { Node } = { heading(ui.node("row", { key = "status", gap = "xs", wrap = true }, chips)) }
 	if note.refused then
 		table.insert(body, ui.node("text", { key = "refused", spans = { ui.span("Not removed. " .. note.refused, "error") } }))
 	end
@@ -4143,16 +4179,20 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 			fresh = a
 		end
 	end
-	local rows: { Node } = {}
-	if tab then
-		table.insert(rows, ui.node("item", { key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
-	else
-		table.insert(rows, ui.node("item", { key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
+	-- Buttons sized to their label (plotroom.css draws the ring), left to right: the tab, then Remove.
+	local buttons: { Node } = {}
+	local function button(p: { [string]: any })
+		p.role, p.basis = "plotroom.button", "content"
+		table.insert(buttons, ui.node("item", p))
 	end
-	table.insert(rows, ui.node("item", { key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
-	table.insert(body, ui.node("rule", { key = "sep" }))
-	table.insert(body, ui.node("list", { key = "actions" }, rows))
-	return { ui.node("card", { key = "worktree", tone = noteTone(note), head = head }, body) }
+	if tab then
+		button({ key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } })
+	else
+		button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } })
+	end
+	button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } })
+	table.insert(body, ui.node("row", { key = "actions", gap = "sm", wrap = true }, buttons))
+	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
 end
 
 -- The description card of the item with key `key`, with no rule: it reads as part of the head. A folded bare card
@@ -5511,13 +5551,8 @@ local function blockDef(base: Kind): BlockDef<State>
 				elseif ev.ev == "change" and item and (ev.value == nil or ev.value == tern.json.null) then
 					resetRow(state, item)
 				elseif ev.ev == "change" and item and isTable(ev.value) then
-					local where = string.match(item, "^pwhere:(.+)$")
 					s.focus = item
-					if where then
-						setWhere(state, where, table.find(ev.value, "worktree") ~= nil)
-					else
-						setMulti(state, item, ev.value)
-					end
+					setMulti(state, item, ev.value)
 				end
 			elseif ev.id == QUEUE_ID then
 				if ev.ev == "select" or ev.ev == "activate" then

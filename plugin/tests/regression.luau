@@ -653,6 +653,13 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return p ~= nil, nil
 			end,
+			move = function(_self: any, pane: number, target: number, _dir: string): boolean
+				local p, to = win.panes[pane], win.panes[target]
+				if p and to then
+					p.tab = to.tab
+				end
+				return p ~= nil and to ~= nil
+			end,
 		},
 		hosts = {
 			list = function(_self: any): any
@@ -4219,7 +4226,7 @@ end
 -- The worktree card's buttons as "key:label", in order; none for a failed attempt.
 local function buttonsOf(b: Block): { string }
 	local out: { string } = {}
-	local list: any = findKey(cardOf(b), "actions", "list")
+	local list: any = findKey(cardOf(b), "actions", "row")
 	local rows: { any } = if list then list.c else {}
 	for _, row in rows do
 		table.insert(out, row.p.key .. ":" .. row.p.label)
@@ -4527,6 +4534,50 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	w.flush()
 	eq(#w.window.agents, 2, "a model that is no model name starts nothing, as it would go on a command line")
 	eq(w.toasts[#w.toasts].level, "error", "the user is told")
+end)
+
+windowCase("window: a PR prompt set to the main checkout starts its agent in a new tab at the checkout, with the PR's details and no worktree", function(w: World)
+	local s, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}: {title} by {author}, {branch} into {base}")
+	review.worktree = false
+	savePrompts(w, { review })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(requestsSent(w)[2].worktree, false, "the request says no worktree")
+	eq(#w.window.agents, 1, "the agent starts")
+	eq(w.window.agents[1].cwd, s.root, "in the main checkout")
+	has(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5: ", "with the PR's variables filled in")
+	lacks(w.window.agents[1].prompt, "{", "every one of them")
+	eq(#w.window.runs, 0, "no setup commands ran")
+	eq(countLog(s.git, "worktree add"), 0, "no worktree was made")
+	eq(cardOf(b), nil, "nor noted on the block")
+end)
+
+windowCase("window: a prompt set to open in this tab starts its agent beside the queue, a new worktree's setup in a tab of its own", function(w: World)
+	local s, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.split = true
+	savePrompts(w, { review })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	b.render()
+	cardSurface(w, b)
+	local agent: number? = nil
+	local start = w.cx.agents.start
+	w.cx.agents.start = function(self: any, opts: any): number
+		agent = start(self, opts)
+		return agent :: number
+	end
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(w.window.agents[1].cwd, s.target, "the agent runs in the worktree")
+	local queueTab = w.window.panes[1].tab
+	eq(w.window.panes[agent :: number].tab, queueTab, "as a block in the queue's tab")
+	eq(#w.window.runs, 1, "the setup commands ran")
+	yes(w.window.panes[w.window.runs[1].pane].tab ~= queueTab, "in a tab of their own")
+	eq(w.toasts[#w.toasts].text, "Agent started beside the queue for o/r#5", "the toast says where")
 end)
 
 windowCase("window: a card button of a prompt the picker's size budget would cut still runs it, the request naming the prompt", function(w: World)
@@ -4840,7 +4891,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "10", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "11", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -7022,7 +7073,7 @@ case("host: an empty Keys row removes the shortcut: no key does it, ? and the ac
 	eq(row.defaultLabel, "w", "so Reset can bring the key back")
 	b.press("tab", "s")
 	eq(prefsOf(b).page, "prompts", "the Prompts page is before Keys")
-	has(prefsOf(b).lead, "or the agent picker. Variables", "it no longer names the agent key")
+	has(prefsOf(b).lead, "or the agent picker, in its", "it no longer names the agent key")
 	b.press("escape")
 	local opened = #w.opened
 	for _, k in { "w", "a" } do
@@ -7701,15 +7752,15 @@ case("host: view prompts limit the menu", function(w: World)
 	local first = menu()
 	eq(first.problem, nil, "nothing is wrong")
 	same(first.items, {
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "For My PRs", send = "Look at {url}\nTwice" },
+		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "For My PRs", send = "Look at {url}\nTwice", worktree = true },
 	}, "a view that lists a prompt offers only it, in the group For the view")
 	b.press("tab")
 	b.press("down")
 	w.flush()
 	eq(pickerOf(b).scope, "v2", "the second view is active")
 	same(menu().items, {
-		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All prompts", send = "Review {url}" },
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All prompts", send = "Look at {url}\nTwice" },
+		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All prompts", send = "Review {url}", worktree = true },
+		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All prompts", send = "Look at {url}\nTwice", worktree = true },
 	}, "a view that lists none offers every prompt with text, as All prompts")
 end)
 
@@ -7732,7 +7783,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 		request(b, "o" .. asked, { op = "menu", only = id })
 		return answerOf(b, "o" .. asked).items
 	end
-	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}" } }, "just the prompt asked for, in the group it has under the view")
+	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}", worktree = true } }, "just the prompt asked for, in the group it has under the view")
 	eq(#only("p2"), 0, "none that the view does not list")
 	eq(#only("p4"), 0, "none with no text")
 	eq(#only("p9"), 0, "none that is not saved")
@@ -7925,7 +7976,7 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pdelete:p1", "pclose:p1" }, "a prompt has its name, text, shortcut, model, Delete and Done, in that order")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pwhere:p1", "psplit:p1", "pdelete:p1", "pclose:p1" }, "a prompt has its name, text, shortcut, model, where it runs and opens, Delete and Done, in that order")
 	local row = rowIn(b, "pkey:p1")
 	eq(row.label, "Shortcut", "the row is the Shortcut")
 	eq(row.control.value, "", "empty while the prompt has none")
@@ -9578,7 +9629,7 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	request(b, "m1", { op = "menu" })
 	w.flush()
-	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All prompts", send = "Review {url}\nthen report" } }, "a well-formed request is answered with the saved prompts")
+	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All prompts", send = "Review {url}\nthen report", worktree = true } }, "a well-formed request is answered with the saved prompts")
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
@@ -10325,8 +10376,8 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 		{ id = "p3", label = "Old", detail = "Old {url}", group = "All prompts", send = "Old {url}", worktree = true },
 	}, "the issues block offers its own prompts, each saying where it runs; one saved without the field runs in a worktree")
 	same(menu(pr), {
-		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All prompts", send = "Review {url}" },
-	}, "the PR block offers its own, with no such field")
+		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All prompts", send = "Review {url}", worktree = true },
+	}, "the PR block offers its own, saying where each runs too")
 	goToSettings(b, "prompts")
 	expand(b, "popen:p1")
 	local ids: { string } = {}
@@ -10337,10 +10388,10 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 			end
 		end
 	end
-	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pwhere:p1", "pdelete:p1", "pclose:p1" }, "Runs in follows the model")
+	same(ids, { "pname:p1", "ptext:p1", "pkey:p1", "pmodel:p1", "pwhere:p1", "psplit:p1", "pdelete:p1", "pclose:p1" }, "Runs in and Opens in follow the model")
 	local where = rowIn(b, "pwhere:p1")
 	eq(where.label, "Runs in", "label")
-	eq(where.hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.", "hint")
+	eq(where.hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout.", "hint")
 	eq(where.control.k, "multi", "one chip")
 	same(where.control.values, { "worktree" }, "on for a prompt that runs in a worktree")
 	same(where.control.options, { { value = "worktree", label = "Worktree" } }, "the chip")
@@ -10374,7 +10425,13 @@ case("host: issue prompts are separate from PR prompts and carry where they run"
 	end
 	yes(keyed, "a prompt's shortcut is listed for the selected issue")
 	goToSettings(pr, "prompts")
-	eq(rowIn(pr, "pwhere:p1"), nil, "a PR prompt has no Runs in row")
+	expand(pr, "popen:p1")
+	eq(rowIn(pr, "pwhere:p1").hint, "On: in the pull request's worktree (made first if needed). Off: in the repository's main checkout.", "a PR prompt has its Runs in row")
+	same(rowIn(pr, "psplit:p1").control.values, array({}), "and opens in a tab of its own until told otherwise")
+	pr.event({ ev = "change", id = "layer.settings", item = "psplit:p1", value = array({ "split" }) })
+	eq(w.kv.get("prompts-prs").items[1].split, true, "the This tab chip saves split")
+	same(rowIn(pr, "psplit:p1").control.values, { "split" }, "the row shows it")
+	eq(menu(pr)[1].split, true, "and the menu says so")
 end)
 
 case("host: the issue's buttons, keys and links: Worktree, Go to tab and one button per prompt, each opening the link the card keeps unseen", function(w: World)
@@ -10980,7 +11037,7 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	page("prompts")
 	expand(b, "popen:p1")
 	eq(rowIn(b, "pname:p1").control.value, "Triage", "the prompts saved for issues are shared with GitHub's")
-	eq(rowIn(b, "pwhere:p1").hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout, in a new tab.", "where a prompt runs")
+	eq(rowIn(b, "pwhere:p1").hint, "On: in the issue's worktree (made first if needed). Off: in the repository's main checkout.", "where a prompt runs")
 	b.event({ ev = "action", id = "layer.settings", act = "edit-prompt", value = "ptext:p1" })
 	local legend: { string } = {}
 	for _, item in findKey(editorCard(b), "list", "kv").p.items do
@@ -13118,15 +13175,15 @@ windowCase("window: a host announcing another protocol is refused for the new as
 		eq(#w.window.events + #w.window.picks + #w.calls + #w.window.launches, 0, what .. ": nothing was sent, asked, run or opened")
 	end
 	refused("a pull request block with no marker", pull, nil)
-	refused("a pull request block of protocol 9", pull, "9")
+	refused("a pull request block of protocol 10", pull, "10")
 	w.window.panes[1].block = "plugin.plotroom.issues"
 	refused("an issues block with no marker", issue, nil)
-	refused("an issues block of protocol 9", issue, "9")
+	refused("an issues block of protocol 10", issue, "10")
 	-- the same links, with the marker of this protocol, are asked of the host
-	offer(issue, "10")
+	offer(issue, "11")
 	w.click(issue[2])
 	local sent = asks.sent(w)
-	eq(#sent, 1, "a host that announces protocol 10 is asked")
+	eq(#sent, 1, "a host that announces protocol 11 is asked")
 	eq(sent[1].op, "where", "where the issue's worktree is")
 end)
 
