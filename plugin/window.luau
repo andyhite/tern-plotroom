@@ -28,7 +28,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "14" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "15" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5

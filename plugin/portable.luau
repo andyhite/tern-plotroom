@@ -570,7 +570,7 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 				if login == nil then
 					blocked = "no account was chosen for " .. slot .. "."
 					break
-				elseif login ~= "" and not string.match(login, "^[%w%-]+$") then
+				elseif login ~= "" and not string.match(login, "^[%w%-_]+$") then
 					blocked = "the account chosen for " .. slot .. " is not a login."
 					break
 				elseif login ~= "" and not table.find(logins, login) then
