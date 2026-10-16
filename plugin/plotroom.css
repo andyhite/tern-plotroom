@@ -71,13 +71,13 @@
 }
 
 /* The 460px preview leaves the list too little beside the scope rail, so the rail folds into the scope dropdown (the two
-   rules `.narrow` applies) once the block is 127 terminal columns or less: 1016px, measured on the laptop. Tern's own cut
+   rules `.narrow` applies) once the block is 127 terminal columns or less (a 1016px pane; 1000px is a trial value). Tern's own cut
    follows the window, so this follows the picker's own width, which a split pane changes. ponytail: the px is the 127
    column width at that font size; retune it if the font size changes. */
 [data-surface='plugin.plotroom.prs'] .sf-picker {
 	container-type: inline-size;
 }
-@container (max-width: 1016px) {
+@container (max-width: 1000px) {
 	[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopes {
 		display: none;
 	}
