@@ -15,6 +15,41 @@
 	display: none;
 }
 
+/* Keep the status label and actions in one bottom row; the native picker otherwise stacks two bars. */
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-sheet {
+	display: grid;
+	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+	grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-head,
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-body {
+	grid-column: 1 / -1;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip {
+	grid-column: 1;
+	grid-row: 3;
+	min-width: 0;
+}
+
+/* The chips are always empty here; hiding them gives the label their room (it still ellipsizes natively when the pane is tiny). */
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip-chips {
+	display: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip-l {
+	flex: 1;
+	min-width: 0;
+	max-width: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-bar {
+	grid-column: 2;
+	grid-row: 3;
+	min-width: 0;
+}
+
 /* The heading's repository name opens the repository picker; it keeps the title's color, not the link's. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-title .sf-link {
 	color: inherit;

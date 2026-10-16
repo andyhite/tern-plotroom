@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "17" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "18" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -876,13 +876,16 @@ end
 
 local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
 
--- The order the palette's groups come in; a group the host names that is not here follows them.
-local GROUPS = { "Item", "Agents", "Saved actions", "GitHub", "Jira", "CI", "Worktree", "View", "Configuration" }
+-- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
+-- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue); the provider-only headings (GitHub,
+-- Jira) are for what needs no item.
+local GROUPS = { "Saved actions", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Triage", "Filter & Sort", "Views", "Worktree", "GitHub", "Jira", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
--- listed: the host names the queue actions (`queue`, each with its group and key, sent back as its `queue` action) and
--- the flows.COMMANDS ids (`commands`) it will accept. With an item selected, a typed prompt and the saved actions its
--- view offers form their own group (each run through its hidden link, as its key runs it).
+-- listed: the host names the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`
+-- action) and the flows.COMMANDS ids (`commands`, each with the group the host gives it) it will accept. With an item
+-- selected, a typed prompt and the saved actions its view offers form the Saved actions group (each run through its
+-- hidden link, as its key runs it); the agent picker is no row of its own.
 local function palette(cx: WindowCx, pane: number)
 	local hasItem = type(nodeProp(readNode(cx, pane, AGENT_NODE), "href")) == "string"
 	ask(cx, pane, "menu", { palette = true }, MENU_MS, function(a: any, cx2: WindowCx)
@@ -914,18 +917,19 @@ local function palette(cx: WindowCx, pane: number)
 		end
 		for _, q in if type(a.queue) == "table" then a.queue else {} do
 			if type(q) == "table" and type(q.id) == "string" and type(q.label) == "string" then
-				add(if type(q.group) == "string" then q.group else "View", { label = q.label, detail = keyed(q.key), queue = q.id })
+				add(if type(q.group) == "string" then q.group else "Filter & Sort", { label = q.label, detail = keyed(q.key, q.detail), queue = q.id })
 			end
 		end
-		local offered: { [string]: boolean } = {}
-		for _, id in if type(a.commands) == "table" then a.commands else {} do
-			if type(id) == "string" then
-				offered[id] = true
+		local offered: { [string]: string | boolean } = {}
+		for _, c in if type(a.commands) == "table" then a.commands else {} do
+			if type(c) == "table" and type(c.id) == "string" then
+				offered[c.id] = if type(c.group) == "string" then c.group else true
 			end
 		end
 		for i, c in flows.COMMANDS do
-			if not c.keyed and offered[c.id] then
-				add(c.group, { label = c.label, at = i })
+			local g = offered[c.id]
+			if not c.keyed and g then
+				add(if type(g) == "string" then g else c.group or "Configuration", { label = c.label, at = i })
 			end
 		end
 		local items: { PickItem } = {}

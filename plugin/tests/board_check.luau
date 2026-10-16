@@ -1,5 +1,5 @@
 --!strict
--- Assertions over the Worktrees board model with a fake backend api. No git.
+-- Assertions over the Worktrees list's model with a fake backend api. No git.
 
 local board = require("../board")
 

@@ -25,7 +25,7 @@ M.ACTIONS = {
 	{ id = "attention", label = "Needs attention only", default = "" },
 	{ id = "sort", label = "Next sort order", default = "" },
 	{ id = "wt-cleanup", label = "Find finished worktrees", default = "" },
-	{ id = "wt-remove", label = "Remove worktree (Worktrees view)", default = "" },
+	{ id = "wt-remove", label = "Remove worktree (Worktrees list)", default = "" },
 	{ id = "more", label = "Command palette", default = "." },
 	{ id = "search", label = "Search", default = "" },
 	{ id = "refresh", label = "Refresh", default = "" },

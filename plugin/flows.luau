@@ -1030,42 +1030,44 @@ end
 
 -- Palette commands the window registers (id, title) and its command palette lists (label, under `group`) when the host
 -- says they apply to the selection now (`menu`'s `commands`) unless `keyed`: the palette lists those as the queue action
--- they are. All but `anywhere` ones need a focused Plotroom block, which the window checks.
-export type Command = { id: string, title: string, label: string, group: string, run: (WindowCx, number) -> (), anywhere: boolean?, keyed: boolean? }
+-- they are (or, as Worktrees list, as the Views scope). An item's own operation has no `group`: the host names it by the
+-- item's type (GitHub - PR, GitHub - Issue, Jira - Issue). All but `anywhere` ones need a focused Plotroom block, which
+-- the window checks.
+export type Command = { id: string, title: string, label: string, group: string?, run: (WindowCx, number) -> (), anywhere: boolean?, keyed: boolean? }
 
 M.COMMANDS = {
-	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "View", run = M.openByUrl, anywhere = true },
+	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
 	{
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
 		label = "Go to agent",
-		group = "Agents",
+		group = "Saved actions",
 		keyed = true,
 		run = function(cx: WindowCx, pane: number)
 			e().follow(cx, pane, AGENTGO_NODE, "The selected item has no agent")
 		end,
 	},
-	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", group = "Item", run = assignMe },
-	{ id = "comment", title = "Plotroom: Comment on the selected item", label = "Comment…", group = "Item", run = comment },
-	{ id = "label-add", title = "Plotroom: Add a label to the selected issue", label = "Add label…", group = "GitHub", run = labelAdd },
-	{ id = "label-remove", title = "Plotroom: Remove a label from the selected issue", label = "Remove label…", group = "GitHub", run = labelRemove },
-	{ id = "issue-close", title = "Plotroom: Close the selected GitHub issue", label = "Close issue…", group = "GitHub", run = issueClose },
-	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", group = "GitHub", run = issueReopen },
-	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", group = "GitHub", run = prReady },
-	{ id = "pr-draft", title = "Plotroom: Convert the selected PR to a draft", label = "Convert to draft…", group = "GitHub", run = prDraft },
-	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", group = "Jira", run = jiraTransition },
-	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", group = "CI", run = rerunFailed },
-	{ id = "rerun-all", title = "Plotroom: Re-run every job of one of the selected PR's finished runs", label = "Re-run all jobs…", group = "CI", run = rerunAll },
-	{ id = "cancel-run", title = "Plotroom: Cancel a running workflow run of the selected PR", label = "Cancel running workflow…", group = "CI", run = cancelRun },
-	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", group = "Worktree", run = draftPr },
+	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", run = assignMe },
+	{ id = "comment", title = "Plotroom: Comment on the selected item", label = "Comment…", run = comment },
+	{ id = "label-add", title = "Plotroom: Add a label to the selected issue", label = "Add label…", run = labelAdd },
+	{ id = "label-remove", title = "Plotroom: Remove a label from the selected issue", label = "Remove label…", run = labelRemove },
+	{ id = "issue-close", title = "Plotroom: Close the selected GitHub issue", label = "Close issue…", run = issueClose },
+	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
+	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
+	{ id = "pr-draft", title = "Plotroom: Convert the selected PR to a draft", label = "Convert to draft…", run = prDraft },
+	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", run = jiraTransition },
+	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
+	{ id = "rerun-all", title = "Plotroom: Re-run every job of one of the selected PR's finished runs", label = "Re-run all jobs…", run = rerunAll },
+	{ id = "cancel-run", title = "Plotroom: Cancel a running workflow run of the selected PR", label = "Cancel running workflow…", run = cancelRun },
+	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
 	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", group = "Configuration", run = exportFlow },
 	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", group = "Configuration", run = importFlow },
-	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Item", run = triage("seen"), keyed = true },
-	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Item", run = triage("snooze"), keyed = true },
-	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "View", run = triage("toggle-snoozed"), keyed = true },
-	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "View", run = triage("toggle-attention"), keyed = true },
-	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "View", run = send("sort", "next"), keyed = true },
-	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees board", label = "Worktrees board", group = "Worktree", run = send("open-worktrees", nil) },
+	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = triage("seen"), keyed = true },
+	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Triage", run = triage("snooze"), keyed = true },
+	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = triage("toggle-snoozed"), keyed = true },
+	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "Filter & Sort", run = triage("toggle-attention"), keyed = true },
+	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
+	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees list", label = "Worktrees list", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }
 
 return M

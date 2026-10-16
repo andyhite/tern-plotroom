@@ -25,7 +25,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
-Smoke prerequisites: Tern 0.8.3, 0.8.4 or 0.9.0 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
+Smoke prerequisites: Tern 0.8.3, 0.8.4, 0.9.0 or 0.9.1 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, Tern directory and log lives under one temporary
 directory that is deleted afterwards.
 """
@@ -56,7 +56,7 @@ SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
 LUAU_VERSION = "0.742"
 LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.8.3"  # the SDK pin
-SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4", "0.9.0")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
+SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4", "0.9.0", "0.9.1")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
 
 # sha256 of the release assets, as GitHub publishes them.
@@ -724,19 +724,68 @@ class Smoke:
         walk(json.loads(self.ctl("tree")).get("tree"))
         return out
 
+    def preview_texts(self) -> List[str]:
+        """Texts inside the drawn native preview slot (`pk-pv-slot`) that has a positive-size rect; empty when no such slot is drawn."""
+        out: List[str] = []
+
+        def sized(node: Dict[str, object]) -> bool:
+            r = node.get("rect")
+            if isinstance(r, dict):
+                w, h = r.get("w", r.get("width")), r.get("h", r.get("height"))
+            elif isinstance(r, list) and len(r) >= 4:
+                w, h = r[2], r[3]
+            else:
+                return False
+            return isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0
+
+        def collect(node: object) -> None:
+            if isinstance(node, dict):
+                for key in ("text", "value", "label", "title"):
+                    if isinstance(node.get(key), str) and node[key].strip():
+                        out.append(node[key])
+                collect(node.get("children") or [])
+                collect(node.get("spans") or [])
+            elif isinstance(node, list):
+                for child in node:
+                    collect(child)
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                if "pk-pv-slot" in str(node.get("class") or "").split() and sized(node):
+                    collect(node)
+                else:
+                    walk(node.get("children") or [])
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child)
+
+        walk(json.loads(self.ctl("tree")).get("tree"))
+        return out
+
     def previewing(self) -> bool:
-        """A preview is open: its Close preview row exists only then."""
-        return "Close preview" in self.texts()
+        """A nonempty native preview is rendered: a row is selected, the sized `pk-pv-slot` holds text, and that text names the selected row; no placeholder."""
+        chosen = [str(c) for c in self.selection() if c]
+        inside = self.preview_texts()
+        return bool(chosen) and bool(inside) and any(c in t for c in chosen for t in inside) and not any("Nothing to preview" in t for t in inside)
 
     def select_row(self) -> None:
-        """Nothing is selected when a list opens: choose a row (Down) as a user does before an item command; a selection already held is kept."""
+        """A nonempty list opens with its first row selected; if none is (an empty or still-loading list), choose one (Down) as a user does; a selection already held is kept."""
         if not self.selection():
             self.ctl_ok("key", "Down")
         self.wait_until("a row is selected", lambda: len(self.selection()) >= 1)
 
     def selection(self) -> List[object]:
-        """The primary label of every selected row as rendered (class tokens `pk-row` and `sel`; the tree has no `selected` prop). Empty: nothing is chosen."""
-        out: List[object] = []
+        """The primary label of every row visibly selected. Tern 0.9.1 can leave a stale `sel` class (and aria-selected) on the row just left when the new
+        selection's row changes in the same render, so while the native `pk-selbar` is drawn, only `sel` rows that sit exactly under it count; with no bar
+        (older Tern) the `pk-row`+`sel` classes decide. Empty: nothing is chosen."""
+        rows: List[Tuple[str, Optional[List[float]]]] = []
+        bars: List[List[float]] = []
+
+        def rect(node: Dict[str, object]) -> Optional[List[float]]:
+            r = node.get("rect")
+            if isinstance(r, list) and len(r) >= 4 and all(isinstance(v, (int, float)) for v in r[:4]):
+                return [float(v) for v in r[:4]]
+            return None
 
         def label(node: object) -> Optional[str]:
             if isinstance(node, dict):
@@ -752,14 +801,18 @@ class Smoke:
             if isinstance(node, dict):
                 tokens = str(node.get("class") or "").split()
                 if "pk-row" in tokens and "sel" in tokens:
-                    out.append(label(node) or "")
+                    rows.append((label(node) or "", rect(node)))
+                elif "pk-selbar" in tokens and rect(node):
+                    bars.append(rect(node))  # type: ignore[arg-type]
                 walk(node.get("children") or [])
             elif isinstance(node, list):
                 for child in node:
                     walk(child)
 
         walk(json.loads(self.ctl("tree")).get("tree"))
-        return out
+        if not bars:
+            return [name for name, _ in rows]
+        return [name for name, r in rows if r and any(abs(r[0] - b[0]) < 1 and abs(r[1] - b[1]) < 1 and abs(r[3] - b[3]) < 1 for b in bars)]
 
     def wait_text(self, what: str, needle: str) -> None:
         deadline = time.monotonic() + SMOKE_TIMEOUT
@@ -1606,7 +1659,7 @@ def sc_draft_push(s: Smoke) -> None:
 def sc_workflow(s: Smoke) -> None:
     """The workflow commands on a real Plotroom block, run through the palette ids a user runs: mark seen drops one "New" badge and nothing else; snooze hides
     the item until the snoozed listing is turned on (it then wears a "Snoozed" badge); the attention filter names itself; the next sort order says which it
-    is; the Worktrees board lists a worktree git has, an unnoted one marked as such. The list is what the fake gh answers; no remote is written."""
+    is; the Worktrees list lists a worktree git has, an unnoted one marked as such. The list is what the fake gh answers; no remote is written."""
     root, wt = s.checkout("flow"), s.tmp / "wts" / "flow-board"
     stamp = "2026-01-01T00:00:00Z"
     prs = [
@@ -1621,57 +1674,51 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_text("the first pull request", "Flow PR 1")
     s.wait_text("the second pull request", "Flow PR 2")
     s.wait_until("unseen pull requests wear New", lambda: s.count("New") >= 1)
-    unseen = s.count("New")
-    # Nothing is chosen at first: no row selected, no preview, and a seen mark or the idle time alone marks nothing.
-    s.eq("no row is selected when the queue opens", [], s.selection())
+    # A nonempty queue opens with its first row selected and previewed natively; that arrival marks only it seen, and idle time marks no other.
+    s.wait_until("the first row is selected when the queue opens", lambda: len(s.selection()) == 1)
+    s.wait_until("its native preview is rendered (title drawn outside the rows)", lambda: s.previewing())
+    chosen = s.selection()
     time.sleep(2.0)
-    s.eq("an unselected queue marks nothing seen", unseen, s.count("New"))
-    s.shot("initial-unselected")
-    s.eq("the closed queue shows no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
-    s.eq("and no Close preview row", False, s.previewing())
-    # The palette (primary key ".") offers only what applies: no item action while nothing is selected.
+    left = s.count("New")
+    s.eq("the arrival marked only the selected row seen: the other stays New", 1, left)
+    s.shot("initial-auto-selected")
+    s.eq("no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
+    s.eq("no Close preview control anywhere", False, any("Close preview" in t for t in s.texts()))
+    # The palette (primary key ".") is grouped; the selected pull request's provider operations sit in the typed group, local state in Triage.
     s.ctl_ok("key", ".")
     s.wait_text("the palette lists the queue's own commands", "Refresh")
-    s.eq("no item command without a selection", False, any(t == "Mark seen" for t in s.texts()))
-    s.shot("palette-unselected")
-    s.ctl_ok("key", "Escape")
-    s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
-    # An explicit selection opens the preview (its Close preview row), and a visible preview marks its item seen by itself.
-    s.ctl_ok("key", "Down")
-    s.wait_until("a row is selected", lambda: len(s.selection()) >= 1)
-    s.wait_until("the preview is open: its Close preview row", lambda: s.previewing())
-    chosen = s.selection()
-    s.shot("selected-preview")
-    s.wait_until("selecting alone drops one New badge", lambda: s.count("New") == unseen - 1)
-    s.ctl_ok("key", ".")
-    s.wait_text("the palette now lists the selected item's commands", "Mark seen")
+    for group in ("GitHub - PR", "Triage", "Filter & Sort", "Views"):
+        s.wait_text("the palette group %s" % group, group)
+    shown = s.texts()
+    s.eq("the palette lists Saved actions first, then the item's operations, then Filter & Sort", True, shown.index("Saved actions") < shown.index("GitHub - PR") < shown.index("Filter & Sort"))
+    s.eq("no Agent picker entry in the primary palette", False, any(t == "Agent picker" for t in s.texts()))
+    s.eq("no Close preview command", False, any(t == "Close preview" for t in s.texts()))
+    s.eq("the unscoped provider-only groups are not the item's", False, any(t == "GitHub - Issue" for t in s.texts()))
+    s.wait_text("the selected item's commands", "Mark seen")
     s.shot("palette-selected")
     s.ctl_ok("key", "Escape")
-    s.wait_until("the palette is closed again", lambda: not any(t == "Refresh" for t in s.texts()))
+    s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
     s.eq("the palette left the selection alone", chosen, s.selection())
-    # A compact window (default 1280 wide, panes ~611 px) still shows the open preview, and closing it leaves no selection or placeholder.
+    s.eq("and its preview", True, s.previewing())
+    # Selecting a second unread row marks that one seen by itself: exactly one more New badge goes.
+    s.ctl_ok("key", "Down")
+    s.wait_until("the second row is selected", lambda: len(s.selection()) == 1 and s.selection() != chosen)
+    s.wait_until("its preview is rendered", lambda: s.previewing())
+    s.wait_until("selecting alone drops one more New badge", lambda: s.count("New") == left - 1)
+    s.ctl_ok("key", "Up")
+    s.wait_until("back on the first row", lambda: s.selection() == chosen)
+    # A compact window (default 1280 wide, panes ~611 px) still shows a readable preview; Escape never closes it.
     s.ctl_ok("resize", "1280", "800")
-    s.wait_until("the compact preview is visible (Close preview)", lambda: s.previewing())
+    s.wait_until("the compact preview is rendered", lambda: s.previewing())
     s.eq("the compact preview keeps the selection", chosen, s.selection())
     s.shot("compact-preview")
     s.ctl_ok("key", "Escape")
-    s.wait_until("closing the compact preview clears the selection", lambda: s.selection() == [])
-    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
-    s.eq("no placeholder in the compact pane", False, any("Nothing to preview" in t for t in s.texts()))
+    time.sleep(1.0)
+    s.eq("Escape keeps the selection", chosen, s.selection())
+    s.eq("and the preview", True, s.previewing())
     s.ctl_ok("resize", "2200", "1000")
-    s.ctl_ok("key", "Down")
-    s.wait_until("selected again after the resize", lambda: s.selection() == chosen)
-    s.wait_until("with its preview open", lambda: s.previewing())
-    # Closing the preview clears the selection (Tern's own highlight included) and does not select again by itself.
-    s.ctl_ok("key", "Escape")
-    s.wait_until("closing the preview clears the selection", lambda: s.selection() == [])
-    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
-    s.eq("no empty pane is left", False, any("Nothing to preview" in t for t in s.texts()))
-    time.sleep(1.5)
-    s.eq("the closed preview stays unselected", [], s.selection())
-    s.shot("preview-closed")
-    s.ctl_ok("key", "Down")
-    s.wait_until("selected again by the keys", lambda: s.selection() == chosen)
+    s.wait_until("the wide preview is rendered", lambda: s.previewing())
+    s.shot("preview-kept")
     s.ctl_ok("plugins", "run", "plugin.plotroom.snooze")
     s.wait_text("the snooze toast", "Snoozed until")
     s.wait_until("the snoozed pull request is hidden", lambda: not any("Flow PR 1" in t for t in s.texts()))
@@ -1704,20 +1751,29 @@ def sc_workflow(s: Smoke) -> None:
     (s.smoke / "issues.json").write_text(json.dumps([{"number": 9, "title": "Flow issue 9", "url": "https://github.com/f/low/issues/9", "state": "OPEN", "reason": None,
                                                       "updatedAt": stamp, "createdAt": stamp, "author": "octo", "comments": 0, "labels": [], "assignees": []}]), encoding="utf-8")
     (wt / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
-    s.ctl_ok("plugins", "run", "plugin.plotroom.worktrees-open")
-    s.wait_text("the Worktrees board lists the worktree git has, unnoted", "Unnoted")
+    # Views holds every sidebar scope: jump to the Worktrees list through the palette's Views group (the sidebar's own dispatch).
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.wait_text("the Views group names the Worktrees list scope", "Worktrees list")
+    s.wait_text("and Open item by URL", "Open item by URL")
+    s.eq("the old board wording is gone", False, any("Worktrees board" in t for t in s.texts()))
+    s.ctl_ok("type", json.dumps("Worktrees list"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the Worktrees list lists the worktree git has, unnoted", "Unnoted")
     s.wait_text("and the main worktree", "Main")
     s.wait_text("the dirty worktree says so by itself", "Changes")
-    s.eq("no board row is selected at first", [], s.selection())
-    s.eq("the closed board shows no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
-    s.eq("and no Close preview row", False, s.previewing())
+    s.wait_until("the list opens with a row selected and previewed", lambda: len(s.selection()) == 1 and s.previewing())
+    s.eq("no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
+    s.eq("no Close preview control", False, any("Close preview" in t for t in s.texts()))
     s.shot("board-initial")
     seen_linked = seen_plain = seen_both = False
-    for _ in range(8):  # walk the rows: each selection shows its preview
-        s.ctl_ok("key", "Down")
+    for n in range(9):  # walk the rows from the auto-selected first one: each selection shows its preview
+        if n:
+            s.ctl_ok("key", "Down")
         time.sleep(0.7)
         ts = s.texts()
-        if "Close preview" not in ts:
+        if len(s.selection()) != 1 or not s.preview_texts():  # one visible row, and its native preview slot holds content
             continue
         if any(t.startswith("Pull request #2") for t in ts):
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
@@ -1749,8 +1805,17 @@ def sc_workflow(s: Smoke) -> None:
     s.eq("the linked worktree's preview names its pull request by the fetched title", True, seen_linked)
     s.eq("the unlinked worktree's preview falls back to its folder name, apart from its row", True, seen_plain)
     s.ctl_ok("key", "Escape")
-    s.wait_until("closing the board preview clears its selection", lambda: s.selection() == [])
-    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
+    time.sleep(1.0)
+    s.eq("Escape keeps the list's selection", 1, len(s.selection()))
+    s.eq("and its preview", True, s.previewing())
+    # Views jump back to a normal view by its sidebar name.
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("My PRs"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_until("the normal view's queue is back, not the worktrees", lambda: any("Flow PR 2" in t for t in s.texts()) and not any(t == "Unnoted" for t in s.texts()))
+    s.wait_until("it opens with a row selected and previewed", lambda: len(s.selection()) == 1 and s.previewing())
 
 
 def sc_prompts(s: Smoke) -> None:
@@ -1784,7 +1849,7 @@ def sc_prompts(s: Smoke) -> None:
     s.wait_text("and the second", "f/low#6")
     s.shot("pins")
     s.wait_until("the Pins group is in the scopes", lambda: any(t == "Pins" for t in s.texts()))
-    s.wait_until("the pinned item's preview is open (its Close preview row)", lambda: s.previewing())
+    s.wait_until("the pinned item's native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
     # Unpin through the palette (primary key "."), filtered to the one command: only the target goes, the other pin stays.
     s.ctl_ok("key", ".")
     s.wait_text("the palette", "Refresh")
@@ -1795,6 +1860,13 @@ def sc_prompts(s: Smoke) -> None:
     s.eq("the other pin remains", True, any("f/low#5" in t for t in s.texts()))
     s.eq("the Pins group is still listed", True, any(t == "Pins" for t in s.texts()))
     s.shot("unpinned")
+    # Views holds the pins too: jump to the remaining pin through the palette.
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("f/low#5"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_until("the remaining pin's item previews", lambda: any("Pinned PR 5" in t for t in s.texts()) and s.previewing())
 
     def export_through(confirm: bool) -> None:
         s.ctl_ok("plugins", "run", "plugin.plotroom.export")

@@ -162,6 +162,7 @@ type State = {
 	snaps: { [string]: Snap },
 	snap: Snap?,
 	cursor: string?,
+	cursorAt: number?, -- the cursor's place in the list: a vanished item hands the selection to the row that took its place
 	focus: string, -- the picker part the keys drive: "list" | "scopes"
 	inflight: number?, -- generation of the search request that owns the spinner
 	gen: number,
@@ -208,6 +209,7 @@ type State = {
 	boardWait: boolean?, -- the next preview read of a picked worktree waits out DETAIL_DEBOUNCE_MS, so scrolling does not read every row
 	boardRemoving: string?, -- the board row whose removal is being confirmed
 	boardBusy: boolean, -- an inventory, a changes read, a cleanup check or a removal is running
+	boardAt: number?, -- the previewed row's place in the list: a removed row hands the preview to the row that took its place
 }
 
 local running: { [number]: State } = {}
@@ -682,7 +684,7 @@ local function retire(state: State)
 	state.snap, state.vis = nil, nil
 	state.snaps = {}
 	state.problem = nil
-	state.cursor = nil
+	state.cursor, state.cursorAt = nil, nil
 end
 
 local function alive(state: State): boolean
@@ -915,7 +917,7 @@ end
 
 -- The seen / snooze store (kv "triage"), read once and kept until a change (`flow.changed`) or `again`; nil while its kv
 -- is unreadable or malformed (`triageProblem` says why), and nothing writes it then. Seen is marked by `flow.mark` (the
--- Mark seen action) and by `flow.autoSeen` (an item whose preview is open); a bare cursor move over a closed preview never is.
+-- Mark seen action) and by `flow.autoSeen` (an item whose preview is open, unless the attention filter chose it itself).
 function flow.store(state: State, again: boolean?): any
 	if again then
 		state.triage, state.triageProblem = nil, nil
@@ -960,6 +962,22 @@ function flow.keep(state: State, kind: string, item: any): boolean
 	end
 	local st = flow.status(state, kind, item)
 	return not (st and st.snoozed)
+end
+
+-- How many of `snap`'s items a sidebar scope counts: those its list shows, so snoozed ones are left out (unless shown).
+-- ponytail: ignores the attention filter, which depends on the open selection; count it too if asked.
+function flow.listedCount(state: State, snap: Snap, pinned: boolean): number
+	if pinned or state.showSnoozed then
+		return #snap.items
+	end
+	local n = 0
+	for _, item in snap.items do
+		local st = flow.status(state, snap.kind, item)
+		if state.agents[item.key] == "waiting_input" or not (st and st.snoozed) then
+			n += 1
+		end
+	end
+	return n
 end
 
 
@@ -1056,17 +1074,6 @@ local function filtered(state: State): Visible?
 	return out
 end
 
--- Drops the cursor when its item is no longer listed. Nothing is ever selected for the user: the first row is not taken
--- after a refresh, a switch or a close.
-local function ensureCursor(state: State)
-	if state.cursor and state.snap then
-		local v = filtered(state)
-		if indexOf(if v then v.items else {}, state.cursor) == 0 then
-			state.cursor = nil
-		end
-	end
-end
-
 -- Moves the selection to `key` (nil: none). With the attention filter the list holds the selected item, so it is rebuilt.
 function flow.select(state: State, key: string?)
 	if state.cursor ~= key then
@@ -1075,12 +1082,27 @@ function flow.select(state: State, key: string?)
 			state.vis = nil
 		end
 	end
+	local v = if key then filtered(state) else nil
+	state.cursorAt = if v then indexOf(v.items, key) else state.cursorAt
 end
 
--- Closes the preview: nothing stays selected.
-function flow.closePreview(state: State)
-	state.descOpen = nil
-	flow.select(state, nil)
+-- Keeps the selection on a listed item, so a nonempty list always has its preview open: the first item when nothing is
+-- selected, the row that took the place of one that vanished (a refresh, a search, a snooze). An empty list selects
+-- nothing. Under the attention filter the selected row stays listed though reading it marks it seen (flow.keep), so a pick
+-- is read once and the next row is not picked until the selection moves.
+local function ensureCursor(state: State)
+	if not state.snap then
+		return
+	end
+	local v = filtered(state)
+	local items: { any } = if v then v.items else {}
+	local at = indexOf(items, state.cursor)
+	if at > 0 then
+		state.cursorAt = at
+		return
+	end
+	local pick = items[math.clamp(state.cursorAt or 1, 1, math.max(#items, 1))]
+	flow.select(state, if pick then pick.key else nil)
 end
 
 -- The saved state changed (here or in another block): every block rereads it and shows the new list, its cursor on a
@@ -1134,7 +1156,7 @@ function flow.mark(state: State, act: string)
 		state.triage, state.triageProblem = nil, nil
 		return state.cx:toast("error", "Not saved", err)
 	end
-	flow.changed(state) -- an item that left the list is deselected (ensureCursor); no neighbour is selected in its place
+	flow.changed(state) -- an item that left the list hands the selection to the row that took its place (ensureCursor)
 	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) else "Snooze ended", item.key)
 end
 
@@ -1546,11 +1568,8 @@ local function retry(state: State)
 end
 
 local function switchView(state: State, id: string?, activeLogin: string?)
-	if state.boardOn then
-		flow.board.close(state.board) -- leaving the board closes its preview
-	end
 	state.activeId, state.activeLogin, state.boardOn = id, activeLogin, false
-	state.cursor = nil -- another view opens with no preview
+	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
 	local v = activeView(state)
 	local cached = if v then state.snaps[snapKey(v, state.activeLogin)] else nil
@@ -1624,9 +1643,19 @@ function flow.boardSelected(state: State): (any, number)
 	return nil, 0
 end
 
--- Closes the preview of a row that is no longer listed. Nothing is selected for the user.
+-- Keeps the preview on a listed worktree while the list is shown: the first when none is previewed, the row that took the
+-- place of one that vanished (a removal, a reload). An empty list previews nothing.
 function flow.boardEnsure(state: State)
-	if state.board.selected and not flow.boardSelected(state) then
+	if not state.boardOn then
+		return
+	end
+	local rows = flow.boardRows(state)
+	local _, at = flow.boardSelected(state)
+	if at > 0 then
+		state.boardAt = at
+	elseif #rows > 0 then
+		flow.boardPick(state, rows[math.clamp(state.boardAt or 1, 1, #rows)])
+	elseif state.board.selected then
 		flow.board.close(state.board)
 	end
 end
@@ -1749,18 +1778,19 @@ function flow.boardLinks(state: State): any
 	}
 end
 
--- Previews `row` (nil closes the preview); the pull request and issue it was made for are read once.
+-- Previews `row`; the pull request and issue it was made for are read once.
 function flow.boardPick(state: State, row: any)
-	state.boardWait = row ~= nil
-	flow.board.select(state.board, flow.boardLinks(state), if row then row.id else nil, function(): boolean
+	state.boardWait = true
+	for i, r in flow.boardRows(state) do
+		if r.id == row.id then
+			state.boardAt = i
+		end
+	end
+	flow.board.select(state.board, flow.boardLinks(state), row.id, function(): boolean
 		return alive(state)
 	end, function()
 		state.cx:render()
 	end)
-end
-
-function flow.boardClose(state: State)
-	flow.board.close(state.board)
 end
 
 function flow.boardMove(state: State, delta: number)
@@ -1831,6 +1861,26 @@ function flow.openBoard(state: State)
 		flow.boardLoad(state)
 	end
 	flow.boardEnsure(state)
+end
+
+-- Shows sidebar scope `scopeId` (flow.scopeRows' id: "worktrees", a pin or a view as one login runs it), as a click on
+-- it does. false when the live sidebar has no such scope, so a stale id never jumps anywhere.
+function flow.goScope(state: State, scopeId: any): boolean
+	if scopeId == "worktrees" then
+		flow.openBoard(state)
+		return true
+	end
+	for _, scope in orderedViews(state) do
+		if scope.id == scopeId then
+			if state.boardOn and ghActive.isActive(state, scope) then
+				state.boardOn = false -- back to the view already shown: its selection stays
+			elseif state.boardOn or not ghActive.isActive(state, scope) then
+				switchView(state, scope.view.id, scope.login)
+			end
+			return true
+		end
+	end
+	return false
 end
 
 -- The folders (as the rows have them) some pane of this host works in.
@@ -1935,7 +1985,7 @@ local function moveView(state: State, delta: number)
 			end
 		end
 	end
-	-- The Worktrees board is the last entry of the sidebar.
+	-- The Worktrees list is the last entry of the sidebar.
 	local to = math.clamp(at + delta, 1, #items + 1)
 	if to == #items + 1 then
 		if not state.boardOn then
@@ -1944,7 +1994,9 @@ local function moveView(state: State, delta: number)
 		return
 	end
 	local target = items[to]
-	if target and (state.boardOn or not ghActive.isActive(state, target)) then
+	if target and state.boardOn and ghActive.isActive(state, target) then
+		state.boardOn = false
+	elseif target and (state.boardOn or not ghActive.isActive(state, target)) then
 		switchView(state, target.view.id, target.login)
 	end
 end
@@ -4161,7 +4213,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "17"
+local RPC_PROTOCOL = "18"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -4437,7 +4489,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 		end
 		table.insert(items, row)
 	end
-	reply(state, id, { items = tern.json.array(items), problem = problem, queue = if palette then tern.json.array(flow.paletteActions(state)) else nil, commands = if palette then flow.strings(flow.commands(state)) else nil })
+	reply(state, id, { items = tern.json.array(items), problem = problem, queue = if palette then tern.json.array(flow.paletteActions(state)) else nil, commands = if palette then tern.json.array(flow.commands(state)) else nil })
 end
 
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
@@ -4906,9 +4958,6 @@ function flow.show(state: State, url: any, force: boolean?): boolean
 		return false
 	end
 	discardEdit(state)
-	if state.boardOn then
-		flow.board.close(state.board)
-	end
 	state.settings, state.help, state.query, state.focus, state.boardOn = nil, false, nil, "list", false
 	if needsPin then
 		if not have then
@@ -4940,7 +4989,7 @@ function flow.unpin(state: State, key: string?): boolean
 end
 
 -- The selected item is marked seen as its preview is shown, with the data it shows now: a later refresh that changes it
--- marks it again while it stays shown. Never on a background fetch, a closed preview or the board.
+-- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
 function flow.autoSeen(state: State)
 	local item, snap = selected(state), state.snap
 	if not item or not snap or state.boardOn then
@@ -5414,17 +5463,17 @@ end
 
 -- The window commands (flows.COMMANDS ids) that apply to what is selected now: nothing is offered that the selected
 -- item, its tracker or its checks cannot take. The window's palette lists exactly these (answer to `menu` with `palette`).
-function flow.commands(state: State): { string }
-	local out: { string } = { "open-url", "export", "import" }
-	if not state.boardOn then
-		table.insert(out, "worktrees-open")
-	end
+-- An item's own operation carries the heading of its type (`group`: "GitHub - PR", "GitHub - Issue" or "Jira - Issue");
+-- without one the command's own heading in flows.COMMANDS stands.
+function flow.commands(state: State): { { id: string, group: string? } }
+	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" } }
 	local item, snap = if state.boardOn then nil else selected(state), state.snap
 	if not item or not snap then
 		return out
 	end
+	local group = if snap.kind == "prs" then "GitHub - PR" elseif item.tracker == "jira" then "Jira - Issue" else "GitHub - Issue"
 	local function add(cmd: string)
-		table.insert(out, cmd)
+		table.insert(out, { id = cmd, group = group })
 	end
 	if snap.kind == "prs" then
 		local failed, pending = false, false
@@ -6359,15 +6408,14 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 	return out
 end
 
--- The preview's own controls, native action rows: Close preview (Esc), and Unpin while the item is pinned.
-function flow.previewControls(state: State, item: any): Node
-	local rows: { Node } = {
-		ui.node("item", { key = "close-preview", label = "Close preview", icon = "x", hint = { "esc" }, aria = "Close the preview", actions = { click = "close-preview" } }),
-	}
+-- The preview's own controls, native action rows: Unpin while the item is pinned (nil otherwise).
+function flow.previewControls(state: State, item: any): Node?
 	if flow.pinFor(state.pins, item.key) then
-		table.insert(rows, ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
+		return ui.node("list", { key = "controls" }, {
+			ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }),
+		})
 	end
-	return ui.node("list", { key = "controls" }, rows)
+	return nil
 end
 
 -- pr: selected(state) while the active view lists pull requests; acts: itemActions(state, pr, open).
@@ -6434,7 +6482,10 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 			ui.node("badge", { key = "integration", text = INTEGRATIONS.github.label, tone = "muted" }),
 		}),
 	}
-	table.insert(out, flow.previewControls(state, pr))
+	local controls = flow.previewControls(state, pr)
+	if controls then
+		table.insert(out, controls)
+	end
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
@@ -6646,7 +6697,10 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 			ui.node("badge", { key = "integration", text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }),
 		}),
 	}
-	table.insert(out, flow.previewControls(state, issue))
+	local controls = flow.previewControls(state, issue)
+	if controls then
+		table.insert(out, controls)
+	end
 	if #chips > 0 then
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
@@ -6708,6 +6762,54 @@ local function helpOverlay(state: State): Node
 	})
 end
 
+-- The sidebar's scopes in its order, and the id of the one shown: the pins, then the views grouped by integration (and
+-- login), then the Worktrees list. Each is { id, label, icon, count, group }; the sidebar and the command palette's Views
+-- group both list these rows, and flow.goScope shows one.
+function flow.scopeRows(state: State): ({ any }, string?)
+	-- Views of several integrations are grouped in the sidebar by integration, the pull request and issue views of one
+	-- together; so are views that run as several logins (a view of several is one entry in each login's group).
+	local scopeList = orderedViews(state)
+	local seen: { [string]: boolean } = {}
+	local integrations = 0
+	local grouped = false
+	for _, scope in scopeList do
+		if not seen[scope.view.integration] then
+			seen[scope.view.integration] = true
+			integrations += 1
+		end
+		grouped = grouped or #scope.view.logins > 1
+	end
+	grouped = grouped or integrations > 1 or #state.pins > 0
+	local dropdown = state.cx.cols <= 127
+	local scopes: { any } = {}
+	local activeScope: string? = nil
+	for _, scope in scopeList do
+		local v = scope.view
+		local cached = state.snaps[snapKey(v, scope.login)]
+		if ghActive.isActive(state, scope) then
+			activeScope = scope.id
+		end
+		table.insert(scopes, {
+			id = scope.id,
+			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") .. ": " .. v.name else v.name,
+			icon = KINDS[v.kind].icon,
+			count = if not dropdown and cached then flow.listedCount(state, cached, flow.isPin(v.id)) else nil,
+			group = if flow.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
+		})
+	end
+	table.insert(scopes, {
+		id = "worktrees",
+		label = "Worktrees list",
+		icon = "folder",
+		count = if not dropdown and state.board.loaded then #flow.boardRows(state) else nil,
+		group = if grouped then "Worktrees" else nil,
+	})
+	if state.boardOn then
+		activeScope = "worktrees"
+	end
+	return scopes, activeScope
+end
+
 -- The board's preview of the selected worktree: its folder's name, the pull request and issue it was made for (each as
 -- the tracker answered, or why not), its git facts and, hidden, the link the window opens its folder with.
 function flow.boardPreview(state: State): { Node }
@@ -6719,9 +6821,6 @@ function flow.boardPreview(state: State): { Node }
 	local kids: { Node } = {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(p.title, "strong") } }),
-		}),
-		ui.node("list", { key = "controls" }, {
-			ui.node("item", { key = "close-preview", label = "Close preview", icon = "x", hint = { "esc" }, aria = "Close the preview", actions = { click = "close-preview" } }),
 		}),
 	}
 	local function section(key: string, head: string, sec: any)
@@ -6856,7 +6955,7 @@ local function queuePicker(state: State): Node
 	elseif snap then
 		note(ui.span("updated " .. os.date("%H:%M", snap.fetched), "muted"))
 	end
-	-- Sort order and the attention filter go in the picker's strip, which stays on screen where the subtitle hides.
+	-- Sort order and the attention filter share the bottom row with the actions (plotroom.css).
 	local strip: { string } = {}
 	if state.attention then
 		table.insert(strip, "Needs attention only")
@@ -6892,47 +6991,8 @@ local function queuePicker(state: State): Node
 		end
 	end
 
-	-- Views of several integrations are grouped in the sidebar by integration, the pull request and issue views of one
-	-- together; so are views that run as several logins (a view of several is one entry in each login's group).
-	local scopeList = orderedViews(state)
-	local seen: { [string]: boolean } = {}
-	local integrations = 0
-	local grouped = false
-	for _, scope in scopeList do
-		if not seen[scope.view.integration] then
-			seen[scope.view.integration] = true
-			integrations += 1
-		end
-		grouped = grouped or #scope.view.logins > 1
-	end
-	grouped = grouped or integrations > 1 or #state.pins > 0
 	local dropdown = state.cx.cols <= 127
-	local scopes: { any } = {}
-	local activeScope: string? = nil
-	for _, scope in scopeList do
-		local v = scope.view
-		local cached = state.snaps[snapKey(v, scope.login)]
-		if ghActive.isActive(state, scope) then
-			activeScope = scope.id
-		end
-		table.insert(scopes, {
-			id = scope.id,
-			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") .. ": " .. v.name else v.name,
-			icon = KINDS[v.kind].icon,
-			count = if not dropdown and cached then #cached.items else nil,
-			group = if flow.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
-		})
-	end
-	table.insert(scopes, {
-		id = "worktrees",
-		label = "Worktrees",
-		icon = "folder",
-		count = if not dropdown and state.board.loaded then #flow.boardRows(state) else nil,
-		group = if grouped then "Worktrees" else nil,
-	})
-	if state.boardOn then
-		activeScope = "worktrees"
-	end
+	local scopes, activeScope = flow.scopeRows(state)
 
 	local wait = waitOf(state)
 	local map = keys.load()
@@ -6964,7 +7024,7 @@ local function queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and #strip > 0 then ".footer-status" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -7310,14 +7370,8 @@ function flow.queueAction(state: State, act: string): boolean
 		flow.cycleSort(state)
 	elseif string.sub(act, 1, 3) == "wt-" then
 		return state.boardOn and flow.boardAct(state, act)
-	elseif act == "close-preview" then
-		if state.boardOn then
-			flow.boardClose(state)
-		elseif chosen then
-			flow.closePreview(state)
-		else
-			return false
-		end
+	elseif string.sub(act, 1, 6) == "scope:" then
+		return flow.goScope(state, string.sub(act, 7))
 	elseif act == "unpin" then
 		return flow.unpin(state, nil)
 	else
@@ -7326,44 +7380,49 @@ function flow.queueAction(state: State, act: string): boolean
 	return true
 end
 
--- The queue actions the command palette offers now, in its order, each with its label, key ("": none) and group: the
--- selected item's, then the view's and the configuration's. Only what applies is listed. The Worktrees board offers its
--- own rows' actions, Refresh, Settings and the shortcut list.
-function flow.paletteActions(state: State): { { id: string, label: string, key: string, group: string } }
+-- The queue actions the command palette offers now, in its order, each with its label, key ("": none) and group (and, for
+-- a scope, the sidebar group it sits under as `detail`): the selected item's, then the view's, every sidebar scope
+-- (`scope:<id>`, shown by flow.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
+-- its own rows' actions, Refresh, the scopes, Settings and the shortcut list.
+function flow.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
 	local map = keys.load()
-	local labels: { [string]: string } = { ["close-preview"] = "Close preview", unpin = "Unpin" }
+	local labels: { [string]: string } = { unpin = "Unpin" }
 	for _, a in keys.ACTIONS do
 		labels[a.id] = a.label
 	end
-	local out: { { id: string, label: string, key: string, group: string } } = {}
+	local out: { { id: string, label: string, key: string, group: string, detail: string? } } = {}
 	local function add(id: string, group: string)
 		table.insert(out, { id = id, label = labels[id], key = map[id] or "", group = group })
+	end
+	local function views()
+		for _, scope in (flow.scopeRows(state)) do
+			table.insert(out, { id = "scope:" .. scope.id, label = scope.label, key = "", group = "Views", detail = scope.group })
+		end
 	end
 	local item = if state.boardOn then nil else selected(state)
 	if item then
 		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
 		labels.open = "Open in " .. INTEGRATIONS[tr].label
-		add("open", "Item")
-		add("worktree", "Item")
+		local group = if state.kind.id ~= "issues" then "GitHub - PR" elseif item.tracker == "jira" then "Jira - Issue" else "GitHub - Issue"
+		add("open", group)
+		add("worktree", group)
 		if openItems(state)[item.key] then
-			add("goto", "Item")
+			add("goto", group)
 		end
-		add("seen", "Item")
-		add("snooze", "Item")
+		add("seen", "Triage")
+		add("snooze", "Triage")
 		if flow.pinFor(state.pins, item.key) then
-			add("unpin", "Item")
+			add("unpin", "Triage")
 		end
-		add("close-preview", "Item")
-		add("agent", "Agents")
+		-- The agent picker is no row: the saved actions and Type a prompt are listed beside this.
 		if state.agents[item.key] then
-			add("agentgo", "Agents")
+			add("agentgo", "Saved actions")
 		end
 	end
 	if state.boardOn then
 		local row = flow.boardSelected(state)
 		labels["wt-open"], labels["wt-remove"], labels["wt-cleanup"] = "Open worktree tab", "Remove worktree…", "Look for finished worktrees"
 		if row then
-			add("close-preview", "Worktree")
 			if not row.missing then
 				add("wt-open", "Worktree")
 			end
@@ -7372,7 +7431,8 @@ function flow.paletteActions(state: State): { { id: string, label: string, key: 
 			end
 		end
 		add("wt-cleanup", "Worktree")
-		add("refresh", "View")
+		add("refresh", "Filter & Sort")
+		views()
 		add("settings", "Configuration")
 		add("help", "Configuration")
 		return out
@@ -7380,9 +7440,10 @@ function flow.paletteActions(state: State): { { id: string, label: string, key: 
 	local view = activeView(state)
 	for _, id in { "snoozed", "attention", "sort", "search", "refresh" } do
 		if id ~= "sort" or (view and not flow.isPin(view.id) and #flow.sorting.choices(view.kind, view.integration) > 0) then
-			add(id, "View")
+			add(id, "Filter & Sort")
 		end
 	end
+	views()
 	add("settings", "Configuration")
 	add("help", "Configuration")
 	return out
@@ -7707,7 +7768,7 @@ local function blockDef(): BlockDef<State>
 					sp = { kind = k :: string, message = m }
 				end
 			end
-			-- The pins restored are in the sidebar's Pins group but nothing is selected: a row is picked to open its preview.
+			-- The pins restored are in the sidebar's Pins group; a pin that is the scope shown opens on its item (ensureCursor).
 			local pins: { View } = {}
 			local function addSaved(url: any)
 				local p = pinView(url)
@@ -7826,6 +7887,7 @@ local function blockDef(): BlockDef<State>
 
 		view = function(state: State, _cx: BlockCx): BlockView
 			flow.boardScan(state)
+			ensureCursor(state)
 			flow.autoSeen(state)
 			scanWorktrees(state)
 			inspectSelected(state)
@@ -7962,11 +8024,8 @@ local function blockDef(): BlockDef<State>
 				elseif name == "escape" then
 					if onScopes then
 						state.focus = "list"
-					elseif state.board.selected then
-						flow.boardClose(state)
 					else
-						state.boardOn = false
-						ensureCursor(state)
+						return false
 					end
 				elseif name == "up" or bact == "up" then
 					if onScopes then
@@ -8024,8 +8083,6 @@ local function blockDef(): BlockDef<State>
 					ensureCursor(state)
 				elseif scopes then
 					state.focus = "list"
-				elseif selected(state) then
-					flow.closePreview(state)
 				else
 					return false
 				end
@@ -8172,12 +8229,6 @@ local function blockDef(): BlockDef<State>
 			elseif act == "goto" or act == "worktree" then
 				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
 				flow.queueAction(state, act)
-			elseif act == "close-preview" then
-				if state.boardOn then
-					flow.boardClose(state)
-				else
-					flow.closePreview(state)
-				end
 			elseif act == "unpin" then
 				flow.unpin(state, nil)
 			elseif act == "queue" then
@@ -8280,18 +8331,7 @@ local function blockDef(): BlockDef<State>
 					end
 				elseif act == "scope" then
 					state.focus = "list"
-					local scopeId = ev.value
-					if scopeId == "worktrees" then
-						flow.openBoard(state)
-					elseif type(scopeId) == "string" then
-						local wasBoard = state.boardOn
-						for _, scope in orderedViews(state) do
-							if scope.id == scopeId and (wasBoard or not ghActive.isActive(state, scope)) then
-								switchView(state, scope.view.id, scope.login)
-								break
-							end
-						end
-					end
+					flow.goScope(state, ev.value)
 				elseif act == "clear" or act == "close" then
 					state.query = nil
 					ensureCursor(state)
