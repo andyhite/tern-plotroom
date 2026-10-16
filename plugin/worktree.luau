@@ -546,39 +546,12 @@ function M.scan(checkout: string, wants: { [string]: Want }, done: (Scan?, strin
 	end)
 end
 
--- lexically collapses `.`, `..` and repeated `/` of an absolute path.
-local function normalize(path: string): string
-	local out: { string } = {}
-	for seg in string.gmatch(path, "[^/]+") do
-		if seg == ".." then
-			table.remove(out)
-		elseif seg ~= "." then
-			table.insert(out, seg)
-		end
-	end
-	return "/" .. table.concat(out, "/")
-end
-
--- The folder new worktrees go in, each a direct child (`omp worktree clear` deletes nested directories there). `place` ""
--- is omp's worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else
--- omp's `worktree.base` setting, else ~/.omp/wt (as in omp, a value that is neither absolute nor `~/` is ignored).
--- An absolute or `~/` `place` is used as it is; any other is resolved against `checkoutRoot`, the repository's checkout.
+-- The folder new worktrees go in, each a direct child (`omp worktree clear` deletes nested directories there): omp's
+-- worktrees directory, where omp's own PR checkouts and `omp worktree clear` live: OMP_WORKTREE_DIR, else omp's
+-- `worktree.base` setting, else ~/.omp/wt (as in omp, a value that is neither absolute nor `~/` is ignored).
 -- ponytail: omp profiles (OMP_PROFILE) are not followed; set worktree.base if you use one.
-function M.worktreesDir(place: string, checkoutRoot: string, done: (string?, string?, WindowCx?) -> ())
+function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
 	local home = tern.getenv("HOME")
-	place = trim(place)
-	if place ~= "" then
-		local dir, why
-		if string.sub(place, 1, 1) == "/" or string.sub(place, 1, 1) == "~" then
-			dir, why = M.expandPath(place, home)
-		else
-			dir = normalize(checkoutRoot .. "/" .. place)
-		end
-		tern.timer(0, function(cx)
-			done(dir, why, cx)
-		end)
-		return
-	end
 	local env = M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)
 	if env then
 		tern.timer(0, function(cx)
@@ -814,7 +787,7 @@ end
 
 -- Resolves `checkout` as a checkout of `repo`, the worktrees folder and the main worktree, then runs `step` with where
 -- the worktree named `dir` goes. Ends the request with M.NO_REPO when `checkout` is not one of `repo`.
-local function locate<T>(s: Steps<T>, checkout: string, repo: string, place: string, dir: string, step: (Spot, WindowCx?) -> ())
+local function locate<T>(s: Steps<T>, checkout: string, repo: string, dir: string, step: (Spot, WindowCx?) -> ())
 	if not M.validLeaf(dir) then
 		tern.timer(0, function(cx)
 			s.finish(nil, "Worktree folder name " .. dir .. " is not usable; change its format in Settings › Repositories.", cx)
@@ -826,7 +799,7 @@ local function locate<T>(s: Steps<T>, checkout: string, repo: string, place: str
 			if not info then
 				return s.finish(nil, M.NO_REPO, cx)
 			end
-			M.worktreesDir(place, info.root, function(base, why, cx0)
+			M.worktreesDir(function(base, why, cx0)
 				if not base then
 					return s.finish(nil, why, cx0)
 				end
@@ -958,7 +931,7 @@ end
 -- Creates or reuses the worktree of pull request `number` of `repo` (checkoutPr) in the worktrees folder, under the
 -- folder name `naming` gives the PR (nil and why when it cannot). done(result, problem, cx) runs exactly once, even
 -- when a step raises. Problem M.NO_REPO means `checkout` is not a checkout of `repo`.
-function M.open(checkout: string, repo: string, number: number, naming: (github.PrMeta) -> (string?, string?), place: string, account: string?, done: Cb<Result>)
+function M.open(checkout: string, repo: string, number: number, naming: (github.PrMeta) -> (string?, string?), account: string?, done: Cb<Result>)
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
 	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
 		tern.timer(0, function(cx)
@@ -979,7 +952,7 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 			if not dir then
 				return s.finish(nil, why, cx)
 			end
-			locate(s, checkout, repo, place, dir, function(spot, cx1)
+			locate(s, checkout, repo, dir, function(spot, cx1)
 				checkoutPr(s, spot, repo, number, found, account, cx1, function(o, m, cx2)
 					s.finish({
 						path = o.path,
@@ -1042,7 +1015,7 @@ end
 -- `plan.base`, fetched first. done(result, problem, cx) runs exactly once. Problems M.NO_REPO (`checkout` is not one of
 -- `repo`), M.UNDECIDED (no worktree yet, and neither `pr` nor `fresh`) and M.NEED_BASE (a new branch and no `base`)
 -- ask the caller for more.
-function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePlan, place: string, account: string?, done: Cb<IssueResult>)
+function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePlan, account: string?, done: Cb<IssueResult>)
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
 	local bad: string? = nil
 	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
@@ -1129,7 +1102,7 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 		end)
 	end
 
-	locate(s, checkout, repo, place, plan.dir, function(spot, cx)
+	locate(s, checkout, repo, plan.dir, function(spot, cx)
 		for _, r in spot.recs do
 			if r.path == spot.target then
 				local rb = if r.branch then string.gsub(r.branch, "^refs/heads/", "") else branch

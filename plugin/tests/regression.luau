@@ -2422,7 +2422,7 @@ type Opened = { calls: number, result: any, problem: string?, cx: any }
 -- Opens the scene's PR from `checkout` (the scene's launch directory by default).
 local function openWt(w: World, worktree: Worktree, s: Scene, checkout: string?, waitMs: number?): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-	worktree.open(checkout or s.launch, s.repo, s.number, naming(s), "", nil, function(result, problem, cx)
+	worktree.open(checkout or s.launch, s.repo, s.number, naming(s), nil, function(result, problem, cx)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -2684,7 +2684,7 @@ windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktr
 	end)
 	local function dir(): string?
 		local got: string? = nil
-		worktree.worktreesDir("", "/work/r", function(d: string?)
+		worktree.worktreesDir(function(d: string?)
 			got = d
 		end)
 		w.flush()
@@ -2700,24 +2700,6 @@ windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktr
 	eq(dir(), "/env/wt", "the environment variable wins")
 	w.env.OMP_WORKTREE_DIR = "relative"
 	eq(dir(), "/cfg", "a relative environment variable is ignored")
-end)
-
-windowCase("worktree: worktree root is omp's directory when empty, an absolute path as it is, a relative one from the checkout", function(w: World)
-	local worktree = w.load("worktree") :: Worktree
-	local function pathFor(place: string): string?
-		local s = scene(w, worktree, "o", "r", 1)
-		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.open(s.launch, s.repo, s.number, naming(s), place, nil, function(result, problem, cx)
-			out.calls += 1
-			out.result, out.problem, out.cx = result, problem, cx
-		end)
-		w.flush()
-		eq(out.problem, nil, "problem for " .. place)
-		return if out.result then out.result.path else nil
-	end
-	eq(pathFor(""), "/wt/plotroom-o_r-pr-1", "empty: omp's worktrees directory")
-	eq(pathFor("/abs/wt"), "/abs/wt/plotroom-o_r-pr-1", "an absolute root is used as it is")
-	eq(pathFor("../wt"), "/work/wt/plotroom-o_r-pr-1", "a relative root is resolved against the checkout /work/r")
 end)
 
 -- The commands spawned after entry `from` of the world's calls that can change a repository or add a worktree, in order,
@@ -3051,7 +3033,7 @@ windowCase("worktree.open: the folder comes from the naming callback, which is g
 		worktree.open(s.launch, s.repo, s.number, function(m: any): (string?, string?)
 			table.insert(seen, m)
 			return dir, nil
-		end, "", nil, function(result, problem, cx)
+		end, nil, function(result, problem, cx)
 			out.calls += 1
 			out.result, out.problem, out.cx = result, problem, cx
 		end)
@@ -3088,7 +3070,7 @@ windowCase("worktree.open: a naming callback that gives no name ends the open wi
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
 	worktree.open(s.launch, s.repo, s.number, function(_m: any): (string?, string?)
 		return nil, "The folder format names {github.user}, which could not be read."
-	end, "", nil, function(result, problem, cx)
+	end, nil, function(result, problem, cx)
 		out.calls += 1
 		out.result, out.problem, out.cx = result, problem, cx
 	end)
@@ -3320,7 +3302,7 @@ type PlanAsk = { dir: string?, branch: string, pr: number?, fresh: boolean, base
 local function openIssuePlan(w: World, worktree: Worktree, r: IssueRepo, key: string, plan: PlanAsk, checkout: string?): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
 	local asked = { dir = plan.dir or "plotroom-o_r-issue-" .. key, branch = plan.branch, pr = plan.pr, fresh = plan.fresh, base = plan.base }
-	worktree.openIssue(checkout or r.launch, "o/r", key, asked, "", nil, function(result, problem, cx)
+	worktree.openIssue(checkout or r.launch, "o/r", key, asked, nil, function(result, problem, cx)
 		out.calls += 1
 		out.result = result
 		out.problem = problem
@@ -3452,7 +3434,7 @@ windowCase("worktree.openIssue: a repository, key or branch it cannot use ends t
 	local r = issueRepo(w, "12")
 	local function refused(what: string, repo: string, key: string, branch: string, want: string)
 		local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.openIssue(r.launch, repo, key, { dir = "plotroom-o_r-issue-" .. key, branch = branch, fresh = true, base = "main" }, "", nil, function(result, problem, cx)
+		worktree.openIssue(r.launch, repo, key, { dir = "plotroom-o_r-issue-" .. key, branch = branch, fresh = true, base = "main" }, nil, function(result, problem, cx)
 			out.calls += 1
 			out.result, out.problem, out.cx = result, problem, cx
 		end)
@@ -3528,7 +3510,7 @@ windowCase("worktree.openIssue: a Jira issue is made in the GitHub repository's 
 	local before = #w.calls
 	for _, bad in { { "ABC", "ABC-1" }, { "o", "ABC-1" }, { "o/r", "ABC/1" }, { "o/r", "" } } do
 		local refused: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-		worktree.openIssue(r.launch, bad[1], bad[2], { dir = "plotroom-x", branch = "x", fresh = true, base = "main" }, "", nil, function(result, problem, cx)
+		worktree.openIssue(r.launch, bad[1], bad[2], { dir = "plotroom-x", branch = "x", fresh = true, base = "main" }, nil, function(result, problem, cx)
 			refused.calls += 1
 			refused.result, refused.problem, refused.cx = result, problem, cx
 		end)
@@ -4470,10 +4452,29 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[3].prompt, "Fix the flaky test in https://github.com/o/r/pull/5", "typed text gets {url} replaced too")
-	w.window.choose, w.window.typed = "Type a prompt…", "{owner}/{repo}#{number} {title} by {author}: {branch} into {base}, {nope}"
+	w.window.choose, w.window.typed = "Type a prompt…", "{owner}/{repo}#{number} {title} by {author}: {branch} into {base} of {remote}, {nope}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main, {nope}", "every variable is filled from a fresh read of the PR; an unknown one stays")
+	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
+end)
+
+windowCase("window: with no prompts saved, a pull request offers Review, Address feedback and Watch, each run in its worktree with every variable it names filled in", function(w: World)
+	local s = agentScene(w)
+	for i, name in { "Review", "Address feedback", "Watch" } do
+		w.window.choose = name
+		w.click(prLink("agent", "o/r", 5))
+		w.flush()
+		local agent = w.window.agents[i]
+		eq(agent.cwd, s.target, name .. " runs in the PR's worktree")
+		has(agent.prompt, "Branches: head `feature` → base `main` (base remote `origin`)", name .. " names the branches and the checkout's remote")
+		lacks(agent.prompt, "{", name .. " has every variable it names filled in")
+	end
+	local labels: { string } = {}
+	for _, item in promptPicks(w)[1].items do
+		table.insert(labels, item.label)
+	end
+	same(labels, { "Type a prompt…", "Review", "Address feedback", "Watch" }, "typing, then the defaults")
+	eq(w.kv.get("prompts-prs"), nil, "running them saves nothing")
 end)
 
 windowCase("window: Recent lists only prompts that are still saved, and with none saved the picker says where to write them", function(w: World)
@@ -4498,14 +4499,14 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 		table.insert(groups, item.group or "")
 	end
 	same(labels, { "Triage", "Type a prompt…", "Triage" }, "a prompt deleted since is no longer a recent row")
-	same(groups, { "Recent", "", "All prompts" }, "the recent one leads, then typing, then the saved prompts")
+	same(groups, { "Recent", "", "All actions" }, "the recent one leads, then typing, then the saved prompts")
 	savePrompts(w, {})
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	local none = promptPicks(w)[4].items
 	eq(#none, 1, "with nothing saved only typing is offered")
 	eq(none[1].label, "Type a prompt…", "typing")
-	eq(none[1].detail, "Save prompts in Settings › Prompts", "which says where to write prompts")
+	eq(none[1].detail, "Save actions in Settings › Actions", "which says where to write prompts")
 end)
 
 windowCase("window: saved prompts the host cannot read are reported, and a prompt can still be typed", function(w: World)
@@ -4515,7 +4516,7 @@ windowCase("window: saved prompts the host cannot read are reported, and a promp
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.toasts[1].level, "error", "the user is told")
-	eq(w.toasts[1].text, "Saved prompts are not listed", "what is missing")
+	eq(w.toasts[1].text, "Saved actions are not listed", "what is missing")
 	has(w.toasts[1].sub, "malformed", "and why")
 	eq(#promptPicks(w)[1].items, 1, "the picker still opens")
 	eq(w.window.agents[1].prompt, "Look at https://github.com/o/r/pull/5", "to type a prompt")
@@ -4660,7 +4661,7 @@ windowCase("window: a prompt no longer offered once the card was drawn gives a t
 		w.flush()
 		eq(#w.toasts, said + 1, what .. ": the user is told once")
 		eq(w.toasts[#w.toasts].level, "error", what .. ": as an error")
-		eq(w.toasts[#w.toasts].text, "That prompt is no longer offered here", what .. ": what is wrong")
+		eq(w.toasts[#w.toasts].text, "That action is no longer offered here", what .. ": what is wrong")
 		eq(#w.window.agents, 0, what .. ": no agent")
 		eq(cardOf(b), nil, what .. ": and no worktree was prepared")
 	end
@@ -7040,7 +7041,7 @@ case("host: Settings › Keys moves an action to another key: the new key works 
 			page = p
 		end
 	end
-	same(page, { id = "keys", label = "Keys", group = "Queue", icon = "keyboard" }, "Keys is a page of the Queue group")
+	same(page, { id = "keys", label = "Keyboard shortcuts", group = "Queue", icon = "keyboard" }, "Keyboard shortcuts is a page of the Queue group")
 	local ids: { string } = {}
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
@@ -7333,6 +7334,7 @@ case("host: setup commands are added, edited and removed per repository; unreada
 	w.kv.put("setup-commands", { ["x/y"] = array({ "make" }) })
 	local b = openQueue(w)
 	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
 	local function save(row: string, text: string)
 		b.event({ ev = "select", id = "layer.settings", item = row })
 		b.press("enter")
@@ -7617,11 +7619,12 @@ end
 
 case("host: Add prompt asks for a name, then opens the text in a multi-line editor where Enter breaks lines and ⌘Enter saves it trimmed", function(w: World)
 	hostScene(w, 3)
+	savePrompts(w, {})
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
 	eq(prefsOf(b).focus, "padd:prs", "with nothing saved the Add row is the first")
 	b.press("enter")
-	same(w.kv.get("prompts-prs"), { version = 1, nextId = 2, items = array({ promptOf("p1", "New prompt", "") }) }, "Add saves a prompt with no text at once, offered under every view")
+	same(w.kv.get("prompts-prs"), { version = 1, nextId = 2, items = array({ promptOf("p1", "New action", "") }) }, "Add saves a prompt with no text at once, offered under every view")
 	eq(prefsOf(b).editing.row, "pname:prs:p1", "and starts naming it")
 	eq(prefsOf(b).editing.draft, "", "from an empty draft")
 	eq(editorCard(b), nil, "the text editor waits for the name")
@@ -7629,7 +7632,7 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	b.press("enter")
 	eq(rowIn(b, "pname:prs:p1").warning, "A name is required.", "an empty name is refused under its row")
 	eq(prefsOf(b).editing.row, "pname:prs:p1", "and the name edit stays open")
-	eq(w.kv.get("prompts-prs").items[1].name, "New prompt", "with nothing saved")
+	eq(w.kv.get("prompts-prs").items[1].name, "New action", "with nothing saved")
 	b.typeText("Review")
 	b.press("enter")
 	eq(w.kv.get("prompts-prs").items[1].name, "Review", "Enter saves the name")
@@ -7672,13 +7675,14 @@ end)
 
 case("host: naming a new prompt with the placeholder name itself still opens its text editor", function(w: World)
 	hostScene(w, 3)
+	savePrompts(w, {})
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
 	b.press("enter")
-	b.typeText("New prompt")
+	b.typeText("New action")
 	b.press("enter")
 	eq(prefsOf(b).editing, nil, "the name edit is over")
-	eq(w.kv.get("prompts-prs").items[1].name, "New prompt", "the name stays what it was")
+	eq(w.kv.get("prompts-prs").items[1].name, "New action", "the name stays what it was")
 	yes(editorCard(b) ~= nil, "and the prompt, still with no text, opens its text editor")
 	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret in its field")
 end)
@@ -7799,7 +7803,7 @@ case("host: Delete on a prompt asks the window to confirm, naming it: confirming
 	b.event({ ev = "select", id = "layer.settings", item = "pdelete:prs:p1" })
 	b.press("enter")
 	local ask = pendingOf(b)
-	same({ ask.row, ask.head, ask.label }, { "pdelete:prs:p1", "Delete prompt “Review”?", "Delete prompt" }, "Delete asks the window to confirm, naming the prompt")
+	same({ ask.row, ask.head, ask.label }, { "pdelete:prs:p1", "Delete action “Review”?", "Delete action" }, "Delete asks the window to confirm, naming the prompt")
 	eq(w.opened[#w.opened], "plotroom://confirm", "through the window's link")
 	b.event({ ev = "action", id = "layer.settings", act = "cancel-delete", value = "pdelete:prs:p1" })
 	eq(#w.kv.get("prompts-prs").items, 2, "cancelling keeps it")
@@ -7813,7 +7817,7 @@ case("host: Delete on a prompt asks the window to confirm, naming it: confirming
 	eq(items[1].id, "p2", "the other prompt stays")
 	eq(prefsOf(b).focus, "padd:prs", "and the Add row takes the focus")
 	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:prs:p2" })
-	eq(pendingOf(b).head, "Delete prompt “Triage”?", "the Delete button asks the same question")
+	eq(pendingOf(b).head, "Delete action “Triage”?", "the Delete button asks the same question")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p2" })
 	eq(#w.kv.get("prompts-prs").items, 0, "and confirming it deletes that prompt")
 end)
@@ -7951,9 +7955,9 @@ case("host: view prompts limit the menu", function(w: World)
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v2", "the second view is active")
 	same(menu().items, {
-		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All prompts", send = "Review {url}", worktree = true },
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All prompts", send = "Look at {url}\nTwice", worktree = true },
-	}, "a view that lists none offers every prompt with text, as All prompts")
+		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All actions", send = "Review {url}", worktree = true },
+		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All actions", send = "Look at {url}\nTwice", worktree = true },
+	}, "a view that lists none offers every prompt with text, as All actions")
 end)
 
 case("host: the menu asked for one prompt answers just that one, if it is offered, however many are saved", function(w: World)
@@ -7981,7 +7985,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 	eq(#only("p9"), 0, "none that is not saved")
 end)
 
-case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and one button per offered prompt by Open; each opens the link the card keeps unseen", function(w: World)
+case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and Agent by Open, with no button per prompt; each opens the link the card keeps unseen, beside each offered prompt's", function(w: World)
 	local s = hostScene(w, 3)
 	savePrompts(w, {
 		promptOf("p1", "Mine", "Review {url}", "m"),
@@ -8015,36 +8019,42 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 		local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
 		return if node then node.p.href else nil
 	end
-	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "under My PRs the prompts it lists; none for a prompt it does not list, a blank one or one whose id is no link; Open last")
+	same(bar(), { "settings", "retry", "worktree", "agent", "open" }, "one Agent button, none per saved prompt; Open last")
 	eq(action("open").primary, true, "Open is the primary button")
 	eq(action("open").keys, nil, "with no keycap")
 	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
 	eq(action("retry")["end"], nil, "both of them")
 	eq(action("worktree")["end"], true, "the PR's buttons sit on the right, by Open")
-	eq(action("prompt-p1")["end"], true, "prompts too")
-	eq(action("prompt-p1").label, "Mine", "a button is named for its prompt")
-	same(action("prompt-p1").keys, { "m" }, "and shows its shortcut")
-	eq(action("prompt-p2").keys, nil, "a prompt with no shortcut shows none")
+	eq(action("agent")["end"], true, "Agent too")
+	eq(action("agent").label, "Agent", "named Agent")
+	same(action("agent").keys, { "a" }, "with the Agent picker's key")
 	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "the links sit in an unseen node")
-	eq(link("prompt-p1"), "plotroom://github/run/o/r/1/p1", "each button's link runs its prompt on the selected pull request")
-	eq(link("agent"), "plotroom://github/agent/o/r/1", "with the Agent link for the a key and the palette command")
-	b.event({ ev = "action", id = "layer.queue", act = "prompt-p1" })
-	eq(w.opened[#w.opened], "plotroom://github/run/o/r/1/p1", "a click opens the button's link")
+	eq(link("agent"), "plotroom://github/agent/o/r/1", "Agent's link opens the picker on the selected pull request")
+	eq(link("prompt-p1"), "plotroom://github/run/o/r/1/p1", "each offered prompt's link runs it, for its shortcut")
+	eq(link("prompt-p2"), "plotroom://github/run/o/r/1/p2", "one with no shortcut too")
+	eq(link("prompt-p3"), nil, "none for a prompt the view does not list")
+	eq(link("prompt-p4"), nil, "or a blank one")
+	eq(link("prompt-p-5"), nil, "or one whose id is no link")
+	b.event({ ev = "action", id = "layer.queue", act = "agent" })
+	eq(w.opened[#w.opened], "plotroom://github/agent/o/r/1", "a click opens the button's link")
 	b.event({ ev = "action", id = "layer.queue", act = "worktree" })
 	eq(w.opened[#w.opened], "plotroom://github/worktree/o/r/1", "Worktree's too")
 	leaveWt(w, s, 1)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
 	refreshNow(w, b)
-	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the pull request's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "worktree", "goto", "agent", "open" }, "a tab in the pull request's worktree adds Go to tab before Agent")
 	eq(link("goto"), "plotroom://github/goto/o/r/1", "with its link")
 	table.remove(w.panes)
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(bar(), { "settings", "retry", "worktree", "prompt-p3", "open" }, "under Review requested the prompt buttons swap")
-	savePrompts(w, { promptOf("p4", "Blank", "", "b") })
-	b.render()
-	same(bar(), { "settings", "retry", "worktree", "open" }, "with none offered the bar has no prompt button")
+	same(bar(), { "settings", "retry", "worktree", "agent", "open" }, "under Review requested the bar stays the same")
+	eq(link("prompt-p3"), "plotroom://github/run/o/r/1/p3", "and the prompt links swap")
+	eq(link("prompt-p1"), nil, "for the ones it lists")
+	b.press("m")
+	eq(w.opened[#w.opened] == "plotroom://github/run/o/r/1/p1", false, "a prompt the view does not list has no key")
+	b.press("x")
+	eq(w.opened[#w.opened], "plotroom://github/run/o/r/1/p3", "one it lists runs on its key, through its link")
 end)
 
 case("host: opening in a linked worktree saves its main checkout, not the worktree", function(w: World)
@@ -8168,7 +8178,7 @@ case("host: a prompt's shortcut is one free key: the row refuses what the queue 
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "popen:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pkey:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "pdelete:prs:p1" }, "an open prompt has Done, its name, text, shortcut, model, where it runs and opens, and Delete, in that order")
+	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pkey:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1" }, "an open prompt has Done and Delete, then its name, text, shortcut, model, where it runs and opens, in that order")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Shortcut", "the row is the Shortcut")
 	eq(row.control.value, "", "empty while the prompt has none")
@@ -8233,8 +8243,8 @@ case("host: a Keys row refuses a key another action or a saved prompt of either 
 	eq(prefsOf(b).editing.row, "key:worktree", "and the capture stays open for another key")
 	eq(bindKey(b, "worktree", " "), "One key: a single letter, digit or symbol.", "a space is no key")
 	eq(prefsOf(b).editing.row, "key:worktree", "and the capture is still open")
-	eq(bindKey(b, "worktree", "m"), "Already the shortcut of the pull request prompt “Review”.", "a pull request prompt's key is refused, naming the prompt")
-	eq(bindKey(b, "worktree", "i"), "Already the shortcut of the issue prompt “Triage”.", "and an issue prompt's")
+	eq(bindKey(b, "worktree", "m"), "Already the shortcut of the pull request action “Review”.", "a pull request prompt's key is refused, naming the prompt")
+	eq(bindKey(b, "worktree", "i"), "Already the shortcut of the issue action “Triage”.", "and an issue prompt's")
 	eq(w.kv.store["keys"], nil, "nothing was saved")
 	eq(bindKey(b, "worktree", "x"), nil, "a free key is saved at once, with no Enter")
 	eq(prefsOf(b).editing, nil, "and closes the capture")
@@ -8396,7 +8406,7 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	local function promptRows(): { { keys: string, text: string } }
 		local out: { { keys: string, text: string } } = {}
 		for _, row in helpRows(b.view().layer) do
-			if string.find(row.text, "Run the prompt", 1, true) then
+			if string.find(row.text, "Run the action", 1, true) then
 				table.insert(out, row)
 			end
 		end
@@ -8404,8 +8414,8 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	end
 	b.typeText("?")
 	same(promptRows(), {
-		{ keys = "m", text = "Run the prompt “Mine” on the selected pull request" },
-		{ keys = "T", text = "Run the prompt “Anywhere” on the selected pull request" },
+		{ keys = "m", text = "Run the action “Mine” on the selected pull request" },
+		{ keys = "T", text = "Run the action “Anywhere” on the selected pull request" },
 	}, "each prompt offered under My PRs that has a key, in the menu's order; none without a key, with no text or for another view")
 	b.press("escape")
 	b.press("tab")
@@ -8413,8 +8423,8 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	w.flush()
 	b.typeText("?")
 	same(promptRows(), {
-		{ keys = "x", text = "Run the prompt “Theirs” on the selected pull request" },
-		{ keys = "T", text = "Run the prompt “Anywhere” on the selected pull request" },
+		{ keys = "x", text = "Run the action “Theirs” on the selected pull request" },
+		{ keys = "T", text = "Run the action “Anywhere” on the selected pull request" },
 	}, "under Review requested the rows follow")
 	b.press("escape")
 	b.typeText("s")
@@ -8429,6 +8439,7 @@ case("host: a checkout of another repository is refused with its draft kept; a r
 	local b = openQueue(w)
 	w.kv.put("checkouts", { ["o/r"] = "" })
 	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
 	eq(prefsOf(b).focus, "checkout:o/r", "the checkout row is focused")
 	b.press("enter")
@@ -8475,6 +8486,7 @@ case("host: a folder that does not exist is cloned into with gh, saved once git 
 	local b = openQueue(w)
 	w.kv.put("checkouts", { ["o/r"] = "" })
 	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
 	b.press("enter")
 	eq(prefsOf(b).editing.row, "checkout:o/r", "the checkout row is ready for a path")
@@ -8503,6 +8515,7 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 		return nil
 	end
 	local function submit()
+		expand(b, "ropen:o/r")
 		b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
 		b.press("enter")
 		b.typeText("/elsewhere")
@@ -9191,6 +9204,31 @@ case("host: selecting and activating rows follows the picker, and a row that is 
 	eq(pickerOf(b).selected, "no_2fr_233", "and so is an event for another surface")
 end)
 
+case("host: with Settings open the queue beside it takes clicks, a field being typed is saved first, and keys stay Settings'", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	expand(b, "vopen:prs:v1")
+	b.event({ ev = "select", id = "layer.settings", item = "name:prs:v1" })
+	b.press("enter")
+	for _ = 1, 40 do
+		b.press("backspace")
+	end
+	b.typeText("Mine")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
+	eq(pickerOf(b).selected, "no_2fr_232", "a row click moves the selection")
+	eq(w.kv.get("views-prs").items[1].name, "Mine", "after saving the name being typed")
+	eq(prefsOf(b).editing, nil, "which closes its edit")
+	eq(prefsOf(b).page, "views", "Settings stays open")
+	b.press("down")
+	eq(pickerOf(b).selected, "no_2fr_232", "keys still go to Settings")
+	pickScope(b, "prs:v2")
+	eq(pickerOf(b).scope, "prs:v2", "a sidebar view click switches the view")
+	yes(prefsOf(b) ~= nil, "beside Settings")
+	b.event({ ev = "action", id = "layer.queue", act = "settings" })
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "the Settings button closes the sheet")
+end)
+
 case("host: a worktree request becomes a badge and a card with its status, place and update commands, and removes nothing", function(w: World)
 	local s = hostScene(w, 2)
 	for n = 1, 2 do
@@ -9777,6 +9815,7 @@ case("host: a checkout typed in Settings is read once git confirms it: the workt
 	eq(cardOf(b), nil, "with no checkout there is no worktree to show")
 	w.kv.put("checkouts", { ["o/r"] = "" })
 	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
 	b.press("enter")
 	b.typeText("/work/r")
@@ -9836,7 +9875,7 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	request(b, "m1", { op = "menu" })
 	w.flush()
-	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All prompts", send = "Review {url}\nthen report", worktree = true } }, "a well-formed request is answered with the saved prompts")
+	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", send = "Review {url}\nthen report", worktree = true } }, "a well-formed request is answered with the saved prompts")
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
@@ -10097,7 +10136,7 @@ case("host: a first run seeds the filters of both kinds, and an issue filter lis
 		end
 	end
 	eq(byKeys.w, "Create or reuse the selected issue's worktree and open it in a new tab: on its linked pull request's branch (Plotroom asks which when several have one), else on a new branch from the base you pick (Plotroom asks for the repository, and its checkout, the first time)", "w makes the issue's worktree, on a linked pull request's branch or a new one")
-	eq(byKeys.a, "Pick a saved prompt, or type one, and run it on the selected issue (typed prompts run in its worktree)", "a runs a prompt on the issue")
+	eq(byKeys.a, "Pick a saved action, or type a prompt, and run it on the selected issue (typed prompts run in its worktree)", "a runs a prompt on the issue")
 	b.press("escape")
 	-- the second filter searches its own query
 	b.press("tab")
@@ -10114,7 +10153,7 @@ case("host: the Keys page refuses a pull request prompt's shortcut while an issu
 	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ promptOf("p1", "Review", "Review {url}", "m") }) })
 	local b = openIssues(w)
 	goToSettings(b, "keys")
-	eq(bindKey(b, "agent", "m"), "Already the shortcut of the pull request prompt “Review”.", "a pull request prompt's key is refused on an issue filter too")
+	eq(bindKey(b, "agent", "m"), "Already the shortcut of the pull request action “Review”.", "a pull request prompt's key is refused on an issue filter too")
 	b.press("escape")
 	eq(bindKey(b, "worktree", "W"), nil, "a free key is accepted")
 	b.press("escape")
@@ -10664,11 +10703,23 @@ case("host: the branch format rejects unknown variables and saves per repository
 	w.kv.put("branch-formats", { ["x/y"] = "keep/{key}" })
 	local b = openIssues(w)
 	goToSettings(b, "repos")
-	local sections: { string } = {}
-	for _, section in prefsOf(b).sections do
-		table.insert(sections, section.id)
+	local function rows(): { string }
+		local out: { string } = {}
+		for _, section in prefsOf(b).sections do
+			for _, r in section.rows do
+				table.insert(out, r.id)
+			end
+		end
+		return out
 	end
-	same(sections, { "repo:o/r", "repo:x/y", "add:repo" }, "each repository has its own section, then the Add button's: the launch one was added")
+	same(rows(), { "ropen:o/r", "ropen:x/y", "radd" }, "each repository is a summary row, then the Add button: the launch one was added")
+	eq(rowIn(b, "ropen:x/y").hint, "/work/y · keep/{key}", "a summary shows the checkout and the repository's own branch format")
+	eq(rowIn(b, "ropen:x/y").control.label, "Edit", "and opens with Edit")
+	eq(rowIn(b, "branch:o/r"), nil, "the fields stay folded")
+	expand(b, "ropen:o/r")
+	eq(prefsOf(b).focus, "checkout:o/r", "Edit opens the form on its checkout")
+	same(rows(), { "ropen:o/r", "rremove:o/r", "checkout:o/r", "branch:o/r", "setup:o/r:new", "ropen:x/y", "radd" }, "one form is open, its Remove right after its Done")
+	eq(rowIn(b, "ropen:o/r").control.label, "Done", "Edit turned Done")
 	local row = rowIn(b, "branch:o/r")
 	eq(row.label, "Issue branch name", "label")
 	eq(row.hint, nil, "no description")
@@ -10740,14 +10791,14 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 		return answerOf(b, "m" .. asked).items
 	end
 	same(menu(), {
-		{ id = "p1", label = "Triage", detail = "Triage {url}", group = "All prompts", send = "Triage {url}", worktree = true },
-		{ id = "p2", label = "Notes", detail = "Summarise {title}", group = "All prompts", send = "Summarise {title}", worktree = false },
-		{ id = "p3", label = "Old", detail = "Old {url}", group = "All prompts", send = "Old {url}", worktree = true },
+		{ id = "p1", label = "Triage", detail = "Triage {url}", group = "All actions", send = "Triage {url}", worktree = true },
+		{ id = "p2", label = "Notes", detail = "Summarise {title}", group = "All actions", send = "Summarise {title}", worktree = false },
+		{ id = "p3", label = "Old", detail = "Old {url}", group = "All actions", send = "Old {url}", worktree = true },
 	}, "an issue filter offers the issue prompts, each saying where it runs; one saved without the field runs in a worktree")
 	pickScope(b, "prs:v1")
 	w.flush()
 	same(menu(), {
-		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All prompts", send = "Review {url}", worktree = true },
+		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All actions", send = "Review {url}", worktree = true },
 	}, "a pull request filter offers the pull request prompts, saying where each runs too: both stores have a p1")
 	pickScope(b, "issues:v1")
 	w.flush()
@@ -10763,7 +10814,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			table.insert(listed, r.id)
 		end
 	end
-	same(listed, { "popen:prs:p1", "padd:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "each kind's prompts are summary rows with the kind's Add row last")
+	same(listed, { "popen:prs:p1", "padd:prs", "prestore:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues", "prestore:issues" }, "each kind's prompts are summary rows with the kind's Add row, then Restore defaults (none of these is named like a default), last")
 	expand(b, "popen:issues:p1")
 	local ids: { string } = {}
 	for _, section in prefsOf(b).sections do
@@ -10773,8 +10824,8 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			end
 		end
 	end
-	same(ids, { "popen:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pkey:issues:p1", "pmodel:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "pdelete:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done, then Runs in and Opens in after the model")
-	eq(sectionIn(b, "popen:issues:p1").title, "Issue prompts", "keeping the kind's title")
+	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pkey:issues:p1", "pmodel:issues:p1", "pwhere:issues:p1", "psplit:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Runs in and Opens in after the model")
+	eq(sectionIn(b, "popen:issues:p1").title, "Issue actions", "keeping the kind's title")
 	local where = rowIn(b, "pwhere:issues:p1")
 	eq(where.label, "Runs in", "label")
 	eq(where.control.k, "choice", "a choice")
@@ -10823,7 +10874,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	b.typeText("?")
 	local keyed = false
 	for _, row in helpRows(b.view().layer) do
-		keyed = keyed or row.text == "Run the prompt “Triage” on the selected issue"
+		keyed = keyed or row.text == "Run the action “Triage” on the selected issue"
 	end
 	yes(keyed, "a prompt's shortcut is listed for the selected issue")
 	b.press("escape")
@@ -10832,7 +10883,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	eq(menu()[1].split, true, "the pull request filter's menu says the prompt opens beside the queue")
 end)
 
-case("host: the issue's buttons, keys and links: Worktree, Go to tab and one button per prompt, each opening the link the card keeps unseen", function(w: World)
+case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
 	leaveIssueWt(w, issueHost(w), 12)
 	saveIssuePrompts(w, {
 		issuePrompt("p1", "Triage", "Triage {url}", true, "t"),
@@ -10847,17 +10898,18 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and one but
 		end
 		return out
 	end
-	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "Worktree, a button per prompt that has text, and Open last")
+	same(bar(), { "settings", "retry", "worktree", "agent", "open" }, "Worktree, Agent, no button per prompt, and Open last")
 	eq(buttonLink(b, "open"), "plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12", "Open's link carries the issue's page, percent-encoded")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "Worktree's")
 	eq(buttonLink(b, "agent"), issueLink("agent", "o/r", "12"), "the Agent link for the a key and the palette command")
-	eq(buttonLink(b, "prompt-p1"), issueRunLink("o/r", "12", "p1"), "each prompt's button runs it on the selected issue")
+	eq(buttonLink(b, "prompt-p1"), issueRunLink("o/r", "12", "p1"), "each prompt's unseen link runs it on the selected issue")
+	eq(buttonLink(b, "prompt-p3"), nil, "none for a prompt with no text")
 	eq(buttonLink(b, "goto"), nil, "no tab works in its worktree: no Go to tab")
 	eq(b.press("g", nil, "g"), false, "and g does nothing")
 	b.event({ ev = "action", id = "layer.queue", act = "worktree" })
 	eq(w.opened[#w.opened], issueLink("worktree", "o/r", "12"), "a click opens the button's link")
-	b.event({ ev = "action", id = "layer.queue", act = "prompt-p2" })
-	eq(w.opened[#w.opened], issueRunLink("o/r", "12", "p2"), "a prompt button's too")
+	b.event({ ev = "action", id = "layer.queue", act = "agent" })
+	eq(w.opened[#w.opened], issueLink("agent", "o/r", "12"), "Agent's too")
 	b.typeText("w")
 	eq(w.opened[#w.opened], issueLink("worktree", "o/r", "12"), "w opens the Worktree link")
 	b.typeText("a")
@@ -10871,14 +10923,14 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and one but
 	b.typeText("k")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12/src" })
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "goto", "prompt-p1", "prompt-p2", "open" }, "a tab in the issue's worktree adds Go to tab before the prompts")
+	same(bar(), { "settings", "retry", "worktree", "goto", "agent", "open" }, "a tab in the issue's worktree adds Go to tab before Agent")
 	eq(buttonLink(b, "goto"), issueLink("goto", "o/r", "12"), "with its link")
 	b.typeText("g")
 	eq(w.opened[#w.opened], issueLink("goto", "o/r", "12"), "g opens it")
 	table.remove(w.panes)
 	forgetCheckouts(w)
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "prompt-p1", "prompt-p2", "open" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
+	same(bar(), { "settings", "retry", "worktree", "agent", "open" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
 	lacks(b.text(), "No local checkout", "and the heading says nothing of it")
 	local opened = #w.opened
 	b.typeText("w")
@@ -11642,12 +11694,16 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	for _, item in findKey(editorCard(b), "list", "kv").p.items do
 		table.insert(legend, item.k[1].t)
 	end
-	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}" }, "the variables of both trackers are listed, with the two users")
+	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}" }, "the variables of both trackers are listed, with the worktree's and the two users")
 	b.press("escape")
 	page("jira")
+	eq(rowIn(b, "jopen:ABC").hint, "o/r", "the project's summary names its repositories")
+	expand(b, "jopen:ABC")
+	eq(prefsOf(b).focus, "jrepos:ABC", "and Edit opens them")
 	eq(rowIn(b, "jrepos:ABC").control.values[1], "o/r", "the project's repository")
 	same(rowIn(b, "jrepos:ABC").control.options, { { value = "o/r", label = "o/r" } }, "chosen among the saved repositories")
 	page("repos")
+	expand(b, "ropen:o/r")
 	save("branch:o/r", "{project}/{key}")
 	eq(w.kv.get("branch-formats")["o/r"], "{project}/{key}", "a good format is saved under the repository")
 	has(b.text(), "ABC/ABC-12", "and the preview's branch follows")
@@ -11665,6 +11721,7 @@ case("host: removing a repository drops it from jira-repos, branch-formats and s
 	w.kv.put("jira-repos", { ABC = array({ "o/r", "x/y" }), DEF = array({ "x/y" }) })
 	local b = openIssues(w)
 	goToSettings(b, "repos")
+	expand(b, "ropen:x/y")
 	b.event({ ev = "select", id = "layer.settings", item = "rremove:x/y" })
 	b.press("enter")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "rremove:x/y" })
@@ -11673,7 +11730,8 @@ case("host: removing a repository drops it from jira-repos, branch-formats and s
 	same(w.kv.get("branch-formats"), { ["o/r"] = "{key}" }, "so is its branch format")
 	same(w.kv.get("setup-commands"), { ["o/r"] = { "pnpm install" } }, "and its setup commands")
 	same(w.kv.get("jira-repos"), { ABC = { "o/r" }, DEF = array({}) }, "every Jira project drops it; one left with none stays listed")
-	eq(rowIn(b, "checkout:x/y"), nil, "its section is gone from the page")
+	eq(rowIn(b, "ropen:x/y"), nil, "it is gone from the page")
+	eq(prefsOf(b).focus, "radd", "and the Add button takes the focus")
 end)
 
 case("host: a Jira issue request makes its worktree in the project's mapped GitHub repository", function(w: World)
@@ -11703,7 +11761,9 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 		["github.user"] = "octocat",
 		["jira.user"] = "ann",
 		branch = "octocat/ABC-12-fix-login",
-	}, "the issue's Jira variables, with both users and the branch")
+		base = "main",
+		remote = "origin",
+	}, "the issue's Jira variables, with both users and the worktree's branch, base and remote")
 	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main:refs/remotes/origin/main"), 1, "the base was fetched into its remote-tracking ref")
 	eq(countLog(s.git, "worktree add -b octocat/ABC-12-fix-login " .. target .. " " .. sha("b")), 1, "and the worktree made once")
 	eq(w.opened[#w.opened], "plotroom://rpc/j1", "the window is told to read the answer")
@@ -12103,12 +12163,12 @@ end)
 windowCase("window: the Agent picker on an issue runs typed text in its worktree and a saved prompt where it says, every {variable} filled in", function(w: World)
 	local s, b = issueWindow(w)
 	saveIssuePrompts(w, {
-		issuePrompt("p1", "Here", "In {branch}: {title}", true),
+		issuePrompt("p1", "Here", "In {branch} ({base}): {title}", true),
 		issuePrompt("p2", "There", "In the checkout, branch {branch}, labels {labels}", false),
 	})
 	b.render()
 	cardSurface(w, b)
-	w.window.choose, w.window.typed = { "Type a prompt…", "main" }, "Fix {title} ({key}) on {branch}; {nope}"
+	w.window.choose, w.window.typed = { "Type a prompt…", "main" }, "Fix {title} ({key}) on {branch} from {base} of {remote}; {nope}"
 	w.click(issueLink("agent", "o/r", "12"))
 	w.flush()
 	local rows = promptPicks(w)[1].items
@@ -12117,7 +12177,7 @@ windowCase("window: the Agent picker on an issue runs typed text in its worktree
 	eq(rows[3].worktree, false, "and one that runs in the checkout")
 	eq(#w.window.agents, 1, "the typed prompt started an agent")
 	eq(w.window.agents[1].cwd, "/wt/plotroom-o_r-issue-12", "in the issue's worktree")
-	eq(w.window.agents[1].prompt, "Fix Fix login (12) on octocat/12-fix-login; {nope}", "with the issue's variables and the worktree's branch filled in; an unknown one stays")
+	eq(w.window.agents[1].prompt, "Fix Fix login (12) on octocat/12-fix-login from main of origin; {nope}", "with the issue's variables and the new worktree's branch, base and remote filled in; an unknown one stays")
 	eq(countLog(s.git, "worktree add -b octocat/12-fix-login /wt/plotroom-o_r-issue-12 " .. sha("b")), 1, "the worktree was made for it")
 	w.window.choose = "There"
 	w.click(issueLink("agent", "o/r", "12"))
@@ -12130,8 +12190,33 @@ windowCase("window: the Agent picker on an issue runs typed text in its worktree
 	w.flush()
 	eq(#w.window.agents, 3, "and another")
 	eq(w.window.agents[3].cwd, "/wt/plotroom-o_r-issue-12", "in the worktree, as that prompt says")
-	eq(w.window.agents[3].prompt, "In octocat/12-fix-login: Fix login", "with its branch")
+	eq(w.window.agents[3].prompt, "In octocat/12-fix-login (): Fix login", "with its branch, and no base: the branch was reused")
 	eq(countLog(s.git, "worktree add"), 1, "the worktree is made once")
+end)
+
+windowCase("window: with no prompts saved, an issue offers Implement and Fix in its worktree and Plan in the main checkout, every variable they name filled in", function(w: World)
+	local _, b = issueWindow(w)
+	b.render()
+	cardSurface(w, b)
+	w.window.choose = { "Implement", "main" }
+	w.click(issueLink("agent", "o/r", "12"))
+	w.flush()
+	local rows = promptPicks(w)[1].items
+	same({ rows[2].label, rows[3].label, rows[4].label }, { "Implement", "Fix", "Plan" }, "after typing, the defaults")
+	same({ rows[2].worktree, rows[3].worktree, rows[4].worktree }, { true, true, false }, "Plan alone runs in the main checkout")
+	for i, name in { "Implement", "Fix", "Plan" } do
+		if i > 1 then
+			w.window.choose = name
+			w.click(issueLink("agent", "o/r", "12"))
+			w.flush()
+		end
+		local agent = w.window.agents[i]
+		eq(agent.cwd, if name == "Plan" then "/work/r" else "/wt/plotroom-o_r-issue-12", name .. " runs where it says")
+		lacks(agent.prompt, "{", name .. " has every variable it names filled in")
+	end
+	has(w.window.agents[1].prompt, "Branch: `octocat/12-fix-login` from base `main` (remote `origin`)", "a new worktree's branch, base and remote")
+	has(w.window.agents[2].prompt, "from base `` (remote `origin`)", "a reused one has no base to tell")
+	eq(w.kv.get("prompts-issues"), nil, "running them saves nothing")
 end)
 
 windowCase("window: Open on an issue docks a Browser at its URL", function(w: World)
@@ -12306,6 +12391,7 @@ case("host: a request is about what it names, not about the filter on screen: a 
 	w.flush()
 	eq(hx.ask(w, b, "j1", { op = "jira-projects" }).items[1].key, "ABC", "Jira's projects are listed while a pull request filter is shown")
 	goToSettings(b, "jira")
+	expand(b, "jopen:ABC")
 	eq(rowIn(b, "jrepos:ABC").control.values[1], "o/r", "Settings has the Jira page under a pull request filter too, with the project's repository")
 	b.press("escape")
 	hx.ask(w, b, "j2", { op = "map-jira", project = "ABC", repo = "x/y" })
@@ -12360,10 +12446,10 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:" }, "Views has Jira's group alone")
 	b.press("escape")
 	goToSettings(b, "prompts")
-	same(hx.rows(b), { "padd:issues" }, "Prompts has the issue prompts alone: the pull request one stays saved, unlisted")
+	same(hx.rows(b), { "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "Prompts has the issue prompts alone, the defaults here: the pull request one stays saved, unlisted")
 	b.press("escape")
 	goToSettings(b, "worktrees")
-	same(hx.rows(b), { "wtroot", "fmt:branch", "fmt:issuedir" }, "no pull request folder name")
+	same(hx.rows(b), { "fmt:branch", "fmt:issuedir" }, "no pull request folder name")
 	b.press("escape")
 	goToSettings(b, "setup-github")
 	same(hx.pages(b), { "views", "prompts", "keys", "worktrees", "repos", "jira", "connection", "setup-github" }, "GitHub's setup page is offered")
@@ -12394,6 +12480,48 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	}, "the GitHub views are listed again")
 	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")
 	eq(#requestsOf(s.gh, "search"), 0, "and nothing searches GitHub until one is picked")
+end)
+
+case("host: with no prompts saved, Settings lists each kind's default prompts, and the first change saves them with it", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "padd:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "both kinds list their defaults")
+	eq(w.kv.get("prompts-prs"), nil, "showing them saves nothing")
+	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
+	local saved = w.kv.get("prompts-prs")
+	local names: { string } = {}
+	for _, p in saved.items do
+		table.insert(names, p.name)
+	end
+	same(names, { "Review", "Address feedback", "Watch", "New action" }, "Add saves the defaults, then the new prompt")
+	eq(saved.nextId, 5, "whose id follows theirs")
+	has(saved.items[1].text, "Review PR #{number} of {owner}/{repo}", "a default is saved with its text")
+	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
+end)
+
+case("host: Restore defaults saves back the default actions no saved one is named like, and a kind with none keeps its title on its buttons", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "My own review"), promptOf("p2", "Mine", "Look at {url}") })
+	saveIssuePrompts(w, {})
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "padd:prs", "prestore:prs", "padd:issues", "prestore:issues" }, "each kind can restore what it lacks")
+	eq(sectionIn(b, "padd:issues").title, "Issue actions", "a kind with none saved titles its buttons, so they say whose they are")
+	eq(sectionIn(b, "padd:prs").title, nil, "a kind with a list has them under it")
+	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:prs" })
+	local saved = w.kv.get("prompts-prs")
+	local names: { string } = {}
+	for _, p in saved.items do
+		table.insert(names, p.name)
+	end
+	same(names, { "Review", "Mine", "Address feedback", "Watch" }, "the missing defaults are added after the saved ones")
+	eq(saved.items[1].text, "My own review", "an edited default keeps its text")
+	same({ saved.items[3].id, saved.items[4].id }, { "p3", "p4" }, "the restored ones take the next ids")
+	eq(saved.nextId, 5, "and the next free one follows them")
+	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "padd:prs", "padd:issues", "prestore:issues" }, "with every default saved, Restore defaults goes")
+	eq(prefsOf(b).focus, "padd:prs", "and Add takes the focus")
+	eq(#w.kv.get("prompts-issues").items, 0, "the other kind is untouched")
 end)
 
 case("host: with neither gh nor acli installed, nothing is listed or asked, and Settings offers both setup guides", function(w: World)
@@ -12435,22 +12563,16 @@ case("host: until the CLIs answer no view is listed or searched, and the restore
 	eq(#listed(b), 3, "its issues are listed")
 end)
 
-case("host: Settings › Worktrees lists the folder and the three name formats with their defaults, and saves only a format that can name a branch or a folder", function(w: World)
+case("host: Settings › Worktrees lists the three name formats with their defaults, and saves only a format that can name a branch or a folder", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = manyItems("o/r", 3)
 	local issues = openIssues(w, 1)
 	local prs = openQueue(w, 2)
 	goToSettings(prs, "worktrees")
-	local first = prefsOf(prs).sections[1]
-	eq(first.id, "sec-wtroot", "the first section of the page")
-	eq(first.title, nil, "has no title")
-	eq(first.rows[1].id, "wtroot", "and holds the folder")
-	eq(#first.rows, 1, "alone")
-	eq(first.rows[1].label, "Worktree folder", "labelled Worktree folder")
-	local section = prefsOf(prs).sections[2]
-	eq(section.id, "sec-names", "the second section of the page")
+	local section = prefsOf(prs).sections[1]
+	eq(section.id, "sec-names", "the page's section")
 	eq(section.title, "Names", "is the Names one")
-	eq(#prefsOf(prs).sections, 2, "and the last")
+	eq(#prefsOf(prs).sections, 1, "and the only one: the worktrees folder is omp's")
 	local ids: { string } = {}
 	for _, row in section.rows do
 		table.insert(ids, row.id)
@@ -12540,6 +12662,7 @@ case("host: the repository's own branch format wins over the Worktrees one for a
 	table.insert(s.gh.issueItems.octocat, issueItem(16, "O/R", EPOCH - 300, { title = "Shout" }))
 	local b = openIssues(w)
 	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
 	eq(rowIn(b, "branch:o/r").control.placeholder, "{github.user}/{key}-{slug}", "the repository's row shows the Worktrees format, the default while none is saved")
 	b.event({ ev = "action", id = "layer.settings", act = "page", value = "worktrees" })
 	eq(hx.save(b, "fmt:branch", "{key}-{slug}"), nil, "a Worktrees format is saved")

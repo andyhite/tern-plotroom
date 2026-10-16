@@ -14,10 +14,26 @@
 	color: inherit;
 }
 
-/* Tern's primary button (GitHub ↗) is 30px tall with 12px padding; every other action is 28px with 8px. Same size. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn.primary {
+/* Tern draws the primary button (GitHub ↗) as a solid pill, taller and set apart; here it is one of the row, drawn as
+   Tern draws the other buttons (`.sf-chat-reader .pk-btn`, its `narrow` variant and hover). Enter still opens it. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar .pk-btn.primary {
 	height: 28px;
-	padding: 0 8px;
+	margin-left: 0;
+	padding: 0 10px;
+	color: var(--t2);
+	background: none;
+	box-shadow: inset 0 0 0 1px var(--l2);
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker.narrow .pk-bar .pk-btn.primary {
+	padding: 0 7px;
+	box-shadow: none;
+}
+
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar .pk-btn.primary:hover {
+	color: var(--t1);
+	background: var(--l1);
+	box-shadow: inset 0 0 0 1px var(--l3);
 }
 
 /* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
@@ -103,6 +119,12 @@
 	display: none;
 }
 
+/* The sheet's page tabs are icons: Tern 0.8.4 hides a tab's .pf-txt there, but its label is a .lbl now, which showed
+   as "…" beside each icon and pushed it off center. ponytail: drop once Tern's sheet hides .lbl itself. */
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-nav .nav-row .lbl {
+	display: none;
+}
+
 /* Settings is Tern's side sheet in the layer, which narrows nothing in a plugin block; make room for it with its own
    width (Tern's `.sf-layer .sf-prefs` rule), so the queue doesn't show through the sheet's glass. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue.aside'] {
@@ -162,11 +184,15 @@
 	color: var(--bad);
 }
 
-/* An open view's Delete sits left of its Done. prefs has one control per row, so the Delete row (right after the
-   summary row) is lifted onto the summary row, and the summary's label stops short of it.
+/* An open item's Delete (a view's or action's) or Remove (a repository's or Jira project's) sits left of its Done.
+   prefs has one control per row, so that row (right after the summary row) is lifted onto the summary row, and the
+   summary's label stops short of it.
    ponytail: `right` is Done's width plus a gap and both rows are one line tall; a prefs row with several actions
    would replace this. */
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'] {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'],
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'],
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'],
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'] {
 	position: absolute;
 	top: 0;
 	right: 59px;
@@ -175,20 +201,32 @@
 	box-shadow: none;
 }
 
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'] .pf-lbl {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'] .pf-lbl {
 	display: none;
 }
 
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='vopen:'] .pf-lbl {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='vopen:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='popen:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='ropen:'] .pf-lbl,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-sec[data-sec^='form:'] .pf-row[data-row^='jopen:'] .pf-lbl {
 	padding-right: 66px;
 }
 
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'].focus,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'].focus,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus {
 	background: none;
 	box-shadow: none;
 }
 
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus .btn {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus .btn,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'].focus .btn,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'].focus .btn,
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus .btn {
 	box-shadow:
 		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
 		0 0 0 3px rgb(from var(--accent) r g b/13%);
@@ -200,7 +238,11 @@
 	margin-top: 10px;
 }
 
+/* Several Add-style buttons (Add action, Restore defaults) share a line. */
 [data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-rows {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
 	background: none;
 	box-shadow: none;
 }
@@ -211,6 +253,11 @@
 	gap: 12px;
 	min-height: 0;
 	padding: 0;
+}
+
+/* Its label is empty but for a warning: no 180px basis pushing the button off the row's start. */
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-lbl {
+	flex: none;
 }
 
 [data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus {

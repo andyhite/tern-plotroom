@@ -17,7 +17,7 @@ local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requ
 local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
-local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: its action-bar button's hidden link
+local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
 -- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
 -- each).
 local MENU_MS = 30 * 1000
@@ -324,7 +324,7 @@ end
 -- shell's `last` status if agents trip over a half-done setup.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, model: string?, join: boolean, split: boolean)
 	if model and not worktree.validModel(model) then
-		return cx:toast("error", "Agent not started for " .. t.label, "The prompt's model is not one omp takes: " .. model)
+		return cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
 	end
 	local path = r.path
 	local tab: number? = nil
@@ -414,7 +414,7 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 		repo = repo,
 		number = tostring(n),
 	}
-	for _, k in { "title", "author", "branch", "base", "github.user" } do
+	for _, k in { "title", "author", "branch", "base", "remote", "github.user" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end
@@ -573,7 +573,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	end
 end
 
--- An action-bar button's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
+-- A run link's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
 local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
@@ -581,7 +581,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true }, it.worktree ~= false)
 			end
 		end
-		cx2:toast("error", "That prompt is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
+		cx2:toast("error", "That action is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
 	end)
 end
 
@@ -594,7 +594,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 	end
 	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
-			cx2:toast("error", "Saved prompts are not listed", a.problem)
+			cx2:toast("error", "Saved actions are not listed", a.problem)
 		end
 		local all: { PickItem } = {}
 		for _, it in if type(a.items) == "table" then a.items else {} do
@@ -621,7 +621,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 				end
 			end
 		end
-		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save prompts in Settings › Prompts" else "Send your own text", typed = true })
+		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save actions in Settings › Actions" else "Send your own text", typed = true })
 		for _, c in all do
 			table.insert(items, c)
 		end

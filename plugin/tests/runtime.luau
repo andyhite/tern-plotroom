@@ -143,14 +143,14 @@ function M.run(cx: WindowCx)
 			if op == "scan" then
 				worktree.scan(request.checkout, wants :: { [string]: worktree.Want }, scanned)
 			elseif op == "issue" then
-				worktree.openIssue(request.checkout, request.repo, request.key, plan :: worktree.IssuePlan, "", nil, finish)
+				worktree.openIssue(request.checkout, request.repo, request.key, plan :: worktree.IssuePlan, nil, finish)
 			elseif op == "branches" then
 				worktree.remoteBranches(request.checkout, request.repo, function(names: { string }?, problem: string?, cx2: WindowCx?)
 					finish(if names then { branches = tern.json.array(names) } else nil, problem, cx2)
 				end)
 			else
 				local format: string = request.prDir or tracker.PR_DIR_DEFAULT
-				worktree.open(request.checkout, request.repo, request.number, naming(request.repo, request.number, format), "", nil, finish)
+				worktree.open(request.checkout, request.repo, request.number, naming(request.repo, request.number, format), nil, finish)
 			end
 		end)
 		if not started then
