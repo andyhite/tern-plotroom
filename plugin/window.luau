@@ -6,6 +6,7 @@
 -- this half only asks the user and arranges tabs.
 
 local worktree = require("./worktree")
+local flows = require("./flows")
 
 local PRS_BLOCK = "plotroom.prs"
 local ISSUE_ICON = "list-checks"
@@ -17,6 +18,9 @@ local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requ
 local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
+local AGENTGO_NODE = "layer.queue.buttons.agentgo" -- hidden: Go to the item's recorded agent
+local MORE_NODE = "layer.queue.buttons.more" -- hidden: the item commands palette
+local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
 -- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
 -- each).
@@ -24,7 +28,7 @@ local MENU_MS = 30 * 1000
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "13" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "14" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -130,7 +134,7 @@ local function parseLink(url: string): (string?, string?, string?, number?, stri
 		kind = if id then "run" else nil
 	end
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "agentgo" and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -358,6 +362,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	if not ok or type(agent) ~= "number" then
 		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
 	end
+	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent)
 	if split then
 		if cx.layout:move(agent, pane, "right") then
 			return cx:toast("success", "Agent started beside the queue for " .. t.label, prompt)
@@ -588,7 +593,7 @@ end
 -- Asks which saved prompt (Settings › Prompts, those the block's view offers) to run on the target, then
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
-local function pickAgent(cx: WindowCx, pane: number, t: Target)
+local function pickMenu(cx: WindowCx, pane: number, t: Target)
 	local function run(cx2: WindowCx, job: Job, wt: boolean)
 		prepareTarget(cx2, pane, t, job, wt)
 	end
@@ -646,6 +651,27 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
 			run(cx3, { text = item.send, model = item.model, split = item.split == true }, item.worktree ~= false)
 		end)
+	end)
+end
+
+-- An agent already linked to the target is offered first (its state shown); starting another goes to the menu.
+local function pickAgent(cx: WindowCx, pane: number, t: Target)
+	local key = string.lower(t.repo) .. "#" .. t.ref
+	local link, state = flows.liveAgent(cx, pane, key)
+	if not link or not state then
+		return pickMenu(cx, pane, t)
+	end
+	local items: { PickItem } = {
+		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = "Pane " .. link.agent, go = true },
+		{ label = "Start another agent", detail = "Choose an action to run" },
+	}
+	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+		if not item or not cx2 then
+			return
+		elseif item.go == true then
+			return flows.goAgent(cx2, pane, key)
+		end
+		pickMenu(cx2, pane, t)
 	end)
 end
 
@@ -812,6 +838,24 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		end
 		return true
 	end
+	local wtn = if string.sub(url, 1, #WTOPEN_PREFIX) == WTOPEN_PREFIX then string.match(url, "^plotroom://worktrees/open/(%d+)$") else nil
+	if url == "plotroom://more" or string.sub(url, 1, #WTOPEN_PREFIX) == WTOPEN_PREFIX then
+		local row = tonumber(wtn)
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif url == "plotroom://more" then
+			if nodeProp(readNode(cx, pane, MORE_NODE), "href") ~= url then
+				cx:toast("error", "Plotroom: no item is selected", "Select a pull request or issue and try again.")
+			else
+				flows.more(cx, pane)
+			end
+		elseif not row or row < 1 or row > 100000 then
+			cx:toast("error", "Plotroom: malformed link")
+		else
+			flows.openWorktree(cx, pane, url, row)
+		end
+		return true
+	end
 	local index, target = parseCheck(url)
 	if index and target then
 		if not isPlotroom(cx, pane) then
@@ -843,7 +887,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		if not act then
 			act, repo, ref = string.match(url, "^plotroom://issue/(%a+)/(.+)/([%w_%-]+)$")
 		end
-		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
+		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "agentgo" and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
 			cx:toast("error", "Plotroom: malformed link")
 			return true
 		end
@@ -851,7 +895,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 			return true
 		end
-		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
+		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "agentgo" then AGENTGO_NODE elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
 		if nodeProp(readNode(cx, pane, node), "href") ~= url then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 			return true
@@ -859,6 +903,8 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		local t = issueTarget(repo, ref)
 		if act == "goto" then
 			gotoTarget(cx, pane, t)
+		elseif act == "agentgo" then
+			flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 		elseif act == "agent" then
 			pickAgent(cx, pane, t)
 		elseif act == "run" and rid2 then
@@ -881,6 +927,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		then OPEN_NODE
 		elseif kind == "goto" then GOTO_NODE
 		elseif kind == "agent" then AGENT_NODE
+		elseif kind == "agentgo" then AGENTGO_NODE
 		elseif kind == "run" then PROMPT_NODE .. (id or "")
 		else WORKTREE_NODE
 	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == url
@@ -896,6 +943,8 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
 		gotoTarget(cx, pane, t)
+	elseif kind == "agentgo" then
+		flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 	elseif kind == "agent" then
 		pickAgent(cx, pane, t)
 	elseif kind == "run" and id then
@@ -906,16 +955,21 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	return true
 end
 
-local function selected(cx: WindowCx, nodeId: string, missing: string?)
-	local pane = cx.session:focused()
-	if not pane or not isPlotroom(cx, pane) then
-		return cx:toast("error", "Focus a Plotroom block first")
-	end
+-- Follows the hidden link node `nodeId` of `pane`.
+local function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?)
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
 		return cx:toast("info", missing or "Nothing is selected")
 	end
 	handle(cx, href, pane)
+end
+
+local function selected(cx: WindowCx, nodeId: string, missing: string?)
+	local pane = cx.session:focused()
+	if not pane or not isPlotroom(cx, pane) then
+		return cx:toast("error", "Focus a Plotroom block first")
+	end
+	follow(cx, pane, nodeId, missing)
 end
 
 tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
@@ -929,6 +983,7 @@ end)
 -- A closed pane may have held a PR's worktree, and the host hears no event for it: nudge this window's Plotroom
 -- blocks so their "In tab" marks follow (the host renders after any event).
 tern.on("pane_closed", function(_ev: any, cx: WindowCx)
+	flows.agentSync(cx)
 	for _, p in cx.session:panes() do
 		if isPlotroom(cx, p.pane) then
 			pcall(function()
@@ -938,7 +993,7 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	end
 end)
 
-local function launch(cx: WindowCx)
+local function launchPane(cx: WindowCx): number?
 	local source = cx.session:focused()
 	local cwd: string? = nil
 	if source then
@@ -952,6 +1007,11 @@ local function launch(cx: WindowCx)
 	if not pane then
 		cx:toast("error", "Plotroom is not loaded on this host")
 	end
+	return pane
+end
+
+local function launch(cx: WindowCx)
+	launchPane(cx)
 end
 
 tern.command({
@@ -965,6 +1025,49 @@ local function available(cx: WindowCx): boolean
 	local pane = cx.session:focused()
 	return pane ~= nil and isPlotroom(cx, pane)
 end
+
+flows.setup({
+	ask = ask,
+	isPlotroom = isPlotroom,
+	readNode = readNode,
+	nodeProp = nodeProp,
+	sourceSession = sourceSession,
+	targetPane = targetPane,
+	launch = launchPane,
+	follow = follow,
+})
+
+for _, c in flows.COMMANDS do
+	tern.command({
+		id = c.id,
+		title = c.title,
+		icon = "merge",
+		available = if c.anywhere then nil else available,
+		run = function(cx: WindowCx)
+			local pane = cx.session:focused()
+			if c.anywhere then
+				return c.run(cx, pane or 0) -- 0: no block; the command finds or launches its own
+			elseif not pane or not isPlotroom(cx, pane) then
+				return cx:toast("error", "Focus a Plotroom block first")
+			end
+			c.run(cx, pane)
+		end,
+	})
+end
+
+-- The agents' status timer: running while a Plotroom block and a link exist; kv holds the links, so a plugin VM
+-- reboot only needs the next of these to start it again.
+tern.on("window_start", function(cx: WindowCx)
+	flows.ensureSync(cx)
+end)
+
+tern.on("pane_created", function(_ev: any, cx: WindowCx)
+	flows.ensureSync(cx)
+end)
+
+tern.on("agent_finished", function(_ev: any, cx: WindowCx)
+	flows.agentSync(cx)
+end)
 
 tern.command({
 	id = "open-selected",

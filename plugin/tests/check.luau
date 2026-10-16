@@ -10,6 +10,7 @@ local keys = require("../keys")
 local process = require("../process")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
+local sorting = require("../sorting")
 
 local M = {}
 
@@ -351,6 +352,19 @@ function M.run()
 	assert(process.extractPath("banner\0PLOTROOM_PATH\0/a b:/c\n\0PLOTROOM_END\0tail") == "/a b:/c", "markers carry the PATH, spaces intact")
 	assert(process.extractPath("\0PLOTROOM_PATH\0\n\0PLOTROOM_END\0") == nil, "empty PATH is rejected")
 	assert(process.extractPath("\0PLOTROOM_PATH\0/a") == nil, "missing end marker is rejected")
+
+	-- per-view sorts: only meaningful choices are offered, ties keep the list order, default is untouched
+	assert(#sorting.choices("issues", "jira") == 1 and sorting.valid("prs", "github", "review") and not sorting.valid("issues", "jira", "updated"), "sorts are offered per kind and integration")
+	local early, late, ask = { updated = 10, review = "approved" } :: any, { updated = 20, review = "approved" } :: any, { updated = 5, review = "required" } :: any
+	local base = { early, late, ask }
+	assert(sorting.apply(base, "updated")[1] == late and sorting.apply(base, "oldest")[1] == ask and sorting.apply(base, "review")[1] == ask and sorting.apply(base, "review")[2] == late, "updated, oldest and review order")
+	assert(sorting.apply(base, nil)[1] == early and sorting.apply(base, "bogus")[3] == ask and base[1] == early, "no or unknown sort keeps the order and never changes the input")
+	local hi, lo, none = { priority = "High" } :: any, { priority = "Low" } :: any, {} :: any
+	assert(sorting.apply({ lo, none, hi }, "priority")[1] == hi and sorting.apply({ lo, none, hi }, "priority")[3] == none, "priority ranks Jira names, unknown last")
+	assert(sorting.cycle("prs", "github", nil) == "updated" and sorting.cycle("prs", "github", "review") == nil and sorting.cycle("issues", "jira", "priority") == nil, "the cycle ends on the default order")
+	require("./triage_check").run()
+	require("./portable_check").run()
+	require("./board_check").run()
 end
 
 return M

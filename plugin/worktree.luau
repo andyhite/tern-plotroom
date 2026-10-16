@@ -665,6 +665,380 @@ function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
 	end)
 end
 
+-- Plotroom notes which item a worktree's branch belongs to in the checkout's own git config (`branch.<b>.plotroomkey`
+-- for an issue, `.plotroompr` for a pull request), so the inventory still knows it once the item leaves the query.
+-- Best effort: a failed write only leaves the worktree unlabelled.
+local function note(root: string, branch: string, repo: string, key: string?, pr: number?, done: (WindowCx?) -> ())
+	local pairs_: { { string } } = { { "plotroomrepo", repo } }
+	if key then
+		table.insert(pairs_, { "plotroomkey", key })
+	end
+	if pr then
+		table.insert(pairs_, { "plotroompr", tostring(pr) })
+	end
+	local function set(i: number, cx: WindowCx?)
+		local p = pairs_[i]
+		if not p then
+			return done(cx)
+		end
+		git(root, { "config", "--local", "branch." .. branch .. "." .. p[1], p[2] }, LOCAL_MS, function(_, _, cx2)
+			set(i + 1, cx2 or cx)
+		end)
+	end
+	set(1, nil)
+end
+
+-- One worktree of the checkout, as `inventory` lists it. `key` (issue) and `number` (pull request) only when Plotroom
+-- noted them; `ref` is that pull request's fetched ref. `main` rows are listed but never removable.
+export type Entry = {
+	path: string,
+	root: string,
+	branch: string?,
+	head: string?,
+	main: boolean,
+	detached: boolean,
+	locked: boolean,
+	prunable: boolean,
+	missing: boolean,
+	key: string?,
+	number: number?,
+	ref: string?,
+	inferred: boolean?, -- `number` was guessed from an older Plotroom's ref or branch, not noted
+}
+
+-- Every worktree of the checkout at `checkout`, the main one first, with the item Plotroom noted for each branch.
+-- `repo` ("owner/name") only names a pull request's fetched ref. Local git only, nothing written.
+function M.inventory(checkout: string, repo: string, done: ({ Entry }?, string?) -> ())
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
+		return done(nil, "Invalid repository " .. repo)
+	end
+	git(checkout, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, err)
+		if not out then
+			return done(nil, err or "git worktree list failed")
+		end
+		local recs = M.parseWorktrees(out)
+		local main = recs[1]
+		if not main or string.sub(main.path, 1, 1) ~= "/" then
+			return done(nil, "Could not find this repository's main worktree.")
+		end
+		local root = string.gsub(main.path, "/+$", "")
+		-- Exit 1 is "no such key": nothing noted yet.
+		git(root, { "config", "--local", "--get-regexp", "^branch\\..*\\.plotroom(key|pr|repo)$" }, LOCAL_MS, function(cfg)
+			local keys: { [string]: string } = {}
+			local prs: { [string]: number } = {}
+			local repos: { [string]: string } = {}
+			for l in string.gmatch(cfg or "", "[^\n]+") do
+				local b, what, v = string.match(l, "^branch%.(.+)%.plotroom(%a+) (.+)$")
+				if b and v and what == "key" then
+					keys[b] = v
+				elseif b and v and what == "repo" then
+					repos[b] = v
+				elseif b and v and what == "pr" and tonumber(v) then
+					prs[b] = tonumber(v) :: number
+				end
+			end
+			-- Worktrees made before notes existed: this repository's fetched PR refs name a pull request by the commit
+			-- they hold, and an earlier version's branches were `plotroom/…/pr-N`. A commit two refs hold names none.
+			local prefix = string.sub(M.prRef(owner, name, 0), 1, -2)
+			local legacyBranch = "^plotroom/" .. string.gsub(string.lower(owner .. "/" .. name), "%p", "%%%0") .. "/pr%-(%d+)$"
+			git(root, { "for-each-ref", "--format=%(objectname) %(refname)", prefix .. "*" }, LOCAL_MS, function(refs)
+				local byHead: { [string]: number? } = {}
+				local refPat = "^(%x+) " .. string.gsub(prefix, "%p", "%%%0") .. "(%d+)$"
+				for l in string.gmatch(refs or "", "[^\n]+") do
+					local sha, n = string.match(l, refPat)
+					if sha then
+						byHead[sha] = if byHead[sha] == nil then tonumber(n) else -1
+					end
+				end
+				local entries: { Entry } = {}
+				for i, r in recs do
+					local branch = if r.branch then string.match(r.branch, "^refs/heads/(.+)$") else nil
+					local here, there = pcall(tern.fs.exists, r.path)
+					-- A note made for another repository is not this one's.
+					local mine = branch ~= nil and (repos[branch] == nil or string.lower(repos[branch]) == string.lower(repo))
+					local n = if branch and mine then prs[branch] else nil
+					local inferred = false
+					if i > 1 and branch and mine and not n and not keys[branch] then
+						local legacy = tonumber(string.match(string.lower(branch), legacyBranch) or "") or (if r.head then byHead[r.head] else nil)
+						if legacy and legacy > 0 then
+							n, inferred = legacy, true
+						end
+					end
+					table.insert(entries, {
+						path = r.path,
+						root = root,
+						branch = branch,
+						head = r.head,
+						main = i == 1,
+						detached = r.detached,
+						locked = r.locked,
+						prunable = r.prunable,
+						missing = not (here and there),
+						key = if branch and mine then keys[branch] else nil,
+						number = n,
+						ref = if n then M.prRef(owner, name, n) else nil,
+						inferred = if inferred then true else nil,
+					})
+				end
+				done(entries, nil)
+			end)
+		end)
+	end)
+end
+
+-- The entry of `inventory` at exactly `path` (never the main worktree) that still has `branch` (nil: detached): what a
+-- window remembers is only a claim, so every action re-reads git's list and acts on its record, not the string.
+local function claim(checkout: string, repo: string, path: string, branch: string?, done: (Entry?, string?) -> ())
+	M.inventory(checkout, repo, function(entries, err)
+		if not entries then
+			return done(nil, err)
+		end
+		for _, e in entries do
+			if e.path == path then
+				if e.main then
+					return done(nil, "That is the main checkout; Plotroom never removes it.")
+				elseif e.branch ~= branch then
+					return done(nil, "The worktree at " .. path .. " changed (it is on " .. (e.branch or "no branch") .. " now); reload the list.")
+				end
+				return done(e, nil)
+			end
+		end
+		done(nil, path .. " is not a worktree of this repository any more; reload the list.")
+	end)
+end
+
+-- Whether the worktree at `path` (checked against git's list as `claim` does) has uncommitted changes.
+-- done(dirty, problem); dirty nil when git could not tell.
+function M.inventoryDirty(checkout: string, repo: string, path: string, branch: string?, done: (boolean?, string?) -> ())
+	claim(checkout, repo, path, branch, function(e, why)
+		if not e then
+			return done(nil, why)
+		elseif e.missing then
+			return done(nil, "The folder " .. path .. " is gone.")
+		end
+		M.dirty(e.path, function(dirty)
+			done(dirty, nil)
+		end)
+	end)
+end
+
+-- Removes one inventory worktree without force, as `remove` does for an item's: a locked, prunable or missing one, the
+-- main checkout and one that is no longer at `path` on `branch` are refused. Only a branch Plotroom noted (an issue key
+-- or a pull request number, not a guessed one) goes with the worktree, as `remove` does it; any other branch is kept,
+-- and a detached worktree has no branch to drop.
+-- done(removal, problem, dirty).
+function M.removeEntry(checkout: string, repo: string, path: string, branch: string?, done: (Removal?, string?, boolean?) -> ())
+	claim(checkout, repo, path, branch, function(e, why)
+		if not e then
+			return done(nil, why, nil)
+		elseif e.locked or e.prunable or e.missing then
+			return done(nil, "The worktree at " .. path .. " is locked, prunable or missing; repair it yourself (git worktree repair or prune).", nil)
+		end
+		local b = e.branch
+		if not b then
+			return git(e.root, { "worktree", "remove", e.path }, REMOVE_MS, function(_, err, _, status)
+				if status ~= 0 then
+					local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
+					return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
+				end
+				done({ branch = "It had no branch." }, nil, nil)
+			end)
+		end
+		if e.key == nil and (e.number == nil or e.inferred == true) then
+			return git(e.root, { "worktree", "remove", e.path }, REMOVE_MS, function(_, err, _, status)
+				if status ~= 0 then
+					local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
+					return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
+				end
+				done({ branch = "Branch " .. b .. " was kept." }, nil, nil)
+			end)
+		end
+		M.remove({ root = e.root, path = e.path, branch = b, ref = e.ref }, done)
+	end)
+end
+
+-- What a draft pull request would be, as `draftPreview` reads it now. Everything `pushBranch` and the window's
+-- confirmation need is here: `pushBranch` pushes exactly `head` to `branch` on `remote` and only while both still hold.
+export type Draft = {
+	path: string,
+	root: string,
+	repo: string,
+	remote: string, -- the checkout's remote of `repo`: where the branch is pushed
+	branch: string,
+	head: string,
+	base: string, -- the branch it would merge into
+	baseSha: string, -- that branch as `remote` last fetched it
+	count: number, -- commits `branch` has over the base
+	commits: { string }, -- the newest 20, `<short sha> <subject>`
+	upstream: string?, -- the branch's configured upstream, if any
+	remoteHead: string?, -- `branch` on `remote` as last fetched
+	needsPush: boolean, -- `remoteHead` is not `head`
+	dirty: boolean?,
+	title: string,
+}
+
+-- Current branch and HEAD of the work tree at `path`; fails on a detached HEAD.
+local function headOf(path: string, done: (string?, string?, string?) -> ())
+	git(path, { "symbolic-ref", "-q", "HEAD" }, LOCAL_MS, function(b, _, _, status)
+		local branch = if b then string.match(trim(b), "^refs/heads/(.+)$") else nil
+		if not branch then
+			return done(nil, nil, if status == 1 then "HEAD is detached; check out a branch first." else "Could not read the current branch.")
+		end
+		git(path, { "rev-parse", "--verify", "HEAD" }, LOCAL_MS, function(h, err)
+			if not h then
+				return done(nil, nil, err or "Could not read HEAD.")
+			end
+			done(branch, trim(h), nil)
+		end)
+	end)
+end
+
+-- The GitHub repositories a draft PR from the work tree at `path` may target: one per distinct github.com repository
+-- among its checkout's remotes (origin first), spelled as the remote URL spells it. Local git only; the same remote
+-- `draftPreview`, `remoteBranches` and `pushBranch` then resolve for that repo. done(list, problem).
+function M.draftDestinations(path: string, done: ({ { repo: string, remote: string } }?, string?) -> ())
+	topLevel(path, function(root, err)
+		if not root then
+			return done(nil, err)
+		end
+		rankedRemotes(root, function(names, err2)
+			if not names then
+				return done(nil, err2)
+			end
+			local out: { { repo: string, remote: string } } = {}
+			local seen: { [string]: boolean } = {}
+			local function try(i: number)
+				if i > #names then
+					if #out == 0 then
+						return done(nil, root .. " has no github.com remote.")
+					end
+					return done(out, nil)
+				end
+				git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls)
+					scan(lines(urls or ""), nil, nil, function(id)
+						if id and not seen[string.lower(id)] then
+							seen[string.lower(id)] = true
+							table.insert(out, { repo = id, remote = names[i] })
+						end
+						try(i + 1)
+					end)
+				end)
+			end
+			try(1)
+		end)
+	end)
+end
+
+-- Reads what a draft PR from the work tree at `path` into `base` of `repo` would hold. The base is fetched from the
+-- remote first (network, up to two minutes; a failed fetch is a problem, never a stale base), so call it on a
+-- deliberate request only. Nothing is pushed or created. done(draft, problem).
+function M.draftPreview(path: string, repo: string, base: string, done: (Draft?, string?) -> ())
+	M.resolveRepository(path, repo, function(info, why)
+		if not info then
+			return done(nil, why)
+		end
+		local root, remote = info.root, info.remote
+		git(root, { "check-ref-format", "--branch", base }, LOCAL_MS, function(_, _, _, st)
+			if st ~= 0 then
+				return done(nil, "Base branch " .. base .. " is not a valid branch name.")
+			end
+			headOf(root, function(branch, head, err)
+				if not branch or not head then
+					return done(nil, err)
+				elseif branch == base then
+					return done(nil, "The current branch is the base " .. base .. "; there is nothing to propose.")
+				end
+				local baseRef = "refs/remotes/" .. remote .. "/" .. base
+				-- The base is fetched (read-only, into its remote-tracking ref) so a preview never waits on the user.
+				git(root, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. baseRef }, NET_MS, function(_, ferr)
+				if ferr then
+					return done(nil, "Could not fetch " .. base .. " from " .. remote .. ": " .. reasonOf(ferr))
+				end
+				git(root, { "rev-parse", "--verify", "--quiet", baseRef }, LOCAL_MS, function(bs)
+					if not bs then
+						return done(nil, remote .. "/" .. base .. " could not be read.")
+					end
+					local baseSha = trim(bs)
+					git(root, { "rev-list", "--count", baseSha .. ".." .. head }, LOCAL_MS, function(c, cerr)
+						local count = tonumber(trim(c or ""))
+						if not count then
+							return done(nil, cerr or "Could not count the commits.")
+						elseif count == 0 then
+							return done(nil, branch .. " has no commits over " .. base .. ".")
+						end
+						git(root, { "log", "-n", "20", "--format=%h %s", baseSha .. ".." .. head }, LOCAL_MS, function(log)
+							local commits = lines(log or "")
+							git(root, { "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch .. "@{upstream}" }, LOCAL_MS, function(up)
+								git(root, { "rev-parse", "--verify", "--quiet", "refs/remotes/" .. remote .. "/" .. branch }, LOCAL_MS, function(rh)
+									local remoteHead = if rh then trim(rh) else nil
+									M.dirty(root, function(dirty)
+										local title = if count == 1 and commits[1]
+											then string.gsub(commits[1], "^%S+ ", "")
+											else (string.gsub(branch, "[-_/]+", " "))
+										done({
+											path = path,
+											root = root,
+											repo = repo,
+											remote = remote,
+											branch = branch,
+											head = head,
+											base = base,
+											baseSha = baseSha,
+											count = count,
+											commits = commits,
+											upstream = if up and trim(up) ~= "" then trim(up) else nil,
+											remoteHead = remoteHead,
+											needsPush = remoteHead ~= head,
+											dirty = dirty,
+											title = title,
+										}, nil)
+									end)
+								end)
+							end)
+						end)
+					end)
+				end)
+				end)
+			end)
+		end)
+	end)
+end
+
+-- Pushes what `draft` previewed: commit `draft.head` to `draft.branch` on `draft.remote`, never forced and never
+-- committing anything. Refused when the work tree is on another branch or commit than previewed, or the remote no
+-- longer is the repository's, so what the user confirmed is what goes. A rejected (non-fast-forward) push is an error.
+-- done(problem): nil when pushed.
+function M.pushBranch(draft: Draft, done: (string?) -> ())
+	M.resolveRepository(draft.path, draft.repo, function(info, why)
+		if not info then
+			return done(why)
+		elseif info.remote ~= draft.remote or info.root ~= draft.root then
+			return done("The repository's remote changed since the preview; preview again.")
+		end
+		headOf(draft.root, function(branch, head, err)
+			if not branch or not head then
+				return done(err)
+			elseif branch ~= draft.branch or head ~= draft.head then
+				return done("The branch moved since the preview (" .. branch .. " at " .. short(head) .. "); preview again.")
+			end
+			local dest = "refs/heads/" .. draft.branch
+			-- Straight through process.run: git's one-line summary of a rejected push would only say "To <url>".
+			process.run({ "git", "-C", draft.root, "push", "--no-force-with-lease", draft.remote, draft.head .. ":" .. dest }, { timeout_ms = NET_MS, env = ENV }, function(res, perr)
+				if not res then
+					return done(perr or "git could not be started")
+				elseif res.timed_out then
+					return done("git push timed out")
+				elseif res.status == 0 then
+					return done(nil)
+				end
+				local why = string.match(res.stderr, "[^\n]*! %[[^\n]*") or string.match(res.stderr, "fatal: ([^\n]+)") or string.match(res.stderr, "[Ee]rror: ([^\n]+)") or firstLine(res.stderr)
+				done("The push was refused: " .. trim(why))
+			end)
+		end)
+	end)
+end
+
 -- Shared by `open` and `openIssue`: `finish` reports the result exactly once; `attempt` runs fn and fails the request
 -- on an error it raises (a failed fs call, a bug) instead of letting it escape into the runtime, where done would
 -- never run and the caller would wait forever; `run` is `git -C dir args`, a failure ending the request.
@@ -939,7 +1313,14 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 		end)
 		return
 	end
-	local s = steps(done)
+	local s = steps(function(r: Result?, problem: string?, cx: WindowCx?)
+		if not r then
+			return done(nil, problem, cx)
+		end
+		note(r.root, r.branch, repo, nil, r.number, function(cx2)
+			done(r, nil, cx2 or cx)
+		end)
+	end)
 	github.pr(repo, number, account, function(meta, problem, cx)
 		s.attempt(cx, function()
 			if not meta then
@@ -1031,7 +1412,14 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 		return
 	end
 	local branch = plan.branch
-	local s = steps(done)
+	local s = steps(function(r: IssueResult?, problem: string?, cx: WindowCx?)
+		if not r then
+			return done(nil, problem, cx)
+		end
+		note(r.root, r.branch, repo, r.key, r.number, function(cx2)
+			done(r, nil, cx2 or cx)
+		end)
+	end)
 	local finish, attempt = s.finish, s.attempt
 
 	local function inspect(spot: Spot, path: string, created: boolean, want: string?, rbranch: string)

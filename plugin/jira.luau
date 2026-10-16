@@ -87,6 +87,7 @@ end
 -- `acli jira auth status`, once per sign-in, with the signed-in email's local part (`{jira.user}`; "" when unnamed).
 local site: string? = nil
 local user = ""
+local email = ""
 
 -- Forgets the site, so a changed sign-in is found without restarting Tern. The host's Retry calls this.
 function M.reset()
@@ -108,6 +109,7 @@ local function withSite(done: (string?, Problem?) -> ())
 		end
 		site = "https://" .. host
 		user = string.match(out, "Email:%s*([%w%.%-_+]+)@") or ""
+		email = string.match(out, "Email:%s*([%w%.%-_+]+@[%w%.%-]+)") or ""
 		done(site, nil)
 	end)
 end
@@ -614,4 +616,278 @@ function M.projects(done: ({ { key: string, name: string } }?, Problem?) -> ())
 	end)
 end
 
+-- ---------------------------------------------------------------- lookups and writes
+-- The host confirms with the user before calling a write. acli runs as the account it is signed in to; every write
+-- is `acli jira workitem <verb> --key <KEY> ... --yes`, one work item, never JQL, a filter or --ignore-errors.
+
+local function later(done: () -> ())
+	tern.timer(0, done)
+end
+
+-- Host and key of a Jira browse link (`https://<host>/browse/ABC-1`, or any board link with `?selectedIssue=ABC-1`);
+-- nil for anything else. The host is returned so a caller can compare it with the signed-in site.
+function M.parseUrl(url: any): (string?, string?)
+	if type(url) ~= "string" then
+		return nil, nil
+	end
+	local host, rawPath, rawQuery = string.match(url, "^https://([%w%.%-]+)(/[^?#]*)%??([^#]*)")
+	if not host then
+		return nil, nil
+	end
+	local path: string = rawPath or ""
+	local query: string = rawQuery or ""
+	local key: string? = string.match(path, "^/browse/([%w_%-]+)/?$")
+	if not key then
+		for param in string.gmatch(query, "[^&]+") do
+			key = string.match(param, "^selectedIssue=([%w_%-]+)$")
+			if key then
+				break
+			end
+		end
+	end
+	if key and string.match(key, KEY) then
+		return key, host
+	end
+	return nil, nil
+end
+
+-- The key of a Jira link whose host is the signed-in site, or nil: done(key, problem). Asks acli for the site first.
+-- done never runs before this call returns.
+function M.keyOfUrl(url: string, done: (string?, Problem?) -> ())
+	local key, host = M.parseUrl(url)
+	if not key then
+		return later(function()
+			done(nil, { kind = "invalid", message = "Not a Jira work item link." })
+		end)
+	end
+	local sync = true
+	withSite(function(base, problem)
+		local function finish(k: string?, p: Problem?)
+			if sync then
+				return later(function()
+					done(k, p)
+				end)
+			end
+			done(k, p)
+		end
+		if not base then
+			return finish(nil, problem)
+		end
+		if base ~= "https://" .. string.lower(host or "") then
+			return finish(nil, { kind = "invalid", message = "That link is on " .. tostring(host) .. ", not the signed-in site " .. string.sub(base, 9) .. "." })
+		end
+		finish(key, nil)
+	end)
+	sync = false
+end
+
+-- One work item as the issue list's items are (`M.normalize`); done(issue, problem). A bad key, superseding and an
+-- unsigned acli behave as in M.issues. done never runs before this call returns.
+function M.item(key: string, done: (tracker.Issue?, Problem?) -> (), shouldContinue: (() -> boolean)?)
+	local superseded: Problem = { kind = "superseded", message = "" }
+	local function finish(issue: tracker.Issue?, problem: Problem?)
+		if shouldContinue and not shouldContinue() then
+			return done(nil, superseded)
+		end
+		done(issue, problem)
+	end
+	if type(key) ~= "string" or not string.match(key, KEY) then
+		return later(function()
+			finish(nil, { kind = "failed", message = "Unexpected issue key." })
+		end)
+	end
+	withSite(function(base, problem)
+		if not base then
+			return finish(nil, problem)
+		end
+		acli({ "jira", "workitem", "view", key, "--json", "--fields", SEARCH_FIELDS }, function(out, problem2)
+			if not out then
+				return finish(nil, noted(problem2))
+			end
+			local ok, data = decode(out)
+			local issue: tracker.Issue?, why: string? = nil, "acli printed something other than a work item"
+			if ok then
+				issue, why = M.normalize(data, base)
+			end
+			if not issue or issue.ref ~= key then
+				return finish(nil, { kind = "failed", message = why or "acli printed another work item than " .. key })
+			end
+			finish(issue, nil)
+		end)
+	end)
+end
+
+-- Assigns `key` to the signed-in user (`--assignee @me`); done(problem).
+function M.assignMe(key: string, done: (Problem?) -> ())
+	if type(key) ~= "string" or not string.match(key, KEY) then
+		return later(function()
+			done({ kind = "invalid", message = "Unexpected issue key." })
+		end)
+	end
+	acli({ "jira", "workitem", "assign", "--key", key, "--assignee", "@me", "--yes" }, function(_, problem)
+		done(noted(problem))
+	end)
+end
+
+-- ---------------------------------------------------------------- transitions (Jira REST)
+-- acli cannot list a work item's transitions, so these two use Jira Cloud's REST API through tern.fetch: Basic auth of
+-- the acli account's email (from `acli jira auth status`) and an API token the user opts in with in the host
+-- environment, PLOTROOM_JIRA_API_TOKEN. The token is read per call, never stored, logged or put in argv or a message.
+-- Only the acli site's own `https://<name>.atlassian.net/rest/api/3/...` fixed routes are requested, and `myself` must
+-- name the acli email before anything is listed or written. tern.fetch follows redirects and has no policy to stop it.
+-- ponytail: Jira Cloud's REST routes used here do not redirect; if that must be guaranteed, it needs a transport option.
+
+export type Transition = { id: string, name: string, to: string? }
+
+local TOKEN_HELP = "Listing Jira transitions needs a Jira API token: create one at https://id.atlassian.com/manage-profile/security/api-tokens, set PLOTROOM_JIRA_API_TOKEN to it in the environment Tern starts from, and restart Tern."
+
+-- Jira's own refusal text (errorMessages or the first field error); "" when it sent none.
+local function reason(body: string): string
+	local ok, data = pcall(tern.json.decode, body)
+	if not ok then
+		return ""
+	end
+	local m = list(field(data, "errorMessages"))[1]
+	if type(m) ~= "string" then
+		local errors = field(data, "errors")
+		m = if type(errors) == "table" then select(2, next(errors)) else nil
+	end
+	return if type(m) == "string" then ": " .. string.sub(m, 1, 300) else ""
+end
+
+-- One request to a fixed /rest/api/3 route as the verified account; done(decoded body or nil, problem).
+local function rest(method: string, path: string, body: any, done: (any, Problem?) -> ())
+	withSite(function(base, problem)
+		if not base then
+			return done(nil, problem)
+		end
+		if not string.match(base, "^https://[%w%-]+%.atlassian%.net$") or email == "" then
+			return done(nil, { kind = "auth", message = "acli's Jira site or email is not a *.atlassian.net sign-in; the REST API is not used for it." })
+		end
+		local token = tern.getenv("PLOTROOM_JIRA_API_TOKEN")
+		if not token or token == "" then
+			return done(nil, { kind = "auth", message = TOKEN_HELP })
+		end
+		local headers = { Authorization = "Basic " .. tern.base64.encode(email .. ":" .. token), Accept = "application/json" }
+		if body ~= nil then
+			headers["Content-Type"] = "application/json"
+		end
+		local ok, err = pcall(function(): string?
+			tern.fetch(base .. path, { method = method, headers = headers, body = if body ~= nil then tern.json.encode(body) else nil, timeout_ms = TIMEOUT_MS }, function(r)
+			if r.timed_out or r.error then
+				return done(nil, { kind = "failed", message = if r.timed_out then "Jira did not answer within 60 seconds." else "Jira could not be reached: " .. tostring(r.error) })
+			end
+			if r.status == 401 then
+				return done(nil, { kind = "auth", message = "Jira rejected PLOTROOM_JIRA_API_TOKEN for " .. email .. "." })
+			elseif r.status == 403 then
+				return done(nil, { kind = "auth", message = "This Jira account may not do that" .. reason(r.body) })
+			elseif r.status == 404 then
+				return done(nil, { kind = "not-found", message = "Jira does not show that work item to this account." })
+			elseif r.status == 429 then
+				return done(nil, { kind = "rate-limit", message = "Jira rate limit reached." })
+			elseif r.status < 200 or r.status > 299 then
+				return done(nil, { kind = "failed", message = "Jira answered HTTP " .. r.status .. reason(r.body) })
+			end
+			if r.body == "" then
+				return done({}, nil)
+			end
+			local decoded, data = pcall(tern.json.decode, r.body)
+			if not decoded then
+				return done(nil, { kind = "failed", message = "Jira printed something other than JSON." })
+			end
+			done(data, nil)
+			end)
+			return nil
+		end)
+		if not ok then
+			done(nil, { kind = "failed", message = "Jira request refused: " .. tostring(err) })
+		end
+	end)
+end
+
+-- `done` once /myself names the acli account; the REST token may belong to another one, and nothing is sent then.
+local function verified(done: (Problem?) -> ())
+	rest("GET", "/rest/api/3/myself", nil, function(data, problem)
+		if problem then
+			return done(problem)
+		end
+		local who = field(data, "emailAddress")
+		if type(who) ~= "string" then
+			return done({ kind = "auth", message = "Jira did not report the token's email, so it cannot be matched to the acli account " .. email .. "." })
+		end
+		if string.lower(who) ~= string.lower(email) then
+			return done({ kind = "auth", message = "PLOTROOM_JIRA_API_TOKEN belongs to " .. who .. ", not the acli account " .. email .. "; nothing was sent." })
+		end
+		done(nil)
+	end)
+end
+
+local function listed(key: string, done: ({ Transition }?, Problem?) -> ())
+	verified(function(problem)
+		if problem then
+			return done(nil, problem)
+		end
+		rest("GET", "/rest/api/3/issue/" .. key .. "/transitions", nil, function(data, problem2)
+			if problem2 then
+				return done(nil, problem2)
+			end
+			local out: { Transition } = {}
+			for _, t in list(field(data, "transitions")) do
+				local id, name = field(t, "id"), field(t, "name")
+				if type(id) == "string" and string.match(id, "^%d+$") and type(name) == "string" then
+					table.insert(out, { id = id, name = name, to = nonEmpty(field(t, "to", "name")) })
+				end
+			end
+			done(out, nil)
+		end)
+	end)
+end
+
+local function badKey(key: any, done: (any, Problem?) -> ()): boolean
+	if type(key) == "string" and string.match(key, KEY) then
+		return false
+	end
+	later(function()
+		done(nil, { kind = "invalid", message = "Unexpected issue key." })
+	end)
+	return true
+end
+
+-- The transitions Jira offers `key` right now, as Jira names them (id, name, target status `to`); done(list, problem).
+-- An empty list is Jira's answer, not an error. Without PLOTROOM_JIRA_API_TOKEN: an `auth` problem naming the setup.
+function M.transitions(key: string, done: ({ Transition }?, Problem?) -> ())
+	if badKey(key, done) then
+		return
+	end
+	listed(key, done)
+end
+
+-- Applies transition `id` (one M.transitions returned) to `key`; the list is read again first and the id must still be
+-- in it. A transition that needs fields (a screen) is refused by Jira and that text is the problem. done(problem).
+function M.transition(key: string, id: string, done: (Problem?) -> ())
+	local function fail(p: Problem)
+		later(function()
+			done(p)
+		end)
+	end
+	if type(key) ~= "string" or not string.match(key, KEY) then
+		return fail({ kind = "invalid", message = "Unexpected issue key." })
+	end
+	if type(id) ~= "string" or not string.match(id, "^%d+$") or #id > 10 then
+		return fail({ kind = "invalid", message = "Unexpected transition id." })
+	end
+	listed(key, function(found, problem)
+		if not found then
+			return done(problem)
+		end
+		for _, t in found do
+			if t.id == id then
+				return rest("POST", "/rest/api/3/issue/" .. key .. "/transitions", { transition = { id = id } }, function(_, p)
+					done(p)
+				end)
+			end
+		end
+		done({ kind = "invalid", message = "Transition " .. id .. " is no longer available for " .. key .. "." })
+	end)
+end
 return M

@@ -25,8 +25,9 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
-Smoke prerequisites: Tern 0.8.3 (TERN=/path or PATH), git >= 2.36, omp on PATH, Python 3.9+. No network; every repository,
-fake gh/ssh, Tern directory and log lives under one temporary directory that is deleted afterwards.
+Smoke prerequisites: Tern 0.8.3 or 0.8.4 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
+Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, Tern directory and log lives under one temporary
+directory that is deleted afterwards.
 """
 
 from __future__ import annotations
@@ -54,7 +55,8 @@ SDK = ROOT / "scripts" / "tern-0.8.3.d.luau"
 SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
 LUAU_VERSION = "0.742"
 LSP_VERSION = "1.70.1"
-TERN_VERSION = "0.8.3"
+TERN_VERSION = "0.8.3"  # the SDK pin
+SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
 
 # sha256 of the release assets, as GitHub publishes them.
@@ -390,12 +392,23 @@ if len(a) == 6 and a[:3] == ["api", "--hostname", "github.com"] and a[4] == "--j
     m = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls/(\d+)", a[3])
 if a[:2] == ["api", "graphql"]:
     fields = dict(x.split("=", 1) for x, flag in zip(a[1:], a) if flag in ("-f", "-F") and "=" in x)
+    if "q" in fields and "/issues/" in fields["q"]:  # one issue by its URL, from issues.json (issues are never in the pull request list)
+        f = os.path.join(SMOKE, "issues.json")
+        items = [i for i in (json.load(open(f)) if os.path.exists(f) else []) if fields["q"].endswith("/issues/%s" % i.get("number"))]
+        sys.stdout.write(json.dumps({"total": len(items), "next": None, "cost": 1, "items": items}))
+        sys.exit(0)
     if "q" in fields:
         f = os.path.join(SMOKE, "search.json")
         items = json.load(open(f)) if os.path.exists(f) else []
+        pinned = re.search(r"/pull/(\d+)", fields["q"])  # a pull request URL asks for that one item, as GitHub's search does
+        if pinned:
+            items = [i for i in items if str(i.get("number")) == pinned.group(1)]
         sys.stdout.write(json.dumps({"total": len(items), "next": None, "cost": 1, "items": items}))
         sys.exit(0)
     if "o" in fields:
+        if "first: 25" in fields.get("query", ""):  # the pull requests that close an issue (the --jq answer is a list): none
+            sys.stdout.write("[]")
+            sys.exit(0)
         sys.stdout.write(json.dumps({"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
 if a == ["auth", "status", "--hostname", "github.com", "--json", "hosts"]:
@@ -414,7 +427,7 @@ with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
 sys.exit(2)
 '''
 
-# Fake ssh: only `git-upload-pack 'owner/name.git'`, served from the local bare repository.
+# Fake ssh: only `git-upload-pack` / `git-receive-pack 'owner/name.git'`, served from the local bare repository (never a real remote).
 FAKE_SSH = r'''
 import os, shlex, sys
 a = sys.argv[1:]
@@ -423,8 +436,8 @@ try:
     w = shlex.split(a[-1]) if a else []
 except ValueError:
     pass
-if len(w) == 2 and w[0] == "git-upload-pack" and not w[1].startswith("/") and ".." not in w[1].split("/"):
-    os.execv(GIT, [GIT, "upload-pack", os.path.join(SMOKE, "remotes", w[1])])
+if len(w) == 2 and w[0] in ("git-upload-pack", "git-receive-pack") and not w[1].startswith("/") and ".." not in w[1].split("/"):
+    os.execv(GIT, [GIT, w[0][4:], os.path.join(SMOKE, "remotes", w[1])])
 with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
     log.write("ssh %r\n" % (a,))
 sys.exit(2)
@@ -437,13 +450,14 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     tern = str(Path(given).expanduser()) if given else shutil.which("tern")
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
         raise GateError(
-            "smoke needs Tern %s: %s. Install it, or set TERN=/path/to/tern."
-            % (TERN_VERSION, "TERN=%s is not an executable file" % given if given else "no `tern` on PATH")
+            "smoke needs Tern %s: %s. Install one, or set TERN=/path/to/tern."
+            % (" or ".join(SMOKE_TERN_VERSIONS), "TERN=%s is not an executable file" % given if given else "no `tern` on PATH")
         )
     done = run([tern, "--version"], timeout=30)
     banner = (done.stdout + done.stderr).strip()
-    if TERN_VERSION not in banner:
-        raise GateError("smoke needs Tern %s; %s reports %r. Install %s or set TERN=/path/to/tern." % (TERN_VERSION, tern, banner, TERN_VERSION))
+    reported = re.match(r"(?:tern\s+)?v?(\d+\.\d+\.\d+)(?=[\s(]|$)", banner, re.IGNORECASE)
+    if not reported or reported.group(1) not in SMOKE_TERN_VERSIONS:
+        raise GateError("smoke needs Tern %s; %s reports %r. Install one or set TERN=/path/to/tern." % (" or ".join(SMOKE_TERN_VERSIONS), tern, banner))
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
@@ -698,7 +712,7 @@ class Smoke:
 
         def walk(node: object) -> None:
             if isinstance(node, dict):
-                for key in ("text", "value", "label", "title"):
+                for key in ("text", "value", "label", "title", "placeholder"):
                     if isinstance(node.get(key), str):
                         out.append(node[key])
                 walk(node.get("children") or [])
@@ -720,7 +734,7 @@ class Smoke:
         self.label = "tern serve"
         self.logf = open(self.tmp / "serve.log", "wb")
         self.proc = subprocess.Popen(
-            [self.tern, "serve", "--control", str(self.sock)],
+            [self.tern, "serve", "--control", str(self.sock)] + (["--out", os.environ["PLOTROOM_SMOKE_SHOTS"]] if os.environ.get("PLOTROOM_SMOKE_SHOTS") else []),
             cwd=str(self.cwd), env=self.env, stdin=subprocess.DEVNULL, stdout=self.logf, stderr=subprocess.STDOUT,
         )
         deadline = time.monotonic() + 60
@@ -829,6 +843,31 @@ class Smoke:
         if not isinstance(problem, str):
             self.fail("problem", "a string", repr(problem))
         return problem  # type: ignore[return-value]
+
+    def cd(self, root: Path) -> None:
+        """The focused shell reports `root` as its directory (OSC 7), so Plotroom opens in that checkout."""
+        self.ctl_ok("run", json.dumps("cd %s && printf '\\033]7;file://localhost%%s\\033\\\\' \"$PWD\"" % root))
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        while os.path.realpath(str(self.state()["focused"].get("cwd") or "")) != os.path.realpath(str(root)):  # type: ignore[union-attr]
+            if time.monotonic() > deadline:
+                self.fail("the shell's directory", str(root), self.state()["focused"])
+            time.sleep(0.2)
+
+    def count(self, text: str) -> int:
+        """How many nodes of the UI tree are exactly `text` (a badge)."""
+        return sum(1 for t in self.texts() if t == text)
+
+    def shot(self, name: str) -> None:
+        """A headless render of the session into $PLOTROOM_SMOKE_SHOTS/<name>.png (with its layout JSON) when that is set; nothing otherwise."""
+        if os.environ.get("PLOTROOM_SMOKE_SHOTS"):
+            self.ctl_ok("shot", name)
+
+    def wait_until(self, what: str, ok: "Callable[[], bool]") -> None:
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        while not ok():
+            if not self.alive() or time.monotonic() > deadline:
+                self.fail(what, "true within %d s" % SMOKE_TIMEOUT, "never (ui texts: %r)" % self.texts()[:40])
+            time.sleep(0.2)
 
     def stop(self) -> None:
         if self.proc is not None and self.proc.poll() is None:
@@ -1362,6 +1401,416 @@ def sc_remote_host(s: Smoke) -> None:
     s.eq("its pane is in the worktree", os.path.realpath(str(wt)), os.path.realpath(str(st["focused"].get("cwd") or "")))  # type: ignore[union-attr]
 
 
+def sc_inventory(s: Smoke) -> None:
+    """worktree.inventory lists the checkout's worktrees as git does (the main one first, never removable), with the pull request Plotroom noted for a
+    branch; inventoryDirty and removeEntry act only on the worktree git still lists at that path and branch: never the main checkout, a locked, prunable
+    or changed one, never one with uncommitted changes (nothing is forced). A clean one goes, its branch with it, and a detached one has none to drop."""
+    root, key = s.checkout("inv"), "i/nv"
+    base = s.tmp / "wts"
+    base.mkdir(exist_ok=True)
+    a, b, c, d = (base / n for n in ("a", "b", "c", "d"))
+    s.out(root, "worktree", "add", "-q", "-b", "plotroom-a", str(a))
+    s.out(root, "config", "branch.plotroom-a.plotroompr", "7")
+    s.out(root, "config", "branch.plotroom-a.plotroomrepo", key)
+    s.out(root, "worktree", "add", "-q", "--detach", str(b))
+    s.out(root, "worktree", "add", "-q", "-b", "locked-c", str(c))
+    s.out(root, "worktree", "lock", str(c))
+    s.out(root, "worktree", "add", "-q", "-b", "gone-d", str(d))
+    shutil.rmtree(str(d))
+
+    def call(op: str, **rest: object) -> Dict[str, object]:
+        return s.run_request(dict(rest, op=op, repo=key, checkout=str(root)), "%s %s" % (op, key))
+
+    def refused(what: str, needle: str, **rest: object) -> None:
+        data = call(**dict(rest, op="removeEntry"))
+        s.eq("%s: ok (data: %r)" % (what, data.get("data")), False, data.get("ok"))
+        s.contains(what, needle, data.get("problem"))
+
+    data = call("inventory")
+    s.eq("inventory ok (problem: %r)" % data.get("problem"), True, data.get("ok"))
+    entries = data.get("data")
+    if not isinstance(entries, list) or not entries:
+        s.fail("inventory", "a list of worktrees", repr(entries))
+    s.same_path("the first entry is the main worktree", root, entries[0].get("path"))
+    s.eq("main flag", True, entries[0].get("main"))
+    by = {os.path.realpath(e["path"]): e for e in entries}
+
+    def at(p: Path) -> Dict[str, object]:
+        e = by.get(os.path.realpath(str(p)))
+        if e is None:
+            s.fail("inventory entry", str(p), sorted(by))
+        return e  # type: ignore[return-value]
+
+    s.eq("main: only one", [True], [e["main"] for e in entries if e["main"]])
+    s.eq("a: branch", "plotroom-a", at(a).get("branch"))
+    s.eq("a: the noted pull request", 7, at(a).get("number"))
+    s.eq("a: its fetched ref", "refs/plotroom-pr/i/nv/pr-7", at(a).get("ref"))
+    s.eq("a: not main, locked or missing", [False, False, False], [at(a).get(k) for k in ("main", "locked", "missing")])
+    s.eq("b: detached", True, at(b).get("detached"))
+    s.eq("b: no branch", None, at(b).get("branch"))
+    s.eq("c: locked", True, at(c).get("locked"))
+    s.eq("c: no item noted", None, at(c).get("number"))
+    s.eq("d: folder missing", True, at(d).get("missing"))
+    s.eq("the folder a was never touched by listing", True, a.is_dir())
+
+    clean = call("inventoryDirty", path=str(a), branch="plotroom-a")
+    s.eq("clean: ok (problem: %r)" % clean.get("problem"), True, clean.get("ok"))
+    s.eq("clean a", False, (clean.get("data") or {}).get("dirty"))  # type: ignore[union-attr]
+    (a / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
+    s.eq("dirty a", True, (call("inventoryDirty", path=str(a), branch="plotroom-a").get("data") or {}).get("dirty"))  # type: ignore[union-attr]
+
+    refused("the main checkout", "main checkout", path=str(root), branch="main")
+    refused("a branch that changed", "changed", path=str(a), branch="somewhere-else")
+    refused("a locked worktree", "locked", path=str(c), branch="locked-c")
+    refused("a missing folder", "missing", path=str(d), branch="gone-d")
+    refused("not a worktree", "not a worktree", path=str(base / "nothing"), branch="x")
+    refused("uncommitted changes", "", path=str(a), branch="plotroom-a")
+    s.eq("a kept with its changes", True, (a / "scratch.txt").is_file())
+    s.eq("a's branch kept", True, s.ref(root, "refs/heads/plotroom-a") is not None)
+
+    (a / "scratch.txt").unlink()
+    done = call("removeEntry", path=str(a), branch="plotroom-a")
+    s.eq("remove a: ok (problem: %r)" % done.get("problem"), True, done.get("ok"))
+    s.eq("a's folder is gone", False, a.exists())
+    s.eq("a's worktree is no longer listed", False, str(a) in s.out(root, "worktree", "list", "--porcelain"))
+    removed = call("removeEntry", path=str(b))
+    s.eq("remove detached b: ok (problem: %r)" % removed.get("problem"), True, removed.get("ok"))
+    s.eq("b says it had no branch", "It had no branch.", (removed.get("data") or {}).get("branch"))  # type: ignore[union-attr]
+    s.eq("b's folder is gone", False, b.exists())
+    s.eq("c (locked) is still there", True, c.is_dir())
+    s.eq("main still listed first", os.path.realpath(str(root)), os.path.realpath(s.out(root, "worktree", "list", "--porcelain").split("\n")[0][len("worktree "):]))
+
+
+def sc_draft_push(s: Smoke) -> None:
+    """A draft pull request's preview reads the branch against the base as the local bare remote has it, and writes nothing there; the push sends exactly the
+    previewed commit, never force: it is refused once the branch moved after the preview or the remote's branch diverged, and a refused or failed push leaves
+    the remote as it was. Every remote is a local bare repository behind the fake ssh; nothing real is contacted."""
+    root, key, bare = s.checkout("draft"), "d/raft", s.bare("d/raft")
+
+    def commit(name: str) -> str:
+        (root / name).write_text(name + "\n", encoding="utf-8")
+        s.out(root, "add", name)
+        s.out(root, "commit", "-q", "-m", "add " + name)
+        return s.out(root, "rev-parse", "HEAD")
+
+    def preview(base: str = "main") -> Dict[str, object]:
+        return s.run_request({"op": "draft", "repo": key, "path": str(root), "base": base, "checkout": str(root)}, "draft preview of %s into %s" % (key, base))
+
+    def push(draft: object) -> Dict[str, object]:
+        return s.run_request({"op": "push", "draft": draft, "checkout": str(root)}, "push of the previewed draft")
+
+    def remote_topic() -> Optional[str]:
+        return s.ref(bare, "refs/heads/topic")
+
+    def previewed(base: str = "main") -> Dict[str, object]:
+        data = preview(base)
+        s.eq("preview ok (problem: %r)" % data.get("problem"), True, data.get("ok"))
+        draft = data.get("data")
+        if not isinstance(draft, dict):
+            s.fail("draft", "an object", repr(draft))
+        return draft  # type: ignore[return-value]
+
+    main = s.out(root, "rev-parse", "main")
+    # Nothing to propose: on the base itself, then a branch with no commit of its own.
+    s.contains("on the base itself", "nothing to propose", preview().get("problem"))
+    s.out(root, "checkout", "-q", "-b", "topic")
+    s.contains("no commits over the base", "no commits", preview().get("problem"))
+    s.eq("a base that does not exist is no draft", False, preview("no-such-base").get("ok"))
+    s.eq("a base that is no branch name is no draft", False, preview("bad..name").get("ok"))
+    first = commit("one.txt")
+    draft = previewed()
+    s.eq("branch", "topic", draft.get("branch"))
+    s.eq("head", first, draft.get("head"))
+    s.eq("base", "main", draft.get("base"))
+    s.eq("base commit (as the remote has it)", main, draft.get("baseSha"))
+    s.eq("commits over the base", 1, draft.get("count"))
+    s.eq("one commit's subject is the title", "add one.txt", draft.get("title"))
+    s.contains("the commit line", "add one.txt", (draft.get("commits") or [""])[0])  # type: ignore[index]
+    s.eq("not on the remote yet", True, draft.get("needsPush"))
+    s.eq("the preview pushed nothing", None, remote_topic())
+    s.eq("the preview made no remote-tracking branch", None, s.ref(root, "refs/remotes/origin/topic"))
+    # Push: the previewed commit lands on the remote's branch of that name.
+    sent = push(draft)
+    s.eq("push ok (problem: %r)" % sent.get("problem"), True, sent.get("ok"))
+    s.eq("the remote's topic is the previewed commit", first, remote_topic())
+    s.eq("nothing left to push after it", False, previewed().get("needsPush"))
+    # A second commit after the preview: the old preview no longer says what is on the branch, so nothing is pushed.
+    stale = previewed()
+    second = commit("two.txt")
+    moved = push(stale)
+    s.eq("stale push refused", False, moved.get("ok"))
+    s.contains("why", "moved since the preview", moved.get("problem"))
+    s.eq("the remote kept the first commit", first, remote_topic())
+    s.eq("a fresh preview pushes the new commit", True, push(previewed()).get("ok"))
+    s.eq("the remote's topic is the second commit", second, remote_topic())
+    # The remote's branch diverged (someone else's work): a plain push is rejected, never forced.
+    scratch = s.repos[key]["scratch"]
+    s.out(scratch, "checkout", "-q", "-B", "other", "main")  # type: ignore[arg-type]
+    (scratch / "theirs.txt").write_text("theirs\n", encoding="utf-8")  # type: ignore[operator]
+    s.out(scratch, "add", "-A")  # type: ignore[arg-type]
+    s.out(scratch, "commit", "-q", "-m", "theirs")  # type: ignore[arg-type]
+    theirs = s.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
+    s.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/heads/topic" % theirs)  # type: ignore[arg-type]
+    s.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
+    third = commit("three.txt")
+    rejected = push(previewed())
+    s.eq("diverged push refused (head %s)" % third, False, rejected.get("ok"))
+    s.eq("the remote's work is untouched, nothing forced", theirs, remote_topic())
+    # A detached HEAD has no branch to propose.
+    s.out(root, "checkout", "-q", "--detach")
+    s.contains("detached", "detached", preview().get("problem"))
+    s.out(root, "checkout", "-q", "topic")
+
+
+def sc_workflow(s: Smoke) -> None:
+    """The workflow commands on a real Plotroom block, run through the palette ids a user runs: mark seen drops one "New" badge and nothing else; snooze hides
+    the item until the snoozed listing is turned on (it then wears a "Snoozed" badge); the attention filter names itself; the next sort order says which it
+    is; the Worktrees board lists a worktree git has, an unnoted one marked as such. The list is what the fake gh answers; no remote is written."""
+    root, wt = s.checkout("flow"), s.tmp / "wts" / "flow-board"
+    stamp = "2026-01-01T00:00:00Z"
+    prs = [
+        {"number": n, "title": "Flow PR %d" % n, "url": "https://github.com/f/low/pull/%d" % n, "author": "octo", "state": "OPEN", "isDraft": False,
+         "updatedAt": "2026-01-0%dT00:00:00Z" % (3 - n), "createdAt": stamp, "head": "feature-%d" % n, "base": "main", "additions": 1, "deletions": 0,
+         "changedFiles": 1, "comments": 0, "labels": [], "runs": [], "runTotal": 0}
+        for n in (1, 2)
+    ]
+    (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
+    s.cd(root)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_text("the first pull request", "Flow PR 1")
+    s.wait_text("the second pull request", "Flow PR 2")
+    s.wait_until("unseen pull requests wear New", lambda: s.count("New") >= 1)
+    unseen = s.count("New")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.mark-seen")
+    s.wait_text("the seen toast", "Marked seen")
+    s.wait_until("one New badge fewer", lambda: s.count("New") == unseen - 1)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.snooze")
+    s.wait_text("the snooze toast", "Snoozed until")
+    s.wait_until("the snoozed pull request is hidden", lambda: not any("Flow PR 1" in t for t in s.texts()))
+    s.eq("the other pull request stays listed", True, any("Flow PR 2" in t for t in s.texts()))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.toggle-snoozed")
+    s.wait_until("the snoozed pull request is listed again, marked", lambda: s.count("Snoozed") >= 1 and any("Flow PR 1" in t for t in s.texts()))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.toggle-snoozed")
+    s.wait_until("hidden again", lambda: not any("Flow PR 1" in t for t in s.texts()))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
+    s.wait_text("the attention filter is named", "Needs attention only")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.sort")
+    s.wait_text("the sort toast", "Sorted: ")
+    s.out(root, "worktree", "add", "-q", "-b", "board-branch", str(wt))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.worktrees-open")
+    s.wait_text("the Worktrees board lists the worktree git has, unnoted", "Unnoted")
+    s.wait_text("and the main worktree", "Main")
+
+
+def sc_prompts(s: Smoke) -> None:
+    """The prompt and picker flows, typed and picked as a user does: Open item by URL pins the pull request the (fake) gh answers for; Export saves the picked
+    view to a file; Import of that file asks before it writes: its Cancel row (first, so Enter) writes nothing, its Import row does. Every write is to the
+    block's own plugin store or a file under the temporary directory. Continues in the checkout and block `sc_workflow` left."""
+    exported = s.tmp / "exported.json"
+    listed = json.loads((s.smoke / "search.json").read_text(encoding="utf-8"))
+    stamp = "2026-01-01T00:00:00Z"
+    listed.append({"number": 5, "title": "Pinned PR 5", "url": "https://github.com/f/low/pull/5", "author": "octo", "state": "OPEN", "isDraft": False,
+                   "updatedAt": stamp, "createdAt": stamp, "head": "feature-5", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1,
+                   "comments": 0, "labels": [], "runs": [], "runTotal": 0})
+    (s.smoke / "search.json").write_text(json.dumps(listed), encoding="utf-8")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open-url")
+    s.wait_text("the URL prompt", "GitHub pull request or issue URL")
+    s.ctl_ok("type", json.dumps("https://github.com/f/low/pull/5"))
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the pinned pull request", "f/low#5")
+    s.wait_text("the requested pull request's row", "Pinned PR 5")
+    s.wait_until("no other pull request under the pin", lambda: not any("Flow PR" in t for t in s.texts()))
+    s.shot("url")
+
+    def export_through(confirm: bool) -> None:
+        s.ctl_ok("plugins", "run", "plugin.plotroom.export")
+        s.wait_text("the export picker", "Pick what to export")
+        s.ctl_ok("picker", "down")  # past Done, onto the first view
+        s.ctl_ok("picker", "enter")  # toggles it
+        s.wait_text("one view picked", "1 picked")
+        s.ctl_ok("picker", "enter")  # Done
+        s.wait_text("what leaves is confirmed first, with the host's real counts", "Export 1 view(s), 0 action(s)")
+        s.shot("export-confirm" if confirm else "export-cancel")
+        s.eq("the confirmation wrote no file yet", False, exported.exists())
+        if not confirm:
+            s.ctl_ok("picker", "enter")  # Cancel, first
+            time.sleep(1.5)
+            s.eq("cancelling wrote no file", False, exported.exists())
+            s.eq("cancelling exported nothing", False, any(t.startswith("Exported ") for t in s.texts()))
+            return
+        s.ctl_ok("picker", "down")  # past Cancel
+        s.ctl_ok("picker", "down")  # past Copy: Write to a file…
+        s.ctl_ok("picker", "enter")
+        s.wait_text("the file prompt", "File path to write the export to")
+        s.ctl_ok("type", json.dumps(str(exported)))
+        s.ctl_ok("key", "Enter")
+        s.wait_text("the export toast", "Exported 1 view(s), 0 action(s)")
+
+    export_through(False)
+    export_through(True)
+    deadline = time.monotonic() + SMOKE_TIMEOUT
+    while not exported.is_file():
+        if time.monotonic() > deadline:
+            s.fail("the export file", str(exported), "never written")
+        time.sleep(0.2)
+    time.sleep(0.5)
+    text = exported.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except ValueError as why:
+        s.fail("the export file", "JSON", why)
+    s.eq("the export is an object", True, isinstance(data, dict))
+    s.eq("exactly the one picked view", 1, len(data.get("views") or []))  # type: ignore[union-attr]
+    s.eq("and no action", 0, len(data.get("prompts") or []))  # type: ignore[union-attr]
+    view = data["views"][0]  # type: ignore[index]
+    s.eq("the view is complete", True, all(k in view for k in ("kind", "name", "integration", "query", "group")))
+    s.eq("it holds nothing local (no checkout path)", False, str(s.tmp) in text.replace(str(exported), ""))
+    s.shot("export")
+
+    def import_through(confirm: bool) -> None:
+        s.ctl_ok("plugins", "run", "plugin.plotroom.import")
+        s.wait_text("the import prompt", "Paste exported JSON")
+        s.ctl_ok("type", json.dumps(str(exported)))
+        s.ctl_ok("key", "Enter")
+        s.wait_text("what the file holds", "Import: what the file holds")
+        s.ctl_ok("picker", "down")  # past Cancel
+        s.ctl_ok("picker", "enter")  # Continue
+        # Conflicts (the view is already here) and account slots each ask once more; the second row of a conflict is "Duplicate".
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        asked = 0
+        while not any(re.match(r"Import \d+ item\(s\)$", t) for t in s.texts()):
+            if time.monotonic() > deadline or not s.alive():
+                s.fail("the import confirmation", "a picker headed 'Import N item(s)'", s.texts()[:40])
+            ts = s.texts()
+            if any("is already here" in t for t in ts) and asked < 5:
+                asked += 1
+                s.ctl_ok("picker", "down")
+                s.ctl_ok("picker", "enter")
+                time.sleep(0.5)
+            elif any("Which account takes" in t for t in ts) and asked < 5:
+                asked += 1
+                s.ctl_ok("picker", "enter")
+                time.sleep(0.5)
+            time.sleep(0.2)
+        s.shot("import-confirm" if confirm else "import-cancel")
+        if confirm:
+            s.ctl_ok("picker", "down")  # past Cancel
+        s.ctl_ok("picker", "enter")
+
+    import_through(False)
+    time.sleep(1.5)
+    s.eq("cancelling imports nothing", False, any("Imported " in t and " view" in t for t in s.texts()))
+    import_through(True)
+    s.wait_text("the import toast counts what was added (the duplicate)", "Imported 1 view and 0 actions")
+    s.shot("imported")
+
+
+def sc_agent(s: Smoke) -> None:
+    """An agent started from a pull request's row, with the agent setting pointed at a local script that only prints and sleeps (no omp, no model, no
+    network): the PR's worktree is made, the agent's pane starts in it and is linked to the PR, `agent-go` focuses exactly that pane, and asking again
+    offers the running agent first (Go to agent) before Start another; dismissing that offer starts nothing."""
+    root, wt = s.checkout("agent"), s.wt("a/gent", 1)
+    fake = s.tmp / "fake-agent.sh"
+    fake.write_text("#!/bin/sh\necho 'smoke agent: no model is called'\nexec sleep 3600\n", encoding="utf-8")
+    fake.chmod(0o755)
+    stamp = "2026-01-01T00:00:00Z"
+    pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
+          "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+          "labels": [], "runs": [], "runTotal": 0}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    s.ctl_ok("agent-command", str(fake))
+    s.ctl_ok("tab", "new")  # a real shell: the focused pane before this one is an earlier scenario's Plotroom block
+    s.ctl_ok("ready")
+    queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
+    s.cd(root)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_text("the pull request", "Agent PR 1")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+    s.wait_text("the action picker", "Run on ")
+    s.ctl_ok("picker", "enter")  # "Type a prompt…", first when nothing ran before
+    s.wait_text("the prompt", "Prompt for an agent on")
+    s.ctl_ok("type", json.dumps("smoke prompt"))
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the agent toast", "Agent started")
+    s.eq("the worktree was made for it", True, wt.is_dir())
+
+    def agent_focused() -> bool:
+        return os.path.realpath(str(s.state()["focused"].get("cwd") or "")) == os.path.realpath(str(wt))  # type: ignore[union-attr]
+
+    s.wait_until("the agent's pane is focused in the worktree", agent_focused)
+    tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
+
+    def back_to_queue() -> None:
+        s.ctl_ok("tab", str(queue_tab))
+        s.wait_until("the queue's tab is focused again", lambda: not agent_focused())
+
+    back_to_queue()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
+    s.wait_until("agent-go focuses the pane the link names", agent_focused)
+    s.shot("agent")
+
+    back_to_queue()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+    s.wait_text("the duplicate-launch offer", "An agent already works on")
+    s.wait_text("Go to agent comes first", "Go to agent (")
+    s.wait_text("Start another agent is the other choice", "Start another agent")
+    s.shot("agent-offer")
+    s.ctl_ok("picker", "esc")
+    time.sleep(1.0)
+    s.eq("dismissing the offer started nothing", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("the queue's tab still has focus", False, agent_focused())
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+    s.wait_text("the offer again", "An agent already works on")
+    s.ctl_ok("picker", "enter")  # Go to agent
+    s.wait_until("the offer's Go to agent focuses the agent", agent_focused)
+    s.eq("still one agent's tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+
+    # Draft PR: only an issue with a worktree can start one (it starts from the issue's branch), so pin a GitHub issue by URL, make its worktree, commit
+    # in it, and walk the draft up to its review: destination picker first, then the bases, then the review. Dismissing the review writes nothing
+    # (no `gh pr create` is reached, nothing is pushed, and the fake gh logs any call it does not know).
+    stamp = "2026-01-01T00:00:00Z"
+    issue = {"number": 9, "title": "Draft issue 9", "url": "https://github.com/a/gent/issues/9", "state": "OPEN", "reason": None, "updatedAt": stamp,
+             "createdAt": stamp, "author": "octo", "comments": 0, "labels": [], "assignees": []}
+    (s.smoke / "issues.json").write_text(json.dumps([issue]), encoding="utf-8")
+    back_to_queue()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open-url")
+    s.wait_text("the URL prompt", "GitHub pull request or issue URL")
+    s.ctl_ok("type", json.dumps("https://github.com/a/gent/issues/9"))
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the pinned issue's row", "Draft issue 9")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
+    issue_wt = s.issue_wt("a/gent", "9")
+    deadline = time.monotonic() + SMOKE_TIMEOUT
+    while not issue_wt.is_dir():
+        if time.monotonic() > deadline or not s.alive():
+            s.fail("the issue's worktree", str(issue_wt), s.texts()[:40])
+        ts = s.texts()
+        if any(t.startswith("Which branch for") for t in ts):
+            s.ctl_ok("picker", "enter")  # no linked pull request: New branch…
+        elif any(t.startswith("Start ") and t.endswith(" from…") for t in ts):
+            s.ctl_ok("picker", "enter")  # the default branch
+        time.sleep(0.7)
+    s.wait_text("the worktree toast", "Worktree ready for")
+    (issue_wt / "draft-work.txt").write_text("work\n", encoding="utf-8")
+    s.out(issue_wt, "add", "draft-work.txt")
+    s.out(issue_wt, "commit", "-q", "-m", "draft work")
+    refs_before = s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)")
+    back_to_queue()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.draft-pr")
+    s.wait_text("the destination picker comes first", "Where should the draft PR from")
+    s.wait_text("it offers the repository itself", "Open the pull request on a/gent")
+    s.shot("draft-destination")
+    s.ctl_ok("picker", "enter")
+    s.wait_text("then the base picker", "Open a draft PR from")
+    s.ctl_ok("picker", "enter")  # the default branch
+    s.wait_text("then the review of the draft", "Draft PR: ")
+    s.shot("draft-review")
+    s.ctl_ok("picker", "esc")
+    time.sleep(1.0)
+    s.eq("dismissing the review pushed nothing: the remote's refs are as before", refs_before, s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)"))
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -1380,6 +1829,11 @@ SCENARIOS = [
     ("issue on a linked PR", sc_issue_pr),
     ("remote branches", sc_remote_branches),
     ("remote host", sc_remote_host),
+    ("worktree inventory", sc_inventory),
+    ("draft preview and push", sc_draft_push),
+    ("triage, sort and worktrees board", sc_workflow),
+    ("URL, export and import prompts", sc_prompts),
+    ("agent launch, jump and duplicate offer", sc_agent),
 ]
 
 
@@ -1395,6 +1849,10 @@ def check_smoke() -> str:
         s.repo("github", ".github", "dotgithub", (1,))
         s.repo("p", "q", "q", (1,))
         s.repo("o", "remote", "remote", (1,))
+        s.repo("i", "nv", "inv", ())
+        s.repo("d", "raft", "draft", ())
+        s.repo("f", "low", "flow", (5,))
+        s.repo("a", "gent", "agent", (1,))
         s.start()
         s.selftest()
         for number, (name, scenario) in enumerate(SCENARIOS, 1):

@@ -75,6 +75,10 @@ end
 -- Result: { ok, hasCx, result?, describe? (open, issue), update? (open), problem? }; the sentinel problems of
 -- openIssue ("undecided", "need-base") arrive as `problem`; `result` of "branches" is { branches = { names } }. A scan
 -- (the host half's read, which has no window context to report) answers { ok, scan?, problem? }.
+-- The local-git reads and writes of the worktree inventory and draft PRs likewise answer { ok, data?, problem? }
+-- (`data` is what the call returned: entries, a Draft, or { pushed = true } / { branch = <Removal's sentence> }):
+--   { op = "inventory" }   { op = "inventoryDirty", path, branch? }   { op = "removeEntry", path, branch? }
+--   { op = "draft", path, base }   { op = "push", draft = <a Draft as "draft" answered it> }
 -- A second `done` writes duplicate.json.
 function M.run(cx: WindowCx)
 	local dir = tern.getenv("PLOTROOM_SMOKE_DIR")
@@ -95,6 +99,10 @@ function M.run(cx: WindowCx)
 			or (request.op == "issue" and type(request.repo) == "string" and type(request.key) == "string" and plan ~= nil)
 			or (request.op == "branches" and type(request.repo) == "string")
 			or (request.op == "scan" and wants ~= nil)
+			or (request.op == "inventory" and type(request.repo) == "string")
+			or ((request.op == "inventoryDirty" or request.op == "removeEntry") and type(request.repo) == "string" and type(request.path) == "string" and (request.branch == nil or type(request.branch) == "string"))
+			or (request.op == "draft" and type(request.repo) == "string" and type(request.path) == "string" and type(request.base) == "string")
+			or (request.op == "push" and type(request.draft) == "table")
 		)
 	if not valid then
 		write(dir, "result.json", { ok = false, hasCx = true, problem = "bad request: " .. tostring(decoded) })
@@ -136,12 +144,38 @@ function M.run(cx: WindowCx)
 			write(dir, "result.json", { ok = scan ~= nil, scan = scan, problem = if scan then nil else (problem or "no scan and no problem") })
 		end
 	end
+	-- The inventory and draft calls: no window context, one `data` answer.
+	local function answered(data: any, problem: string?)
+		if once() then
+			write(dir, "result.json", { ok = problem == nil, data = data, problem = problem })
+		end
+	end
 	-- Run from a process callback, as the host runs its requests (from an event): a headless Tern keeps no clock between commands, so a timer
 	-- armed while this command runs (the immediate refusals of worktree.open and openIssue) would wait for the next event.
 	process.run({ "git", "--version" }, { timeout_ms = 10 * 1000 }, function()
 		local started, why = pcall(function()
 			if op == "scan" then
 				worktree.scan(request.checkout, wants :: { [string]: worktree.Want }, scanned)
+			elseif op == "inventory" then
+				worktree.inventory(request.checkout, request.repo, function(entries, problem)
+					answered(if entries then tern.json.array(entries) else nil, problem)
+				end)
+			elseif op == "inventoryDirty" then
+				worktree.inventoryDirty(request.checkout, request.repo, request.path, request.branch, function(dirty, problem)
+					answered({ dirty = dirty }, problem)
+				end)
+			elseif op == "removeEntry" then
+				worktree.removeEntry(request.checkout, request.repo, request.path, request.branch, function(removal, problem, dirty)
+					answered(if removal then { branch = removal.branch } else { dirty = dirty }, problem)
+				end)
+			elseif op == "draft" then
+				worktree.draftPreview(request.path, request.repo, request.base, function(draft, problem)
+					answered(draft, problem)
+				end)
+			elseif op == "push" then
+				worktree.pushBranch(request.draft :: worktree.Draft, function(problem)
+					answered({ pushed = problem == nil }, problem)
+				end)
 			elseif op == "issue" then
 				worktree.openIssue(request.checkout, request.repo, request.key, plan :: worktree.IssuePlan, nil, finish)
 			elseif op == "branches" then
@@ -154,7 +188,7 @@ function M.run(cx: WindowCx)
 			end
 		end)
 		if not started then
-			local what = if op == "scan" then "scan" elseif op == "issue" then "openIssue" elseif op == "branches" then "remoteBranches" else "open"
+			local what = if op == "issue" then "openIssue" elseif op == "branches" then "remoteBranches" elseif op == "open" then "open" else op
 			write(dir, "result.json", { ok = false, hasCx = true, problem = "worktree." .. what .. " raised: " .. tostring(why) })
 		end
 	end)

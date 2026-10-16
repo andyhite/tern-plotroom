@@ -17,6 +17,13 @@ M.ACTIONS = {
 	{ id = "worktree", label = "Worktree", default = "w" },
 	{ id = "goto", label = "Go to tab", default = "g" },
 	{ id = "agent", label = "Agent picker", default = "a" },
+	{ id = "agentgo", label = "Go to agent", default = "G" },
+	{ id = "seen", label = "Mark seen", default = "m" },
+	{ id = "snooze", label = "Snooze until tomorrow", default = "z" },
+	{ id = "snoozed", label = "Show or hide snoozed", default = "Z" },
+	{ id = "attention", label = "Needs attention only", default = "n" },
+	{ id = "sort", label = "Next sort order", default = "o" },
+	{ id = "more", label = "Item commands", default = "." },
 	{ id = "search", label = "Search", default = "/" },
 	{ id = "refresh", label = "Refresh", default = "r" },
 	{ id = "settings", label = "Settings", default = "s" },
@@ -79,10 +86,19 @@ end
 -- needs no notice; cache it in the block's State if that ever shows up in a profile.
 function M.load(): (Map, string?)
 	local mine, why = saved(pcall(tern.kv.get, KV))
+	-- Every key the user saved is theirs first: an action nobody customized keeps its default only when no saved key
+	-- already holds it, so a newer built-in shortcut never takes over an older custom binding.
+	local taken: { [string]: boolean } = {}
+	local own: { [string]: string? } = mine or {}
+	for _, key in own do
+		if key ~= "" then
+			taken[key :: string] = true
+		end
+	end
 	local map: Map = {}
 	for _, a in M.ACTIONS do
-		local own = if mine then mine[a.id] else nil
-		map[a.id] = own or a.default
+		local custom = own[a.id]
+		map[a.id] = custom or (if taken[a.default] then "" else a.default)
 	end
 	return map, why
 end

@@ -13,7 +13,7 @@ local M = {}
 export type Problem = { kind: string, message: string }
 -- status: failure | pending | success | neutral; detail spells it out ("Passed · 3s"); took is the bare duration of a
 -- finished check run, when GitHub gives one.
-export type Run = { name: string, status: string, detail: string, required: boolean, url: string?, took: string? }
+export type Run = { name: string, status: string, detail: string, required: boolean, url: string?, took: string?, runId: string? }
 export type Pr = {
 	key: string,
 	repo: string,
@@ -249,6 +249,7 @@ function M.runs(raw: any): { Run }
 					required = field(n, "isRequired") == true,
 					url = if link and string.sub(link, 1, 8) == "https://" and not string.find(link, "[%c%s]") then link else nil,
 					took = spent,
+					runId = M.runIdOf(link),
 				}
 				local id = nonEmpty(field(n, "id"))
 				local key = if suite then "suite\0" .. suite .. "\0" .. name elseif id then "id\0" .. id else nil
@@ -519,7 +520,7 @@ function M.classify(result: ProcessResult, limit: string?): Problem
 	end
 	if string.find(err, "HTTP 422", 1, true) or string.find(low, "cannot be searched", 1, true) then
 		-- Validation Failed: bad query, or the account cannot search the repository. Retrying unchanged cannot help.
-		return { kind = "invalid", message = "GitHub rejected the search: " .. firstLines(err, 3) }
+		return { kind = "invalid", message = "GitHub rejected the request: " .. firstLines(err, 3) }
 	end
 	if string.find(err, "HTTP 404", 1, true) then
 		return { kind = "not-found", message = "The repository or pull request is not visible to this GitHub account: " .. firstLines(err, 3) }
@@ -1261,4 +1262,274 @@ function M.repos(account: string, done: ({ string }?, Problem?) -> ())
 	end, done)
 end
 
+
+-- ---------------------------------------------------------------- writes and single lookups
+-- Every write is argv-only (`--flag=value`, so a value that starts with `-` stays a value), runs as the view's saved
+-- gh account through M.gh, and checks its inputs first: a bad input never reaches gh. The host confirms with the user
+-- before calling any of these.
+
+local function bad(message: string): Problem
+	return { kind = "invalid", message = message }
+end
+
+-- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
+local function repoArg(repo: any): string?
+	local o, r = string.match(if type(repo) == "string" then repo else "", "^([%w%-_%.]+)/([%w%-_%.]+)$")
+	if not o or not r or o == "." or o == ".." or r == "." or r == ".." then
+		return nil
+	end
+	return "github.com/" .. o .. "/" .. r
+end
+
+local function whole32(v: any): boolean
+	return type(v) == "number" and v >= 1 and v <= 2147483647 and v == math.floor(v)
+end
+
+-- A gh login or `@me`; nil otherwise.
+local function assignee(v: any): string?
+	return if v == "@me" then v else login(v)
+end
+
+-- A label name. gh reads --add-label values as CSV, so csv() quotes the name when it is sent.
+local function label(v: any): string?
+	if type(v) == "string" and #v >= 1 and #v <= 50 and not string.find(v, "[%c]") and string.sub(v, 1, 1) ~= "-" and string.match(v, "%S") then
+		return v
+	end
+	return nil
+end
+
+local function csv(v: string): string
+	return '"' .. (string.gsub(v, '"', '""')) .. '"'
+end
+
+-- Valid entries of `values` as `--flag=value` args; the problem when one is invalid, over `max`, or repeated.
+local function flagged(flag: string, values: any, check: (any) -> string?, what: string, args: { string }, seen: { [string]: string }, encode: ((string) -> string)?): Problem?
+	if type(values) ~= "table" then
+		return nil
+	end
+	if #values > 20 then
+		return bad("At most 20 " .. what .. " per change.")
+	end
+	for _, v in values do
+		local ok = check(v)
+		if not ok then
+			return bad("Not a valid " .. string.gsub(what, "s$", "") .. ": " .. tostring(v))
+		end
+		local k = string.lower(ok)
+		if seen[k] and seen[k] ~= flag then
+			return bad(ok .. " cannot be both added and removed.")
+		end
+		seen[k] = flag
+		table.insert(args, flag .. "=" .. (if encode then encode(ok) else ok))
+	end
+	return nil
+end
+
+export type IssueEdit = {
+	repo: string,
+	number: number,
+	addAssignees: { string }?,
+	removeAssignees: { string }?,
+	addLabels: { string }?,
+	removeLabels: { string }?,
+}
+
+local function later(done: () -> ())
+	tern.timer(0, done)
+end
+
+-- `gh issue edit` with validated assignees (logins, or `@me` for the account's own login) and labels; done(problem).
+-- At least one change is required. Labels GitHub does not know are created by gh's own refusal: it fails, nothing is
+-- invented here. done never runs before this call returns.
+function M.editIssue(e: IssueEdit, account: string?, done: (Problem?) -> ())
+	local repo = repoArg(e.repo)
+	local args: { string } = { "issue", "edit", tostring(e.number), "--repo", repo or "" }
+	local problem: Problem? = nil
+	if not repo then
+		problem = bad("Unexpected repository name.")
+	elseif not whole32(e.number) then
+		problem = bad("Unexpected issue number.")
+	end
+	local seenAssignee: { [string]: string } = {}
+	local seenLabel: { [string]: string } = {}
+	problem = problem
+		or flagged("--add-assignee", e.addAssignees, assignee, "assignees", args, seenAssignee)
+		or flagged("--remove-assignee", e.removeAssignees, assignee, "assignees", args, seenAssignee)
+		or flagged("--add-label", e.addLabels, label, "labels", args, seenLabel, csv)
+		or flagged("--remove-label", e.removeLabels, label, "labels", args, seenLabel, csv)
+	if not problem and #args == 5 then
+		problem = bad("Nothing to change.")
+	end
+	if problem then
+		local p = problem
+		return later(function()
+			done(p)
+		end)
+	end
+	if account == "" then
+		account = nil
+	end
+	M.gh(args, function(_, p)
+		done(p)
+	end, account)
+end
+
+-- The Actions workflow run id in a check's link (`.../actions/runs/<id>/job/<job>`); nil for links that are not a
+-- workflow run, a check suite or a check run id included.
+function M.runIdOf(url: any): string?
+	local id = if type(url) == "string" then string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)/") or string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)$") else nil
+	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
+end
+
+local RERUNNABLE: { [string]: boolean } = { failure = true, timed_out = true, cancelled = true, startup_failure = true }
+
+-- Re-runs the failed jobs of workflow run `runId` (a `Run.runId`: never a check suite or check run id). The run is
+-- read first and must belong to `repo`, be finished and have failed; a missing run id is a not-found, never remapped.
+function M.rerunFailed(repo: string, runId: string, account: string?, done: (Problem?) -> ())
+	local target = repoArg(repo)
+	local problem: Problem? = nil
+	if not target then
+		problem = bad("Unexpected repository name.")
+	elseif type(runId) ~= "string" or not string.match(runId, "^%d+$") or #runId > 15 or tonumber(runId) == 0 then
+		problem = bad("Unexpected workflow run id.")
+	end
+	if problem then
+		local p = problem
+		return later(function()
+			done(p)
+		end)
+	end
+	if account == "" then
+		account = nil
+	end
+	M.gh({ "run", "view", runId, "--repo", target or "", "--json", "databaseId,status,conclusion,url" }, function(out, p)
+		if not out then
+			return done(p)
+		end
+		local ok, data = pcall(tern.json.decode, out)
+		local url = field(data, "url")
+		if not ok or tostring(field(data, "databaseId")) ~= runId or type(url) ~= "string" or not string.find(url, "/actions/runs/" .. runId, 1, true) then
+			return done({ kind = "failed", message = "gh printed unexpected run data." })
+		end
+		if field(data, "status") ~= "completed" then
+			return done(bad("Workflow run " .. runId .. " has not finished."))
+		end
+		local conclusion = field(data, "conclusion")
+		if type(conclusion) ~= "string" or not RERUNNABLE[conclusion] then
+			return done(bad("Workflow run " .. runId .. " did not fail (" .. tostring(conclusion) .. ")."))
+		end
+		M.gh({ "run", "rerun", runId, "--repo", target or "", "--failed" }, function(_, p2)
+			done(p2)
+		end, account)
+	end, account)
+end
+
+export type NewPr = { repo: string, base: string, head: string, title: string, body: string, draft: boolean }
+
+-- A branch name as git allows it, or `owner:branch` for a head on a fork; nil otherwise.
+local function branch(v: any, forkOk: boolean): string?
+	if type(v) ~= "string" or #v < 1 or #v > 255 then
+		return nil
+	end
+	local name = v
+	if forkOk then
+		local owner, rest = string.match(v, "^([%w%-]+):(.+)$")
+		name = rest or v
+		if owner and not rest then
+			return nil
+		end
+	end
+	if string.find(name, "[%c%s~^:?*%[\\]") or string.find(name, "..", 1, true) or string.find(name, "@{", 1, true) or string.find(name, "//", 1, true) then
+		return nil
+	end
+	local first, last = string.sub(name, 1, 1), string.sub(name, -1)
+	if first == "-" or first == "/" or last == "/" or last == "." or string.sub(name, -5) == ".lock" or name == "@" then
+		return nil
+	end
+	return v
+end
+
+-- Opens a DRAFT pull request of `repo` from `head` into `base` with the given title and body (never `--fill`, never a
+-- prompt); done(url, problem). Only `draft = true` is accepted. `--head` is explicit, so gh never pushes or forks.
+function M.createPr(d: NewPr, account: string?, done: (string?, Problem?) -> ())
+	local repo = repoArg(d.repo)
+	local problem: Problem? = nil
+	if not repo then
+		problem = bad("Unexpected repository name.")
+	elseif d.draft ~= true then
+		problem = bad("Only draft pull requests are created.")
+	elseif not branch(d.base, false) then
+		problem = bad("Unexpected base branch.")
+	elseif not branch(d.head, true) then
+		problem = bad("Unexpected head branch.")
+	elseif type(d.title) ~= "string" or not string.match(d.title, "%S") or (utf8.len(d.title) or 257) > 256 or string.find(d.title, "[%c]") then
+		problem = bad("The title must be one line of 1 to 256 characters.")
+	elseif type(d.body) ~= "string" or #d.body > 60000 or string.find(d.body, "[\0-\8\11\12\14-\31]") then
+		problem = bad("The body must be text of at most 60000 bytes.")
+	end
+	if problem then
+		local p = problem
+		return later(function()
+			done(nil, p)
+		end)
+	end
+	if account == "" then
+		account = nil
+	end
+	local args = { "pr", "create", "--repo", repo or "", "--draft", "--base=" .. d.base, "--head=" .. d.head, "--title=" .. d.title, "--body=" .. d.body }
+	M.gh(args, function(out, p)
+		if not out then
+			return done(nil, p)
+		end
+		local url = string.match(out, "(https://github%.com/[^%s]+)%s*$")
+		if not url or not M.parsePrUrl(url) then
+			return done(nil, { kind = "failed", message = "gh did not print the new pull request's URL: " .. firstLines(out, 3) })
+		end
+		done(url, nil)
+	end, account)
+end
+
+-- Repository, number and kind of a github.com pull request or issue URL (https only; a query, fragment or trailing
+-- slash is ignored); nil for anything else.
+function M.parseItemUrl(url: any): { kind: string, repo: string, number: number }?
+	if type(url) ~= "string" then
+		return nil
+	end
+	local clean = string.gsub(string.match(url, "^[^?#]*") or "", "/$", "")
+	local o, r, k, n = string.match(clean, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/(%a+)/(%d+)$")
+	local num = tonumber(n)
+	if not o or not r or o == "." or o == ".." or r == "." or r == ".." or (k ~= "pull" and k ~= "issues") or not num or not whole32(num) then
+		return nil
+	end
+	return { kind = if k == "pull" then "pr" else "issue", repo = o .. "/" .. r, number = num }
+end
+
+local ISSUE_ITEM_GQL = "query($q: URI!) { rateLimit { cost } resource(url: $q) { ... on Issue { number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } }"
+local ISSUE_ITEM_JQ = "[.data.resource | select(.number != null) | {number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]}] as $items | {total:($items | length),next:null,cost:.data.rateLimit.cost,items:$items}"
+
+-- The one issue `repo`#`number`, normalized as the issue list's items are; done(issue, problem, spent). Not-found when
+-- the login sees no issue there (a pull request's number is not an issue). done never runs before this returns.
+function M.issueItem(repo: string, number: number, account: string?, done: (tracker.Issue?, Problem?) -> (), shouldContinue: (() -> boolean)?)
+	local live = shouldContinue or function()
+		return true
+	end
+	if not repoArg(repo) or not whole32(number) then
+		return later(function()
+			done(nil, bad("Unexpected issue address."))
+		end)
+	end
+	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, function(body)
+		local pg, why = M.parseIssuePage(body)
+		if not pg then
+			return nil, why
+		end
+		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.issues }, nil
+	end, live, function(items, _, _, problem)
+		local issue = if items then (items :: { tracker.Issue })[1] else nil
+		if not issue then
+			return done(nil, problem or { kind = "not-found", message = "This GitHub account sees no issue " .. repo .. "#" .. number .. "." })
+		end
+		done(issue, nil)
+	end)
+end
 return M
