@@ -64,15 +64,9 @@
 	margin-left: 0;
 }
 
-/* Tern's side preview is a fixed 340px: too tight for the worktree card and the checks. Keep it at least 460px; under
-   980px Tern moves it below the list (.pv-below-auto), which this leaves alone. */
-[data-surface='plugin.plotroom.prs'] .sf-picker.pv-side:not(.pv-below-auto) .pk-pv {
-	min-width: 460px;
-}
-
-/* The 460px preview leaves the list too little beside the scope rail, so the rail folds into the scope dropdown (the two
-   rules `.narrow` applies) once the block is 127 terminal columns or less. host.luau adds `.narrow` to the queue's role
-   from the block's own `cx.cols`: Tern's CSS sees the window's width, and container queries are not applied here. */
+/* The scope rail folds into the scope dropdown (the two rules `.narrow` applies) once the block is 127 terminal columns
+   or less. host.luau adds `.narrow` to the queue's role from the block's own `cx.cols`: Tern's CSS sees the window's
+   width, and container queries are not applied here. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.narrow'] .pk-scopes {
 	display: none;
 }
