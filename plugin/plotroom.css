@@ -286,3 +286,273 @@
 		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
 		0 0 0 3px rgb(from var(--accent) r g b/13%);
 }
+
+/* TEMP DEBUG: picker width in px, to the nearest 2px below. Delete this block. */
+[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+	content: '<960';
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	z-index: 9999;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background: #000;
+	color: #0f0;
+	font: 12px var(--mono);
+	pointer-events: none;
+}
+@container (min-width: 960px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '960+';
+	}
+}
+@container (min-width: 962px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '962+';
+	}
+}
+@container (min-width: 964px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '964+';
+	}
+}
+@container (min-width: 966px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '966+';
+	}
+}
+@container (min-width: 968px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '968+';
+	}
+}
+@container (min-width: 970px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '970+';
+	}
+}
+@container (min-width: 972px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '972+';
+	}
+}
+@container (min-width: 974px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '974+';
+	}
+}
+@container (min-width: 976px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '976+';
+	}
+}
+@container (min-width: 978px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '978+';
+	}
+}
+@container (min-width: 980px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '980+';
+	}
+}
+@container (min-width: 982px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '982+';
+	}
+}
+@container (min-width: 984px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '984+';
+	}
+}
+@container (min-width: 986px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '986+';
+	}
+}
+@container (min-width: 988px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '988+';
+	}
+}
+@container (min-width: 990px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '990+';
+	}
+}
+@container (min-width: 992px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '992+';
+	}
+}
+@container (min-width: 994px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '994+';
+	}
+}
+@container (min-width: 996px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '996+';
+	}
+}
+@container (min-width: 998px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '998+';
+	}
+}
+@container (min-width: 1000px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1000+';
+	}
+}
+@container (min-width: 1002px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1002+';
+	}
+}
+@container (min-width: 1004px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1004+';
+	}
+}
+@container (min-width: 1006px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1006+';
+	}
+}
+@container (min-width: 1008px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1008+';
+	}
+}
+@container (min-width: 1010px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1010+';
+	}
+}
+@container (min-width: 1012px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1012+';
+	}
+}
+@container (min-width: 1014px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1014+';
+	}
+}
+@container (min-width: 1016px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1016+';
+	}
+}
+@container (min-width: 1018px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1018+';
+	}
+}
+@container (min-width: 1020px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1020+';
+	}
+}
+@container (min-width: 1022px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1022+';
+	}
+}
+@container (min-width: 1024px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1024+';
+	}
+}
+@container (min-width: 1026px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1026+';
+	}
+}
+@container (min-width: 1028px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1028+';
+	}
+}
+@container (min-width: 1030px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1030+';
+	}
+}
+@container (min-width: 1032px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1032+';
+	}
+}
+@container (min-width: 1034px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1034+';
+	}
+}
+@container (min-width: 1036px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1036+';
+	}
+}
+@container (min-width: 1038px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1038+';
+	}
+}
+@container (min-width: 1040px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1040+';
+	}
+}
+@container (min-width: 1042px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1042+';
+	}
+}
+@container (min-width: 1044px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1044+';
+	}
+}
+@container (min-width: 1046px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1046+';
+	}
+}
+@container (min-width: 1048px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1048+';
+	}
+}
+@container (min-width: 1050px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1050+';
+	}
+}
+@container (min-width: 1052px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1052+';
+	}
+}
+@container (min-width: 1054px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1054+';
+	}
+}
+@container (min-width: 1056px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1056+';
+	}
+}
+@container (min-width: 1058px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1058+';
+	}
+}
+@container (min-width: 1060px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker::after {
+		content: '1060+';
+	}
+}
