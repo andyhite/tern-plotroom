@@ -23,7 +23,7 @@ Triage with the keyboard. One key checks a PR or issue out into its own worktree
 
 ## Install
 
-Requires Tern 0.8.3, `gh` signed in to github.com, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi) (worktrees and agents). Jira views also need Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) signed in (`acli jira auth login`).
+Requires Tern 0.8.3, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi) (worktrees and agents), plus the CLI of each integration you use: `gh` signed in to github.com for GitHub, Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) signed in (`acli jira auth login`) for Jira. An integration is only there while its CLI is installed on the block's host: without `gh`, Plotroom has no GitHub views, groups or prompts, only Settings › GitHub with a **Setup guide** button to gh's install instructions; without `acli`, the same for Jira (Settings › Jira). Install the CLI, then Refresh (or show its setup page again) and the integration turns on.
 
 ```sh
 tern plugin install github.com/andyhite/tern-plotroom/plugin
@@ -64,7 +64,7 @@ Press `?` in the block for this list, which shows the keys as you have set them.
 | your keys | Run the saved prompt with that shortcut on the PR (listed under `?`) |
 | `/` | Search the loaded PRs or issues |
 | `r` | Refresh now |
-| `s` | Settings, on the page it last showed: views, prompts, keys, worktrees (folder and name formats), repositories (checkouts, branch formats, setup commands), Jira projects, refresh |
+| `s` | Settings, on the page it last showed: views, prompts, keys, worktrees (folder and name formats), repositories (checkouts, branch formats, setup commands), Jira projects (while `acli` is installed), refresh, and the setup page of `gh` or `acli` while it is not installed |
 
 ## Worktrees
 

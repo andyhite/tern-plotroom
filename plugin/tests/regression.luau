@@ -471,7 +471,17 @@ local function newWorld(instantiate: Loader, context: string): World
 	local copied: { string } = {}
 	local frames: { { pane: number, ops: any } } = {}
 	local calls: { Call } = {}
-	local responders: { Responder } = {}
+	-- gh and acli start unless a model of them says otherwise (newGh, newAcli answer first): a block asks each for its
+	-- --version before it lists any view.
+	local responders: { Responder } = {
+		function(call: Call): Reply?
+			local argv = call.argv
+			if (argv[1] == "gh" or argv[1] == "acli") and argv[2] == "--version" and #argv == 2 then
+				return { stdout = argv[1] .. " version 1.0.0\n" }
+			end
+			return nil
+		end,
+	}
 	local unmatched: { string } = {}
 	local panes: { PaneRow } = {}
 	local blocks: { [string]: any } = {}
@@ -11363,7 +11373,7 @@ case("host: the Jira group of the Views page follows acli: with no Jira view it 
 	yes(rowIn(b, "vadd:github:octocat") ~= nil, "while the signed-in account's group is there")
 	acli.override = nil
 	b.press("escape")
-	refreshNow(w, b) -- Refresh forgets which CLIs start
+	refreshNow(w, b) -- Refresh asks again which CLIs start
 	goToSettings(b, "views")
 	w.flush()
 	eq(sectionIn(b, "vadd:jira:").id, "add-to:jira:", "acli answers: Jira is a group with only its Add")
@@ -11487,9 +11497,11 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	end
 	eq(searched(), 1, "one search covers the project's issues")
 	for _, call in w.calls do
-		-- the sidebar's group labels learn gh's active login; nothing else may ask gh
-		eq(call.argv[1] == "gh" and call.argv[2] ~= "auth", false, "a Jira filter never searches through gh: " .. table.concat(call.argv, " "))
-		eq(call.argv[1] == "gh" and call.argv[3] ~= "status", false, "nor reads a token: " .. table.concat(call.argv, " "))
+		-- whether gh starts, and the sidebar's group labels learn gh's active login; nothing else may ask gh
+		if call.argv[2] ~= "--version" then
+			eq(call.argv[1] == "gh" and call.argv[2] ~= "auth", false, "a Jira filter never searches through gh: " .. table.concat(call.argv, " "))
+			eq(call.argv[1] == "gh" and call.argv[3] ~= "status", false, "nor reads a token: " .. table.concat(call.argv, " "))
+		end
 	end
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
@@ -11809,9 +11821,9 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(factOf(b, "Priority"), "High", "and the priority, which the search carries")
 	has(b.text(), "Linked issues", "the linked items' heading shimmers meanwhile")
 	has(b.text(), "Loading details…", "with the details loading")
-	eq(#s.acli.requests, 2, "only the sign-in and the search were asked: the details wait for the cursor to rest")
+	eq(#s.acli.requests, 3, "only whether acli starts, the sign-in and the search were asked: the details wait for the cursor to rest")
 	w.advance(300)
-	eq(s.acli.requests[3].kind, "view", "the details load once the cursor rests")
+	eq(s.acli.requests[4].kind, "view", "the details load once the cursor rests")
 	eq(factOf(b, "Parent"), "ABC-1 Auth epic", "the parent")
 	eq(factOf(b, "Sprint"), "Sprint 2", "the active sprint")
 	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority", "Parent", "Sprint", "Fix versions", "Comments", "Opened", "Updated" }, "no components row without components")
@@ -12299,6 +12311,128 @@ case("host: a request is about what it names, not about the filter on screen: a 
 	hx.ask(w, b, "j2", { op = "map-jira", project = "ABC", repo = "x/y" })
 	same(w.kv.get("jira-repos").ABC, { "o/r", "x/y" }, "and a repository is mapped to a project")
 	eq(hx.ask(w, b, "i1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false }).problem, "That issue is not loaded here any more; Refresh and try again.", "an issue is answered only while its list is loaded: the pull request filter replaced it")
+end)
+
+-- `program` ("gh" | "acli") is not installed while the returned switch's `missing` holds: every spawn of it fails to
+-- start, whatever a model of it would answer.
+function hx.uninstalled(w: World, program: string): { missing: boolean }
+	local switch = { missing = true }
+	w.respond(function(call: Call): Reply?
+		if switch.missing and call.argv[1] == program then
+			return { raise = "spawn " .. program .. ": no such file or directory" }
+		end
+		return nil
+	end)
+	return switch
+end
+
+-- The ids of the pages Settings offers, in order.
+function hx.pages(b: Block): { string }
+	local out: { string } = {}
+	for _, p in prefsOf(b).pages do
+		table.insert(out, p.id)
+	end
+	return out
+end
+
+-- The ids of the rows of the Settings page shown, in order.
+function hx.rows(b: Block): { string }
+	local out: { string } = {}
+	for _, section in prefsOf(b).sections do
+		for _, r in section.rows do
+			table.insert(out, r.id)
+		end
+	end
+	return out
+end
+
+case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt or request, and Settings shows its setup guide until gh starts", function(w: World)
+	local s = jiraHost(w)
+	local gh = hx.uninstalled(w, "gh")
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	-- restored on a GitHub pull request view
+	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
+	w.flush()
+	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
+	eq(b.title(), "Plotroom · Assigned to me (2)", "and shown in place of the GitHub view restored")
+	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
+	goToSettings(b, "views")
+	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:" }, "Views has Jira's group alone")
+	b.press("escape")
+	goToSettings(b, "prompts")
+	same(hx.rows(b), { "padd:issues" }, "Prompts has the issue prompts alone: the pull request one stays saved, unlisted")
+	b.press("escape")
+	goToSettings(b, "worktrees")
+	same(hx.rows(b), { "wtroot", "fmt:branch", "fmt:issuedir" }, "no pull request folder name")
+	b.press("escape")
+	goToSettings(b, "setup-github")
+	same(hx.pages(b), { "views", "prompts", "keys", "worktrees", "repos", "jira", "connection", "setup-github" }, "GitHub's setup page is offered")
+	eq(prefsOf(b).focus, "guide:github", "its one row")
+	b.press("enter")
+	eq(w.opened[#w.opened], "https://github.com/cli/cli#installation", "opens gh's install guide")
+	b.press("escape")
+	w.kv.put("branch-format", "{key}-{slug}")
+	same(hx.ask(w, b, "j1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = true }), { chooseBase = true, branch = "ABC-12-fix-login", branches = { "main" } }, "a Jira issue's worktree looks for no linked pull request: a new branch")
+	w.kv.put("branch-format", "")
+	has(hx.ask(w, b, "j2", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = true }).problem, "{github.user}, which could not be read: install gh (Settings › GitHub)", "the default format's gh login says gh is missing")
+	for _, call in w.calls do
+		if call.argv[1] == "gh" then
+			eq(table.concat(call.argv, " "), "gh --version", "gh is only asked whether it starts")
+		end
+	end
+	-- gh is installed meanwhile: showing its setup page again finds it
+	gh.missing = false
+	goToSettings(b, "setup-github")
+	w.flush()
+	eq(prefsOf(b).page, "views", "the setup page gives way to Views")
+	yes(rowIn(b, "vadd:github:octocat") ~= nil, "which has the signed-in account's group")
+	b.press("escape")
+	same(sidebarOf(b), {
+		"My PRs @ GitHub - octocat = prs:v1",
+		"Review requested @ GitHub - octocat = prs:v2",
+		"Assigned to me @ Jira = issues:v1",
+	}, "the GitHub views are listed again")
+	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")
+	eq(#requestsOf(s.gh, "search"), 0, "and nothing searches GitHub until one is picked")
+end)
+
+case("host: with neither gh nor acli installed, nothing is listed or asked, and Settings offers both setup guides", function(w: World)
+	hostScene(w, 3)
+	hx.uninstalled(w, "gh")
+	hx.uninstalled(w, "acli")
+	local b = openQueue(w)
+	eq(#pickerOf(b).scopes, 0, "no view is listed")
+	eq(pickerOf(b).state, "ready", "nothing is loading")
+	has(b.text(), "Neither gh nor acli is installed on this host. Press s to set one up.", "the queue says what to do")
+	for _, call in w.calls do
+		if call.argv[1] == "gh" or call.argv[1] == "acli" then
+			eq(call.argv[2], "--version", call.argv[1] .. " is only asked whether it starts")
+		end
+	end
+	goToSettings(b, "setup-jira")
+	same(hx.pages(b), { "views", "prompts", "keys", "worktrees", "repos", "connection", "setup-github", "setup-jira" }, "no Jira projects page, and a setup page each")
+	b.press("enter")
+	eq(w.opened[#w.opened], "https://developer.atlassian.com/cloud/acli/guides/install-acli/", "Jira's opens acli's install guide")
+end)
+
+case("host: until the CLIs answer no view is listed or searched, and the restored view is the active one once they do", function(w: World)
+	local s = issueHost(w)
+	w.respond(function(call: Call): Reply?
+		if call.argv[1] == "gh" and call.argv[2] == "--version" then
+			return { delay = 1000, stdout = "gh version 2.98.0\n" }
+		end
+		return nil
+	end)
+	local b = openIssues(w) -- acli has answered, gh not yet
+	eq(#pickerOf(b).scopes, 0, "no view is listed while gh has not answered")
+	eq(pickerOf(b).state, "loading", "the queue is loading")
+	eq(#requestsOf(s.gh, "issue-search"), 0, "nothing is searched")
+	eq(b.saved().activeViewId, "v1", "the block still saves the view it was restored on")
+	eq(b.saved().activeKind, "issues", "with its kind")
+	w.advance(1000)
+	eq(pickerOf(b).scope, "issues:v1", "once gh answers, the restored view is the active one")
+	eq(#requestsOf(s.gh, "issue-search"), 1, "and is searched")
+	eq(#listed(b), 3, "its issues are listed")
 end)
 
 case("host: Settings › Worktrees lists the folder and the three name formats with their defaults, and saves only a format that can name a branch or a folder", function(w: World)

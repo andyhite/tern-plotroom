@@ -375,13 +375,17 @@ GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
-# Fake gh: the canned pull request file (the answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a
-# pull request it cannot see; a search answers with the canned list in search.json (none: empty), a checks load with no
-# checks, `auth status` with one signed-in login (the repository picker's list, warmed after a search). Header is prepended.
+# Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
+# answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
+# answers with the canned list in search.json (none: empty), a checks load with no checks, `auth status` with one
+# signed-in login (the repository picker's list, warmed after a search). Header is prepended.
 FAKE_GH = r'''
 import json, os, re, sys
 a = sys.argv[1:]
 m = None
+if a == ["--version"]:
+    sys.stdout.write("gh version 2.98.0 (smoke)\n")
+    sys.exit(0)
 if len(a) == 6 and a[:3] == ["api", "--hostname", "github.com"] and a[4] == "--jq":
     m = re.fullmatch(r"repos/([^/]+)/([^/]+)/pulls/(\d+)", a[3])
 if a[:2] == ["api", "graphql"]:

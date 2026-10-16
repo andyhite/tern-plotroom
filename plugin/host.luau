@@ -193,10 +193,34 @@ type State = {
 
 local running: { [number]: State } = {}
 
--- The CLI each tracker needs, and whether it starts on this host: the Jira projects page offers Add only when Jira's does.
-local CLIS: { { id: string, argv: { string } } } = { { id = "github", argv = { "gh", "--version" } }, { id = "jira", argv = { "acli", "--version" } } }
-local installed: { [string]: boolean } = {} -- tracker id -> its CLI starts on this host; absent: not checked yet
-local probing: { [string]: boolean } = {} -- tracker id -> its check is running
+-- The CLI each integration runs on, whether it starts on this host (`installed`; absent: not known yet) and where its
+-- install guide is. An integration is on only once its CLI is known to start: until then none of its views, groups
+-- or requests exist, and while it does not start Settings shows its setup page instead.
+local cli = {
+	list = {
+		{ id = "github", argv = { "gh", "--version" }, url = "https://github.com/cli/cli#installation" },
+		{ id = "jira", argv = { "acli", "--version" }, url = "https://developer.atlassian.com/cloud/acli/guides/install-acli/" },
+	},
+	installed = {} :: { [string]: boolean },
+	probing = {} :: { [string]: boolean },
+	moved = false, -- an answer of the probes running differs from the one before
+}
+
+-- Whether integration `id` ("github" | "jira") is on: its CLI starts on this host.
+function cli.on(id: string): boolean
+	return cli.installed[id] == true
+end
+
+-- Whether every CLI's answer is in: before that, no view is shown or loaded.
+function cli.ready(): boolean
+	for _, c in cli.list do
+		if cli.installed[c.id] == nil then
+			return false
+		end
+	end
+	return true
+end
+
 -- gh's active login on this host once known (`login`), the logins signed in (`accounts`) and the helpers that use them:
 -- the sidebar groups of views that run as one login.
 local ghActive: {
@@ -320,7 +344,8 @@ local function loadViews(kind: Kind): (Views, boolean, string?)
 end
 
 -- Rereads both kinds' saved views into `state.views`, pull request views first, and notes per kind whether they can be
--- changed (`state.locked`: why not). Each kind keeps its own kv store, which a view's id names.
+-- changed (`state.locked`: why not). Each kind keeps its own kv store, which a view's id names. A view of an integration
+-- that is not on stays saved but is left out.
 local function loadAll(state: State)
 	local all: { View } = {}
 	for _, kind in { KINDS.prs, KINDS.issues } do
@@ -330,7 +355,11 @@ local function loadAll(state: State)
 		else
 			state.locked[kind.id] = err or "Saved " .. kind.one .. " views are read-only."
 		end
-		table.move(store.items, 1, #store.items, #all + 1, all)
+		for _, v in store.items do
+			if cli.on(v.integration) then
+				table.insert(all, v)
+			end
+		end
 	end
 	state.views = all
 end
@@ -634,9 +663,9 @@ local function alive(state: State): boolean
 end
 
 -- Learns gh's active login (cached by github.accounts) and redraws when it changed, so views without a login of their own
--- sit under whichever account is active.
+-- sit under whichever account is active. Only views of GitHub ask (`always`: asked anyway), and never while gh is off.
 function ghActive.note(state: State, always: boolean?)
-	local any = always == true
+	local any = always == true and cli.on("github")
 	for _, v in state.views do
 		any = any or v.integration == "github"
 	end
@@ -667,28 +696,9 @@ function ghActive.note(state: State, always: boolean?)
 	end)
 end
 
--- Looks up which tracker CLIs start on this host, once each until Retry forgets the answers; every open Settings is
--- redrawn as an answer lands.
-local function probeClis()
-	for _, cli in CLIS do
-		if installed[cli.id] == nil and not probing[cli.id] then
-			probing[cli.id] = true
-			process.run(cli.argv, { timeout_ms = 10000 }, function(result)
-				probing[cli.id] = nil
-				installed[cli.id] = result ~= nil
-				for _, s in running do
-					if s.settings and alive(s) then
-						s.cx:render()
-					end
-				end
-			end)
-		end
-	end
-end
-
 local function activeView(state: State): View?
 	local pin = state.pin
-	if pin and pin.id == state.activeId then
+	if pin and pin.id == state.activeId and cli.on("github") then
 		return pin
 	end
 	for _, v in state.views do
@@ -729,13 +739,13 @@ end
 -- group or, with none, under gh's active one. `shown` is the login its group names ("" for Jira, or while unknown).
 type Scope = { id: string, view: View, login: string?, shown: string }
 
--- The scopes as the sidebar lists them: the pinned pull request first, as gh's active login runs it; then, by
--- integration, each one's views within the group of the login they run as (pull request views, then issue views, each
--- in store order); groups by login, sorted by name.
+-- The scopes as the sidebar lists them: the pinned pull request first (while gh is on), as gh's active login runs it;
+-- then, by integration, each one's views within the group of the login they run as (pull request views, then issue
+-- views, each in store order); groups by login, sorted by name.
 local function orderedViews(state: State): { Scope }
 	local out: { Scope } = {}
 	local pin = state.pin
-	if pin then
+	if pin and cli.on("github") then
 		table.insert(out, { id = pin.id, view = pin, login = nil, shown = ghActive.login or "" })
 	end
 	for _, id in { "github", "jira" } do
@@ -1227,16 +1237,13 @@ local function changed(state: State)
 	refresh(state)
 end
 
--- Explicit user retry (`r`, Refresh, Retry): also forgets which tracker CLIs start and Jira's site, and retries failed
--- checks loads. The search it starts makes the loaded checks stale (State.round): the selected PR's load again once it
--- lands.
+-- Explicit user retry (`r`, Refresh, Retry): also asks again which CLIs start (one installed or removed meanwhile turns
+-- its integration on or off once answered), forgets Jira's site and retries failed checks loads. The search it starts
+-- makes the loaded checks stale (State.round): the selected PR's load again once it lands.
 local function retry(state: State)
 	process.reset()
 	jira.reset()
-	table.clear(installed) -- a CLI installed meanwhile counts: the Jira projects page asks again
-	if state.settings and state.settings.page == "jira" then
-		probeClis()
-	end
+	cli.probe(true)
 	local p = state.problem
 	if p and TERMINAL[p.kind] then
 		state.problem = nil
@@ -1272,13 +1279,16 @@ local function switchView(state: State, id: string?, activeLogin: string?)
 	end
 end
 
--- After another block wrote the views, or on restore: reread storage; what is shown must match it: the kind,
--- integration, query and login of the active view are what the block remembers it applied (its snapshot key).
+-- After another block wrote the views, on restore or once the CLIs answered: reread storage; what is shown must match
+-- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
+-- key). Until every CLI answered, an active view that is not listed yet stays the active one.
 local function reloadViews(state: State)
 	loadAll(state)
 	local v = activeView(state)
 	if not v then
-		switchView(state, if state.views[1] then state.views[1].id else nil)
+		if cli.ready() then
+			switchView(state, if state.views[1] then state.views[1].id else nil)
+		end
 	elseif snapKey(v, state.activeLogin) ~= state.applied then
 		changed(state)
 	end
@@ -1417,16 +1427,72 @@ end
 
 local QUEUE_ID = "layer.queue"
 local SETTINGS_ID = "layer.settings"
--- The Settings pages, in order: the same whatever the active kind.
-local PAGE_DEFS: { { id: string, label: string, group: string, icon: string } } = {
+-- The Settings pages, in order, the same whatever the active kind: one that `needs` an integration only while it is on,
+-- the `setup` page of one (its install guide) only while its CLI is known not to start.
+local PAGE_DEFS: { { id: string, label: string, group: string, icon: string, needs: string?, setup: string? } } = {
 	{ id = "views", label = "Views", group = "Queue", icon = "funnel" },
 	{ id = "prompts", label = "Prompts", group = "Queue", icon = "prompt" },
 	{ id = "keys", label = "Keys", group = "Queue", icon = "keyboard" },
 	{ id = "worktrees", label = "Worktrees", group = "Code", icon = "tree" },
 	{ id = "repos", label = "Repositories", group = "Code", icon = "folder" },
-	{ id = "jira", label = "Jira projects", group = "Code", icon = "kanban" },
+	{ id = "jira", label = "Jira projects", group = "Code", icon = "kanban", needs = "jira" },
 	{ id = "connection", label = "Refresh", group = "Connection", icon = "gauge" },
+	{ id = "setup-github", label = "GitHub", group = "Setup", icon = "merge", setup = "github" },
+	{ id = "setup-jira", label = "Jira", group = "Setup", icon = "kanban", setup = "jira" },
 }
+
+-- The Settings pages shown now, as prefs takes them.
+function cli.pages(): { { id: string, label: string, group: string, icon: string } }
+	local out: { { id: string, label: string, group: string, icon: string } } = {}
+	for _, p in PAGE_DEFS do
+		if (not p.needs or cli.on(p.needs)) and (not p.setup or cli.installed[p.setup] == false) then
+			table.insert(out, { id = p.id, label = p.label, group = p.group, icon = p.icon })
+		end
+	end
+	return out
+end
+
+-- Page `id` while Settings shows it, else Views.
+function cli.page(id: string?): string
+	for _, p in cli.pages() do
+		if p.id == id then
+			return p.id
+		end
+	end
+	return "views"
+end
+
+-- Asks each CLI whether it starts, once (`again`: those already answered too, as Refresh does). Once every answer is
+-- in and one changed, every block rereads its views (an integration turned on or off), and a Settings page that went
+-- with it (a setup page once its CLI starts) gives way to Views.
+function cli.probe(again: boolean?)
+	for _, c in cli.list do
+		if (again or cli.installed[c.id] == nil) and not cli.probing[c.id] then
+			cli.probing[c.id] = true
+			process.run(c.argv, { timeout_ms = 10000 }, function(result)
+				cli.probing[c.id] = nil
+				cli.moved = cli.moved or cli.installed[c.id] ~= (result ~= nil)
+				cli.installed[c.id] = result ~= nil
+				if next(cli.probing) ~= nil or not cli.moved then
+					return
+				end
+				cli.moved = false
+				for _, s in running do
+					if alive(s) then
+						reloadViews(s)
+						local set = s.settings
+						if set and cli.page(set.page) ~= set.page then
+							set.page, set.focus, set.pick, s.settingsPage = "views", nil, nil, "views"
+						end
+						ghActive.note(s, set ~= nil)
+						s.cx:render()
+					end
+				end
+			end)
+		end
+	end
+end
+
 -- The pickers the window opens for Settings' add rows (window.luau's `pickRepo` and `pickJira`).
 local REPOS_HREF = "plotroom://repos"
 local JIRA_HREF = "plotroom://jira-projects"
@@ -1655,19 +1721,6 @@ type Row = {
 	disabled: string?,
 }
 
--- Why the CLI of tracker `id` ("github" | "jira") cannot be used yet: nil when it starts on this host.
-local function cliOff(id: string): string?
-	local gh = id == "github"
-	if installed[id] == nil then
-		return "Checking whether " .. (if gh then "gh" else "acli") .. " is installed…"
-	elseif not installed[id] then
-		return if gh
-			then "gh is not installed on this host. Install the GitHub CLI (cli.github.com) to use GitHub."
-			else "acli is not installed on this host. Install Atlassian's CLI (developer.atlassian.com/cloud/acli) and sign in with acli jira auth login to use Jira."
-	end
-	return nil
-end
-
 -- sections and extra children of the open settings page.
 local function pageContent(state: State): ({ any }, { Node })
 	local s = state.settings :: Settings
@@ -1699,10 +1752,10 @@ local function pageContent(state: State): ({ any }, { Node })
 			promptLists[kind.id] = if prompts then prompts.items else {}
 			table.insert(kindOptions, { value = kind.id, label = kind.label })
 		end
-		-- The groups, in the sidebar's order: one for each signed-in gh login and one for Jira while acli is installed (or a
-		-- Jira view is saved), each ending in an Add button for a view of its own (`add`: "<integration>:<login>", addView);
-		-- and one for each other group a saved view sits in (a login no longer signed in, several logins, gh's active one
-		-- while unknown), without one. A view of several logins, in each one's group in the sidebar, has its own here.
+		-- The groups, in the sidebar's order: one for each signed-in gh login while gh is on and one for Jira while acli
+		-- is, each ending in an Add button for a view of its own (`add`: "<integration>:<login>", addView); and one for each
+		-- other group a listed view sits in (a login no longer signed in, several logins, gh's active one while unknown),
+		-- without one. A view of several logins, in each one's group in the sidebar, has its own here.
 		local groups: { { label: string, integration: string, add: string?, views: { View } } } = {}
 		local byLabel: { [string]: { label: string, integration: string, add: string?, views: { View } } } = {}
 		local function groupOf(label: string, integration: string, add: string?): { label: string, integration: string, add: string?, views: { View } }
@@ -1716,10 +1769,12 @@ local function pageContent(state: State): ({ any }, { Node })
 			table.insert(groups, g)
 			return g
 		end
-		for _, who in ghActive.accounts do
-			groupOf(INTEGRATIONS.github.label .. " - " .. who, "github", "github:" .. who)
+		if cli.on("github") then
+			for _, who in ghActive.accounts do
+				groupOf(INTEGRATIONS.github.label .. " - " .. who, "github", "github:" .. who)
+			end
 		end
-		if installed.jira then
+		if cli.on("jira") then
 			groupOf(INTEGRATIONS.jira.label, "jira", "jira:")
 		end
 		for _, scope in orderedViews(state) do
@@ -1730,9 +1785,6 @@ local function pageContent(state: State): ({ any }, { Node })
 					table.insert(g.views, v)
 				end
 			end
-		end
-		if not byLabel[string.lower(INTEGRATIONS.jira.label)] and installed.jira == nil then
-			probeClis() -- whether Jira's group shows: answers render again
 		end
 		table.sort(groups, function(a, b)
 			if a.integration ~= b.integration then
@@ -1813,6 +1865,14 @@ local function pageContent(state: State): ({ any }, { Node })
 		end
 	elseif s.page == "prompts" then
 		for _, kind in { KINDS.prs, KINDS.issues } do
+			-- A kind's prompts while one of its integrations is on: pull request prompts need gh.
+			local usable = false
+			for _, i in kind.integrations do
+				usable = usable or cli.on(i)
+			end
+			if not usable then
+				continue
+			end
 			local prompts, unreadable = loadPrompts(kind)
 			local list: { Prompt } = if prompts then prompts.items else {}
 			section("prompts:" .. kind.id, if kind.id == "prs" then "Pull request prompts" else "Issue prompts")
@@ -1907,6 +1967,9 @@ local function pageContent(state: State): ({ any }, { Node })
 			{ id = "prdir", label = "Pull request folder name", vars = tracker.DIR_VARS },
 			{ id = "issuedir", label = "Issue folder name", vars = tracker.DIR_VARS },
 		} do
+			if f.id == "prdir" and not cli.on("github") then
+				continue -- pull requests need gh
+			end
 			local saved = formats.saved(f.id)
 			row({
 				id = "fmt:" .. f.id,
@@ -2005,7 +2068,17 @@ local function pageContent(state: State): ({ any }, { Node })
 		end
 		table.insert(sections, {
 			id = "add:jira",
-			rows = { { id = "jadd", label = "", disabled = unreadable or cliOff("jira"), control = { k = "action", act = "add-jira", label = "Add project" } } },
+			rows = { { id = "jadd", label = "", disabled = unreadable, control = { k = "action", act = "add-jira", label = "Add project" } } },
+		})
+	elseif s.page == "setup-github" or s.page == "setup-jira" then
+		-- An integration whose CLI does not start: only the way to its install guide.
+		local gh = s.page == "setup-github"
+		section("setup")
+		row({
+			id = if gh then "guide:github" else "guide:jira",
+			label = if gh then "Install gh, then sign in with gh auth login" else "Install acli, then sign in with acli jira auth login",
+			hint = if gh then "gh is not installed on this host" else "acli is not installed on this host",
+			control = { k = "action", act = "guide", label = "Setup guide ↗" },
 		})
 	else
 		local now = os.time()
@@ -2240,7 +2313,7 @@ end
 local function addView(state: State, row: string)
 	local s = state.settings
 	local integration, login = string.match(row, "^vadd:(%a+):(.*)$")
-	if not s or not integration or not INTEGRATIONS[integration] or not string.match(login or "", "^[%w%-]*$") then
+	if not s or not integration or not cli.on(integration) or not INTEGRATIONS[integration] or not string.match(login or "", "^[%w%-]*$") then
 		return
 	end
 	local kind = if table.find(state.kind.integrations, integration) then state.kind else KINDS.issues
@@ -2646,6 +2719,12 @@ local function runAction(state: State, act: string, row: string)
 		state.cx:open(REPOS_HREF)
 	elseif act == "add-jira" then
 		state.cx:open(JIRA_HREF)
+	elseif act == "guide" then
+		for _, c in cli.list do
+			if row == "guide:" .. c.id then
+				state.cx:open(c.url)
+			end
+		end
 	end
 end
 
@@ -2896,15 +2975,16 @@ local function discardEdit(state: State)
 	end
 end
 
--- Opens Settings page `page` with nothing focused or being edited; the Jira projects page looks up which CLIs are installed.
+-- Opens Settings page `page` with nothing focused or being edited. Views learns the signed-in gh logins (a group each);
+-- a setup page asks again whether the CLIs start, so one installed meanwhile turns its integration on.
 local function showPage(state: State, s: Settings, page: string)
 	discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
 	state.settingsPage = page
-	if page == "jira" then
-		probeClis()
-	elseif page == "views" then
-		ghActive.note(state, true) -- the signed-in logins: a group each
+	if page == "views" then
+		ghActive.note(state, true)
+	elseif string.find(page, "^setup%-") then
+		cli.probe(true)
 	end
 end
 
@@ -2946,16 +3026,13 @@ local function resetRow(state: State, row: string)
 	end
 end
 
--- Opens Settings on `page`, else the page it last showed, else Views.
+-- Opens Settings on `page`, else the page it last showed, else Views (also for a page it does not show now).
 local function openSettings(state: State, page: string?, row: string?, edit: boolean?)
 	discardEdit(state) -- releases the prompt editor's caret, if one was open
-	local shown = page or state.settingsPage or "views"
-	state.settings, state.settingsPage = { page = shown, focus = row, errors = {} }, shown
-	if shown == "jira" then
-		probeClis()
-	elseif shown == "views" then
-		ghActive.note(state, true) -- the signed-in logins: a group each
-	end
+	local s: Settings = { page = "views", errors = {} }
+	state.settings = s
+	showPage(state, s, cli.page(page or state.settingsPage))
+	s.focus = row
 	if edit and row then
 		beginEdit(state, row)
 	end
@@ -3393,11 +3470,11 @@ end
 -- `{github.user}` and `{jira.user}`: who you are on GitHub and Jira, for branch formats and prompts.
 local me = {}
 
--- Reads `{github.user}` (the login the active view's gh account is, else gh's active one) and, `jiraToo`, `{jira.user}`;
--- done(users), "" for one that could not be read.
+-- Reads `{github.user}` (the login the active view's gh account is, else gh's active one; "" while gh is off) and,
+-- `jiraToo`, `{jira.user}`; done(users), "" for one that could not be read.
 function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) -> ())
 	local account = login(state)
-	github.login(account, function(gh)
+	local function read(gh: string?)
 		if gh and not account then
 			ghActive.login = gh
 		end
@@ -3411,7 +3488,12 @@ function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) ->
 			end
 			done(users)
 		end)
-	end)
+	end
+	if cli.on("github") then
+		github.login(account, read)
+	else
+		read(nil)
+	end
 end
 
 -- Whether `text` names `{github.user}` or `{jira.user}`.
@@ -3713,8 +3795,13 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 	local fmt = formats.issueBranch(code)
 	local need = users or (wt and me.named(fmt))
 
-	-- No worktree yet and nothing chosen: the linked PRs whose branch is still there decide.
+	-- No worktree yet and nothing chosen: the linked PRs whose branch is still there decide. While gh is off (a Jira
+	-- issue) none are looked up: a new branch.
 	local function undecided()
+		if not cli.on("github") then
+			preparing[key] = nil
+			return prepareIssue(state, id, repo, ref, wt, target, { fresh = true }, users)
+		end
 		github.linkedPrs(code, issue.ref, login(state), function(prs, problem)
 			preparing[key] = nil -- the read is over: what it found is asked or acted on next
 			if not alive(state) then
@@ -3780,7 +3867,8 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 		for _, u in { "github.user", "jira.user" } do
 			if found[u] == "" and string.find(fmt, "{" .. u .. "}", 1, true) and (u == "github.user" or issue.tracker == "jira") then
 				preparing[key] = nil
-				return reply(state, id, { problem = "The branch format names {" .. u .. "}, which could not be read: sign in with " .. (if u == "github.user" then "gh auth login" else "acli jira auth login") .. ", or change the format in Settings › Repositories." })
+				local fix = if u == "jira.user" then "sign in with acli jira auth login" elseif cli.on("github") then "sign in with gh auth login" else "install gh (Settings › GitHub)"
+				return reply(state, id, { problem = "The branch format names {" .. u .. "}, which could not be read: " .. fix .. ", or change the format in Settings › Repositories." })
 			end
 		end
 		local made: string = branch
@@ -3853,7 +3941,8 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 end
 
 -- The repository picker's first page: every saved repository with its checkout, sorted by name, and the gh logins
--- signed in to github.com, whose repositories the picker offers next (`profile`). Without the logins, `problem` says why.
+-- signed in to github.com (none while gh is off), whose repositories the picker offers next (`profile`). Without the
+-- logins, `problem` says why.
 local function repos(state: State, id: string)
 	local items: { any } = {}
 	for name, path in readCheckouts() do
@@ -3864,6 +3953,9 @@ local function repos(state: State, id: string)
 	table.sort(items, function(a, b)
 		return a.repo < b.repo
 	end)
+	if not cli.on("github") then
+		return reply(state, id, { items = tern.json.array(items), accounts = tern.json.array({}) })
+	end
 	state.listing += 1
 	github.accounts(function(accounts, problem)
 		state.listing -= 1
@@ -4749,6 +4841,9 @@ local function queuePicker(state: State): Node
 		end
 	end
 
+	-- Neither integration is on: the setup pages in Settings are all there is.
+	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
+
 	local props: { [string]: any } = {
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it.
@@ -4761,9 +4856,16 @@ local function queuePicker(state: State): Node
 		subtitle = if #subtitle > 0 then subtitle else nil,
 		noun = state.kind.many,
 		placeholder = "Filter the loaded " .. state.kind.many,
-		state = if not snap and problem then "error" elseif not snap and view then "loading" else "ready",
+		-- Nothing loads until the CLIs answered.
+		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
-			ui.span(if view then "No " .. state.kind.many .. " match " .. view.name .. "." else "No saved views yet. " .. (if map.settings ~= "" then "Press " .. map.settings .. " to add one." else "Open Settings to add one."), "muted"),
+			ui.span(
+				if view then "No " .. state.kind.many .. " match " .. view.name .. "."
+					else (if none then "Neither gh nor acli is installed on this host. " else "No saved views yet. ")
+						.. (if map.settings ~= "" then "Press " .. map.settings .. " to " else "Open Settings to ")
+						.. (if none then "set one up." else "add one."),
+				"muted"
+			),
 		},
 		items = items,
 		order = order,
@@ -4829,11 +4931,10 @@ end
 local function settingsView(state: State): BlockView
 	local s = state.settings :: Settings
 	local sections, extra = pageContent(state)
-	local pages: { any } = table.clone(PAGE_DEFS)
 	local props: { [string]: any } = {
 		key = "settings",
 		title = "Plotroom",
-		pages = tern.json.array(pages),
+		pages = tern.json.array(cli.pages()),
 		page = s.page,
 		sections = sections,
 		focus = s.focus,
@@ -5311,19 +5412,22 @@ local function blockDef(): BlockDef<State>
 			loadAll(state)
 			if state.pin and not mine then
 				state.activeId, state.cursor = state.pin.id, string.lower(state.pin.name)
-			elseif not activeView(state) then
+			elseif not activeView(state) and cli.ready() then
 				state.activeId = if state.views[1] then state.views[1].id else nil
 			end
 			-- What the first scope runs as is the identity from the start, so a restored pause survives identify. A saved
-			-- login the view no longer lists falls back to the view's first.
+			-- login the view no longer lists falls back to the view's first. Before the CLIs answered no view is listed: the
+			-- restored one and its login are kept for when it is.
+			local picked = if mine and type(saved.activeLogin) == "string" then saved.activeLogin else nil
 			local first = activeView(state)
+			state.activeLogin = picked
 			if first then
-				local picked = if mine and type(saved.activeLogin) == "string" then saved.activeLogin else nil
 				state.activeLogin = if #first.logins > 1 then accountOf(first, picked) else nil
 				state.kind = KINDS[first.kind]
 				state.account, state.tracker, state.applied = accountOf(first, state.activeLogin), first.integration, snapKey(first, state.activeLogin)
 			end
 			running[cx.pane] = state
+			cli.probe() -- the first block of this runtime: its views are listed once the CLIs answer
 			if cwd then
 				-- Launching inside a checkout maps its repository to it, unless it has one already.
 				worktree.currentRepository(cwd, function(found)
@@ -5437,13 +5541,14 @@ local function blockDef(): BlockDef<State>
 				if name == "escape" then
 					state.settings = nil
 				elseif name == "tab" and plain then
+					local pages = cli.pages()
 					local at = 1
-					for i, p in PAGE_DEFS do
+					for i, p in pages do
 						if p.id == s.page then
 							at = i
 						end
 					end
-					showPage(state, s, PAGE_DEFS[((at - 1 + (if key.shift then -1 else 1)) % #PAGE_DEFS) + 1].id)
+					showPage(state, s, pages[((at - 1 + (if key.shift then -1 else 1)) % #pages) + 1].id)
 				elseif plain and keys.action((keys.load()), k) == "help" then
 					state.help = true
 				elseif name == "up" or name == "down" then
@@ -5634,7 +5739,7 @@ local function blockDef(): BlockDef<State>
 					discardEdit(state)
 				end
 				if act == "page" then
-					for _, p in PAGE_DEFS do
+					for _, p in cli.pages() do
 						if p.id == ev.value then
 							showPage(state, s, p.id)
 						end
@@ -5646,7 +5751,7 @@ local function blockDef(): BlockDef<State>
 					else
 						s.pick = nil -- a click outside an open choice's menu, or away from a text being edited
 					end
-				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "expand" or act == "collapse" then
+				elseif act == "add" or act == "add-prompt" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "guide" or act == "expand" or act == "collapse" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)
@@ -5713,17 +5818,14 @@ local function blockDef(): BlockDef<State>
 				pause = { kind = p.kind, message = p.message }
 			end
 			-- The active view as its kv store has it: the saved id without the kind, and the kind only for an issue view (a
-			-- save without one is a pull request view's, as the older PR block saved).
-			local active = activeView(state)
-			local own: string? = nil
-			if active then
-				own = if active == state.pin then active.id else string.sub(active.id, #active.kind + 2)
-			end
+			-- save without one is a pull request view's, as the older PR block saved). Read from its id, as one restored
+			-- before the CLIs answered is not listed yet.
+			local kind, own = kindAndId(state.activeId or "")
 			return {
 				version = 2,
 				launchCwd = state.launchCwd,
-				activeViewId = own,
-				activeKind = if active and active.kind == "issues" then "issues" else nil,
+				activeViewId = if state.activeId then own else nil,
+				activeKind = if kind == KINDS.issues then "issues" else nil,
 				activeLogin = state.activeLogin,
 				pause = pause,
 				pin = if state.pin then state.pin.query else nil,
