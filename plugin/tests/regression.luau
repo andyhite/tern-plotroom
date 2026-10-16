@@ -5159,6 +5159,25 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	eq(#w.toasts, said, "and says nothing")
 end)
 
+windowCase("window: an answer already on screen is found by polling even when its link never arrives", function(w: World)
+	w.load("window")
+	listPr(w, "o/r", 5)
+	local surface: any = w.window.surfaces[1]
+	local nodes: { any } = { { id = "main.rpc", p = { text = "15", hidden = true } } }
+	surface.main = { id = "main", c = nodes }
+	w.click(prLink("agent", "o/r", 5))
+	local sent = requestsSent(w)
+	eq(#sent, 1, "the list is requested")
+	local picks = #w.window.picks
+	table.insert(nodes, { id = "main.r" .. sent[1].id, p = { text = jsonEncode({ items = { { label = "/go", send = "/go" } } }), hidden = true } })
+	w.advance(1000)
+	eq(#w.window.picks, picks + 1, "the list opens without any rpc link")
+	w.advance(60 * 1000)
+	for _, t in w.toasts do
+		lacks(t.text, "did not answer", "and the request is not given up")
+	end
+end)
+
 -- ---- github.luau
 
 local function always(): boolean

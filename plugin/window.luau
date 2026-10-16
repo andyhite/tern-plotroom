@@ -25,6 +25,8 @@ local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the
 -- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
 -- each).
 local MENU_MS = 30 * 1000
+-- How often a waiting request looks for its answer on screen, in case the host's link to it never arrives.
+local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
@@ -213,6 +215,8 @@ local function sameVersion(cx: WindowCx, pane: number): boolean
 	return false
 end
 
+local answered: (WindowCx, string) -> ()
+
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
 -- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
 -- so instead. False when nothing was sent.
@@ -239,13 +243,24 @@ local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any
 		timer:cancel()
 		pending[id] = nil
 		cx:toast("error", "Plotroom: the block could not be reached", tostring(why))
+	else
+		local function poll(cx2: WindowCx?)
+			if cx2 and pending[id] then
+				answered(cx2, id)
+				if pending[id] then
+					tern.timer(POLL_MS, poll)
+				end
+			end
+		end
+		tern.timer(POLL_MS, poll)
 	end
 	return ok
 end
 
 -- plotroom://rpc/<id>: the host answered request `id`. Only the window that asked acts, and only on the answer its
--- block shows: a link without one (stale, or not the host's) leaves the request waiting.
-local function answered(cx: WindowCx, id: string)
+-- block shows: a link without one (stale, or not the host's) leaves the request waiting. `ask` also polls for the
+-- answer, so one whose link was lost, or beat its rendered answer over a remote host, is still found.
+function answered(cx: WindowCx, id: string)
 	local p = pending[id]
 	if not p then
 		return
