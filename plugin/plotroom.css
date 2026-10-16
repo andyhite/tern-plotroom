@@ -92,32 +92,6 @@
 	font-size: 12px;
 }
 
-/* A comment bubble before a row's comment count (spans carry no icons, and Tern drops url() from plugin CSS): a
-   rounded box, then (order) a triangle tail pulled back under its left side. c0 is the queue's only column. */
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty) {
-	display: flex;
-	justify-content: flex-end;
-	align-items: center;
-}
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::before {
-	content: "";
-	order: -2;
-	box-sizing: border-box;
-	width: 12px;
-	height: 10px;
-	border: 1.5px solid currentColor;
-	border-radius: 3px;
-}
-[data-surface='plugin.plotroom.prs'] .pk-row .pk-fact.c0:not(:empty)::after {
-	content: "";
-	order: -1;
-	position: relative;
-	top: 6px;
-	margin: 0 11px 0 -10px;
-	border-top: 4px solid currentColor;
-	border-right: 4px solid transparent;
-}
-
 /* Too few settings to need search. */
 [data-surface='plugin.plotroom.prs'] .sf-prefs .pf-search {
 	display: none;

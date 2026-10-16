@@ -3666,7 +3666,6 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 		detail = detail,
 		mark = { text = pr.author, seed = pr.author },
 		badges = if #badges > 0 then badges else nil,
-		facts = { comments = if pr.comments > 0 then tostring(pr.comments) else nil }, -- the icon is CSS (plotroom.css)
 	}
 end
 
@@ -3702,7 +3701,6 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 		detail = detail,
 		mark = { text = issue.author, seed = issue.author },
 		badges = if #badges > 0 then badges else nil,
-		facts = { comments = if issue.comments > 0 then tostring(issue.comments) else nil }, -- the comment icon is CSS (plotroom.css)
 	}
 end
 
@@ -6366,7 +6364,6 @@ local function queuePicker(state: State): Node
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
 		scope = activeScope,
-		columns = { { id = "comments", format = "text", priority = 50 } },
 		actions = actions,
 	}
 	if state.query then
