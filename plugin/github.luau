@@ -1425,6 +1425,154 @@ function M.rerunFailed(repo: string, runId: string, account: string?, done: (Pro
 	end, account)
 end
 
+-- ---------------------------------------------------------------- confirmed item and run operations
+-- The host confirms first. Every operation re-reads the live state as `account`, rejects a target in the wrong state
+-- and only then changes it; argv arrays only, `--body=` keeps comment text from being read as a flag.
+
+local COMMENT_MAX = 4000
+
+-- The comment text as sent: CRLF/CR become LF (input.clean), edges trimmed. Multiline and tabs are kept; nil when empty,
+-- over COMMENT_MAX characters, invalid UTF-8 or holding any other control byte (rejected, not silently dropped).
+function M.commentText(v: any): string?
+	if type(v) ~= "string" or utf8.len(v) == nil or string.find(v, "[%z\1-\8\11\12\14-\31\127]") then
+		return nil
+	end
+	local t = string.match(input.clean(v, true), "^%s*(.-)%s*$") or ""
+	if t == "" or (utf8.len(t) :: number) > COMMENT_MAX then
+		return nil
+	end
+	return t
+end
+
+-- Reads `gh <kind> view <id>` of `repo` as `account` (normalized once: the read and the write run as the same login),
+-- requires the answered number/id and its https://github.com/<owner>/<repo>/<seg>/<id> URL to match the target exactly,
+-- then runs the argv `act(seg)` returns. `check(data)` returns a refusal text or nil. `id` is a validated digit string.
+local function guarded(kind: string, fields: string, segs: { string }, repo: string, id: any, account: string?, check: (any) -> string?, act: (string, string) -> { string }, done: (Problem?) -> ())
+	local target = repoArg(repo)
+	local problem: Problem? = nil
+	if not target then
+		problem = bad("Unexpected repository name.")
+	elseif type(id) ~= "string" or not string.match(id, "^%d+$") or #id > 15 or tonumber(id) == 0 then
+		problem = bad("Unexpected " .. (if kind == "run" then "workflow run id" else kind .. " number") .. ".")
+	end
+	if problem then
+		local p = problem
+		return later(function()
+			done(p)
+		end)
+	end
+	local repoFlag = target or ""
+	local who: string? = if account == "" then nil else account
+	M.gh({ kind, "view", id, "--repo", repoFlag, "--json", fields }, function(out, p)
+		if not out then
+			return done(p)
+		end
+		local ok, data = pcall(tern.json.decode, out)
+		local url = field(data, "url")
+		local path = string.lower(string.sub(repoFlag, #"github.com" + 1)) -- "/owner/repo"
+		local rest = if type(url) == "string" and string.sub(string.lower(url), 1, #"https://github.com" + #path + 1) == "https://github.com" .. path .. "/" then string.sub(url, #"https://github.com" + #path + 2) else nil
+		local seg = if rest then string.match(rest, "^(.-)/" .. id .. "$") else nil
+		local live = field(data, if kind == "run" then "databaseId" else "number")
+		if not ok or not seg or not table.find(segs, seg) or (if type(live) == "number" then string.format("%d", live) else tostring(live)) ~= id then
+			return done({ kind = "failed", message = "gh printed unexpected " .. kind .. " data." })
+		end
+		local why = check(data)
+		if why then
+			return done(bad(why))
+		end
+		M.gh(act(seg, id), function(_, p2)
+			done(p2)
+		end, who)
+	end, who)
+end
+
+-- op "close" closes the open issue (gh's default reason), "reopen" reopens the closed one.
+function M.setIssueState(repo: string, number: number, op: string, account: string?, done: (Problem?) -> ())
+	local open = op == "reopen"
+	if (not open and op ~= "close") or not whole32(number) then
+		return later(function()
+			done(bad(if whole32(number) then "Unexpected issue operation." else "Unexpected issue number."))
+		end)
+	end
+	guarded("issue", "number,state,url", { "issues" }, repo, tostring(number), account, function(d)
+		local expected = if open then "CLOSED" else "OPEN"
+		if field(d, "state") ~= expected then
+			return "Issue #" .. number .. (if open then " is not closed." else " is not open.")
+		end
+		return nil
+	end, function(_, id)
+		return { "issue", if open then "reopen" else "close", id, "--repo", repoArg(repo) or "" }
+	end, done)
+end
+
+-- Marks the open draft PR ready (`ready` true) or converts the open non-draft PR to a draft.
+function M.setPrReady(repo: string, number: number, ready: boolean, account: string?, done: (Problem?) -> ())
+	if not whole32(number) then
+		return later(function()
+			done(bad("Unexpected pull request number."))
+		end)
+	end
+	guarded("pr", "number,state,isDraft,url", { "pull" }, repo, tostring(number), account, function(d)
+		if field(d, "state") ~= "OPEN" then
+			return "Pull request #" .. number .. " is not open."
+		elseif ready and field(d, "isDraft") ~= true then
+			return "Pull request #" .. number .. " is not a draft."
+		elseif not ready and field(d, "isDraft") ~= false then
+			return "Pull request #" .. number .. " is already a draft."
+		end
+		return nil
+	end, function(_, id)
+		local args = { "pr", "ready", id, "--repo", repoArg(repo) or "" }
+		if not ready then
+			table.insert(args, "--undo")
+		end
+		return args
+	end, done)
+end
+
+-- Adds `text` (M.commentText) to an existing issue or pull request of `repo`, any state.
+function M.comment(repo: string, number: number, text: string, account: string?, done: (Problem?) -> ())
+	local body = M.commentText(text)
+	if not body or not whole32(number) then
+		return later(function()
+			done(bad(if body then "Unexpected issue number." else "The comment is empty, too long or has control characters."))
+		end)
+	end
+	-- `gh issue view` also answers a pull request number (with its /pull/ URL), which picks the comment command.
+	guarded("issue", "number,url", { "issues", "pull" }, repo, tostring(number), account, function()
+		return nil
+	end, function(seg, id)
+		return { if seg == "pull" then "pr" else "issue", "comment", id, "--repo", repoArg(repo) or "", "--body=" .. body }
+	end, done)
+end
+
+local CANCELLABLE: { [string]: boolean } = { queued = true, in_progress = true, waiting = true, pending = true, requested = true }
+
+-- Cancels a queued or running workflow run (never --force). `runId` is a digit string of up to 15 digits.
+function M.cancelRun(repo: string, runId: string, account: string?, done: (Problem?) -> ())
+	guarded("run", "databaseId,status,url", { "actions/runs" }, repo, runId, account, function(d)
+		local status = field(d, "status")
+		if type(status) ~= "string" or not CANCELLABLE[status] then
+			return "Workflow run " .. runId .. " is not queued or running (" .. tostring(status) .. ")."
+		end
+		return nil
+	end, function(_, id)
+		return { "run", "cancel", id, "--repo", repoArg(repo) or "" }
+	end, done)
+end
+
+-- Re-runs the whole of a finished workflow run, whatever its conclusion (M.rerunFailed is the failed-jobs variant).
+function M.rerunAll(repo: string, runId: string, account: string?, done: (Problem?) -> ())
+	guarded("run", "databaseId,status,url", { "actions/runs" }, repo, runId, account, function(d)
+		if field(d, "status") ~= "completed" then
+			return "Workflow run " .. runId .. " has not finished."
+		end
+		return nil
+	end, function(_, id)
+		return { "run", "rerun", id, "--repo", repoArg(repo) or "" }
+	end, done)
+end
+
 export type NewPr = { repo: string, base: string, head: string, title: string, body: string, draft: boolean }
 
 -- A branch name as git allows it, or `owner:branch` for a head on a fork; nil otherwise.

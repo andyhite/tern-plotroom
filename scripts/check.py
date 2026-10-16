@@ -25,7 +25,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
-Smoke prerequisites: Tern 0.8.3 or 0.8.4 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
+Smoke prerequisites: Tern 0.8.3, 0.8.4 or 0.9.0 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, Tern directory and log lives under one temporary
 directory that is deleted afterwards.
 """
@@ -56,7 +56,7 @@ SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
 LUAU_VERSION = "0.742"
 LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.8.3"  # the SDK pin
-SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
+SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4", "0.9.0")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
 
 # sha256 of the release assets, as GitHub publishes them.
@@ -716,6 +716,44 @@ class Smoke:
                     if isinstance(node.get(key), str):
                         out.append(node[key])
                 walk(node.get("children") or [])
+                walk(node.get("spans") or [])
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child)
+
+        walk(json.loads(self.ctl("tree")).get("tree"))
+        return out
+
+    def previewing(self) -> bool:
+        """A preview is open: its Close preview row exists only then."""
+        return "Close preview" in self.texts()
+
+    def select_row(self) -> None:
+        """Nothing is selected when a list opens: choose a row (Down) as a user does before an item command; a selection already held is kept."""
+        if not self.selection():
+            self.ctl_ok("key", "Down")
+        self.wait_until("a row is selected", lambda: len(self.selection()) >= 1)
+
+    def selection(self) -> List[object]:
+        """The primary label of every selected row as rendered (class tokens `pk-row` and `sel`; the tree has no `selected` prop). Empty: nothing is chosen."""
+        out: List[object] = []
+
+        def label(node: object) -> Optional[str]:
+            if isinstance(node, dict):
+                if "pk-label" in str(node.get("class") or "").split() and isinstance(node.get("text"), str):
+                    return node["text"]
+                for child in node.get("children") or []:
+                    found = label(child)
+                    if found is not None:
+                        return found
+            return None
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                tokens = str(node.get("class") or "").split()
+                if "pk-row" in tokens and "sel" in tokens:
+                    out.append(label(node) or "")
+                walk(node.get("children") or [])
             elif isinstance(node, list):
                 for child in node:
                     walk(child)
@@ -743,6 +781,8 @@ class Smoke:
                 self.fail("server start", "tern serve running", "exited with %s" % (self.proc.returncode if self.proc else None))
             try:
                 if run([self.tern, "ctl", "--control", str(self.sock), "state"], env=self.env, timeout=10).returncode == 0:
+                    # Wide enough that a split pane keeps the native side preview (it hides below 640 px a pane; the default 1280 splits to 611).
+                    self.ctl_ok("resize", "2200", "1000")
                     return
             except subprocess.TimeoutExpired:
                 pass
@@ -1387,6 +1427,7 @@ def sc_remote_host(s: Smoke) -> None:
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
     s.wait_text("the remote block lists the PR", "Remote PR 1")
     s.wait_text("the row of the worktree made before the block, with its place read from git", str(wt))
+    s.select_row()
     s.out(root, "worktree", "remove", str(wt))
     s.out(root, "branch", "-D", branch)
     s.out(root, "update-ref", "-d", ref)
@@ -1581,9 +1622,56 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_text("the second pull request", "Flow PR 2")
     s.wait_until("unseen pull requests wear New", lambda: s.count("New") >= 1)
     unseen = s.count("New")
-    s.ctl_ok("plugins", "run", "plugin.plotroom.mark-seen")
-    s.wait_text("the seen toast", "Marked seen")
-    s.wait_until("one New badge fewer", lambda: s.count("New") == unseen - 1)
+    # Nothing is chosen at first: no row selected, no preview, and a seen mark or the idle time alone marks nothing.
+    s.eq("no row is selected when the queue opens", [], s.selection())
+    time.sleep(2.0)
+    s.eq("an unselected queue marks nothing seen", unseen, s.count("New"))
+    s.shot("initial-unselected")
+    s.eq("the closed queue shows no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
+    s.eq("and no Close preview row", False, s.previewing())
+    # The palette (primary key ".") offers only what applies: no item action while nothing is selected.
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette lists the queue's own commands", "Refresh")
+    s.eq("no item command without a selection", False, any(t == "Mark seen" for t in s.texts()))
+    s.shot("palette-unselected")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
+    # An explicit selection opens the preview (its Close preview row), and a visible preview marks its item seen by itself.
+    s.ctl_ok("key", "Down")
+    s.wait_until("a row is selected", lambda: len(s.selection()) >= 1)
+    s.wait_until("the preview is open: its Close preview row", lambda: s.previewing())
+    chosen = s.selection()
+    s.shot("selected-preview")
+    s.wait_until("selecting alone drops one New badge", lambda: s.count("New") == unseen - 1)
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette now lists the selected item's commands", "Mark seen")
+    s.shot("palette-selected")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("the palette is closed again", lambda: not any(t == "Refresh" for t in s.texts()))
+    s.eq("the palette left the selection alone", chosen, s.selection())
+    # A compact window (default 1280 wide, panes ~611 px) still shows the open preview, and closing it leaves no selection or placeholder.
+    s.ctl_ok("resize", "1280", "800")
+    s.wait_until("the compact preview is visible (Close preview)", lambda: s.previewing())
+    s.eq("the compact preview keeps the selection", chosen, s.selection())
+    s.shot("compact-preview")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("closing the compact preview clears the selection", lambda: s.selection() == [])
+    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
+    s.eq("no placeholder in the compact pane", False, any("Nothing to preview" in t for t in s.texts()))
+    s.ctl_ok("resize", "2200", "1000")
+    s.ctl_ok("key", "Down")
+    s.wait_until("selected again after the resize", lambda: s.selection() == chosen)
+    s.wait_until("with its preview open", lambda: s.previewing())
+    # Closing the preview clears the selection (Tern's own highlight included) and does not select again by itself.
+    s.ctl_ok("key", "Escape")
+    s.wait_until("closing the preview clears the selection", lambda: s.selection() == [])
+    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
+    s.eq("no empty pane is left", False, any("Nothing to preview" in t for t in s.texts()))
+    time.sleep(1.5)
+    s.eq("the closed preview stays unselected", [], s.selection())
+    s.shot("preview-closed")
+    s.ctl_ok("key", "Down")
+    s.wait_until("selected again by the keys", lambda: s.selection() == chosen)
     s.ctl_ok("plugins", "run", "plugin.plotroom.snooze")
     s.wait_text("the snooze toast", "Snoozed until")
     s.wait_until("the snoozed pull request is hidden", lambda: not any("Flow PR 1" in t for t in s.texts()))
@@ -1592,15 +1680,77 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the snoozed pull request is listed again, marked", lambda: s.count("Snoozed") >= 1 and any("Flow PR 1" in t for t in s.texts()))
     s.ctl_ok("plugins", "run", "plugin.plotroom.toggle-snoozed")
     s.wait_until("hidden again", lambda: not any("Flow PR 1" in t for t in s.texts()))
+    held = s.selection()
     s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
     s.wait_text("the attention filter is named", "Needs attention only")
     s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
+    time.sleep(1.0)
+    s.eq("a filter toggled and undone keeps the selection steady", held, s.selection())
     s.ctl_ok("plugins", "run", "plugin.plotroom.sort")
     s.wait_text("the sort toast", "Sorted: ")
+    s.wait_until("the sort is stated in the view's own line, not only a toast", lambda: any(t.startswith("Sort: ") for t in s.texts()))
+    s.shot("sorted")
+    # The board: one unnoted worktree, made dirty with no press; one linked to the pull request the fake gh answers for.
+    linked = s.tmp / "wts" / "flow-linked"
     s.out(root, "worktree", "add", "-q", "-b", "board-branch", str(wt))
+    s.out(root, "worktree", "add", "-q", "-b", "board-linked", str(linked))
+    s.out(root, "config", "branch.board-linked.plotroompr", "1")
+    s.out(root, "config", "branch.board-linked.plotroomrepo", "f/low")
+    both = s.tmp / "wts" / "flow-both"
+    s.out(root, "worktree", "add", "-q", "-b", "board-both", str(both))
+    s.out(root, "config", "branch.board-both.plotroompr", "2")
+    s.out(root, "config", "branch.board-both.plotroomkey", "f/low#9")
+    s.out(root, "config", "branch.board-both.plotroomrepo", "f/low")
+    (s.smoke / "issues.json").write_text(json.dumps([{"number": 9, "title": "Flow issue 9", "url": "https://github.com/f/low/issues/9", "state": "OPEN", "reason": None,
+                                                      "updatedAt": stamp, "createdAt": stamp, "author": "octo", "comments": 0, "labels": [], "assignees": []}]), encoding="utf-8")
+    (wt / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
     s.ctl_ok("plugins", "run", "plugin.plotroom.worktrees-open")
     s.wait_text("the Worktrees board lists the worktree git has, unnoted", "Unnoted")
     s.wait_text("and the main worktree", "Main")
+    s.wait_text("the dirty worktree says so by itself", "Changes")
+    s.eq("no board row is selected at first", [], s.selection())
+    s.eq("the closed board shows no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
+    s.eq("and no Close preview row", False, s.previewing())
+    s.shot("board-initial")
+    seen_linked = seen_plain = seen_both = False
+    for _ in range(8):  # walk the rows: each selection shows its preview
+        s.ctl_ok("key", "Down")
+        time.sleep(0.7)
+        ts = s.texts()
+        if "Close preview" not in ts:
+            continue
+        if any(t.startswith("Pull request #2") for t in ts):
+            # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
+            deadline = time.monotonic() + SMOKE_TIMEOUT
+            while not (any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts())):
+                if time.monotonic() > deadline or not s.alive():
+                    s.fail("the both-linked preview's fetched titles", "texts with 'Flow PR 2' and 'Flow issue 9'", [t for t in s.texts() if "#2" in t or "#9" in t or "Loading" in t])
+                time.sleep(0.2)
+            seen_both = True
+            s.eq("no placeholder is left in the both-linked preview", False, any(t.startswith("Loading") and ("#2" in t or "#9" in t) for t in s.texts()))
+            s.shot("board-both-preview")
+        elif any(t.startswith("Pull request #1") for t in ts):
+            # the tracker's answer, not the placeholder
+            deadline = time.monotonic() + SMOKE_TIMEOUT
+            while not any("Flow PR 1" in t for t in s.texts()):
+                if time.monotonic() > deadline or not s.alive():
+                    s.fail("the linked preview's fetched title", "a text with 'Flow PR 1'", [t for t in s.texts() if "#1" in t])
+                time.sleep(0.2)
+            seen_linked = True
+            s.eq("the fetched title replaced Loading #1", False, any(t.startswith("Loading #1") for t in s.texts()))
+            s.shot("board-linked-preview")
+        # An unlinked worktree's preview is titled by its folder: that text twice (the row's label and the preview's title).
+        elif sum(1 for t in ts if t == wt.name) >= 2:
+            seen_plain = True
+            s.shot("board-unlinked-preview")
+        if seen_linked and seen_plain and seen_both:
+            break
+    s.eq("a worktree linked to both a pull request and an issue previews both fetched titles", True, seen_both)
+    s.eq("the linked worktree's preview names its pull request by the fetched title", True, seen_linked)
+    s.eq("the unlinked worktree's preview falls back to its folder name, apart from its row", True, seen_plain)
+    s.ctl_ok("key", "Escape")
+    s.wait_until("closing the board preview clears its selection", lambda: s.selection() == [])
+    s.wait_until("and removes its Close preview row", lambda: not s.previewing())
 
 
 def sc_prompts(s: Smoke) -> None:
@@ -1622,6 +1772,29 @@ def sc_prompts(s: Smoke) -> None:
     s.wait_text("the requested pull request's row", "Pinned PR 5")
     s.wait_until("no other pull request under the pin", lambda: not any("Flow PR" in t for t in s.texts()))
     s.shot("url")
+    # A second pin joins the first (grouped, each its own view); the row of the one requested shows while it is the active pin.
+    listed.append(dict(listed[-1], number=6, title="Pinned PR 6", url="https://github.com/f/low/pull/6", head="feature-6"))
+    (s.smoke / "search.json").write_text(json.dumps(listed), encoding="utf-8")
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open-url")
+    s.wait_text("the URL prompt again", "GitHub pull request or issue URL")
+    s.ctl_ok("type", json.dumps("https://github.com/f/low/pull/6"))
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the second pinned pull request", "Pinned PR 6")
+    s.wait_text("the first pin is still there", "f/low#5")
+    s.wait_text("and the second", "f/low#6")
+    s.shot("pins")
+    s.wait_until("the Pins group is in the scopes", lambda: any(t == "Pins" for t in s.texts()))
+    s.wait_until("the pinned item's preview is open (its Close preview row)", lambda: s.previewing())
+    # Unpin through the palette (primary key "."), filtered to the one command: only the target goes, the other pin stays.
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Unpin"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_until("the unpinned item is gone", lambda: not any("f/low#6" in t for t in s.texts() if not t.startswith("Unpinned")))
+    s.eq("the other pin remains", True, any("f/low#5" in t for t in s.texts()))
+    s.eq("the Pins group is still listed", True, any(t == "Pins" for t in s.texts()))
+    s.shot("unpinned")
 
     def export_through(confirm: bool) -> None:
         s.ctl_ok("plugins", "run", "plugin.plotroom.export")
@@ -1726,6 +1899,7 @@ def sc_agent(s: Smoke) -> None:
     s.cd(root)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
     s.wait_text("the pull request", "Agent PR 1")
+    s.select_row()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
     s.wait_text("the action picker", "Run on ")
     s.ctl_ok("picker", "enter")  # "Type a prompt…", first when nothing ran before
@@ -1744,6 +1918,7 @@ def sc_agent(s: Smoke) -> None:
     def back_to_queue() -> None:
         s.ctl_ok("tab", str(queue_tab))
         s.wait_until("the queue's tab is focused again", lambda: not agent_focused())
+        s.select_row()
 
     back_to_queue()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
@@ -1779,6 +1954,7 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("type", json.dumps("https://github.com/a/gent/issues/9"))
     s.ctl_ok("key", "Enter")
     s.wait_text("the pinned issue's row", "Draft issue 9")
+    s.select_row()
     s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
     issue_wt = s.issue_wt("a/gent", "9")
     deadline = time.monotonic() + SMOKE_TIMEOUT

@@ -19,7 +19,7 @@ local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = "layer.queue.buttons.agentgo" -- hidden: Go to the item's recorded agent
-local MORE_NODE = "layer.queue.buttons.more" -- hidden: the item commands palette
+local MORE_NODE = "main.more" -- hidden: the command palette
 local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
 -- How long the block's host may take to answer: listing saved prompts, preparing a worktree (fetch and add, 2 minutes
@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "15" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "17" -- what host.luau's `main.rpc` node must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -179,25 +179,11 @@ local function targetPane(cx: WindowCx, path: string): (number?, number?, number
 	return nil, nil, nil
 end
 
--- Opens `url` in a Browser block docked right of `pane`.
-local function openUrl(cx: WindowCx, pane: number, url: string, what: string)
-	cx.browser:call({ op = "open", owner = pane, url = url }):next(function(result, err, cx2)
-		if not cx2 then
-			return
-		end
-		if err or not result or result.error or not result.ok then
-			local why = err or (if result and result.error then result.error.message else "no result")
-			return cx2:toast("error", "Could not open " .. what, why)
-		end
-		local browserPane = result.ok.block
-		if type(browserPane) ~= "number" then
-			return cx2:toast("error", "Browser opened but did not report its block", tern.json.encode(result.ok))
-		end
-		local ok, why = cx2.layout:dock(browserPane, pane, "right", { focus = true })
-		if not ok then
-			cx2:toast("error", "Could not dock the Browser block", why)
-		end
-	end)
+-- Opens `url` beside `pane` as a plain link open would. Not `cx.browser`'s `open`: its `owner` is in the window's
+-- global block ids, and a remote host's pane ids reach Luau translated, so it answers "no block" for a remote pane.
+local function openUrl(cx: WindowCx, pane: number, url: string)
+	cx.layout:focus(pane)
+	cx:open(url, "beside")
 end
 
 -- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host.luau's `showPr`).
@@ -214,6 +200,54 @@ local function sameVersion(cx: WindowCx, pane: number): boolean
 	cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
 	return false
 end
+
+-- The focused Plotroom block's host announcing another protocol, as a status-line warning. Polled while that block is
+-- focused (a remote reload changes the announcement either way); a missing marker is a host still loading, not a mismatch.
+local WATCH_MS = 2000
+local mismatched: number? = nil -- the focused pane whose host announces another protocol
+local watch: TimerHandle? = nil
+local checkProtocol: (WindowCx) -> ()
+
+-- One timer at a time: whoever finds none arms it, and its tick clears it before checking again.
+local function arm(ms: number)
+	if not watch then
+		watch = tern.timer(ms, function(cx: WindowCx?)
+			watch = nil
+			if cx then
+				checkProtocol(cx)
+			end
+		end)
+	end
+end
+
+function checkProtocol(cx: WindowCx)
+	local pane = cx.session:focused()
+	local flagged: number? = nil
+	if pane and isPlotroom(cx, pane) then
+		arm(WATCH_MS)
+		local text = nodeProp(readNode(cx, pane, "main.rpc"), "text")
+		if type(text) == "string" and text ~= PROTOCOL then
+			flagged = pane
+		end
+	elseif watch then
+		watch:cancel()
+		watch = nil
+	end
+	if flagged ~= mismatched then
+		mismatched = flagged
+		tern.chrome.refresh()
+	end
+end
+
+-- A plugin reload while a Plotroom block is focused fires no lifecycle event: start with a check of our own.
+arm(0)
+
+tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
+	if pane.pane ~= mismatched then
+		return nil
+	end
+	return { { text = "Plotroom protocol mismatch", icon = "warning", tone = "error" } }
+end)
 
 local answered: (WindowCx, string) -> ()
 
@@ -605,6 +639,15 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	end)
 end
 
+-- Asks for a prompt's text and runs it on the target in an agent in its worktree.
+local function typePrompt(cx: WindowCx, pane: number, t: Target)
+	cx:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx2)
+		if cx2 and text and string.find(text, "%S") then
+			prepareTarget(cx2, pane, t, { text = text }, true)
+		end
+	end)
+end
+
 -- Asks which saved prompt (Settings › Prompts, those the block's view offers) to run on the target, then
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
@@ -650,11 +693,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 				return
 			end
 			if item.typed then
-				return cx3:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx4)
-					if cx4 and text and string.find(text, "%S") then
-						run(cx4, { text = text }, true)
-					end
-				end)
+				return typePrompt(cx3, pane, t)
 			end
 			local recent = readRecent()
 			local at = table.find(recent, item.label)
@@ -835,8 +874,100 @@ local function linkedListed(cx: WindowCx, pane: number, url: string): boolean
 	return false
 end
 
--- Validates a plotroom:// link against the pane's live surface and runs it.
-local function handle(cx: WindowCx, url: string, pane: number): boolean
+local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
+
+-- The order the palette's groups come in; a group the host names that is not here follows them.
+local GROUPS = { "Item", "Agents", "Saved actions", "GitHub", "Jira", "CI", "Worktree", "View", "Configuration" }
+
+-- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
+-- listed: the host names the queue actions (`queue`, each with its group and key, sent back as its `queue` action) and
+-- the flows.COMMANDS ids (`commands`) it will accept. With an item selected, a typed prompt and the saved actions its
+-- view offers form their own group (each run through its hidden link, as its key runs it).
+local function palette(cx: WindowCx, pane: number)
+	local hasItem = type(nodeProp(readNode(cx, pane, AGENT_NODE), "href")) == "string"
+	ask(cx, pane, "menu", { palette = true }, MENU_MS, function(a: any, cx2: WindowCx)
+		if hasItem and type(a.problem) == "string" then
+			cx2:toast("error", "Saved actions are not listed", a.problem)
+		end
+		local function keyed(key: any, rest: any): string?
+			local k = if type(key) == "string" and key ~= "" then "key " .. key else nil
+			local r = if type(rest) == "string" and rest ~= "" then rest else nil
+			return if k and r then k .. " · " .. r else k or r
+		end
+		local by: { [string]: { PickItem } } = {}
+		local names: { string } = {}
+		local function add(group: string, item: PickItem)
+			if not by[group] then
+				by[group] = {}
+				table.insert(names, group)
+			end
+			item.group = group
+			table.insert(by[group], item)
+		end
+		if hasItem then
+			add("Saved actions", { label = "Type a prompt…", detail = "Run your own text in an agent", typed = true })
+			for _, it in if type(a.items) == "table" then a.items else {} do
+				if type(it) == "table" and type(it.id) == "string" and type(it.label) == "string" then
+					add("Saved actions", { label = it.label, detail = keyed(it.key, it.detail), run = it.id })
+				end
+			end
+		end
+		for _, q in if type(a.queue) == "table" then a.queue else {} do
+			if type(q) == "table" and type(q.id) == "string" and type(q.label) == "string" then
+				add(if type(q.group) == "string" then q.group else "View", { label = q.label, detail = keyed(q.key), queue = q.id })
+			end
+		end
+		local offered: { [string]: boolean } = {}
+		for _, id in if type(a.commands) == "table" then a.commands else {} do
+			if type(id) == "string" then
+				offered[id] = true
+			end
+		end
+		for i, c in flows.COMMANDS do
+			if not c.keyed and offered[c.id] then
+				add(c.group, { label = c.label, at = i })
+			end
+		end
+		local items: { PickItem } = {}
+		local placed: { [string]: boolean } = {}
+		for _, g in GROUPS do
+			placed[g] = true
+			local group = by[g]
+			if group then
+				for _, it in group do
+					table.insert(items, it)
+				end
+			end
+		end
+		for _, g in names do
+			if not placed[g] then
+				for _, it in by[g] do
+					table.insert(items, it)
+				end
+			end
+		end
+		cx2:pick({ items = items, placeholder = "Run a command", icon = "merge", action = "run" }):next(function(item, _, cx3)
+			if not item or not cx3 or not isPlotroom(cx3, pane) then
+				return
+			elseif item.typed then
+				follow(cx3, pane, AGENT_NODE, "Select a pull request or issue first", true)
+			elseif type(item.run) == "string" then
+				follow(cx3, pane, PROMPT_NODE .. item.run, "That action is no longer offered here")
+			elseif type(item.queue) == "string" then
+				cx3.session:event(pane, { ev = "action", act = "queue", value = item.queue })
+			else
+				local c = flows.COMMANDS[item.at :: number]
+				if c then
+					c.run(cx3, pane)
+				end
+			end
+		end)
+	end)
+end
+
+-- Validates a plotroom:// link against the pane's live surface and runs it. `typed`: an agent link asks for a typed
+-- prompt straight away (the command palette's Type a prompt…), not the agent picker.
+local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?): boolean
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
 	if rid then
 		answered(cx, rid)
@@ -860,9 +991,9 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://more" then
 			if nodeProp(readNode(cx, pane, MORE_NODE), "href") ~= url then
-				cx:toast("error", "Plotroom: no item is selected", "Select a pull request or issue and try again.")
+				cx:toast("error", "Plotroom: the command palette is not offered here")
 			else
-				flows.more(cx, pane)
+				palette(cx, pane)
 			end
 		elseif not row or row < 1 or row > 100000 then
 			cx:toast("error", "Plotroom: malformed link")
@@ -878,7 +1009,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		elseif not checkListed(cx, pane, index, url) then
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
-			openUrl(cx, pane, target, "the check")
+			openUrl(cx, pane, target)
 		end
 		return true
 	end
@@ -892,7 +1023,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= url then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 		else
-			openUrl(cx, pane, page, "the issue")
+			openUrl(cx, pane, page)
 		end
 		return true
 	end
@@ -921,7 +1052,11 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 		elseif act == "agentgo" then
 			flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 		elseif act == "agent" then
-			pickAgent(cx, pane, t)
+			if typed then
+				typePrompt(cx, pane, t)
+			else
+				pickAgent(cx, pane, t)
+			end
 		elseif act == "run" and rid2 then
 			runSaved(cx, pane, t, rid2)
 		else
@@ -953,7 +1088,7 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	local t = prTarget(owner, repo, n)
 	local page = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
 	if kind == "open" then
-		openUrl(cx, pane, page, "the pull request")
+		openUrl(cx, pane, page)
 	elseif kind == "show" then
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
@@ -961,7 +1096,11 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	elseif kind == "agentgo" then
 		flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 	elseif kind == "agent" then
-		pickAgent(cx, pane, t)
+		if typed then
+			typePrompt(cx, pane, t)
+		else
+			pickAgent(cx, pane, t)
+		end
 	elseif kind == "run" and id then
 		runSaved(cx, pane, t, id)
 	else
@@ -970,13 +1109,13 @@ local function handle(cx: WindowCx, url: string, pane: number): boolean
 	return true
 end
 
--- Follows the hidden link node `nodeId` of `pane`.
-local function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?)
+-- Follows the hidden link node `nodeId` of `pane` (`typed`: as handle's).
+function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?)
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
 		return cx:toast("info", missing or "Nothing is selected")
 	end
-	handle(cx, href, pane)
+	handle(cx, href, pane, typed)
 end
 
 local function selected(cx: WindowCx, nodeId: string, missing: string?)
@@ -1074,14 +1213,24 @@ end
 -- reboot only needs the next of these to start it again.
 tern.on("window_start", function(cx: WindowCx)
 	flows.ensureSync(cx)
+	checkProtocol(cx)
 end)
 
 tern.on("pane_created", function(_ev: any, cx: WindowCx)
 	flows.ensureSync(cx)
+	checkProtocol(cx)
 end)
 
 tern.on("agent_finished", function(_ev: any, cx: WindowCx)
 	flows.agentSync(cx)
+end)
+
+tern.on("focus", function(_ev: any, cx: WindowCx)
+	checkProtocol(cx)
+end)
+
+tern.on("pane_closed", function(_ev: any, cx: WindowCx)
+	checkProtocol(cx)
 end)
 
 tern.command({

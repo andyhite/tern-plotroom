@@ -44,6 +44,11 @@ local function fake(inv: { [string]: { board.Entry } }): Fake
 				done(nil, "boom")
 			end
 		end,
+		dirty = function(path, done)
+			enter("dirty:" .. path)
+			busy -= 1
+			done(f.dirty[path] == true, nil)
+		end,
 		inventoryDirty = function(_, _, path, _, done)
 			enter("dirty:" .. path)
 			busy -= 1
@@ -125,10 +130,26 @@ function M.run()
 	board.load(b, f.api, { ["o/a"] = "/a" }, yes, function() end)
 	assert(row("/shared").dirty == true)
 
-	-- inspect
-	f.dirty["/shared"] = false
-	board.inspect(b, f.api, row("/shared").id, yes, function() end)
-	assert(row("/shared").dirty == false and row("/shared").checking == nil)
+	-- successive scans cover every row beyond the cap, a failing one included
+	local lots: { board.Entry } = {}
+	for i = 1, 100 do
+		table.insert(lots, entry("/q" .. i))
+	end
+	local fl = fake({ ["/l"] = lots })
+	local bl = loaded(fl, { ["o/l"] = "/l" })
+	local realDirty = fl.api.dirty
+	fl.api.dirty = function(path, d)
+		if path == "/q50" then
+			return d(nil, "boom")
+		end
+		realDirty(path, d)
+	end
+	for pass = 1, 3 do
+		assert(board.scan(bl, fl.api, pass * 1000, yes, function() end))
+	end
+	for _, r in bl.rows do
+		assert(r.scannedAt ~= nil and (r.dirty ~= nil or r.path == "/q50"))
+	end
 
 	-- candidates: bounded, never remove
 	local many: { board.Entry } = {}
@@ -235,7 +256,225 @@ function M.run()
 	for _, x in board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", main = false, number = 5, locked = false, missing = false } :: board.Row, false) do
 		assert(x.text ~= "Unnoted")
 	end
-	assert(board.label({ branch = nil } :: any) == "(detached)")
+	assert(board.label({ path = "/w/feature-x/", branch = "b" } :: any) == "feature-x")
+	assert(board.label({ path = "", branch = nil } :: any) == "(detached)")
+
+	-- automatic dirty scan: sequential, deduped, selected first, due-gated, failures never clean
+	local fs = fake({ ["/a"] = { entry("/a", { main = true }), entry("/w1"), entry("/w2"), entry("/gone", { prunable = true }) } })
+	local bs = loaded(fs, { ["o/a"] = "/a", ["o/b"] = "/a" })
+	for _, r in bs.rows do
+		if r.path == "/w2" then
+			bs.selected = r.id
+		end
+	end
+	fs.dirty["/w1"] = true
+	local ticks = 0
+	local before2 = #fs.calls
+	assert(board.scan(bs, fs.api, 100, yes, function()
+		ticks += 1
+	end))
+	assert(fs.max == 1 and #fs.calls - before2 == 3 and fs.calls[before2 + 1] == "dirty:/w2" and not bs.scanning)
+	for _, r in bs.rows do
+		assert(r.missing or r.dirty == (r.path == "/w1"))
+	end
+	assert(not board.scan(bs, fs.api, 110, yes, function() end) and #fs.calls - before2 == 3)
+	assert(board.scan(bs, fs.api, 110, yes, function() end, true))
+	assert(board.scan(bs, fs.api, 110 + board.SCAN_SECONDS, yes, function() end)) -- due this long after the forced scan started
+	-- offscreen: nothing starts; a live() that turns false stops it
+	assert(not board.scan(bs, fs.api, 1e6, function()
+		return false
+	end, function() end, true))
+	local on = true
+	local fo = fake({ ["/a"] = { entry("/w1"), entry("/w2") } })
+	local bo = loaded(fo, { ["o/a"] = "/a" })
+	fo.api.dirty = function(path, d)
+		table.insert(fo.calls, path)
+		on = false
+		d(true, nil)
+	end
+	board.scan(bo, fo.api, 0, function()
+		return on
+	end, function() end)
+	-- the first answer took the board offscreen: the scan stops there, reads no more, and the next one is due at once
+	assert(#fo.calls == 2 and not bo.scanning and bo.scanAt == nil)
+	on = true
+	assert(board.scan(bo, fo.api, 1, function()
+		return on
+	end, function() end))
+	board.stop(bo)
+	assert(not bo.scanning and bo.scanAt == nil)
+	-- failure is unknown, not clean; stale answers after reload are ignored
+	local ff = fake({ ["/a"] = { entry("/w1") } })
+	local bf = loaded(ff, { ["o/a"] = "/a" })
+	local held: ((boolean?, string?) -> ())? = nil
+	ff.api.dirty = function(_, d)
+		held = d
+	end
+	board.scan(bf, ff.api, 0, yes, function() end)
+	board.load(bf, ff.api, { ["o/a"] = "/a" }, yes, function() end);
+	(held :: (boolean?, string?) -> ())(false, nil)
+	assert(bf.rows[1].dirty == nil and not bf.scanning)
+	ff.api.dirty = function(_, d)
+		d(nil, "git failed")
+	end
+	board.scan(bf, ff.api, 0, yes, function() end)
+	assert(bf.rows[1].dirty == nil and bf.rows[1].scannedAt == 0)
+	assert(board.badges(bf.rows[1], false)[1].text == "Unknown")
+
+	-- boundaries: non-ASCII excerpt, reload mid-read, changed link, repeated select, scan stop/dedup, missing never clean
+	local fb = fake({ ["/m"] = { entry("/m/a", { number = 1 }), entry("/m/gone", { prunable = true }) } })
+	local bb = loaded(fb, { ["o/m"] = "/m" })
+	local pend: { (board.Info?, string?) -> () } = {}
+	local nPr = 0
+	local lk: board.Links = {
+		pr = function(_, _, d)
+			nPr += 1
+			table.insert(pend, d)
+		end,
+		issue = function(_, _, d)
+			d(nil, nil)
+		end,
+	}
+	local a = bb.rows[1].id
+	board.select(bb, lk, a, yes, function() end)
+	board.select(bb, lk, a, yes, function() end)
+	assert(nPr == 1) -- repeated select while loading asks nothing more and keeps its round
+	pend[1]({ ref = "#1", title = "t", state = "open", tracker = "g", excerpt = string.rep("é", 300) }, nil)
+	local dpr = bb.details[a].pr
+	assert(dpr and dpr.info)
+	local ex = dpr.info.excerpt :: string
+	assert(dpr.state == "ready" and utf8.len(ex) ~= nil and #ex <= board.EXCERPT + 3)
+	board.select(bb, lk, a, yes, function() end, true) -- explicit refresh reads again
+	assert(nPr == 2)
+	board.load(bb, fb.api, { ["o/m"] = "/m" }, yes, function() end) -- reload mid-read: asked again, never stuck loading
+	local function prOf(id: string?): board.Section
+		local d = bb.details[id :: string]
+		assert(d and d.pr)
+		return d.pr
+	end
+	local function infoOf(id: string?): board.Info
+		local i = prOf(id).info
+		assert(i)
+		return i
+	end
+	assert(nPr == 3 and prOf(bb.selected).state == "loading")
+	pend[2]({ ref = "#1", title = "old", state = "open", tracker = "g" }, nil)
+	assert(prOf(bb.selected).state == "loading")
+	pend[3]({ ref = "#1", title = "new", state = "open", tracker = "g" }, nil)
+	assert(infoOf(bb.selected).title == "new")
+	fb.api.inventory = function(_, _, d) -- the worktree moved to another PR: the old read is stale
+		d({ entry("/m/a", { number = 2 }) }, nil)
+	end
+	board.load(bb, fb.api, { ["o/m"] = "/m" }, yes, function() end)
+	assert(nPr == 4 and prOf(bb.selected).ref == "#2")
+	-- stop makes the next scan due at once; the same folder under two checkouts is read once; a missing row is never clean
+	local inventory = { ["/c1"] = { entry("/same"), entry("/gone") }, ["/c2"] = { entry("/same") } }
+	local fm = fake(inventory)
+	local bm = loaded(fm, { ["o/1"] = "/c1", ["o/2"] = "/c2" })
+	for _, r in bm.rows do
+		r.dirty = false
+	end
+	inventory["/c1"][2] = entry("/gone", { prunable = true })
+	board.load(bm, fm.api, { ["o/1"] = "/c1", ["o/2"] = "/c2" }, yes, function() end)
+	assert(board.scan(bm, fm.api, 5, yes, function() end))
+	local reads = 0
+	for _, c in fm.calls do
+		if c == "dirty:/same" then
+			reads += 1
+		end
+	end
+	assert(reads == 1)
+	for _, r in bm.rows do
+		assert(not r.missing or r.dirty ~= false)
+	end
+	local held3: ((boolean?, string?) -> ())? = nil
+	fm.api.dirty = function(_, d)
+		held3 = d
+	end
+	assert(board.scan(bm, fm.api, 6, yes, function() end, true) and bm.scanning)
+	board.stop(bm)
+	assert(not bm.scanning and bm.scanAt == nil);
+	(held3 :: (boolean?, string?) -> ())(true, nil) -- the cancelled scan's late answer changes nothing
+	for _, r in bm.rows do
+		assert(r.dirty ~= true)
+	end
+	assert(board.scan(bm, fm.api, 7, yes, function() end)) -- not held back by the cancelled scan's start time
+
+	-- preview: starts unselected, PR + issue, enrichment, errors, close, stale
+	local bp = loaded(fake({ ["/p"] = { entry("/p/one", { number = 7, key = "PRJ-1" }), entry("/p/two", { number = 8 }), entry("/p/three") } }), { ["o/p"] = "/p" })
+	assert(bp.selected == nil)
+	local asked2: { string } = {}
+	local held2: { [string]: (board.Info?, string?) -> () } = {}
+	local links: board.Links = {
+		pr = function(_, n, d)
+			table.insert(asked2, "pr" .. n)
+			if n == 8 then
+				return d({ ref = "#8", title = "T", state = "open", tracker = "github o/p", excerpt = "  a\n\n b  ", related = { key = "PRJ-2" } }, nil)
+			end
+			d({ ref = "#7", title = "Seven", state = "open", person = "ann", tracker = "github o/p" }, nil)
+		end,
+		issue = function(_, k, d)
+			table.insert(asked2, k)
+			held2[k] = d
+		end,
+	}
+	local function idOf(p: string): string
+		for _, r in bp.rows do
+			if r.path == p then
+				return r.id
+			end
+		end
+		error(p)
+	end
+	board.select(bp, links, idOf("/p/one"), yes, function() end)
+	local function sec(p: string, which: "pr" | "issue"): board.Section
+		local d = bp.details[idOf(p)]
+		assert(d)
+		local s = if which == "pr" then d.pr else d.issue
+		assert(s)
+		return s
+	end
+	assert(table.concat(asked2, ",") == "pr7,PRJ-1" and sec("/p/one", "issue").state == "loading")
+	held2["PRJ-1"]({ ref = "PRJ-1", title = "Jira", state = "To Do", person = "bo", tracker = "jira PRJ" }, nil)
+	local one = board.preview(bp, bp.rows[1])
+	assert(one.pr and one.pr.state == "ready" and one.issue and one.issue.info and one.issue.info.tracker == "jira PRJ")
+	-- cached: reselect asks nothing; a different row's late answer is ignored
+	board.select(bp, links, idOf("/p/one"), yes, function() end)
+	assert(#asked2 == 2)
+	-- one identifier known: the verified related key fills in the issue; excerpt is plain and short
+	board.select(bp, links, idOf("/p/two"), yes, function() end)
+	assert(asked2[3] == "pr8" and asked2[4] == "PRJ-2")
+	assert(sec("/p/two", "pr").info and (sec("/p/two", "pr").info :: board.Info).excerpt == "a b")
+	board.select(bp, links, idOf("/p/one"), yes, function() end)
+	held2["PRJ-2"]({ ref = "PRJ-2", title = "late", state = "x", tracker = "jira PRJ" }, nil)
+	assert(sec("/p/two", "issue").state == "loading")
+	-- error then retry; unlinked row has no sections; close ignores in-flight answers
+	local bad = false
+	links.pr = function(_, _, d)
+		d(nil, if bad then "offline" else nil)
+	end
+	bad = true
+	board.select(bp, links, idOf("/p/two"), yes, function() end)
+	assert(sec("/p/two", "pr").state == "error" and sec("/p/two", "pr").problem == "offline")
+	board.select(bp, links, idOf("/p/three"), yes, function() end)
+	assert(board.preview(bp, bp.rows[1]).facts[1][1] == "Branch")
+	assert(bp.details[idOf("/p/three")] and bp.details[idOf("/p/three")].pr == nil and bp.details[idOf("/p/three")].issue == nil)
+	board.select(bp, links, idOf("/p/one"), yes, function() end)
+	board.close(bp)
+	assert(bp.selected == nil)
+	board.select(bp, links, "nope", yes, function() end)
+	assert(bp.selected == nil)
+	-- scan prefers the cheap read-only api.dirty (no re-listing); only listed paths reach it
+	local fd = fake({ ["/a"] = { entry("/w1"), entry("/w2") } })
+	local bd2 = loaded(fd, { ["o/a"] = "/a" })
+	local cheap: { string } = {}
+	fd.api.dirty = function(path, d)
+		table.insert(cheap, path)
+		d(path == "/w1", nil)
+	end
+	local invCalls = #fd.calls
+	board.scan(bd2, fd.api, 0, yes, function() end)
+	assert(#cheap == 2 and #fd.calls == invCalls and bd2.rows[1].dirty == true and bd2.rows[2].dirty == false)
 end
 
 return M

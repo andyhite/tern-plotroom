@@ -1,6 +1,6 @@
 --!strict
 -- Triage memory for the queue: per item, the signature last marked seen and an optional snooze, in kv "triage".
--- Seen changes ONLY through markSeen (an explicit act); moving the cursor over an item never marks it seen.
+-- Seen changes only through markSeen: the host calls it for the Mark seen action and when an item's preview is shown, never for an item that is merely listed or fetched.
 -- An idle, exited or working agent never counts as handling an item; only waiting_input asks for attention.
 
 local M = {}

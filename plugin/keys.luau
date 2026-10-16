@@ -1,6 +1,7 @@
 --!strict
 -- The queue's one-key shortcuts, shared by the pull request and issue blocks: each action's default key, and kv "keys",
 -- which holds the keys this machine changed (action id -> key; "" removes the shortcut, an absent id keeps its default).
+-- Only the command palette has a default key: every other action is reached through it until someone binds one.
 
 local M = {}
 
@@ -12,22 +13,24 @@ local BAD = "Saved keys are malformed; not overwriting them."
 
 -- In the order the Keys page lists them and `action` tries them.
 M.ACTIONS = {
-	{ id = "down", label = "Move down", default = "j" },
-	{ id = "up", label = "Move up", default = "k" },
-	{ id = "worktree", label = "Worktree", default = "w" },
-	{ id = "goto", label = "Go to tab", default = "g" },
-	{ id = "agent", label = "Agent picker", default = "a" },
-	{ id = "agentgo", label = "Go to agent", default = "G" },
-	{ id = "seen", label = "Mark seen", default = "m" },
-	{ id = "snooze", label = "Snooze until tomorrow", default = "z" },
-	{ id = "snoozed", label = "Show or hide snoozed", default = "Z" },
-	{ id = "attention", label = "Needs attention only", default = "n" },
-	{ id = "sort", label = "Next sort order", default = "o" },
-	{ id = "more", label = "Item commands", default = "." },
-	{ id = "search", label = "Search", default = "/" },
-	{ id = "refresh", label = "Refresh", default = "r" },
-	{ id = "settings", label = "Settings", default = "s" },
-	{ id = "help", label = "Shortcut list", default = "?" },
+	{ id = "down", label = "Move down", default = "" },
+	{ id = "up", label = "Move up", default = "" },
+	{ id = "worktree", label = "Worktree", default = "" },
+	{ id = "goto", label = "Go to tab", default = "" },
+	{ id = "agent", label = "Agent picker", default = "" },
+	{ id = "agentgo", label = "Go to agent", default = "" },
+	{ id = "seen", label = "Mark seen", default = "" },
+	{ id = "snooze", label = "Snooze until tomorrow", default = "" },
+	{ id = "snoozed", label = "Show or hide snoozed", default = "" },
+	{ id = "attention", label = "Needs attention only", default = "" },
+	{ id = "sort", label = "Next sort order", default = "" },
+	{ id = "wt-cleanup", label = "Find finished worktrees", default = "" },
+	{ id = "wt-remove", label = "Remove worktree (Worktrees view)", default = "" },
+	{ id = "more", label = "Command palette", default = "." },
+	{ id = "search", label = "Search", default = "" },
+	{ id = "refresh", label = "Refresh", default = "" },
+	{ id = "settings", label = "Settings", default = "" },
+	{ id = "help", label = "Shortcut list", default = "" },
 } :: { Action }
 
 local function actionOf(id: string): Action?

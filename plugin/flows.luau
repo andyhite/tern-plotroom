@@ -2,7 +2,7 @@
 -- The window's workflow flows: agent links (which agent pane works on which item, kept in kv `agent-links`, and the
 -- timer that tells each Plotroom block how those agents are doing), the guided mutations (assign, labels, Jira
 -- transition, re-run, draft PR, export, import: always plan, Cancel-first confirm, commit), Open item by URL and the
--- "more" palette. window.luau injects what it owns (`setup`), so there is no require cycle.
+-- commands the command palette lists. window.luau injects what it owns (`setup`), so there is no require cycle.
 
 local M = {}
 
@@ -482,11 +482,12 @@ local function jiraTransition(cx: WindowCx, pane: number)
 	end)
 end
 
-local function rerunFailed(cx: WindowCx, pane: number)
-	e().ask(cx, pane, "act", { name = "rerun-failed" }, ACT_MS, function(a: any, cx2: WindowCx)
+-- A workflow-run action on the selected pull request's checks: the host answers the runs to pick from (several) or a plan.
+local function runAction(cx: WindowCx, pane: number, name: string, title: string, none: string, placeholder: string)
+	e().ask(cx, pane, "act", { name = name }, ACT_MS, function(a: any, cx2: WindowCx)
 		local why = problemOf(a)
 		if why then
-			return cx2:toast("error", "Nothing to re-run", why)
+			return cx2:toast("error", title, why)
 		elseif type(a.runs) ~= "table" then
 			return M.confirmPlan(cx2, pane, a, nil)
 		end
@@ -497,13 +498,50 @@ local function rerunFailed(cx: WindowCx, pane: number)
 			end
 		end
 		if #items == 0 then
-			return cx2:toast("info", "No failed runs to re-run")
+			return cx2:toast("info", none)
 		end
-		cx2:pick({ items = items, placeholder = "Which failed run to re-run?", icon = "merge", action = "plan" }):next(function(item, _, cx3)
+		cx2:pick({ items = items, placeholder = placeholder, icon = "merge", action = "plan" }):next(function(item, _, cx3)
 			if item and cx3 then
-				planAct(cx3, pane, "Nothing to re-run", { name = "rerun-failed", run = item.runId })
+				planAct(cx3, pane, title, { name = name, run = item.runId })
 			end
 		end)
+	end)
+end
+
+local function rerunFailed(cx: WindowCx, pane: number)
+	runAction(cx, pane, "rerun-failed", "Nothing to re-run", "No failed runs to re-run", "Which failed run to re-run?")
+end
+
+local function rerunAll(cx: WindowCx, pane: number)
+	runAction(cx, pane, "rerun-all", "Nothing to re-run", "No finished runs to re-run", "Which run to re-run in full?")
+end
+
+local function cancelRun(cx: WindowCx, pane: number)
+	runAction(cx, pane, "cancel-run", "Nothing to cancel", "No queued or running workflow runs", "Which running workflow run to cancel?")
+end
+
+local function issueClose(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Issue not closed", { name = "issue-close" })
+end
+
+local function issueReopen(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Issue not reopened", { name = "issue-reopen" })
+end
+
+local function prReady(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Not marked ready", { name = "pr-ready" })
+end
+
+local function prDraft(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Not converted to a draft", { name = "pr-draft" })
+end
+
+-- One-line prompt; the host validates the text and shows exactly what it will post when it asks for the confirmation.
+local function comment(cx: WindowCx, pane: number)
+	cx:prompt({ placeholder = "Comment to add to the selected item", icon = "merge", action = "review" }):next(function(text, _, cx2)
+		if cx2 and text and trim(text) ~= "" then
+			planAct(cx2, pane, "Comment not added", { name = "comment", text = trim(text) })
+		end
 	end)
 end
 
@@ -990,51 +1028,44 @@ local function triage(value: string): (WindowCx, number) -> ()
 	return send("triage", value)
 end
 
--- Palette commands the window registers (id, title) and the "more" palette lists (label); all but `anywhere` ones
--- need a focused Plotroom block, which the window checks.
-export type Command = { id: string, title: string, label: string, run: (WindowCx, number) -> (), anywhere: boolean? }
+-- Palette commands the window registers (id, title) and its command palette lists (label, under `group`) when the host
+-- says they apply to the selection now (`menu`'s `commands`) unless `keyed`: the palette lists those as the queue action
+-- they are. All but `anywhere` ones need a focused Plotroom block, which the window checks.
+export type Command = { id: string, title: string, label: string, group: string, run: (WindowCx, number) -> (), anywhere: boolean?, keyed: boolean? }
 
 M.COMMANDS = {
-	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", run = M.openByUrl, anywhere = true },
+	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "View", run = M.openByUrl, anywhere = true },
 	{
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
 		label = "Go to agent",
+		group = "Agents",
+		keyed = true,
 		run = function(cx: WindowCx, pane: number)
 			e().follow(cx, pane, AGENTGO_NODE, "The selected item has no agent")
 		end,
 	},
-	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", run = assignMe },
-	{ id = "label-add", title = "Plotroom: Add a label to the selected issue", label = "Add label…", run = labelAdd },
-	{ id = "label-remove", title = "Plotroom: Remove a label from the selected issue", label = "Remove label…", run = labelRemove },
-	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", run = jiraTransition },
-	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
-	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
-	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", run = exportFlow },
-	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", run = importFlow },
-	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", run = triage("seen") },
-	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", run = triage("snooze") },
-	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", run = triage("toggle-snoozed") },
-	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", run = triage("toggle-attention") },
-	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", run = send("sort", "next") },
-	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees board", label = "Worktrees board", run = send("open-worktrees", nil) },
+	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", group = "Item", run = assignMe },
+	{ id = "comment", title = "Plotroom: Comment on the selected item", label = "Comment…", group = "Item", run = comment },
+	{ id = "label-add", title = "Plotroom: Add a label to the selected issue", label = "Add label…", group = "GitHub", run = labelAdd },
+	{ id = "label-remove", title = "Plotroom: Remove a label from the selected issue", label = "Remove label…", group = "GitHub", run = labelRemove },
+	{ id = "issue-close", title = "Plotroom: Close the selected GitHub issue", label = "Close issue…", group = "GitHub", run = issueClose },
+	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", group = "GitHub", run = issueReopen },
+	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", group = "GitHub", run = prReady },
+	{ id = "pr-draft", title = "Plotroom: Convert the selected PR to a draft", label = "Convert to draft…", group = "GitHub", run = prDraft },
+	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", group = "Jira", run = jiraTransition },
+	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", group = "CI", run = rerunFailed },
+	{ id = "rerun-all", title = "Plotroom: Re-run every job of one of the selected PR's finished runs", label = "Re-run all jobs…", group = "CI", run = rerunAll },
+	{ id = "cancel-run", title = "Plotroom: Cancel a running workflow run of the selected PR", label = "Cancel running workflow…", group = "CI", run = cancelRun },
+	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", group = "Worktree", run = draftPr },
+	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", group = "Configuration", run = exportFlow },
+	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", group = "Configuration", run = importFlow },
+	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Item", run = triage("seen"), keyed = true },
+	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Item", run = triage("snooze"), keyed = true },
+	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "View", run = triage("toggle-snoozed"), keyed = true },
+	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "View", run = triage("toggle-attention"), keyed = true },
+	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "View", run = send("sort", "next"), keyed = true },
+	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees board", label = "Worktrees board", group = "Worktree", run = send("open-worktrees", nil) },
 } :: { Command }
-
--- plotroom://more: the palette of the item commands, run on the block the link came from.
-function M.more(cx: WindowCx, pane: number)
-	local items: { PickItem } = {}
-	for i, c in M.COMMANDS do
-		table.insert(items, { label = c.label, at = i })
-	end
-	cx:pick({ items = items, placeholder = "Commands for the selected item", icon = "merge", action = "run" }):next(function(item, _, cx2)
-		if not item or not cx2 then
-			return
-		end
-		local c = M.COMMANDS[item.at :: number]
-		if c and e().isPlotroom(cx2, pane) then
-			c.run(cx2, pane)
-		end
-	end)
-end
 
 return M

@@ -337,9 +337,11 @@ function M.run()
 	-- queue keys: which action a typed key triggers, and which keys an action may have
 	local queue: keys.Map = {}
 	for _, a in keys.ACTIONS do
+		assert(a.default == (if a.id == "more" then "." else ""), "only the command palette has a default key: " .. a.id)
 		queue[a.id] = a.default
 	end
-	assert(keys.action(queue, "w") == "worktree" and keys.action(queue, "?") == "help" and keys.action(queue, "x") == nil, "a typed key triggers the action that has it")
+	queue.worktree, queue["goto"], queue.help = "w", "g", "?"
+	assert(keys.action(queue, "w") == "worktree" and keys.action(queue, "?") == "help" and keys.action(queue, ".") == "more" and keys.action(queue, "x") == nil, "a typed key triggers the action that has it")
 	assert(keys.shape("") == nil and keys.shape("é") == nil and keys.shape("ab") ~= nil and keys.shape("a b") ~= nil and keys.shape(" ") ~= nil, "a key is one character that is not a gap, and empty is no key")
 	assert(keys.problem(queue, "goto", "g") == nil, "an action keeps its own key")
 	assert(keys.problem(queue, "worktree", "g") == "Already the shortcut of Go to tab.", "another action's key is refused, naming the action")
@@ -362,6 +364,8 @@ function M.run()
 	local hi, lo, none = { priority = "High" } :: any, { priority = "Low" } :: any, {} :: any
 	assert(sorting.apply({ lo, none, hi }, "priority")[1] == hi and sorting.apply({ lo, none, hi }, "priority")[3] == none, "priority ranks Jira names, unknown last")
 	assert(sorting.cycle("prs", "github", nil) == "updated" and sorting.cycle("prs", "github", "review") == nil and sorting.cycle("issues", "jira", "priority") == nil, "the cycle ends on the default order")
+	assert(sorting.label("updated") == "Recently updated" and sorting.label("oldest") == "Oldest waiting" and sorting.label("review") == "Review required first", "a sort's label is the one the toast and the header's Sort note show")
+	assert(sorting.label(nil) == "Default order" and sorting.label("bogus") == "Default order", "no sort or an unknown one is the default order")
 	require("./triage_check").run()
 	require("./portable_check").run()
 	require("./board_check").run()

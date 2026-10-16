@@ -3,6 +3,12 @@
    Everything else is drawn by Tern's own kinds (picker, prefs, list, overlay, md…): add a rule only where no kind or
    prop covers it. */
 
+/* Tern hides previews below 640px, even for preview="below". A selected item must remain readable (and only then
+   becomes seen). Keep its native below-list layout at that width; unselected pickers use pv-none and stay closed. */
+[data-surface='plugin.plotroom.prs'] .sf-picker.pv-hide.pv-side .pk-pv {
+	display: flex;
+}
+
 /* Tern draws a Close (esc) button on every picker, but the queue is the block itself: there is nothing to close, and
    its close only clears the search, which the search field's own clear button does. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-esc {

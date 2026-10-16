@@ -121,6 +121,22 @@ function M.user(done: (string?, Problem?) -> ())
 	end)
 end
 
+export type Identity = { site: string, email: string }
+
+-- The account acli runs as, read fresh (never from the cache): its full email and site. A sign-in with no email is a
+-- problem, because nothing could be bound to it. done(identity, problem).
+function M.identity(done: (Identity?, Problem?) -> ())
+	site = nil
+	withSite(function(found, problem)
+		if not found then
+			return done(nil, problem)
+		elseif email == "" then
+			return done(nil, { kind = "auth", message = "acli did not name the signed-in email; run acli jira auth login." })
+		end
+		done({ site = found, email = email }, nil)
+	end)
+end
+
 -- The signed-in Jira user once a search or M.user found the site, without asking; nil before then.
 function M.known(): string?
 	return if site then user else nil
@@ -726,6 +742,35 @@ function M.assignMe(key: string, done: (Problem?) -> ())
 	end
 	acli({ "jira", "workitem", "assign", "--key", key, "--assignee", "@me", "--yes" }, function(_, problem)
 		done(noted(problem))
+	end)
+end
+
+-- Adds `text` (github.commentText: trimmed, nonempty, bounded) as a comment on `key` as the account `who` (M.identity: its
+-- full email and site, read again here and required to match), read first so a missing item is a not-found;
+-- `acli jira workitem comment create --key <KEY> --body=<text>` (one item, project-default visibility). done(problem).
+function M.comment(key: string, text: string, who: Identity, done: (Problem?) -> ())
+	local body = github.commentText(text)
+	if type(key) ~= "string" or not string.match(key, KEY) or not body then
+		return later(function()
+			done({ kind = "invalid", message = if body then "Unexpected issue key." else "The comment is empty, too long or has control characters." })
+		end)
+	end
+	-- Read the sign-in again now: the write goes only to the account and site the user was shown, and the lookup below
+	-- (which reuses this read's site) finds the key on that site.
+	M.identity(function(now, problem0)
+		if not now then
+			return done(problem0)
+		elseif now.site ~= who.site or now.email ~= who.email then
+			return done({ kind = "invalid", message = "The acli account changed since you were asked (" .. who.email .. " at " .. who.site .. ", now " .. now.email .. " at " .. now.site .. "); nothing was sent." })
+		end
+		M.item(key, function(_, problem)
+			if problem then
+				return done(problem)
+			end
+			acli({ "jira", "workitem", "comment", "create", "--key", key, "--body=" .. body }, function(_, p2)
+				done(noted(p2))
+			end)
+		end)
 	end)
 end
 
