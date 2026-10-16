@@ -70,10 +70,14 @@
 	min-width: 460px;
 }
 
-/* The 460px preview leaves the list too little beside the scope rail at Tern's own width cut, so the rail folds into the
-   scope dropdown sooner: the same two rules `.narrow` applies. ponytail: Tern's CSS sees the window's width, not the
-   pane's (no @container), so a split pane folds late; drop once Tern's cut counts the preview's min-width. */
-@media (max-width: 1360px) {
+/* The 460px preview leaves the list too little beside the scope rail, so the rail folds into the scope dropdown (the two
+   rules `.narrow` applies) once the block is 127 terminal columns or less: about 1020px at ~8px a column. Tern's own cut
+   follows the window, so this follows the picker's own width, which a split pane changes. ponytail: the px is a measured
+   guess at the column width; retune it if the font size changes. */
+[data-surface='plugin.plotroom.prs'] .sf-picker {
+	container-type: inline-size;
+}
+@container (max-width: 1020px) {
 	[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopes {
 		display: none;
 	}
