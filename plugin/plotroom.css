@@ -70,6 +70,18 @@
 	min-width: 460px;
 }
 
+/* The 460px preview leaves the list too little beside the scope rail at Tern's own width cut, so the rail folds into the
+   scope dropdown sooner: the same two rules `.narrow` applies. ponytail: Tern's CSS sees the window's width, not the
+   pane's (no @container), so a split pane folds late; drop once Tern's cut counts the preview's min-width. */
+@media (max-width: 1360px) {
+	[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopes {
+		display: none;
+	}
+	[data-surface='plugin.plotroom.prs'] .sf-picker .pk-scopebtn.has {
+		display: inline-flex;
+	}
+}
+
 /* The worktree card's buttons are items (Tern has no button kind) sized to their label: give them a button's ring. */
 [data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'] {
 	border: 1px solid var(--l3);
