@@ -2176,7 +2176,9 @@ local function newGit(w: World, root: string): Git
 			elseif at == 1 then
 				return { status = 128, stderr = "fatal: '" .. target .. "' is a main working tree\n" }
 			elseif (g.dirty[target] or "") ~= "" then
-				return { status = 128, stderr = "fatal: '" .. target .. "' contains modified or untracked files, use --force to delete it\n" }
+				-- git speaks the user's language unless the caller pins the C locale
+				local why = if call.env.LC_ALL == "C" then "contains modified or untracked files, use --force to delete it" else "enthält geänderte oder unversionierte Dateien, benutzen Sie --force zum Löschen"
+				return { status = 128, stderr = "fatal: '" .. target .. "' " .. why .. "\n" }
 			end
 			table.remove(g.worktrees, at)
 			for folder in w.fs.dirs do
@@ -2188,10 +2190,13 @@ local function newGit(w: World, root: string): Git
 		elseif sub == "merge-base" and args[2] == "--is-ancestor" then
 			-- exit 0: yes, 1: no, 128: a name that is no commit
 			local branch, ref = args[3] or "", args[4] or ""
-			if not g.refs["refs/heads/" .. branch] or not g.refs[ref] then
+			-- git resolves a short name as a tag before a branch of the same name; a full name is exact
+			local full = if g.refs[branch] then branch elseif g.refs["refs/tags/" .. branch] then "refs/tags/" .. branch elseif g.refs["refs/heads/" .. branch] then "refs/heads/" .. branch else nil
+			if not full or not g.refs[ref] then
 				return { status = 128, stderr = "fatal: Not a valid object name " .. (if g.refs[ref] then branch else ref) .. "\n" }
 			end
-			return { status = if g.ahead[branch] then 1 else 0 }
+			local head = string.match(full, "^refs/heads/(.+)$")
+			return { status = if (if head then g.ahead[head] else g.refs[full] ~= g.refs[ref]) then 1 else 0 }
 		elseif sub == "branch" and (args[2] == "-d" or args[2] == "-D") then
 			local name = args[3] or ""
 			if not g.refs["refs/heads/" .. name] then
@@ -2702,6 +2707,30 @@ windowCase("worktree: omp's worktrees directory is OMP_WORKTREE_DIR, then worktr
 	eq(dir(), "/cfg", "a relative environment variable is ignored")
 end)
 
+windowCase("worktree: the worktrees directory is a clean path, so git's own listing of it matches", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.env.HOME = "/home/u"
+	w.respond(function(call: Call): Reply?
+		local a = call.argv
+		return if a[1] == "omp" and a[2] == "config" then { stdout = jsonEncode({ key = "worktree.base", value = "/cfg/wts//" }) .. "\n" } else nil
+	end)
+	local function dir(): string?
+		local got: string? = nil
+		worktree.worktreesDir(function(d: string?)
+			got = d
+		end)
+		w.flush()
+		return got
+	end
+	eq(dir(), "/cfg/wts", "the setting's trailing slashes are dropped")
+	w.env.OMP_WORKTREE_DIR = "/env//wt/"
+	eq(dir(), "/env/wt", "so are the environment variable's, and doubled slashes inside")
+	w.env.OMP_WORKTREE_DIR = "/"
+	eq(dir(), "/", "the root stays the root")
+	w.env.OMP_WORKTREE_DIR = "~/wt/"
+	eq(dir(), "/home/u/wt", "after ~ expansion too")
+end)
+
 -- The commands spawned after entry `from` of the world's calls that can change a repository or add a worktree, in order,
 -- every argument joined by spaces: everything but git's read-only commands (`omp worktree add` included).
 local function worktreeWrites(w: World, from: number?): { string }
@@ -3204,7 +3233,7 @@ case("worktree: remove takes a clean pull request worktree, its branch once the 
 	eq(out.removal.branch, "Branch feature was deleted too.", "the branch went with it")
 	same(ranSince(w, mark), {
 		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
-		"git -C /work/r merge-base --is-ancestor feature refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r merge-base --is-ancestor refs/heads/feature refs/plotroom-pr/o/r/pr-5",
 		"git -C /work/r branch -D feature",
 		"git -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5",
 	}, "the worktree without --force, then -D only after the ancestry check, then the ref")
@@ -3225,7 +3254,7 @@ case("worktree: remove keeps a pull request branch that holds commits of its own
 	eq(out.removal.branch, "Branch feature was kept. The branch 'feature' is not fully merged.", "the branch stays, with git's reason")
 	same(ranSince(w, mark), {
 		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
-		"git -C /work/r merge-base --is-ancestor feature refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r merge-base --is-ancestor refs/heads/feature refs/plotroom-pr/o/r/pr-5",
 		"git -C /work/r branch -d feature",
 	}, "-d, never -D, and the ref is not dropped")
 	eq(#s.git.worktrees, 1, "the worktree is gone")
@@ -3242,11 +3271,33 @@ case("worktree: remove deletes a pull request branch that is ahead of its ref wh
 	eq(out.removal.branch, "Branch feature was deleted too.", "the branch goes")
 	same(ranSince(w, mark), {
 		"git -C /work/r worktree remove /wt/plotroom-o_r-pr-5",
-		"git -C /work/r merge-base --is-ancestor feature refs/plotroom-pr/o/r/pr-5",
+		"git -C /work/r merge-base --is-ancestor refs/heads/feature refs/plotroom-pr/o/r/pr-5",
 		"git -C /work/r branch -d feature",
 		"git -C /work/r update-ref -d refs/plotroom-pr/o/r/pr-5",
 	}, "through -d, which git allows, and then the ref")
 	eq(s.git.refs["refs/plotroom-pr/o/r/pr-5"], nil, "the ref is gone")
+end)
+
+case("worktree: remove keeps unpushed commits of a pull request branch even when a tag has the branch's name", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.refs["refs/tags/feature"] = s.git.refs["refs/plotroom-pr/o/r/pr-5"] -- the tag sits at the fetched head
+	s.git.ahead["feature"] = true -- the branch has moved on
+	s.git.unmerged["feature"] = true
+	local out = removeWt(w, worktree, t)
+	eq(out.problem, nil, "the worktree itself was removed")
+	eq(out.removal.branch, "Branch feature was kept. The branch 'feature' is not fully merged.", "the branch stays")
+	eq(s.git.refs["refs/heads/feature"], sha("b"), "its commits are not lost")
+end)
+
+case("worktree: remove reads uncommitted changes from git whatever language git speaks", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s, t = madeWt(w, worktree)
+	s.git.dirty["/wt/plotroom-o_r-pr-5"] = " M src/a.lua\n"
+	local out = removeWt(w, worktree, t)
+	eq(out.dirty, true, "dirty")
+	has(out.problem, "uncommitted changes", "said plainly")
+	eq(#s.git.worktrees, 2, "nothing was removed")
 end)
 
 case("worktree: remove stops at uncommitted changes, which git refuses to discard, and does nothing else", function(w: World)
@@ -3577,6 +3628,24 @@ windowCase("worktree: a project is a Jira key or a GitHub repository, and a chec
 	has(plain.problem, "not an empty directory", "gh's reason is the problem")
 end)
 
+windowCase("worktree: claimCheckout answers a folder the runtime cannot look at with a problem, and never clones", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	issueRepo(w, "ABC-7")
+	w.sdk.fs.exists = function(_path: string): boolean
+		error("fs gone", 0)
+	end
+	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+	worktree.claimCheckout("/work/new", "o/r", nil, function(result, problem, cx)
+		out.calls += 1
+		out.result, out.problem, out.cx = result, problem, cx
+	end)
+	w.flush()
+	eq(out.calls, 1, "answered once")
+	eq(out.result, nil, "no checkout")
+	has(out.problem, "fs gone", "the reason")
+	eq(countCalls(w, "gh repo clone o/r /work/new"), 0, "nothing was cloned")
+end)
+
 case("worktree: describeIssue says how the issue's worktree stands", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local function result(created: boolean, dirty: boolean?): any
@@ -3730,6 +3799,45 @@ case("worktree: scan knows a worktree by its branch before its folder, and takes
 	eq(scanOf(w, worktree, "/work/r", two).found["o/r#3"].path, "/wt/by-branch", "the first git lists is the item's")
 	table.insert(g.worktrees, 2, table.remove(g.worktrees) :: any)
 	eq(scanOf(w, worktree, "/work/r", two).found["o/r#3"].path, "/wt/by-folder", "whichever that is")
+end)
+
+case("worktree: scan gives a worktree to every item that names its branch or folder", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = newGit(w, "/work/r")
+	table.insert(g.worktrees, { path = "/wt/a", branch = "refs/heads/fix-login", head = sha("b"), locked = false })
+	table.insert(g.worktrees, { path = "/wt/plotroom-o_r-issue-9", branch = "refs/heads/other", head = sha("c"), locked = false })
+	w.fs.dirs["/wt/a"] = true
+	w.fs.dirs["/wt/plotroom-o_r-issue-9"] = true
+	local scan = scanOf(w, worktree, "/work/r", {
+		["o/r#12"] = { branches = { "fix-login" }, dirs = { "plotroom-o_r-issue-12" } },
+		["o/r#45"] = { branches = { "fix-login" }, dirs = { "plotroom-o_r-pr-45" }, ref = "refs/plotroom-pr/o/r/pr-45" },
+		["o/r#46"] = { branches = { "fix-login" }, dirs = { "plotroom-o_r-pr-46" }, ref = "refs/plotroom-pr/o/r/pr-46" },
+		["o/r#9"] = { branches = { "x" }, dirs = { "plotroom-o_r-issue-9" } },
+		["o/r#10"] = { branches = { "y" }, dirs = { "plotroom-o_r-issue-9" } },
+	})
+	same(foundKeys(scan), { "o/r#10", "o/r#12", "o/r#45", "o/r#46", "o/r#9" }, "an issue and pull requests on one branch, or in one folder, all have it")
+	eq(scan.found["o/r#45"].ref, "refs/plotroom-pr/o/r/pr-45", "each keeps its own fetched ref")
+	eq(scan.found["o/r#46"].ref, "refs/plotroom-pr/o/r/pr-46", "each keeps its own fetched ref")
+	eq(scan.found["o/r#12"].path, "/wt/a", "the same worktree")
+end)
+
+case("worktree: scan gives a folder-only item the worktree a PR branch also matches, unless the item has a worktree of its own branch", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = newGit(w, "/work/r")
+	local function add(path: string, branch: string)
+		table.insert(g.worktrees, { path = path, branch = "refs/heads/" .. branch, head = sha("b"), locked = false })
+		w.fs.dirs[path] = true
+	end
+	add("/wt/plotroom-o_r-issue-12", "fix-login")
+	add("/wt/own", "feature-b")
+	local scan = scanOf(w, worktree, "/work/r", {
+		["o/r#45"] = { branches = { "fix-login" }, dirs = { "plotroom-o_r-pr-45" }, ref = "refs/plotroom-pr/o/r/pr-45" },
+		["o/r#12"] = { branches = { "octocat/12-x" }, dirs = { "plotroom-o_r-issue-12" } },
+		["o/r#13"] = { branches = { "feature-b" }, dirs = { "plotroom-o_r-issue-12" } },
+	})
+	eq(scan.found["o/r#45"].path, "/wt/plotroom-o_r-issue-12", "the PR by its branch")
+	eq(scan.found["o/r#12"].path, "/wt/plotroom-o_r-issue-12", "the issue by its folder, though the branch is the PR's")
+	eq(scan.found["o/r#13"].path, "/wt/own", "an item with a worktree on its own branch keeps that one")
 end)
 
 case("worktree: scan never reports the main worktree, whatever branch or folder name an item wants", function(w: World)
@@ -4912,7 +5020,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "13", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = "14", hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -5643,6 +5751,17 @@ case("github.linkedPrs: an issue number reads its closing references, keeps this
 	eq(#argv, 15, "nothing else is passed")
 end)
 
+case("github.linkedPrs: a merged pull request is not offered as the issue's branch, a closed unmerged one still is", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.linked["o/r#12"] = array({
+		{ number = 1, title = "Merged", head = "m", branch = "m", base = "o/r", state = "MERGED" },
+		{ number = 2, title = "Closed", head = "c", branch = "c", base = "o/r", state = "CLOSED" },
+		{ number = 3, title = "Open", head = "o", branch = "o", base = "o/r", state = "OPEN" },
+	})
+	same(ghx.brief(ghx.linked(w, github, "12", nil).list), { "2:c", "3:o" }, "only the merged one is dropped")
+end)
+
 case("github.linkedPrs: an issue number with no PRs is an empty list, and a failed or odd answer is a problem", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
@@ -5840,6 +5959,19 @@ case("github.login: gh's active login is read once and kept", function(w: World)
 	same(got, { "zed", "zed", "zed" }, "an empty account is no account")
 	eq(#ghx.of(gh, "accounts"), 1, "the second and third read nothing")
 	eq(#gh.requests, 1, "and nothing else was asked")
+end)
+
+case("github.login: an Enterprise Managed User login with an underscore is an account", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.active = "mona-cat_octo"
+	gh.tokens["mona-cat_octo"] = "tok-emu"
+	local got: { string } = {}
+	github.login(nil, function(login, problem)
+		table.insert(got, (login or "nil") .. if problem then "!" else "")
+	end)
+	w.flush()
+	same(got, { "mona-cat_octo" }, "the login is kept whole")
 end)
 
 case("github.login: callers during the read share one accounts request", function(w: World)
@@ -7489,9 +7621,9 @@ windowCase("window: the confirm link is refused from a pane of another version o
 	end
 	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "2", hidden = true } }, { id = "main.confirm", p = { text = question, hidden = true } } } }
 	refused("another version", "another protocol")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "13", hidden = true } } } }
+	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "14", hidden = true } } } }
 	refused("nothing to delete", "no question")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "13", hidden = true } }, { id = "main.confirm", p = { text = "{not json", hidden = true } } } }
+	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "14", hidden = true } }, { id = "main.confirm", p = { text = "{not json", hidden = true } } } }
 	refused("nothing to delete", "a malformed question")
 	refused("did not come from a Plotroom block", "a pane that is not Plotroom", 2)
 end)
@@ -8557,6 +8689,159 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 	eq(w.kv.get("checkouts")["o/r"], "", "nothing was ever saved")
 end)
 
+-- gh's clone of o/r answers after 5s with a refusal (fail) or after 2s with a clone at /code/r
+local function slowClone(w: World, s: any, fail: boolean)
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "clone" then
+			if fail then
+				return { status = 1, stderr = "fatal: destination path '/elsewhere' already exists and is not an empty directory.\n", delay = 5000 }
+			end
+			w.fs.dirs["/code/r"] = true
+			w.fs.dirs["/code/r/.git"] = true
+			return { stdout = "", delay = 2000 }
+		end
+		return nil
+	end
+end
+
+case("host: a clone that fails late leaves a draft being typed in another row alone", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	w.kv.put("checkouts", { ["o/r"] = "", ["x/y"] = "" })
+	slowClone(w, s, true)
+	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	b.typeText("/elsewhere")
+	b.press("enter")
+	expand(b, "ropen:x/y")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:x/y" })
+	b.press("enter")
+	b.typeText("/mine")
+	w.advance(5000)
+	eq(prefsOf(b).editing.row, "checkout:x/y", "the form being typed in stays")
+	eq(prefsOf(b).editing.draft, "/mine", "with its draft")
+	eq(w.toasts[#w.toasts].text, "Checkout not saved", "the refusal is a toast instead")
+end)
+
+case("host: a checkout asked in the palette waits out a clone of the same repository", function(w: World)
+	local s = hostScene(w, 3)
+	local fresh = newGit(w, "/code/r")
+	fresh.remotes.origin = { "https://github.com/o/r.git" }
+	w.fs.dirs["/code/r"] = nil
+	w.fs.dirs["/code/r/.git"] = nil
+	slowClone(w, s, false)
+	local b = openQueue(w)
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	b.typeText("/code/r")
+	b.press("enter")
+	request(b, "c1", { op = "checkout", repo = "o/r", path = "/work/r" })
+	w.flush()
+	has(answerOf(b, "c1").problem, "being", "the second claim is answered busy")
+	eq(w.kv.get("checkouts")["o/r"], "", "and saved nothing")
+	w.advance(2000)
+	eq(w.kv.get("checkouts")["o/r"], "/code/r", "the clone is the checkout")
+end)
+
+case("host: removing a repository while it clones does not bring it back", function(w: World)
+	local s = hostScene(w, 3)
+	local fresh = newGit(w, "/code/r")
+	fresh.remotes.origin = { "https://github.com/o/r.git" }
+	w.fs.dirs["/code/r"] = nil
+	w.fs.dirs["/code/r/.git"] = nil
+	slowClone(w, s, false)
+	local b = openQueue(w)
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	b.typeText("/code/r")
+	b.press("enter")
+	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "rremove:o/r" })
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "rremove:o/r" })
+	w.advance(2000)
+	eq(w.kv.get("checkouts")["o/r"], nil, "the removed repository stays removed")
+	eq(w.toasts[#w.toasts].level, "error", "and the clone's end says why")
+end)
+
+-- o/r is listed without a checkout, and gh's clone of it into /code/r takes 2s; panes 1 and 2 hold blocks
+local function cloneScene(w: World): (Block, Block)
+	local s = hostScene(w, 3)
+	local fresh = newGit(w, "/code/r")
+	fresh.remotes.origin = { "https://github.com/o/r.git" }
+	w.fs.dirs["/code/r"] = nil
+	w.fs.dirs["/code/r/.git"] = nil
+	slowClone(w, s, false)
+	local a = openQueue(w)
+	local b = openQueue(w, 2)
+	w.kv.put("checkouts", { ["o/r"] = "" })
+	return a, b
+end
+
+case("host: a Settings checkout refused as busy keeps the typed path", function(w: World)
+	local a, b = cloneScene(w)
+	goToSettings(b, "repos")
+	expand(b, "ropen:o/r")
+	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
+	b.press("enter")
+	b.typeText("/work/r")
+	request(a, "c1", { op = "checkout", repo = "o/r", path = "/code/r" }) -- another pane starts its claim while the field is open
+	w.flush()
+	b.press("enter")
+	has(rowIn(b, "checkout:o/r").warning, "already being set up", "the refusal is shown under the row")
+	eq(prefsOf(b).editing.draft, "/work/r", "the typed path stays for another try")
+end)
+
+case("host: a claim in one pane makes another pane's claim of the same repository wait", function(w: World)
+	local a, b = cloneScene(w)
+	request(a, "c1", { op = "checkout", repo = "o/r", path = "/code/r" })
+	request(b, "c2", { op = "checkout", repo = "O/R", path = "/work/r" })
+	w.flush()
+	has(answerOf(b, "c2").problem, "being", "the other pane is told it is busy")
+	eq(w.kv.get("checkouts")["o/r"], "", "and saved nothing")
+	w.advance(2000)
+	eq(answerOf(a, "c1").ok, true, "the first claim finishes")
+	eq(w.kv.get("checkouts")["o/r"], "/code/r", "and is the checkout")
+	request(b, "c3", { op = "checkout", repo = "o/r", path = "/work/r" })
+	w.flush()
+	eq(answerOf(b, "c3").ok, true, "the repository can be claimed again once it is done")
+end)
+
+case("host: a repository removed while a palette claim clones it is not listed again", function(w: World)
+	local a = cloneScene(w)
+	request(a, "c1", { op = "checkout", repo = "o/r", path = "/code/r" })
+	w.kv.put("checkouts", {}) -- removed meanwhile, from Settings in any pane
+	w.advance(2000)
+	has(answerOf(a, "c1").problem, "changed or removed", "the claim is refused")
+	eq(w.kv.get("checkouts")["o/r"], nil, "the repository stays removed")
+end)
+
+case("host: a claim of a repository that was not listed is still saved", function(w: World)
+	local a = cloneScene(w)
+	w.kv.put("checkouts", {})
+	request(a, "c1", { op = "checkout", repo = "o/r", path = "/code/r" })
+	w.advance(2000)
+	eq(answerOf(a, "c1").ok, true, "claimed")
+	eq(w.kv.get("checkouts")["o/r"], "/code/r", "and listed")
+end)
+
+case("host: a claim whose block closed saves nothing and frees the repository", function(w: World)
+	local a, b = cloneScene(w)
+	request(a, "c1", { op = "checkout", repo = "o/r", path = "/code/r" })
+	table.remove(w.panes, 1) -- pane 1 closes while gh clones
+	w.advance(2000)
+	eq(w.kv.get("checkouts")["o/r"], "", "the retired block saved nothing")
+	request(b, "c2", { op = "checkout", repo = "o/r", path = "/work/r" })
+	w.flush()
+	eq(answerOf(b, "c2").ok, true, "the repository is not left claimed")
+end)
+
 case("host: switching views searches the new query, reuses a fresh cached list, and never waits for a superseded request", function(w: World)
 	local s = hostScene(w, 3)
 	local second = { searchItem(21, "o/r", EPOCH - 10), searchItem(22, "o/r", EPOCH - 20) }
@@ -9411,7 +9696,7 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	w.flush()
 	same(logFrom(s.git, mark), {
 		"worktree remove " .. target,
-		"merge-base --is-ancestor " .. branch .. " " .. ref,
+		"merge-base --is-ancestor refs/heads/" .. branch .. " " .. ref,
 		"branch -D " .. branch,
 		"update-ref -d " .. ref,
 		"worktree list --porcelain -z",
@@ -9488,7 +9773,7 @@ case("host: removing a worktree whose branch holds commits of its own keeps the 
 	w.flush()
 	same(logFrom(s.git, mark), {
 		"worktree remove " .. target,
-		"merge-base --is-ancestor " .. branch .. " " .. ref,
+		"merge-base --is-ancestor refs/heads/" .. branch .. " " .. ref,
 		"branch -d " .. branch,
 		"worktree list --porcelain -z",
 	}, "-d, never -D, and the ref stays with its branch; then a read of the checkout")
@@ -10973,6 +11258,23 @@ case("host: an account's Add makes a view of the kind on screen, saved with that
 	b.event({ ev = "action", id = "layer.settings", act = "add", value = "vadd:nowhere:" })
 	b.event({ ev = "action", id = "layer.settings", act = "add", value = "vadd:github:bad name" })
 	same({ #w.kv.get("views-prs").items, #w.kv.get("views-issues").items }, { 3, 6 }, "a malformed Add value (an unknown integration, a login that is none) saves nothing")
+end)
+
+case("host: an Enterprise Managed User account (a login with an underscore) can have a view added, saved and shown", function(w: World)
+	local s = issueHost(w)
+	newAcli(w)
+	s.gh.active = "mona-cat_octo"
+	s.gh.tokens["mona-cat_octo"] = "tok-emu"
+	local b = openIssues(w)
+	goToSettings(b, "views")
+	yes(rowIn(b, "vadd:github:mona-cat_octo") ~= nil, "the account has its group and Add")
+	b.event({ ev = "action", id = "layer.settings", act = "add", value = "vadd:github:mona-cat_octo" })
+	local made = w.kv.get("views-issues").items[#w.kv.get("views-issues").items]
+	same(made.logins, { "mona-cat_octo" }, "the view is saved as that account")
+	b.press("escape")
+	b.press("escape")
+	w.flush()
+	eq(pickerOf(b).scope, "issues:v" .. (#w.kv.get("views-issues").items), "and is the one shown")
 end)
 
 case("host: deleting a view takes only its own kind's view of that id, and the block moves on to the view now at its place in the list", function(w: World)
@@ -12823,6 +13125,13 @@ case("host: a branch format naming {jira.user} is refused while the sign-in name
 	eq(hx.ask(w, b, "t3", freshAsk("ABC", "ABC-12")).vars.branch, "octocat/ABC-12-fix-login", "a format that names no Jira user does not need one")
 end)
 
+case("host: a map-jira request naming something other than owner/name is answered with a problem, not left to time out", function(w: World)
+	hostScene(w, 1)
+	local b = openQueue(w)
+	eq(hx.ask(w, b, "j1", { op = "map-jira", project = "ABC", repo = "github.com/o/r" }).problem, "Type it as owner/name.", "the typed text is refused with what to type")
+	eq(w.kv.get("jira-repos"), nil, "and nothing is saved")
+end)
+
 case("host: a pull request worktree request answers the gh login only when it asks for it, and still makes the worktree when gh cannot say it", function(w: World)
 	local s = hostScene(w, 1)
 	s.git.served["refs/pull/1/head"] = sha("b")
@@ -12915,7 +13224,7 @@ case("host: an issue with exactly one linked pull request still on its branch is
 	w.flush()
 	same(logFrom(s.git, mark), {
 		"worktree remove /wt/plotroom-o_r-issue-12",
-		"merge-base --is-ancestor fix-login refs/plotroom-pr/o/r/pr-45",
+		"merge-base --is-ancestor refs/heads/fix-login refs/plotroom-pr/o/r/pr-45",
 		"branch -D fix-login",
 		"update-ref -d refs/plotroom-pr/o/r/pr-45",
 		"worktree list --porcelain -z",
@@ -14024,12 +14333,12 @@ windowCase("window: a host announcing another protocol is refused for the new as
 		refused("a block of protocol 12", links, "12")
 	end
 	-- the same links, with the marker of this protocol, are asked of the host: one block, both kinds
-	offer(issue, "13")
+	offer(issue, "14")
 	w.click(issue[2])
 	local sent = asks.sent(w)
-	eq(#sent, 1, "a host that announces protocol 13 is asked")
+	eq(#sent, 1, "a host that announces protocol 14 is asked")
 	eq(sent[1].op, "where", "where the issue's worktree is")
-	offer(pull, "13")
+	offer(pull, "14")
 	w.click(pull[2])
 	sent = asks.sent(w)
 	same(sent[2], { op = "where", kind = "pr", key = "o/r#5" }, "and where the pull request's is")

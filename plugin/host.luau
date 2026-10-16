@@ -169,7 +169,6 @@ type State = {
 	cost: number,
 	interval: number?,
 	nextAt: number?,
-	claiming: string?, -- lowercase repository whose checkout folder is being verified or cloned into
 	problem: github.Problem?,
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
@@ -204,6 +203,7 @@ local cli = {
 	},
 	installed = {} :: { [string]: boolean },
 	probing = {} :: { [string]: boolean },
+	claims = {} :: { [string]: true }, -- lowercase repositories whose checkout folder is being verified or cloned into, in any pane
 	moved = false, -- an answer of the probes running differs from the one before
 }
 
@@ -271,7 +271,7 @@ local function validViews(kind: Kind, v: any): Views?
 			or type(f.integration) ~= "string"
 			or not table.find(kind.integrations, f.integration)
 			or (f.logins ~= nil and not isTable(f.logins))
-			or (f.login ~= nil and (type(f.login) ~= "string" or not string.match(f.login, "^[%w%-]+$")))
+			or (f.login ~= nil and (type(f.login) ~= "string" or not string.match(f.login, "^[%w%-_]+$")))
 			or type(f.group) ~= "string"
 			or not isTable(f.prompts)
 		then
@@ -289,7 +289,7 @@ local function validViews(kind: Kind, v: any): Views?
 		local seen: { [string]: boolean } = {}
 		local saved: { any } = if f.logins ~= nil then f.logins else (if f.login ~= nil then { f.login } else {})
 		for _, who in saved do
-			if type(who) ~= "string" or not string.match(who, "^[%w%-]+$") then
+			if type(who) ~= "string" or not string.match(who, "^[%w%-_]+$") then
 				return nil
 			end
 			if not seen[string.lower(who)] and f.integration == "github" then
@@ -2024,7 +2024,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				control = { k = "text", value = mapped or "", placeholder = "~/Code/" .. (string.match(repo, "/(.+)$") or repo), mono = true },
 				changed = mapped ~= nil,
 				defaultLabel = "Not set",
-				disabled = if state.claiming == repo then "Checking the folder, or cloning into it…" else nil,
+				disabled = if cli.claims[string.lower(repo)] then "Checking the folder, or cloning into it…" else nil,
 			})
 			row({
 				id = "branch:" .. repo,
@@ -2337,7 +2337,7 @@ end
 local function addView(state: State, row: string)
 	local s = state.settings
 	local integration, login = string.match(row, "^vadd:(%a+):(.*)$")
-	if not s or not integration or not cli.on(integration) or not INTEGRATIONS[integration] or not string.match(login or "", "^[%w%-]*$") then
+	if not s or not integration or not cli.on(integration) or not INTEGRATIONS[integration] or not string.match(login or "", "^[%w%-_]*$") then
 		return
 	end
 	local kind = if table.find(state.kind.integrations, integration) then state.kind else KINDS.issues
@@ -2976,21 +2976,34 @@ local function commitEdit(state: State)
 			s.errors[row] = why or "That is not a usable path."
 			return
 		end
+		local key = string.lower(repo)
+		if cli.claims[key] then
+			s.errors[row] = "A checkout of " .. repo .. " is already being set up."
+			return
+		end
 		s.edit = nil
-		state.claiming = repo
+		local before = readCheckouts()[key]
+		cli.claims[key] = true
 		worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
+			cli.claims[key] = nil
 			if not alive(state) then
 				return
 			end
-			state.claiming = nil
 			local root = if claimed then claimed.root else nil
-			local err = if root then saveCheckout(repo, root) else (problem or "That path is not a checkout of " .. repo .. ".")
+			local err: string?
+			if root and readCheckouts()[key] ~= before then
+				err = repo .. "'s checkout was changed or removed while it was being set up" -- saving would undo that
+			elseif root then
+				err = saveCheckout(repo, root)
+			else
+				err = problem or "That path is not a checkout of " .. repo .. "."
+			end
 			if not err then
 				s.errors[row] = nil
 				local cloned = claimed ~= nil and claimed.cloned
 				state.scanned = nil -- the new checkout may already hold worktrees: the next render scans it
 				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", root)
-			elseif state.settings == s and s.page == "repos" then
+			elseif state.settings == s and s.page == "repos" and not s.edit and readCheckouts()[key] ~= nil then
 				s.open = repo -- its form, should it have been closed meanwhile
 				beginEdit(state, row, text) -- the draft stays for a correction; this clears the row's warning, so set it after
 				s.errors[row] = err
@@ -3420,7 +3433,7 @@ end
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local RPC_PROTOCOL = "13"
+local RPC_PROTOCOL = "14"
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
@@ -4076,14 +4089,22 @@ local function claim(state: State, id: string, repo: string, raw: string)
 		return reply(state, id, { problem = "That is not a usable path." })
 	end
 	local key = string.lower(repo)
-	state.claiming = key
+	if cli.claims[key] then
+		return reply(state, id, { problem = "A checkout of " .. repo .. " is already being set up; try again when it is done." })
+	end
+	local before = readCheckouts()[key]
+	cli.claims[key] = true
 	worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
-		if state.claiming == key then
-			state.claiming = nil
+		cli.claims[key] = nil
+		if not alive(state) then
+			return
 		end
 		local root = if claimed then claimed.root else nil
 		if not root then
 			return reply(state, id, { problem = problem or "That path is not a checkout of " .. repo .. "." })
+		end
+		if readCheckouts()[key] ~= before then
+			return reply(state, id, { problem = repo .. "'s checkout was changed or removed while it was being set up." })
 		end
 		local err = saveCheckout(repo, root)
 		if err then
@@ -4123,7 +4144,7 @@ local function rpc(state: State, raw: any)
 		menu(state, id, if type(q.only) == "string" then q.only else nil)
 	elseif q.op == "repos" then
 		repos(state, id)
-	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-]+$") then
+	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-_]+$") then
 		profile(state, id, q.login)
 	elseif q.op == "worktree" then
 		local repo = parseRepo(q.repo)
@@ -4148,8 +4169,11 @@ local function rpc(state: State, raw: any)
 	elseif q.op == "map-jira" then
 		local repo = parseRepo(q.repo)
 		local project = q.project
-		if not repo or type(project) ~= "string" or not tracker.jiraProject(project) then
+		if type(project) ~= "string" or not tracker.jiraProject(project) then
 			return
+		end
+		if not repo then
+			return reply(state, id, { problem = "Type it as owner/name." })
 		end
 		mapJira(state, id, project, repo)
 	elseif q.op == "jira-projects" then
@@ -5422,7 +5446,6 @@ local function blockDef(): BlockDef<State>
 				account = "",
 				tracker = "github",
 				applied = nil,
-				claiming = nil,
 				cost = COST_GUESS,
 				interval = nil,
 				nextAt = nil,

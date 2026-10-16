@@ -343,7 +343,7 @@ function M.normalize(item: any): (Pr?, string?)
 		created = M.epoch(str(item.createdAt)) or 0,
 		head = str(item.head),
 		headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil,
-		fork = if type(item.fork) == "string" and string.match(item.fork, "^[%w%-]+$") then item.fork else nil,
+		fork = if type(item.fork) == "string" and string.match(item.fork, "^[%w%-_]+$") then item.fork else nil,
 		base = str(item.base),
 		additions = count(item.additions),
 		deletions = count(item.deletions),
@@ -1096,7 +1096,7 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		if forkRepo or headRepo == "" then
 			-- A deleted fork's owner is still the head's user.
 			local owner = if forkRepo then string.match(forkRepo, "^([^/]+)/") else text(data.headOwner)
-			fork = if owner and string.match(owner, "^[%w%-]+$") then owner else text(data.author)
+			fork = if owner and string.match(owner, "^[%w%-_]+$") then owner else text(data.author)
 		end
 		done({
 			base = data.base,
@@ -1115,8 +1115,8 @@ end
 -- A pull request an issue may be worked on: its number, title, and head branch while that branch still exists.
 export type LinkedPr = { number: number, title: string, branch: string? }
 
-local PR_LINK = "number title headRefName headRef { name } baseRepository { nameWithOwner }"
-local PR_LINK_JQ = "{number, title, head: .headRefName, branch: .headRef.name, base: .baseRepository.nameWithOwner}"
+local PR_LINK = "number title state headRefName headRef { name } baseRepository { nameWithOwner }"
+local PR_LINK_JQ = "{number, title, state, head: .headRefName, branch: .headRef.name, base: .baseRepository.nameWithOwner}"
 local CLOSING_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { closedByPullRequestsReferences(first: 25, includeClosedPrs: true) { nodes { " .. PR_LINK .. " } } } } }"
 local CLOSING_JQ = "[(.data.repository.issue.closedByPullRequestsReferences.nodes // [])[] | " .. PR_LINK_JQ .. "]"
 local MENTION_GQL = "query($q: String!) { search(query: $q, type: ISSUE, first: 50) { nodes { ... on PullRequest { " .. PR_LINK .. " } } } }"
@@ -1148,8 +1148,9 @@ function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ Linke
 			local n = data[i]
 			local num, title, head, branch, base = field(n, "number"), field(n, "title"), field(n, "head"), field(n, "branch"), field(n, "base")
 			local names = mention and (string.find(string.lower(tostring(title)), word) or (type(head) == "string" and string.find(string.lower(head), word)))
-			-- A pull request into another repository is no checkout of this one.
-			if type(num) == "number" and type(title) == "string" and type(base) == "string" and string.lower(base) == string.lower(repo) and (names or not mention) then
+			-- A pull request into another repository is no checkout of this one, and a merged one's branch is spent:
+			-- new work on it would never reach the base.
+			if type(num) == "number" and type(title) == "string" and type(base) == "string" and string.lower(base) == string.lower(repo) and (names or not mention) and field(n, "state") ~= "MERGED" then
 				table.insert(list, { number = num, title = title, branch = if type(branch) == "string" and branch ~= "" then branch else nil })
 			end
 		end
@@ -1208,7 +1209,7 @@ function M.accounts(done: ({ Account }?, Problem?) -> ())
 			end
 			local list: { Account } = {}
 			for _, a in hosts do
-				if type(a) == "table" and a.state == "success" and type(a.login) == "string" and string.match(a.login, "^[%w%-]+$") then
+				if type(a) == "table" and a.state == "success" and type(a.login) == "string" and string.match(a.login, "^[%w%-_]+$") then
 					table.insert(list, { login = a.login, active = a.active == true })
 				end
 			end

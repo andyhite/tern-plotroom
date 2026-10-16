@@ -117,7 +117,8 @@ local function git(
 	for _, a in args do
 		table.insert(argv, a)
 	end
-	process.run(argv, { timeout_ms = ms, env = ENV }, function(result, perr, cx)
+	-- LC_ALL only for git: remove reads git's English "modified or untracked" to tell uncommitted changes
+	process.run(argv, { timeout_ms = ms, env = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0", LC_ALL = "C" } }, function(result, perr, cx)
 		if not result then
 			return done(nil, perr or "git could not be started", cx, nil)
 		end
@@ -425,7 +426,11 @@ function M.claimCheckout(path: string, repo: string, account: string?, done: Cb<
 			resolved(true)
 		end)
 	end
-	if not tern.fs.exists(path) then
+	local okExists, there = pcall(tern.fs.exists, path)
+	if not okExists then
+		return done(nil, "Could not look at " .. path .. ": " .. tostring(there), nil)
+	end
+	if not there then
 		return clone()
 	end
 	topLevel(path, function(root)
@@ -519,31 +524,62 @@ function M.scan(checkout: string, wants: { [string]: Want }, done: (Scan?, strin
 		if not main or string.sub(main.path, 1, 1) ~= "/" then
 			return done(nil, "Could not find this repository's main worktree.")
 		end
-		local byBranch: { [string]: string } = {}
-		local byDir: { [string]: string } = {}
+		local byBranch: { [string]: { string } } = {}
+		local byDir: { [string]: { string } } = {}
+		local function add(map: { [string]: { string } }, name: string, key: string)
+			map[name] = map[name] or {}
+			table.insert(map[name], key)
+		end
 		for key, want in wants do
 			for _, b in want.branches do
-				byBranch[b] = key
+				add(byBranch, b, key)
 			end
 			for _, d in want.dirs do
-				byDir[d] = key
+				add(byDir, d, key)
 			end
 		end
 		local result: Scan = { root = (string.gsub(main.path, "/+$", "")), found = {} }
+		-- A record on a branch some item wants goes to those items; the items that only name its folder get it after
+		-- the whole list, when no record of their own branch had it.
+		local function give(key: string, path: string, branch: string, head: string)
+			if result.found[key] == nil then
+				result.found[key] = { root = result.root, path = path, branch = branch, head = head, ref = wants[key].ref }
+			end
+		end
+		local later: { { path: string, branch: string, head: string, keys: { string } } } = {}
 		for i = 2, #recs do
 			local r = recs[i]
 			local branch = if r.branch then string.match(r.branch, "^refs/heads/(.+)$") else nil
-			local key = if branch then (byBranch[branch] or byDir[string.match(r.path, "([^/]+)/*$") or ""]) else nil
-			if key and branch and r.head and not r.locked and not r.prunable and result.found[key] == nil then
-				-- A folder the runtime cannot even look at is as good as gone.
-				local here, there = pcall(tern.fs.exists, r.path)
-				if here and there then
-					result.found[key] = { root = result.root, path = r.path, branch = branch, head = r.head, ref = wants[key].ref }
+			if branch and r.head and not r.locked and not r.prunable then
+				local byB = byBranch[branch]
+				local byD = byDir[string.match(r.path, "([^/]+)/*$") or ""]
+				if byB or byD then
+					-- A folder the runtime cannot even look at is as good as gone.
+					local here, there = pcall(tern.fs.exists, r.path)
+					if here and there then
+						-- Every item that names it has it: an issue worked on its PR's branch, PRs of one head branch.
+						for _, key in byB or byD :: { string } do
+							give(key, r.path, branch, r.head)
+						end
+						if byB and byD then
+							table.insert(later, { path = r.path, branch = branch, head = r.head, keys = byD })
+						end
+					end
 				end
+			end
+		end
+		for _, l in later do
+			for _, key in l.keys do
+				give(key, l.path, l.branch, l.head)
 			end
 		end
 		done(result, nil)
 	end)
+end
+
+-- A path without doubled or trailing slashes, as git lists it ("/" stays).
+local function clean(p: string?): string?
+	return if p then (string.gsub(string.gsub(p, "/+", "/"), "(.)/$", "%1")) else nil
 end
 
 -- The folder new worktrees go in, each a direct child (`omp worktree clear` deletes nested directories there): omp's
@@ -552,7 +588,7 @@ end
 -- ponytail: omp profiles (OMP_PROFILE) are not followed; set worktree.base if you use one.
 function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
 	local home = tern.getenv("HOME")
-	local env = M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)
+	local env = clean((M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)))
 	if env then
 		tern.timer(0, function(cx)
 			done(env, nil, cx)
@@ -562,7 +598,7 @@ function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
 	process.run({ "omp", "config", "get", "worktree.base", "--json" }, { timeout_ms = LOCAL_MS }, function(res, _, cx)
 		local ok, data = pcall(tern.json.decode, if res and res.status == 0 and not res.timed_out then res.stdout else "")
 		local set = if ok and type(data) == "table" and type(data.value) == "string" then M.expandPath(data.value, home) else nil
-		local dir = set or M.expandPath("~/.omp/wt", home)
+		local dir = clean(set or M.expandPath("~/.omp/wt", home))
 		done(dir, if dir then nil else "HOME is not set, so omp's worktree directory is unknown.", cx)
 	end)
 end
@@ -659,7 +695,7 @@ function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
 		if not ref then
 			return dropBranch("-d")
 		end
-		git(t.root, { "merge-base", "--is-ancestor", branch, ref }, LOCAL_MS, function(_, _, _, merged)
+		git(t.root, { "merge-base", "--is-ancestor", "refs/heads/" .. branch, ref }, LOCAL_MS, function(_, _, _, merged)
 			dropBranch(if merged == 0 then "-D" else "-d")
 		end)
 	end)
