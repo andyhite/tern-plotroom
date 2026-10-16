@@ -290,7 +290,7 @@
 /* TEMP DEBUG: picker width in px, rounded down to 8px: right badge on the picker, left badge on its body. Delete this block. */
 [data-surface='plugin.plotroom.prs'] .sf-picker::after {
 	content: '<400';
-	position: fixed;
+	position: absolute;
 	right: 8px;
 	bottom: 8px;
 	z-index: 9999;
@@ -303,7 +303,7 @@
 }
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-body::before {
 	content: '<400';
-	position: fixed;
+	position: absolute;
 	left: 8px;
 	bottom: 8px;
 	z-index: 9999;
