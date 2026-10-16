@@ -6337,8 +6337,9 @@ local function queuePicker(state: State): Node
 
 	local props: { [string]: any } = {
 		key = "queue",
-		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it.
-		role = "plotroom.queue" .. (if state.settings then ".aside" else ""),
+		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
+		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if state.cx.cols <= 127 then ".narrow" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "side",
