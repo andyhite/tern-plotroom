@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "21" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "22" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -429,7 +429,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	local chain: any = nil
 	if job.id then
-		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0 }
+		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch }
 	end
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	if split then
@@ -645,7 +645,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title) })
 			else
 				local vars: any = a.vars
-				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil })
+				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code) })
 				if prompt.status then
 					moveStatus(cx2, pane, t, prompt.status)
 				end
@@ -1288,21 +1288,43 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 		return cx:toast("info", "Next action not started after " .. label .. " for " .. t.label, "A chain of actions stops after " .. MAX_CHAIN .. ".")
 	end
 	local tab = cx.session:tab_of(agent)
-	ask(cx, pane, "action", { kind = chain.kind, pid = next }, MENU_MS, function(a: any, cx2: WindowCx)
-		if type(a.send) ~= "string" then
-			return cx2:toast("error", "Next action not started after " .. label .. " for " .. t.label, if type(a.problem) == "string" then a.problem else "The action is gone.")
-		end
-		prepareTarget(cx2, pane, t, {
+	-- An issue action's `prs:<id>` next: the pull request on the worktree's branch in the code repository is the item.
+	local prAction = if chain.kind == "issue" then string.match(next, "^prs:(.+)$") else nil
+	local function start(cx2: WindowCx, a: any, target: Target, id: string)
+		prepareTarget(cx2, pane, target, {
 			text = a.send,
 			model = if type(a.model) == "string" then a.model else nil,
 			split = a.split == true,
 			status = if type(a.status) == "string" then a.status else nil,
-			id = next,
+			id = id,
 			name = if type(a.label) == "string" then a.label else nil,
 			next = if type(a.next) == "string" then a.next else nil,
 			depth = chain.depth + 1,
 			tab = tab,
 		}, a.worktree ~= false, {})
+	end
+	local function stop(cx2: WindowCx, why: string)
+		cx2:toast("error", "Next action not started after " .. label .. " for " .. t.label, why)
+	end
+	if prAction then
+		local code, branch = chain.code, chain.branch
+		if not branch or not code then
+			return stop(cx, "The agent did not run in a worktree, so no pull request can be found for its branch.")
+		end
+		local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
+		ask(cx, pane, "action", { kind = "pr", pid = prAction, repo = code, branch = branch }, PREPARE_MS, function(a: any, cx2: WindowCx)
+			if type(a.send) ~= "string" or type(a.pr) ~= "number" or not owner or not name then
+				return stop(cx2, if type(a.problem) == "string" then a.problem else "The action is gone.")
+			end
+			start(cx2, a, prTarget(owner, name, a.pr), prAction)
+		end)
+		return
+	end
+	ask(cx, pane, "action", { kind = chain.kind, pid = next }, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.send) ~= "string" then
+			return stop(cx2, if type(a.problem) == "string" then a.problem else "The action is gone.")
+		end
+		start(cx2, a, t, next)
 	end)
 end
 

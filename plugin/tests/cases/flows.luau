@@ -2813,4 +2813,89 @@ windowCase("window flows: Go to agent names the action an agent ran, so the agen
 	eq(pick.items[1].detail, "Review · pane " .. first.agent, "the agent is listed under its action's name")
 end)
 
+-- Starts the issue action Implement (p1, next prs:p2) on o/r#12 through the real link flow and returns its link; `wt`
+-- false runs it in the main checkout, which has no branch.
+local function startIssueChained(w: World, st: FlowStub, wt: boolean): any
+	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
+	w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Implement" } else "Implement"
+	w.click("plotroom://issue/agent/o/r/12")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = wt, next = "prs:p2" } } })
+	local vars: any = { url = "https://github.com/o/r/issues/12", title = "Fix login" }
+	if wt then
+		vars.branch = "12-fix"
+	end
+	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = vars, code = "o/r" })
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+windowCase("window flows: an issue action whose next is a pull request action runs it on the pull request of the worktree's branch, in the same worktree and tab", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startIssueChained(w, st, true)
+	eq(first.chain.next, "prs:p2", "the link keeps the qualified next")
+	eq(first.chain.branch, "12-fix", "the worktree's branch")
+	eq(first.chain.code, "o/r", "and the code repository")
+	agentFinished(w, first.agent, "done")
+	local asked = st.reply("action", { label = "Watch", send = "Watch {url}", worktree = true, pr = 45 })
+	eq(asked.kind, "pr", "a pull request action is asked for")
+	eq(asked.pid, "p2", "by its own id")
+	eq(asked.repo, "o/r", "with the code repository")
+	eq(asked.branch, "12-fix", "and the branch its pull request is looked up by")
+	local prepared = st.reply("worktree", { path = "/wt/i12", summary = "Reused", created = false, current = true })
+	eq(prepared.number, 45, "the worktree is the found pull request's")
+	eq(prepared.repo, "o/r", "of the code repository")
+	eq(#w.window.agents, 2, "the next agent started")
+	eq(w.window.agents[2].prompt, "Watch https://github.com/o/r/pull/45", "with the pull request's variables")
+	eq(w.window.agents[2].cwd, "/wt/i12", "in the same worktree")
+	local links: any = w.kv.get("agent-links")
+	eq(links[1].key, "o/r#45", "linked to the pull request")
+	eq(links[1].chain.kind, "pr", "as a pull request action")
+	eq(links[1].chain.depth, 1, "one step along the chain")
+	eq(w.window.panes[links[1].agent].tab, w.window.panes[first.agent].tab, "in the tab of the agent that finished")
+end)
+
+windowCase("window flows: an issue action's pull request action stops with a toast when there is no open pull request, the lookup fails, or the action ran in the main checkout", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startIssueChained(w, st, true)
+	agentFinished(w, first.agent, "done")
+	st.reply("action", { problem = "No pull request of o/r has 12-fix as its branch." })
+	eq(w.toasts[#w.toasts].text, "Next action not started after Implement for o/r#12", "the toast names the action and the issue")
+	eq(w.toasts[#w.toasts].sub, "No pull request of o/r has 12-fix as its branch.", "and why")
+	eq(#w.window.agents, 1, "nothing started")
+	local second = startIssueChained(w, st, true)
+	agentFinished(w, second.agent, "done")
+	st.reply("action", { problem = "The pull request of 12-fix (#40) is merged, not open." })
+	has(w.toasts[#w.toasts].sub, "merged", "a merged one stops the chain")
+	eq(#w.window.agents, 2, "and nothing started")
+	local third = startIssueChained(w, st, false)
+	eq(third.chain.branch, nil, "the main checkout has no branch")
+	local ops = #st.ops()
+	agentFinished(w, third.agent, "done")
+	eq(#st.ops(), ops, "no lookup is asked")
+	has(w.toasts[#w.toasts].sub, "worktree", "the toast says there is no branch to look up")
+	eq(#w.window.agents, 3, "and nothing started")
+end)
+
+case("host action: with a repository and branch it finds the open or draft pull request on that branch and answers its number, and anything else is a problem", function(w: World)
+	local s = hostScene(w, 3)
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ { id = "p1", name = "Watch", text = "Watch {url}" } }) })
+	local b = openQueue(w)
+	local function ask(branch: string): any
+		return asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p1", repo = "o/r", branch = branch })
+	end
+	s.gh.heads["o/r@draft"] = { { number = 7, title = "Draft", state = "OPEN", isDraft = true, url = "https://github.com/o/r/pull/7" } }
+	s.gh.heads["o/r@merged"] = { { number = 8, title = "Done", state = "MERGED", isDraft = false, url = "https://github.com/o/r/pull/8" } }
+	s.gh.heads["o/r@closed"] = { { number = 9, title = "Shut", state = "CLOSED", isDraft = false, url = "https://github.com/o/r/pull/9" } }
+	local found = ask("draft")
+	eq(found.pr, 7, "a draft one is found")
+	eq(found.send, "Watch {url}", "with the action")
+	has(ask("merged").problem, "merged", "a merged one is not run on")
+	has(ask("closed").problem, "closed", "nor a closed one")
+	has(ask("none").problem, "No pull request", "no pull request on the branch")
+	eq(asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p1" }).pr, nil, "without a branch it only answers the action")
+	has(asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p9", repo = "o/r", branch = "draft" }).problem, "no longer exists", "a deleted action is a problem before any lookup")
+end)
+
 return {}

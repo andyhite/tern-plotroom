@@ -423,7 +423,18 @@ function M.promptById(store: Prompts, id: string): Prompt?
 	return nil
 end
 
--- Whether following `next` from prompt `from` leads back to it (a prompt naming itself included): a cycle.
+-- The kind and saved id a prompt's `next` names: a bare id is of the prompt's own kind, `prs:<id>` (an issue action's
+-- only) a pull request action.
+function M.nextOf(kind: Kind, nxt: string): (Kind, string)
+	local id = string.match(nxt, "^prs:(.+)$")
+	if id and kind.id == "issues" then
+		return KINDS.prs, id
+	end
+	return kind, nxt
+end
+
+-- Whether following `next` from prompt `from` leads back to it (a prompt naming itself included): a cycle. A qualified
+-- next (`prs:<id>`) leaves the store, and a pull request action never chains back, so it ends the walk.
 function M.chainReaches(store: Prompts, from: string, next: string): boolean
 	local seen: { [string]: boolean } = {}
 	local at: string? = next

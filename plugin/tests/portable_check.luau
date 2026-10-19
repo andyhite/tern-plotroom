@@ -237,6 +237,21 @@ function M.run()
 	assert(not portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = 5 } })
 	end)), "a next action that is not an id")
+
+	-- an issue action's pull request action (`prs:<id>`) travels with it and is remapped on import; the other way, or a
+	-- bare cross-kind ref, is dropped
+	local cross = portable.parse(portable.build({}, { { id = "p1", kind = "issues", name = "Implement", text = "Do it.", next = "prs:p3" } }, nil, { { id = "p3", kind = "prs", name = "Watch", text = "Watch." } }) or "")
+	assert(cross and #cross.prompts == 2 and cross.prompts[1].next == "prs:p3" and cross.prompts[2].kind == "prs", "the pull request action is exported with its issue action")
+	local crossFresh = existing()
+	table.insert(crossFresh.prs.prompts.items, { id = "p4", name = "Other", text = "x" })
+	crossFresh.prs.prompts.nextId = 5
+	local crossOut = cross and portable.apply(cross, portable.plan(cross, crossFresh), {}, {}, crossFresh, ok)
+	assert(crossOut and crossOut.issues and crossOut.issues.prompts.items[1].next == "prs:p5", "an import qualifies the new id of the pull request action")
+	assert(cross and crossOut and portable.plan(cross, crossOut).entries[1].conflict == "identical", "and a saved qualified next makes the same action identical")
+	local backwards = portable.parse(doc(function(x: any)
+		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "issues:p1" }, { id = "issues:p1", kind = "issues", name = "B", text = "t" } } :: { any })
+	end))
+	assert(backwards and backwards.prompts[1].next == nil, "a pull request action never leads to an issue action")
 end
 
 return M

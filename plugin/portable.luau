@@ -97,6 +97,11 @@ local function checkView(v: any): string?
 	return nil
 end
 
+-- Whether an action of kind `from` may name one of kind `to` as its next: its own kind, or an issue action's pull request action.
+local function mayChain(from: string, to: string): boolean
+	return from == to or (from == "issues" and to == "prs")
+end
+
 local function checkPrompt(p: any): string?
 	if type(p) ~= "table" then
 		return "not an action"
@@ -116,7 +121,7 @@ local function checkPrompt(p: any): string?
 		return "invalid model"
 	elseif p.status ~= nil and (p.kind ~= "issues" or not clean(p.status, M.STATUS_CAP, false) or p.status == "") then
 		return "a status is a name of at most " .. M.STATUS_CAP .. " characters on one line, on an issue action"
-	elseif p.next ~= nil and (type(p.next) ~= "string" or not string.match(p.next, "^%w+$")) then
+	elseif p.next ~= nil and (type(p.next) ~= "string" or not (string.match(p.next, "^%w+$") or (p.kind == "issues" and string.match(p.next, "^prs:%w+$")))) then
 		return "next must be the id of another action"
 	end
 	return nil
@@ -182,9 +187,9 @@ function M.build(views: { ExView }, prompts: { ExPrompt }, secretFree: boolean?,
 			table.insert(outPrompts, item)
 			included[ref] = true
 			-- The next action travels with it; one that cannot be exported (or no longer exists) is dropped.
-			local nref = if p.next then p.kind .. ":" .. p.next else nil
+			local nref = if p.next then (if p.kind == "issues" and string.match(p.next, "^prs:") then p.next else p.kind .. ":" .. p.next) else nil
 			local nextP = if nref then byRef[nref] else nil
-			if nref and nextP and nextP.kind == p.kind and include(nref, nextP) then
+			if nref and nextP and mayChain(p.kind, nextP.kind) and include(nref, nextP) then
 				item.next = nref
 			end
 			return true
@@ -361,7 +366,7 @@ function M.parse(text: string): (Doc?, string?)
 				seen[at.ref] = true
 				at = if at.next then byRef[at.next] else nil
 			end
-			if not target or target.kind ~= item.kind or loops then
+			if not target or not mayChain(item.kind, target.kind) or loops then
 				item.next = nil
 			end
 		end
@@ -495,7 +500,12 @@ function M.plan(doc: Doc, existing: Existing): Plan
 			found = findByName(existing[p.kind].prompts.items, p.name)
 			if found then
 				local nextName = if p.next then refName[p.next] or "" else ""
-				local savedNext = if found.next then findById(existing[p.kind].prompts.items, found.next) else nil
+				local savedNext: any = nil
+				if found.next then
+					local qualified = if p.kind == "issues" then string.match(found.next, "^prs:(.+)$") else nil
+					local from = if qualified then existing.prs else existing[p.kind]
+					savedNext = if from then findById(from.prompts.items, qualified or found.next) else nil
+				end
 				conflict = if samePrompt(p, found, nextName, if savedNext then string.lower(savedNext.name) else "") then "identical" else "same-name"
 			end
 		end
@@ -599,8 +609,11 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 		local target = applied[p.ref]
 		if target then
 			target.next = nil
+			local nk = if p.next then string.match(p.next, "^(%a+):") else nil
 			local nid = if p.next then promptId[p.next] else nil
-			if nid and nid ~= target.id then
+			if nid and nk and nk ~= p.kind then
+				target.next = nk .. ":" .. nid -- an issue action's pull request action; mayChain let nothing else through
+			elseif nid and nid ~= target.id then
 				local items = out[p.kind].prompts.items
 				local at: any = findById(items, nid)
 				local seen: { [string]: boolean } = {}

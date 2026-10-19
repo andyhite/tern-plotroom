@@ -25,11 +25,14 @@ export type Env = {
 -- A Plotroom block's host: Tern's slot id and its address ("" for this machine), the name only for people.
 type HostId = { id: number, name: string, address: string }
 -- The saved action an agent ran, kept with its link: `next` (nil once started or stopped) is the action to start when the
--- agent finishes, for the same item (`kind`, `repo`, `ref`); `depth` counts the actions chained before it.
-type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number }
+-- agent finishes, for the same item (`kind`, `repo`, `ref`), or `prs:<id>` for a pull request action on the pull request
+-- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
+-- counts the actions chained before it.
+type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string? }
 type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string? }
--- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title).
-export type AgentInfo = { action: string?, branch: string?, title: string? }
+-- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
+-- (an issue's code repository) is only for its chain.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string? }
 type StatusRow = { state: string, action: string?, branch: string?, title: string? }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
@@ -124,10 +127,12 @@ local function linkOf(row: any): Link?
 			or type(r.repo) ~= "string"
 			or type(r.ref) ~= "string"
 			or type(r.depth) ~= "number"
+			or (r.code ~= nil and type(r.code) ~= "string")
+			or (r.branch ~= nil and type(r.branch) ~= "string")
 		then
 			return nil
 		end
-		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth }
+		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth, code = r.code, branch = r.branch }
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}

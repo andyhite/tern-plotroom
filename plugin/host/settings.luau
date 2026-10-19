@@ -23,7 +23,7 @@ type State = core.State
 type View = core.View
 
 local INTEGRATIONS, KINDS, SETTINGS_ID, clip, groupsOf, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.groupsOf, core.printable, core.cli
-local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId
+local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId, nextOf = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId, storage.nextOf
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
 local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, alive, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.alive, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
@@ -306,11 +306,19 @@ local function pageContent(state: State): ({ any }, { Node })
 						table.insert(nextOptions, { value = other.id, label = clip(printable(other.name), 60) })
 					end
 				end
+				-- An issue action may also lead into a pull request action (Implement → Watch), labelled by its kind.
+				local prSaved = if kind.id == "issues" then loadPrompts(KINDS.prs) else nil
+				local prItems: { Prompt } = if prSaved then prSaved.items else {}
+				for _, other in prItems do
+					table.insert(nextOptions, { value = "prs:" .. other.id, label = clip(printable(other.name), 48) .. " (pull request)" })
+				end
+				local nextKind, nextId = nextOf(kind, p.next or "")
+				local nextStore = if p.next == nil then nil elseif nextKind == kind then prompts else prSaved
 				row({
 					id = "pnext:" .. qid,
 					label = "Next action",
 					hint = "Starts for the same item, in the same tab and worktree, when this agent finishes",
-					control = { k = "choice", style = "menu", value = if p.next and promptById(prompts :: Prompts, p.next) then p.next else "none", options = tern.json.array(nextOptions) },
+					control = { k = "choice", style = "menu", value = if p.next and nextStore and promptById(nextStore :: Prompts, nextId) then p.next else "none", options = tern.json.array(nextOptions) },
 				})
 				section("after:" .. qid)
 			end
@@ -812,6 +820,18 @@ local function deletePrompt(state: State, s: Settings, id: string)
 		end
 		return nil
 	end)
+	if not err and kind.id == "prs" then
+		-- Issue actions name it as `prs:<id>`. ponytail: an unreadable issue store keeps its bytes and its dangling next,
+		-- which Settings shows as None and a finished agent reports as gone.
+		editPrompts(KINDS.issues, function(store: Prompts): string?
+			for _, p in store.items do
+				if p.next == id then
+					p.next = nil
+				end
+			end
+			return nil
+		end)
+	end
 	s.errors["popen:" .. id] = err -- the summary row shows why: the Delete row draws no label
 	if not err then
 		s.focus = "padd:" .. kind.id
@@ -861,11 +881,13 @@ function M.setValue(state: State, row: string, value: any)
 		local to: string? = if choice == "none" then nil else choice
 		s.errors[row] = editPrompts(pk, function(store: Prompts): string?
 			local p = promptById(store, pid)
+			local tk, tid = nextOf(pk, to or "")
+			local tstore = if to == nil then nil elseif tk == pk then store else loadPrompts(tk)
 			if not p then
 				return "That action was deleted elsewhere."
-			elseif to and not promptById(store, to) then
+			elseif to and not (tstore and promptById(tstore, tid)) then
 				return "That action was deleted elsewhere."
-			elseif to and chainReaches(store, pid, to) then
+			elseif to and tk == pk and chainReaches(store, pid, to) then
 				return "That would make a loop of actions."
 			end
 			p.next = to

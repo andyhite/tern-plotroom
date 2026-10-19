@@ -353,7 +353,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 			vars["jira.user"] = found["jira.user"] or ""
 		end
 		if not wt then
-			return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars })
+			return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars, code = code })
 		end
 		local branch, dir, why = engine.issueNames(issue, code, found)
 		if not branch or not dir then
@@ -414,6 +414,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 					summary = summary,
 					setup = if r.created then setupLine(code) else nil,
 					vars = vars,
+					code = code,
 				})
 			end)
 		end)
@@ -1681,13 +1682,36 @@ function M.rpc(state: State, raw: any)
 	end
 	local id: string = q.id
 	if q.op == "action" and (q.kind == "pr" or q.kind == "issue") and type(q.pid) == "string" and #q.pid <= 64 then
-		-- One saved action by id, whatever view offers it: what a finished agent's next action runs.
+		-- One saved action by id, whatever view offers it: what a finished agent's next action runs. With `repo` and
+		-- `branch` (a pull request action after an issue's): also the open or draft pull request of that repository whose
+		-- head is the branch, as `pr`; any other answer is a problem, and nothing runs.
 		local store, why = loadPrompts(if q.kind == "pr" then KINDS.prs else KINDS.issues)
 		local p = if store then promptById(store, q.pid) else nil
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		reply(state, id, { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next })
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, pr = nil :: number? }
+		if q.repo == nil and q.branch == nil then
+			return reply(state, id, answer)
+		end
+		local repo = if q.kind == "pr" then parseRepo(q.repo) else nil
+		local branch = q.branch
+		if not repo or type(branch) ~= "string" or branch == "" or #branch > 255 or string.find(branch, "%c") then
+			return
+		end
+		github.pullByHead(repo, branch, login(state), function(pr, problem)
+			if not alive(state) then
+				return
+			elseif problem then
+				return reply(state, id, { problem = "The pull request of " .. branch .. " could not be looked up: " .. M.whyOf(problem) })
+			elseif not pr then
+				return reply(state, id, { problem = "No pull request of " .. repo .. " has " .. branch .. " as its branch." })
+			elseif pr.state ~= "open" and pr.state ~= "draft" then
+				return reply(state, id, { problem = "The pull request of " .. branch .. " (#" .. pr.number .. ") is " .. pr.state .. ", not open." })
+			end
+			answer.pr = pr.number
+			reply(state, id, answer)
+		end)
 	elseif q.op == "menu" then
 		menu(state, id, if type(q.only) == "string" then q.only else nil, q.palette == true)
 	elseif q.op == "repos" then
