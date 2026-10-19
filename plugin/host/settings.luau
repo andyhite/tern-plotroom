@@ -23,7 +23,7 @@ type State = core.State
 type View = core.View
 
 local INTEGRATIONS, KINDS, SETTINGS_ID, clip, groupsOf, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.groupsOf, core.printable, core.cli
-local PROMPT_CAP, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId = storage.PROMPT_CAP, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId
+local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
 local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, alive, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.alive, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
@@ -299,6 +299,18 @@ local function pageContent(state: State): ({ any }, { Node })
 						value = if p.split then "split" else "tab",
 						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
 					},
+				})
+				local nextOptions: { any } = { { value = "none", label = "None" } }
+				for _, other in list do
+					if other.id ~= p.id and not chainReaches(prompts :: Prompts, p.id, other.id) then
+						table.insert(nextOptions, { value = other.id, label = clip(printable(other.name), 60) })
+					end
+				end
+				row({
+					id = "pnext:" .. qid,
+					label = "Next action",
+					hint = "Starts for the same item, in the same tab and worktree, when this agent finishes",
+					control = { k = "choice", style = "menu", value = if p.next and promptById(prompts :: Prompts, p.next) then p.next else "none", options = tern.json.array(nextOptions) },
 				})
 				section("after:" .. qid)
 			end
@@ -793,6 +805,11 @@ local function deletePrompt(state: State, s: Settings, id: string)
 				break
 			end
 		end
+		for _, p in store.items do
+			if p.next == saved then
+				p.next = nil -- a next action that is gone is dropped
+			end
+		end
 		return nil
 	end)
 	s.errors["popen:" .. id] = err -- the summary row shows why: the Delete row draws no label
@@ -836,7 +853,25 @@ function M.setValue(state: State, row: string, value: any)
 	if not kind or not id then
 		return
 	end
-	if kind == "pwhere" or kind == "psplit" then
+	if kind == "pnext" then
+		local pk, pid = kindAndId(id)
+		if not pk or not choice then
+			return
+		end
+		local to: string? = if choice == "none" then nil else choice
+		s.errors[row] = editPrompts(pk, function(store: Prompts): string?
+			local p = promptById(store, pid)
+			if not p then
+				return "That action was deleted elsewhere."
+			elseif to and not promptById(store, to) then
+				return "That action was deleted elsewhere."
+			elseif to and chainReaches(store, pid, to) then
+				return "That would make a loop of actions."
+			end
+			p.next = to
+			return nil
+		end)
+	elseif kind == "pwhere" or kind == "psplit" then
 		local on = choice == (if kind == "pwhere" then "worktree" else "split")
 		local pk, pid = kindAndId(id)
 		if not pk or not (on or choice == (if kind == "pwhere" then "checkout" else "tab")) then

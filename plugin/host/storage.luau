@@ -387,10 +387,11 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.split ~= nil and type(p.split) ~= "boolean")
 			or (p.model ~= nil and type(p.model) ~= "string")
 			or (p.status ~= nil and type(p.status) ~= "string")
+			or (p.next ~= nil and type(p.next) ~= "string")
 		then
 			return nil, PROMPTS_BAD
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -407,7 +408,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
@@ -420,6 +421,21 @@ function M.promptById(store: Prompts, id: string): Prompt?
 		end
 	end
 	return nil
+end
+
+-- Whether following `next` from prompt `from` leads back to it (a prompt naming itself included): a cycle.
+function M.chainReaches(store: Prompts, from: string, next: string): boolean
+	local seen: { [string]: boolean } = {}
+	local at: string? = next
+	while at and not seen[at] do
+		if at == from then
+			return true
+		end
+		seen[at] = true
+		local p = M.promptById(store, at)
+		at = if p then p.next else nil
+	end
+	return false
 end
 
 -- The prompts view `v` lists, as ids of prompts that still exist, in the prompts' order; empty: it lists none.

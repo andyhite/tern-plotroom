@@ -27,7 +27,7 @@ type Prompts = core.Prompts
 type State = core.State
 
 local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, stateKind, cli = core.COMMENT_ROWS, core.INTEGRATIONS, core.KINDS, core.clip, core.printable, core.stateKind, core.cli
-local checkoutOf, editJiraRepos, editPrompts, isTable, jiraReposOf, loadAll, loadPrompts, loadViews = storage.checkoutOf, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.loadAll, storage.loadPrompts, storage.loadViews
+local checkoutOf, editJiraRepos, editPrompts, isTable, jiraReposOf, loadAll, loadPrompts, loadViews, promptById = storage.checkoutOf, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById
 local readCheckouts, readJiraRepos, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.readCheckouts, storage.readJiraRepos, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local activeView, alive, changed, detailKey, filtered, indexOf, issueVars, login, noteWorktree = engine.activeView, engine.alive, engine.changed, engine.detailKey, engine.filtered, engine.indexOf, engine.issueVars, engine.login, engine.noteWorktree
 local offered, openItems, parseRepo, propagate, reloadViews, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.propagate, engine.reloadViews, engine.selected, engine.snapKey, engine.switchView, input.trim, engine.me, engine.ghActive
@@ -129,6 +129,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
+			next = p.next, -- the action that starts when its agent finishes
 			key = p.key,
 		})
 	end
@@ -1321,7 +1322,7 @@ function M.exportable(state: State, viewIds: any, promptIds: any): ({ any }?, { 
 			return nil, nil, nil, why
 		end
 		for _, p in store.items do
-			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status }
+			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next }
 			table.insert(pool, entry)
 			if isTable(promptIds) and table.find(promptIds, kind.id .. ":" .. p.id) then
 				table.insert(prompts, entry)
@@ -1679,7 +1680,15 @@ function M.rpc(state: State, raw: any)
 		return
 	end
 	local id: string = q.id
-	if q.op == "menu" then
+	if q.op == "action" and (q.kind == "pr" or q.kind == "issue") and type(q.pid) == "string" and #q.pid <= 64 then
+		-- One saved action by id, whatever view offers it: what a finished agent's next action runs.
+		local store, why = loadPrompts(if q.kind == "pr" then KINDS.prs else KINDS.issues)
+		local p = if store then promptById(store, q.pid) else nil
+		if not p or p.text == "" then
+			return reply(state, id, { problem = why or "That action no longer exists." })
+		end
+		reply(state, id, { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next })
+	elseif q.op == "menu" then
 		menu(state, id, if type(q.only) == "string" then q.only else nil, q.palette == true)
 	elseif q.op == "repos" then
 		repos(state, id)

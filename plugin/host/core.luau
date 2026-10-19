@@ -53,8 +53,9 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
--- alias such as @slow.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
+-- alias such as @slow. `next` (nil: none) is the id of another prompt of the kind that starts for the same item, in the same
+-- tab and worktree, when this prompt's agent finishes.
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keyboard shortcuts; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -591,6 +592,6 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "19"
+M.RPC_PROTOCOL = "20"
 
 return M

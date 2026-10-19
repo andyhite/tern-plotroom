@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "19" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "20" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -40,8 +40,11 @@ type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
--- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own.
-type Job = { text: string, model: string?, split: boolean?, status: string? }
+-- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
+-- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
+-- chained before it and `tab` is the tab the previous one ran in, which the next one joins.
+type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number? }
+local MAX_CHAIN = 8 -- actions in one chain; Settings refuses loops, this stops one that got into the store anyway
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -375,14 +378,23 @@ end
 -- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
 -- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, model: string?, join: boolean, split: boolean)
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean)
+	local model, split = job.model, job.split == true
 	if model and not worktree.validModel(model) then
 		return cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
 	end
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
-	if join and not split then
+	if job.tab and not split then
+		-- A chained action joins the tab of the one before it, while that tab is open.
+		for _, tb in cx.session:tabs() do
+			if tb.id == job.tab then
+				tab, found = tb.id, tb.session
+			end
+		end
+	end
+	if not tab and join and not split then
 		local _pane
 		_pane, tab, found = targetPane(cx, path)
 	end
@@ -411,7 +423,11 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	if not ok or type(agent) ~= "number" then
 		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
 	end
-	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent)
+	local chain: any = nil
+	if job.id then
+		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0 }
+	end
+	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain)
 	if split then
 		if cx.layout:move(agent, pane, "right") then
 			return cx:toast("success", "Agent started beside the queue for " .. t.label, prompt)
@@ -622,9 +638,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
 				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt.model, wt, prompt.split == true)
+				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt)
 			else
-				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt.model, wt, prompt.split == true)
+				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt, wt)
 				if prompt.status then
 					moveStatus(cx2, pane, t, prompt.status)
 				end
@@ -647,7 +663,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil }, it.worktree ~= false)
+				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil }, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That action is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -684,6 +700,8 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 					send = it.send,
 					model = if type(it.model) == "string" then it.model else nil,
 					status = if type(it.status) == "string" then it.status else nil,
+					id = if type(it.id) == "string" then it.id else nil,
+					next = if type(it.next) == "string" then it.next else nil,
 					worktree = it.worktree ~= false,
 					split = it.split == true,
 				})
@@ -719,7 +737,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status }, item.worktree ~= false)
+			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status, id = item.id, name = item.label, next = item.next }, item.worktree ~= false)
 		end)
 	end)
 end
@@ -732,7 +750,7 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 		return pickMenu(cx, pane, t)
 	end
 	local items: { PickItem } = {
-		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = "Pane " .. link.agent, go = true },
+		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = (if link.chain and link.chain.name ~= "" then link.chain.name .. " · pane " else "Pane ") .. link.agent, go = true },
 		{ label = "Start another agent", detail = "Choose an action to run" },
 	}
 	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "choose" }):next(function(item, _, cx2)
@@ -1241,8 +1259,53 @@ tern.on("pane_created", function(_ev: any, cx: WindowCx)
 	checkProtocol(cx)
 end)
 
-tern.on("agent_finished", function(_ev: any, cx: WindowCx)
+-- A finished agent's next action: starts for the same item, in the tab the agent ran in, when the agent's turn ended "done".
+-- Any other result stops the chain, and a toast says why. The link keeps nothing to start afterwards, so another turn of
+-- the same agent starts nothing.
+local function advanceChain(cx: WindowCx, agent: number, result: string)
+	local chain, pane = flows.takeChain(cx, agent)
+	local next = if chain then chain.next else nil
+	if not chain or not pane or not next then
+		return
+	end
+	local t: Target
+	if chain.kind == "pr" then
+		local owner, name = string.match(chain.repo, "^([^/]+)/([^/]+)$")
+		t = prTarget(owner or "", name or "", tonumber(chain.ref) or 0)
+	else
+		t = issueTarget(chain.repo, chain.ref)
+	end
+	local label = if chain.name ~= "" then chain.name else "the action"
+	if result ~= "done" then
+		local why = if result == "failed" then "The agent reported a failure." elseif result == "exited" then "The agent's program exited." else "The agent's pane was closed."
+		return cx:toast("info", "Next action not started after " .. label .. " for " .. t.label, why)
+	elseif chain.depth + 1 >= MAX_CHAIN then
+		return cx:toast("info", "Next action not started after " .. label .. " for " .. t.label, "A chain of actions stops after " .. MAX_CHAIN .. ".")
+	end
+	local tab = cx.session:tab_of(agent)
+	ask(cx, pane, "action", { kind = chain.kind, pid = next }, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.send) ~= "string" then
+			return cx2:toast("error", "Next action not started after " .. label .. " for " .. t.label, if type(a.problem) == "string" then a.problem else "The action is gone.")
+		end
+		prepareTarget(cx2, pane, t, {
+			text = a.send,
+			model = if type(a.model) == "string" then a.model else nil,
+			split = a.split == true,
+			status = if type(a.status) == "string" then a.status else nil,
+			id = next,
+			name = if type(a.label) == "string" then a.label else nil,
+			next = if type(a.next) == "string" then a.next else nil,
+			depth = chain.depth + 1,
+			tab = tab,
+		}, a.worktree ~= false, {})
+	end)
+end
+
+tern.on("agent_finished", function(ev: any, cx: WindowCx)
 	flows.agentSync(cx)
+	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
+		advanceChain(cx, ev.pane, ev.result)
+	end
 end)
 
 tern.on("focus", function(_ev: any, cx: WindowCx)

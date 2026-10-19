@@ -2630,4 +2630,80 @@ case("host move-status: moves a Jira issue to the status by its transitions' tar
 	eq(#reqs, before, "and nothing was requested")
 end)
 
+-- Starts the action Review (p1, next p2) on o/r#5 through the real link flow and returns its link.
+local function startChained(w: World, st: FlowStub): any
+	st.link("layer.queue.buttons.agent", "plotroom://github/agent/o/r/5")
+	w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Review" } else "Review"
+	w.click("plotroom://github/agent/o/r/5")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, next = "p2" } } })
+	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true })
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+local function agentFinished(w: World, pane: number, result: string)
+	w.window.handlers.agent_finished({ pane = pane, result = result }, w.cx)
+	w.flush()
+end
+
+windowCase("window flows: a finished agent starts its action's next action for the same item, in its tab and worktree, once", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	eq(first.chain.action, "p1", "the link keeps the action the agent ran")
+	eq(first.chain.next, "p2", "and the one to start when it finishes")
+	agentFinished(w, first.agent, "done")
+	eq(st.ops()[#st.ops()], "action", "done asks the block's host for the next action")
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Reused", created = false, current = true })
+	eq(#w.window.agents, 2, "the next agent started")
+	eq(w.window.agents[2].prompt, "Fix https://github.com/o/r/pull/5", "with the next action's text")
+	eq(w.window.agents[2].cwd, "/wt/r5", "in the same worktree")
+	local links: any = w.kv.get("agent-links")
+	eq(#links, 2, "both agents stay linked")
+	eq(links[1].chain.action, "p2", "the newest is the next action's")
+	eq(links[1].chain.name, "Fix", "named for it")
+	eq(links[1].chain.depth, 1, "one step along the chain")
+	eq(links[1].chain.next, nil, "and with no next of its own")
+	eq(w.window.panes[links[1].agent].tab, w.window.panes[first.agent].tab, "in the tab of the agent that finished")
+	local asked = #st.ops()
+	agentFinished(w, first.agent, "done")
+	eq(#st.ops(), asked, "another turn of the same agent starts nothing")
+	agentFinished(w, links[1].agent, "done")
+	eq(#st.ops(), asked, "an action without a next action ends the chain")
+end)
+
+windowCase("window flows: a failed, exited or closed agent stops its chain with a toast, and a next action that is gone starts nothing", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	local ops = #st.ops()
+	agentFinished(w, first.agent, "failed")
+	eq(#st.ops(), ops, "no request for the next action")
+	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "the toast names the action and the item")
+	eq(w.toasts[#w.toasts].sub, "The agent reported a failure.", "and why")
+	agentFinished(w, first.agent, "done")
+	eq(#st.ops(), ops, "the chain stays stopped")
+	eq(#w.window.agents, 1, "no second agent")
+	local second = startChained(w, st)
+	agentFinished(w, second.agent, "closed")
+	eq(w.toasts[#w.toasts].sub, "The agent's pane was closed.", "a closed pane says so")
+	local third = startChained(w, st)
+	agentFinished(w, third.agent, "done")
+	st.reply("action", { problem = "That action no longer exists." })
+	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "a next action that was deleted is toasted")
+	eq(#w.window.agents, 3, "and no agent starts for it")
+end)
+
+windowCase("window flows: Go to agent names the action an agent ran, so the agents of one item can be told apart", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	w.window.choose = "Go to agent (working)"
+	w.click("plotroom://github/agent/o/r/5")
+	w.flush()
+	local pick = w.window.picks[#w.window.picks]
+	eq(pick.items[1].detail, "Review · pane " .. first.agent, "the agent is listed under its action's name")
+end)
+
 return {}

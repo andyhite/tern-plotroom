@@ -217,6 +217,26 @@ function M.run()
 	assert(not portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "issues:p1", kind = "issues", name = "A", text = "t", status = string.rep("s", portable.STATUS_CAP + 1) } })
 	end)), "a status over the cap")
+
+	-- a next action travels by ref, is remapped on import, and is dropped when it is gone or closes a loop
+	local chained = portable.parse(portable.build({}, { { id = "p1", kind = "prs", name = "Review", text = "Review.", next = "p2" }, { id = "p2", kind = "prs", name = "Fix", text = "Fix.", next = "p9" } }) or "")
+	assert(chained and chained.prompts[1].next == "prs:p2", "the next action is exported by ref, with its own action")
+	assert(chained and chained.prompts[2].next == nil, "a next action that does not exist is not exported")
+	local chainedOut = chained and portable.apply(chained, portable.plan(chained, taken), {}, {}, taken, ok)
+	local chainedItems = chainedOut and chainedOut.prs and chainedOut.prs.prompts.items
+	assert(chainedItems and chainedItems[2].next == chainedItems[3].id and chainedItems[3].next == nil, "an import remaps the next action to its new id")
+	assert(chained and chainedOut and portable.plan(chained, chainedOut).entries[1].conflict == "identical", "a saved next action makes the same action identical")
+	local dangling = portable.parse(doc(function(x: any)
+		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "prs:p9" } })
+	end))
+	assert(dangling and dangling.prompts[1].next == nil, "a next action the document lacks is dropped")
+	local looped = portable.parse(doc(function(x: any)
+		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "prs:p2" }, { id = "prs:p2", kind = "prs", name = "B", text = "t", next = "prs:p1" } })
+	end))
+	assert(looped and looped.prompts[1].next == nil and looped.prompts[2].next == "prs:p1", "a loop is broken where it closes")
+	assert(not portable.parse(doc(function(x: any)
+		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = 5 } })
+	end)), "a next action that is not an id")
 end
 
 return M

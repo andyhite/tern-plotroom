@@ -24,7 +24,10 @@ export type Env = {
 
 -- A Plotroom block's host: Tern's slot id and its address ("" for this machine), the name only for people.
 type HostId = { id: number, name: string, address: string }
-type Link = { key: string, agent: number, host: HostId, at: number }
+-- The saved action an agent ran, kept with its link: `next` (nil once started or stopped) is the action to start when the
+-- agent finishes, for the same item (`kind`, `repo`, `ref`); `depth` counts the actions chained before it.
+type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number }
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain? }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
@@ -95,7 +98,24 @@ local function linkOf(row: any): Link?
 	if type(h) ~= "table" or type(h.id) ~= "number" or type(h.name) ~= "string" or type(h.address) ~= "string" then
 		return nil
 	end
-	return { key = row.key, agent = row.agent, host = { id = h.id, name = h.name, address = h.address }, at = row.at }
+	local c: Chain? = nil
+	if row.chain ~= nil then
+		local r = row.chain
+		if
+			type(r) ~= "table"
+			or type(r.action) ~= "string"
+			or type(r.name) ~= "string"
+			or (r.next ~= nil and type(r.next) ~= "string")
+			or (r.kind ~= "pr" and r.kind ~= "issue")
+			or type(r.repo) ~= "string"
+			or type(r.ref) ~= "string"
+			or type(r.depth) ~= "number"
+		then
+			return nil
+		end
+		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth }
+	end
+	return { key = row.key, agent = row.agent, host = { id = h.id, name = h.name, address = h.address }, at = row.at, chain = c }
 end
 
 -- The saved links, newest first, and whether the store was readable: a store that is not (a failing read, a value
@@ -124,7 +144,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -241,8 +261,9 @@ function M.ensureSync(cx: WindowCx)
 end
 
 -- Records that agent block `agent`, started from the Plotroom block `pane`, works on `key`. No link when the two are
--- not on the same host, or the saved links cannot be read.
-function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number)
+-- not on the same host, or the saved links cannot be read. `chain`: the saved action it ran; earlier agents of the key
+-- that ran a saved action stay linked, so a chain's panes can each be mapped back to their action.
+function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, chain: Chain?)
 	local host, agentHost = hostOf(cx, pane), hostOf(cx, agent)
 	if not host or not agentHost or not hostSame(host, agentHost) then
 		return
@@ -251,9 +272,9 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number)
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()) } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain } }
 	for _, l in links do
-		if not (l.key == key and hostSame(l.host, host)) then
+		if not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil then
 			table.insert(out, l)
 		end
 	end
@@ -265,6 +286,34 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number)
 	end)
 	M.agentSync(cx)
 	M.ensureSync(cx)
+end
+
+-- The chain of the finished agent pane `agent`, once: its link says what to start next, and the next action is cleared
+-- so a later finish of the same agent (another turn) starts nothing. Returns that chain and the Plotroom block on the
+-- agent's host to start it from; nil for an agent with no next action, an unreadable store or no such block.
+function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
+	local host = hostOf(cx, agent)
+	local links, healthy = readLinks()
+	if not host or not healthy then
+		return nil, nil
+	end
+	for _, l in links do
+		if l.agent == agent and hostSame(l.host, host) and l.chain and l.chain.next then
+			local taken: Chain = table.clone(l.chain)
+			l.chain.next = nil
+			if not writeLinks(links) then
+				return nil, nil
+			end
+			for _, p in plotroomPanes(cx) do
+				local ph = hostOf(cx, p)
+				if ph and hostSame(ph, host) then
+					return taken, p
+				end
+			end
+			return nil, nil
+		end
+	end
+	return nil, nil
 end
 
 -- The newest link for `key` on `pane`'s host, and its state; nil link when none, with state "exited" for one whose

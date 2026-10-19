@@ -7,9 +7,9 @@
 local M = {}
 
 export type ExView = { id: string, kind: string, name: string, integration: string, query: string, group: string, sort: string?, logins: { string }, prompts: { string } }
-export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
+export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
 export type DView = { kind: string, name: string, integration: string, query: string, group: string, sort: string?, slots: { string }, prompts: { string } }
-export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
+export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
 export type Doc = { views: { DView }, prompts: { DPrompt } }
 export type Existing = { [string]: { views: { items: { any }, nextId: number }, prompts: { items: { any }, nextId: number } } }
 export type Entry = { id: number, type: "view" | "prompt", kind: string, name: string, conflict: ("same-name" | "identical")?, remap: { string }, slots: { string } }
@@ -50,6 +50,15 @@ local function deepCopy(v: any): any
 		out[k] = deepCopy(x)
 	end
 	return out
+end
+
+local function findById(items: { any }, id: string): any
+	for _, it in items do
+		if it.id == id then
+			return it
+		end
+	end
+	return nil
 end
 
 local function findByName(items: { any }, name: string): any
@@ -107,6 +116,8 @@ local function checkPrompt(p: any): string?
 		return "invalid model"
 	elseif p.status ~= nil and (p.kind ~= "issues" or not clean(p.status, M.STATUS_CAP, false) or p.status == "") then
 		return "a status is a name of at most " .. M.STATUS_CAP .. " characters on one line, on an issue action"
+	elseif p.next ~= nil and (type(p.next) ~= "string" or not string.match(p.next, "^%w+$")) then
+		return "next must be the id of another action"
 	end
 	return nil
 end
@@ -167,8 +178,15 @@ function M.build(views: { ExView }, prompts: { ExPrompt }, secretFree: boolean?,
 			table.insert(notes, "Action '" .. p.name .. "' left out: its text looks like it holds a secret.")
 			failed = secretFree == true
 		else
-			table.insert(outPrompts, { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status })
+			local item = { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nil :: string? }
+			table.insert(outPrompts, item)
 			included[ref] = true
+			-- The next action travels with it; one that cannot be exported (or no longer exists) is dropped.
+			local nref = if p.next then p.kind .. ":" .. p.next else nil
+			local nextP = if nref then byRef[nref] else nil
+			if nref and nextP and nextP.kind == p.kind and include(nref, nextP) then
+				item.next = nref
+			end
 			return true
 		end
 		included[ref] = false
@@ -306,6 +324,10 @@ function M.parse(text: string): (Doc?, string?)
 			return nil, "Action " .. i .. " is invalid: not an action."
 		end
 		local p = { kind = val(raw.kind), name = val(raw.name), text = val(raw.text), key = val(raw.key), worktree = val(raw.worktree), split = val(raw.split), model = val(raw.model), status = val(raw.status) }
+		local nextRef = val(raw.next)
+		if nextRef ~= nil and (type(nextRef) ~= "string" or not string.match(nextRef, "^%a+:%w+$")) then
+			return nil, "Action " .. i .. " is invalid: next must be the id of another action."
+		end
 		local ref = val(raw.id)
 		local why = if type(raw) ~= "table" then "not an action" else checkPrompt(p)
 		if not why and (type(ref) ~= "string" or ref ~= p.kind .. ":" .. (string.match(ref, "^%a+:(%w+)$") or "") or byRef[ref]) then
@@ -319,9 +341,30 @@ function M.parse(text: string): (Doc?, string?)
 			return nil, "Action " .. i .. " is invalid: " .. why .. "."
 		end
 		names[nameKey] = true
-		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status }
+		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nextRef }
 		byRef[ref] = item
 		table.insert(doc.prompts, item)
+	end
+	-- A next action the document does not hold, of another kind, or that closes a loop is dropped.
+	for _, item in doc.prompts do
+		local nx = item.next
+		if nx then
+			local target = byRef[nx]
+			local at: DPrompt? = target
+			local seen: { [string]: boolean } = {}
+			local loops = false
+			while at and not seen[at.ref] do
+				if at.ref == item.ref then
+					loops = true
+					break
+				end
+				seen[at.ref] = true
+				at = if at.next then byRef[at.next] else nil
+			end
+			if not target or target.kind ~= item.kind or loops then
+				item.next = nil
+			end
+		end
 	end
 
 	names = {}
@@ -382,8 +425,8 @@ local function namesOf(ids: { any }, items: { any }): string
 	return table.concat(out, "\n")
 end
 
-local function samePrompt(p: DPrompt, e: any): boolean
-	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.model or "") == (e.model or "") and (p.status or "") == (e.status or "")
+local function samePrompt(p: DPrompt, e: any, nextName: string, savedNextName: string): boolean
+	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.model or "") == (e.model or "") and (p.status or "") == (e.status or "") and nextName == savedNextName
 end
 
 -- Who holds `key` among `items` (not the item `skipId`) or the reserved keys; nil when it is free.
@@ -451,7 +494,9 @@ function M.plan(doc: Doc, existing: Existing): Plan
 		if known(p.kind) then
 			found = findByName(existing[p.kind].prompts.items, p.name)
 			if found then
-				conflict = if samePrompt(p, found) then "identical" else "same-name"
+				local nextName = if p.next then refName[p.next] or "" else ""
+				local savedNext = if found.next then findById(existing[p.kind].prompts.items, found.next) else nil
+				conflict = if samePrompt(p, found, nextName, if savedNext then string.lower(savedNext.name) else "") then "identical" else "same-name"
 			end
 		end
 		if p.key and existing[p.kind] then
@@ -511,6 +556,7 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 	end
 
 	local promptId: { [string]: string } = {} -- export ref -> the saved id it ended as
+	local applied: { [string]: any } = {} -- export ref -> the saved prompt this import wrote
 	for i, p in doc.prompts do
 		local ex = existing[p.kind]
 		if not ex then
@@ -544,7 +590,34 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 			table.insert(store.items, target)
 		end
 		target.name, target.text, target.key, target.worktree, target.split, target.model, target.status = name, p.text, key, p.worktree, p.split, p.model, p.status
+		applied[p.ref] = target
 		promptId[p.ref] = target.id
+	end
+	-- Each written action's next action, remapped to saved ids; one that was skipped away, or would close a loop among the
+	-- saved actions, is dropped.
+	for _, p in doc.prompts do
+		local target = applied[p.ref]
+		if target then
+			target.next = nil
+			local nid = if p.next then promptId[p.next] else nil
+			if nid and nid ~= target.id then
+				local items = out[p.kind].prompts.items
+				local at: any = findById(items, nid)
+				local seen: { [string]: boolean } = {}
+				local loops = false
+				while at and not seen[at.id] do
+					if at.id == target.id then
+						loops = true
+						break
+					end
+					seen[at.id] = true
+					at = if at.next then findById(items, at.next) else nil
+				end
+				if not loops then
+					target.next = nid
+				end
+			end
+		end
 	end
 
 	for i, v in doc.views do
