@@ -132,12 +132,13 @@ python3 scripts/check.py           # test · types · bench · smoke
 
 | | |
 | --- | --- |
-| `plugin/host.luau` | the one `prs` block (shown as Plotroom): pull request and issue views by kind, prompts, refresh, state; worktrees and the agent menu for the window, run where the block runs |
+| `plugin/host.luau` | the one `prs` block (shown as Plotroom): the entry point only (requires, queue action dispatcher, block handlers, `tern.block.define`) |
+| `plugin/host/` | the block's logic, run where the block runs, layered (each requires only those before it): `core` (types, constants, badges, CLI state) · `storage` (kv stores) · `engine` (lifecycle, refresh, triage, pins, worktrees, details) · `render` (rows, previews, help) · `settings` (Settings sheet) · `requests` (window requests, workflows, export/import, palette actions) |
 | `plugin/window.luau` | links, palette commands, the pickers and tabs of the worktree and agent flows |
 | `plugin/flows.luau` | window side of the workflow commands: agent links and status, confirmed mutations, draft PR, export/import, open by URL, the item commands |
 | `plugin/triage.luau` · `sorting.luau` · `portable.luau` · `board.luau` | seen/snooze memory, per-view sorts, export/import format and plan, the Worktrees list's model |
 | `plugin/github.luau` · `jira.luau` · `tracker.luau` · `worktree.luau` · `process.luau` · `input.luau` · `keys.luau` · `prompts.luau` | `gh` search and writes, Jira through `acli` (and its REST API for transitions), tracker-neutral issues and name formats, worktrees and their inventory, argv process runner, text input (one line or many), the queue's rebindable keys, the default prompts |
-| `plugin/tests/` | `regression.luau` (fake SDK), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
-| `scripts/check.py` | the gate; CI runs `--ci` (no smoke, Tern is not available there). Smoke runs on Tern 0.8.3, 0.8.4, 0.9.0 or 0.9.1 against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/board, URL, export/import, agents |
+| `plugin/tests/` | `regression.luau` (runner), `harness.luau` (fake SDK, helpers), `cases/` (one file per area), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
+| `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` (no smoke, Tern is not available there). `smoke.py` runs on Tern 0.8.3, 0.8.4, 0.9.0 or 0.9.1 against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/board, URL, export/import, agents |
 
 `link` and `install` are exclusive per id: switch with `tern plugin remove plotroom` / `tern plugin unlink plotroom` first.
