@@ -2888,11 +2888,16 @@ case("host action: with a repository and branch it finds the open or draft pull 
 	s.gh.heads["o/r@draft"] = { { number = 7, title = "Draft", state = "OPEN", isDraft = true, url = "https://github.com/o/r/pull/7" } }
 	s.gh.heads["o/r@merged"] = { { number = 8, title = "Done", state = "MERGED", isDraft = false, url = "https://github.com/o/r/pull/8" } }
 	s.gh.heads["o/r@closed"] = { { number = 9, title = "Shut", state = "CLOSED", isDraft = false, url = "https://github.com/o/r/pull/9" } }
+	s.gh.heads["o/r@forked"] = {
+		{ number = 11, title = "Fork's", state = "OPEN", isDraft = false, isCrossRepository = true, url = "https://github.com/o/r/pull/11" },
+		{ number = 8, title = "Done", state = "MERGED", isDraft = false, isCrossRepository = false, url = "https://github.com/o/r/pull/8" },
+	}
 	local found = ask("draft")
 	eq(found.pr, 7, "a draft one is found")
 	eq(found.send, "Watch {url}", "with the action")
 	has(ask("merged").problem, "merged", "a merged one is not run on")
 	has(ask("closed").problem, "closed", "nor a closed one")
+	has(ask("forked").problem, "merged", "a fork's open pull request of the same branch name is not the branch's own")
 	has(ask("none").problem, "No pull request", "no pull request on the branch")
 	eq(asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p1" }).pr, nil, "without a branch it only answers the action")
 	has(asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p9", repo = "o/r", branch = "draft" }).problem, "no longer exists", "a deleted action is a problem before any lookup")

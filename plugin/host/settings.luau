@@ -821,16 +821,25 @@ local function deletePrompt(state: State, s: Settings, id: string)
 		return nil
 	end)
 	if not err and kind.id == "prs" then
-		-- Issue actions name it as `prs:<id>`. ponytail: an unreadable issue store keeps its bytes and its dangling next,
+		-- Issue actions name it as `prs:<id>`. Only an issue store that has one is written: a store with nothing saved
+		-- keeps its seeded defaults unsaved. ponytail: an unreadable issue store keeps its bytes and its dangling next,
 		-- which Settings shows as None and a finished agent reports as gone.
-		editPrompts(KINDS.issues, function(store: Prompts): string?
-			for _, p in store.items do
-				if p.next == id then
-					p.next = nil
+		local issues = loadPrompts(KINDS.issues)
+		local names = false
+		local items: { Prompt } = if issues then issues.items else {}
+		for _, p in items do
+			names = names or p.next == id
+		end
+		if names then
+			editPrompts(KINDS.issues, function(store: Prompts): string?
+				for _, p in store.items do
+					if p.next == id then
+						p.next = nil
+					end
 				end
-			end
-			return nil
-		end)
+				return nil
+			end)
+		end
 	end
 	s.errors["popen:" .. id] = err -- the summary row shows why: the Delete row draws no label
 	if not err then

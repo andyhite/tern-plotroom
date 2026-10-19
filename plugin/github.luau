@@ -1161,7 +1161,7 @@ function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ Linke
 end
 
 -- The pull request of `repo` whose head branch is `branch`, whatever its state: `gh pr list --head` (a branch name,
--- not owner:branch, so a fork's PR of the same name counts too; ponytail: it is only ever shown, never acted on).
+-- not owner:branch, so a fork's PR of the same name is listed too: cross-repository ones are skipped, the branch is not theirs).
 -- An open one wins, else the newest. `state` is "open", "draft", "merged" or "closed". done(nil, nil): none.
 export type HeadPr = { number: number, title: string, state: string, url: string }
 function M.pullByHead(repo: string, branch: string, account: string?, done: (HeadPr?, Problem?) -> ())
@@ -1169,7 +1169,7 @@ function M.pullByHead(repo: string, branch: string, account: string?, done: (Hea
 		account = nil
 	end
 	-- `--head=` keeps a branch that starts with a dash from being read as a flag.
-	M.gh({ "pr", "list", "--repo", repo, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url" }, function(out, problem)
+	M.gh({ "pr", "list", "--repo", repo, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url,isCrossRepository" }, function(out, problem)
 		if not out then
 			return done(nil, problem)
 		end
@@ -1181,7 +1181,7 @@ function M.pullByHead(repo: string, branch: string, account: string?, done: (Hea
 		for i = 1, #data do
 			local n = data[i]
 			local num, title, state, url = field(n, "number"), field(n, "title"), field(n, "state"), field(n, "url")
-			if type(num) == "number" and type(title) == "string" and type(state) == "string" and type(url) == "string" then
+			if type(num) == "number" and type(title) == "string" and type(state) == "string" and type(url) == "string" and field(n, "isCrossRepository") ~= true then
 				local look = string.lower(state)
 				if look == "open" and field(n, "isDraft") == true then
 					look = "draft"
