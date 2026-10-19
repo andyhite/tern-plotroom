@@ -3,14 +3,6 @@
 ## Backlog
 
 ## Todo
-- [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
-  - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
-  - Enter goes to the agent's tab (`flows.goAgent`). The `agentgo` link only parses `owner/repo/number` today, so extend it to Jira keys.
-  - Persist action name, branch and title on `Link` (`agent-links`, `recordAgent` call in `window.luau`) and send them with the status map, so rows need no loaded view. Old links without them show key and state only.
-  - Bump `RPC_PROTOCOL` and `PROTOCOL` together (the status map shape changes). Update `agentSig` and `engine.agentStatus` validation (size and key caps stay). Never write over a malformed `agent-links`.
-  - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
-  - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
-
 - [ ] Jira items and status groups always order by status category: in progress, then to do, then done.
   - Items and `status` groups sort by category first, whatever the sort. A saved `priority` sort now means priority within each category, so existing views reorder. Done shows only when the filter includes it.
   - Status groups: category, then status name within a category (not first appearance), so groups do not jump between refreshes.
@@ -33,6 +25,15 @@
   - Cases: switch to a fresh cached view issues a search, click on the active view issues a search, click inside the cooldown does not. README: refresh section.
 
 ## In-Progress
+
+- [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
+  - Branch: todo/an-agents-entry-in-the-sidebar-lists-my at /Users/andyhite/Code/tern-plotroom.todo/an-agents-entry-in-the-sidebar-lists-my
+  - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
+  - Enter goes to the agent's tab (`flows.goAgent`). The `agentgo` link only parses `owner/repo/number` today, so extend it to Jira keys.
+  - Persist action name, branch and title on `Link` (`agent-links`, `recordAgent` call in `window.luau`) and send them with the status map, so rows need no loaded view. Old links without them show key and state only.
+  - Bump `RPC_PROTOCOL` and `PROTOCOL` together (the status map shape changes). Update `agentSig` and `engine.agentStatus` validation (size and key caps stay). Never write over a malformed `agent-links`.
+  - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
+  - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
 
 ## Review
 
