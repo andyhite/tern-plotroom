@@ -17,16 +17,6 @@
 
 ## Review
 
-- [ ] Show both the PR and the issue in the preview when an item's worktree has both.
-  - Queue, issue selected: when its worktree's branch is the head of a GitHub PR in the code repo (`gh pr list --head <branch> --state all`), show a Pull request section (number, title, state, link). Skip it when GitHub's linked list already has that PR.
-  - Queue, PR selected: when its head branch is a worktree branch noted with an issue (`branch.<b>.plotroomkey`), show an Issue section (key, title, status, link).
-  - Worktrees board: a row with an issue `key` but no PR `number` and no tracker `related` looks the PR up by head branch the same way, so a PR the implement agent opened shows. Update `board.select`'s "branch text never does" comment: a head-ref match is GitHub's answer, not a guess.
-  - Lookups ride the existing detail loads (debounce, `alive`/`gen` guards); no new polling.
-  - Cases: `board_check` enrich by head, one host case per queue preview. README: preview section.
-  - Decided: several PRs on one head branch show the open one (else the newest); the lookup matches the branch name only, so a fork's PR of the same name can show.
-  - Decided: the issue side uses the worktree note the scan had when the detail loaded; a refresh loads it again. The PR side lists the saved checkout with `inventory` (adds a `git worktree list` per PR detail load; two existing list-count cases now expect it).
-  - Decided: a failed lookup shows nothing (no error row); the Worktrees board shows the PR section only when one is found, never "not found".
-
 ## Done
 
 - [x] Actions can move a Jira issue to a set status when they run.
@@ -36,3 +26,13 @@
   - GitHub issues and PR actions have no such field.
   - The window asks the host for the move (the token lives in the host env). Bump `RPC_PROTOCOL` and `PROTOCOL` together if the rpc shape changes.
   - Cases: match, no match, already there, no token, export/import round-trip. README: actions section.
+
+- [x] Show both the PR and the issue in the preview when an item's worktree has both.
+  - Queue, issue selected: when its worktree's branch is the head of a GitHub PR in the code repo (`gh pr list --head <branch> --state all`), show a Pull request section (number, title, state, link). Skip it when GitHub's linked list already has that PR.
+  - Queue, PR selected: when its head branch is a worktree branch noted with an issue (`branch.<b>.plotroomkey`), show an Issue section (key, title, status, link).
+  - Worktrees board: a row with an issue `key` but no PR `number` and no tracker `related` looks the PR up by head branch the same way, so a PR the implement agent opened shows. Update `board.select`'s "branch text never does" comment: a head-ref match is GitHub's answer, not a guess.
+  - Lookups ride the existing detail loads (debounce, `alive`/`gen` guards); no new polling.
+  - Cases: `board_check` enrich by head, one host case per queue preview. README: preview section.
+  - Decided: several PRs on one head branch show the open one (else the newest); the lookup matches the branch name only, so a fork's PR of the same name can show.
+  - Decided: the issue side uses the worktree note the scan had when the detail loaded; a refresh loads it again. The PR side lists the saved checkout with `inventory` (adds a `git worktree list` per PR detail load; two existing list-count cases now expect it).
+  - Decided: a failed lookup shows nothing (no error row); the Worktrees board shows the PR section only when one is found, never "not found".
