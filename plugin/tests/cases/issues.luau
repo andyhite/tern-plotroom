@@ -1,5 +1,5 @@
 --!strict
--- Regression cases: host issue worktrees, prompts and filters.
+-- Regression cases: the host's Jira and issue previews and worktrees, issue prompts, Settings formats, and the issue-worktree window flows.
 
 local h = require("../harness")
 
@@ -478,7 +478,9 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(badges(2), "Jira/accent Done/success", "a done issue says Done")
 	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open in Jira", "the preview head's Open icon names the tracker")
 	b.typeText("?")
-	for _, r in helpRows(b.view().layer) do
+	local rows = helpRows(b.view().layer)
+	yes(#rows > 0, "the shortcut list has rows")
+	for _, r in rows do
 		eq(r.keys == "p", false, "no shortcut for another project")
 	end
 	b.press("escape")
@@ -822,6 +824,7 @@ case("host: the project pickers: Jira's list puts saved projects first with thei
 	local s = jiraHost(w)
 	local gh = s.gh
 	gh.tokens.octocat = "tok-octo"
+	gh.repos.octocat = { "o/r", "x/y" }
 	s.acli.projects = {
 		{ key = "ABC", name = "Alpha" },
 		{ key = "LOW", name = "Lower" },
@@ -862,7 +865,9 @@ case("host: the project pickers: Jira's list puts saved projects first with thei
 	same(answerOf(b, "r1").accounts, { { login = "octocat", active = true } }, "and the gh logins")
 	request(b, "r2", { op = "profile", login = "octocat" })
 	w.flush()
-	same(answerOf(b, "r2").repos, array({}), "a login's list holds the repositories it can open")
+	w.advance(5000)
+	same(answerOf(b, "r2").repos, { "o/r", "x/y" }, "a login's list holds the repositories it can open")
+	eq(answerOf(b, "r2").problem, nil, "with no problem")
 end)
 
 windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotroom-o_r-issue-12", function(w: World)
@@ -1198,8 +1203,6 @@ windowCase("window: a forged issue link not shown by the block is refused before
 	eq(#w.window.browser, 0, "no Browser opened")
 	eq(#w.window.agents + #w.window.launches, 0, "and nothing started")
 end)
-
--- (hx, the helpers of the cases, is declared before openQueue.)
 
 case("host: a request is about what it names, not about the filter on screen: a pull request's worktree and Jira's projects are answered under either kind", function(w: World)
 	local s = jiraHost(w)
@@ -2157,9 +2160,9 @@ case("host: the saved folder formats name the folders of pull request and issue 
 	w.kv.put("issue-dir-format", tooLong)
 	local before = snapshot(s.git)
 	a = hx.ask(w, prs, "p3", { op = "worktree", repo = "o/r", number = 2 })
-	has(a.problem, "is not usable; change its format in Settings › Repositories.", "a pull request's name is refused with the way to fix it")
+	has(a.problem, "is not usable; change its format in Settings › Worktrees.", "a pull request's name is refused with the way to fix it")
 	a = hx.ask(w, issues, "i3", freshAsk("o/r", "16"))
-	has(a.problem, "is not usable; change its format in Settings › Repositories.", "so is an issue's")
+	has(a.problem, "is not usable; change its format in Settings › Worktrees.", "so is an issue's")
 	eq(snapshot(s.git), before, "no branch or worktree was made")
 end)
 

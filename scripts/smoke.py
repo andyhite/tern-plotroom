@@ -1785,3 +1785,9 @@ def check_smoke() -> str:
     finally:
         s.stop()
         shutil.rmtree(str(tmp), ignore_errors=True)
+
+
+if __name__ == "__main__":
+    import check
+
+    sys.exit(check.main(["smoke"]))

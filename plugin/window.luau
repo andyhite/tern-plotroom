@@ -2,7 +2,7 @@
 -- The window half: opening Plotroom, validated PR links (Browser block, worktree tab, the PR's open tab, an agent
 -- running a saved or typed prompt) and their keyboard-accessible palette commands.
 -- This half runs on the machine showing the window; the block may run on a remote host. Whatever touches the checkout
--- or the saved prompts (git, gh, omp, kv) is asked of the block's host half (host.luau, "requests from window.luau");
+-- or the saved prompts (git, gh, omp, kv) is asked of the block's host half (host/requests.luau);
 -- this half only asks the user and arranges tabs.
 
 local worktree = require("./worktree")
@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "18" -- what host.luau's `main.rpc` node must say
+local PROTOCOL = "18" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -186,7 +186,7 @@ local function openUrl(cx: WindowCx, pane: number, url: string)
 	cx:open(url, "beside")
 end
 
--- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host.luau's `showPr`).
+-- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host/requests' `show`).
 local function showPr(cx: WindowCx, pane: number, url: string)
 	cx.session:event(pane, { ev = "action", act = "show-pr", value = url })
 	cx.layout:focus(pane)
@@ -830,7 +830,7 @@ local function pickJira(cx: WindowCx, pane: number)
 end
 
 -- plotroom://confirm: asks in the palette before the Plotroom block in `pane` deletes what its hidden `main.confirm`
--- node names (host.luau's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
+-- node names (host/render's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
 -- which acts only on the row it asked about.
 local function confirmDelete(cx: WindowCx, pane: number)
 	if not sameVersion(cx, pane) then

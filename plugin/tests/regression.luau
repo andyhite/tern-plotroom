@@ -16,8 +16,7 @@ require("./cases/issues")
 require("./cases/mutation")
 require("./cases/flows")
 
-type Require = h.Require
-export type Loader = (any, any) -> Require
+type Loader = h.Loader
 
 local EPOCH, array, cases, hostScene, jsonEncode, newWorld = h.EPOCH, h.array, h.cases, h.hostScene, h.jsonEncode, h.newWorld
 local openQueue, pickerOf, searchItem = h.openQueue, h.pickerOf, h.searchItem

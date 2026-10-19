@@ -17,6 +17,7 @@ local listed, loginsSavedBy, newAcli, newGh, newGit, openQueue = h.listed, h.log
 local pickScope, pickerNode, pickerOf, prLink, prefsOf, promptOf = h.pickScope, h.pickerNode, h.pickerOf, h.prLink, h.prefsOf, h.promptOf
 local refreshNow, request, requestsOf, rowIn, runLink, same = h.refreshNow, h.request, h.requestsOf, h.rowIn, h.runLink, h.same
 local savePrompts, searchItem, sectionIn, sha, windowCase, yes = h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.windowCase, h.yes
+local asks = h.asks
 
 -- The delete the block asks the window to confirm: its hidden `confirm` node, decoded ({row, head, label, detail}); nil when none is pending.
 local function pendingOf(b: Block): any
@@ -249,6 +250,7 @@ case("host: Settings › Keys binds an action to a key: the key works, ? and the
 	eq(row.changed, false, "the default is no change")
 	eq(row.defaultLabel, "None", "and is what Reset goes back to")
 	eq(rowIn(b, "key:more").control.value, ".", "the command palette's key is .")
+	eq(#pickerOf(b).actions, 1, "the action bar has one button")
 	for _, a in pickerOf(b).actions do
 		eq(a.id, "more", "the action bar shows only the command palette's button, the one with a key")
 	end
@@ -643,7 +645,7 @@ case("host: a opens the selected PR's agent link", function(w: World)
 	local n = string.match(pickerOf(b).selected, "_23(%d+)$") :: string
 	local link: any = findKey(pickerNode(b), "agent")
 	eq(link.p.href, "plotroom://github/agent/o/r/" .. n, "the card keeps the selected PR's Agent link")
-	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "unseen: the action bar has no Agent button")
+	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "the card keeps its links in an unseen node")
 	b.typeText("a")
 	eq(w.opened[#w.opened], "plotroom://github/agent/o/r/" .. n, "a opens it")
 end)
@@ -906,9 +908,9 @@ windowCase("window: the confirm link is refused from a pane of another version o
 	end
 	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "2", hidden = true } }, { id = "main.confirm", p = { text = question, hidden = true } } } }
 	refused("another version", "another protocol")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "18", hidden = true } } } }
+	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } } }
 	refused("nothing to delete", "no question")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "18", hidden = true } }, { id = "main.confirm", p = { text = "{not json", hidden = true } } } }
+	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } }, { id = "main.confirm", p = { text = "{not json", hidden = true } } } }
 	refused("nothing to delete", "a malformed question")
 	refused("did not come from a Plotroom block", "a pane that is not Plotroom", 2)
 end)
@@ -2371,6 +2373,27 @@ case("host: a search still running for the old account never shows after the acc
 	same(listed(b), { "no_2fr_237" }, "the new account's list is shown")
 	w.advance(5000)
 	same(listed(b), { "no_2fr_237" }, "the old account's late answer is dropped")
+end)
+
+case("settings: Save on the prompt editor saves the typed text after Done closed the prompt's form", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	b.press("down")
+	eq(prefsOf(b).focus, "ptext:prs:p1", "the prompt's text row")
+	b.press("enter")
+	b.press("a", "c")
+	b.typeText("Summarise {url}")
+	eq(draftOf(b), "Summarise {url}", "the new text is typed in the editor")
+	b.event({ ev = "action", id = "layer.settings", act = "collapse", value = "popen:prs:p1" })
+	eq(draftOf(b), "Summarise {url}", "Done on the prompt's form leaves the editor card open with the draft")
+	b.event({ ev = "action", id = "layer.settings.prompt.buttons.save", act = "save-prompt" })
+	eq(savedText(w, 1), "Summarise {url}", "Save saves the draft though its form was closed")
+	eq(draftOf(b), nil, "and closes the editor")
+	local op: any = w.frames[#w.frames].ops[1]
+	eq(op[2], NULL, "giving the caret back")
 end)
 
 return {}

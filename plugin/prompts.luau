@@ -1,8 +1,8 @@
 --!strict
--- The prompts each kind offers until its saved prompts are first changed: host.luau's loadPrompts shows these while kv
+-- The prompts each kind offers until its saved prompts are first changed: host/storage's loadPrompts shows these while kv
 -- prompts-prs / prompts-issues is absent, and the first edit in Settings › Prompts saves them as they stand. Written
 -- for an omp agent that Plotroom starts in the item's worktree (`worktree` false: the repository's main checkout), with
--- the variables KINDS[kind].vars lists filled in. Each stays under host.luau's PROMPT_CAP, so it can be edited.
+-- the variables KINDS[kind].vars lists filled in. Each stays under host/storage's PROMPT_CAP, so it can be edited.
 
 local M = {}
 

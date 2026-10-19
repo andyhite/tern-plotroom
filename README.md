@@ -132,7 +132,7 @@ python3 scripts/check.py           # test · types · bench · smoke
 
 | | |
 | --- | --- |
-| `plugin/host.luau` | the one `prs` block (shown as Plotroom): the entry point only (requires, queue action dispatcher, block handlers, `tern.block.define`) |
+| `plugin/host.luau` | the one `prs` block (shown as Plotroom): the entry point (requires, queue action dispatcher, block handlers with the worktree card helpers, `tern.block.define`) |
 | `plugin/host/` | the block's logic, run where the block runs, layered (each requires only those before it): `core` (types, constants, badges, CLI state) · `storage` (kv stores) · `engine` (lifecycle, refresh, triage, pins, worktrees, details) · `render` (rows, previews, help) · `settings` (Settings sheet) · `requests` (window requests, workflows, export/import, palette actions) |
 | `plugin/window.luau` | links, palette commands, the pickers and tabs of the worktree and agent flows |
 | `plugin/flows.luau` | window side of the workflow commands: agent links and status, confirmed mutations, draft PR, export/import, open by URL, the item commands |

@@ -76,6 +76,8 @@ end
 
 -- The block: one engine for pull request and issue views alike, each taking its search, details and wording from its kind.
 local function blockDef(): BlockDef<State>
+	-- The worktree card's helpers (summaryOf to removeNow) live here, not in a host/ layer: they share this block's
+	-- scan/status state and are only ever called from the handlers below.
 	-- One line for the badges' tooltip on where the worktree of `note` stands (`item`: the listed item it is of); nil
 	-- when that cannot be said: its head is unread, or a pull request's head is unknown.
 	local function summaryOf(issues: boolean, note: Note, item: any): string?
@@ -505,7 +507,7 @@ local function blockDef(): BlockDef<State>
 		view = function(state: State, _cx: BlockCx): BlockView
 			engine.boardScan(state)
 			ensureCursor(state)
-			requests.autoSeen(state)
+			engine.autoSeen(state)
 			scanWorktrees(state)
 			inspectSelected(state)
 			return if state.settings then settingsView(state) else queueView(state)

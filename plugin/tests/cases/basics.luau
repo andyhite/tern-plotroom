@@ -262,8 +262,4 @@ case("input: selection collapses, extends by word, and meta word keys are not ha
 	eq(input.selected(n), "foo bar", "ctrl+a still selects everything")
 end)
 
--- ---------------------------------------------------------------- semantic models of gh and git
--- They answer process.run calls from state: a PR list per login with paging and quota headers, a repository
--- with refs, remotes and worktrees. A case changes that state (or injects a failure) and reads it back.
-
 return {}

@@ -174,7 +174,7 @@ local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } =
 }
 
 -- Puts the triage mark (New, Changed, Snoozed) and the agent's state in front of `row`'s badges.
-function M.decorate(state: State, kind: string, item: any, row: { [string]: any })
+local function decorate(state: State, kind: string, item: any, row: { [string]: any })
 	local extra: { any } = {}
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent then
@@ -218,7 +218,7 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	for _, item in snap.items do
 		local isOpen = open[item.key] == true
 		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go) else pickerItem(item, state.notes[item.key], isOpen, go)
-		M.decorate(state, snap.kind, item, row)
+		decorate(state, snap.kind, item, row)
 		if engine.needs(state, snap.kind, item) then
 			need += 1
 		end
@@ -231,7 +231,7 @@ end
 
 -- The agent map this block holds as one string, "key=state;" per entry in key order: the hidden `main.agents` node says it,
 -- so a window that sent its map to an earlier run of this block (a reload) sees the block no longer holds it and sends again.
-function M.agentSig(map: { [string]: string }): string
+local function agentSig(map: { [string]: string }): string
 	local names: { string } = {}
 	for k in map do
 		table.insert(names, k)
@@ -247,7 +247,7 @@ end
 function M.rpcNodes(state: State): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
-		ui.node("text", { key = "agents", text = M.agentSig(state.agents), hidden = true }),
+		ui.node("text", { key = "agents", text = agentSig(state.agents), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
 	}
@@ -527,7 +527,7 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 end
 
 -- The preview's own controls, native action rows: Unpin while the item is pinned (nil otherwise).
-function M.previewControls(state: State, item: any): Node?
+local function previewControls(state: State, item: any): Node?
 	if engine.pinFor(state.pins, item.key) then
 		return ui.node("list", { key = "controls" }, {
 			ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }),
@@ -600,7 +600,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 			ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
 		}),
 	}
-	local controls = M.previewControls(state, pr)
+	local controls = previewControls(state, pr)
 	if controls then
 		table.insert(out, controls)
 	end
@@ -815,7 +815,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 			ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
 		}),
 	}
-	local controls = M.previewControls(state, issue)
+	local controls = previewControls(state, issue)
 	if controls then
 		table.insert(out, controls)
 	end
@@ -930,7 +930,7 @@ end
 
 -- The board's preview of the selected worktree: its folder's name, the pull request and issue it was made for (each as
 -- the tracker answered, or why not), its git facts and, hidden, the link the window opens its folder with.
-function M.boardPreview(state: State): { Node }
+local function boardPreview(state: State): { Node }
 	local row, at = engine.boardSelected(state)
 	if not row then
 		return {}
@@ -1002,7 +1002,7 @@ local function keyed(actions: { any }): { any }
 end
 
 -- Turns the queue's picker props into the Worktrees board's: its rows, subtitle and action bar.
-function M.boardProps(state: State, props: { [string]: any })
+local function boardProps(state: State, props: { [string]: any })
 	local items, order = engine.boardItems(state)
 	local row = engine.boardSelected(state)
 	local map = keys.load()
@@ -1173,12 +1173,16 @@ function M.queuePicker(state: State): Node
 	if not snap and problem then
 		props.message = spans(ui.span(headOf(state, problem.kind) or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(helpOf(state, problem.kind) or "", "muted"))
 	end
-	local preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
+	local preview: { Node }
 	if state.boardOn then
-		preview = M.boardPreview(state)
-		M.boardProps(state, props)
-	elseif #strip > 0 then
-		props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
+		cancelDetails(state) -- no checks load for a queue preview that is not shown
+		preview = boardPreview(state)
+		boardProps(state, props)
+	else
+		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
+		if #strip > 0 then
+			props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
+		end
 	end
 	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane.
 	props.preview = if props.selected then "side" else "none"
@@ -1202,7 +1206,7 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 end
 
 -- The modal that asks before a board row's worktree is removed; Enter or Esc keeps it, `d` or a click removes it.
-function M.boardConfirm(state: State): Node
+local function boardConfirm(state: State): Node
 	local row: any = nil
 	for _, r in engine.boardRows(state) do
 		if r.id == state.boardRemoving then
@@ -1230,7 +1234,7 @@ function M.queueView(state: State): BlockView
 		local body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
 		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
 	elseif state.boardOn and state.boardRemoving then
-		table.insert(layer, M.boardConfirm(state))
+		table.insert(layer, boardConfirm(state))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

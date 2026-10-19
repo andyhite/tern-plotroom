@@ -10,14 +10,16 @@ There is one block. `Plotroom: Open` is its one entry point; other palette comma
 
 Two Luau runtimes talk through Tern:
 
-- **Host** (`plugin/host.luau` + `plugin/host/`): runs where the block runs (the remote host's daemon for a remote pane). Owns per-pane `State` (`running`, keyed by pane), polls GitHub and Jira, persists prefs in `tern.kv`, returns a declarative `ui` tree from `view`, and does all checkout work (git, gh, omp) for the window. `host.luau` is only the entry point: requires, the queue action dispatcher, `blockDef` handlers, `tern.block.define("prs", {...})`.
+- **Host** (`plugin/host.luau` + `plugin/host/`): runs where the block runs (the remote host's daemon for a remote pane). Owns per-pane `State` (`running`, keyed by pane), polls GitHub and Jira, persists prefs in `tern.kv`, returns a declarative `ui` tree from `view`, and does all checkout work (git, gh, omp) for the window. `host.luau` is the entry point: requires, the queue action dispatcher, the `blockDef` handlers (plus the worktree card helpers `summaryOf`/`applyScans`/`scanWorktrees`/`inspectSelected`/`askRemove`/`removeNow`, kept inside `blockDef`) and `tern.block.define("prs", {...})`.
 - **Window** (`plugin/window.luau`): runs on the machine showing the window, so it never touches a checkout. Registers `tern.route.link` for `plotroom://…` links and palette commands, and asks the host through `{ev="action", act="rpc", value=JSON{id, op, ...}}` requests. `flows.luau` is the window's workflow side (agent links/status, confirmed mutations, draft PR, export/import, open by URL).
 
 Host layers (`plugin/host/`; each module may require only those to its left, no cycles):
 
 `core` (types, constants, `KINDS`/`GROUPS`, badges, the `cli` table, `running`, pure text/href helpers) ← `storage` (kv stores, name `formats`) ← `engine` (lifecycle, identity/refresh, triage, pins, Worktrees board glue, navigation, details, worktree notes, `me`, `ghActive`, CLI probing) ← `render` (rows, previews, checks, help, scopes, hidden rpc nodes) ← `settings` (Settings sheet) ← `requests` (window requests, workflow requests, export/import, palette actions).
 
-Shared helpers (no cycles): `github`, `jira`, `tracker`, `worktree`, `process`, `input`, `keys`, `prompts` plus pure models `triage`, `sorting`, `portable`, `board`. `window → flows, worktree`; `flows` takes what window owns through `flows.setup(Env)`.
+Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts` and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree`; `flows` takes what window owns through `flows.setup(Env)`.
+
+A change to a shared store (views, prompts, checkouts, ...) fans out to the other live blocks through `propagate` (engine), which rereads storage and renders them.
 
 Invariants (keep when editing):
 
@@ -54,7 +56,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Code Conventions & Common Patterns
 
 - `--!strict` at the top of every module. Modules are `local M = {}` + `function M.x` + `return M`; `require` paths are relative to the requiring file. `host.luau`/`window.luau` expose only registrations.
-- Luau caps a function (including a module's main chunk) at 200 locals. Put new host code in the module of its layer and keep each file well under 200 top-level locals; do not hide helpers on catch-all tables.
+- Put new host code in the module of its layer; do not hide helpers on catch-all tables.
 - Naming: files lowercase single word; functions/locals camelCase; constants SCREAMING_SNAKE; types PascalCase (`export type` when shared); action/check ids kebab-case; kv keys lowercase words.
 - Async is callbacks only, no coroutines. Shape: `done(value?, problem?, cx?)`. `process.run` is the only way to spawn anything.
 - Errors are values: `Problem = {kind, message}` (kinds in `github.luau`). Wrap `tern.kv`/`tern.json` calls in `pcall`; validate untrusted input at the boundary (store validators, `parsePage`, size caps).
@@ -85,7 +87,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Testing & QA
 
 - No framework. `check.py test` bundles every `plugin/**/*.luau` into one temp script (each module wrapped as `function(tern, require, os)`, named by its path under `plugin/`, e.g. `host/core`) and runs `luau` on it. Pass = exit 0 and stdout `REGRESSION cases=N failed=0`.
-- `regression.luau` is the runner. Add a case to the file in `plugin/tests/cases/` for its area, binding the harness helpers as locals, with `case("module: behavior", fn)` (host context) or `windowCase(...)` (window context). Each case gets a fresh `World` (`newWorld`): fake SDK with virtual clock (`advance`/`runUntil`/`flush`), in-memory `fs`/`kv`, and `w.respond(fn)` to answer `process.run` spawns; unmatched spawns fail the case at `w.finish()`. Assertions: `eq`, `same`, `yes`, `has`, `lacks`.
+- `regression.luau` is the runner. Add a case to the file in `plugin/tests/cases/` for its area, binding the harness helpers as locals, with `case("module: behavior", fn)` (host context) or `windowCase(...)` (window context). A new `tests/cases/<area>.luau` must be `require`d from `tests/regression.luau`, or its cases never run and the gate fails. Each case gets a fresh `World` (`newWorld`): fake SDK with virtual clock (`advance`/`runUntil`/`flush`), in-memory `fs`/`kv`, and `w.respond(fn)` to answer `process.run` spawns; unmatched spawns fail the case at `w.finish()`. Assertions: `eq`, `same`, `yes`, `has`, `lacks`.
 
 ```lua
 case("input: clean drops only malformed bytes and control characters", function(w: World)
@@ -96,7 +98,7 @@ end)
 
 - Prefer behavioral assertions (rendered text, argv, kv contents, toasts). Case names are prefixed by module.
 - Pure helpers with no SDK dependency go in `plugin/tests/check.luau` (bare `assert`), which runs in the bundle and in-app via the `selftest` palette command.
-- No coverage tool. Bench rows (`BENCH <name> ms=…`, 1000 PRs) must stay under budget. Smoke (`scripts/smoke.py`) covers real-git worktree scenarios and real Plotroom blocks with a fake gh; see its header.
+- No coverage tool. Bench rows (`BENCH <name> ms=…`, 1000 PRs) must stay under budget. Smoke (`scripts/smoke.py`) covers real-git worktree scenarios and real Plotroom blocks with a fake gh; its scenarios are listed in `SCENARIOS` in `scripts/smoke.py` (see its header).
 - Fake-SDK window cases that need the host's answers use `linkQueue`/`agentScene`, which `w.link` a real host block to the window's pane.
 - A block probes `gh --version` and `acli --version` before listing any view: `newWorld` answers them (installed, with sprints) unless a model (`newGh`, `newAcli`) answers first; `hx.uninstalled(w, program)` makes one fail to start.
 - Host scenes save fixture views (ungrouped, unsorted) unless the case saved that store first; a case about default views clears `views-prs`/`views-issues` first.

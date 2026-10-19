@@ -25,7 +25,7 @@ local NULL: any = setmetatable({}, {
 	end,
 })
 M.NULL = NULL
-local arrayTags: { [any]: boolean } = {}
+local arrayTags: { [any]: boolean } = (setmetatable({}, { __mode = "k" }) :: any)
 
 -- The SDK tags an array with a protected metatable: table.clone refuses it ("table has a protected metatable").
 local function tagArray(list: any): any
@@ -1323,6 +1323,9 @@ local function windowCase(name: string, run: (World) -> ())
 end
 M.windowCase = windowCase
 
+-- ---------------------------------------------------------------- semantic models of gh and git
+-- They answer process.run calls from state: a PR list per login with paging and quota headers, a repository
+-- with refs, remotes and worktrees. A case changes that state (or injects a failure) and reads it back.
 local function sha(c: string): string
 	return string.rep(c, 40)
 end
@@ -1765,7 +1768,7 @@ export type Git = {
 	pushFail: Reply?, -- the answer of every push instead of success: a non-fast-forward rejection
 }
 
-local gitFallback: { [any]: boolean } = {}
+local gitFallback: { [any]: boolean } = (setmetatable({}, { __mode = "k" }) :: any)
 
 -- `git worktree list --porcelain -z` of the model as it stands: one record per worktree, the main one first.
 local function porcelain(g: Git): string
@@ -2149,8 +2152,6 @@ local function logFrom(g: Git, from: number): { string }
 	return out
 end
 M.logFrom = logFrom
-
--- ---- worktree.luau: names, remotes, wording
 
 export type Worktree = typeof(require("../worktree"))
 
@@ -3005,7 +3006,7 @@ end
 -- Helpers of the cases below, grouped in one table.
 local asks = {}
 M.asks = asks
-asks.protocol = "18" -- what host.luau's `main.rpc` node says: the one place the window cases below name it
+asks.protocol = "18" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
@@ -3073,7 +3074,6 @@ function asks.several(w: World): (HostScene, Block)
 	return s, b
 end
 
--- BEGIN backend cases
 -- Helpers hang on `asks.bk`, grouping those of the backend cases.
 asks.bk = {}
 
@@ -3205,9 +3205,8 @@ function asks.bk.drafted(w: World): Git
 	return g
 end
 
--- BEGIN host workflow cases
--- Triage, sorts, agent status, item mutations, draft pull requests, the Worktrees list, export and import, open by URL.
--- Helpers hang on `asks.hx`, grouping those of these cases.
+-- Helpers hang on `asks.hx`, grouping those of the host workflow cases: triage, sorts, agent status, item mutations,
+-- draft pull requests, the Worktrees list, export and import, open by URL.
 asks.hx = {}
 asks.hx.seq = 0
 

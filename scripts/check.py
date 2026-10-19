@@ -276,6 +276,9 @@ def luau_banner(luau: Path) -> str:
 
 
 def check_test() -> str:
+    unlisted = [p.stem for p in sorted((PLUGIN / "tests" / "cases").glob("*.luau")) if 'require("./cases/%s")' % p.stem not in (PLUGIN / "tests" / "regression.luau").read_text(encoding="utf-8")]
+    if unlisted:
+        raise GateError("plugin/tests/cases/ files not required by plugin/tests/regression.luau (they would run nothing): %s" % ", ".join(unlisted))
     luau = find_tool("luau", "LUAU")
     say("test: " + luau_banner(luau))
     code, out, err = run_bundle(luau, "test")
@@ -342,11 +345,15 @@ def check_bench() -> str:
     return "%d rows, slowest %.1f ms (budget %.0f ms)" % (len(rows), worst, BENCH_BUDGET_MS)
 
 
-def check_smoke() -> str:
+def load_smoke():
     sys.modules.setdefault("check", sys.modules[__name__])  # run as __main__: smoke.py must share this module's GateError
     import smoke
 
-    return smoke.check_smoke()
+    return smoke
+
+
+def check_smoke() -> str:
+    return load_smoke().check_smoke()
 
 
 # --------------------------------------------------------------------------- main
@@ -404,6 +411,7 @@ def main(argv: List[str]) -> int:
     results: List[Tuple[str, str, str]] = []
     if args.command in ("all", "smoke"):
         if args.ci:
+            load_smoke()  # a syntax or import error in smoke.py must still fail CI
             results.append(("smoke", "NOT RUN", "--ci: Tern is not available on CI; run `python3 scripts/check.py smoke` locally"))
         else:
             plan.append(("smoke", check_smoke))

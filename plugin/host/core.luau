@@ -42,7 +42,7 @@ local TRACKERS: { [string]: TrackerApi } = {
 M.TRACKERS = TRACKERS
 
 -- A saved search: `kind` is what it lists ("prs" | "issues", a key of KINDS) and its `id` is "<kind>:<its id in that
--- kind's kv store>" (the pinned pull request's is "pin"), so ids are the block's own whichever store a view is in.
+-- kind's kv store>" (a pin's is "pin:<item key>", see engine.pinView), so ids are the block's own whichever store a view is in.
 -- `integration` is the tracker it asks ("github" | "jira"), `logins` the gh logins a GitHub view runs
 -- as (none: gh's active account; with several, the view is one sidebar scope under each login, running as it),
 -- `group` how the list is grouped ("none" or a GROUPS value) and `prompts` the ids of the prompts offered under it, in

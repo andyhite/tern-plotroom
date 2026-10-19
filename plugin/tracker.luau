@@ -31,7 +31,7 @@ export type Field = { label: string, value: string? } -- nil value: shown as Non
 export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }
 export type IssueResult = { issues: { Issue }, total: number, complete: boolean }
 
--- Name formats (Settings › Repositories): an issue's new branch, and the folder name of a PR's or an issue's worktree.
+-- Name formats: an issue's new branch (Settings › Worktrees, or per repository in Settings › Repositories), and the folder name of a PR's or an issue's worktree (Settings › Worktrees).
 -- `{github.user}` is the gh login the repository is worked with, `{jira.user}` the Jira sign-in's email before the `@`.
 M.BRANCH_DEFAULT = "{github.user}/{key}-{slug}"
 M.VARS = { "key", "slug", "owner", "repo", "project", "github.user", "jira.user" }

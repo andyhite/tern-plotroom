@@ -106,7 +106,7 @@
 }
 
 /* The scope rail folds into the scope dropdown (the two rules `.narrow` applies) once the block is 127 terminal columns
-   or less. host.luau adds `.narrow` to the queue's role from the block's own `cx.cols`: Tern's CSS sees the window's
+   or less. host/render adds `.narrow` to the queue's role from the block's own `cx.cols`: Tern's CSS sees the window's
    width, and container queries are not applied here. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.narrow'] .pk-scopes {
 	display: none;

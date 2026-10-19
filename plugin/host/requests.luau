@@ -6,7 +6,6 @@
 -- opening plotroom://rpc/<id>, which only the window waiting for that id acts on. `main.rpc` says which protocol this
 -- host speaks, so a window never waits on a host running another Plotroom version.
 
-local board = require("../board")
 local github = require("../github")
 local jira = require("../jira")
 local input = require("../input")
@@ -15,7 +14,6 @@ local portable = require("../portable")
 local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
-local triage = require("../triage")
 local worktree = require("../worktree")
 
 local core = require("./core")
@@ -613,35 +611,6 @@ function M.unpin(state: State): boolean
 	return true
 end
 
--- The selected item is marked seen as its preview is shown, with the data it shows now: a later refresh that changes it
--- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
-function M.autoSeen(state: State)
-	local item, snap = selected(state), state.snap
-	if not item or not snap or state.boardOn then
-		return
-	end
-	local st = engine.status(state, snap.kind, item)
-	if not st or st.fresh == "seen" then
-		return
-	end
-	local sig = item.key .. "\0" .. triage.signature(snap.kind, item)
-	if state.seenTried == sig then
-		return
-	end
-	state.seenTried = sig
-	local store = engine.store(state, true)
-	if not store then
-		return -- unreadable: nothing is written over it (the header says why)
-	end
-	triage.markSeen(store, snap.kind, item, os.time())
-	local err = triage.save(store)
-	if err then
-		state.triage, state.triageProblem = nil, nil
-		return state.cx:toast("error", "Not saved", err)
-	end
-	engine.triageChanged(state)
-end
-
 function M.whyOf(problem: github.Problem?): string
 	return if problem then problem.message else "It did not work."
 end
@@ -974,7 +943,7 @@ function M.act(state: State, id: string, q: any)
 		-- `who` is the Jira account (full email and site) acli runs as, read now and read again at commit by jira.comment:
 		-- the comment is never sent as another account or to another site.
 		local function offerComment(who: jira.Identity?)
-			local lines = { target .. ": " .. printable(item.title), if who then "Jira account: " .. printable(who.email) .. " at " .. printable(who.site) else "Account: @" .. (account :: string), "Comment (" .. total .. " characters):" }
+			local lines = { target .. ": " .. printable(item.title), if who then "Jira account: " .. printable(who.email) .. " at " .. printable(who.site) else "Account: @" .. (account :: string), "Comment (" .. (utf8.len(body) or #body) .. " characters):" }
 			table.move(rows, 1, #rows, #lines + 1, lines)
 			M.offer(state, id, item, { head = "Comment on " .. target .. "?", label = "Add comment", lines = lines }, function(done)
 				local function landed(problem: github.Problem?)
@@ -1636,7 +1605,7 @@ function M.openUrl(state: State, id: string, url: any)
 	end)
 end
 
--- Window requests that belong to the workflow additions (rpc's last branch).
+-- Window requests of flows.luau's workflows (rpc's last branch).
 function M.workflowRpc(state: State, id: string, q: any)
 	local op = q.op
 	if op == "ctx" then
@@ -1658,8 +1627,7 @@ function M.workflowRpc(state: State, id: string, q: any)
 	elseif op == "open-url" and type(q.url) == "string" and #q.url <= 2048 then
 		M.openUrl(state, id, q.url)
 	elseif op == "worktree-path" and type(q.n) == "number" then
-		local rows = board.rows(state.board, { showMain = true })
-		local row = rows[q.n]
+		local row = engine.boardRows(state)[q.n]
 		reply(state, id, if row and not row.missing then { path = row.path } else { problem = "That worktree is no longer listed." })
 	end
 end

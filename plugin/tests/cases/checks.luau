@@ -1,5 +1,5 @@
 --!strict
--- Regression cases: host checks, worktree cards and palette.
+-- Regression cases: host checks, worktree card (removal, refusals, scans), Settings views and prompts, and the issue filters.
 
 local h = require("../harness")
 
@@ -652,9 +652,12 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	eq(cardOf(b), nil, "its Remove button removes it as d does")
 	ask()
 	b.typeText("s")
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "Settings is open")
 	b.event({ ev = "action", id = "layer.queue.worktree.actions.remove", act = "remove-worktree" })
+	eq(findKey(b.view().layer, "settings", "prefs"), nil, "the Remove button closes Settings")
+	yes(confirmOf(b) ~= nil, "and asks")
 	b.press("escape")
-	eq(confirmOf(b), nil, "with Settings open the queue's buttons do nothing, here as on the action bar")
+	yes(confirmOf(b) == nil and cardOf(b) ~= nil, "Esc keeps the worktree")
 end)
 
 case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
@@ -737,6 +740,7 @@ case("host: Remove worktree is refused while the worktree is being prepared, at 
 	b.typeText("d")
 	eq(confirmOf(b), nil, "the question closes")
 	eq(w.toasts[#w.toasts].text, "Worktree is busy", "and d is refused the same")
+	eq(#w.toasts, told + 2, "each refusal toasted once")
 	w.flush()
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
 	yes(cardOf(b) ~= nil, "and the card is still there")
@@ -2287,11 +2291,7 @@ case("host: a collapsed view is one summary row; Edit expands its form, another'
 	goToSettings(other, "views")
 	local hint = rowIn(other, "vopen:prs:v1").hint
 	lacks(hint, "work", "a login is not in the summary")
-	for _, section in prefsOf(other).sections do
-		if section.id == "group:github - work" then
-			has(section.title, "work", "it is in the group's title")
-		end
-	end
+	eq(sectionIn(other, "vopen:prs:v1").title, "GitHub - work", "the login is in the group's title")
 	eq(hint, "Pull requests · is:open", "the summary is the kind and the query: no grouping, no prompt count")
 end)
 

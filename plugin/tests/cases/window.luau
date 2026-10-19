@@ -2,6 +2,7 @@
 -- Regression cases: window module.
 
 local h = require("../harness")
+local asks = h.asks
 
 type Worktree = h.Worktree
 type World = h.World
@@ -503,7 +504,7 @@ windowCase("window: PR worktree without a checkout asks for one, then continues"
 	eq(sent[2].repo, "o/r", "for the repository")
 	eq(sent[2].path, "/work/r", "and that path")
 	eq(sent[3].op, "worktree", "and the worktree once more")
-	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the checkout is saved under the lowercase repository")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the repository's checkout is saved under its lowercase name")
 	eq(w.toasts[#w.toasts].level, "success", "the worktree is made")
 	has(w.toasts[#w.toasts].text, "o/r#5", "for the pull request")
 	eq(countLog(s.git, "worktree add"), 1, "once")
@@ -611,7 +612,7 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "18", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	w.click(prLink("worktree", "o/r", 5))
@@ -653,7 +654,7 @@ windowCase("window: an answer already on screen is found by polling even when it
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = "18", hidden = true } } }
+	local nodes: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } }
 	surface.main = { id = "main", c = nodes }
 	w.click(prLink("agent", "o/r", 5))
 	local sent = requestsSent(w)
@@ -667,7 +668,5 @@ windowCase("window: an answer already on screen is found by polling even when it
 		lacks(t.text, "did not answer", "and the request is not given up")
 	end
 end)
-
--- ---- github.luau
 
 return {}

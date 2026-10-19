@@ -379,9 +379,7 @@ case("jira.transitions: an API token of another account sends nothing past /myse
 	end
 	eq(#reqs, 1, "only /myself was requested")
 	eq(reqs[1].line, "GET /rest/api/3/myself", "that request")
-	for _, t in w.toasts do
-		lacks(t.text, "s3cret-token", "no toast carries the token")
-	end
+	eq(#w.toasts, 0, "no toast is shown, so none carries the token")
 	for _, call in w.calls do
 		lacks(table.concat(call.argv, " "), "s3cret-token", "the token is in no argv")
 	end
@@ -526,11 +524,10 @@ case("worktree.removeEntry: refuses main, locked, prunable, missing, changed and
 	eq(countLog(g, "worktree remove"), 0, "git was never asked to remove any of them")
 end)
 
-case("worktree.removeEntry: a dirty worktree is never forced, a clean one goes with its branch kept unless merged", function(w: World)
+case("worktree.removeEntry: a dirty worktree is never forced, a clean one goes with its branch kept unless merged, and a branch Plotroom did not note is left alone", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.inventoryRepo(w)
 	asks.bk.tree(w, g, "/wt/um", "um")
-	g.unmerged.um = true
 	local function remove(path: string, branch: string?): any
 		return asks.bk.pack(w, function(done)
 			worktree.removeEntry("/work/r", "o/r", path, branch, done)
@@ -565,10 +562,10 @@ case("worktree.removeEntry: a dirty worktree is never forced, a clean one goes w
 	eq(countLog(g, "branch -d feature"), 1, "its branch is deleted without force")
 	eq(countLog(g, "branch -D"), 0, "never with -D: the pull request's fetched ref is not there to compare with")
 	local unmerged = remove("/wt/um", "um")
-	eq(listed("/wt/um"), false, "the worktree of an unmerged branch is removed")
+	eq(listed("/wt/um"), false, "the worktree of a branch Plotroom did not note is removed")
 	yes(unmerged[1], "a removal")
 	has(unmerged[1].branch, "kept", "the removal says the branch was kept")
-	eq(g.refs["refs/heads/um"], sha("b"), "but its unmerged branch is kept")
+	eq(g.refs["refs/heads/um"], sha("b"), "and that branch is kept")
 	eq(countLog(g, "branch -D"), 0, "and still never forced")
 	local det = remove("/wt/det", nil)
 	eq(det[2], nil, "problem")
@@ -776,10 +773,5 @@ case("worktree: draftPreview and remoteBranches resolve the remote of the reposi
 	eq(countLog(g, "ls-remote --symref fork"), 1, "remoteBranches lists that remote's branches")
 	eq(countLog(g, "ls-remote --symref origin"), 0, "not origin's")
 end)
--- END backend cases
-
--- ---------------------------------------------------------------- runner
-
--- ---------------------------------------------------------------- window flows (flows.luau)
 
 return {}

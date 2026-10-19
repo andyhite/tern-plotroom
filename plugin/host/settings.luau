@@ -22,7 +22,7 @@ type State = core.State
 type View = core.View
 
 local INTEGRATIONS, KINDS, SETTINGS_ID, clip, groupsOf, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.groupsOf, core.printable, core.cli
-local PROMPT_CAP, editJiraRepos, editPrompts, isTable, jiraReposOf, kindAndId, kvSet = storage.PROMPT_CAP, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.kindAndId, storage.kvSet
+local PROMPT_CAP, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId = storage.PROMPT_CAP, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
 local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, alive, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.alive, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
@@ -559,6 +559,9 @@ local function beginEdit(state: State, row: string, initial: string?)
 	if not s or not def or def.disabled then
 		return
 	end
+	if s.edit and s.edit.model.multi then
+		return -- an open prompt draft is not overwritten
+	end
 	local id = string.match(row, "^ptext:(.+)$")
 	local pk, pid = kindAndId(id or "")
 	local prompts = if pk then loadPrompts(pk) else nil
@@ -594,22 +597,6 @@ local function clearCheckout(state: State, repo: string): string?
 		state.cx:toast("success", "Checkout cleared", repo)
 	end
 	return err
-end
-
--- Rereads `repo`'s setup commands, lets `fn` change them (an error string aborts) and saves them.
-local function editSetup(repo: string, fn: ({ string }) -> string?): string?
-	local map, err = setupMap()
-	if not map then
-		return err
-	end
-	local list = setupOf(map, repo)
-	local ferr = fn(list)
-	if ferr then
-		return ferr
-	end
-	map[string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
-	local werr = kvSet("setup-commands", map)
-	return if werr then "Could not save: " .. werr else nil
 end
 
 -- Whether `value` is a group-by of views of `integration` (every kind accepts "none").
@@ -667,7 +654,9 @@ end
 -- pull request is no saved view and has none.
 function M.cycleSort(state: State)
 	local v = activeView(state)
-	if not v or engine.isPin(v.id) then
+	if not v then
+		return state.cx:toast("info", "No sort to change", "No view is shown.")
+	elseif engine.isPin(v.id) then
 		return state.cx:toast("info", "No sort to change", "A pinned item is a single item.")
 	end
 	local choices = sorting.choices(v.kind, v.integration)
@@ -1168,7 +1157,7 @@ function M.commitEdit(state: State)
 	local row = e.row
 	local def = M.rowById(state, row)
 	-- An action's unchanged name still saves: naming a new one "New action" must open its text all the same.
-	if not def or (text == def.control.value and not string.match(row, "^pname:")) then
+	if not e.model.multi and (not def or (text == def.control.value and not string.match(row, "^pname:"))) then
 		settle(s, row, nil) -- nothing to save: the edit closes, and a warning about the rejected draft goes with it
 		return
 	end

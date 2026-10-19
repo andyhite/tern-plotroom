@@ -101,7 +101,7 @@ local function validViews(kind: Kind, v: any): Views?
 end
 
 -- tern.kv.set raises on failure and returns nothing: the error text, or nil when saved.
-function M.kvSet(key: string, value: any): string?
+local function kvSet(key: string, value: any): string?
 	local ok, err = pcall(function(): string?
 		tern.kv.set(key, value)
 		return nil
@@ -117,7 +117,7 @@ function M.writeViews(kind: Kind, store: Views): string?
 	for _, v in store.items do
 		table.insert(items, { id = string.sub(v.id, #kind.id + 2), name = v.name, integration = v.integration, query = v.query, logins = tern.json.array(v.logins), group = v.group, prompts = tern.json.array(v.prompts), sort = v.sort })
 	end
-	return M.kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	return kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 end
 
 -- views, writable, error. The views' ids are "<kind>:<saved id>". An absent key is seeded; unreadable or malformed
@@ -159,7 +159,7 @@ function M.loadAll(state: State)
 			state.locked[kind.id] = err or "Saved " .. kind.one .. " views are read-only."
 		end
 		for _, v in store.items do
-			if cli.on(v.integration) then
+			if cli.ready() and cli.on(v.integration) then
 				table.insert(all, v)
 			end
 		end
@@ -218,7 +218,7 @@ function M.saveCheckout(repo: string, path: string, keep: boolean?): string?
 		return nil
 	end
 	repos[key] = path
-	local err = M.kvSet("checkouts", repos)
+	local err = kvSet("checkouts", repos)
 	return if err then "Could not save: " .. err else nil
 end
 
@@ -242,7 +242,23 @@ function M.setupOf(map: { [string]: any }, repo: string): { string }
 	return M.stringList(map[string.lower(repo)])
 end
 
--- Branch and worktree folder name formats (Settings › Repositories). One table keeps the format helpers together.
+-- Rereads `repo`'s setup commands, lets `fn` change them (an error string aborts) and saves them.
+function M.editSetup(repo: string, fn: ({ string }) -> string?): string?
+	local map, err = M.setupMap()
+	if not map then
+		return err
+	end
+	local list = M.setupOf(map, repo)
+	local ferr = fn(list)
+	if ferr then
+		return ferr
+	end
+	map[string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
+	local werr = kvSet("setup-commands", map)
+	return if werr then "Could not save: " .. werr else nil
+end
+
+-- Branch and worktree folder name formats (folders: Settings › Worktrees; branch: there, or per repository in Settings › Repositories). One table keeps the format helpers together.
 local formats = {}
 M.formats = formats
 
@@ -292,11 +308,11 @@ function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
 	for key, list in map do
 		out[key] = tern.json.array(M.stringList(list))
 	end
-	local werr = M.kvSet("jira-repos", out)
+	local werr = kvSet("jira-repos", out)
 	return if werr then "Could not save: " .. werr else nil
 end
 
--- Name formats for every repository (Settings › Repositories › Worktrees): the branch of an issue's worktree, and the
+-- Name formats for every repository (Settings › Worktrees): the branch of an issue's worktree, and the
 -- folder names of PR and issue worktrees. Kept under kv formats.KEYS; "" or unset is the default.
 formats.KEYS = { branch = "branch-format", prdir = "pr-dir-format", issuedir = "issue-dir-format" } :: { [string]: string }
 formats.DEFAULTS = { branch = tracker.BRANCH_DEFAULT, prdir = tracker.PR_DIR_DEFAULT, issuedir = tracker.ISSUE_DIR_DEFAULT } :: { [string]: string }
@@ -320,7 +336,7 @@ function M.removeRepo(repo: string): string?
 		local ok, stored = pcall(tern.kv.get, name)
 		if ok and isTable(stored) and stored[key] ~= nil then
 			stored[key] = nil
-			local err = M.kvSet(name, stored)
+			local err = kvSet(name, stored)
 			failed = failed or (if err then "Could not save: " .. err else nil)
 		end
 	end
@@ -392,7 +408,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	for _, p in store.items do
 		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model })
 	end
-	local werr = M.kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
 end
 
@@ -424,13 +440,13 @@ function formats.saveRepo(repo: string, fmt: string?): string?
 		return err
 	end
 	map[string.lower(repo)] = fmt
-	local werr = M.kvSet("branch-formats", map)
+	local werr = kvSet("branch-formats", map)
 	return if werr then "Could not save: " .. werr else nil
 end
 
 -- Saves name format `which` (a formats.KEYS key; "" is the default).
 function formats.save(which: string, fmt: string): string?
-	local err = M.kvSet(formats.KEYS[which], fmt)
+	local err = kvSet(formats.KEYS[which], fmt)
 	return if err then "Could not save: " .. err else nil
 end
 

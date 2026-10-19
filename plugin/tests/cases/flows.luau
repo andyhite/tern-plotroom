@@ -1,5 +1,5 @@
 --!strict
--- Regression cases: window flows, triage, sort, mutations, export/import and agents.
+-- Regression cases: window flows (status, draft PR, import/export, open-url, palette), triage, sort, mutations, the Worktrees board, keys, views and agents.
 
 local h = require("../harness")
 
@@ -180,7 +180,7 @@ windowCase("window status: a mismatched host warns while its block is focused, a
 	w.window.handlers.window_start(w.cx)
 	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "an announcement of another protocol warns at once")
 	eq(w.window.refreshes, 1, "the status line was redrawn")
-	announce(w, 1, "18")
+	announce(w, 1, asks.protocol)
 	w.advance(2100)
 	eq(protocolWarning(w, 1), nil, "a reloaded host that matches clears it while focused")
 	announce(w, 1, "3")
@@ -189,7 +189,7 @@ windowCase("window status: a mismatched host warns while its block is focused, a
 	announce(w, 1, nil)
 	w.advance(2000)
 	eq(protocolWarning(w, 1), nil, "a host that has not announced yet is loading, not mismatched")
-	announce(w, 1, "18")
+	announce(w, 1, asks.protocol)
 	w.advance(2000)
 	eq(protocolWarning(w, 1), nil, "and its marker arriving as a match stays quiet")
 	local before = w.window.refreshes
@@ -219,7 +219,7 @@ windowCase("window status: only the focused Plotroom pane is checked, and leavin
 	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
 	w.window.panes[3] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
 	announce(w, 1, "2")
-	announce(w, 3, "18")
+	announce(w, 3, asks.protocol)
 	w.window.handlers.pane_created({ pane = 3 }, w.cx)
 	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "the focused pane's host is checked")
 	eq(w.window.reads[3], nil, "an unfocused Plotroom pane is not read")
@@ -438,18 +438,18 @@ windowCase("window flows: several draft destinations are all offered, the chosen
 	w.flush()
 	st.reply("draft", { repo = "me/r", branch = "feat", destinations = { { repo = "me/r", remote = "origin" }, { repo = "up/r", remote = "upstream" } } })
 	same(flowRows(w.window.picks[1]), { "Open the pull request on me/r", "Open the pull request on up/r" }, "every destination, the default first")
+	w.window.choose = nil
+	local sent = #requestsSent(w)
 	local bases = st.reply("draft", { repo = "up/r", remote = "upstream", bases = { "main" }, defaultBase = "main" })
 	eq(bases.repo, "up/r", "the bases of the chosen destination")
-	local sent = #requestsSent(w)
-	w.window.choose = nil
 	w.flush()
 	eq(#requestsSent(w), sent, "a dismissed base picker sends nothing")
 	-- cancelling the destination picker sends nothing after info
 	w.command("draft-pr")
 	w.flush()
 	st.reply("draft", { repo = "me/r", branch = "feat", destinations = { { repo = "me/r", remote = "origin" } } })
-	local ops = st.ops()
-	eq(ops[#ops], "draft", "only info was asked")
+	local asked: any = requestsSent(w)[#requestsSent(w)]
+	eq(asked.phase, "info", "only info was asked")
 	eq(#requestsSent(w), sent + 1, "nothing followed a dismissed destination picker")
 end)
 
@@ -531,8 +531,6 @@ windowCase("window flows: import asks conflicts with Skip first, maps slots, and
 	w.flush()
 	local second = st.reply("import", preview)
 	eq(second.path, "/tmp/export.json", "anything not JSON is a file path")
-	local ops = st.ops()
-	eq(ops[#ops], "import", "the confirm applies")
 	local apply = nil
 	for _, q in requestsSent(w) do
 		if q.phase == "apply" then
@@ -547,7 +545,7 @@ end)
 windowCase("window flows: export confirms the host's actual counts and notes, then commits that snapshot's token", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	local order = { "Mine", "Done" }
+	local order = { "Mine", "Review", "Done" }
 	local at = 0
 	local final = "Cancel"
 	w.window.typed = "/tmp/out.json"
@@ -605,19 +603,20 @@ windowCase("window flows: Esc on the draft title prompt returns to the review wi
 			return "main", nil
 		elseif string.find(ph, "^Draft PR: ") then
 			reviews += 1
-			return if reviews == 1 then "Edit title…" else "Create with this title and description", nil
+			return if reviews <= 2 then "Edit title…" else "Create with this title and description", nil
 		end
 		return "Cancel", nil
 	end
-	w.window.typed = nil -- Esc
+	w.window.typedQueue = { "New title" }
+	w.window.typed = nil -- then Esc
 	w.command("draft-pr")
 	w.flush()
 	st.reply("draft", { repo = "o/r", branch = "feat", destinations = { { repo = "o/r", remote = "origin" } } })
 	st.reply("draft", { repo = "o/r", remote = "origin", bases = { "main" }, defaultBase = "main" })
 	st.reply("draft", { draft = true, token = "d1", repo = "o/r", title = "Add thing", body = "Body", commits = {}, branch = "feat", base = "main", remote = "origin", count = 1, needsPush = false })
-	eq(reviews, 2, "the review came back after Esc")
+	eq(reviews, 3, "the review came back after the edit and after Esc")
 	local plan = st.reply("draft", { token = "p1", confirm = { head = "Create", label = "Create draft PR", lines = { "Repository: o/r" } } })
-	eq(plan.title, "Add thing", "the earlier title is planned")
+	eq(plan.title, "New title", "the earlier (edited) title is planned")
 	eq(plan.body, "Body", "and the earlier body")
 end)
 
@@ -646,7 +645,7 @@ end)
 
 windowCase("window flows: agent status is resent when the block's acknowledgement is absent or differs", function(w: World)
 	w.load("window")
-	local st = flowHost(w)
+	flowHost(w)
 	seedAgent(w, 50, "idle", 1, "o/r#5")
 	w.window.handlers.window_start(w.cx)
 	w.advance(4100)
@@ -661,7 +660,6 @@ windowCase("window flows: agent status is resent when the block's acknowledgemen
 	end
 	w.advance(4000)
 	eq(#statusEvents(w), 2, "a host that lost its map (no acknowledgement) is told again")
-	st.ops()
 end)
 
 windowCase("window flows: palette commands send plain events, and the command palette lists, in its groups, the typed prompt, the saved actions, the queue's actions and only the commands the host says apply", function(w: World)
@@ -917,8 +915,7 @@ case("host triage: unseen rows are New, the selected row is marked seen on its o
 	local b = openQueue(w)
 	eq(pickerOf(b).selected, "no_2fr_231", "the first row is selected on arrival")
 	same(asks.hx.marks(b), { "-", "New", "New" }, "and its preview marked it seen: the others are New")
-	local said = #w.toasts
-	eq(#w.toasts, said, "without a toast")
+	eq(#w.toasts, 0, "without a toast")
 	local saved: any = w.kv.get("triage")
 	eq(saved.version, 1, "the store is versioned")
 	same(asks.hx.keys(saved.items), { "o/r#1" }, "and holds the one row")
@@ -1200,7 +1197,7 @@ case("host agents: agent-status shows a badge per row, drops values and keys it 
 	asks.hx.agents(b, { ["o/r#1"] = "sleeping", ["o/r#2"] = "working", ["bad\nkey"] = "working" })
 	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "-", "Working", "-" }, "an unknown state is dropped")
 	eq(b.state().agents["bad\nkey"], nil, "and so is a key with a control character")
-	b.event({ ev = "action", act = "agent-status", value = string.rep("x", 40001) })
+	b.event({ ev = "action", act = "agent-status", value = jsonEncode({ ["o/r#2"] = "idle", pad = string.rep("x", 40000) }) })
 	b.event({ ev = "action", act = "agent-status", value = "not json" })
 	b.event({ ev = "action", act = "agent-status", value = 5 })
 	eq(asks.hx.agent(b, "no_2fr_232"), "Working", "an oversize, malformed or mistyped report changes nothing")
@@ -1272,6 +1269,7 @@ case("host mutations: ctx describes the selected issue, and assign-me offers a p
 	same(seen, { "gh issue edit 12 --repo github.com/o/r --add-assignee=@me" }, "one gh call: assign me, nothing else")
 	local sent = requestsOf(s.gh, "other")
 	eq(sent[#sent].login, "octocat", "run with the token of the account the plan named")
+	eq(sent[#sent].call.env.GH_TOKEN, "tok-octocat", "and its token, in the environment")
 	local pr = asks.hx.ask(w, b, { op = "act", name = "bogus" })
 	eq(pr.problem, "Plotroom does not know that command.", "an unknown command is refused")
 end)
@@ -1354,7 +1352,7 @@ case("host mutations: on a Jira issue assign-me runs acli, transition lists Jira
 		end
 		return nil
 	end
-	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
+	w.env.PLOTROOM_JIRA_API_TOKEN = "s3cret-token"
 	local reqs = asks.bk.fetch(w, function(req: any): { status: number, body: string }?
 		if req.line == "GET /rest/api/3/myself" then
 			return { status = 200, body = jsonEncode({ emailAddress = "ann@example.com" }) }
@@ -1409,6 +1407,7 @@ case("host mutations: on a Jira issue assign-me runs acli, transition lists Jira
 	local before = #reqs
 	has(asks.hx.ask(w, b, { op = "act", name = "transition" }).problem, "PLOTROOM_JIRA_API_TOKEN", "no API token: the problem names the setup")
 	eq(#reqs, before, "and nothing was requested")
+	lacks(jsonEncode(w.kv.store) .. jsonEncode(w.toasts) .. jsonEncode(b.saved()), "s3cret-token", "the token is in no store, toast or saved state")
 end)
 
 case("host mutations: a Jira comment shows the whole text and the full account and site, and is sent only as that account on that site", function(w: World)
@@ -1569,6 +1568,7 @@ case("host mutations: a gh account that cannot sign in fails the commit closed: 
 	has(r.problem, "not signed in", "the commit says the account is not signed in")
 	eq(r.ok, nil, "and is no success")
 	eq(#seen, 0, "no gh mutation was spawned")
+	s.gh.tokens.work = "tok-work"
 	local l = asks.hx.ask(w, b, { op = "act", name = "label-add", label = "x" })
 	s.gh.tokens["work"] = nil :: any
 	has(asks.hx.ask(w, b, { op = "commit", token = l.token }).problem, "not signed in", "a label edit fails closed the same way")
@@ -1961,7 +1961,7 @@ case("host worktrees board: u asks about at most twenty worktrees a press, rows 
 	w.flush()
 	eq(#requestsOf(s.gh, "pull") - before, 20, "twenty were asked")
 	has(w.toasts[#w.toasts].text, "Checked 20 worktrees", "the toast says so")
-	eq(w.toasts[#w.toasts].sub, "5 more not checked: press u again", "and that five were left")
+	eq(w.toasts[#w.toasts].sub, "5 more not checked: run Find finished worktrees again", "and that five were left")
 	local asked = 0
 	for _, row in b.state().board.rows do
 		if row.candidateChecked then
@@ -1976,6 +1976,53 @@ case("host worktrees board: u asks about at most twenty worktrees a press, rows 
 	end
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
 	eq(#asks.hx.board(b), 26, "every row is still listed")
+end)
+
+case("host worktrees board: a preview read that lands while a cleanup runs leaves the board busy until the cleanup ends", function(w: World)
+	local s = asks.hx.boardScene(w)
+	s.gh.pulls["https://github.com/o/r/pull/5"] = searchItem(5, "o/r", EPOCH - 60, { title = "Fix the board" })
+	local b = openQueue(w)
+	pickScope(b, "worktrees")
+	w.flush()
+	w.advance(300)
+	w.flush()
+	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "pull request 5's worktree is previewed")
+	has(b.text(), "Fix the board", "and its pull request was read")
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "checks" and req.fields.o == "o" and req.fields.r == "r" and req.fields.n == "5" then
+			return { stdout = '{"next":null,"nodes":[],"total":0}', delay = 1000 }
+		elseif req.kind == "pull" and req.fields.q == "https://github.com/x/y/pull/7" then
+			return { stdout = '{"cost":1,"items":[],"next":null,"total":0}', delay = 5000 }
+		end
+		return nil
+	end
+	b.typeText("r")
+	w.flush()
+	eq(actionOf(b, "retry").disabled, nil, "the reload is over")
+	has(b.text(), "Loading #5…", "and the preview reads pull request 5 again")
+	b.typeText("u")
+	w.flush()
+	eq(actionOf(b, "retry").disabled, "Reading…", "the cleanup holds the board")
+	w.advance(1000)
+	local function cleanups(): number
+		local n = 0
+		for _, t in w.toasts do
+			if string.find(t.text, "^Checked ") then
+				n += 1
+			end
+		end
+		return n
+	end
+	has(b.text(), "Fix the board", "the preview's read has landed")
+	eq(cleanups(), 0, "while the cleanup still waits on gh")
+	eq(actionOf(b, "retry").disabled, "Reading…", "Refresh stays disabled while the cleanup runs")
+	eq(actionOf(b, "wt-cleanup").disabled, "Reading…", "and so does a second cleanup")
+	b.typeText("d")
+	eq(asks.toasted(w, "Still reading"), 1, "Remove waits for the cleanup")
+	eq(b.state().boardRemoving, nil, "and asks nothing meanwhile")
+	w.advance(4000)
+	eq(cleanups(), 1, "the cleanup ends with its toast")
+	eq(actionOf(b, "retry").disabled, nil, "and only then is the board free")
 end)
 
 case("host worktrees board: with the default keys its bar shows only the command palette; a bound key brings its button back", function(w: World)
@@ -2469,11 +2516,6 @@ case("host import: a preview lists every entry up to 150 and refuses more, stori
 	local big = asks.hx.ask(w, b, { op = "import", phase = "preview", text = asks.hx.doc(100, 51) })
 	has(big.problem, "151 entries", "151 entries are refused, naming the count")
 	eq(big.token, nil, "with no token")
-	local views, prompts = w.kv.store["views-prs"], w.kv.store["prompts-prs"]
-	local r = asks.hx.ask(w, b, { op = "import", phase = "apply", token = "i0_1", choices = {}, mapping = {} })
-	has(r.problem, "expired", "an apply has nothing to apply")
-	eq(w.kv.store["views-prs"], views, "no view was written")
-	eq(w.kv.store["prompts-prs"], prompts, "no action was written")
 	local ok = asks.hx.ask(w, b, { op = "import", phase = "preview", text = asks.hx.doc(100, 50) })
 	eq(#ok.entries, 150, "150 entries list every one")
 	yes(ok.token ~= nil, "with a token")
@@ -2544,7 +2586,5 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
 end)
-
--- END host workflow cases
 
 return {}

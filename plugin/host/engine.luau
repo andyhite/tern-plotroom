@@ -147,7 +147,7 @@ end
 
 function M.activeView(state: State): View?
 	for _, pin in state.pins do
-		if pin.id == state.activeId and cli.on(pin.integration) then
+		if pin.id == state.activeId and cli.ready() and cli.on(pin.integration) then
 			return pin
 		end
 	end
@@ -195,7 +195,7 @@ type Scope = { id: string, view: View, login: string?, shown: string }
 function M.orderedViews(state: State): { Scope }
 	local out: { Scope } = {}
 	for _, pin in state.pins do
-		if cli.on(pin.integration) then
+		if cli.ready() and cli.on(pin.integration) then
 			table.insert(out, { id = pin.id, view = pin, login = nil, shown = if pin.integration == "github" then ghActive.login or "" else "" })
 		end
 	end
@@ -322,7 +322,7 @@ end
 
 -- The seen / snooze store (kv "triage"), read once and kept until a change (`M.triageChanged`) or `again`; nil while its kv
 -- is unreadable or malformed (`triageProblem` says why), and nothing writes it then. Seen is marked by `M.mark` (the
--- Mark seen action) and by `requests.autoSeen` (an item whose preview is open, unless the attention filter chose it itself).
+-- Mark seen action) and by `M.autoSeen` (an item whose preview is open, unless the attention filter chose it itself).
 function M.store(state: State, again: boolean?): any
 	if again then
 		state.triage, state.triageProblem = nil, nil
@@ -562,6 +562,35 @@ function M.mark(state: State, act: string)
 	end
 	M.triageChanged(state) -- an item that left the list hands the selection to the row that took its place (ensureCursor)
 	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) else "Snooze ended", item.key)
+end
+
+-- The selected item is marked seen as its preview is shown, with the data it shows now: a later refresh that changes it
+-- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
+function M.autoSeen(state: State)
+	local item, snap = M.selected(state), state.snap
+	if not item or not snap or state.boardOn then
+		return
+	end
+	local st = M.status(state, snap.kind, item)
+	if not st or st.fresh == "seen" then
+		return
+	end
+	local sig = item.key .. "\0" .. triage.signature(snap.kind, item)
+	if state.seenTried == sig then
+		return
+	end
+	state.seenTried = sig
+	local store = M.store(state, true)
+	if not store then
+		return -- unreadable: nothing is written over it (the header says why)
+	end
+	triage.markSeen(store, snap.kind, item, os.time())
+	local err = triage.save(store)
+	if err then
+		state.triage, state.triageProblem = nil, nil
+		return state.cx:toast("error", "Not saved", err)
+	end
+	M.triageChanged(state)
 end
 
 -- Turns the snoozed items' listing ("snoozed") or the needs-attention filter ("attention") on or off.
@@ -979,11 +1008,13 @@ end
 -- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
 -- key). Until every CLI answered, an active view that is not listed yet stays the active one.
 function M.reloadViews(state: State)
+	local boardOn = state.boardOn -- switchView leaves the Worktrees scope
 	loadAll(state)
 	local v = M.activeView(state)
 	if not v then
 		if cli.ready() then
 			M.switchView(state, if state.views[1] then state.views[1].id else nil)
+			state.boardOn = boardOn
 		end
 	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
 		M.changed(state)
@@ -1229,10 +1260,14 @@ function M.boardLoad(state: State)
 		end
 	end
 	state.boardBusy = true
+	local settled = false -- board.select (through board.load) calls this again as each preview read lands
 	board.load(state.board, M.boardApi(state), checkouts, aliveFn(state), function()
-		state.boardBusy = false
-		M.boardEnsure(state)
-		M.boardScan(state, true)
+		if not settled then
+			settled = true
+			state.boardBusy = false
+			M.boardEnsure(state)
+			M.boardScan(state, true)
+		end
 		state.cx:render()
 	end)
 	state.cx:render()
@@ -1763,7 +1798,7 @@ function M.boardAct(state: State, act: string): boolean
 			state.boardBusy = true
 			board.findCandidates(state.board, M.boardCheck(state), live, function(checked: number, skipped: number)
 				state.boardBusy = false
-				state.cx:toast("info", "Checked " .. checked .. " worktree" .. (if checked == 1 then "" else "s") .. " against GitHub and Jira", if skipped > 0 then skipped .. " more not checked: press u again" else "Closed and merged ones are marked; nothing is removed")
+				state.cx:toast("info", "Checked " .. checked .. " worktree" .. (if checked == 1 then "" else "s") .. " against GitHub and Jira", if skipped > 0 then skipped .. " more not checked: run Find finished worktrees again" else "Closed and merged ones are marked; nothing is removed")
 				state.cx:render()
 			end)
 			state.cx:render()
@@ -1788,6 +1823,9 @@ function M.boardAct(state: State, act: string): boolean
 				for _, s in running do
 					s.scanned = nil -- every block reads its notes from git again
 					s.noteSeq += 1
+					if s ~= state and M.alive(s) then
+						s.cx:render()
+					end
 				end
 				state.cx:render()
 			end)

@@ -41,7 +41,7 @@ local function stringsOf(list: any): { string }?
 	return out
 end
 
--- The wants a scan request spells out, as host.luau's formats.want builds them (item key -> how its worktree is known);
+-- The wants a scan request spells out, as engine.worktreeWant builds them (item key -> how its worktree is known);
 -- nil when they are malformed.
 local function wantsOf(p: any): { [string]: worktree.Want }?
 	if type(p) ~= "table" then

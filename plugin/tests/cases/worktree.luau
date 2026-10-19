@@ -198,7 +198,7 @@ windowCase("worktree: a first open fetches the PR head into its own ref and repo
 	eq(s.git.refs["refs/heads/feature"], sha("b"), "the branch starts at the PR head")
 	eq(s.git.worktrees[2].path, s.target, "the worktree is registered")
 	eq(w.fs.mkdirs[1], "/wt", "omp's worktrees directory was created")
-	eq(countLog(s.git, "worktree add -b feature /wt/plotroom-o_r-pr-5 " .. sha("b")), 1, "added through omp worktree add")
+	eq(countCalls(w, "omp worktree add -q -C /work/r -b feature " .. s.target .. " " .. sha("b")), 1, "added through omp worktree add")
 	local created = worktree.describe(r)
 	has(created, "Created", "summary: new")
 	has(created, "Current", "summary: at the PR head")
@@ -748,6 +748,7 @@ windowCase("worktree.open: a plain folder at the PR's folder, or a locked or mis
 	eq(refused("a plain folder"), s.target .. " already exists and is not the worktree of feature; move it away or remove it.", "a folder that is no worktree")
 	table.insert(s.git.worktrees, { path = s.target, branch = "refs/heads/other", head = sha("d"), locked = true })
 	eq(refused("a locked worktree of another branch at the folder"), "The worktree record at " .. s.target .. " belongs to something other than feature.", "one that cannot be used is neither reused nor replaced")
+	s.git.worktrees[2].locked = false
 	w.fs.dirs[s.target] = nil
 	eq(refused("a worktree of another branch at the folder whose folder is gone"), "The worktree record at " .. s.target .. " belongs to something other than feature.", "nor is one with no folder")
 	table.remove(s.git.worktrees, 2)
@@ -1925,7 +1926,5 @@ windowCase("worktree.remoteBranches: a remote that cannot be listed is the probl
 	eq(none.problem, worktree.NO_REPO, "problem: a checkout of another repository")
 	eq(countLog(r.git, "ls-remote"), 1, "only the first checkout was listed")
 end)
-
--- ---- window.luau: the Worktree link
 
 return {}

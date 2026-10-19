@@ -17,7 +17,7 @@ type World = h.World
 
 local EPOCH, NULL, acliCount, always, array, case = h.EPOCH, h.NULL, h.acliCount, h.always, h.array, h.case
 local checkRun, eq, has, issueItem, jiraItem, jsonEncode = h.checkRun, h.eq, h.has, h.issueItem, h.jiraItem, h.jsonEncode
-local manyItems, newAcli, newGh, nodes, runChecks, runSearch = h.manyItems, h.newAcli, h.newGh, h.nodes, h.runChecks, h.runSearch
+local manyItems, newAcli, newGh, nodes, requestsOf, runChecks, runSearch = h.manyItems, h.newAcli, h.newGh, h.nodes, h.requestsOf, h.runChecks, h.runSearch
 local same, searchItem, sha, yes = h.same, h.searchItem, h.sha, h.yes
 
 case("github.gh: a token that times out is 'failed' after one spawn, a refusal is 'auth', a token travels only in GH_TOKEN", function(w: World)
@@ -547,23 +547,13 @@ case("github.pr: the head sha must be 40 hex digits and is lowercased", function
 	has(why.message, "unexpected pull request metadata", "message")
 end)
 
--- Shared by the github cases (one top-level local: regression.luau is near Luau's limit).
+-- Shared by the github cases.
 local ghx = {
 	-- "<number>:<branch>" of every linked PR, "-" for a deleted branch: one string per PR, in order.
 	brief = function(prs: any): { string }
 		local out: { string } = {}
 		for _, p in prs do
 			table.insert(out, p.number .. ":" .. (p.branch or "-"))
-		end
-		return out
-	end,
-	-- The fake gh's requests of one kind (requestsOf is defined further down the suite).
-	of = function(gh: Gh, kind: string): { GhReq }
-		local out: { GhReq } = {}
-		for _, req in gh.requests do
-			if req.kind == kind then
-				table.insert(out, req)
-			end
 		end
 		return out
 	end,
@@ -651,7 +641,7 @@ case("github.linkedPrs: an issue number reads its closing references, keeps this
 	same(ghx.brief(out.list), { "9:late", "3:-", "7:fix-login" }, "the other repository's PR is dropped, the deleted branch is nil, the order is kept")
 	eq(out.list[2].title, "Gone", "a PR whose branch is gone keeps its title")
 	eq(out.list[1].base, nil, "only number, title and branch are kept")
-	local sent = ghx.of(gh, "linked")
+	local sent = requestsOf(gh, "linked")
 	eq(#sent, 1, "one GraphQL request")
 	same({ sent[1].fields.o, sent[1].fields.r, sent[1].fields.n }, { "o", "r", "12" }, "owner, name and number are the variables")
 	eq(sent[1].fields.q, nil, "and there is no search query")
@@ -747,7 +737,7 @@ case("github.linkedPrs: a Jira key searches the repository and keeps PRs naming 
 	eq(out.problem, nil, "no problem")
 	same(ghx.brief(out.list), { "1:x", "2:y", "3:fix/ABC-12-login", "7:feat/abc-12_login", "9:-", "13:q" }, "the key as a whole word in the title or the head branch, any letter case; ABC-123, NABC-12, ABC-12x and other repositories' PRs are dropped; a deleted branch is nil")
 	eq(out.list[5].title, "Mentions ABC-12.", "a PR whose branch is gone keeps its title")
-	local sent = ghx.of(gh, "linked")
+	local sent = requestsOf(gh, "linked")
 	eq(#sent, 1, "one GraphQL request")
 	eq(sent[1].fields.q, "repo:o/r is:pr ABC-12", "the search names the repository, pull requests and the key")
 	same({ sent[1].fields.o, sent[1].fields.r, sent[1].fields.n }, { nil, nil, nil }, "no issue variables")
@@ -825,7 +815,7 @@ case("github.linkedPrs: runs as the given account, else as gh's active one", fun
 		local ghost = ghx.linked(w, github, ref, "ghost")
 		eq(ghost.list, nil, "an account that is not signed in lists nothing for " .. ref)
 		eq(ghost.problem.kind, "auth", "an auth problem for " .. ref)
-		eq(#ghx.of(gh, "linked"), 0, "and sends no PR read for " .. ref)
+		eq(#requestsOf(gh, "linked"), 0, "and sends no PR read for " .. ref)
 		gh.requests = {}
 	end
 end)
@@ -864,13 +854,13 @@ case("github.login: gh's active login is read once and kept", function(w: World)
 	eq(#got, 0, "done never runs before the call returns")
 	w.flush()
 	same(got, { "zed" }, "the active account, not the first alphabetically")
-	eq(#ghx.of(gh, "accounts"), 1, "one accounts request")
+	eq(#requestsOf(gh, "accounts"), 1, "one accounts request")
 	ask(nil)
 	ask("")
 	eq(#got, 1, "a known answer is still asynchronous")
 	w.flush()
 	same(got, { "zed", "zed", "zed" }, "an empty account is no account")
-	eq(#ghx.of(gh, "accounts"), 1, "the second and third read nothing")
+	eq(#requestsOf(gh, "accounts"), 1, "the second and third read nothing")
 	eq(#gh.requests, 1, "and nothing else was asked")
 end)
 
@@ -898,7 +888,7 @@ case("github.login: callers during the read share one accounts request", functio
 	end
 	w.flush()
 	same(got, { "octocat", "octocat" }, "both callers are answered")
-	eq(#ghx.of(gh, "accounts"), 1, "from one request")
+	eq(#requestsOf(gh, "accounts"), 1, "from one request")
 end)
 
 case("github.login: a gh that fails or lists no hosts is a problem with no login, and is read again next time", function(w: World)
@@ -938,7 +928,7 @@ case("github.login: a gh that fails or lists no hosts is a problem with no login
 	ask()
 	eq(login, "octocat", "a failed read is not remembered: once gh is signed in the login is found")
 	eq(problem, nil, "with no problem")
-	eq(#ghx.of(gh, "accounts"), 3, "every failed attempt asked gh again")
+	eq(#requestsOf(gh, "accounts"), 3, "every failed attempt asked gh again")
 end)
 
 case("github.login: signed-in accounts without an active one are an auth problem with no login", function(w: World)
@@ -997,16 +987,7 @@ case("jira.user: the email's local part before the @", function(w: World)
 	same(got, { "ann" }, "ann@example.com is ann")
 	ask()
 	same(got, { "ann", "ann" }, "the second read answers the same")
-	local function authCount(): number
-		local n = 0
-		for _, req in acli.requests do
-			if req.kind == "auth" then
-				n += 1
-			end
-		end
-		return n
-	end
-	eq(authCount(), 1, "acli was asked once for the sign-in")
+	eq(acliCount(acli, "auth"), 1, "acli was asked once for the sign-in")
 	local function signIn(status: string)
 		acli.override = function(req: AcliReq): Reply?
 			if req.kind == "auth" then
@@ -1331,7 +1312,7 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(acli.requests[2].kind, "search", "then the search")
 	local argv = acli.requests[2].argv
 	eq(acliOption(argv, "--jql"), jql, "the view's query in parentheses, highest priority then newest update first, no project clause")
-	eq(acliOption(argv, "--limit"), "100", "the newest 100")
+	eq(acliOption(argv, "--limit"), "100", "at most 100, highest priority first")
 	eq(acliOption(argv, "--fields"), "key,summary,status,issuetype,priority,assignee,reporter,labels", "only the fields acli's search allows")
 	yes(table.find(argv, "--json"), "as JSON")
 	eq(out.result.total, 2, "total")
@@ -1737,7 +1718,5 @@ case("jira.projects: lists the visible projects by key and leaves out what is no
 	list()
 	eq(why.kind, "failed", "output that is no project list")
 end)
-
--- ---- host.luau: the Plotroom block (`prs`), driven through the def it registers with tern.block.define
 
 return {}
