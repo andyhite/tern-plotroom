@@ -3,12 +3,6 @@
 ## Backlog
 
 ## Todo
-- [ ] Jira items and status groups always order by status category: in progress, then to do, then done.
-  - Items and `status` groups sort by category first, whatever the sort. A saved `priority` sort now means priority within each category, so existing views reorder. Done shows only when the filter includes it.
-  - Status groups: category, then status name within a category (not first appearance), so groups do not jump between refreshes.
-  - Gap today: only the default order and grouping are category-ordered, through `tracker.byStatus` running before `sorting.apply`; `sorting.apply` (`priority`) ignores category, and group labels depend on that pre-sort.
-  - Touch points: `sorting.apply`/`rank` (take the category), the `sorting.apply` call and group labels in `engine` (~`:414-469`), the Jira `status` group in `core`. GitHub issues and PRs unchanged.
-  - Cases: `check.luau` priority sort with categories, `issues.luau` grouped Jira view with a `priority` sort (Done never above In Progress; two To Do statuses ordered by name). README: sorting and grouping; update the `sorting.luau` header comment.
 - [ ] Actions can name a next action that starts automatically when the agent finishes.
   - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
   - On `agent_finished` with result `done` (handler in `window.luau`, today only `agentSync`), start the next action for the same item in a new pane in the same tab, same worktree. `failed`, `exited` and `closed` stop the chain, with a toast naming why.
@@ -35,6 +29,13 @@
   - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
   - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
 
+- [ ] Jira items and status groups always order by status category: in progress, then to do, then done.
+  - Branch: todo/jira-items-and-status-groups-always-orde at /Users/andyhite/Code/tern-plotroom.todo/jira-items-and-status-groups-always-orde
+  - Items and `status` groups sort by category first, whatever the sort. A saved `priority` sort now means priority within each category, so existing views reorder. Done shows only when the filter includes it.
+  - Status groups: category, then status name within a category (not first appearance), so groups do not jump between refreshes.
+  - Gap today: only the default order and grouping are category-ordered, through `tracker.byStatus` running before `sorting.apply`; `sorting.apply` (`priority`) ignores category, and group labels depend on that pre-sort.
+  - Touch points: `sorting.apply`/`rank` (take the category), the `sorting.apply` call and group labels in `engine` (~`:414-469`), the Jira `status` group in `core`. GitHub issues and PRs unchanged.
+  - Cases: `check.luau` priority sort with categories, `issues.luau` grouped Jira view with a `priority` sort (Done never above In Progress; two To Do statuses ordered by name). README: sorting and grouping; update the `sorting.luau` header comment.
 ## Review
 
 ## Done
