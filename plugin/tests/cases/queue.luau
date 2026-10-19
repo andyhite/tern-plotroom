@@ -2131,7 +2131,7 @@ case("host: a claim whose block closed saves nothing and frees the repository", 
 	eq(answerOf(b, "c2").ok, true, "the repository is not left claimed")
 end)
 
-case("host: switching views searches the new query, reuses a fresh cached list, and never waits for a superseded request", function(w: World)
+case("host: switching views searches the new query, shows the cached list at once, and never waits for a superseded request", function(w: World)
 	local s = hostScene(w, 3)
 	local second = { searchItem(21, "o/r", EPOCH - 10), searchItem(22, "o/r", EPOCH - 20) }
 	local slow = false
@@ -2156,15 +2156,16 @@ case("host: switching views searches the new query, reuses a fresh cached list, 
 	eq(#requestsOf(s.gh, "search"), 2, "it was searched")
 	scope("prs:v1")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "going back shows the cached list at once")
+	w.flush()
 	scope("prs:v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "a fresh cached list and re-selecting the active view cost nothing")
+	eq(#requestsOf(s.gh, "search"), 4, "going back and re-selecting the active view each search again")
 	slow = true
 	second = { searchItem(23, "o/r", EPOCH - 5) }
 	b.typeText("r")
 	scope("prs:v2")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 4, "the switch sent its own search while the slow one is still pending")
+	eq(#requestsOf(s.gh, "search"), 6, "the switch sent its own search while the slow one is still pending")
 	same(listed(b), { "no_2fr_2323" }, "the switch showed the new answer without waiting for the slow search")
 	w.advance(5000)
 	same(listed(b), { "no_2fr_2323" }, "and the superseded answer never replaces it")
@@ -2244,6 +2245,47 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	eq(#requestsOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
 	eq(actionOf(b, "retry").disabled, nil, "Refresh is available again")
+end)
+
+case("host: clicking a view refreshes it, even a fresh cached one or the one already shown, and the worktrees list back to it", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	local function searches(): number
+		return #requestsOf(s.gh, "search")
+	end
+	eq(searches(), 1, "the first view loaded")
+	pickScope(b, "prs:v2")
+	w.flush()
+	eq(searches(), 2, "another view searches")
+	pickScope(b, "prs:v1")
+	w.flush()
+	eq(searches(), 3, "back to a view whose snapshot is seconds old searches again")
+	pickScope(b, "prs:v1")
+	w.flush()
+	eq(searches(), 4, "a click on the view already shown searches")
+	b.event({ ev = "action", act = "queue", value = "scope:worktrees" })
+	w.flush()
+	b.event({ ev = "action", act = "queue", value = "scope:prs:v1" })
+	w.flush()
+	eq(pickerOf(b).scope, "prs:v1", "back from the Worktrees list")
+	eq(searches(), 5, "searches too")
+end)
+
+case("host: a click on a view inside the rate-limit cooldown sends nothing", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" then
+			return { status = 1, stderr = "gh: API rate limit exceeded (HTTP 403)\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	eq(#requestsOf(s.gh, "search"), 1, "the first search was refused")
+	pickScope(b, "prs:v1")
+	w.flush()
+	pickScope(b, "prs:v2")
+	w.flush()
+	eq(#requestsOf(s.gh, "search"), 1, "clicks do not hammer a limited account")
 end)
 
 case("host: a sign-in failure survives a restart and only an explicit Refresh tries again", function(w: World)

@@ -111,7 +111,7 @@ SSH aliases (`git@github.com-work:…`) count as GitHub when `ssh -G` resolves t
 <details>
 <summary><b>Finer points</b> (refresh, partial results, accounts, ref names, errors)</summary>
 
-**Refresh.** Up to 10 requests of 100 results per refresh (GitHub's 1,000 cap). Interval is 60 s with ample quota; otherwise time-to-reset is spread over 80 % of remaining requests across open panes, never under 60 s. Quota 0 or `Retry-After` pauses everything until reset. A failed page discards that refresh and keeps the last complete result marked `stale`. Terminal errors (`gh` missing, not signed in, HTTP 422, unusable account) stop auto-refresh until you Refresh.
+**Refresh.** Up to 10 requests of 100 results per refresh (GitHub's 1,000 cap). Interval is 60 s with ample quota; otherwise time-to-reset is spread over 80 % of remaining requests across open panes, never under 60 s. Clicking a view in the sidebar (also the one already shown, or back from the Worktrees list) refreshes it at once, whatever the age of its last result; the timer is unchanged. A refresh already running for the view, a rate-limit cooldown and a terminal error still hold. Quota 0 or `Retry-After` pauses everything until reset. A failed page discards that refresh and keeps the last complete result marked `stale`. Terminal errors (`gh` missing, not signed in, HTTP 422, unusable account) stop auto-refresh until you Refresh.
 
 **Views.** GitHub views search every repository the login can see, as GitHub search does; `repo:`, `org:` and `user:` narrow a view. Jira views are JQL over every project `acli` can see.
 

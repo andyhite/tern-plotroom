@@ -985,23 +985,7 @@ function M.switchView(state: State, id: string?, activeLogin: string?)
 	state.activeId, state.activeLogin, state.boardOn = id, activeLogin, false
 	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
-	local v = M.activeView(state)
-	local cached = if v then state.snaps[M.snapKey(v, state.activeLogin)] else nil
-	local age = if cached then os.time() - cached.fetched else 0
-	local fresh = math.floor((state.interval or POLL_MS) / 1000)
-	local halted = state.problem
-	local blocked = false
-	if halted then
-		blocked = TERMINAL[halted.kind] == true and halted.kind ~= "invalid"
-	end
-	if cached and state.inflight == nil and age < fresh and not blocked then
-		-- A snapshot younger than the refresh interval: show it and keep polling on its schedule.
-		state.problem = nil
-		showSnapshot(state)
-		schedule(state, (fresh - age) * 1000)
-	else
-		M.changed(state)
-	end
+	M.changed(state) -- a click always refreshes; refresh itself dedupes, honors the cooldown and skips terminal problems
 end
 
 -- After another block wrote the views, on restore or once the CLIs answered: reread storage; what is shown must match
@@ -1308,9 +1292,10 @@ function M.goScope(state: State, scopeId: any): boolean
 	end
 	for _, scope in M.orderedViews(state) do
 		if scope.id == scopeId then
-			if state.boardOn and ghActive.isActive(state, scope) then
-				state.boardOn = false -- back to the view already shown: its selection stays
-			elseif state.boardOn or not ghActive.isActive(state, scope) then
+			if ghActive.isActive(state, scope) then
+				state.boardOn = false -- the view already shown: its selection stays
+				M.refresh(state) -- a click refreshes it
+			else
 				M.switchView(state, scope.view.id, scope.login)
 			end
 			return true
