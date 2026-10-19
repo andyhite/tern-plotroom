@@ -3,6 +3,9 @@
 ## Backlog
 
 ## Todo
+
+## In-Progress
+
 - [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
   - Branch: todo/an-agents-entry-in-the-sidebar-lists-my at /Users/andyhite/Code/tern-plotroom.todo/an-agents-entry-in-the-sidebar-lists-my
   - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
@@ -16,8 +19,6 @@
   - Decided: an `agent-links` row whose action, branch or title is not a string counts as malformed, so the store is never written over.
   - Decided: rebased onto main with the next-action chain work; `recordAgent` takes `(…, chain, info)` and `finishAgent` takes `info` last. A click on the active view clears both `boardOn` and `agentsOn` and refreshes.
   - Fix: plugin/host/core.luau:601, plugin/window.luau:33, plugin/tests/harness.luau:3022 - `RPC_PROTOCOL` and `PROTOCOL` are still "20", same as main, though the status map changed shape - bump both to "21" and `asks.protocol` in the harness with them
-
-## In-Progress
 
 ## Review
 
