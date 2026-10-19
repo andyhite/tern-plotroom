@@ -1103,6 +1103,23 @@ local function parseIssueRef(key: string, rowRepo: string): (number?, string, st
 	return (if n and tostring(n) == ref then n else nil), (if owner and string.find(owner, "/", 1, true) then owner else rowRepo), ref
 end
 
+-- Reads the issue a worktree was noted for (`key` as parseIssueRef takes it): GitHub's by number, Jira's by key. done(issue,
+-- problem, number, repo, ref): `number` is set for a GitHub issue; no issue and no problem for a key that is neither.
+local function readNoted(key: string, rowRepo: string, live: () -> boolean, done: (tracker.Issue?, github.Problem?, number?, string, string) -> ())
+	local n, repo, ref = parseIssueRef(key, rowRepo)
+	if n then
+		github.issueItem(repo, n, nil, function(issue, problem)
+			done(issue, problem, n, repo, ref)
+		end, live)
+	elseif string.match(ref, "^%u[%u%d_]*%-%d+$") then
+		jira.item(ref, function(issue, problem)
+			done(issue, problem, nil, repo, ref)
+		end, live)
+	else
+		done(nil, nil, nil, repo, ref)
+	end
+end
+
 -- How the preview reads the pull request and the issue a worktree was made for (the model decides which to ask). The
 -- first read after a pick waits for the cursor to rest. A description or a linked item that cannot be read leaves the
 -- rest of the answer as it is; `related` is only what the tracker itself links within the same repository.
@@ -1140,7 +1157,6 @@ function M.boardLinks(state: State): any
 			end)
 		end,
 		issue = function(row: any, key: string, done: (any, string?) -> ())
-			local n, repo, ref = parseIssueRef(key, row.repo)
 			local function base(issue: tracker.Issue, where: string, label: string): { [string]: any }
 				local who = issue.assignees[1]
 				return {
@@ -1153,11 +1169,11 @@ function M.boardLinks(state: State): any
 				}
 			end
 			later(row, function()
-				if n then
-					github.issueItem(repo, n, nil, function(issue: tracker.Issue?, problem: github.Problem?)
-						if not issue then
-							return done(nil, if problem then problem.message else nil)
-						end
+				readNoted(key, row.repo, live, function(issue: tracker.Issue?, problem: github.Problem?, n: number?, repo: string, ref: string)
+					if not issue then
+						return done(nil, if problem then problem.message else nil)
+					end
+					if n then
 						local info = base(issue, "github " .. repo, "#" .. n)
 						github.issue(repo, n, nil, function(detail: tracker.IssueDetail?)
 							if detail then
@@ -1174,12 +1190,7 @@ function M.boardLinks(state: State): any
 							end
 							done(info, nil)
 						end, live)
-					end, live)
-				elseif string.match(ref, "^%u[%u%d_]*%-%d+$") then
-					jira.item(ref, function(issue: tracker.Issue?, problem: github.Problem?)
-						if not issue then
-							return done(nil, if problem then problem.message else nil)
-						end
+					else
 						local info = base(issue, "jira " .. (string.match(ref, "^(.-)%-%d+$") or ref), ref)
 						jira.issue(ref, function(detail: tracker.IssueDetail?)
 							if detail and string.find(detail.body, "%S") then
@@ -1187,10 +1198,17 @@ function M.boardLinks(state: State): any
 							end
 							done(info, nil)
 						end, live)
-					end, live)
-				else
-					done(nil, nil)
-				end
+					end
+				end)
+			end)
+		end,
+		-- The PR whose head is `branch`, for a row noted with an issue but no PR: GitHub's own answer (a lookup of
+		-- `gh pr list --head`), none when there is none. A failed lookup shows nothing.
+		head = function(row: any, branch: string, done: (number?) -> ())
+			later(row, function()
+				github.pullByHead(row.repo, branch, nil, function(pr: github.HeadPr?)
+					done(if pr then pr.number else nil)
+				end)
 			end)
 		end,
 	}
@@ -1561,14 +1579,61 @@ loadDetails = function(state: State, key: string)
 		-- A GitHub load, like github.checks, sends nothing while the quota is spent or the login unusable: it
 		-- answers with that problem, which failDetails paces.
 		TRACKERS[item.tracker].detail(item, M.login(state), function(detail, problem)
-			land(problem, if detail then { runs = {}, total = 0, round = round, issue = detail } else nil, "The issue could not be read.")
+			if not detail then
+				return land(problem, nil, "The issue could not be read.")
+			end
+			local loaded: core.Detail = { runs = {}, total = 0, round = round, issue = detail }
+			-- The PR of the worktree's branch, as far as the scan knew the worktree when this load ran (a later refresh
+			-- loads again). Best effort: a failed lookup shows none.
+			local note, code = state.notes[item.key], M.codeRepoOf(item)
+			local branch = if note and note.ok then note.branch else nil
+			if not branch or not code or not cli.on("github") then
+				return land(nil, loaded, "")
+			end
+			github.pullByHead(code, branch, M.login(state), function(head)
+				if head then
+					local linked = false
+					for _, l in detail.linked do
+						local o, r, n = github.parsePrUrl(l.url)
+						linked = linked or (n == head.number and o ~= nil and r ~= nil and string.lower(o .. "/" .. r) == string.lower(code))
+					end
+					if not linked then
+						loaded.headPr = head
+					end
+				end
+				land(nil, loaded, "")
+			end)
 		end, live)
 		return
 	end
 	local pr: github.Pr = item
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
 	github.checks(pr.repo, pr.number, M.login(state), function(runs, total, problem, about)
-		land(problem, if runs then { runs = runs, total = total, round = round, about = about } else nil, "The checks could not be read.")
+		if not runs then
+			return land(problem, nil, "The checks could not be read.")
+		end
+		local loaded: core.Detail = { runs = runs, total = total, round = round, about = about }
+		-- The issue Plotroom noted for the worktree on this head branch, read from the checkout's git config. Best effort.
+		local checkout = readCheckouts()[string.lower(pr.repo)]
+		if type(checkout) ~= "string" or checkout == "" then
+			return land(nil, loaded, "")
+		end
+		worktree.inventory(checkout, pr.repo, function(entries)
+			local noted: string? = nil
+			for _, e in entries or ({} :: { worktree.Entry }) do
+				if not e.main and e.branch == pr.head and e.key then
+					noted = e.key
+					break
+				end
+			end
+			if not noted then
+				return land(nil, loaded, "")
+			end
+			readNoted(noted, pr.repo, live, function(issue)
+				loaded.noted = issue
+				land(nil, loaded, "")
+			end)
+		end)
 	end, live)
 end
 

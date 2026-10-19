@@ -526,6 +526,59 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 	return out
 end
 
+-- The pull request whose head is an issue's worktree branch, a link that shows it in this block (window.luau's `showPr`)
+-- under a "Pull request" heading; nothing without one. `repo` is where the PR is.
+local function headPrNodes(repo: string?, pr: github.HeadPr?): { Node }
+	if not pr or not repo then
+		return {}
+	end
+	local look = STATE_BADGE[pr.state] or STATE_BADGE.open
+	local what = "#" .. pr.number .. " · " .. look.text
+	return {
+		ui.node("text", { key = "headpr-head", spans = { ui.span("Pull request", "strong") } }),
+		ui.node("list", { key = "headpr" }, {
+			ui.node("item", {
+				key = "hp1",
+				label = pr.title,
+				value = "#" .. pr.number,
+				icon = if pr.state == "merged" then "check" elseif pr.state == "closed" then "x" else "merge",
+				tone = look.tone,
+				title = what,
+				aria = pr.title .. ", " .. what,
+				href = "plotroom://github/show/" .. repo .. "/" .. pr.number,
+				actions = { click = "open" },
+			}),
+		}),
+	}
+end
+
+-- The issue Plotroom noted for a pull request's worktree: key, title and status, a link that opens it in a Browser
+-- block (as the issue's own Open does); nothing without one.
+local function notedNodes(issue: tracker.Issue?): { Node }
+	if not issue then
+		return {}
+	end
+	local look = issue.status or STATE_BADGE[issue.state] or STATE_BADGE.open
+	local ref = tracker.refLabel(issue.ref)
+	local what = ref .. " · " .. look.text
+	return {
+		ui.node("text", { key = "noted-head", spans = { ui.span("Issue", "strong") } }),
+		ui.node("list", { key = "noted" }, {
+			ui.node("item", {
+				key = "issue1",
+				label = issue.title,
+				value = ref,
+				icon = ISSUE_ICON,
+				tone = look.tone,
+				title = what,
+				aria = issue.title .. ", " .. what,
+				href = "plotroom://issue/open/" .. pct(issue.url),
+				actions = { click = "open" },
+			}),
+		}),
+	}
+end
+
 -- The preview's own controls, native action rows: Unpin while the item is pinned (nil otherwise).
 local function previewControls(state: State, item: any): Node?
 	if engine.pinFor(state.pins, item.key) then
@@ -608,6 +661,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
 	end
 	addPart(out, "worktree", worktreeNodes(state, pr.key, acts))
+	addPart(out, "noted", notedNodes(if detail then detail.noted else nil))
 	if about and string.find(about.body, "%S") then
 		addDescription(out, state, pr.key, about.body)
 	end
@@ -828,6 +882,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
 	addPart(out, "linked", linkedNodes(issue.tracker, detail, fail, loading))
+	addPart(out, "headpr", headPrNodes(code, if loaded then loaded.headPr else nil))
 	return out
 end
 

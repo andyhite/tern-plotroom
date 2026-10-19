@@ -103,8 +103,10 @@ function M.groupsOf(kindId: string, integration: string): { Group }
 end
 -- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
 -- `about` is the PR's merge state, reviewers and description, nil when gh did not print them. `issue` is an issue's
--- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty).
-export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail? }
+-- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty). `headPr` is the PR whose head is
+-- the branch of the issue's worktree, `noted` the issue Plotroom noted for the PR's head branch's worktree; each nil
+-- when there is none (or the lookup failed: it is best effort).
+export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.

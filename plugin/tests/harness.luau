@@ -1420,6 +1420,7 @@ export type Gh = {
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
 	linked: { [string]: { any } }, -- "owner/repo#ref" (an issue number or a Jira key) -> the pull requests PR_LINK_JQ prints for it: {number, title, head, branch, base}
+	heads: { [string]: { any } }, -- "owner/repo@branch" -> the pull requests `pr list --head` prints for it: {number, title, state, isDraft, url}
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
 	repos: { [string]: { string } }, -- login -> the repositories `user/repos` lists, most recently pushed first
 	pageSize: number,
@@ -1441,6 +1442,7 @@ local function newGh(w: World): Gh
 		checkTotal = {},
 		about = {},
 		linked = {},
+		heads = {},
 		limits = {},
 		repos = {},
 		pageSize = 100,
@@ -1532,7 +1534,9 @@ local function newGh(w: World): Gh
 			end
 		end
 		local kind = "other"
-		if argv[2] == "repo" and argv[3] == "clone" then
+		if argv[2] == "pr" and argv[3] == "list" then
+			kind = "head" -- the pull requests whose head is a branch
+		elseif argv[2] == "repo" and argv[3] == "clone" then
 			kind = "clone"
 		elseif string.find(fields.query or "", "resource(url: $q)", 1, true) then
 			kind = "pull"
@@ -1617,6 +1621,15 @@ local function newGh(w: World): Gh
 				repo, ref = (fields.o or "") .. "/" .. (fields.r or ""), fields.n
 			end
 			return { stdout = jsonEncode(array(gh.linked[(repo or "") .. "#" .. (ref or "")] or {})) }
+		elseif kind == "head" then
+			local repo, branch = "", ""
+			for j = 4, #argv do
+				if argv[j - 1] == "--repo" then
+					repo = argv[j]
+				end
+				branch = string.match(argv[j], "^%-%-head=(.*)$") or branch
+			end
+			return { stdout = jsonEncode(array(gh.heads[repo .. "@" .. branch] or {})) }
 		elseif kind == "repos" then
 			local list = gh.repos[key] or {}
 			return { stdout = if #list > 0 then table.concat(list, "\n") .. "\n" else "" }

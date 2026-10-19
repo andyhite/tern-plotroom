@@ -334,6 +334,9 @@ function M.run()
 		issue = function(_, _, d)
 			d(nil, nil)
 		end,
+		head = function(_, _, d)
+			d(nil)
+		end,
 	}
 	local a = bb.rows[1].id
 	board.select(bb, lk, a, yes, function() end)
@@ -417,6 +420,9 @@ function M.run()
 			table.insert(asked2, k)
 			held2[k] = d
 		end,
+		head = function(_, _, d)
+			d(nil)
+		end,
 	}
 	local function idOf(p: string): string
 		for _, r in bp.rows do
@@ -464,6 +470,43 @@ function M.run()
 	assert(bp.selected == nil)
 	board.select(bp, links, "nope", yes, function() end)
 	assert(bp.selected == nil)
+	-- an issue with no PR its tracker links: GitHub's head-ref match fills the PR in; no match, or a PR already known, asks nothing
+	local bh = loaded(
+		fake({ ["/h"] = { entry("/h/a", { key = "PRJ-3" }), entry("/h/b", { key = "PRJ-4" }), entry("/h/c", { key = "PRJ-5", number = 9 }), entry("/h/d", { key = "PRJ-6" }) } }),
+		{ ["o/h"] = "/h" }
+	)
+	local heads: { string } = {}
+	local prsRead: { number } = {}
+	local lh: board.Links = {
+		pr = function(_, n, d)
+			table.insert(prsRead, n)
+			d({ ref = "#" .. n, title = "T" .. n, state = "open", tracker = "github o/h" }, nil)
+		end,
+		issue = function(_, k, d)
+			d({ ref = k, title = "I", state = "x", tracker = "jira PRJ", related = if k == "PRJ-6" then { number = 3 } else nil }, nil)
+		end,
+		head = function(_, b, d)
+			table.insert(heads, b)
+			d(if b == "b-/h/a" then 12 else nil)
+		end,
+	}
+	local function hid(p: string): string
+		for _, r in bh.rows do
+			if r.path == p then
+				return r.id
+			end
+		end
+		error(p)
+	end
+	board.select(bh, lh, hid("/h/a"), yes, function() end)
+	local ha = bh.details[hid("/h/a")]
+	assert(ha and ha.pr and ha.pr.state == "ready" and (ha.pr.info :: board.Info).title == "T12" and table.concat(heads, ",") == "b-/h/a")
+	board.select(bh, lh, hid("/h/b"), yes, function() end)
+	local hb = bh.details[hid("/h/b")]
+	assert(hb and hb.pr == nil and hb.issue and #heads == 2, "no PR on that head: no section")
+	board.select(bh, lh, hid("/h/c"), yes, function() end)
+	board.select(bh, lh, hid("/h/d"), yes, function() end)
+	assert(#heads == 2 and prsRead[#prsRead] == 3, "a known or tracker-linked PR needs no head lookup")
 	-- scan prefers the cheap read-only api.dirty (no re-listing); only listed paths reach it
 	local fd = fake({ ["/a"] = { entry("/w1"), entry("/w2") } })
 	local bd2 = loaded(fd, { ["o/a"] = "/a" })

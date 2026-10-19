@@ -63,6 +63,8 @@ export type Info = {
 export type Links = {
 	pr: (row: Row, number: number, done: (info: Info?, problem: string?) -> ()) -> (),
 	issue: (row: Row, key: string, done: (info: Info?, problem: string?) -> ()) -> (),
+	-- The number of the pull request whose head branch is `branch` (nil: none, or the lookup failed).
+	head: (row: Row, branch: string, done: (number: number?) -> ()) -> (),
 }
 -- One half of the preview: loading, ready (`info`), failed (`problem`) or empty (read fine, nothing there).
 export type Section = { state: "loading" | "ready" | "error" | "empty", info: Info?, problem: string?, ref: string }
@@ -408,8 +410,10 @@ function M.preview(board: Board, row: Row): { title: string, pr: Section?, issue
 end
 
 -- Previews `id` (nil closes it) and reads its linked pull request and issue through `links`, once per row until a read
--- fails. A counterpart the first read's tracker links (and the adapter verified) fills in the missing one; branch text
--- never does. `done` runs after every visible change; a superseded, closed or removed preview is ignored.
+-- fails. A counterpart the first read's tracker links (and the adapter verified) fills in the missing one, and so does
+-- GitHub's pull request whose head is the row's branch (`links.head`: a head-ref match is GitHub's answer, not a
+-- guess); branch text itself never does. `done` runs after every visible change; a superseded, closed or removed
+-- preview is ignored.
 function M.select(board: Board, links: Links, id: string?, live: () -> boolean, done: () -> (), refresh: boolean?)
 	local row = if id then find(board, id) else nil
 	if not row then
@@ -481,13 +485,19 @@ function M.select(board: Board, links: Links, id: string?, live: () -> boolean, 
 		end
 		local from = (dd.pr or dd.issue) :: Section?
 		local rel = if from and from.info then from.info.related else nil
-		if not rel then
-			return
+		if rel and not dd.issue and rel.key then
+			return fetchIssue(rel.key, function() end)
+		elseif rel and not dd.pr and rel.number then
+			return fetchPr(rel.number, function() end)
 		end
-		if not dd.issue and rel.key then
-			fetchIssue(rel.key, function() end)
-		elseif not dd.pr and rel.number then
-			fetchPr(rel.number, function() end)
+		-- An issue and no PR its tracker links: GitHub may still know one whose head is the worktree's branch.
+		local branch = row.branch
+		if dd.issue and not dd.pr and branch then
+			links.head(row :: Row, branch, function(n)
+				if n and alive() and not dd.pr then
+					fetchPr(n, function() end)
+				end
+			end)
 		end
 	end
 	local function second()

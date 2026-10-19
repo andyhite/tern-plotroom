@@ -1160,6 +1160,42 @@ function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ Linke
 	end, account)
 end
 
+-- The pull request of `repo` whose head branch is `branch`, whatever its state: `gh pr list --head` (a branch name,
+-- not owner:branch, so a fork's PR of the same name counts too; ponytail: it is only ever shown, never acted on).
+-- An open one wins, else the newest. `state` is "open", "draft", "merged" or "closed". done(nil, nil): none.
+export type HeadPr = { number: number, title: string, state: string, url: string }
+function M.pullByHead(repo: string, branch: string, account: string?, done: (HeadPr?, Problem?) -> ())
+	if account == "" then
+		account = nil
+	end
+	-- `--head=` keeps a branch that starts with a dash from being read as a flag.
+	M.gh({ "pr", "list", "--repo", repo, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url" }, function(out, problem)
+		if not out then
+			return done(nil, problem)
+		end
+		local ok, data = pcall(tern.json.decode, out)
+		if not ok or type(data) ~= "table" then
+			return done(nil, { kind = "failed", message = "gh printed unexpected pull request data." })
+		end
+		local best: HeadPr? = nil
+		for i = 1, #data do
+			local n = data[i]
+			local num, title, state, url = field(n, "number"), field(n, "title"), field(n, "state"), field(n, "url")
+			if type(num) == "number" and type(title) == "string" and type(state) == "string" and type(url) == "string" then
+				local look = string.lower(state)
+				if look == "open" and field(n, "isDraft") == true then
+					look = "draft"
+				end
+				local pr: HeadPr = { number = num, title = title, state = look, url = url }
+				if not best or (look == "open" or look == "draft") and best.state ~= "open" and best.state ~= "draft" then
+					best = pr
+				end
+			end
+		end
+		done(best, nil)
+	end, account)
+end
+
 -- What the repository picker lists, read slowly from gh, so kept by `key`: a known value answers at once (one older
 -- than LIST_TTL_S is then read again in the background), and callers during a read share it. `read` calls its
 -- callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.

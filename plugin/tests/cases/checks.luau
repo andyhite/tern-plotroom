@@ -773,7 +773,7 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(badgeOf(b).tone, "success", "and the row follows")
 	eq(cardOf(b).p.tone, "success", "and the card")
 	eq(countLog(s.git, "status"), 1, "by one status")
-	eq(countLog(s.git, "worktree list"), 1, "the checkout was not listed again for it")
+	eq(countLog(s.git, "worktree list"), 2, "the status read lists nothing again: the second listing is the preview's look for an issue noted on the PR's branch")
 	eq(#w.toasts, 0, "nothing was said")
 end)
 
@@ -946,7 +946,7 @@ case("host: a scan that began before a worktree attempt or a removal ended canno
 	yes(cardOf(b) ~= nil, "the late answer does not list the worktree, and does not take its card away")
 	w.advance(1000)
 	yes(cardOf(b) ~= nil and badgeOf(b, 1) ~= nil and badgeOf(b, 2) ~= nil, "the listing made again confirms it")
-	eq(countLog(s.git, "worktree list"), 4, "the first scan, the refresh's, the attempt's own and the one made again")
+	eq(countLog(s.git, "worktree list"), 5, "the first scan, the refresh's, the attempt's own, the one made again and the preview's look for an issue noted on the branch")
 	-- The same for a removal: a scan that listed the worktree before it went cannot bring it back.
 	slowly(5000)
 	refreshNow(w, b)
@@ -1562,6 +1562,61 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	lacks(b.text(), "Linked pull requests", "and no heading for them")
 	eq(findKey(pickerNode(b), "description"), nil, "an empty body shows no card")
 	eq(findKey(findKey(pickerNode(b), "head"), "state", "badge").p.text, "Not planned", "a closed issue says why in the head's badge")
+end)
+
+case("host: the issue preview shows the pull request whose head is its worktree's branch (the open one first), unless the linked list has it", function(w: World)
+	local s = issueHost(w)
+	leaveIssueWt(w, s, 12)
+	s.gh.heads["o/r@12-fix-login"] = {
+		{ number = 40, title = "Old try", state = "CLOSED", isDraft = false, url = "https://github.com/o/r/pull/40" },
+		{ number = 45, title = "Fix the login redirect", state = "OPEN", isDraft = true, url = "https://github.com/o/r/pull/45" },
+	}
+	local b = openIssues(w)
+	w.advance(300)
+	local item: any = findKey(pickerNode(b), "hp1", "item")
+	eq(item.p.label, "Fix the login redirect", "the open pull request, not the older closed one")
+	eq(item.p.value, "#45", "its number")
+	eq(item.p.title, "#45 · Draft", "and its state")
+	eq(item.p.href, "plotroom://github/show/o/r/45", "a link that shows it in this block")
+	has(b.text(), "Pull request", "under its heading")
+	-- Another issue has no worktree: nothing is asked for it.
+	local asked = #requestsOf(s.gh, "head")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
+	w.advance(300)
+	eq(findKey(pickerNode(b), "headpr-head"), nil, "an issue with no worktree shows no pull request")
+	eq(#requestsOf(s.gh, "head"), asked, "and looks none up")
+end)
+
+case("host: the issue preview does not repeat a pull request the linked list already shows", function(w: World)
+	local t = issueHost(w)
+	leaveIssueWt(w, t, 12)
+	t.gh.heads["o/r@12-fix-login"] = { { number = 45, title = "Fix the login redirect", state = "OPEN", isDraft = false, url = "https://github.com/o/r/pull/45" } }
+	t.gh.issueDetail["o/r#12"] = {
+		body = "x",
+		linked = array({ { number = 45, title = "Fix the login redirect", url = "https://github.com/o/r/pull/45", state = "OPEN", isDraft = false } }),
+	}
+	local c = openIssues(w)
+	w.advance(300)
+	eq(#requestsOf(t.gh, "head"), 1, "the lookup ran")
+	yes(findKey(pickerNode(c), "pr1", "item") ~= nil, "the linked list shows the pull request")
+	eq(findKey(pickerNode(c), "headpr-head"), nil, "and the head lookup does not repeat it")
+end)
+
+case("host: the pull request preview shows the issue Plotroom noted for the worktree on its head branch", function(w: World)
+	local s = hostScene(w, 2)
+	table.insert(s.git.worktrees, { path = "/wt/iss", branch = "refs/heads/branch-1", head = sha("b"), locked = false })
+	w.fs.dirs["/wt/iss"] = true
+	s.git.notes["branch.branch-1.plotroomkey"] = "o/r#12"
+	s.git.notes["branch.branch-1.plotroomrepo"] = "o/r"
+	s.gh.pulls["https://github.com/o/r/issues/12"] = issueItem(12, "o/r", EPOCH - 60, { title = "Fix login" })
+	local b = openQueue(w)
+	w.advance(300)
+	local item: any = findKey(pickerNode(b), "issue1", "item")
+	eq(item.p.label, "Fix login", "the issue's title")
+	eq(item.p.value, "#12", "its key")
+	eq(item.p.title, "#12 · Open", "and its status")
+	eq(string.sub(item.p.href, 1, 22), "plotroom://issue/open/", "a link that opens it in a Browser block")
+	eq(#requestsOf(s.gh, "head"), 0, "a pull request preview looks up no pull request")
 end)
 
 case("host: a block told to show a pull request selects it where its pull request filter lists it, else looks it up alone in a pinned scope, and from an issue filter always pins", function(w: World)
