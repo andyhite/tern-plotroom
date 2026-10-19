@@ -4696,22 +4696,27 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
 end)
 
-windowCase("window: with no prompts saved, a pull request offers Review, Address feedback and Watch, each run in its worktree with every variable it names filled in", function(w: World)
+windowCase("window: with no prompts saved, a pull request offers Review, Quick review, Address feedback and Watch, each run where it says with every variable it names filled in", function(w: World)
 	local s = agentScene(w)
-	for i, name in { "Review", "Address feedback", "Watch" } do
+	for i, name in { "Review", "Quick review", "Address feedback", "Watch" } do
 		w.window.choose = { "Start another agent", name }
 		w.click(prLink("agent", "o/r", 5))
 		w.flush()
 		local agent = w.window.agents[i]
-		eq(agent.cwd, s.target, name .. " runs in the PR's worktree")
-		has(agent.prompt, "Branches: head `feature` → base `main` (base remote `origin`)", name .. " names the branches and the checkout's remote")
+		if name == "Quick review" then
+			eq(agent.cwd, s.root, name .. " runs in the main checkout")
+			has(agent.prompt, "Branches: head `feature` → base `main`", name .. " names the branches")
+		else
+			eq(agent.cwd, s.target, name .. " runs in the PR's worktree")
+			has(agent.prompt, "Branches: head `feature` → base `main` (base remote `origin`)", name .. " names the branches and the checkout's remote")
+		end
 		lacks(agent.prompt, "{", name .. " has every variable it names filled in")
 	end
 	local labels: { string } = {}
 	for _, item in promptPicks(w)[1].items do
 		table.insert(labels, item.label)
 	end
-	same(labels, { "Type a prompt…", "Review", "Address feedback", "Watch" }, "typing, then the defaults")
+	same(labels, { "Type a prompt…", "Review", "Quick review", "Address feedback", "Watch" }, "typing, then the defaults")
 	eq(w.kv.get("prompts-prs"), nil, "running them saves nothing")
 end)
 
@@ -13222,7 +13227,7 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	hostScene(w, 3)
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
-	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "padd:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "both kinds list their defaults")
+	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "padd:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "both kinds list their defaults")
 	eq(w.kv.get("prompts-prs"), nil, "showing them saves nothing")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
 	local saved = w.kv.get("prompts-prs")
@@ -13230,8 +13235,8 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	for _, p in saved.items do
 		table.insert(names, p.name)
 	end
-	same(names, { "Review", "Address feedback", "Watch", "New action" }, "Add saves the defaults, then the new prompt")
-	eq(saved.nextId, 5, "whose id follows theirs")
+	same(names, { "Review", "Quick review", "Address feedback", "Watch", "New action" }, "Add saves the defaults, then the new prompt")
+	eq(saved.nextId, 6, "whose id follows theirs")
 	has(saved.items[1].text, "Review PR #{number} of {owner}/{repo}", "a default is saved with its text")
 	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
 end)
@@ -13251,11 +13256,12 @@ case("host: Restore defaults saves back the default actions no saved one is name
 	for _, p in saved.items do
 		table.insert(names, p.name)
 	end
-	same(names, { "Review", "Mine", "Address feedback", "Watch" }, "the missing defaults are added after the saved ones")
+	same(names, { "Review", "Mine", "Quick review", "Address feedback", "Watch" }, "the missing defaults are added after the saved ones")
 	eq(saved.items[1].text, "My own review", "an edited default keeps its text")
-	same({ saved.items[3].id, saved.items[4].id }, { "p3", "p4" }, "the restored ones take the next ids")
-	eq(saved.nextId, 5, "and the next free one follows them")
-	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "padd:prs", "padd:issues", "prestore:issues" }, "with every default saved, Restore defaults goes")
+	same({ saved.items[3].id, saved.items[4].id, saved.items[5].id }, { "p3", "p4", "p5" }, "the restored ones take the next ids")
+	eq(saved.items[3].worktree, false, "and keep where they run")
+	eq(saved.nextId, 6, "and the next free one follows them")
+	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "popen:prs:p5", "padd:prs", "padd:issues", "prestore:issues" }, "with every default saved, Restore defaults goes")
 	eq(prefsOf(b).focus, "padd:prs", "and Add takes the focus")
 	eq(#w.kv.get("prompts-issues").items, 0, "the other kind is untouched")
 end)
