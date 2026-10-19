@@ -6,6 +6,8 @@
 
 ## In-Progress
 
+## Review
+
 - [ ] An issue action's Next action can be a PR action, so Implement can chain into Watch.
   - Settings › Actions › Next action on an issue action also offers the PR actions, labelled by kind; PR actions still offer only PR actions.
   - Issue agent finishes `done` with a PR next action → look up the PR whose head is the issue worktree's branch in the issue's code repository (`github.pullByHead`, open or draft only), then run the PR action on it as a manual run would: same worktree (reused by branch), the tab the agent ran in, PR variables from the fresh PR read.
@@ -16,10 +18,12 @@
   - Decided: issue → PR only; PR actions cannot chain into issue actions.
   - Decided: the PR is the open or draft one on the worktree branch; merged/closed only → the chain stops.
   - Decided: the next action gets only its own kind's variables; issue variables are not carried over.
+  - Decided: `agent-links` chain records also keep optional `code` (code repo) and `branch`; issue rpc replies carry `code`, so a Jira chain no longer leans on its project key. Old links stay valid.
+  - Decided: the `action` rpc takes optional `repo`/`branch` and runs `github.pullByHead` itself, replying with `pr` or a `problem` (lookup failed, no PR, merged/closed only); no separate head-lookup op. The hop reuses `prepareTarget`'s PR path.
+  - Decided: `storage.nextOf(kind, next)` resolves a next; `chainReaches` is unchanged (a qualified next ends the walk). Deleting a PR action clears `prs:<id>` in the issues store, leaving an unreadable store untouched. PR options on issue actions are labelled `<name> (pull request)`.
+  - Decided: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "22".
   - Base: main
   - Branch: todo/issue-next-pr-action at /Users/andyhite/Code/tern-plotroom.todo/issue-next-pr-action
-
-## Review
 
 ## Done
 
