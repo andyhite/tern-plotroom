@@ -1,6 +1,7 @@
 --!strict
 -- Per-view list order: the choices a view may save (`View.sort`) and the stable sort that applies one. A view without a
--- sort keeps the list order it always had (search order; issues by status category).
+-- sort keeps the list order it always had (search order; issues by status category). Jira lists pass a category rank to
+-- `apply`, which then orders by status category first (In Progress, To Do, Done) and by the sort only within one.
 
 local M = {}
 
@@ -56,8 +57,8 @@ local function rank(item: any, sort: string): number
 end
 
 -- `items` in the order of `sort`, a copy; ties (and every item for an unknown sort) keep the list's order. "review"
--- then orders each half by recent update.
-function M.apply(items: { any }, sort: string?): { any }
+-- then orders each half by recent update. `category` (item to rank, lower first) puts a category before the sort.
+function M.apply(items: { any }, sort: string?, category: ((any) -> number)?): { any }
 	local out: { any } = {}
 	for _, item in items do
 		table.insert(out, item)
@@ -70,6 +71,12 @@ function M.apply(items: { any }, sort: string?): { any }
 		at[item] = i
 	end
 	table.sort(out, function(a: any, b: any): boolean
+		if category then
+			local c, d = category(a), category(b)
+			if c ~= d then
+				return c < d
+			end
+		end
 		local x, y = rank(a, sort), rank(b, sort)
 		if x ~= y then
 			return x < y

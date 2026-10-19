@@ -122,6 +122,11 @@ function M.category(issue: Issue): string
 	return issue.category or (if issue.state == "closed" then "done" else "new")
 end
 
+-- Where `issue`'s category falls in CATEGORIES (lower first).
+function M.categoryRank(issue: Issue): number
+	return table.find(M.CATEGORIES, M.category(issue)) or #M.CATEGORIES + 1
+end
+
 -- Sorts `issues` in place by status category in CATEGORIES order, keeping their order within a category: the
 -- tracker's own (Jira: priority, then newest update; GitHub: newest update).
 function M.byStatus(issues: { Issue })
@@ -129,11 +134,8 @@ function M.byStatus(issues: { Issue })
 	for i, issue in issues do
 		at[issue] = i
 	end
-	local function rank(issue: Issue): number
-		return table.find(M.CATEGORIES, M.category(issue)) or #M.CATEGORIES + 1
-	end
 	table.sort(issues, function(a, b)
-		local x, y = rank(a), rank(b)
+		local x, y = M.categoryRank(a), M.categoryRank(b)
 		if x ~= y then
 			return x < y
 		end

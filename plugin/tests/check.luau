@@ -363,6 +363,10 @@ function M.run()
 	assert(sorting.apply(base, nil)[1] == early and sorting.apply(base, "bogus")[3] == ask and base[1] == early, "no or unknown sort keeps the order and never changes the input")
 	local hi, lo, none = { priority = "High" } :: any, { priority = "Low" } :: any, {} :: any
 	assert(sorting.apply({ lo, none, hi }, "priority")[1] == hi and sorting.apply({ lo, none, hi }, "priority")[3] == none, "priority ranks Jira names, unknown last")
+	local function cat(i: any): number return i.cat end
+	local doneHi, todoLow, wipLow = { priority = "High", cat = 3 } :: any, { priority = "Low", cat = 2 } :: any, { priority = "Low", cat = 1 } :: any
+	local byCat = sorting.apply({ doneHi, todoLow, wipLow }, "priority", cat)
+	assert(byCat[1] == wipLow and byCat[2] == todoLow and byCat[3] == doneHi, "a category rank orders before the priority")
 	assert(sorting.cycle("prs", "github", nil) == "updated" and sorting.cycle("prs", "github", "review") == nil and sorting.cycle("issues", "jira", "priority") == nil, "the cycle ends on the default order")
 	assert(sorting.label("updated") == "Recently updated" and sorting.label("oldest") == "Oldest waiting" and sorting.label("review") == "Review required first", "a sort's label is the one the toast and the header's Sort note show")
 	assert(sorting.label(nil) == "Default order" and sorting.label("bogus") == "Default order", "no sort or an unknown one is the default order")

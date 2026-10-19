@@ -93,8 +93,9 @@ export type Snap = {
 -- What the local search lets through: computed once per snapshot and search text.
 export type Visible = { snap: Snap, needle: string, group: string, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }
 -- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in. `keep`: the
--- groups follow the list's order (status, sorted by its category) instead of their labels'.
-export type Group = { value: string, label: string, of: (any) -> string, keep: boolean? }
+-- groups follow the list's order (GitHub state) instead of their labels'. `rank`: the groups go by their items' rank
+-- (Jira status category), then by label.
+export type Group = { value: string, label: string, of: (any) -> string, keep: boolean?, rank: ((any) -> number)? }
 -- What each kind can group each integration's items by; assigned below, once the badges it reads are defined.
 local GROUPS: { [string]: { [string]: { Group } } }
 function M.groupsOf(kindId: string, integration: string): { Group }
@@ -581,7 +582,7 @@ GROUPS = {
 		},
 		jira = {
 			{ value = "project", label = "Project", of = function(issue: any): string return issue.repo end },
-			{ value = "status", label = "Status", keep = true, of = function(issue: any): string return M.issueBadge(issue).text end },
+			{ value = "status", label = "Status", rank = tracker.categoryRank, of = function(issue: any): string return M.issueBadge(issue).text end },
 			{ value = "type", label = "Type", of = function(issue: any): string return issue.type or "No type" end },
 			{ value = "priority", label = "Priority", of = function(issue: any): string return issue.priority or "No priority" end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },

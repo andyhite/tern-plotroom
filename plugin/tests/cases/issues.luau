@@ -522,15 +522,41 @@ case("host: issues always list In Progress, then To Do, then Done, in acli's pri
 		end
 		return out
 	end
-	same(shown(grouped), { "In Review", "nabc_23ABC-3", "In Development", "nabc_23ABC-5", "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "Done", "nabc_23ABC-1" }, "status groups follow the list, not the alphabet")
+	same(shown(grouped), { "In Development", "nabc_23ABC-5", "In Review", "nabc_23ABC-3", "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "Done", "nabc_23ABC-1" }, "status groups go by category, then by name within one")
 	goToSettings(b, "views")
 	eq(rowIn(b, "sorder"), nil, "Settings has no status order row")
 	local saved = array({ "done", "new", "indeterminate" })
 	w.kv.put("status-order", saved)
 	local later = openIssues(w, 3)
-	same(shown(later), { "In Review", "nabc_23ABC-3", "In Development", "nabc_23ABC-5", "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "Done", "nabc_23ABC-1" }, "a saved status order is not read: a block opened after it sorts as before")
+	same(shown(later), { "In Development", "nabc_23ABC-5", "In Review", "nabc_23ABC-3", "Proposed", "nabc_23ABC-2", "nabc_23ABC-4", "Done", "nabc_23ABC-1" }, "a saved status order is not read: a block opened after it sorts as before")
 	same(listed(b), { "nabc_23ABC-3", "nabc_23ABC-5", "nabc_23ABC-2", "nabc_23ABC-4", "nabc_23ABC-1" }, "and the list of the block that was open stays the same")
 	same(w.kv.get("status-order"), saved, "and it is left as it was")
+end)
+
+case("host: a priority sort on a grouped Jira view keeps status categories first, and two To Do statuses go by name", function(w: World)
+	local s = jiraHost(w)
+	local function item(key: string, status: string, category: string, priority: string): any
+		return jiraItem(key, key, { status = { name = status, statusCategory = { key = category } }, priority = { name = priority } })
+	end
+	s.acli.searches[JIRA_ASSIGNED] = {
+		item("ABC-1", "Done", "done", "Highest"),
+		item("ABC-2", "Ready", "new", "Low"),
+		item("ABC-3", "Backlog", "new", "High"),
+		item("ABC-4", "Coding", "indeterminate", "Low"),
+		item("ABC-5", "Ready", "new", "Highest"),
+	}
+	local views: any = w.kv.get("views-issues")
+	views.items[1].sort = "priority"
+	w.kv.put("views-issues", views)
+	local b = openIssues(w)
+	same(listed(b), { "nabc_23ABC-4", "nabc_23ABC-5", "nabc_23ABC-3", "nabc_23ABC-2", "nabc_23ABC-1" }, "category first, priority within it, Done last")
+	views.items[1].group = "status"
+	w.kv.put("views-issues", views)
+	local out: { string } = {}
+	for _, id in pickerOf(openIssues(w, 2)).order do
+		table.insert(out, if type(id) == "table" then id.label else id)
+	end
+	same(out, { "Coding", "nabc_23ABC-4", "Backlog", "nabc_23ABC-3", "Ready", "nabc_23ABC-5", "nabc_23ABC-2", "Done", "nabc_23ABC-1" }, "groups by category then name, items by priority")
 end)
 
 case("host: a Jira view's Settings speak of JQL, the shared prompts, the repositories its issues are worked in and its branch format", function(w: World)

@@ -428,21 +428,26 @@ function M.filtered(state: State): Visible?
 			end
 		end
 	end
-	local sorted: { any } = if view and view.sort then sorting.apply(kept, view.sort) else kept
+	local byCategory: ((any) -> number)? = if view and view.integration == "jira" and snap.kind == "issues" then tracker.categoryRank else nil
+	local sorted: { any } = if view and view.sort then sorting.apply(kept, view.sort, byCategory) else kept
 	if not spec then
 		kept = sorted
 	end
 	local items: { any } = {}
 	local order: { any } = {}
 	if spec then
-		-- Headers of the groups, in label order, each followed by its items; navigation walks `items`, so a header is never selected.
+		-- Headers of the groups, each followed by its items; navigation walks `items`, so a header is never selected.
 		local buckets: { [string]: { any } } = {}
 		local labels: { string } = {}
+		local ranks: { [string]: number } = {}
 		for _, item in kept do
 			local label = spec.of(item)
 			if not buckets[label] then
 				buckets[label] = {}
 				table.insert(labels, label)
+				if spec.rank then
+					ranks[label] = spec.rank(item)
+				end
 			end
 		end
 		-- A sort orders the items of a group; the groups keep the order of the list they came in.
@@ -451,7 +456,11 @@ function M.filtered(state: State): Visible?
 			table.insert(buckets[spec.of(item)], item)
 		end
 		if not spec.keep then
+			local rank = spec.rank
 			table.sort(labels, function(a: string, b: string): boolean
+				if rank and ranks[a] ~= ranks[b] then
+					return ranks[a] < ranks[b]
+				end
 				local x, y = string.lower(a), string.lower(b)
 				if x ~= y then
 					return x < y
