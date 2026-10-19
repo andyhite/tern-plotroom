@@ -6,6 +6,8 @@
 
 ## In-Progress
 
+## Review
+
 - [ ] An issue action's Next action can be a PR action, so Implement can chain into Watch.
   - Settings › Actions › Next action on an issue action also offers the PR actions, labelled by kind; PR actions still offer only PR actions.
   - Issue agent finishes `done` with a PR next action → look up the PR whose head is the issue worktree's branch in the issue's code repository (`github.pullByHead`, open or draft only), then run the PR action on it as a manual run would: same worktree (reused by branch), the tab the agent ran in, PR variables from the fresh PR read.
@@ -23,11 +25,7 @@
   - Base: main
   - Branch: todo/issue-next-pr-action at /Users/andyhite/Code/tern-plotroom.todo/issue-next-pr-action
   - Decided: `github.pullByHead` skips cross-repository (fork) PRs for every caller, so the Worktrees board/preview head lookup ignores fork PRs too.
-  - Fix: plugin/host/settings.luau:310 - the issue Next action menu loads `prompts-prs` without the `usable(KINDS.prs)` check the same page applies at :231, so with gh off (README: no GitHub prompts) every issue action still offers "<name> (pull request)" options that can only fail (the `action` rpc then spawns gh) - guard it: `if kind.id == "issues" and usable(KINDS.prs) then loadPrompts(KINDS.prs) else nil`; add a case that a gh-less Settings offers no pull request actions
-  - Fix: plugin/portable.luau:502-509 - `plan` compares the imported and saved next action by lowercase name only, so a saved issue action whose next is the issue action "Watch" and an imported one whose next is the PR action "Watch" (or the reverse) is marked `identical` and the import offers only Skip/Duplicate - compare kind-qualified names on both sides (import: the ref's kind + name; saved: `prs` when qualified else `p.kind`, + name); add a `portable_check` assert
   - Review attempts: 2
-
-## Review
 
 ## Done
 
