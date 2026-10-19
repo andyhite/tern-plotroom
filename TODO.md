@@ -2,6 +2,8 @@
 
 ## Backlog
 
+- [ ] Action chains should be able to include actions that go across type, so that we can chain from Implement (issue) to Watch (PR) and similar operations. This may require changes to how some things work to ensure that all the necessary variables exist for prompts being executed next in a chain
+
 ## Todo
 
 ## In-Progress
