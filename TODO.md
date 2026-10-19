@@ -15,6 +15,8 @@
   - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
   - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
 
+## Review
+
 - [ ] Actions can name a next action that starts automatically when the agent finishes.
   - Branch: todo/actions-can-name-a-next-action-that-star at /Users/andyhite/Code/tern-plotroom.todo/actions-can-name-a-next-action-that-star
   - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
@@ -24,8 +26,9 @@
   - Cycles (A → B → A) are rejected in Settings; chain depth is capped. A pane finishing while a prompt waits does not fire `agent_finished`, so it does not advance.
   - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
   - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
-
-## Review
+  - Decided: Tern 0.8.3 has no API to name a pane (only tabs), so Go to agent lists each agent as "<action name> · pane N", read from the link's recorded action name.
+  - Decided: `recordAgent` keeps every earlier link that carries a chain, so each pane maps back to its action. `takeChain` clears the link's `next` before advancing, so a later turn of the same agent starts nothing.
+  - Decided: chain cap is 8 actions. A next action deleted at runtime gives an error toast and nothing starts. Deleting an action in Settings clears it as anyone's next.
 
 ## Done
 
