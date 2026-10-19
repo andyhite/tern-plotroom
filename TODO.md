@@ -2,9 +2,18 @@
 
 ## Backlog
 
-- [ ] Action chains should be able to include actions that go across type, so that we can chain from Implement (issue) to Watch (PR) and similar operations. This may require changes to how some things work to ensure that all the necessary variables exist for prompts being executed next in a chain
-
 ## Todo
+
+- [ ] An issue action's Next action can be a PR action, so Implement can chain into Watch.
+  - Settings › Actions › Next action on an issue action also offers the PR actions, labelled by kind; PR actions still offer only PR actions.
+  - Issue agent finishes `done` with a PR next action → look up the PR whose head is the issue worktree's branch in the issue's code repository (`github.pullByHead`, open or draft only), then run the PR action on it as a manual run would: same worktree (reused by branch), the tab the agent ran in, PR variables from the fresh PR read.
+  - No open/draft PR on the branch, a failed lookup, or an issue action that ran in the main checkout (no branch) → the chain stops with a toast naming why; nothing starts.
+  - Storage: a cross-kind `next` is stored qualified (`prs:<id>`); a bare id stays same-kind, so existing `prompts-*` stores stay valid. `storage.chainReaches`, deleting an action (clears it as anyone's next, in both stores) and export/import (`portable` drops another kind's next today) handle the qualified form.
+  - Touch points: `advanceChain`/`prepareTarget` (window), `flows` `Chain` (needs the code repo and branch: a Jira chain's `repo` is the project key), the host `action` rpc or a head-lookup op (requests), settings `pnext` options. Bump `RPC_PROTOCOL` and `PROTOCOL` together; never write over a malformed `agent-links`.
+  - Cases: issue → PR chain starts on the found PR in the same worktree; no PR / merged only → toast, nothing starts; Settings offers PR actions on the issue side only; qualified next survives export/import and delete. README: Next action bullet in the actions section.
+  - Decided: issue → PR only; PR actions cannot chain into issue actions.
+  - Decided: the PR is the open or draft one on the worktree branch; merged/closed only → the chain stops.
+  - Decided: the next action gets only its own kind's variables; issue variables are not carried over.
 
 ## In-Progress
 
