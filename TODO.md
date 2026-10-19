@@ -6,6 +6,8 @@
 
 ## In-Progress
 
+## Review
+
 - [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
   - Branch: todo/an-agents-entry-in-the-sidebar-lists-my at /Users/andyhite/Code/tern-plotroom.todo/an-agents-entry-in-the-sidebar-lists-my
   - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
@@ -14,8 +16,9 @@
   - Bump `RPC_PROTOCOL` and `PROTOCOL` together (the status map shape changes). Update `agentSig` and `engine.agentStatus` validation (size and key caps stay). Never write over a malformed `agent-links`.
   - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
   - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
-
-## Review
+  - Decided: the `agentgo` link needed no window change. For Jira, the host builds `plotroom://issue/agentgo/<PROJECT>/<KEY>` with the project upper-cased, which the window's issue branch already accepts.
+  - Decided: the status map is now `key -> {state, action?, branch?, title?}`. Exited agents carry no texts, and texts stop at 30000 bytes so the report stays under the host's 40000-byte cap.
+  - Decided: an `agent-links` row whose action, branch or title is not a string counts as malformed, so the store is never written over.
 
 ## Done
 
