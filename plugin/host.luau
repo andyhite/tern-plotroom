@@ -47,6 +47,8 @@ local function queueAction(state: State, act: string): boolean
 		else
 			retry(state)
 		end
+	elseif act == "agentgo" and state.agentsOn then
+		engine.agentGo(state)
 	elseif act == "settings" then
 		openSettings(state)
 	elseif act == "more" then
@@ -451,6 +453,9 @@ local function blockDef(): BlockDef<State>
 				showSnoozed = false,
 				attention = false,
 				agents = {},
+				agentInfo = {},
+				agentsOn = false,
+				agentAt = nil,
 				plan = nil,
 				draft = nil,
 				imported = nil,
@@ -670,6 +675,47 @@ local function blockDef(): BlockDef<State>
 					engine.boardAct(state, bact)
 				elseif bact == "refresh" or bact == "settings" or bact == "help" or bact == "more" then
 					queueAction(state, bact)
+				else
+					return false
+				end
+				return true
+			end
+			if state.agentsOn then
+				-- The Agents scope: its rows take the list keys and Enter goes to the agent's tab.
+				local onScopes = state.focus == "scopes"
+				local aact = if plain then keys.action((keys.load()), k) else nil
+				if name == "tab" and plain then
+					state.focus = if onScopes then "list" else "scopes"
+				elseif name == "escape" then
+					if onScopes then
+						state.focus = "list"
+					else
+						return false
+					end
+				elseif name == "up" or aact == "up" then
+					if onScopes then
+						moveView(state, -1)
+					else
+						engine.agentMove(state, -1)
+					end
+				elseif name == "down" or aact == "down" then
+					if onScopes then
+						moveView(state, 1)
+					else
+						engine.agentMove(state, 1)
+					end
+				elseif name == "page_up" or name == "page_down" then
+					engine.agentMove(state, if name == "page_up" then -10 else 10)
+				elseif name == "enter" then
+					if onScopes then
+						state.focus = "list"
+					else
+						engine.agentGo(state)
+					end
+				elseif aact == "agentgo" then
+					engine.agentGo(state)
+				elseif aact == "refresh" or aact == "settings" or aact == "help" or aact == "more" then
+					queueAction(state, aact)
 				else
 					return false
 				end
@@ -922,6 +968,18 @@ local function blockDef(): BlockDef<State>
 					leaveEdit(s)
 				end
 				if ev.ev == "select" or ev.ev == "activate" then
+					if state.agentsOn then
+						-- The Agents scope's rows are not the queue's items either.
+						for _, r in engine.agentRows(state) do
+							if item and engine.agentId(r) == item then
+								state.agentAt, state.focus = r.key, "list"
+								if ev.ev == "activate" then
+									engine.agentGo(state)
+								end
+							end
+						end
+						return
+					end
 					if state.boardOn then
 						-- The Worktrees board's rows are not the queue's items.
 						local row: any = nil

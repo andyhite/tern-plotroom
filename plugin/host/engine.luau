@@ -15,6 +15,7 @@ local storage = require("./storage")
 
 local ui = tern.ui
 
+type AgentInfo = core.AgentInfo
 type Attempt = core.Attempt
 type Group = core.Group
 type Note = core.Note
@@ -577,7 +578,7 @@ end
 -- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
 function M.autoSeen(state: State)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap or state.boardOn then
+	if not item or not snap or state.boardOn or state.agentsOn then
 		return
 	end
 	local st = M.status(state, snap.kind, item)
@@ -991,7 +992,7 @@ function M.retry(state: State)
 end
 
 function M.switchView(state: State, id: string?, activeLogin: string?)
-	state.activeId, state.activeLogin, state.boardOn = id, activeLogin, false
+	state.activeId, state.activeLogin, state.boardOn, state.agentsOn = id, activeLogin, false, false
 	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
 	M.changed(state) -- a click always refreshes; refresh itself dedupes, honors the cooldown and skips terminal problems
@@ -1001,13 +1002,13 @@ end
 -- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
 -- key). Until every CLI answered, an active view that is not listed yet stays the active one.
 function M.reloadViews(state: State)
-	local boardOn = state.boardOn -- switchView leaves the Worktrees scope
+	local boardOn, agentsOn = state.boardOn, state.agentsOn -- switchView leaves the Worktrees and Agents scopes
 	loadAll(state)
 	local v = M.activeView(state)
 	if not v then
 		if cli.ready() then
 			M.switchView(state, if state.views[1] then state.views[1].id else nil)
-			state.boardOn = boardOn
+			state.boardOn, state.agentsOn = boardOn, agentsOn
 		end
 	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
 		M.changed(state)
@@ -1285,7 +1286,7 @@ function M.boardLoad(state: State)
 end
 
 function M.openBoard(state: State)
-	state.boardOn, state.focus = true, "list"
+	state.boardOn, state.agentsOn, state.focus = true, false, "list"
 	if not state.board.loaded then
 		M.boardLoad(state)
 	end
@@ -1298,11 +1299,14 @@ function M.goScope(state: State, scopeId: any): boolean
 	if scopeId == "worktrees" then
 		M.openBoard(state)
 		return true
+	elseif scopeId == "agents" then
+		M.openAgents(state)
+		return true
 	end
 	for _, scope in M.orderedViews(state) do
 		if scope.id == scopeId then
 			if ghActive.isActive(state, scope) then
-				state.boardOn = false -- the view already shown: its selection stays
+				state.boardOn, state.agentsOn = false, false -- the view already shown: its selection stays
 				M.refresh(state) -- a click refreshes it
 			else
 				M.switchView(state, scope.view.id, scope.login)
@@ -1400,26 +1404,32 @@ end
 
 function M.moveView(state: State, delta: number)
 	local items = M.orderedViews(state)
-	local at = if state.boardOn then #items + 1 else 0
-	if not state.boardOn then
+	local other = state.boardOn or state.agentsOn -- a scope that is no view is shown
+	local at = if state.agentsOn then #items + 2 elseif state.boardOn then #items + 1 else 0
+	if not other then
 		for i, scope in items do
 			if ghActive.isActive(state, scope) then
 				at = i
 			end
 		end
 	end
-	-- The Worktrees list is the last entry of the sidebar.
-	local to = math.clamp(at + delta, 1, #items + 1)
-	if to == #items + 1 then
+	-- The Worktrees list and then the Agents list are the last entries of the sidebar.
+	local to = math.clamp(at + delta, 1, #items + 2)
+	if to == #items + 2 then
+		if not state.agentsOn then
+			M.openAgents(state)
+		end
+		return
+	elseif to == #items + 1 then
 		if not state.boardOn then
 			M.openBoard(state)
 		end
 		return
 	end
 	local target = items[to]
-	if target and state.boardOn and ghActive.isActive(state, target) then
-		state.boardOn = false
-	elseif target and (state.boardOn or not ghActive.isActive(state, target)) then
+	if target and other and ghActive.isActive(state, target) then
+		state.boardOn, state.agentsOn = false, false
+	elseif target and (other or not ghActive.isActive(state, target)) then
 		M.switchView(state, target.view.id, target.login)
 	end
 end
@@ -1913,7 +1923,9 @@ end)
 tern.on("pane_exited", function(_ev: any, _cx: any)
 	redrawQueues()
 end)
--- The window's report of its agents' states (`agent-status`: JSON of item key -> state): replaces what the rows show.
+-- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title? }): replaces
+-- what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256 }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -1923,29 +1935,119 @@ function M.agentStatus(state: State, raw: any)
 		return
 	end
 	local map: { [string]: string } = {}
+	local infos: { [string]: AgentInfo } = {}
 	local count = 0
 	for key, value in decoded do
 		local clean = triage.sanitizeKey(key)
-		if clean and (value == "working" or value == "waiting_input" or value == "idle" or value == "exited") and count < 200 then
-			map[clean] = value
+		local st = if isTable(value) then (value :: any).state else nil
+		if clean and (st == "working" or st == "waiting_input" or st == "idle" or st == "exited") and count < 200 then
+			map[clean] = st
+			local info: { [string]: string } = {}
+			for field, cap in INFO_CAPS do
+				local text: any = (value :: any)[field]
+				if type(text) == "string" and text ~= "" and #text <= cap and not string.find(text, "%c") then
+					info[field] = text
+				end
+			end
+			infos[clean] = info :: any
 			count += 1
 		end
 	end
 	local same = true
 	for k, v in map do
-		same = same and state.agents[k] == v
+		local was, now = state.agentInfo[k], infos[k]
+		same = same and state.agents[k] == v and was ~= nil and was.action == now.action and was.branch == now.branch and was.title == now.title
 	end
 	for k in state.agents do
 		same = same and map[k] ~= nil
 	end
 	if not same then
-		state.agents = map
+		state.agents, state.agentInfo = map, infos
 		state.rev += 1
 		state.vis = nil
 		if state.snap then
 			M.ensureCursor(state)
 		end
+		M.agentEnsure(state)
 		state.cx:render()
+	end
+end
+
+-- The Agents scope's rows: every agent not exited, by repository then item key. `repo` is the part of the key before `#`.
+function M.agentRows(state: State): { any }
+	local rows: { any } = {}
+	for key, st in state.agents do
+		if st ~= "exited" then
+			local info: AgentInfo = state.agentInfo[key] or {}
+			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title })
+		end
+	end
+	table.sort(rows, function(a: any, b: any): boolean
+		return if a.repo ~= b.repo then a.repo < b.repo else a.key < b.key
+	end)
+	return rows
+end
+
+-- The picker id of an Agents row: no `/` or `#`, as an item's.
+function M.agentId(row: any): string
+	return "g" .. (string.gsub(row.key, "[^%w%-]", function(c: string): string
+		return string.format("_%02x", string.byte(c))
+	end))
+end
+
+-- The row previewed and its place in the list (nil, 0 when there is none).
+function M.agentSelected(state: State): (any, number)
+	for i, row in M.agentRows(state) do
+		if row.key == state.agentAt then
+			return row, i
+		end
+	end
+	return nil, 0
+end
+
+-- Keeps the preview on a listed agent while the scope is shown: the first when none is previewed or it went away.
+function M.agentEnsure(state: State)
+	if state.agentsOn and select(2, M.agentSelected(state)) == 0 then
+		local first = M.agentRows(state)[1]
+		state.agentAt = if first then first.key else nil
+	end
+end
+
+-- Moves the previewed agent `delta` rows, clamped to the list.
+function M.agentMove(state: State, delta: number)
+	local rows = M.agentRows(state)
+	if #rows > 0 then
+		local _, at = M.agentSelected(state)
+		state.agentAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].key
+	end
+end
+
+-- Shows the Agents scope instead of a view or the Worktrees list.
+function M.openAgents(state: State)
+	state.agentsOn, state.boardOn, state.focus = true, false, "list"
+	M.agentEnsure(state)
+end
+
+-- The link the window follows to the agent of item `key` ("repo#ref"): a pull request's or GitHub issue's number, or a Jira
+-- issue's key (its project upper case, as the window's issue links take it). nil for a key that is neither.
+function M.agentHref(key: string): string?
+	local repo, n = string.match(key, "^([^/#]+/[^/#]+)#(%d+)$")
+	if repo and n then
+		return "plotroom://github/agentgo/" .. repo .. "/" .. n
+	end
+	local project, ref = string.match(key, "^([^#]+)#([%w_%-]+)$")
+	if project and ref and not string.find(project, "/", 1, true) then
+		return "plotroom://issue/agentgo/" .. string.upper(project) .. "/" .. ref
+	end
+	return nil
+end
+
+-- Goes to the previewed agent's tab: the window follows the link its hidden node carries.
+function M.agentGo(state: State)
+	local row = M.agentSelected(state)
+	local href = if row then M.agentHref(row.key) else nil
+	if href then
+		state.cx:open(href)
 	end
 end
 

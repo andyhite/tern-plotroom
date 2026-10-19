@@ -27,11 +27,16 @@ type HostId = { id: number, name: string, address: string }
 -- The saved action an agent ran, kept with its link: `next` (nil once started or stopped) is the action to start when the
 -- agent finishes, for the same item (`kind`, `repo`, `ref`); `depth` counts the actions chained before it.
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number }
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain? }
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string? }
+-- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title).
+export type AgentInfo = { action: string?, branch: string?, title: string? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string? }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
+local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 100, 100 -- the host takes up to 120, 200 and 256
+local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
 local COMMIT_MS = 3 * 60 * 1000
@@ -90,6 +95,15 @@ local function hostSame(a: HostId, b: HostId): boolean
 	return a.id == b.id and a.address == b.address
 end
 
+-- `s` as one clean line of at most `cap` bytes; nil for nothing (or only blanks) to say.
+local function clip(s: string?, cap: number): string?
+	if not s then
+		return nil
+	end
+	local text = string.gsub(input.clean(string.sub(s, 1, cap)), "%c", " ")
+	return if string.find(text, "%S") then text else nil
+end
+
 local function linkOf(row: any): Link?
 	if type(row) ~= "table" or type(row.key) ~= "string" or row.key == "" or #row.key > 200 or type(row.agent) ~= "number" or type(row.at) ~= "number" then
 		return nil
@@ -115,7 +129,25 @@ local function linkOf(row: any): Link?
 		end
 		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth }
 	end
-	return { key = row.key, agent = row.agent, host = { id = h.id, name = h.name, address = h.address }, at = row.at, chain = c }
+	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
+	local texts: { [string]: string } = {}
+	for _, field in { "action", "branch", "title" } do
+		local v = row[field]
+		if v ~= nil and type(v) ~= "string" then
+			return nil
+		end
+		texts[field] = v
+	end
+	return {
+		key = row.key,
+		agent = row.agent,
+		host = { id = h.id, name = h.name, address = h.address },
+		at = row.at,
+		chain = c,
+		action = clip(texts.action, ACTION_CAP),
+		branch = clip(texts.branch, BRANCH_CAP),
+		title = clip(texts.title, TITLE_CAP),
+	}
 end
 
 -- The saved links, newest first, and whether the store was readable: a store that is not (a failing read, a value
@@ -144,7 +176,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -177,21 +209,32 @@ local function plotroomPanes(cx: WindowCx): { number }
 	return out
 end
 
--- key -> state for the links recorded on `host` (the newest link of a key counts); an agent pane no longer listed is
--- exited.
-local function statusMap(links: { Link }, host: HostId, states: { [number]: string }): { [string]: string }
-	local map: { [string]: string } = {}
+-- key -> state (and what the link recorded about the agent) for the links recorded on `host` (the newest link of a key
+-- counts); an agent pane no longer listed is exited. An exited agent carries no text: its row is not shown, and the
+-- report stays small. ponytail: the texts stop at INFO_BYTES of JSON-encoded size (escapes count: the host's cap is on the
+-- encoded report), so a report of many live agents stays under its 40000-byte cap with state only for the rest; raise the host's cap with the count of agents if that is ever too few.
+local function statusMap(links: { Link }, host: HostId, states: { [number]: string }): { [string]: StatusRow }
+	local map: { [string]: StatusRow } = {}
 	local count = 0
+	local bytes = 0
 	for _, l in links do
 		if map[l.key] == nil and hostSame(l.host, host) and count < LINKS_CAP then
-			map[l.key] = states[l.agent] or "exited"
+			local state = states[l.agent] or "exited"
+			local row: StatusRow = { state = state }
+			local size = #tern.json.encode({ [l.key] = { state = state, action = l.action, branch = l.branch, title = l.title } }) + 1
+			if state ~= "exited" and bytes + size <= INFO_BYTES then
+				row.action, row.branch, row.title = l.action, l.branch, l.title
+				bytes += size
+			end
+			map[l.key] = row
 			count += 1
 		end
 	end
 	return map
 end
 
-local function signature(map: { [string]: string }): string
+-- "key=state|action|branch|title;" per key in order: host/render's `agentSig` spells it the same.
+local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
 		table.insert(keys, k)
@@ -199,7 +242,8 @@ local function signature(map: { [string]: string }): string
 	table.sort(keys)
 	local parts: { string } = {}
 	for _, k in keys do
-		table.insert(parts, k .. "=" .. map[k] .. ";")
+		local r = map[k]
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -263,7 +307,7 @@ end
 -- Records that agent block `agent`, started from the Plotroom block `pane`, works on `key`. No link when the two are
 -- not on the same host, or the saved links cannot be read. `chain`: the saved action it ran; earlier agents of the key
 -- that ran a saved action stay linked, so a chain's panes can each be mapped back to their action.
-function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, chain: Chain?)
+function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, chain: Chain?, info: AgentInfo?)
 	local host, agentHost = hostOf(cx, pane), hostOf(cx, agent)
 	if not host or not agentHost or not hostSame(host, agentHost) then
 		return
@@ -272,7 +316,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil } }
 	for _, l in links do
 		if not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil then
 			table.insert(out, l)

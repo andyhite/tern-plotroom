@@ -41,7 +41,8 @@ local function flowHost(w: World, pane: number?): FlowStub
 			table.sort(keys)
 			local sig = ""
 			for _, k in keys do
-				sig ..= k .. "=" .. map[k] .. ";"
+				local r = map[k]
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -119,7 +120,7 @@ local function startAgentOn(w: World, st: FlowStub)
 	w.click("plotroom://github/agent/o/r/5")
 	w.flush()
 	st.reply("menu", { items = { { label = "Review", send = "Review {url}", worktree = true } } })
-	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing" })
 end
 
 windowCase("window flows: an agent started from a block is linked in kv and the block hears its state", function(w: World)
@@ -134,17 +135,20 @@ windowCase("window flows: an agent started from a block is linked in kv and the 
 	eq(w.window.agentStates[links[1].agent], "working", "to the agent block the start made")
 	local status = statusEvents(w)
 	eq(#status, 1, "the block was told at once")
-	same(status[1].map, { ["o/r#5"] = "working" }, "the state of the key")
+	same(status[1].map, { ["o/r#5"] = { state = "working", action = "Review", branch = "fix-5", title = "Fix the thing" } }, "the state of the key with what the link recorded")
+	eq(links[1].action, "Review", "the action's name is kept on the link")
+	eq(links[1].branch, "fix-5", "and the branch")
+	eq(links[1].title, "Fix the thing", "and the item's title")
 	eq(status[1].pane, 1, "the Plotroom block")
 	w.advance(4100)
 	eq(#statusEvents(w), 1, "nothing changed: nothing more is sent")
 	w.window.agentStates[links[1].agent] = "waiting_input"
 	w.advance(4000)
 	eq(#statusEvents(w), 2, "a changed state is sent")
-	same(statusEvents(w)[2].map, { ["o/r#5"] = "waiting_input" }, "in full")
+	same(statusEvents(w)[2].map, { ["o/r#5"] = { state = "waiting_input", action = "Review", branch = "fix-5", title = "Fix the thing" } }, "in full")
 	w.window.panes[links[1].agent] = nil
 	w.advance(4000)
-	same(statusEvents(w)[3].map, { ["o/r#5"] = "exited" }, "a closed agent pane is exited")
+	same(statusEvents(w)[3].map, { ["o/r#5"] = { state = "exited" } }, "a closed agent pane is exited, with no texts")
 	w.advance(12000)
 	eq(#statusEvents(w), 3, "and then it is quiet")
 end)
@@ -159,7 +163,7 @@ windowCase("window flows: links survive a plugin VM reboot (kv) and the timer st
 	local start: any = w.window.handlers.window_start
 	start(w.cx)
 	w.advance(4100)
-	same(statusEvents(w)[1].map, { ["o/r#5"] = "idle" }, "the saved link gives the state")
+	same(statusEvents(w)[1].map, { ["o/r#5"] = { state = "idle" } }, "the saved link gives the state, and no texts for a link saved without them")
 	w.window.choose = nil
 	w.click("plotroom://github/agentgo/o/r/5")
 	eq(w.window.focused, 50, "the link focuses the recorded agent")
@@ -249,7 +253,7 @@ windowCase("window flows: a link recorded for another host is ignored, and an ag
 	seedAgent(w, 52, "idle", 1, "o/r#9")
 	w.window.handlers.window_start(w.cx)
 	w.advance(4100)
-	same(statusEvents(w)[1].map, { ["o/r#9"] = "idle" }, "the other host's key is not in this block's map")
+	same(statusEvents(w)[1].map, { ["o/r#9"] = { state = "idle" } }, "the other host's key is not in this block's map")
 	w.window.focused = 1
 	local said = #w.toasts
 	w.click("plotroom://github/agentgo/x/y/1")
@@ -272,6 +276,27 @@ windowCase("window flows: a malformed agent-links store is never written over", 
 	eq(#w.window.agents, 1, "the agent started")
 	eq(w.kv.store["agent-links"], before, "the store is as it was")
 	eq(w.toasts[#w.toasts - 1].text, "Agent started, but not linked to o/r#5", "and the user is told")
+end)
+
+windowCase("window flows: an agent-links store whose texts are not strings is malformed and never written over", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	seedAgent(w, 50, "idle", 1, "o/r#4")
+	local links: any = w.kv.get("agent-links")
+	links[1].action = 5
+	w.kv.put("agent-links", links)
+	local before = w.kv.store["agent-links"]
+	startAgentOn(w, st)
+	eq(w.kv.store["agent-links"], before, "the store is as it was")
+end)
+
+windowCase("window flows: a Jira issue's agentgo link goes to the agent recorded under its lower-case project key", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentgo", "plotroom://issue/agentgo/ABC/ABC-12")
+	seedAgent(w, 50, "working", 1, "abc#ABC-12")
+	w.click("plotroom://issue/agentgo/ABC/ABC-12")
+	eq(w.window.focused, 50, "the recorded pane is focused")
 end)
 
 windowCase("window flows: an agent link switches to the exact recorded pane, even with other agents in the same folder", function(w: World)
@@ -660,6 +685,29 @@ windowCase("window flows: agent status is resent when the block's acknowledgemen
 	end
 	w.advance(4000)
 	eq(#statusEvents(w), 2, "a host that lost its map (no acknowledgement) is told again")
+end)
+
+windowCase("window flows: the status report stays under the host's 40000-byte cap when titles are mostly JSON escapes", function(w: World)
+	w.load("window")
+	flowHost(w)
+	for i = 1, 100 do
+		seedAgent(w, 50 + i, "idle", 1, "o/r#" .. i)
+	end
+	local links: any = w.kv.get("agent-links")
+	for _, l in links do
+		l.title = string.rep("\1", 100) -- 100 raw bytes, 600 once JSON-encoded
+	end
+	w.kv.put("agent-links", links)
+	w.window.handlers.window_start(w.cx)
+	w.advance(4100)
+	local sent: any = nil
+	for _, e in w.window.events do
+		if e.ev.act == "agent-status" then
+			sent = e.ev.value
+		end
+	end
+	yes(sent ~= nil and #sent <= 40000, "the encoded report is within the host's cap")
+	eq(statusEvents(w)[1].map["o/r#100"].state, "idle", "every agent still has its state")
 end)
 
 windowCase("window flows: palette commands send plain events, and the command palette lists, in its groups, the typed prompt, the saved actions, the queue's actions and only the commands the host says apply", function(w: World)
@@ -1803,13 +1851,70 @@ case("host: returning from the Worktrees list to the view already shown, by pale
 	eq(pickerOf(b).selected, "no_2fr_232", "by the sidebar: the same row")
 	yes(table.find(listed(b), "no_2fr_232") ~= nil, "still listed")
 end)
+
+case("host agents: the Agents scope lists agents that are not exited by repository with item, action, branch and state, counts them in the sidebar, and Enter goes to the selected one, a Jira issue's too", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local scopes = pickerOf(b).scopes
+	eq(scopes[#scopes].id, "agents", "the sidebar ends with the Agents scope")
+	eq(scopes[#scopes].label, "Agents", "named so")
+	eq(scopes[#scopes].count, 0, "with no agent to count")
+	asks.hx.agents(b, {
+		["o/r#1"] = { state = "working", action = "Review", branch = "fix-1", title = "Fix one" },
+		["o/r#2"] = "waiting_input", -- a link saved before the texts were recorded
+		["o/r#3"] = "exited",
+		["x/y#4"] = { state = "idle", action = "Watch", title = "Other" },
+	})
+	scopes = pickerOf(b).scopes
+	eq(scopes[#scopes].count, 3, "the exited agent is not counted")
+	pickScope(b, "agents")
+	w.flush()
+	eq(pickerOf(b).scope, "agents", "opening it makes it the active scope")
+	eq(pickerOf(b).noun, "agents", "the list holds agents")
+	local rows: { string } = {}
+	for _, item in pickerOf(b).items do
+		table.insert(rows, item.label .. " | " .. detailText(item) .. " | " .. item.badges[1].text)
+	end
+	same(rows, { "Fix one | Review · fix-1 | Working", "o/r#2 | o/r#2 | Needs input", "Other | Watch | Idle" }, "title, action and branch and the state badge; an old link shows its key and state; an exited agent is hidden")
+	eq(pickerOf(b).order[1].label, "o/r", "grouped by repository")
+	eq(pickerOf(b).order[1].count, 2, "counting its agents")
+	eq(pickerOf(b).order[4].label, "x/y", "the next repository after them")
+	eq(pickerOf(b).selected, "go_2fr_231", "the first agent is selected on arrival")
+	eq(findKey(pickerNode(b), "agentgo").p.href, "plotroom://github/agentgo/o/r/1", "its hidden link is the agent's")
+	b.press("down")
+	eq(pickerOf(b).selected, "go_2fr_232", "Down moves to the next")
+	eq(b.press("enter"), true, "Enter goes to its agent")
+	eq(w.opened[#w.opened], "plotroom://github/agentgo/o/r/2", "through its link")
+	asks.hx.agents(b, { ["abc#ABC-12"] = "working" })
+	eq(pickerOf(b).selected, "gabc_23ABC-12", "an agent that went away hands the selection on")
+	eq(findKey(pickerNode(b), "agentgo").p.href, "plotroom://issue/agentgo/ABC/ABC-12", "a Jira issue's link names its project in upper case")
+	b.press("enter")
+	eq(w.opened[#w.opened], "plotroom://issue/agentgo/ABC/ABC-12", "and Enter follows it")
+	asks.hx.agents(b, { ["abc#ABC-12"] = "exited" })
+	eq(#pickerOf(b).items, 0, "no agent left: no row")
+	eq(pickerOf(b).selected, nil, "and none selected")
+	pickScope(b, "prs:v1")
+	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the Agents scope")
+end)
+
+case("host agents: agent-status drops texts that are not clean strings within their caps", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = 5, branch = string.rep("b", 201), title = "bad\ntitle" } })
+	pickScope(b, "agents")
+	w.flush()
+	eq(pickerOf(b).items[1].label, "o/r#1", "a malformed title is not shown")
+	eq(detailText(pickerOf(b).items[1]), "o/r#1", "nor a malformed action or an oversize branch")
+	asks.hx.agents(b, { ["o/r#1"] = "working" })
+	same(b.state().agentInfo["o/r#1"], {}, "the old shape of a status row is a row with no texts")
+end)
 case("host worktrees board: the Worktrees scope lists every worktree of every saved checkout, not only the shown view's repository, with badges, an open link and a way back", function(w: World)
 	local s = asks.hx.boardScene(w)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
-	eq(scopes[#scopes].id, "worktrees", "the sidebar ends with the Worktrees scope")
-	eq(scopes[#scopes].label, "Worktrees list", "named so")
-	eq(scopes[#scopes].count, nil, "with no count until it was read")
+	eq(scopes[#scopes - 1].id, "worktrees", "the sidebar's last but one scope is the Worktrees scope")
+	eq(scopes[#scopes - 1].label, "Worktrees list", "named so")
+	eq(scopes[#scopes - 1].count, nil, "with no count until it was read")
 	eq(pickerOf(b).scope, "prs:v1", "the view is the active scope")
 	pickScope(b, "worktrees")
 	w.flush()
@@ -1817,7 +1922,7 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	eq(pickerOf(b).noun, "worktrees", "the board lists worktrees")
 	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "every checkout's worktrees, grouped by repository, the other repository's too")
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes].count, 5, "the scope counts them")
+	eq(scopes[#scopes - 1].count, 5, "the scope counts them")
 	has(asks.hx.badges(b, "o/r/main"), "Main", "the main worktree is marked")
 	has(asks.hx.badges(b, "x/y/main"), "Main", "in every repository")
 	has(asks.hx.badges(b, "o/r/lk"), "Locked", "a locked worktree is marked")
@@ -2577,14 +2682,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working;o/r#2=idle;", "pairs in key order")
+	eq(sig(b), "o/r#1=working|||;o/r#2=idle|||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input|||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue to the status by its transitions' target, and says why when it cannot, with nothing posted", function(w: World)

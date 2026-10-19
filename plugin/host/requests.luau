@@ -584,7 +584,7 @@ function M.show(state: State, url: any, force: boolean?): boolean
 		return false
 	end
 	discardEdit(state)
-	state.settings, state.help, state.query, state.focus, state.boardOn = nil, false, nil, "list", false
+	state.settings, state.help, state.query, state.focus, state.boardOn, state.agentsOn = nil, false, nil, "list", false, false
 	if needsPin then
 		if not have then
 			table.insert(state.pins, pin)
@@ -1041,7 +1041,7 @@ end
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
 	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" } }
-	local item, snap = if state.boardOn then nil else selected(state), state.snap
+	local item, snap = if state.boardOn or state.agentsOn then nil else selected(state), state.snap
 	if not item or not snap then
 		return out
 	end
@@ -1782,7 +1782,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			table.insert(out, { id = "scope:" .. scope.id, label = scope.label, key = "", group = "Views", detail = scope.group })
 		end
 	end
-	local item = if state.boardOn then nil else selected(state)
+	local item = if state.boardOn or state.agentsOn then nil else selected(state)
 	if item then
 		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
 		labels.open = "Open in " .. INTEGRATIONS[tr].label

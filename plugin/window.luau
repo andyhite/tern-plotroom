@@ -35,6 +35,10 @@ local PROTOCOL = "20" -- what host/core's RPC_PROTOCOL, shown by host/render's `
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
 
+local function strOf(v: any): string?
+	return if type(v) == "string" then v else nil
+end
+
 -- A worktree the host prepared, as its answer says.
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
@@ -378,7 +382,7 @@ end
 -- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
 -- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean)
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo)
 	local model, split = job.model, job.split == true
 	if model and not worktree.validModel(model) then
 		return cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
@@ -427,7 +431,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	if job.id then
 		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0 }
 	end
-	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain)
+	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	if split then
 		if cx.layout:move(agent, pane, "right") then
 			return cx:toast("success", "Agent started beside the queue for " .. t.label, prompt)
@@ -638,9 +642,10 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
 				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt)
+				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title) })
 			else
-				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt, wt)
+				local vars: any = a.vars
+				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil })
 				if prompt.status then
 					moveStatus(cx2, pane, t, prompt.status)
 				end
@@ -674,7 +679,7 @@ end
 local function typePrompt(cx: WindowCx, pane: number, t: Target)
 	cx:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx2)
 		if cx2 and text and string.find(text, "%S") then
-			prepareTarget(cx2, pane, t, { text = text }, true)
+			prepareTarget(cx2, pane, t, { text = text, name = "Typed prompt" }, true)
 		end
 	end)
 end

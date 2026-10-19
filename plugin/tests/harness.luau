@@ -3266,9 +3266,13 @@ function asks.hx.keys(t: any): { string }
 	return out
 end
 
--- The window's `agent-status` report.
-function asks.hx.agents(b: Block, map: { [string]: string })
-	b.event({ ev = "action", act = "agent-status", value = jsonEncode(map) })
+-- The window's `agent-status` report: a state as a string, or the whole row ({ state, action?, branch?, title? }).
+function asks.hx.agents(b: Block, map: { [string]: any })
+	local sent: { [string]: any } = {}
+	for k, v in map do
+		sent[k] = if type(v) == "string" then { state = v } else v
+	end
+	b.event({ ev = "action", act = "agent-status", value = jsonEncode(sent) })
 end
 
 -- Sends the block a request as the window does and returns its answer once everything it started has finished.

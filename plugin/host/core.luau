@@ -155,6 +155,9 @@ export type Settings = {
 	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") awaiting confirmation; view and prompt ids are qualified by their kind
 }
 
+-- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title.
+export type AgentInfo = { action: string?, branch: string?, title: string? }
+
 export type State = {
 	cx: BlockCx,
 	kind: Kind, -- the active view's, as identify keeps it (a block with no view keeps its last)
@@ -204,6 +207,9 @@ export type State = {
 	attention: boolean, -- only items that need attention are listed: unseen or changed ones, and those whose agent waits for input
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)
 	agents: { [string]: string }, -- item key -> its agent's state as the window last reported it (working | waiting_input | idle | exited)
+	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
+	agentsOn: boolean, -- the Agents scope is shown instead of a view
+	agentAt: string?, -- the item key of the Agents row previewed
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	imported: any, -- the parsed import waiting for its choices, nil: none

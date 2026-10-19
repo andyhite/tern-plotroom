@@ -229,17 +229,19 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state;" per entry in key order: the hidden `main.agents` node says it,
--- so a window that sent its map to an earlier run of this block (a reload) sees the block no longer holds it and sends again.
-local function agentSig(map: { [string]: string }): string
+-- The agent map this block holds as one string, "key=state|action|branch|title;" per entry in key order: the hidden
+-- `main.agents` node says it, so a window that sent its map to an earlier run of this block (a reload) sees the block no
+-- longer holds it and sends again. flows.luau's `signature` spells it the same.
+local function agentSig(state: State): string
 	local names: { string } = {}
-	for k in map do
+	for k in state.agents do
 		table.insert(names, k)
 	end
 	table.sort(names)
 	local out: { string } = {}
 	for _, k in names do
-		table.insert(out, k .. "=" .. map[k] .. ";")
+		local info: core.AgentInfo = state.agentInfo[k] or {}
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -247,7 +249,7 @@ end
 function M.rpcNodes(state: State): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
-		ui.node("text", { key = "agents", text = agentSig(state.agents), hidden = true }),
+		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
 	}
@@ -977,8 +979,17 @@ function M.scopeRows(state: State): ({ any }, string?)
 		count = if not dropdown and state.board.loaded then #engine.boardRows(state) else nil,
 		group = if grouped then "Worktrees" else nil,
 	})
+	table.insert(scopes, {
+		id = "agents",
+		label = "Agents",
+		icon = "bot",
+		count = if not dropdown then #engine.agentRows(state) else nil,
+		group = if grouped then "Agents" else nil,
+	})
 	if state.boardOn then
 		activeScope = "worktrees"
+	elseif state.agentsOn then
+		activeScope = "agents"
 	end
 	return scopes, activeScope
 end
@@ -1094,6 +1105,84 @@ local function boardProps(state: State, props: { [string]: any })
 	props.actions = keyed(actions)
 end
 
+-- The Agents scope's preview of the selected agent: its item, its action, branch and state, and, hidden, the link the window
+-- goes to its tab with.
+local function agentsPreview(state: State): { Node }
+	local row = engine.agentSelected(state)
+	if not row then
+		return {}
+	end
+	local badge = AGENT_BADGE[row.state]
+	local href = engine.agentHref(row.key)
+	local facts: { { [string]: any } } = withValue({
+		{ k = "Item", v = { ui.span(printable(row.key), "mono") } },
+		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
+		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
+	})
+	local kids: { Node } = {
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "title", spans = { ui.span(printable(row.title or row.key), "strong") } }),
+			ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }),
+		}),
+		ui.node("kv", { key = "facts", items = facts }),
+	}
+	if href then
+		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, { ui.node("text", { key = "agentgo", href = href }) }))
+	end
+	return kids
+end
+
+-- Turns the queue's picker props into the Agents scope's: a group per repository, each agent's item, action, branch and state.
+local function agentsProps(state: State, props: { [string]: any })
+	local rows = engine.agentRows(state)
+	local current = engine.agentSelected(state)
+	local map = keys.load()
+	local items: { any } = {}
+	local order: { any } = {}
+	local groups: { [string]: { any } } = {}
+	local names: { string } = {}
+	for _, row in rows do
+		local label = printable(row.title or row.key)
+		local detail: { any } = {}
+		if row.action then
+			table.insert(detail, ui.span(printable(row.action)))
+		end
+		if row.branch then
+			table.insert(detail, if #detail > 0 then " · " else "")
+			table.insert(detail, ui.span(printable(row.branch), "mono"))
+		end
+		if #detail == 0 then
+			detail = { ui.span(printable(row.key), "mono") }
+		end
+		local id = engine.agentId(row)
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state] } })
+		if not groups[row.repo] then
+			groups[row.repo] = {}
+			table.insert(names, row.repo)
+		end
+		table.insert(groups[row.repo], id)
+	end
+	for _, name in names do
+		table.insert(order, { group = name, label = name, count = #groups[name] })
+		for _, id in groups[name] do
+			table.insert(order, id)
+		end
+	end
+	props.icon, props.title, props.noun = "bot", { ui.span("Agents", "strong") }, "agents"
+	props.subtitle = { ui.span(#rows .. " agent" .. (if #rows == 1 then "" else "s"), "muted") }
+	props.placeholder = "Agents are not searched"
+	props.state = "ready"
+	props.empty = { ui.span("No agents are running. Start one from a pull request or issue.", "muted") }
+	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
+	props.selected = if current then engine.agentId(current) else nil
+	props.columns, props.query, props.cursor = {}, nil, nil
+	props.actions = keyed({
+		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
+		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
+		{ id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true, disabled = if current then nil else "No agent is listed" },
+	})
+end
+
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
@@ -1189,7 +1278,7 @@ function M.queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and #strip > 0 then ".footer-status" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and #strip > 0 then ".footer-status" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1233,6 +1322,10 @@ function M.queuePicker(state: State): Node
 		cancelDetails(state) -- no checks load for a queue preview that is not shown
 		preview = boardPreview(state)
 		boardProps(state, props)
+	elseif state.agentsOn then
+		cancelDetails(state)
+		preview = agentsPreview(state)
+		agentsProps(state, props)
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
 		if #strip > 0 then
