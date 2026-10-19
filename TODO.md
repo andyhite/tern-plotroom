@@ -3,9 +3,15 @@
 ## Backlog
 - [ ] Let users specify the order statuses are listed in, for both sort order and grouping.
 - [ ] Let an action prompt be inserted into a running agent managed by Plotroom (e.g. run the watch action after implement finishes and the PR is open).
-- [ ] Add a special view that shows all of my in-progress agents and what they're working on
 
 ## Todo
+- [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
+  - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
+  - Enter goes to the agent's tab (`flows.goAgent`). The `agentgo` link only parses `owner/repo/number` today, so extend it to Jira keys.
+  - Persist action name, branch and title on `Link` (`agent-links`, `recordAgent` call in `window.luau`) and send them with the status map, so rows need no loaded view. Old links without them show key and state only.
+  - Bump `RPC_PROTOCOL` and `PROTOCOL` together (the status map shape changes). Update `agentSig` and `engine.agentStatus` validation (size and key caps stay). Never write over a malformed `agent-links`.
+  - No new polling: rows ride the 4 s status sync. Host state goes in `core`, glue in `engine`, rows in `render` (mirror `boardOn`/`scopeRows`/`boardProps`).
+  - Cases: rows by state, exited hidden, old link, Jira go-to. README: Agents and sidebar sections.
 
 ## In-Progress
 - [ ] Show both the PR and the issue in the preview when an item's worktree has both.
