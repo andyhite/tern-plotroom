@@ -6,6 +6,8 @@
 
 ## In-Progress
 
+## Review
+
 - [ ] An issue action's Next action can be a PR action, so Implement can chain into Watch.
   - Settings › Actions › Next action on an issue action also offers the PR actions, labelled by kind; PR actions still offer only PR actions.
   - Issue agent finishes `done` with a PR next action → look up the PR whose head is the issue worktree's branch in the issue's code repository (`github.pullByHead`, open or draft only), then run the PR action on it as a manual run would: same worktree (reused by branch), the tab the agent ran in, PR variables from the fresh PR read.
@@ -22,11 +24,8 @@
   - Decided: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "22".
   - Base: main
   - Branch: todo/issue-next-pr-action at /Users/andyhite/Code/tern-plotroom.todo/issue-next-pr-action
-  - Fix: plugin/host/requests.luau:1702-1711 (via plugin/github.luau:1163-1172 `pullByHead`) - the chain now acts on `pullByHead`'s result, which matches the branch name only, so a fork's open PR with the same head branch name can win: the PR action then runs on someone else's PR in a new worktree, not the issue's (and `pullByHead`'s "only ever shown, never acted on" comment is now false) - add `isCrossRepository` to the `--json` fields and skip cross-repository PRs for this lookup; update the comment; add a `heads` stub case with a same-named fork PR
-  - Fix: plugin/host/settings.luau:823-832 - deleting any PR action always calls `editPrompts(KINDS.issues, ...)`, which writes the store; with no saved `prompts-issues` this saves the seeded defaults, freezing them against later default changes (breaks storage.luau:361 "saved with the first edit") - only call `editPrompts` when the loaded issue store has an action whose `next` is the deleted `prs:<id>`
+  - Decided: `github.pullByHead` skips cross-repository (fork) PRs for every caller, so the Worktrees board/preview head lookup ignores fork PRs too.
   - Review attempts: 1
-
-## Review
 
 ## Done
 
