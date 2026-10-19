@@ -17,19 +17,6 @@
 
 ## Review
 
-- [ ] Actions can name a next action that starts automatically when the agent finishes.
-  - Branch: todo/actions-can-name-a-next-action-that-star at /Users/andyhite/Code/tern-plotroom.todo/actions-can-name-a-next-action-that-star
-  - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
-  - On `agent_finished` with result `done` (handler in `window.luau`, today only `agentSync`), start the next action for the same item in a new pane in the same tab, same worktree. `failed`, `exited` and `closed` stop the chain, with a toast naming why.
-  - Every agent pane is named after the action it ran, so panes in a tab can be told apart.
-  - Needs the finished pane mapped back to item and action: `recordAgent` keeps only one link per key and host today, so it must keep the chained agents (record action id on `Link`, without writing over a malformed `agent-links`).
-  - Cycles (A → B → A) are rejected in Settings; chain depth is capped. A pane finishing while a prompt waits does not fire `agent_finished`, so it does not advance.
-  - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
-  - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
-  - Decided: Tern 0.8.3 has no API to name a pane (only tabs), so Go to agent lists each agent as "<action name> · pane N", read from the link's recorded action name.
-  - Decided: `recordAgent` keeps every earlier link that carries a chain, so each pane maps back to its action. `takeChain` clears the link's `next` before advancing, so a later turn of the same agent starts nothing.
-  - Decided: chain cap is 8 actions. A next action deleted at runtime gives an error toast and nothing starts. Deleting an action in Settings clears it as anyone's next.
-
 ## Done
 
 - [x] Actions can move a Jira issue to a set status when they run.
@@ -66,3 +53,15 @@
   - Cases: `check.luau` priority sort with categories, `issues.luau` grouped Jira view with a `priority` sort (Done never above In Progress; two To Do statuses ordered by name). README: sorting and grouping; update the `sorting.luau` header comment.
   - Decided: `sorting.apply` takes an optional category-rank function, which the engine passes only for Jira issue views, so GitHub is unchanged.
   - Decided: the Jira `status` group gets a `rank` field (`tracker.categoryRank`) in place of `keep`. Groups sort by category, then by lowercase status name. GitHub's `state` group keeps `keep`.
+
+- [x] Actions can name a next action that starts automatically when the agent finishes.
+  - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
+  - On `agent_finished` with result `done` (handler in `window.luau`, today only `agentSync`), start the next action for the same item in a new pane in the same tab, same worktree. `failed`, `exited` and `closed` stop the chain, with a toast naming why.
+  - Every agent pane is named after the action it ran, so panes in a tab can be told apart.
+  - Needs the finished pane mapped back to item and action: `recordAgent` keeps only one link per key and host today, so it must keep the chained agents (record action id on `Link`, without writing over a malformed `agent-links`).
+  - Cycles (A → B → A) are rejected in Settings; chain depth is capped. A pane finishing while a prompt waits does not fire `agent_finished`, so it does not advance.
+  - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
+  - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
+  - Decided: Tern 0.8.3 has no API to name a pane (only tabs), so Go to agent lists each agent as "<action name> · pane N", read from the link's recorded action name.
+  - Decided: `recordAgent` keeps every earlier link that carries a chain, so each pane maps back to its action. `takeChain` clears the link's `next` before advancing, so a later turn of the same agent starts nothing.
+  - Decided: chain cap is 8 actions. A next action deleted at runtime gives an error toast and nothing starts. Deleting an action in Settings clears it as anyone's next.
