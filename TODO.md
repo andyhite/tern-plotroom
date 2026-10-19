@@ -3,14 +3,6 @@
 ## Backlog
 
 ## Todo
-- [ ] Actions can name a next action that starts automatically when the agent finishes.
-  - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
-  - On `agent_finished` with result `done` (handler in `window.luau`, today only `agentSync`), start the next action for the same item in a new pane in the same tab, same worktree. `failed`, `exited` and `closed` stop the chain, with a toast naming why.
-  - Every agent pane is named after the action it ran, so panes in a tab can be told apart.
-  - Needs the finished pane mapped back to item and action: `recordAgent` keeps only one link per key and host today, so it must keep the chained agents (record action id on `Link`, without writing over a malformed `agent-links`).
-  - Cycles (A → B → A) are rejected in Settings; chain depth is capped. A pane finishing while a prompt waits does not fire `agent_finished`, so it does not advance.
-  - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
-  - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
 - [ ] Clicking a view in the sidebar always refreshes it.
   - Clicking a view refreshes it even when its cached snapshot is younger than the refresh interval, and clicking the already-active view refreshes it too (also from the Worktrees board back to the queue). The periodic timer is unchanged.
   - Gaps: `switchView` skips the refresh when `age < fresh`; `goScope` does nothing for the active scope with the board off.
@@ -36,6 +28,16 @@
   - Gap today: only the default order and grouping are category-ordered, through `tracker.byStatus` running before `sorting.apply`; `sorting.apply` (`priority`) ignores category, and group labels depend on that pre-sort.
   - Touch points: `sorting.apply`/`rank` (take the category), the `sorting.apply` call and group labels in `engine` (~`:414-469`), the Jira `status` group in `core`. GitHub issues and PRs unchanged.
   - Cases: `check.luau` priority sort with categories, `issues.luau` grouped Jira view with a `priority` sort (Done never above In Progress; two To Do statuses ordered by name). README: sorting and grouping; update the `sorting.luau` header comment.
+- [ ] Actions can name a next action that starts automatically when the agent finishes.
+  - Branch: todo/actions-can-name-a-next-action-that-star at /Users/andyhite/Code/tern-plotroom.todo/actions-can-name-a-next-action-that-star
+  - Add an optional `next` (another action of the same kind) to `Prompt`: a "Next action" row in Settings › Actions, carried through the `prompts-*` validator and save (storage) and export/import (portable `ref` remap; a `next` pointing at a deleted action is dropped).
+  - On `agent_finished` with result `done` (handler in `window.luau`, today only `agentSync`), start the next action for the same item in a new pane in the same tab, same worktree. `failed`, `exited` and `closed` stop the chain, with a toast naming why.
+  - Every agent pane is named after the action it ran, so panes in a tab can be told apart.
+  - Needs the finished pane mapped back to item and action: `recordAgent` keeps only one link per key and host today, so it must keep the chained agents (record action id on `Link`, without writing over a malformed `agent-links`).
+  - Cycles (A → B → A) are rejected in Settings; chain depth is capped. A pane finishing while a prompt waits does not fire `agent_finished`, so it does not advance.
+  - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
+  - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
+
 ## Review
 
 ## Done
