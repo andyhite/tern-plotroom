@@ -450,8 +450,10 @@ end
 function M.plan(doc: Doc, existing: Existing): Plan
 	local plan: Plan = { entries = {}, slots = {}, problems = {} }
 	local refName: { [string]: string } = {}
+	local refQual: { [string]: string } = {}
 	for _, p in doc.prompts do
 		refName[p.ref] = string.lower(p.name)
+		refQual[p.ref] = p.kind .. ":" .. string.lower(p.name)
 	end
 	local unknown: { [string]: boolean } = {}
 	local function known(kind: string): boolean
@@ -499,14 +501,16 @@ function M.plan(doc: Doc, existing: Existing): Plan
 		if known(p.kind) then
 			found = findByName(existing[p.kind].prompts.items, p.name)
 			if found then
-				local nextName = if p.next then refName[p.next] or "" else ""
+				local pn = if p.next then refQual[p.next] or "" else ""
 				local savedNext: any = nil
+				local savedKind = p.kind
 				if found.next then
 					local qualified = if p.kind == "issues" then string.match(found.next, "^prs:(.+)$") else nil
-					local from = if qualified then existing.prs else existing[p.kind]
+					savedKind = if qualified then "prs" else p.kind
+					local from = existing[savedKind]
 					savedNext = if from then findById(from.prompts.items, qualified or found.next) else nil
 				end
-				conflict = if samePrompt(p, found, nextName, if savedNext then string.lower(savedNext.name) else "") then "identical" else "same-name"
+				conflict = if samePrompt(p, found, pn, if savedNext then savedKind .. ":" .. string.lower(savedNext.name) else "") then "identical" else "same-name"
 			end
 		end
 		if p.key and existing[p.kind] then

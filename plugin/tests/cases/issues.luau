@@ -1251,6 +1251,16 @@ case("host: a request is about what it names, not about the filter on screen: a 
 	eq(hx.ask(w, b, "i1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false }).problem, "That issue is not loaded here any more; Refresh and try again.", "an issue is answered only while its list is loaded: the pull request filter replaced it")
 end)
 
+case("host: without gh, an issue action's Next action offers no pull request actions", function(w: World)
+	jiraHost(w)
+	hx.uninstalled(w, "gh")
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	local b = openIssues(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:issues:p1")
+	same(asks.hx.options(b, "pnext:issues:p1"), { "none", "p2", "p3" }, "only the issue actions: a pull request action could only fail")
+end)
+
 case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt or request, and Settings shows its setup guide until gh starts", function(w: World)
 	local s = jiraHost(w)
 	local gh = hx.uninstalled(w, "gh")

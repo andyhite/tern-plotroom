@@ -248,6 +248,12 @@ function M.run()
 	local crossOut = cross and portable.apply(cross, portable.plan(cross, crossFresh), {}, {}, crossFresh, ok)
 	assert(crossOut and crossOut.issues and crossOut.issues.prompts.items[1].next == "prs:p5", "an import qualifies the new id of the pull request action")
 	assert(cross and crossOut and portable.plan(cross, crossOut).entries[1].conflict == "identical", "and a saved qualified next makes the same action identical")
+	-- a saved issue action leading to the issue action "Watch" is not the imported one leading to the pull request action "Watch"
+	local clash = existing()
+	clash.issues.prompts.items = { { id = "p1", name = "Implement", text = "Do it.", next = "p2" }, { id = "p2", name = "Watch", text = "w" } }
+	clash.prs.prompts.items = { { id = "p1", name = "Watch", text = "w" } }
+	local clashDoc = portable.parse(portable.build({}, { { id = "p1", kind = "issues", name = "Implement", text = "Do it.", next = "prs:p1" } }, nil, { { id = "p1", kind = "prs", name = "Watch", text = "w" } }) or "")
+	assert(clashDoc and portable.plan(clashDoc, clash).entries[1].conflict == "same-name", "the same next name in another kind is a different action")
 	local backwards = portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "issues:p1" }, { id = "issues:p1", kind = "issues", name = "B", text = "t" } } :: { any })
 	end))

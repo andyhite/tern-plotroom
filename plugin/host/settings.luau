@@ -307,7 +307,7 @@ local function pageContent(state: State): ({ any }, { Node })
 					end
 				end
 				-- An issue action may also lead into a pull request action (Implement → Watch), labelled by its kind.
-				local prSaved = if kind.id == "issues" then loadPrompts(KINDS.prs) else nil
+				local prSaved = if kind.id == "issues" and usable(KINDS.prs) then loadPrompts(KINDS.prs) else nil
 				local prItems: { Prompt } = if prSaved then prSaved.items else {}
 				for _, other in prItems do
 					table.insert(nextOptions, { value = "prs:" .. other.id, label = clip(printable(other.name), 48) .. " (pull request)" })
