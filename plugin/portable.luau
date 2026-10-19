@@ -7,9 +7,9 @@
 local M = {}
 
 export type ExView = { id: string, kind: string, name: string, integration: string, query: string, group: string, sort: string?, logins: { string }, prompts: { string } }
-export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string? }
+export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
 export type DView = { kind: string, name: string, integration: string, query: string, group: string, sort: string?, slots: { string }, prompts: { string } }
-export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string? }
+export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
 export type Doc = { views: { DView }, prompts: { DPrompt } }
 export type Existing = { [string]: { views: { items: { any }, nextId: number }, prompts: { items: { any }, nextId: number } } }
 export type Entry = { id: number, type: "view" | "prompt", kind: string, name: string, conflict: ("same-name" | "identical")?, remap: { string }, slots: { string } }
@@ -27,6 +27,7 @@ M.reservedKeys = {} :: { [string]: boolean }
 local FORMAT = "plotroom-export"
 local MAX_ITEMS = 100
 local NAME_CAP = 120
+M.STATUS_CAP = 100 -- bytes of an action's target status name
 local QUERY_CAP = 1000
 local TEXT_CAP = 8000
 local KINDS: { [string]: boolean } = { prs = true, issues = true }
@@ -104,6 +105,8 @@ local function checkPrompt(p: any): string?
 		return "split must be true or false"
 	elseif p.model ~= nil and (not clean(p.model, NAME_CAP, false) or p.model == "") then
 		return "invalid model"
+	elseif p.status ~= nil and (p.kind ~= "issues" or not clean(p.status, M.STATUS_CAP, false) or p.status == "") then
+		return "a status is a name of at most " .. M.STATUS_CAP .. " characters on one line, on an issue action"
 	end
 	return nil
 end
@@ -164,7 +167,7 @@ function M.build(views: { ExView }, prompts: { ExPrompt }, secretFree: boolean?,
 			table.insert(notes, "Action '" .. p.name .. "' left out: its text looks like it holds a secret.")
 			failed = secretFree == true
 		else
-			table.insert(outPrompts, { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model })
+			table.insert(outPrompts, { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status })
 			included[ref] = true
 			return true
 		end
@@ -302,7 +305,7 @@ function M.parse(text: string): (Doc?, string?)
 		if type(raw) ~= "table" then
 			return nil, "Action " .. i .. " is invalid: not an action."
 		end
-		local p = { kind = val(raw.kind), name = val(raw.name), text = val(raw.text), key = val(raw.key), worktree = val(raw.worktree), split = val(raw.split), model = val(raw.model) }
+		local p = { kind = val(raw.kind), name = val(raw.name), text = val(raw.text), key = val(raw.key), worktree = val(raw.worktree), split = val(raw.split), model = val(raw.model), status = val(raw.status) }
 		local ref = val(raw.id)
 		local why = if type(raw) ~= "table" then "not an action" else checkPrompt(p)
 		if not why and (type(ref) ~= "string" or ref ~= p.kind .. ":" .. (string.match(ref, "^%a+:(%w+)$") or "") or byRef[ref]) then
@@ -316,7 +319,7 @@ function M.parse(text: string): (Doc?, string?)
 			return nil, "Action " .. i .. " is invalid: " .. why .. "."
 		end
 		names[nameKey] = true
-		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model }
+		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status }
 		byRef[ref] = item
 		table.insert(doc.prompts, item)
 	end
@@ -380,7 +383,7 @@ local function namesOf(ids: { any }, items: { any }): string
 end
 
 local function samePrompt(p: DPrompt, e: any): boolean
-	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.model or "") == (e.model or "")
+	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.model or "") == (e.model or "") and (p.status or "") == (e.status or "")
 end
 
 -- Who holds `key` among `items` (not the item `skipId`) or the reserved keys; nil when it is free.
@@ -540,7 +543,7 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 			store.nextId += 1
 			table.insert(store.items, target)
 		end
-		target.name, target.text, target.key, target.worktree, target.split, target.model = name, p.text, key, p.worktree, p.split, p.model
+		target.name, target.text, target.key, target.worktree, target.split, target.model, target.status = name, p.text, key, p.worktree, p.split, p.model, p.status
 		promptId[p.ref] = target.id
 	end
 

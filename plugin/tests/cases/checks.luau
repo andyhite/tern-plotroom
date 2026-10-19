@@ -1957,7 +1957,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			end
 		end
 	end
-	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pwhere:issues:p1", "psplit:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Runs in and Opens in after the model")
+	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in and Opens in after the model")
 	eq(sectionIn(b, "popen:issues:p1").title, "Issue actions", "keeping the kind's title")
 	local where = rowIn(b, "pwhere:issues:p1")
 	eq(where.label, "Runs in", "label")

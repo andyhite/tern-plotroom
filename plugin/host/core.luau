@@ -54,7 +54,7 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
 -- alias such as @slow.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string? }
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keyboard shortcuts; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -588,6 +588,6 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "18"
+M.RPC_PROTOCOL = "19"
 
 return M

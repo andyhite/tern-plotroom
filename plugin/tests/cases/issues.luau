@@ -2770,4 +2770,42 @@ windowCase("window: a host announcing another protocol is refused for the new as
 	same(sent[2], { op = "where", kind = "pr", key = "o/r#5" }, "and where the pull request's is")
 end)
 
+case("host: an issue action's Move to status is an issue-side row that saves, resets, and reaches the menu", function(w: World)
+	jiraHost(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	saveIssuePrompts(w, { issuePrompt("p1", "Fix", "Fix {key}", true) })
+	local b = openIssues(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	eq(rowIn(b, "pstatus:prs:p1"), nil, "a pull request action has no status row")
+	expand(b, "popen:issues:p1")
+	eq(rowIn(b, "pstatus:issues:p1").control.value, "", "empty while the action has none")
+	local function save(text: string)
+		b.event({ ev = "select", id = "layer.settings", item = "pstatus:issues:p1" })
+		if prefsOf(b).editing == nil then
+			b.press("enter")
+		end
+		b.press("a", "c")
+		b.press("backspace")
+		b.typeText(text)
+		b.press("enter")
+	end
+	save(string.rep("x", 101))
+	has(rowIn(b, "pstatus:issues:p1").warning, "at most 100", "a long name is refused")
+	eq(w.kv.get("prompts-issues").items[1].status, nil, "and not saved")
+	b.press("escape")
+	save("In Review")
+	eq(w.kv.get("prompts-issues").items[1].status, "In Review", "saved")
+	request(b, "m1", { op = "menu" })
+	local sent: any = nil
+	for _, it in answerOf(b, "m1").items do
+		if it.id == "p1" then
+			sent = it
+		end
+	end
+	eq(sent.status, "In Review", "the menu sends it")
+	b.event({ ev = "change", id = "layer.settings", item = "pstatus:issues:p1", value = nil })
+	eq(w.kv.get("prompts-issues").items[1].status, nil, "reset clears it")
+end)
+
 return {}

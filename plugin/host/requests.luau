@@ -128,6 +128,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			model = p.model,
 			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
+			status = p.status, -- an issue action's Jira status to move to when its agent starts
 			key = p.key,
 		})
 	end
@@ -1320,7 +1321,7 @@ function M.exportable(state: State, viewIds: any, promptIds: any): ({ any }?, { 
 			return nil, nil, nil, why
 		end
 		for _, p in store.items do
-			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model }
+			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status }
 			table.insert(pool, entry)
 			if isTable(promptIds) and table.find(promptIds, kind.id .. ":" .. p.id) then
 				table.insert(prompts, entry)
@@ -1632,6 +1633,42 @@ function M.workflowRpc(state: State, id: string, q: any)
 	end
 end
 
+-- Moves Jira issue `ref` to the status named `status`, as an action's setting asks when its agent starts: nothing when
+-- the issue is there already, else the first transition whose target matches (case-insensitively). Replies
+-- {moved = <status>}, {already = true}, {skipped = true} (not a Jira key) or {problem}. No confirm: the action's
+-- status is the user's own setting. A transition that needs fields is Jira's refusal, and its text the problem.
+local function moveStatus(state: State, id: string, ref: string, status: string)
+	if not string.match(ref, "^[A-Z][A-Z0-9_]*%-%d+$") then
+		return reply(state, id, { skipped = true })
+	end
+	local want = string.lower(status)
+	jira.item(ref, function(issue, problem)
+		if not issue then
+			return reply(state, id, { problem = M.whyOf(problem) })
+		elseif issue.status and string.lower(issue.status.text) == want then
+			return reply(state, id, { already = true })
+		end
+		jira.transitions(ref, function(list, problem2)
+			if not list then
+				return reply(state, id, { problem = M.whyOf(problem2) })
+			end
+			local names: { string } = {}
+			for _, t in list do
+				if t.to and string.lower(t.to) == want then
+					return jira.transition(ref, t.id, function(problem3: github.Problem?)
+						if problem3 then
+							return reply(state, id, { problem = M.whyOf(problem3) })
+						end
+						reply(state, id, { moved = t.to })
+					end)
+				end
+				table.insert(names, t.to or t.name)
+			end
+			reply(state, id, { problem = "No transition of " .. ref .. " leads to “" .. printable(status) .. "”" .. (if #names > 0 then "; Jira offers: " .. table.concat(names, ", ") else "") .. "." })
+		end)
+	end)
+end
+
 -- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
 function M.rpc(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 120000 then
@@ -1705,6 +1742,8 @@ function M.rpc(state: State, raw: any)
 			return
 		end
 		prepareIssue(state, id, repo, ref, q.worktree, target, { pr = pr, fresh = q.fresh == true, base = base }, q.users == true)
+	elseif q.op == "move-status" and type(q.ref) == "string" and #q.ref <= 64 and type(q.status) == "string" and q.status ~= "" and #q.status <= portable.STATUS_CAP then
+		moveStatus(state, id, q.ref, q.status)
 	elseif q.op == "where" and (q.kind == "pr" or q.kind == "issue") and type(q.key) == "string" and #q.key <= 200 then
 		-- The worktree folder of an item as its note has it (git's list or the last attempt), for the window's Go to tab:
 		-- a note of the kind asked about.

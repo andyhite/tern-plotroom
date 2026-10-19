@@ -2587,4 +2587,47 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
 end)
 
+case("host move-status: moves a Jira issue to the status by its transitions' target, and says why when it cannot, with nothing posted", function(w: World)
+	local s = jiraHost(w)
+	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login", { status = { name = "In Progress", statusCategory = { key = "indeterminate" } } })
+	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
+	local reqs = asks.bk.fetch(w, function(req: any): { status: number, body: string }?
+		if req.line == "GET /rest/api/3/myself" then
+			return { status = 200, body = jsonEncode({ emailAddress = "ann@example.com" }) }
+		elseif req.line == "GET /rest/api/3/issue/ABC-12/transitions" then
+			return { status = 200, body = jsonEncode({ transitions = array({ { id = "31", name = "Finish", to = { name = "Done" } }, { id = "41", name = "Back" } }) }) }
+		elseif req.line == "POST /rest/api/3/issue/ABC-12/transitions" then
+			return { status = 204, body = "" }
+		end
+		return nil
+	end)
+	local b = openIssues(w)
+	local function move(status: string, ref: string?): any
+		return asks.hx.ask(w, b, { op = "move-status", ref = ref or "ABC-12", status = status })
+	end
+	local function posts(): number
+		local n = 0
+		for _, r in reqs do
+			if r.method == "POST" then
+				n += 1
+			end
+		end
+		return n
+	end
+	eq(move("in progress").already, true, "an issue already there (any case) is left alone")
+	eq(#reqs, 0, "and Jira's API is not asked")
+	eq(move("12", "12").skipped, true, "a GitHub issue's number is no Jira key")
+	local none = move("Blocked")
+	has(none.problem, "No transition of ABC-12 leads to “Blocked”", "no matching target names the status")
+	has(none.problem, "Done", "and what Jira offers")
+	eq(posts(), 0, "nothing was posted")
+	eq(move("dONE").moved, "Done", "the first transition whose target matches, in any case")
+	eq(posts(), 1, "one POST")
+	eq(reqs[#reqs].body, '{"transition":{"id":"31"}}', "of exactly that transition")
+	w.env.PLOTROOM_JIRA_API_TOKEN = nil
+	local before = #reqs
+	has(move("Done").problem, "PLOTROOM_JIRA_API_TOKEN", "no API token: the problem names the setup")
+	eq(#reqs, before, "and nothing was requested")
+end)
+
 return {}

@@ -4,6 +4,7 @@ local github = require("../github")
 local input = require("../input")
 local jira = require("../jira")
 local keys = require("../keys")
+local portable = require("../portable")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -269,6 +270,16 @@ local function pageContent(state: State): ({ any }, { Node })
 					changed = p.model ~= nil,
 					defaultLabel = "omp's default",
 				})
+				if kind.id == "issues" then
+					row({
+						id = "pstatus:" .. qid,
+						label = "Move to status",
+						hint = "Jira issues move here when the agent starts",
+						control = { k = "text", value = p.status or "", placeholder = "Leave the status alone" },
+						changed = p.status ~= nil,
+						defaultLabel = "Leave the status alone",
+					})
+				end
 				row({
 					id = "pwhere:" .. qid,
 					label = "Runs in",
@@ -1180,6 +1191,24 @@ function M.commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
+	elseif kind == "pstatus" and id then
+		local err: string? = nil
+		local pk, pid = kindAndId(id)
+		if #text > portable.STATUS_CAP or string.find(text, "%c") then
+			err = "A status name on one line, at most " .. portable.STATUS_CAP .. " characters."
+		elseif not pk then
+			err = "That action was deleted elsewhere."
+		else
+			err = editPrompts(pk, function(store: Prompts): string?
+				local p = promptById(store, pid)
+				if not p then
+					return "That action was deleted elsewhere."
+				end
+				p.status = if text ~= "" then text else nil
+				return nil
+			end)
+		end
+		settle(s, row, err)
 	elseif kind == "pmodel" and id then
 		local err: string? = nil
 		local pk, pid = kindAndId(id)
@@ -1404,6 +1433,17 @@ function M.resetRow(state: State, row: string)
 				local p = promptById(store, pid)
 				if p then
 					p.model = nil
+				end
+				return nil
+			end)
+		end
+	elseif kind == "pstatus" and id then
+		local pk, pid = kindAndId(id)
+		if pk then
+			err = editPrompts(pk, function(store: Prompts): string?
+				local p = promptById(store, pid)
+				if p then
+					p.status = nil
 				end
 				return nil
 			end)

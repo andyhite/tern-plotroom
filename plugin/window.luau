@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "18" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "19" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -41,7 +41,7 @@ type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own.
-type Job = { text: string, model: string?, split: boolean? }
+type Job = { text: string, model: string?, split: boolean?, status: string? }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -487,6 +487,18 @@ local function fillVars(prompt: string, vars: any): string
 	end))
 end
 
+-- Asks the host to move a Jira issue to the status an action names (the token lives in the host's environment) and
+-- toasts what came of it; nothing for an issue already there or one that is not Jira's. The agent does not wait for it.
+local function moveStatus(cx: WindowCx, pane: number, t: Target, status: string)
+	ask(cx, pane, "move-status", { ref = t.ref, status = status }, PREPARE_MS, function(a: any, cx2: WindowCx)
+		if type(a.moved) == "string" then
+			cx2:toast("success", "Moved " .. t.label .. " to " .. a.moved)
+		elseif type(a.problem) == "string" then
+			cx2:toast("error", "Not moved to " .. status .. ": " .. t.label, a.problem)
+		end
+	end)
+end
+
 -- What prepareTarget's earlier answers settled: the repository a Jira issue is worked in (`target`), and for a new issue
 -- worktree the linked PR to check out (`pr`) or a new branch (`fresh`) from remote branch `base`.
 type Settled = { target: string?, pr: number?, fresh: boolean?, base: string? }
@@ -613,6 +625,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt.model, wt, prompt.split == true)
 			else
 				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, a.vars), prompt.model, wt, prompt.split == true)
+				if prompt.status then
+					moveStatus(cx2, pane, t, prompt.status)
+				end
 			end
 		end)
 	end
@@ -632,7 +647,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true }, it.worktree ~= false)
+				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil }, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That action is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -668,6 +683,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 					group = if type(it.group) == "string" then it.group else nil,
 					send = it.send,
 					model = if type(it.model) == "string" then it.model else nil,
+					status = if type(it.status) == "string" then it.status else nil,
 					worktree = it.worktree ~= false,
 					split = it.split == true,
 				})
@@ -703,7 +719,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 			table.insert(recent, 1, item.label)
 			recent[RECENT_CAP + 1] = nil
 			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			run(cx3, { text = item.send, model = item.model, split = item.split == true }, item.worktree ~= false)
+			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status }, item.worktree ~= false)
 		end)
 	end)
 end

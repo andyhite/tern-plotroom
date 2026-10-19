@@ -203,6 +203,20 @@ function M.run()
 		x.views[1].color = "red"
 	end))
 	assert(ignored and (ignored.views[1] :: any).color == nil, "unknown keys are dropped")
+
+	-- an issue action's status survives export and import, and only an issue action may have one
+	local moving: portable.ExPrompt = { id = "p1", kind = "issues", name = "Fix", text = "Fix it.", status = "In Review" }
+	local moved = portable.parse(portable.build({}, { moving }) or "")
+	assert(moved and moved.prompts[1].status == "In Review", "the status is exported and parsed")
+	local movedOut = portable.apply(moved, portable.plan(moved, empty), {}, {}, empty, ok)
+	assert(movedOut and movedOut.issues and movedOut.issues.prompts.items[1].status == "In Review", "and saved")
+	assert(portable.plan(moved, movedOut).entries[1].conflict == "identical", "a saved status makes the same action identical")
+	local other = portable.parse(portable.build({}, { { id = "p1", kind = "issues", name = "Fix", text = "Fix it." } }) or "")
+	assert(other and portable.plan(other, movedOut).entries[1].conflict == "same-name", "another status is a different action")
+	assert(portable.build({}, { { id = "p1", kind = "prs", name = "R", text = "Review.", status = "Done" } }) == nil, "a pull request action has no status")
+	assert(not portable.parse(doc(function(x: any)
+		x.prompts = tern.json.array({ { id = "issues:p1", kind = "issues", name = "A", text = "t", status = string.rep("s", portable.STATUS_CAP + 1) } })
+	end)), "a status over the cap")
 end
 
 return M
