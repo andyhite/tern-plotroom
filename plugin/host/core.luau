@@ -598,6 +598,6 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "20"
+M.RPC_PROTOCOL = "21"
 
 return M
