@@ -25,6 +25,8 @@
   - Bump `RPC_PROTOCOL` and `PROTOCOL` together if the status map or an rpc shape changes. No confirm step, like the first action.
   - Cases: chain advances on done, stops on failed, cycle rejected, deleted next dropped, export/import round-trip, pane name. README: actions section.
 
+## Review
+
 - [ ] Jira items and status groups always order by status category: in progress, then to do, then done.
   - Branch: todo/jira-items-and-status-groups-always-orde at /Users/andyhite/Code/tern-plotroom.todo/jira-items-and-status-groups-always-orde
   - Items and `status` groups sort by category first, whatever the sort. A saved `priority` sort now means priority within each category, so existing views reorder. Done shows only when the filter includes it.
@@ -34,13 +36,6 @@
   - Cases: `check.luau` priority sort with categories, `issues.luau` grouped Jira view with a `priority` sort (Done never above In Progress; two To Do statuses ordered by name). README: sorting and grouping; update the `sorting.luau` header comment.
   - Decided: `sorting.apply` takes an optional category-rank function, which the engine passes only for Jira issue views, so GitHub is unchanged.
   - Decided: the Jira `status` group gets a `rank` field (`tracker.categoryRank`) in place of `keep`. Groups sort by category, then by lowercase status name. GitHub's `state` group keeps `keep`.
-  - Fix: plugin/host/sorting.luau (`apply`/`rank`) - branch has no code change (only README.md and TODO.md edited); `sorting.apply` still ignores category - add the optional category-rank parameter and update the header comment
-  - Fix: plugin/host/engine.luau (~:414-469) - Jira issue views pass no category rank - pass `tracker.categoryRank` only for Jira issue views
-  - Fix: plugin/host/core.luau (Jira `status` group) - no `rank` field, `keep` still used - replace `keep` with `rank = tracker.categoryRank`, sort groups by category then lowercase status name; GitHub `state` keeps `keep`
-  - Fix: plugin/tests/check.luau, plugin/tests/cases/issues.luau - no new cases - add the priority-sort-with-categories case and the grouped Jira view case (Done never above In Progress; two To Do statuses by name)
-  - Fix: README.md:60 - describes behavior the code lacks - land it together with the code
-
-## Review
 
 ## Done
 
