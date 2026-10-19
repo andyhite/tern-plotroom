@@ -6,14 +6,14 @@
 - [ ] Add a special view that shows all of my in-progress agents and what they're working on
 
 ## Todo
+
+## In-Progress
 - [ ] Show both the PR and the issue in the preview when an item's worktree has both.
   - Queue, issue selected: when its worktree's branch is the head of a GitHub PR in the code repo (`gh pr list --head <branch> --state all`), show a Pull request section (number, title, state, link). Skip it when GitHub's linked list already has that PR.
   - Queue, PR selected: when its head branch is a worktree branch noted with an issue (`branch.<b>.plotroomkey`), show an Issue section (key, title, status, link).
   - Worktrees board: a row with an issue `key` but no PR `number` and no tracker `related` looks the PR up by head branch the same way, so a PR the implement agent opened shows. Update `board.select`'s "branch text never does" comment: a head-ref match is GitHub's answer, not a guess.
   - Lookups ride the existing detail loads (debounce, `alive`/`gen` guards); no new polling.
   - Cases: `board_check` enrich by head, one host case per queue preview. README: preview section.
-
-## In-Progress
 
 ## Review
 
