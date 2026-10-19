@@ -8,7 +8,9 @@
 
 ## Review
 
-- [ ] An issue action's Next action can be a PR action, so Implement can chain into Watch.
+## Done
+
+- [x] An issue action's Next action can be a PR action, so Implement can chain into Watch.
   - Settings › Actions › Next action on an issue action also offers the PR actions, labelled by kind; PR actions still offer only PR actions.
   - Issue agent finishes `done` with a PR next action → look up the PR whose head is the issue worktree's branch in the issue's code repository (`github.pullByHead`, open or draft only), then run the PR action on it as a manual run would: same worktree (reused by branch), the tab the agent ran in, PR variables from the fresh PR read.
   - No open/draft PR on the branch, a failed lookup, or an issue action that ran in the main checkout (no branch) → the chain stops with a toast naming why; nothing starts.
@@ -22,12 +24,7 @@
   - Decided: the `action` rpc takes optional `repo`/`branch` and runs `github.pullByHead` itself, replying with `pr` or a `problem` (lookup failed, no PR, merged/closed only); no separate head-lookup op. The hop reuses `prepareTarget`'s PR path.
   - Decided: `storage.nextOf(kind, next)` resolves a next; `chainReaches` is unchanged (a qualified next ends the walk). Deleting a PR action clears `prs:<id>` in the issues store, leaving an unreadable store untouched. PR options on issue actions are labelled `<name> (pull request)`.
   - Decided: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "22".
-  - Base: main
-  - Branch: todo/issue-next-pr-action at /Users/andyhite/Code/tern-plotroom.todo/issue-next-pr-action
   - Decided: `github.pullByHead` skips cross-repository (fork) PRs for every caller, so the Worktrees board/preview head lookup ignores fork PRs too.
-  - Review attempts: 2
-
-## Done
 
 - [x] Actions can move a Jira issue to a set status when they run.
   - Add an optional `status` (target status name) to issue-side actions. Settings › Actions gets a "Move to status" text row on the issues side only. Carry it through `Prompt` (core), the `prompts-*` validator and save (storage), export/import (portable `checkPrompt`/`samePrompt`) and the action menu entries (requests).
