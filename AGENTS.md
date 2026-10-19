@@ -79,7 +79,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 
 - Luau (Tern's embedded runtime), not Lua 5.x: no `goto`. Type-checked with luau-lsp 1.70.1 against Tern 0.8.3 definitions.
 - `scripts/*.py` are Python 3.9+, stdlib only; no pip, package.json or Makefile. Do not add dependencies.
-- Smoke needs real `tern` (versions in `SMOKE_TERN_VERSIONS`; types stay pinned to 0.8.3), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA.
+- Smoke needs real `tern` (any version; types stay pinned to 0.8.3), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA.
 - `plugin/tern.d.luau` is gitignored editor output; never commit it or depend on it in checks.
 
 ## Testing & QA

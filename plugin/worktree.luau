@@ -3,9 +3,12 @@
 -- process.luau; nothing is ever interpolated into a shell. (`update` only formats commands for the user to run
 -- themselves; `remove` deletes a worktree and its branch only as far as plain git allows; `scan` and `dirty` only read.)
 
-local process = require("./process")
 local github = require("./github")
+local input = require("./input")
+local process = require("./process")
 local tracker = require("./tracker")
+
+local trim = input.trim
 
 local M = {}
 
@@ -85,10 +88,6 @@ local REMOVE_MS = 120 * 1000 -- deleting a worktree's whole folder (node_modules
 local ENV = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0" }
 
 type Cb<T> = (T?, string?, WindowCx?) -> ()
-
-local function trim(s: string): string
-	return string.match(s, "^%s*(.-)%s*$") or ""
-end
 
 local function firstLine(s: string): string
 	return string.match(s, "[^\n]+") or ""

@@ -3,6 +3,7 @@
 
 local board = require("../board")
 local github = require("../github")
+local input = require("../input")
 local jira = require("../jira")
 local process = require("../process")
 local sorting = require("../sorting")
@@ -51,9 +52,10 @@ local ghActive: {
 		return false
 	end,
 }
+M.ghActive = ghActive
 
 -- Cancels the checks load waiting out its debounce or retry delay, if any.
-local function cancelDetails(state: State)
+function M.cancelDetails(state: State)
 	local waiting = state.detailAttempt
 	if waiting then
 		state.detailAttempt = nil
@@ -65,11 +67,11 @@ end
 
 -- Forgets every loaded or failed checks list. Loads still running are dropped when they land: they compare the account.
 local function dropDetails(state: State)
-	cancelDetails(state)
+	M.cancelDetails(state)
 	state.details, state.detailFail = {}, {}
 end
 
-local function retire(state: State)
+function M.retire(state: State)
 	if running[state.cx.pane] == state then
 		running[state.cx.pane] = nil
 	end
@@ -89,7 +91,7 @@ local function retire(state: State)
 	state.cursor, state.cursorAt = nil, nil
 end
 
-local function alive(state: State): boolean
+function M.alive(state: State): boolean
 	if running[state.cx.pane] ~= state then
 		return false
 	end
@@ -98,8 +100,15 @@ local function alive(state: State): boolean
 			return true
 		end
 	end
-	retire(state)
+	M.retire(state)
 	return false
+end
+
+-- `M.alive(state)` as the stale guard callbacks take.
+local function aliveFn(state: State): () -> boolean
+	return function(): boolean
+		return M.alive(state)
+	end
 end
 
 -- Learns gh's active login (cached by github.accounts) and redraws when it changed, so views without a login of their own
@@ -129,14 +138,14 @@ function ghActive.note(state: State, always: boolean?)
 		end
 		if (found and found ~= ghActive.login) or (list ~= nil and known ~= table.concat(names, ",")) then
 			ghActive.login = found or ghActive.login
-			if alive(state) then
+			if M.alive(state) then
 				state.cx:render()
 			end
 		end
 	end)
 end
 
-local function activeView(state: State): View?
+function M.activeView(state: State): View?
 	for _, pin in state.pins do
 		if pin.id == state.activeId and cli.on(pin.integration) then
 			return pin
@@ -152,7 +161,7 @@ end
 
 -- The gh login view `v` runs as in the scope that picked `login` (nil, or one it does not list: its first): "" is gh's
 -- active account. Jira has none.
-local function accountOf(v: View, login: string?): string
+function M.accountOf(v: View, login: string?): string
 	if v.integration ~= "github" or #v.logins == 0 then
 		return ""
 	end
@@ -183,7 +192,7 @@ type Scope = { id: string, view: View, login: string?, shown: string }
 -- The scopes as the sidebar lists them: the pinned pull request first (while gh is on), as gh's active login runs it;
 -- then, by integration, each one's views within the group of the login they run as (pull request views, then issue
 -- views, each in store order); groups by login, sorted by name.
-local function orderedViews(state: State): { Scope }
+function M.orderedViews(state: State): { Scope }
 	local out: { Scope } = {}
 	for _, pin in state.pins do
 		if cli.on(pin.integration) then
@@ -228,10 +237,10 @@ function ghActive.isActive(state: State, scope: Scope): boolean
 	if scope.view.id ~= state.activeId then
 		return false
 	end
-	return #scope.view.logins <= 1 or string.lower(scope.login or "") == string.lower(accountOf(scope.view, state.activeLogin))
+	return #scope.view.logins <= 1 or string.lower(scope.login or "") == string.lower(M.accountOf(scope.view, state.activeLogin))
 end
 
-local function indexOf(items: { any }, key: string?): number
+function M.indexOf(items: { any }, key: string?): number
 	for i, item in items do
 		if item.key == key then
 			return i
@@ -241,16 +250,16 @@ local function indexOf(items: { any }, key: string?): number
 end
 
 -- The item under the cursor, a github.Pr (prs) or a tracker.Issue (issues); nil when there is none.
-local function selected(state: State): any
+function M.selected(state: State): any
 	local snap = state.snap
 	if snap then
-		return snap.items[indexOf(snap.items, state.cursor)]
+		return snap.items[M.indexOf(snap.items, state.cursor)]
 	end
 	return nil
 end
 
 -- Keys ("owner/repo#n", "abc#ABC-12") of the items whose worktree (as its note has it) holds some pane's cwd on this host.
-local function openItems(state: State): { [string]: boolean }
+function M.openItems(state: State): { [string]: boolean }
 	local open: { [string]: boolean } = {}
 	local mine: { [string]: string } = {}
 	for key, note in state.notes do
@@ -274,13 +283,9 @@ local function openItems(state: State): { [string]: boolean }
 	return open
 end
 
-local function trim(s: string): string
-	return string.match(s, "^%s*(.-)%s*$") or ""
-end
-
 -- `raw` as a GitHub "owner/name" (both parts valid worktree segments, trimmed); nil when it is not one.
-local function parseRepo(raw: any): string?
-	local owner, name = string.match(if type(raw) == "string" then trim(raw) else "", "^([^/]+)/([^/]+)$")
+function M.parseRepo(raw: any): string?
+	local owner, name = string.match(if type(raw) == "string" then input.trim(raw) else "", "^([^/]+)/([^/]+)$")
 	if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
 		return owner .. "/" .. name
 	end
@@ -289,17 +294,17 @@ end
 
 -- Picker ids hold no `/` or `#`: the item's key ("owner/repo#n", or "abc#ABC-12") with every other character spelled
 -- `_xx`, `_` included, so two keys never share one.
-local function itemId(item: any): string
+function M.itemId(item: any): string
 	return "n" .. (string.gsub(item.key, "[^%w%-]", function(c: string): string
 		return string.format("_%02x", string.byte(c))
 	end))
 end
 
-local function itemOf(state: State, id: string): any
+function M.itemOf(state: State, id: string): any
 	local snap = state.snap
 	if snap then
 		for _, item in snap.items do
-			if itemId(item) == id then
+			if M.itemId(item) == id then
 				return item
 			end
 		end
@@ -349,7 +354,7 @@ end
 -- Whether the list shows `item`: with the attention filter only what needs it; else everything except snoozed items
 -- (unless shown), though an agent that waits for input always surfaces its item.
 function M.keep(state: State, kind: string, item: any): boolean
-	local shown = activeView(state)
+	local shown = M.activeView(state)
 	if shown and M.isPin(shown.id) then
 		return true -- the one item shown on its own is never filtered out
 	end
@@ -382,13 +387,13 @@ end
 
 -- The items the local search lets through, in snapshot order, with their picker ids and title hits. Recomputed only when
 -- the snapshot or the search text changes.
-local function filtered(state: State): Visible?
+function M.filtered(state: State): Visible?
 	local snap = state.snap
 	if not snap then
 		return nil
 	end
 	local text = if state.query then state.query.text else ""
-	local view = activeView(state)
+	local view = M.activeView(state)
 	local group = if view then view.group else "none"
 	local cached = state.vis
 	if cached and cached.snap == snap and cached.needle == text and cached.group == group and cached.rev == state.rev then
@@ -405,7 +410,7 @@ local function filtered(state: State): Visible?
 	local kept: { any } = {}
 	local hits: { [string]: any } = {}
 	local hasHits = false
-	local blank = trim(text) == ""
+	local blank = input.trim(text) == ""
 	for _, item in snap.items do
 		local ok = true
 		local range: { number }? = nil
@@ -418,7 +423,7 @@ local function filtered(state: State): Visible?
 		if ok then
 			table.insert(kept, item)
 			if range then
-				hits[itemId(item)] = { range }
+				hits[M.itemId(item)] = { range }
 				hasHits = true
 			end
 		end
@@ -459,13 +464,13 @@ local function filtered(state: State): Visible?
 			table.insert(order, { group = label, label = label, count = #bucket })
 			for _, item in bucket do
 				table.insert(items, item)
-				table.insert(order, itemId(item))
+				table.insert(order, M.itemId(item))
 			end
 		end
 	else
 		for _, item in kept do
 			table.insert(items, item)
-			table.insert(order, itemId(item))
+			table.insert(order, M.itemId(item))
 		end
 	end
 	local out: Visible = { snap = snap, needle = text, group = group, rev = state.rev, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
@@ -481,21 +486,21 @@ function M.select(state: State, key: string?)
 			state.vis = nil
 		end
 	end
-	local v = if key then filtered(state) else nil
-	state.cursorAt = if v then indexOf(v.items, key) else state.cursorAt
+	local v = if key then M.filtered(state) else nil
+	state.cursorAt = if v then M.indexOf(v.items, key) else state.cursorAt
 end
 
 -- Keeps the selection on a listed item, so a nonempty list always has its preview open: the first item when nothing is
 -- selected, the row that took the place of one that vanished (a refresh, a search, a snooze). An empty list selects
 -- nothing. Under the attention filter the selected row stays listed though reading it marks it seen (M.keep), so a pick
 -- is read once and the next row is not picked until the selection moves.
-local function ensureCursor(state: State)
+function M.ensureCursor(state: State)
 	if not state.snap then
 		return
 	end
-	local v = filtered(state)
+	local v = M.filtered(state)
 	local items: { any } = if v then v.items else {}
-	local at = indexOf(items, state.cursor)
+	local at = M.indexOf(items, state.cursor)
 	if at > 0 then
 		state.cursorAt = at
 		return
@@ -511,9 +516,9 @@ function M.triageChanged(state: State)
 		s.triage, s.triageProblem = nil, nil
 		s.rev += 1
 		s.vis = nil
-		if alive(s) then
+		if M.alive(s) then
 			if s.snap then
-				ensureCursor(s)
+				M.ensureCursor(s)
 			end
 			if s ~= state then
 				s.cx:render()
@@ -525,7 +530,7 @@ end
 -- `act` ("seen" | "snooze" | "unsnooze") on the selected item, saved to the triage store at once (the store is reread
 -- first and never overwritten when unreadable). The cursor moves to the neighbour when the item leaves the list.
 function M.mark(state: State, act: string)
-	local item, snap = selected(state), state.snap
+	local item, snap = M.selected(state), state.snap
 	if not item or not snap then
 		return
 	end
@@ -570,35 +575,35 @@ function M.toggle(state: State, what: string)
 	end
 	state.rev += 1
 	state.vis = nil
-	ensureCursor(state)
+	M.ensureCursor(state)
 end
 
 -- The gh login the active scope runs as (nil: the active gh account), for github.wait and quota and every gh call.
-local function login(state: State): string?
-	local v = activeView(state)
-	local who = if v then accountOf(v, state.activeLogin) else ""
+function M.login(state: State): string?
+	local v = M.activeView(state)
+	local who = if v then M.accountOf(v, state.activeLogin) else ""
 	return if who ~= "" then who else nil
 end
 
 -- The active view's integration: what a search, wait or heading of the block belongs to.
-local function trackerOf(state: State): string
-	local v = activeView(state)
+function M.trackerOf(state: State): string
+	local v = M.activeView(state)
 	return if v then v.integration else state.kind.integrations[1]
 end
 
 -- Seconds every pane must still wait before a search of this block's tracker: only GitHub has a shared quota.
-local function waitOf(state: State): number
-	return if trackerOf(state) == "github" then github.wait(os.time(), login(state)) else 0
+function M.waitOf(state: State): number
+	return if M.trackerOf(state) == "github" then github.wait(os.time(), M.login(state)) else 0
 end
 
 -- Cache key of a snapshot: what it lists, integration, the gh login the scope runs as and query.
-local function snapKey(v: View, login: string?): string
-	return v.kind .. "\0" .. v.integration .. "\0" .. string.lower(accountOf(v, login)) .. "\0" .. v.query
+function M.snapKey(v: View, login: string?): string
+	return v.kind .. "\0" .. v.integration .. "\0" .. string.lower(M.accountOf(v, login)) .. "\0" .. v.query
 end
 
 -- Cache key of an item's loaded details (a PR's checks, an issue's body); the login is part of it, so one identity
 -- never sees another's.
-local function detailKey(state: State, item: any): string
+function M.detailKey(state: State, item: any): string
 	return state.account .. "\0" .. item.key .. "@" .. item.updated
 end
 
@@ -612,8 +617,8 @@ end
 -- `state.account`, `state.tracker` and `state.kind` are the identity everything on screen and in flight belongs to: the
 -- active view's gh login, integration and kind. A different one drops all data and problems of the old one.
 local function identify(state: State)
-	local v = activeView(state)
-	local account = if v then accountOf(v, state.activeLogin) else ""
+	local v = M.activeView(state)
+	local account = if v then M.accountOf(v, state.activeLogin) else ""
 	local integration = if v then v.integration else state.kind.integrations[1]
 	local kind = if v then KINDS[v.kind] else state.kind
 	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
@@ -625,17 +630,16 @@ end
 -- Shows the cached snapshot of the active scope.
 local function showSnapshot(state: State)
 	identify(state)
-	local v = activeView(state)
-	state.applied = if v then snapKey(v, state.activeLogin) else nil
-	state.snap = if v then state.snaps[snapKey(v, state.activeLogin)] else nil
-	ensureCursor(state)
+	local v = M.activeView(state)
+	state.applied = if v then M.snapKey(v, state.activeLogin) else nil
+	state.snap = if v then state.snaps[M.snapKey(v, state.activeLogin)] else nil
+	M.ensureCursor(state)
 end
-
-local refresh: (State) -> ()
 
 -- Problems that retrying cannot fix by itself: no automatic refresh until an explicit Retry. "invalid" belongs to one
 -- query, "not-found" to a repository or project the login cannot see (each tracker's classifier reports it).
 local TERMINAL: { [string]: boolean } = { auth = true, missing = true, ["not-found"] = true, invalid = true }
+M.TERMINAL = TERMINAL
 
 local HEADS: { [string]: string } = {
 	missing = "GitHub CLI not found",
@@ -667,16 +671,16 @@ local JIRA_HELP: { [string]: string } = {
 }
 
 -- The heading of problem kind `k`, nil when it has none; a failed load names what it was loading.
-local function headOf(state: State, k: string): string?
+function M.headOf(state: State, k: string): string?
 	if k == "failed" then
 		return "Could not load " .. state.kind.many
 	end
-	return if trackerOf(state) == "jira" then JIRA_HEADS[k] else HEADS[k]
+	return if M.trackerOf(state) == "jira" then JIRA_HEADS[k] else HEADS[k]
 end
 
 -- What to do about problem kind `k`, nil when there is no advice.
-local function helpOf(state: State, k: string): string?
-	return if trackerOf(state) == "jira" then JIRA_HELP[k] else HELP[k]
+function M.helpOf(state: State, k: string): string?
+	return if M.trackerOf(state) == "jira" then JIRA_HELP[k] else HELP[k]
 end
 
 -- Panes of this runtime that still exist; they share one search quota.
@@ -699,29 +703,24 @@ local function schedule(state: State, ms: number)
 	if state.timer then
 		state.timer:cancel()
 	end
-	ms = math.max(ms, waitOf(state) * 1000)
+	ms = math.max(ms, M.waitOf(state) * 1000)
 	state.nextAt = os.time() + math.ceil(ms / 1000)
 	state.timer = tern.timer(ms, function()
-		if not alive(state) then
+		if not M.alive(state) then
 			return
 		end
 		state.timer = nil
-		refresh(state)
+		M.refresh(state)
 		state.cx:render()
 	end)
 end
 
 -- Checks, failures and folds of PRs that no cached snapshot lists any more (or lists with a newer update) cannot be shown again.
 local function prune(state: State)
-	local live: { [string]: boolean } = {}
 	local keep: { [string]: boolean } = {}
 	for _, snap in state.snaps do
 		for _, item in snap.items do
-			live[item.key] = true
-			local key = detailKey(state, item)
-			if key then
-				keep[key] = true
-			end
+			keep[M.detailKey(state, item)] = true
 		end
 	end
 	for key in state.details do
@@ -736,35 +735,15 @@ local function prune(state: State)
 	end
 end
 
--- The pinned scope of the item at `url` (untrusted: anything but a canonical GitHub pull request or issue URL or a Jira
--- issue URL is nil): a view of one item, apart from the saved views. Its name is "owner/name#N" or the Jira key.
-function M.buildPin(url: any): View?
-	if type(url) ~= "string" then
-		return nil
-	end
-	local o, r, n = github.parsePrUrl(url)
-	if o and r and n then
-		return { id = "", kind = "prs", name = o .. "/" .. r .. "#" .. n, integration = "github", query = "https://github.com/" .. o .. "/" .. r .. "/pull/" .. n, logins = {}, group = "none", prompts = {} }
-	end
-	local item = github.parseItemUrl(url)
-	if item and item.kind == "issue" then
-		local canonical = "https://github.com/" .. item.repo .. "/issues/" .. item.number
-		return { id = "pin", kind = "issues", name = item.repo .. "#" .. item.number, integration = "github", query = canonical, logins = {}, group = "none", prompts = {} }
-	end
-	if item and item.kind == "pr" then
-		return { id = "pin", kind = "prs", name = item.repo .. "#" .. item.number, integration = "github", query = "https://github.com/" .. item.repo .. "/pull/" .. item.number, logins = {}, group = "none", prompts = {} }
-	end
-	local key = jira.parseUrl(url)
-	if key then
-		return { id = "pin", kind = "issues", name = key, integration = "jira", query = url, logins = {}, group = "none", prompts = {} }
-	end
-	return nil
+-- The item key (as the lists key it: lowercase "owner/repo#n", Jira "abc#ABC-12") of the pin named `name` of `integration`.
+local function keyOf(name: string, integration: string): string
+	local project = string.match(name, "^([^%-]+)%-%d+$")
+	return if integration == "jira" and project then string.lower(project) .. "#" .. name else string.lower(name)
 end
 
--- The item key (as the lists key it: lowercase "owner/repo#n", Jira "abc#ABC-12") of pin `v`.
+-- The item key of pin `v`.
 function M.pinKey(v: View): string
-	local project = string.match(v.name, "^([^%-]+)%-%d+$")
-	return if v.integration == "jira" and project then string.lower(project) .. "#" .. v.name else string.lower(v.name)
+	return keyOf(v.name, v.integration)
 end
 
 M.PIN_CAP = 20 -- pins kept and saved; a pin past it is refused with a toast, never dropped silently
@@ -784,13 +763,23 @@ function M.pinFor(pins: { View }, key: string): View?
 	return nil
 end
 
--- The pinned scope of the item at `url` (see buildPin), its id made from the item's key so each item has one.
+-- The pinned scope of the item at `url` (untrusted: anything but a github.com pull request or issue URL or a Jira
+-- issue URL is nil): a view of one item, apart from the saved views. Its name is "owner/name#N" or the Jira key, and
+-- its id is made from the item's key so each item has one.
 function M.pinView(url: any): View?
-	local v = M.buildPin(url)
-	if v then
-		v.id = "pin:" .. M.pinKey(v)
+	if type(url) ~= "string" then
+		return nil
 	end
-	return v
+	local function pin(name: string, integration: string, kind: string, query: string): View
+		return { id = "pin:" .. keyOf(name, integration), kind = kind, name = name, integration = integration, query = query, logins = {}, group = "none", prompts = {} }
+	end
+	local item = github.parseItemUrl(url)
+	if item then
+		local pr = item.kind == "pr"
+		return pin(item.repo .. "#" .. item.number, "github", if pr then "prs" else "issues", "https://github.com/" .. item.repo .. (if pr then "/pull/" else "/issues/") .. item.number)
+	end
+	local key = jira.parseUrl(url)
+	return if key then pin(key, "jira", "issues", url) else nil
 end
 
 -- Loads the one item of pin `v` as a search would (`landed` takes a SearchResult or IssueResult). It runs as gh's active
@@ -838,8 +827,8 @@ function M.fetchPin(state: State, v: View, live: () -> boolean, landed: (any, gi
 	end
 end
 
-refresh = function(state: State)
-	if not alive(state) then
+function M.refresh(state: State)
+	if not M.alive(state) then
 		return
 	end
 	if state.timer then
@@ -854,20 +843,20 @@ refresh = function(state: State)
 	if state.inflight == state.gen then
 		return -- the request for the current query is already running
 	end
-	local v = activeView(state)
+	local v = M.activeView(state)
 	if not v then
 		state.problem = nil
 		return
 	end
 	-- The server's cooldown holds for every trigger, manual refresh included.
-	local wait = waitOf(state)
+	local wait = M.waitOf(state)
 	if wait > 0 then
 		-- Nothing is loading: say why, so an uncached view does not show a spinner until the reset.
 		state.problem = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }
 		return schedule(state, wait * 1000)
 	end
 	local gen, query, integration = state.gen, v.query, v.integration
-	local key = snapKey(v, state.activeLogin)
+	local key = M.snapKey(v, state.activeLogin)
 	state.inflight = gen
 	local function current(): boolean
 		return running[state.cx.pane] == state and state.gen == gen
@@ -876,7 +865,7 @@ refresh = function(state: State)
 	local issues = kind == "issues"
 	-- `result` is a github.SearchResult (prs) or a tracker.IssueResult (issues).
 	local function landed(result: any, problem: github.Problem?, spent: number)
-		if not alive(state) then
+		if not M.alive(state) then
 			return
 		end
 		if state.inflight == gen then
@@ -899,7 +888,7 @@ refresh = function(state: State)
 			state.snap = snap
 			state.round += 1 -- every loaded checks list is older than this result now
 			state.problem = nil
-			ensureCursor(state)
+			M.ensureCursor(state)
 			prune(state)
 			if integration == "github" then
 				-- Warms the repository picker's list of gh logins (window.luau's pickRepo), so it opens without waiting on gh.
@@ -911,7 +900,7 @@ refresh = function(state: State)
 		if spent > 0 then
 			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.
 			state.cost = if result then spent else math.max(spent, state.cost)
-			state.interval = github.interval(github.quota(login(state)), os.time(), state.cost, openPanes(), POLL_MS)
+			state.interval = github.interval(github.quota(M.login(state)), os.time(), state.cost, openPanes(), POLL_MS)
 		elseif result and integration == "jira" then
 			state.interval = POLL_MS -- Jira has no quota to pace: the plain minute
 		else
@@ -925,28 +914,28 @@ refresh = function(state: State)
 	if M.isPin(v.id) then
 		M.fetchPin(state, v, current, landed) -- the pin's query is its item's URL
 	elseif issues then
-		TRACKERS[integration].search(login(state), query, current, landed)
+		TRACKERS[integration].search(M.login(state), query, current, landed)
 	else
-		github.search(login(state), query, current, landed)
+		github.search(M.login(state), query, current, landed)
 	end
 end
 
 -- A different applied query or login: invalidate whatever is in flight and reload now. A rejected query (HTTP 422)
 -- belonged to the old query; the other pauses are about the environment and stay.
-local function changed(state: State)
+function M.changed(state: State)
 	state.gen += 1
 	local p = state.problem
 	if p and (p.kind == "invalid" or not TERMINAL[p.kind]) then
 		state.problem = nil
 	end
 	showSnapshot(state)
-	refresh(state)
+	M.refresh(state)
 end
 
 -- Explicit user retry (`r`, Refresh, Retry): also asks again which CLIs start (one installed or removed meanwhile turns
 -- its integration on or off once answered), forgets Jira's site and retries failed checks loads. The search it starts
 -- makes the loaded checks stale (State.round): the selected PR's load again once it lands.
-local function retry(state: State)
+function M.retry(state: State)
 	process.reset()
 	jira.reset()
 	M.probeClis(true)
@@ -955,20 +944,20 @@ local function retry(state: State)
 		state.problem = nil
 	end
 	state.detailFail = {}
-	cancelDetails(state)
+	M.cancelDetails(state)
 	if state.inflight == state.gen then
-		local v = activeView(state)
+		local v = M.activeView(state)
 		state.cx:toast("info", "Already refreshing", if v then v.name else nil)
 	end
-	refresh(state)
+	M.refresh(state)
 end
 
-local function switchView(state: State, id: string?, activeLogin: string?)
+function M.switchView(state: State, id: string?, activeLogin: string?)
 	state.activeId, state.activeLogin, state.boardOn = id, activeLogin, false
 	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
-	local v = activeView(state)
-	local cached = if v then state.snaps[snapKey(v, state.activeLogin)] else nil
+	local v = M.activeView(state)
+	local cached = if v then state.snaps[M.snapKey(v, state.activeLogin)] else nil
 	local age = if cached then os.time() - cached.fetched else 0
 	local fresh = math.floor((state.interval or POLL_MS) / 1000)
 	local halted = state.problem
@@ -982,30 +971,30 @@ local function switchView(state: State, id: string?, activeLogin: string?)
 		showSnapshot(state)
 		schedule(state, (fresh - age) * 1000)
 	else
-		changed(state)
+		M.changed(state)
 	end
 end
 
 -- After another block wrote the views, on restore or once the CLIs answered: reread storage; what is shown must match
 -- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
 -- key). Until every CLI answered, an active view that is not listed yet stays the active one.
-local function reloadViews(state: State)
+function M.reloadViews(state: State)
 	loadAll(state)
-	local v = activeView(state)
+	local v = M.activeView(state)
 	if not v then
 		if cli.ready() then
-			switchView(state, if state.views[1] then state.views[1].id else nil)
+			M.switchView(state, if state.views[1] then state.views[1].id else nil)
 		end
-	elseif snapKey(v, state.activeLogin) ~= state.applied then
-		changed(state)
+	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
+		M.changed(state)
 	end
 end
 
 -- Every other live block of this runtime follows a change made in `origin`. Closed panes are retired, not rendered.
-local function propagate(origin: State)
+function M.propagate(origin: State)
 	for _, s in running do
-		if s ~= origin and alive(s) then
-			reloadViews(s)
+		if s ~= origin and M.alive(s) then
+			M.reloadViews(s)
 			s.cx:render()
 		end
 	end
@@ -1073,18 +1062,26 @@ function M.boardApi(state: State): any
 	}
 end
 
+-- The pieces of the issue key a board row was noted for. A worktree is noted by its issue's ref ("12", "ABC-1"); a key
+-- "owner/repo#12" names its repository itself. Returns the GitHub issue number (nil when the ref is not a plain one), the
+-- repository it is in (the key's, else `rowRepo`) and the ref.
+local function parseIssueRef(key: string, rowRepo: string): (number?, string, string)
+	local owner, tail = string.match(key, "^(.+)#([%w_%-]+)$")
+	local ref: string = tail or key
+	local n = tonumber(ref)
+	return (if n and tostring(n) == ref then n else nil), (if owner and string.find(owner, "/", 1, true) then owner else rowRepo), ref
+end
+
 -- How the preview reads the pull request and the issue a worktree was made for (the model decides which to ask). The
 -- first read after a pick waits for the cursor to rest. A description or a linked item that cannot be read leaves the
 -- rest of the answer as it is; `related` is only what the tracker itself links within the same repository.
 function M.boardLinks(state: State): any
-	local function live(): boolean
-		return alive(state)
-	end
+	local live = aliveFn(state)
 	local function later(row: any, run: () -> ())
 		if state.boardWait then
 			state.boardWait = false
 			tern.timer(DETAIL_DEBOUNCE_MS, function()
-				if alive(state) and state.board.selected == row.id then
+				if M.alive(state) and state.board.selected == row.id then
 					run()
 				end
 			end)
@@ -1112,10 +1109,7 @@ function M.boardLinks(state: State): any
 			end)
 		end,
 		issue = function(row: any, key: string, done: (any, string?) -> ())
-			-- A worktree is noted by its issue's ref ("12", "ABC-1"); a key "owner/repo#12" names its repository itself.
-			local owner, tail = string.match(key, "^(.+)#([%w_%-]+)$")
-			local ref: string = tail or key
-			local n = tonumber(ref)
+			local n, repo, ref = parseIssueRef(key, row.repo)
 			local function base(issue: tracker.Issue, where: string, label: string): { [string]: any }
 				local who = issue.assignees[1]
 				return {
@@ -1128,8 +1122,7 @@ function M.boardLinks(state: State): any
 				}
 			end
 			later(row, function()
-				if n and tostring(n) == ref then
-					local repo = if owner and string.find(owner, "/", 1, true) then owner else row.repo
+				if n then
 					github.issueItem(repo, n, nil, function(issue: tracker.Issue?, problem: github.Problem?)
 						if not issue then
 							return done(nil, if problem then problem.message else nil)
@@ -1180,9 +1173,7 @@ function M.boardPick(state: State, row: any)
 			state.boardAt = i
 		end
 	end
-	board.select(state.board, M.boardLinks(state), row.id, function(): boolean
-		return alive(state)
-	end, function()
+	board.select(state.board, M.boardLinks(state), row.id, aliveFn(state), function()
 		state.cx:render()
 	end)
 end
@@ -1209,7 +1200,7 @@ function M.boardScan(state: State, force: boolean?)
 		return
 	end
 	board.scan(state.board, M.boardApi(state), os.time(), function(): boolean
-		return alive(state) and state.boardOn
+		return M.alive(state) and state.boardOn
 	end, function()
 		state.cx:render()
 	end, force)
@@ -1219,7 +1210,7 @@ function M.boardScan(state: State, force: boolean?)
 		local wait = if at then math.max(1, board.SCAN_SECONDS - (os.time() - at)) else board.SCAN_SECONDS
 		state.boardTimer = tern.timer(wait * 1000, function()
 			state.boardTimer = nil
-			if alive(state) then
+			if M.alive(state) then
 				M.boardScan(state)
 			end
 		end)
@@ -1238,9 +1229,7 @@ function M.boardLoad(state: State)
 		end
 	end
 	state.boardBusy = true
-	board.load(state.board, M.boardApi(state), checkouts, function(): boolean
-		return alive(state)
-	end, function()
+	board.load(state.board, M.boardApi(state), checkouts, aliveFn(state), function()
 		state.boardBusy = false
 		M.boardEnsure(state)
 		M.boardScan(state, true)
@@ -1264,12 +1253,12 @@ function M.goScope(state: State, scopeId: any): boolean
 		M.openBoard(state)
 		return true
 	end
-	for _, scope in orderedViews(state) do
+	for _, scope in M.orderedViews(state) do
 		if scope.id == scopeId then
 			if state.boardOn and ghActive.isActive(state, scope) then
 				state.boardOn = false -- back to the view already shown: its selection stays
 			elseif state.boardOn or not ghActive.isActive(state, scope) then
-				switchView(state, scope.view.id, scope.login)
+				M.switchView(state, scope.view.id, scope.login)
 			end
 			return true
 		end
@@ -1294,26 +1283,21 @@ end
 -- Whether an item's pull request or issue is closed, merged or open, as the board's cleanup check asks: GitHub pull
 -- requests by number, GitHub issues and Jira issues by the key the worktree was noted for.
 function M.boardCheck(state: State): any
-	local function live(): boolean
-		return alive(state)
-	end
+	local live = aliveFn(state)
 	local function closedOrOpen(issue: tracker.Issue?): string
 		return if not issue then "unknown" elseif issue.state == "closed" then "closed" else "open"
 	end
 	return function(row: any, done: (string) -> ())
 		local number: number? = row.number
-		-- A worktree is noted by its issue's ref ("12", "ABC-1"); a key "owner/repo#12" names its repository itself.
 		local key: string = row.key or ""
-		local owner, tail = string.match(key, "^(.+)#([%w_%-]+)$")
-		local ref: string = tail or key
-		local n = tonumber(ref)
+		local n, repo, ref = parseIssueRef(key, row.repo)
 		if number then
 			github.pull(nil, "https://github.com/" .. row.repo .. "/pull/" .. number, live, function(result: any)
 				local pr = if result and result.prs then result.prs[1] else nil
 				done(if not pr then "unknown" elseif pr.state == "merged" then "merged" elseif pr.state == "closed" then "closed" else "open")
 			end)
-		elseif n and tostring(n) == ref then
-			github.issueItem(if owner and string.find(owner, "/", 1, true) then owner else row.repo, n, nil, function(issue: tracker.Issue?)
+		elseif n then
+			github.issueItem(repo, n, nil, function(issue: tracker.Issue?)
 				done(closedOrOpen(issue))
 			end, live)
 		elseif string.match(ref, "^%u[%u%d_]*%-%d+$") then
@@ -1358,17 +1342,17 @@ function M.boardItems(state: State): ({ any }, { any })
 end
 
 -- Moves the cursor `delta` rows through the visible items, clamped to the list.
-local function moveCursor(state: State, delta: number)
-	local v = filtered(state)
+function M.moveCursor(state: State, delta: number)
+	local v = M.filtered(state)
 	if not v or #v.items == 0 then
 		return
 	end
-	local i = indexOf(v.items, state.cursor)
+	local i = M.indexOf(v.items, state.cursor)
 	M.select(state, v.items[math.clamp(i + delta, 1, #v.items)].key)
 end
 
-local function moveView(state: State, delta: number)
-	local items = orderedViews(state)
+function M.moveView(state: State, delta: number)
+	local items = M.orderedViews(state)
 	local at = if state.boardOn then #items + 1 else 0
 	if not state.boardOn then
 		for i, scope in items do
@@ -1389,7 +1373,7 @@ local function moveView(state: State, delta: number)
 	if target and state.boardOn and ghActive.isActive(state, target) then
 		state.boardOn = false
 	elseif target and (state.boardOn or not ghActive.isActive(state, target)) then
-		switchView(state, target.view.id, target.login)
+		M.switchView(state, target.view.id, target.login)
 	end
 end
 
@@ -1413,8 +1397,8 @@ function M.probeClis(again: boolean?)
 							return -- the reread once every CLI answered reads it
 						end
 						for _, s in running do
-							if alive(s) then
-								reloadViews(s)
+							if M.alive(s) then
+								M.reloadViews(s)
 								s.cx:render()
 							end
 						end
@@ -1425,8 +1409,8 @@ function M.probeClis(again: boolean?)
 				end
 				cli.moved = false
 				for _, s in running do
-					if alive(s) then
-						reloadViews(s)
+					if M.alive(s) then
+						M.reloadViews(s)
 						local set = s.settings
 						if set and cli.page(set.page) ~= set.page then
 							set.page, set.focus, set.pick, s.settingsPage = "views", nil, nil, "views"
@@ -1441,12 +1425,12 @@ function M.probeClis(again: boolean?)
 end
 
 -- The sidebar group a view sits under: "GitHub - andyhite" for a view with its own login.
-local function groupLabel(v: View): string
+function M.groupLabel(v: View): string
 	local login = ghActive.shown(v)
 	return if login ~= "" then INTEGRATIONS[v.integration].label .. " - " .. login else INTEGRATIONS[v.integration].label
 end
 
-local function viewOf(state: State, id: string): View?
+function M.viewOf(state: State, id: string): View?
 	for _, v in state.views do
 		if v.id == id then
 			return v
@@ -1455,8 +1439,8 @@ local function viewOf(state: State, id: string): View?
 	return nil
 end
 
-local function openSelected(state: State, act: string, rerender: boolean)
-	local item = selected(state)
+function M.openSelected(state: State, act: string, rerender: boolean)
+	local item = M.selected(state)
 	if item then
 		if rerender then
 			state.cx:render() -- sends the new preview before the open request
@@ -1469,7 +1453,7 @@ local loadDetails: (State, string) -> ()
 
 -- Loads the checks of `key` after `ms`. One attempt waits at a time; a new one replaces it.
 local function armDetails(state: State, key: string, ms: number)
-	cancelDetails(state)
+	M.cancelDetails(state)
 	local attempt: Attempt = { key = key, timer = nil }
 	state.detailAttempt = attempt
 	attempt.timer = tern.timer(ms, function()
@@ -1477,7 +1461,7 @@ local function armDetails(state: State, key: string, ms: number)
 			return -- replaced or cancelled: the slot belongs to someone else now
 		end
 		state.detailAttempt = nil
-		if alive(state) then
+		if M.alive(state) then
 			loadDetails(state, key)
 		end
 	end)
@@ -1492,7 +1476,7 @@ local function failDetails(state: State, key: string, problem: github.Problem)
 	local now = os.time()
 	local retryAt: number? = nil
 	if problem.kind == "rate-limit" then
-		retryAt = now + math.max(waitOf(state), DETAIL_RETRY_S)
+		retryAt = now + math.max(M.waitOf(state), DETAIL_RETRY_S)
 	elseif not TERMINAL[problem.kind] then
 		retryAt = now + math.min(DETAIL_RETRY_S * 2 ^ (tries - 1), DETAIL_RETRY_MAX_S)
 	end
@@ -1506,8 +1490,8 @@ local function upToDate(state: State, key: string): boolean
 end
 
 loadDetails = function(state: State, key: string)
-	local item = selected(state)
-	if not item or detailKey(state, item) ~= key or upToDate(state, key) or state.detailBusy[key] then
+	local item = M.selected(state)
+	if not item or M.detailKey(state, item) ~= key or upToDate(state, key) or state.detailBusy[key] then
 		return -- the cursor moved on, or it is loaded or loading already: a render asks again if it still matters
 	end
 	local snap = state.snap
@@ -1518,47 +1502,38 @@ loadDetails = function(state: State, key: string)
 	local function live(): boolean
 		return running[state.cx.pane] == state and current()
 	end
+	-- Where a load lands. A load of another identity or an older search is not stored: its own render asks again.
+	-- Otherwise `details` is kept (and a failure forgotten), or, when nil, the failure paced by failDetails.
+	local function land(problem: github.Problem?, details: core.Detail?, unread: string)
+		state.detailBusy[key] = nil
+		if not M.alive(state) then
+			return
+		end
+		if not current() or (problem and problem.kind == "superseded") then
+			state.cx:render() -- another identity or a newer search owns the preview now: its own render asks for fresh details
+			return
+		end
+		if details then
+			state.details[key] = details
+			state.detailFail[key] = nil
+		else
+			failDetails(state, key, problem or { kind = "failed", message = unread })
+		end
+		state.cx:render()
+	end
 	state.detailBusy[key] = true
 	if kind == "issues" then
 		-- A GitHub load, like github.checks, sends nothing while the quota is spent or the login unusable: it
 		-- answers with that problem, which failDetails paces.
-		TRACKERS[item.tracker].detail(item, login(state), function(detail, problem)
-			state.detailBusy[key] = nil
-			if not alive(state) then
-				return
-			end
-			if not current() or (problem and problem.kind == "superseded") then
-				state.cx:render() -- another identity or a newer search owns the preview now: its own render asks for fresh details
-				return
-			end
-			if detail then
-				state.details[key] = { runs = {}, total = 0, round = round, issue = detail }
-				state.detailFail[key] = nil
-			else
-				failDetails(state, key, problem or { kind = "failed", message = "The issue could not be read." })
-			end
-			state.cx:render()
+		TRACKERS[item.tracker].detail(item, M.login(state), function(detail, problem)
+			land(problem, if detail then { runs = {}, total = 0, round = round, issue = detail } else nil, "The issue could not be read.")
 		end, live)
 		return
 	end
 	local pr: github.Pr = item
 	-- github.checks sends nothing while the quota is spent or the saved login unusable: it answers with that problem, which failDetails paces.
-	github.checks(pr.repo, pr.number, login(state), function(runs, total, problem, about)
-		state.detailBusy[key] = nil
-		if not alive(state) then
-			return
-		end
-		if not current() or (problem and problem.kind == "superseded") then
-			state.cx:render() -- another identity or a newer search owns the preview now: its own render asks for fresh checks
-			return
-		end
-		if runs then
-			state.details[key] = { runs = runs, total = total, round = round, about = about }
-			state.detailFail[key] = nil
-		else
-			failDetails(state, key, problem or { kind = "failed", message = "The checks could not be read." })
-		end
-		state.cx:render()
+	github.checks(pr.repo, pr.number, M.login(state), function(runs, total, problem, about)
+		land(problem, if runs then { runs = runs, total = total, round = round, about = about } else nil, "The checks could not be read.")
 	end, live)
 end
 
@@ -1566,11 +1541,11 @@ end
 -- 25, unflagged, and shows them meanwhile; checks loaded before the latest search show meanwhile too, and load again).
 -- Once it rests on an issue, loads its body, milestone and linked pull requests. Idempotent: every render calls it. A
 -- load waits out a debounce and a failed one its retry delay; moving to another item cancels the wait.
-local function wantDetails(state: State, item: any)
-	local key = detailKey(state, item)
+function M.wantDetails(state: State, item: any)
+	local key = M.detailKey(state, item)
 	local waiting = state.detailAttempt
 	if waiting and waiting.key ~= key then
-		cancelDetails(state)
+		M.cancelDetails(state)
 		waiting = nil
 	end
 	if not key or waiting or upToDate(state, key) or state.detailBusy[key] then
@@ -1588,7 +1563,7 @@ end
 -- a toast. `key` is the item's key (lowercase "owner/repo#n"). The next render scans the checkouts again, so git
 -- confirms a report. Only the attempts git has not confirmed count against NOTE_CAP: a block may hold more worktrees
 -- than that.
-local function noteWorktree(state: State, key: string, kind: string, r: Report?, problem: string?)
+function M.noteWorktree(state: State, key: string, kind: string, r: Report?, problem: string?)
 	local note: Note = {
 		seq = state.noteSeq + 1,
 		kind = kind,
@@ -1625,7 +1600,7 @@ end
 
 -- The variables of an issue's prompts and branch name (KINDS.issues.vars lists them); `code` is the GitHub repository the
 -- issue is worked in. `branch`, `base` and `remote` are only known once a worktree exists.
-local function issueVars(issue: tracker.Issue, code: string): { [string]: string }
+function M.issueVars(issue: tracker.Issue, code: string): { [string]: string }
 	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
 	local vars: { [string]: string } = {
 		url = issue.url,
@@ -1648,7 +1623,7 @@ end
 
 -- The GitHub repository an issue is worked in: its own, or the one its Jira project maps to when that is exactly one;
 -- nil while the choice is still to be made.
-local function codeRepoOf(issue: tracker.Issue): string?
+function M.codeRepoOf(issue: tracker.Issue): string?
 	if issue.tracker ~= "jira" then
 		return issue.repo
 	end
@@ -1658,11 +1633,12 @@ end
 
 -- `{github.user}` and `{jira.user}`: who you are on GitHub and Jira, for branch formats and prompts.
 local me = {}
+M.me = me
 
 -- Reads `{github.user}` (the login the active view's gh account is, else gh's active one; "" while gh is off) and,
 -- `jiraToo`, `{jira.user}`; done(users), "" for one that could not be read.
 function me.read(state: State, jiraToo: boolean, done: ({ [string]: string }) -> ())
-	local account = login(state)
+	local account = M.login(state)
 	local function read(gh: string?)
 		if gh and not account then
 			ghActive.login = gh
@@ -1695,7 +1671,7 @@ end
 -- known once a Jira search found the site.
 function me.of(state: State, issue: tracker.Issue): { [string]: string }
 	return {
-		["github.user"] = login(state) or ghActive.login,
+		["github.user"] = M.login(state) or ghActive.login,
 		["jira.user"] = if issue.tracker == "jira" then jira.known() else "",
 	}
 end
@@ -1753,8 +1729,8 @@ end
 
 -- The saved prompts offered under the active view, those with text: the ones the view lists (`here`), else every one;
 -- and why the prompts could not be read.
-local function offered(state: State): ({ { prompt: Prompt, here: boolean } }, string?)
-	local active = activeView(state)
+function M.offered(state: State): ({ { prompt: Prompt, here: boolean } }, string?)
+	local active = M.activeView(state)
 	local prompts, problem = loadPrompts(if active then KINDS[active.kind] else state.kind)
 	local list: { Prompt } = if prompts then prompts.items else {}
 	local ids = if active then livePrompts(active, list) else {}
@@ -1769,9 +1745,7 @@ end
 
 -- The board's own actions (`act`: the action bar's id or its key): true when it was one.
 function M.boardAct(state: State, act: string): boolean
-	local live = function(): boolean
-		return alive(state)
-	end
+	local live = aliveFn(state)
 	local row = M.boardSelected(state)
 	if act == "retry" then
 		if not state.boardBusy then
@@ -1830,7 +1804,7 @@ end
 local function redrawQueues()
 	tern.timer(250, function()
 		for _, s in running do
-			if alive(s) then
+			if M.alive(s) then
 				s.cx:render()
 			end
 		end
@@ -1872,7 +1846,7 @@ function M.agentStatus(state: State, raw: any)
 		state.rev += 1
 		state.vis = nil
 		if state.snap then
-			ensureCursor(state)
+			M.ensureCursor(state)
 		end
 		state.cx:render()
 	end
@@ -1888,47 +1862,5 @@ function M.triageEvent(state: State, value: any)
 		M.toggle(state, "attention")
 	end
 end
-
-M.TERMINAL = TERMINAL
-M.accountOf = accountOf
-M.activeView = activeView
-M.alive = alive
-M.cancelDetails = cancelDetails
-M.changed = changed
-M.codeRepoOf = codeRepoOf
-M.detailKey = detailKey
-M.ensureCursor = ensureCursor
-M.filtered = filtered
-M.groupLabel = groupLabel
-M.headOf = headOf
-M.helpOf = helpOf
-M.indexOf = indexOf
-M.issueVars = issueVars
-M.itemId = itemId
-M.itemOf = itemOf
-M.login = login
-M.moveCursor = moveCursor
-M.moveView = moveView
-M.noteWorktree = noteWorktree
-M.offered = offered
-M.openItems = openItems
-M.openSelected = openSelected
-M.orderedViews = orderedViews
-M.parseRepo = parseRepo
-M.propagate = propagate
-M.refresh = refresh
-M.reloadViews = reloadViews
-M.retire = retire
-M.retry = retry
-M.selected = selected
-M.snapKey = snapKey
-M.switchView = switchView
-M.trackerOf = trackerOf
-M.trim = trim
-M.viewOf = viewOf
-M.waitOf = waitOf
-M.wantDetails = wantDetails
-M.me = me
-M.ghActive = ghActive
 
 return M

@@ -56,6 +56,11 @@ function M.clean(s: string, multi: boolean?): string
 	return table.concat(out)
 end
 
+-- `s` without leading and trailing whitespace.
+function M.trim(s: string): string
+	return string.match(s, "^%s*(.-)%s*$") or ""
+end
+
 function M.new(text: string, multi: boolean?): Model
 	text = M.clean(text, multi)
 	return { text = text, cur = #text, anchor = nil, undo = {}, multi = multi }

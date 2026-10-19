@@ -179,6 +179,7 @@ local function field(v: any, ...: string): any
 	end
 	return v
 end
+M.field = field
 
 local function nonEmpty(v: any): string?
 	return if type(v) == "string" and v ~= "" then v else nil

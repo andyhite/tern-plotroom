@@ -26,7 +26,7 @@ local PROMPT_CAP, editJiraRepos, editPrompts, isTable, jiraReposOf, kindAndId, k
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
 local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, alive, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.alive, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
-local propagate, retry, snapKey, switchView, trackerOf, trim, viewOf, waitOf, ghActive = engine.propagate, engine.retry, engine.snapKey, engine.switchView, engine.trackerOf, engine.trim, engine.viewOf, engine.waitOf, engine.ghActive
+local propagate, retry, snapKey, switchView, trackerOf, viewOf, waitOf, ghActive = engine.propagate, engine.retry, engine.snapKey, engine.switchView, engine.trackerOf, engine.viewOf, engine.waitOf, engine.ghActive
 local helpOverlay, paceLine, queuePicker, rpcNodes = render.helpOverlay, render.paceLine, render.queuePicker, render.rpcNodes
 
 local M = {}
@@ -41,6 +41,26 @@ type Row = {
 	warning: string?,
 	disabled: string?,
 }
+
+-- Where `list` holds the item with `id`, or 0.
+local function indexOf(list: { View }, id: string): number
+	for i, v in list do
+		if v.id == id then
+			return i
+		end
+	end
+	return 0
+end
+
+-- Whether one of the kind's integrations is on.
+local function usable(kind: Kind): boolean
+	for _, i in kind.integrations do
+		if cli.on(i) then
+			return true
+		end
+	end
+	return false
+end
 
 -- sections and extra children of the open settings page.
 local function pageContent(state: State): ({ any }, { Node })
@@ -208,11 +228,7 @@ local function pageContent(state: State): ({ any }, { Node })
 	elseif s.page == "prompts" then
 		for _, kind in { KINDS.prs, KINDS.issues } do
 			-- A kind's prompts while one of its integrations is on: pull request prompts need gh.
-			local usable = false
-			for _, i in kind.integrations do
-				usable = usable or cli.on(i)
-			end
-			if not usable then
+			if not usable(kind) then
 				continue
 			end
 			local prompts, unreadable = loadPrompts(kind)
@@ -297,11 +313,7 @@ local function pageContent(state: State): ({ any }, { Node })
 		end
 		-- Each saved action's own key, a card per kind while one of its integrations is on (as on the Actions page).
 		for _, kind in { KINDS.prs, KINDS.issues } do
-			local usable = false
-			for _, i in kind.integrations do
-				usable = usable or cli.on(i)
-			end
-			local prompts = if usable then loadPrompts(kind) else nil
+			local prompts = if usable(kind) then loadPrompts(kind) else nil
 			if not prompts or #prompts.items == 0 then
 				continue
 			end
@@ -508,7 +520,7 @@ local function pageContent(state: State): ({ any }, { Node })
 end
 
 -- Ids of the page's rows the keys can reach, in order.
-local function focusRows(state: State): { string }
+function M.focusRows(state: State): { string }
 	local out: { string } = {}
 	local sections = pageContent(state)
 	for _, sec in sections do
@@ -521,7 +533,7 @@ local function focusRows(state: State): { string }
 	return out
 end
 
-local function rowById(state: State, id: string): Row?
+function M.rowById(state: State, id: string): Row?
 	local sections = pageContent(state)
 	for _, sec in sections do
 		for _, row in sec.rows do
@@ -543,7 +555,7 @@ end
 -- Opens a text row for editing, or a prompt's text (its "ptext:" row) in the multi-line editor card.
 local function beginEdit(state: State, row: string, initial: string?)
 	local s = state.settings
-	local def = if s then rowById(state, row) else nil
+	local def = if s then M.rowById(state, row) else nil
 	if not s or not def or def.disabled then
 		return
 	end
@@ -626,12 +638,7 @@ local function updateView(state: State, id: string, fn: (View) -> ()): string?
 		loadAll(state)
 		return err or "Views cannot be saved."
 	end
-	local target: View? = nil
-	for _, v in store.items do
-		if v.id == id then
-			target = v
-		end
-	end
+	local target: View? = store.items[indexOf(store.items, id)]
 	if not target then
 		return "That view was deleted elsewhere."
 	end
@@ -710,36 +717,21 @@ local function addView(state: State, row: string)
 	beginEdit(state, "name:" .. id, "")
 end
 
-local function deleteView(state: State, id: string)
-	local s = state.settings
-	if not s then
-		return
-	end
-	s.confirm = nil
+local function deleteView(state: State, s: Settings, id: string)
 	local rowId = "vopen:" .. id -- the summary row shows why: the Delete row draws no label
 	local view = viewOf(state, id)
 	if not view then
 		return
 	end
 	local kind = KINDS[view.kind]
-	local place = 1 -- where the view sits in the sidebar's list: its place goes to the view after it
-	for i, v in state.views do
-		if v.id == id then
-			place = i
-		end
-	end
+	local place = math.max(indexOf(state.views, id), 1) -- where the view sits in the sidebar's list: its place goes to the view after it
 	local store, writable, err = loadViews(kind)
 	if not writable then
 		loadAll(state)
 		s.errors[rowId] = err or "Views cannot be saved."
 		return
 	end
-	local at = 0
-	for i, v in store.items do
-		if v.id == id then
-			at = i
-		end
-	end
+	local at = indexOf(store.items, id)
 	if at == 0 then
 		return
 	end
@@ -782,12 +774,7 @@ local function addPrompt(state: State, row: string)
 end
 
 -- Deletes prompt `id` as Settings names it: "<kind id>:<id in that kind's store>".
-local function deletePrompt(state: State, id: string)
-	local s = state.settings
-	if not s then
-		return
-	end
-	s.confirm = nil
+local function deletePrompt(state: State, s: Settings, id: string)
 	local kind, saved = kindAndId(id)
 	if not kind then
 		return
@@ -815,12 +802,7 @@ local function deletePrompt(state: State, id: string)
 end
 
 -- Removes repository `repo` everywhere it is saved.
-local function deleteRepo(state: State, repo: string)
-	local s = state.settings
-	if not s then
-		return
-	end
-	s.confirm = nil
+local function deleteRepo(s: Settings, repo: string)
 	local err = removeRepo(repo)
 	s.errors["ropen:" .. repo] = err -- the summary row shows why: the Remove row draws no label
 	if not err then
@@ -829,12 +811,7 @@ local function deleteRepo(state: State, repo: string)
 end
 
 -- Removes Jira project `key` and its repositories.
-local function deleteJira(state: State, key: string)
-	local s = state.settings
-	if not s then
-		return
-	end
-	s.confirm = nil
+local function deleteJira(s: Settings, key: string)
 	local err = editJiraRepos(function(map: { [string]: any }): string?
 		map[key] = nil
 		return nil
@@ -848,7 +825,7 @@ end
 -- Saves row `row`'s new value as its control sends it: a choice row's option (a string: a view's type and group-by,
 -- where a prompt runs and opens) or a chips row's options now on (an array).
 -- A value of another shape, or an option the row does not offer, changes nothing.
-local function setValue(state: State, row: string, value: any)
+function M.setValue(state: State, row: string, value: any)
 	local s = state.settings
 	if not s then
 		return
@@ -903,12 +880,7 @@ local function setValue(state: State, row: string, value: any)
 				s.errors[row] = (if srcWritable then dstErr else srcErr) or "Views cannot be saved."
 				return
 			end
-			local at = 0
-			for i, v in src.items do
-				if v.id == id then
-					at = i
-				end
-			end
+			local at = indexOf(src.items, id)
 			if at == 0 then
 				s.errors[row] = "That view was deleted elsewhere."
 				return
@@ -1004,16 +976,16 @@ end
 
 -- Enter or Space on option `option` of row `row` while the keys drive it: a choice row takes it (and closes), a chips
 -- row turns it on or off.
-local function pressOption(state: State, row: string, option: string)
+function M.pressOption(state: State, row: string, option: string)
 	local s = state.settings
-	local def = rowById(state, row)
+	local def = M.rowById(state, row)
 	if not s or not def then
 		return
 	end
 	local c = def.control
 	if c.k == "choice" then
 		s.pick = nil
-		setValue(state, row, option)
+		M.setValue(state, row, option)
 		return
 	end
 	local values: { any } = {}
@@ -1026,29 +998,33 @@ local function pressOption(state: State, row: string, option: string)
 	else
 		table.insert(values, option)
 	end
-	setValue(state, row, values)
+	M.setValue(state, row, values)
 end
 
 -- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>" or
 -- "jremove:<project key>").
-local function confirmDelete(state: State)
+function M.confirmDelete(state: State)
 	local s = state.settings
-	local kind, id = string.match(if s and s.confirm then s.confirm else "", "^(%a+):(.+)$")
+	if not s then
+		return
+	end
+	local kind, id = string.match(s.confirm or "", "^(%a+):(.+)$")
 	if not id then
 		return
 	end
+	s.confirm = nil
 	if kind == "delete" then
-		deleteView(state, id)
+		deleteView(state, s, id)
 	elseif kind == "pdelete" then
-		deletePrompt(state, id)
+		deletePrompt(state, s, id)
 	elseif kind == "rremove" then
-		deleteRepo(state, id)
+		deleteRepo(s, id)
 	elseif kind == "jremove" then
-		deleteJira(state, id)
+		deleteJira(s, id)
 	end
 end
 
-local function runAction(state: State, act: string, row: string)
+function M.runAction(state: State, act: string, row: string)
 	local s = state.settings
 	if not s then
 		return
@@ -1150,12 +1126,12 @@ end
 -- Enter on a row, or a click on its field or popup: edits a text row, presses a button, switches a segmented choice to
 -- its next option (its segments show no keyboard highlight), or hands the keys to a menu choice (opened on the current
 -- option) or chips row (on its first option).
-local function runRow(state: State, row: string?)
+function M.runRow(state: State, row: string?)
 	local s = state.settings
 	if not row or not s or (s.edit and s.edit.row == row) then
 		return -- a click inside the field being edited keeps its draft
 	end
-	local def = rowById(state, row)
+	local def = M.rowById(state, row)
 	if not def or def.disabled then
 		return
 	end
@@ -1163,7 +1139,7 @@ local function runRow(state: State, row: string?)
 	if c.k == "text" then
 		beginEdit(state, row)
 	elseif c.k == "action" then
-		runAction(state, c.act, row)
+		M.runAction(state, c.act, row)
 	elseif c.k == "choice" and c.style == "segmented" then
 		local at = 0
 		for i, o in c.options do
@@ -1173,7 +1149,7 @@ local function runRow(state: State, row: string?)
 		end
 		local nextOption = c.options[at % #c.options + 1]
 		s.focus = row
-		setValue(state, row, nextOption.value)
+		M.setValue(state, row, nextOption.value)
 	elseif c.k == "choice" then
 		s.focus, s.pick = row, { row = row, option = c.value }
 	elseif c.k == "multi" and c.options[1] then
@@ -1182,15 +1158,15 @@ local function runRow(state: State, row: string?)
 end
 
 -- Enter on a text row: saves it. A rejected value stays in the field with its warning, for a correction.
-local function commitEdit(state: State)
+function M.commitEdit(state: State)
 	local s = state.settings
 	local e = if s then s.edit else nil
 	if not s or not e then
 		return
 	end
-	local text = trim(e.model.text)
+	local text = input.trim(e.model.text)
 	local row = e.row
-	local def = rowById(state, row)
+	local def = M.rowById(state, row)
 	-- An action's unchanged name still saves: naming a new one "New action" must open its text all the same.
 	if not def or (text == def.control.value and not string.match(row, "^pname:")) then
 		settle(s, row, nil) -- nothing to save: the edit closes, and a warning about the rejected draft goes with it
@@ -1394,7 +1370,7 @@ local function commitEdit(state: State)
 end
 
 -- Escape (or clicking away) leaves a text row without saving; the row's warning belonged to the rejected value.
-local function discardEdit(state: State)
+function M.discardEdit(state: State)
 	local s = state.settings
 	local e = if s then s.edit else nil
 	if s and e then
@@ -1408,8 +1384,8 @@ end
 
 -- Opens Settings page `page` with nothing focused or being edited. Views learns the signed-in gh logins (a group each);
 -- a setup page asks again whether the CLIs start, so one installed meanwhile turns its integration on.
-local function showPage(state: State, s: Settings, page: string)
-	discardEdit(state)
+function M.showPage(state: State, s: Settings, page: string)
+	M.discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
 	state.settingsPage = page
 	if page == "views" then
@@ -1419,7 +1395,7 @@ local function showPage(state: State, s: Settings, page: string)
 	end
 end
 
-local function resetRow(state: State, row: string)
+function M.resetRow(state: State, row: string)
 	local s = state.settings
 	if not s then
 		return
@@ -1457,11 +1433,11 @@ end
 
 -- Opens Settings on `page`, else the page it last showed, else Views (also for a page it does not show now). With
 -- `row` ("<field>:<item>"), the item's form is open and `row` focused.
-local function openSettings(state: State, page: string?, row: string?, edit: boolean?)
-	discardEdit(state) -- releases the prompt editor's caret, if one was open
+function M.openSettings(state: State, page: string?, row: string?, edit: boolean?)
+	M.discardEdit(state) -- releases the prompt editor's caret, if one was open
 	local s: Settings = { page = "views", errors = {}, open = if row then string.match(row, "^%a+:(.+)$") else nil }
 	state.settings = s
-	showPage(state, s, cli.page(page or state.settingsPage))
+	M.showPage(state, s, cli.page(page or state.settingsPage))
 	s.focus = row
 	if edit and row then
 		beginEdit(state, row)
@@ -1470,7 +1446,7 @@ end
 
 -- The window's repository picker chose `raw` ("owner/name", maybe typed): it is listed in Settings, which opens on
 -- its checkout row to set it.
-local function addRepo(state: State, raw: any)
+function M.addRepo(state: State, raw: any)
 	local repo = parseRepo(raw)
 	if not repo then
 		return state.cx:toast("error", "Not a repository", "Type it as owner/name.")
@@ -1479,13 +1455,13 @@ local function addRepo(state: State, raw: any)
 	if err then
 		return state.cx:toast("error", "Repository not saved", err)
 	end
-	openSettings(state, "repos", "checkout:" .. string.lower(repo), true)
+	M.openSettings(state, "repos", "checkout:" .. string.lower(repo), true)
 end
 
 -- The window's Jira project picker chose `raw` (a project key, maybe typed in lowercase): it is listed in Settings,
 -- which opens on its repositories.
-local function addJira(state: State, raw: any)
-	local key = string.upper(if type(raw) == "string" then trim(raw) else "")
+function M.addJira(state: State, raw: any)
+	local key = string.upper(if type(raw) == "string" then input.trim(raw) else "")
 	if not tracker.jiraProject(key) then
 		return state.cx:toast("error", "Not a Jira project key", "Type its key, such as ABC.")
 	end
@@ -1496,10 +1472,10 @@ local function addJira(state: State, raw: any)
 	if err then
 		return state.cx:toast("error", "Jira project not saved", err)
 	end
-	openSettings(state, "jira", "jrepos:" .. key, false)
+	M.openSettings(state, "jira", "jrepos:" .. key, false)
 end
 
-local function settingsView(state: State): BlockView
+function M.settingsView(state: State): BlockView
 	local s = state.settings :: Settings
 	local sections, extra = pageContent(state)
 	local props: { [string]: any } = {
@@ -1568,21 +1544,5 @@ local function settingsView(state: State): BlockView
 	end
 	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
 end
-
-M.addJira = addJira
-M.addRepo = addRepo
-M.commitEdit = commitEdit
-M.confirmDelete = confirmDelete
-M.discardEdit = discardEdit
-M.focusRows = focusRows
-M.openSettings = openSettings
-M.pressOption = pressOption
-M.resetRow = resetRow
-M.rowById = rowById
-M.runAction = runAction
-M.runRow = runRow
-M.setValue = setValue
-M.settingsView = settingsView
-M.showPage = showPage
 
 return M

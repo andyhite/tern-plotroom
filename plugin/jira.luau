@@ -2,9 +2,10 @@
 -- Jira through Atlassian's acli, as the account it is signed in to: one project's issue search, one issue's details and
 -- the project list. Shared by host and window. Cloud only; every command is an argv array run through process.luau.
 
+local github = require("./github")
+local input = require("./input")
 local process = require("./process")
 local tracker = require("./tracker")
-local github = require("./github")
 
 local M = {}
 
@@ -20,16 +21,7 @@ local BODY_CHARS = 20000
 local TONE: { [string]: string } = { new = "muted", indeterminate = "warning", done = "success" }
 local KEY = "^[A-Z][A-Z0-9_]*%-%d+$"
 
--- Value at a key path of decoded JSON; nil when a step is missing or not a table.
-local function field(v: any, ...: string): any
-	for _, key in { ... } do
-		if type(v) ~= "table" then
-			return nil
-		end
-		v = v[key]
-	end
-	return v
-end
+local field = github.field
 
 local function nonEmpty(v: any): string?
 	return if type(v) == "string" and v ~= "" then v else nil
@@ -39,13 +31,9 @@ local function list(v: any): { any }
 	return if type(v) == "table" then v else {}
 end
 
-local function trim(s: string): string
-	return string.match(s, "^%s*(.-)%s*$") or ""
-end
-
 -- The Problem acli's failure means; `text` is what it printed, stdout then stderr.
 function M.classify(text: string): Problem
-	local line = trim(string.match(text, "Error:%s*([^\n]+)") or string.match(text, "%S[^\n]*") or "")
+	local line = input.trim(string.match(text, "Error:%s*([^\n]+)") or string.match(text, "%S[^\n]*") or "")
 	if line == "" then
 		line = "acli failed."
 	end
@@ -462,7 +450,7 @@ end
 
 -- An ADF (Atlassian Document Format) node as markdown. Dates and media draw nothing.
 function M.adf(node: any): string
-	return trim(block(node))
+	return input.trim(block(node))
 end
 
 -- The description's markdown, cut to BODY_CHARS characters.

@@ -10,14 +10,14 @@ local ui = tern.ui
 
 local M = {}
 
-local POLL_MS = 60 * 1000
-local COST_GUESS = 10
-local DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
-local DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
-local DETAIL_RETRY_MAX_S = 300
-local NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
-local COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows: the window shows 40 (flows.luau MAX_ROWS), 3 are the target, account and count
-local ISSUE_ICON = "list-checks" -- the icon of issue views, as in window.luau; a name outside Tern's icon set (`circle-dot` is one) draws blank
+M.POLL_MS = 60 * 1000
+M.COST_GUESS = 10
+M.DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
+M.DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
+M.DETAIL_RETRY_MAX_S = 300
+M.NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
+M.COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows: the window shows 40 (flows.luau MAX_ROWS), 3 are the target, account and count
+M.ISSUE_ICON = "list-checks" -- the icon of issue views, as in window.luau; a name outside Tern's icon set (`circle-dot` is one) draws blank
 -- How an issue view lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
 export type TrackerApi = {
 	search: (string?, string, () -> boolean, (tracker.IssueResult?, github.Problem?, number) -> ()) -> (),
@@ -39,6 +39,7 @@ local TRACKERS: { [string]: TrackerApi } = {
 		end,
 	},
 }
+M.TRACKERS = TRACKERS
 
 -- A saved search: `kind` is what it lists ("prs" | "issues", a key of KINDS) and its `id` is "<kind>:<its id in that
 -- kind's kv store>" (the pinned pull request's is "pin"), so ids are the block's own whichever store a view is in.
@@ -94,11 +95,9 @@ export type Visible = { snap: Snap, needle: string, group: string, rev: number, 
 -- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in. `keep`: the
 -- groups follow the list's order (status, sorted by its category) instead of their labels'.
 export type Group = { value: string, label: string, of: (any) -> string, keep: boolean? }
--- The two kinds of view by id ("prs" | "issues"); assigned below, with the wording and keys each brings.
-local KINDS: { [string]: Kind }
 -- What each kind can group each integration's items by; assigned below, once the badges it reads are defined.
 local GROUPS: { [string]: { [string]: { Group } } }
-local function groupsOf(kindId: string, integration: string): { Group }
+function M.groupsOf(kindId: string, integration: string): { Group }
 	local list: { Group } = GROUPS[kindId][integration] or {}
 	return list
 end
@@ -214,7 +213,7 @@ export type State = {
 	boardAt: number?, -- the previewed row's place in the list: a removed row hands the preview to the row that took its place
 }
 
-local running: { [number]: State } = {}
+M.running = {} :: { [number]: State }
 
 -- The CLI each integration runs on, whether it starts on this host (`installed`; absent: not known yet) and where its
 -- install guide is. An integration is on only once its CLI is known to start: until then none of its views, groups
@@ -247,52 +246,43 @@ function cli.ready(): boolean
 	end
 	return true
 end
+M.cli = cli
 
 -- A span list for a node prop; spans and plain strings may mix.
-local function spans(...: Span | string): { Span | string }
+function M.spans(...: Span | string): { Span | string }
 	return { ... }
 end
 
 -- Percent-encodes everything but unreserved URL characters.
-local function pct(s: string): string
+function M.pct(s: string): string
 	return (string.gsub(s, "[^%w%-_%.~]", function(c)
 		return string.format("%%%02X", string.byte(c))
 	end))
 end
 
-local function prHref(act: string, pr: github.Pr): string
-	return "plotroom://github/" .. act .. "/" .. pr.repo .. "/" .. pr.number
-end
-
--- The link that runs saved prompt `id` (letters and digits) on `pr`: the prompt's shortcut opens it.
-local function runHref(pr: github.Pr, id: string): string
-	return "plotroom://github/run/" .. pr.repo .. "/" .. pr.number .. "/" .. id
-end
-
--- The same links for an issue: open carries the percent-encoded URL (the window compares it with the one shown), the
--- others the repository and the issue's ref.
-local function issueHref(act: string, issue: tracker.Issue): string
-	if act == "open" then
-		return "plotroom://issue/open/" .. pct(issue.url)
+-- The link of action `act` (open | worktree | goto | agent) on `item`: a pull request's carries its repository and
+-- number; an issue's open carries the percent-encoded URL (the window compares it with the one shown), the others the
+-- repository and the issue's ref.
+function M.hrefOf(state: State, item: any, act: string): string
+	if state.kind.id == "issues" then
+		if act == "open" then
+			return "plotroom://issue/open/" .. M.pct(item.url)
+		end
+		return "plotroom://issue/" .. act .. "/" .. item.repo .. "/" .. item.ref
 	end
-	return "plotroom://issue/" .. act .. "/" .. issue.repo .. "/" .. issue.ref
+	return "plotroom://github/" .. act .. "/" .. item.repo .. "/" .. item.number
 end
 
-local function issueRunHref(issue: tracker.Issue, id: string): string
-	return "plotroom://issue/run/" .. issue.repo .. "/" .. issue.ref .. "/" .. id
-end
-
--- The link of action `act` (open | worktree | goto | agent) on `item`, and of the button that runs prompt `id` on it.
-local function hrefOf(state: State, item: any, act: string): string
-	return if state.kind.id == "issues" then issueHref(act, item) else prHref(act, item)
-end
-
-local function runHrefOf(state: State, item: any, id: string): string
-	return if state.kind.id == "issues" then issueRunHref(item, id) else runHref(item, id)
+-- The link of the button that runs saved prompt `id` (letters and digits) on `item`: the prompt's shortcut opens it.
+function M.runHrefOf(state: State, item: any, id: string): string
+	if state.kind.id == "issues" then
+		return "plotroom://issue/run/" .. item.repo .. "/" .. item.ref .. "/" .. id
+	end
+	return "plotroom://github/run/" .. item.repo .. "/" .. item.number .. "/" .. id
 end
 
 -- "45s", "3m 20s", "1h 5m" for a whole number of seconds.
-local function duration(s: number): string
+function M.duration(s: number): string
 	s = math.max(0, math.ceil(s))
 	if s < 60 then
 		return s .. "s"
@@ -303,7 +293,7 @@ local function duration(s: number): string
 end
 
 -- `s` with control characters as spaces and, when it is not valid UTF-8, every non-ASCII byte as "?".
-local function printable(s: string): string
+function M.printable(s: string): string
 	local out = string.gsub(s, "%c", " ")
 	if utf8.len(out) == nil then
 		out = string.gsub(out, "[\128-\255]", "?")
@@ -312,18 +302,18 @@ local function printable(s: string): string
 end
 
 -- `s` (valid UTF-8, see printable) cut to `max` characters.
-local function clip(s: string, max: number): string
+function M.clip(s: string, max: number): string
 	local cut = utf8.offset(s, max + 1)
 	return if cut and cut <= #s then string.sub(s, 1, cut - 1) .. "…" else s
 end
 
 -- The first line of `s`, cut to 160 characters.
-local function brief(s: string): string
-	return clip(printable(string.match(s, "[^\n]*") or ""), 160)
+function M.brief(s: string): string
+	return M.clip(M.printable(string.match(s, "[^\n]*") or ""), 160)
 end
 
-local QUEUE_ID = "layer.queue"
-local SETTINGS_ID = "layer.settings"
+M.QUEUE_ID = "layer.queue"
+M.SETTINGS_ID = "layer.settings"
 -- The Settings pages, in order, the same whatever the active kind: one that `needs` an integration only while it is on,
 -- the `setup` page of one (its install guide) only while its CLI is known not to start.
 local PAGE_DEFS: { { id: string, label: string, group: string, icon: string, needs: string?, setup: string? } } = {
@@ -362,7 +352,7 @@ end
 -- What each integration is called, what a new view of it starts as, what its query row is labelled, and the heading of
 -- an issue's linked items.
 export type Integration = { label: string, newQuery: string, query: string, linked: string }
-local INTEGRATIONS: { [string]: Integration } = {
+M.INTEGRATIONS = {
 	github = {
 		label = "GitHub",
 		newQuery = "is:open involves:@me",
@@ -375,29 +365,29 @@ local INTEGRATIONS: { [string]: Integration } = {
 		query = "JQL",
 		linked = "Linked issues",
 	},
-}
+} :: { [string]: Integration }
 
-local STATE_BADGE: { [string]: { text: string, tone: string } } = {
+M.STATE_BADGE = {
 	open = { text = "Open", tone = "success" },
 	draft = { text = "Draft", tone = "muted" },
 	merged = { text = "Merged", tone = "accent" },
 	closed = { text = "Closed", tone = "error" },
 	done = { text = "Done", tone = "success" },
-}
+} :: { [string]: { text: string, tone: string } }
 -- Why a closed issue closed; any other reason (or none) is a plain Closed.
 local CLOSED_REASON: { [string]: { text: string, tone: string } } = {
 	completed = { text = "Completed", tone = "accent" },
 	["not-planned"] = { text = "Not planned", tone = "muted" },
 	duplicate = { text = "Duplicate", tone = "muted" },
 }
-local REVIEW_BADGE: { [string]: { text: string, tone: string } } = {
+M.REVIEW_BADGE = {
 	approved = { text = "Approved", tone = "success" },
 	changes = { text = "Changes requested", tone = "error" },
 	required = { text = "Review required", tone = "warning" },
-}
-local RUN_TONE: { [string]: string } = { success = "success", failure = "error", pending = "warning", neutral = "muted" }
-local RUN_ICON: { [string]: string } = { success = "check", failure = "x", pending = "clock", neutral = "minus" }
-local MERGE_STATE: { [string]: { text: string, tone: string } } = {
+} :: { [string]: { text: string, tone: string } }
+M.RUN_TONE = { success = "success", failure = "error", pending = "warning", neutral = "muted" } :: { [string]: string }
+M.RUN_ICON = { success = "check", failure = "x", pending = "clock", neutral = "minus" } :: { [string]: string }
+M.MERGE_STATE = {
 	conflicts = { text = "Conflicts", tone = "error" },
 	behind = { text = "Behind base", tone = "warning" },
 	blocked = { text = "Blocked", tone = "warning" },
@@ -405,23 +395,23 @@ local MERGE_STATE: { [string]: { text: string, tone: string } } = {
 	ready = { text = "Ready", tone = "success" },
 	draft = { text = "Draft", tone = "muted" },
 	unknown = { text = "Checking…", tone = "muted" },
-}
-local VERDICT_ROW: { [string]: { text: string, tone: string, icon: string } } = {
+} :: { [string]: { text: string, tone: string } }
+M.VERDICT_ROW = {
 	approved = { text = "Approved", tone = "success", icon = "check" },
 	changes = { text = "Changes requested", tone = "error", icon = "x" },
 	commented = { text = "Commented", tone = "muted", icon = "message" },
 	dismissed = { text = "Dismissed", tone = "muted", icon = "slash" },
 	requested = { text = "Requested", tone = "warning", icon = "clock" },
-}
-local CHECK: { [string]: { text: string, tone: string, mark: string } } = {
+} :: { [string]: { text: string, tone: string, icon: string } }
+M.CHECK = {
 	success = { text = "Passing", tone = "success", mark = "✓" },
 	failure = { text = "Failing", tone = "error", mark = "✗" },
 	pending = { text = "Pending", tone = "warning", mark = "●" },
-}
+} :: { [string]: { text: string, tone: string, mark: string } }
 
 -- The two kinds of view the engine runs. `keys` is the `?` list of the queue (every shortcut of the kind, concise);
 -- `vars` the prompt editor's legend of the variables a prompt may use.
-KINDS = {
+local KINDS: { [string]: Kind } = {
 	prs = {
 		id = "prs",
 		label = "Pull requests",
@@ -479,7 +469,7 @@ KINDS = {
 		label = "Issues",
 		one = "issue",
 		many = "issues",
-		icon = ISSUE_ICON,
+		icon = M.ISSUE_ICON,
 		viewsKey = "views-issues",
 		promptsKey = "prompts-issues",
 		integrations = { "github", "jira" },
@@ -538,8 +528,9 @@ KINDS = {
 		prompts = prompts.issues,
 	},
 }
+M.KINDS = KINDS
 
-local SETTINGS_KEYS: { KeyHelp } = {
+M.SETTINGS_KEYS = {
 	{ keys = { "↑", "↓" }, text = "Move between rows" },
 	{ keys = { "Enter" }, text = "Edit a text row, press its button, switch a choice to its next option or open its menu; while editing, Enter saves" },
 	{ keys = { "⌘↵" }, text = "Save an action's prompt (Enter there starts a new line)" },
@@ -548,9 +539,9 @@ local SETTINGS_KEYS: { KeyHelp } = {
 	{ keys = { "Esc" }, text = "Cancel the edit or close the choice; with nothing open, close Settings" },
 	{ keys = { "Tab" }, text = "Next page (Shift+Tab: previous page)" },
 	{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
-}
+} :: { KeyHelp }
 
-local function stateKind(pr: github.Pr): string
+function M.stateKind(pr: github.Pr): string
 	if pr.state == "merged" or pr.state == "closed" then
 		return pr.state
 	end
@@ -558,14 +549,14 @@ local function stateKind(pr: github.Pr): string
 end
 
 -- An issue's state badge: its workflow status (Jira), else Open, or why it was closed.
-local function issueBadge(issue: tracker.Issue): { text: string, tone: string }
+function M.issueBadge(issue: tracker.Issue): { text: string, tone: string }
 	if issue.status then
 		return issue.status
 	end
 	if issue.state ~= "closed" then
-		return STATE_BADGE.open
+		return M.STATE_BADGE.open
 	end
-	return CLOSED_REASON[issue.reason or ""] or STATE_BADGE.closed
+	return CLOSED_REASON[issue.reason or ""] or M.STATE_BADGE.closed
 end
 
 GROUPS = {
@@ -573,9 +564,9 @@ GROUPS = {
 		github = {
 			{ value = "repo", label = "Repository", of = function(pr: any): string return pr.repo end },
 			{ value = "author", label = "Author", of = function(pr: any): string return pr.author end },
-			{ value = "state", label = "State", of = function(pr: any): string return STATE_BADGE[stateKind(pr)].text end },
-			{ value = "review", label = "Review", of = function(pr: any): string return if pr.review then REVIEW_BADGE[pr.review].text else "No review" end },
-			{ value = "checks", label = "Checks", of = function(pr: any): string return if pr.checks then CHECK[pr.checks].text else "No checks" end },
+			{ value = "state", label = "State", of = function(pr: any): string return M.STATE_BADGE[M.stateKind(pr)].text end },
+			{ value = "review", label = "Review", of = function(pr: any): string return if pr.review then M.REVIEW_BADGE[pr.review].text else "No review" end },
+			{ value = "checks", label = "Checks", of = function(pr: any): string return if pr.checks then M.CHECK[pr.checks].text else "No checks" end },
 			{ value = "base", label = "Base branch", of = function(pr: any): string return pr.base end },
 		},
 	},
@@ -583,12 +574,12 @@ GROUPS = {
 		github = {
 			{ value = "repo", label = "Repository", of = function(issue: any): string return issue.repo end },
 			{ value = "author", label = "Author", of = function(issue: any): string return issue.author end },
-			{ value = "state", label = "State", keep = true, of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "state", label = "State", keep = true, of = function(issue: any): string return M.issueBadge(issue).text end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
 		},
 		jira = {
 			{ value = "project", label = "Project", of = function(issue: any): string return issue.repo end },
-			{ value = "status", label = "Status", keep = true, of = function(issue: any): string return issueBadge(issue).text end },
+			{ value = "status", label = "Status", keep = true, of = function(issue: any): string return M.issueBadge(issue).text end },
 			{ value = "type", label = "Type", of = function(issue: any): string return issue.type or "No type" end },
 			{ value = "priority", label = "Priority", of = function(issue: any): string return issue.priority or "No priority" end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
@@ -597,42 +588,6 @@ GROUPS = {
 	},
 }
 
-local RPC_PROTOCOL = "18"
-
-M.CHECK = CHECK
-M.COMMENT_ROWS = COMMENT_ROWS
-M.COST_GUESS = COST_GUESS
-M.DETAIL_DEBOUNCE_MS = DETAIL_DEBOUNCE_MS
-M.DETAIL_RETRY_MAX_S = DETAIL_RETRY_MAX_S
-M.DETAIL_RETRY_S = DETAIL_RETRY_S
-M.INTEGRATIONS = INTEGRATIONS
-M.ISSUE_ICON = ISSUE_ICON
-M.KINDS = KINDS
-M.MERGE_STATE = MERGE_STATE
-M.NOTE_CAP = NOTE_CAP
-M.POLL_MS = POLL_MS
-M.QUEUE_ID = QUEUE_ID
-M.REVIEW_BADGE = REVIEW_BADGE
-M.RPC_PROTOCOL = RPC_PROTOCOL
-M.RUN_ICON = RUN_ICON
-M.RUN_TONE = RUN_TONE
-M.SETTINGS_ID = SETTINGS_ID
-M.SETTINGS_KEYS = SETTINGS_KEYS
-M.STATE_BADGE = STATE_BADGE
-M.TRACKERS = TRACKERS
-M.VERDICT_ROW = VERDICT_ROW
-M.brief = brief
-M.clip = clip
-M.duration = duration
-M.groupsOf = groupsOf
-M.hrefOf = hrefOf
-M.issueBadge = issueBadge
-M.pct = pct
-M.printable = printable
-M.runHrefOf = runHrefOf
-M.running = running
-M.spans = spans
-M.stateKind = stateKind
-M.cli = cli
+M.RPC_PROTOCOL = "18"
 
 return M

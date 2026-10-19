@@ -4,6 +4,9 @@
 -- transition, re-run, draft PR, export, import: always plan, Cancel-first confirm, commit), Open item by URL and the
 -- commands the command palette lists. window.luau injects what it owns (`setup`), so there is no require cycle.
 
+local input = require("./input")
+local trim = input.trim
+
 local M = {}
 
 export type Env = {
@@ -50,10 +53,6 @@ end
 
 local function problemOf(a: any): string?
 	return if type(a.problem) == "string" then a.problem else nil
-end
-
-local function trim(s: string): string
-	return string.match(s, "^%s*(.-)%s*$") or ""
 end
 
 -- ---------------------------------------------------------------- agent links

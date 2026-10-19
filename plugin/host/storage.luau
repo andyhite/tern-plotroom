@@ -21,6 +21,7 @@ local M = {}
 local function isTable(v: any): boolean
 	return type(v) == "table"
 end
+M.isTable = isTable
 
 -- The default views of `kind` a first run saves. A sprint view left out keeps its id unused, so nextId follows them all.
 local function seedViews(kind: Kind): Views
@@ -100,7 +101,7 @@ local function validViews(kind: Kind, v: any): Views?
 end
 
 -- tern.kv.set raises on failure and returns nothing: the error text, or nil when saved.
-local function kvSet(key: string, value: any): string?
+function M.kvSet(key: string, value: any): string?
 	local ok, err = pcall(function(): string?
 		tern.kv.set(key, value)
 		return nil
@@ -111,17 +112,17 @@ local function kvSet(key: string, value: any): string?
 	return tostring(err)
 end
 
-local function writeViews(kind: Kind, store: Views): string?
+function M.writeViews(kind: Kind, store: Views): string?
 	local items: { any } = {}
 	for _, v in store.items do
 		table.insert(items, { id = string.sub(v.id, #kind.id + 2), name = v.name, integration = v.integration, query = v.query, logins = tern.json.array(v.logins), group = v.group, prompts = tern.json.array(v.prompts), sort = v.sort })
 	end
-	return kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	return M.kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 end
 
 -- views, writable, error. The views' ids are "<kind>:<saved id>". An absent key is seeded; unreadable or malformed
 -- storage is never overwritten: seeds are shown but Save is disabled.
-local function loadViews(kind: Kind): (Views, boolean, string?)
+function M.loadViews(kind: Kind): (Views, boolean, string?)
 	local ok, v = pcall(tern.kv.get, kind.viewsKey)
 	if not ok then
 		return seedViews(kind), false, "Saved " .. kind.one .. " views could not be read: " .. tostring(v)
@@ -132,7 +133,7 @@ local function loadViews(kind: Kind): (Views, boolean, string?)
 		if kind.id == "issues" and (cli.installed.jira == nil or cli.sprintsAsking) then
 			return s, true, nil
 		end
-		local err = writeViews(kind, s)
+		local err = M.writeViews(kind, s)
 		if err then
 			return s, false, "Saved " .. kind.one .. " views could not be written: " .. err
 		end
@@ -148,10 +149,10 @@ end
 -- Rereads both kinds' saved views into `state.views`, pull request views first, and notes per kind whether they can be
 -- changed (`state.locked`: why not). Each kind keeps its own kv store, which a view's id names. A view of an integration
 -- that is not on stays saved but is left out.
-local function loadAll(state: State)
+function M.loadAll(state: State)
 	local all: { View } = {}
 	for _, kind in { KINDS.prs, KINDS.issues } do
-		local store, writable, err = loadViews(kind)
+		local store, writable, err = M.loadViews(kind)
 		if writable then
 			state.locked[kind.id] = nil
 		else
@@ -169,13 +170,13 @@ local function loadAll(state: State)
 end
 
 -- The kind and the saved id of a view or prompt as Settings names it: "<kind id>:<id in that kind's kv store>".
-local function kindAndId(qid: string): (Kind?, string)
+function M.kindAndId(qid: string): (Kind?, string)
 	local k, id = string.match(qid, "^(%a+):(.+)$")
 	return (if k then KINDS[k] else nil), id or qid
 end
 
 -- The strings of a saved list; anything else in it is dropped.
-local function stringList(v: any): { string }
+function M.stringList(v: any): { string }
 	local out: { string } = {}
 	if isTable(v) then
 		for _, x in v do
@@ -189,7 +190,7 @@ end
 
 -- Saved repositories (kv "checkouts", keyed by lowercase "owner/name") to their local checkout; "" marks one listed
 -- in Settings without a checkout.
-local function readCheckouts(): { [string]: any }
+function M.readCheckouts(): { [string]: any }
 	local ok, v = pcall(tern.kv.get, "checkouts")
 	if ok and isTable(v) then
 		return v
@@ -199,14 +200,14 @@ end
 
 -- The saved local checkout of `repo`, nil when none: then the window's palette asks for one before anything makes a
 -- worktree of it.
-local function checkoutOf(repo: string): string?
-	local path = readCheckouts()[string.lower(repo)]
+function M.checkoutOf(repo: string): string?
+	local path = M.readCheckouts()[string.lower(repo)]
 	return if type(path) == "string" and path ~= "" then path else nil
 end
 
 -- Saves `path` as `repo`'s checkout ("": none, but still listed); with `keep`, only a repository not saved yet. Fails
 -- closed when the saved map cannot be read.
-local function saveCheckout(repo: string, path: string, keep: boolean?): string?
+function M.saveCheckout(repo: string, path: string, keep: boolean?): string?
 	local ok, stored = pcall(tern.kv.get, "checkouts")
 	if not ok or (stored ~= nil and not isTable(stored)) then
 		return "Saved checkouts could not be read"
@@ -217,35 +218,38 @@ local function saveCheckout(repo: string, path: string, keep: boolean?): string?
 		return nil
 	end
 	repos[key] = path
-	local err = kvSet("checkouts", repos)
+	local err = M.kvSet("checkouts", repos)
 	return if err then "Could not save: " .. err else nil
 end
 
--- Saved worktree setup commands per repository (kv "setup-commands", keyed like "checkouts"), or nil and why
--- when unreadable: a write then fails closed rather than overwrite them.
-local function setupMap(): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, "setup-commands")
+-- A saved map under kv `key` (`what` names it in the message), or nil and why when unreadable: a write then fails
+-- closed rather than overwrite it.
+local function readMap(key: string, what: string): ({ [string]: any }?, string?)
+	local ok, stored = pcall(tern.kv.get, key)
 	if not ok or (stored ~= nil and not isTable(stored)) then
-		return nil, "Saved setup commands could not be read."
+		return nil, "Saved " .. what .. " could not be read."
 	end
 	return if stored ~= nil then stored else {}, nil
 end
 
-local function setupOf(map: { [string]: any }, repo: string): { string }
-	return stringList(map[string.lower(repo)])
+-- Saved worktree setup commands per repository (kv "setup-commands", keyed like "checkouts"), or nil and why when
+-- unreadable.
+function M.setupMap(): ({ [string]: any }?, string?)
+	return readMap("setup-commands", "setup commands")
+end
+
+function M.setupOf(map: { [string]: any }, repo: string): { string }
+	return M.stringList(map[string.lower(repo)])
 end
 
 -- Branch and worktree folder name formats (Settings › Repositories). One table keeps the format helpers together.
 local formats = {}
+M.formats = formats
 
 -- Saved branch name formats per repository (kv "branch-formats", keyed like "checkouts"), or nil and why when
--- unreadable: a write then fails closed rather than overwrite them.
+-- unreadable.
 function formats.repoMap(): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, "branch-formats")
-	if not ok or (stored ~= nil and not isTable(stored)) then
-		return nil, "Saved branch formats could not be read."
-	end
-	return if stored ~= nil then stored else {}, nil
+	return readMap("branch-formats", "branch formats")
 end
 
 -- The branch name format saved for `repo`; nil when none is (the Worktrees format applies) or they cannot be read.
@@ -256,20 +260,16 @@ function formats.repoOf(repo: string): string?
 end
 
 -- Saved repositories per Jira project (kv "jira-repos": KEY to lowercase "owner/name" list), or nil and why when
--- unreadable: a write then fails closed rather than overwrite them.
-local function readJiraRepos(): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, "jira-repos")
-	if not ok or (stored ~= nil and not isTable(stored)) then
-		return nil, "Saved Jira project repositories could not be read."
-	end
-	return if stored ~= nil then stored else {}, nil
+-- unreadable.
+function M.readJiraRepos(): ({ [string]: any }?, string?)
+	return readMap("jira-repos", "Jira project repositories")
 end
 
 -- The repositories Jira project `project` is worked in: the valid "owner/name" strings saved for it, in saved order.
-local function jiraReposOf(project: string): { string }
-	local map = readJiraRepos()
+function M.jiraReposOf(project: string): { string }
+	local map = M.readJiraRepos()
 	local out: { string } = {}
-	for _, r in stringList(if map then map[project] else nil) do
+	for _, r in M.stringList(if map then map[project] else nil) do
 		local owner, name = string.match(r, "^([^/]+)/([^/]+)$")
 		if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
 			table.insert(out, r)
@@ -279,8 +279,8 @@ local function jiraReposOf(project: string): { string }
 end
 
 -- Rereads the Jira project map, lets `fn` change it (an error string aborts) and saves it; an error message or nil.
-local function editJiraRepos(fn: ({ [string]: any }) -> string?): string?
-	local map, err = readJiraRepos()
+function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
+	local map, err = M.readJiraRepos()
 	if not map then
 		return err
 	end
@@ -290,9 +290,9 @@ local function editJiraRepos(fn: ({ [string]: any }) -> string?): string?
 	end
 	local out: { [string]: any } = {}
 	for key, list in map do
-		out[key] = tern.json.array(stringList(list))
+		out[key] = tern.json.array(M.stringList(list))
 	end
-	local werr = kvSet("jira-repos", out)
+	local werr = M.kvSet("jira-repos", out)
 	return if werr then "Could not save: " .. werr else nil
 end
 
@@ -313,21 +313,21 @@ end
 
 -- Deletes `repo` from the checkouts, branch formats, setup commands and every Jira project's repositories. A map is
 -- only written when it was readable; the first failure is returned.
-local function removeRepo(repo: string): string?
+function M.removeRepo(repo: string): string?
 	local key = string.lower(repo)
 	local failed: string? = nil
 	for _, name in { "checkouts", "branch-formats", "setup-commands" } do
 		local ok, stored = pcall(tern.kv.get, name)
 		if ok and isTable(stored) and stored[key] ~= nil then
 			stored[key] = nil
-			local err = kvSet(name, stored)
+			local err = M.kvSet(name, stored)
 			failed = failed or (if err then "Could not save: " .. err else nil)
 		end
 	end
-	local jerr = editJiraRepos(function(map: { [string]: any }): string?
+	local jerr = M.editJiraRepos(function(map: { [string]: any }): string?
 		for project, list in map do
 			local keep: { string } = {}
-			for _, r in stringList(list) do
+			for _, r in M.stringList(list) do
 				if string.lower(r) ~= key then
 					table.insert(keep, r)
 				end
@@ -340,11 +340,11 @@ local function removeRepo(repo: string): string?
 end
 
 local PROMPTS_BAD = "Saved actions are malformed; not overwriting them."
-local PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
+M.PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 
 -- Saved agent prompts (kv prompts-prs / prompts-issues; absent: the kind's default prompts, saved with the first edit),
 -- or nil and why when unreadable or malformed: a write then fails closed rather than overwrite them.
-local function loadPrompts(kind: Kind): (Prompts?, string?)
+function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	local ok, v = pcall(tern.kv.get, kind.promptsKey)
 	if not ok then
 		return nil, "Saved actions could not be read: " .. tostring(v)
@@ -379,8 +379,8 @@ local function loadPrompts(kind: Kind): (Prompts?, string?)
 end
 
 -- Rereads the prompts, lets `fn` change them (an error string aborts) and saves them; an error message or nil.
-local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
-	local store, err = loadPrompts(kind)
+function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
+	local store, err = M.loadPrompts(kind)
 	if not store then
 		return err
 	end
@@ -392,11 +392,11 @@ local function editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	for _, p in store.items do
 		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model })
 	end
-	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
+	local werr = M.kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil
 end
 
-local function promptById(store: Prompts, id: string): Prompt?
+function M.promptById(store: Prompts, id: string): Prompt?
 	for _, p in store.items do
 		if p.id == id then
 			return p
@@ -406,7 +406,7 @@ local function promptById(store: Prompts, id: string): Prompt?
 end
 
 -- The prompts view `v` lists, as ids of prompts that still exist, in the prompts' order; empty: it lists none.
-local function livePrompts(v: View, list: { Prompt }): { string }
+function M.livePrompts(v: View, list: { Prompt }): { string }
 	local out: { string } = {}
 	for _, p in list do
 		if table.find(v.prompts, p.id) then
@@ -424,13 +424,13 @@ function formats.saveRepo(repo: string, fmt: string?): string?
 		return err
 	end
 	map[string.lower(repo)] = fmt
-	local werr = kvSet("branch-formats", map)
+	local werr = M.kvSet("branch-formats", map)
 	return if werr then "Could not save: " .. werr else nil
 end
 
 -- Saves name format `which` (a formats.KEYS key; "" is the default).
 function formats.save(which: string, fmt: string): string?
-	local err = kvSet(formats.KEYS[which], fmt)
+	local err = M.kvSet(formats.KEYS[which], fmt)
 	return if err then "Could not save: " .. err else nil
 end
 
@@ -444,28 +444,5 @@ function formats.prDir(repo: string, n: number, title: string): (string?, string
 	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
 	return tracker.render(formats.of("prdir"), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
 end
-
-M.PROMPT_CAP = PROMPT_CAP
-M.checkoutOf = checkoutOf
-M.editJiraRepos = editJiraRepos
-M.editPrompts = editPrompts
-M.isTable = isTable
-M.jiraReposOf = jiraReposOf
-M.kindAndId = kindAndId
-M.kvSet = kvSet
-M.livePrompts = livePrompts
-M.loadAll = loadAll
-M.loadPrompts = loadPrompts
-M.loadViews = loadViews
-M.promptById = promptById
-M.readCheckouts = readCheckouts
-M.readJiraRepos = readJiraRepos
-M.removeRepo = removeRepo
-M.saveCheckout = saveCheckout
-M.setupMap = setupMap
-M.setupOf = setupOf
-M.stringList = stringList
-M.writeViews = writeViews
-M.formats = formats
 
 return M

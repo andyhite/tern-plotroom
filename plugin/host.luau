@@ -25,7 +25,8 @@ local loadAll, readCheckouts, saveCheckout = storage.loadAll, storage.readChecko
 local TERMINAL, accountOf, activeView, alive, cancelDetails = engine.TERMINAL, engine.accountOf, engine.activeView, engine.alive, engine.cancelDetails
 local detailKey, ensureCursor, itemOf, moveCursor, moveView = engine.detailKey, engine.ensureCursor, engine.itemOf, engine.moveCursor, engine.moveView
 local offered, openItems, openSelected, refresh, retire = engine.offered, engine.openItems, engine.openSelected, engine.refresh, engine.retire
-local retry, selected, snapKey, trim, ghActive = engine.retry, engine.selected, engine.snapKey, engine.trim, engine.ghActive
+local retry, selected, snapKey, ghActive = engine.retry, engine.selected, engine.snapKey, engine.ghActive
+local trim = input.trim
 local queueView = render.queueView
 local addJira, addRepo, commitEdit, confirmDelete, discardEdit = settings.addJira, settings.addRepo, settings.commitEdit, settings.confirmDelete, settings.discardEdit
 local focusRows, openSettings, pressOption, resetRow, rowById = settings.focusRows, settings.openSettings, settings.pressOption, settings.resetRow, settings.rowById
@@ -66,7 +67,7 @@ local function queueAction(state: State, act: string): boolean
 	elseif string.sub(act, 1, 6) == "scope:" then
 		return engine.goScope(state, string.sub(act, 7))
 	elseif act == "unpin" then
-		return requests.unpin(state, nil)
+		return requests.unpin(state)
 	else
 		return false
 	end
@@ -75,11 +76,6 @@ end
 
 -- The block: one engine for pull request and issue views alike, each taking its search, details and wording from its kind.
 local function blockDef(): BlockDef<State>
-		-- The pin (engine.pinView) and showing an item in it (requests.show: a pull request, GitHub issue or Jira issue URL).
-	local pinView = engine.pinView
-	local function showPr(state: State, url: any)
-		requests.show(state, url)
-	end
 	-- One line for the badges' tooltip on where the worktree of `note` stands (`item`: the listed item it is of); nil
 	-- when that cannot be said: its head is unread, or a pull request's head is unknown.
 	local function summaryOf(issues: boolean, note: Note, item: any): string?
@@ -392,7 +388,7 @@ local function blockDef(): BlockDef<State>
 			-- The pins restored are in the sidebar's Pins group; a pin that is the scope shown opens on its item (ensureCursor).
 			local pins: { View } = {}
 			local function addSaved(url: any)
-				local p = pinView(url)
+				local p = engine.pinView(url)
 				if p and #pins < engine.PIN_CAP and not engine.pinFor(pins, engine.pinKey(p)) then
 					table.insert(pins, p)
 				end
@@ -799,7 +795,7 @@ local function blockDef(): BlockDef<State>
 			elseif act == "rpc" then
 				rpc(state, ev.value)
 			elseif act == "show-pr" then
-				showPr(state, ev.value)
+				requests.show(state, ev.value)
 			elseif act == "agent-status" then
 				engine.agentStatus(state, ev.value)
 			elseif act == "agent-link" then
@@ -851,7 +847,7 @@ local function blockDef(): BlockDef<State>
 				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
 				queueAction(state, act)
 			elseif act == "unpin" then
-				requests.unpin(state, nil)
+				requests.unpin(state)
 			elseif act == "queue" then
 				-- The command palette's pick: only an action it offers now runs.
 				for _, a in requests.paletteActions(state) do
@@ -965,11 +961,7 @@ local function blockDef(): BlockDef<State>
 						openSettings(state)
 					end
 				elseif act == "retry" then
-					if state.boardOn then
-						engine.boardAct(state, "retry")
-					else
-						retry(state)
-					end
+					queueAction(state, "refresh")
 				elseif act then
 					-- An item's button in the action bar, or the command palette's: runs as its key does.
 					queueAction(state, act)

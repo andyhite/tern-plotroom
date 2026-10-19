@@ -28,7 +28,7 @@ local M = {}
 
 -- The adaptive refresh pace: cooldown while the server holds us back, else the interval and the next refresh (the
 -- quota sits under this row). Nothing when no request was sent (invalid query).
-local function paceLine(state: State): string?
+function M.paceLine(state: State): string?
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
 		return "Auto-refresh paused: " .. (headOf(state, halted.kind) or halted.kind) .. ". Fix it, then Refresh."
@@ -229,11 +229,6 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- Link to a check's page: its row index (the window reads the live row to validate) and the percent-encoded URL.
-local function checkHref(i: number, url: string): string
-	return "plotroom://github/check/" .. i .. "/" .. pct(url)
-end
-
 -- The agent map this block holds as one string, "key=state;" per entry in key order: the hidden `main.agents` node says it,
 -- so a window that sent its map to an earlier run of this block (a reload) sees the block no longer holds it and sends again.
 function M.agentSig(map: { [string]: string }): string
@@ -249,7 +244,7 @@ function M.agentSig(map: { [string]: string }): string
 	return table.concat(out)
 end
 
-local function rpcNodes(state: State): { Node }
+function M.rpcNodes(state: State): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = M.agentSig(state.agents), hidden = true }),
@@ -315,7 +310,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 			aria = what,
 		}
 		if r.url then
-			props.href = checkHref(i, r.url)
+			props.href = "plotroom://github/check/" .. i .. "/" .. pct(r.url)
 			props.actions = { click = "open" }
 		end
 		table.insert(groups[if r.required then "required" else "runs"], ui.node("item", props))
@@ -836,7 +831,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	return out
 end
 
-local function helpOverlay(state: State): Node
+function M.helpOverlay(state: State): Node
 	local map = keys.load()
 	local listed: { KeyHelp } = if state.settings then SETTINGS_KEYS else state.kind.keys
 	local rows: { KeyHelp } = {}
@@ -995,6 +990,17 @@ function M.boardPreview(state: State): { Node }
 	return kids
 end
 
+-- Only buttons with a key show.
+local function keyed(actions: { any }): { any }
+	local out: { any } = {}
+	for _, a in actions do
+		if a.keys then
+			table.insert(out, a)
+		end
+	end
+	return out
+end
+
 -- Turns the queue's picker props into the Worktrees board's: its rows, subtitle and action bar.
 function M.boardProps(state: State, props: { [string]: any })
 	local items, order = engine.boardItems(state)
@@ -1030,32 +1036,16 @@ function M.boardProps(state: State, props: { [string]: any })
 		{ id = "wt-cleanup", label = "Find cleanup", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
 		{ id = "wt-remove", label = "Remove", keys = keys.caps(map, "wt-remove"), ["end"] = true, disabled = if removable then nil else "The main, locked or missing worktrees are not removed here" },
 	}
-	-- Only buttons with a key show.
-	props.actions = {}
-	for _, a in actions do
-		if a.keys then
-			table.insert(props.actions, a)
-		end
-	end
+	props.actions = keyed(actions)
 end
 
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
-local function queuePicker(state: State): Node
+function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
-	local items: { any } = {}
-	local order: { any } = {}
 	local open = openItems(state)
-	if snap then
-		items = rowsOf(state, snap, open)
-	else
-		tern.json.array(items)
-	end
-	if vis then
-		order = vis.order
-	else
-		tern.json.array(order)
-	end
+	local items: { any } = if snap then rowsOf(state, snap, open) else tern.json.array({})
+	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
 	local title: { any } = { ui.span(if view then view.name else "Plotroom", "strong") }
@@ -1122,23 +1112,20 @@ local function queuePicker(state: State): Node
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
 	-- Only buttons with a key show: Settings and Refresh on the left, the selected item's on the right, the command
 	-- palette last in the corner.
-	local actions: { any } = {}
-	local function bar(a: { [string]: any })
-		if a.keys then
-			table.insert(actions, a)
-		end
-	end
-	bar({ id = "settings", label = "Settings", keys = keys.caps(map, "settings") })
-	bar({
-		id = "retry",
-		label = "Refresh",
-		keys = keys.caps(map, "refresh"),
-		disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
-	})
+	local all: { any } = {
+		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
+		{
+			id = "retry",
+			label = "Refresh",
+			keys = keys.caps(map, "refresh"),
+			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
+		},
+	}
 	for _, a in acts do
-		bar({ id = a.id, label = a.label, keys = a.keys, ["end"] = true })
+		table.insert(all, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
 	end
-	bar({ id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true })
+	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true })
+	local actions = keyed(all)
 
 	-- Neither integration is on: the setup pages in Settings are all there is.
 	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
@@ -1197,6 +1184,23 @@ local function queuePicker(state: State): Node
 	props.preview = if props.selected then "side" else "none"
 	return ui.node("picker", props, if props.selected then preview else {})
 end
+
+-- The Keep/Remove modal both worktree removals ask with: `tabbed` adds the warning that a tab works in the folder.
+local function removeOverlay(head: string, body: string, facts: { { [string]: any } }, tabbed: any, keepAct: string, dropAct: string): Node
+	local kids: { Node } = {
+		ui.node("text", { key = "body", spans = { ui.span(body, "muted") } }),
+		ui.node("kv", { key = "facts", items = facts }),
+	}
+	if tabbed then
+		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
+	end
+	table.insert(kids, ui.node("list", { key = "buttons" }, {
+		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
+		ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }),
+	}))
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
+end
+
 -- The modal that asks before a board row's worktree is removed; Enter or Esc keeps it, `d` or a click removes it.
 function M.boardConfirm(state: State): Node
 	local row: any = nil
@@ -1209,70 +1213,28 @@ function M.boardConfirm(state: State): Node
 		{ k = "Path", v = if row then { ui.span(row.path, "code") } else nil },
 		{ k = "Branch", v = if row and row.branch then { ui.span(row.branch, "code") } else nil },
 	})
-	local kids: { Node } = {
-		ui.node("text", {
-			key = "body",
-			spans = {
-				ui.span("Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it.", "muted"),
-			},
-		}),
-		ui.node("kv", { key = "facts", items = facts }),
-	}
-	if row and engine.boardOpen(state)[row.path] then
-		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
-	end
-	table.insert(kids, ui.node("list", { key = "buttons" }, {
-		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = "wt-cancel-remove" } }),
-		ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = "wt-confirm-remove" } }),
-	}))
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = "Remove this worktree?" }, kids)
+	local body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it."
+	return removeOverlay("Remove this worktree?", body, facts, row and engine.boardOpen(state)[row.path], "wt-cancel-remove", "wt-confirm-remove")
 end
 
-local function queueView(state: State): BlockView
-	local layer: { Node } = { queuePicker(state) }
+function M.queueView(state: State): BlockView
+	local layer: { Node } = { M.queuePicker(state) }
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
 		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
-		local facts: { { [string]: any } } = {}
-		if note.path then
-			table.insert(facts, { k = "Path", v = { ui.span(note.path, "code") } })
-		end
-		if note.branch then
-			table.insert(facts, { k = "Branch", v = { ui.span(note.branch, "code") } })
-		end
-		local kids: { Node } = {
-			ui.node("text", {
-				key = "body",
-				spans = {
-					ui.span(
-						"Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it.",
-						"muted"
-					),
-				},
-			}),
-			ui.node("kv", { key = "facts", items = facts }),
-		}
-		if openItems(state)[removing] then
-			table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
-		end
-		table.insert(kids, ui.node("list", { key = "buttons" }, {
-			ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = "cancel-remove" } }),
-			ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = "confirm-remove" } }),
-		}))
-		table.insert(layer, ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = "Remove worktree?" }, kids))
+		local facts = withValue({
+			{ k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil },
+			{ k = "Branch", v = if note.branch then { ui.span(note.branch, "code") } else nil },
+		})
+		local body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
+		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
 	elseif state.boardOn and state.boardRemoving then
 		table.insert(layer, M.boardConfirm(state))
 	elseif state.help then
-		table.insert(layer, helpOverlay(state))
+		table.insert(layer, M.helpOverlay(state))
 	end
-	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
+	return { main = ui.col(M.rpcNodes(state)), layer = ui.col(layer) }
 end
-
-M.helpOverlay = helpOverlay
-M.paceLine = paceLine
-M.queuePicker = queuePicker
-M.queueView = queueView
-M.rpcNodes = rpcNodes
 
 return M

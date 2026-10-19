@@ -9,6 +9,7 @@
 local board = require("../board")
 local github = require("../github")
 local jira = require("../jira")
+local input = require("../input")
 local keys = require("../keys")
 local portable = require("../portable")
 local process = require("../process")
@@ -31,12 +32,10 @@ local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, stateKind, cli = core.
 local checkoutOf, editJiraRepos, editPrompts, isTable, jiraReposOf, loadAll, loadPrompts, loadViews = storage.checkoutOf, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.loadAll, storage.loadPrompts, storage.loadViews
 local readCheckouts, readJiraRepos, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.readCheckouts, storage.readJiraRepos, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local activeView, alive, changed, detailKey, filtered, indexOf, issueVars, login, noteWorktree = engine.activeView, engine.alive, engine.changed, engine.detailKey, engine.filtered, engine.indexOf, engine.issueVars, engine.login, engine.noteWorktree
-local offered, openItems, parseRepo, propagate, reloadViews, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.propagate, engine.reloadViews, engine.selected, engine.snapKey, engine.switchView, engine.trim, engine.me, engine.ghActive
+local offered, openItems, parseRepo, propagate, reloadViews, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.propagate, engine.reloadViews, engine.selected, engine.snapKey, engine.switchView, input.trim, engine.me, engine.ghActive
 local discardEdit = settings.discardEdit
 
 local M = {}
-
-M.seq = 0 -- confirmation tokens issued by this runtime
 
 M.seq = 0 -- confirmation tokens issued by this runtime
 
@@ -44,9 +43,24 @@ local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs 
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
 
+-- The prefix of `list` whose running `cost` stays within MENU_BUDGET.
+local function capped(list: { any }, cost: (any) -> number): { any }
+	local out: { any } = {}
+	local size = 0
+	for _, v in list do
+		size += cost(v)
+		if size > MENU_BUDGET then
+			break
+		end
+		table.insert(out, v)
+	end
+	return out
+end
+
 -- Pull requests and issues whose worktree is being prepared or removed on this host ("owner/repo#n", lowercase): one
 -- at a time, whichever window asks.
 local preparing: { [string]: boolean } = {}
+M.preparing = preparing
 
 local function reply(state: State, id: string, body: { [string]: any })
 	if not alive(state) then
@@ -119,15 +133,9 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			key = p.key,
 		})
 	end
-	local items: { any } = {}
-	local size = 0
-	for _, row in mine do
-		size += #tern.json.encode(row)
-		if size > MENU_BUDGET then
-			break
-		end
-		table.insert(items, row)
-	end
+	local items = capped(mine, function(row)
+		return #tern.json.encode(row)
+	end)
 	reply(state, id, { items = tern.json.array(items), problem = problem, queue = if palette then tern.json.array(M.paletteActions(state)) else nil, commands = if palette then tern.json.array(M.commands(state)) else nil })
 end
 
@@ -332,15 +340,9 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 			if not names then
 				return reply(state, id, { problem = why or "The remote's branches could not be listed." })
 			end
-			local list: { string } = {}
-			local size = 0
-			for _, b in names do
-				size += #b + 3
-				if size > MENU_BUDGET then
-					break
-				end
-				table.insert(list, b)
-			end
+			local list = capped(names, function(b)
+				return #b + 3
+			end)
 			reply(state, id, { chooseBase = true, branch = branch, branches = tern.json.array(list) })
 		end)
 	end
@@ -465,16 +467,9 @@ local function profile(state: State, id: string, login: string)
 	state.listing += 1
 	github.repos(login, function(names, problem)
 		state.listing -= 1
-		local more: { string } = {}
-		local size = 0
-		local list: { string } = names or {}
-		for _, name in list do
-			size += #name + 3
-			if size > MENU_BUDGET then
-				break
-			end
-			table.insert(more, name)
-		end
+		local more = capped(names or {}, function(name)
+			return #name + 3
+		end)
 		reply(state, id, { repos = tern.json.array(more), problem = if problem then problem.message else nil })
 	end)
 end
@@ -509,15 +504,9 @@ local function jiraProjects(state: State, id: string)
 				table.insert(rows, { key = p.key, name = p.name, saved = false })
 			end
 		end
-		local items: { any } = {}
-		local size = 0
-		for _, row in rows do
-			size += #tern.json.encode(row)
-			if size > MENU_BUDGET then
-				break
-			end
-			table.insert(items, row)
-		end
+		local items = capped(rows, function(row)
+			return #tern.json.encode(row)
+		end)
 		reply(state, id, { items = tern.json.array(items), problem = if problem then problem.message else nil })
 	end)
 end
@@ -606,12 +595,11 @@ function M.show(state: State, url: any, force: boolean?): boolean
 	return true
 end
 
--- Unpins item `key` (default: the selected one). The other pins and the saved views stay; when the unpinned item's scope
+-- Unpins the selected item. The other pins and the saved views stay; when the unpinned item's scope
 -- was the one shown, the first saved view opens with nothing selected. false when that item is not pinned.
-function M.unpin(state: State, key: string?): boolean
+function M.unpin(state: State): boolean
 	local chosen = selected(state)
-	local want = key or (if chosen then chosen.key else nil)
-	local pin = if want then engine.pinFor(state.pins, want) else nil
+	local pin = if chosen then engine.pinFor(state.pins, chosen.key) else nil
 	local at = if pin then table.find(state.pins, pin) else nil
 	if not pin or not at then
 		return false
@@ -751,6 +739,13 @@ function M.act(state: State, id: string, q: any)
 	local function no(why: string)
 		reply(state, id, { problem = why })
 	end
+	local function needAccount(): string?
+		local account = M.concrete(state)
+		if not account then
+			no("Could not tell which GitHub account is active; Refresh, then try again.")
+		end
+		return account
+	end
 	if not item or not snap then
 		return no("Select an item first.")
 	end
@@ -770,9 +765,9 @@ function M.act(state: State, id: string, q: any)
 				end)
 			end)
 		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = "Assign " .. target .. " to you?",
@@ -795,9 +790,9 @@ function M.act(state: State, id: string, q: any)
 		if add == (table.find(item.labels, label) ~= nil) then
 			return no(if add then "It already has that label." else "It does not have that label.")
 		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = (if add then "Add" else "Remove") .. " label “" .. label .. "” on " .. target .. "?",
@@ -855,44 +850,15 @@ function M.act(state: State, id: string, q: any)
 		if not prs then
 			return no("Failed checks are rerun on pull requests.")
 		end
-		local d = state.details[detailKey(state, item)]
-		local runs: { github.Run } = if d then d.runs else item.runs
-		local ids: { string } = {}
-		local names: { [string]: { string } } = {}
-		for _, r in runs do
-			local run = r.runId
-			if r.status == "failure" and run then
-				if not names[run] then
-					names[run] = {}
-					table.insert(ids, run)
-				end
-				table.insert(names[run], r.name)
-			end
+		local run, names = M.runPick(state, id, q, item, function(r: github.Run): boolean
+			return r.status == "failure"
+		end, "No failed check of this pull request has a GitHub Actions run to rerun. Its checks may still be loading.")
+		if not run or not names then
+			return
 		end
-		if #ids == 0 then
-			return no("No failed check of this pull request has a GitHub Actions run to rerun. Its checks may still be loading.")
-		end
-		-- One workflow run at a time: with several failed runs the window asks which, and every one can be picked.
-		local run: string? = q.run
-		if run == nil and #ids == 1 then
-			run = ids[1]
-		end
-		if run == nil then
-			local listed: { any } = {}
-			for i, rid in ids do
-				if i <= 100 then
-					table.insert(listed, { id = rid, label = "Run " .. rid .. ": " .. clip(table.concat(names[rid], ", "), 100) })
-				end
-			end
-			return reply(state, id, { runs = tern.json.array(listed) })
-		end
-		local picked: string = run
-		if not names[picked] then
-			return no("That workflow run no longer has failed checks on this pull request; nothing was sent.")
-		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = "Rerun failed jobs of " .. target .. "?",
@@ -900,11 +866,11 @@ function M.act(state: State, id: string, q: any)
 			lines = {
 				target .. ": " .. printable(item.title),
 				"Account: @" .. account,
-				"Rerun the failed jobs of workflow run " .. picked .. " (" .. clip(table.concat(names[picked], ", "), 100) .. ")",
+				"Rerun the failed jobs of workflow run " .. run .. " (" .. clip(table.concat(names, ", "), 100) .. ")",
 			},
 		}, function(done)
-			github.rerunFailed(item.repo, picked, account, function(problem: github.Problem?)
-				M.landed(state, done, problem, "Rerunning the failed jobs of run " .. picked .. " of " .. target)
+			github.rerunFailed(item.repo, run, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, "Rerunning the failed jobs of run " .. run .. " of " .. target)
 			end)
 		end)
 	elseif name == "cancel-run" or name == "rerun-all" then
@@ -922,9 +888,9 @@ function M.act(state: State, id: string, q: any)
 		if not run or not names then
 			return
 		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = (if cancel then "Cancel workflow run " else "Rerun every job of workflow run ") .. run .. " of " .. target .. "?",
@@ -948,9 +914,9 @@ function M.act(state: State, id: string, q: any)
 		if item.state ~= (if close then "open" else "closed") then
 			return no(if close then "That issue is not open." else "That issue is not closed.")
 		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = (if close then "Close " else "Reopen ") .. target .. "?",
@@ -969,9 +935,9 @@ function M.act(state: State, id: string, q: any)
 		if item.state ~= "open" or item.draft ~= ready then
 			return no(if ready then "That pull request is not an open draft." else "That pull request is not open and ready for review.")
 		end
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		return M.offer(state, id, item, {
 			head = (if ready then "Mark " else "Convert ") .. target .. (if ready then " ready for review?" else " to a draft?"),
@@ -988,9 +954,9 @@ function M.act(state: State, id: string, q: any)
 			return no("A comment is plain text without control characters, up to 4000 characters.")
 		end
 		local isJira = not prs and item.tracker == "jira"
-		local account = if isJira then nil else M.concrete(state)
+		local account = if isJira then nil else needAccount()
 		if not isJira and not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		-- The whole normalized text is shown, a row per 100 characters (newlines as ⏎); a text that would not fit the
 		-- window's rows is refused, so no tail goes unpreviewed.
@@ -1183,6 +1149,13 @@ function M.draft(state: State, id: string, q: any)
 	local function no(why: string)
 		reply(state, id, { problem = why })
 	end
+	local function needAccount(): string?
+		local account = M.concrete(state)
+		if not account then
+			no("Could not tell which GitHub account is active; Refresh, then try again.")
+		end
+		return account
+	end
 	if not item or not snap or snap.kind ~= "issues" then
 		return no("Select an issue that has a worktree: the draft starts from its branch.")
 	end
@@ -1312,9 +1285,9 @@ function M.draft(state: State, id: string, q: any)
 		end
 		local draft = d.draft
 		-- The account is settled now and used by every later step, whatever view is shown meanwhile.
-		local account = M.concrete(state)
+		local account = needAccount()
 		if not account then
-			return no("Could not tell which GitHub account is active; Refresh, then try again.")
+			return
 		end
 		local lines: { string } = {
 			"Repository: " .. draft.repo,
@@ -1550,11 +1523,7 @@ function M.importPreview(state: State, id: string, q: any)
 			table.insert(entries, { id = e.id, type = e.type, kind = e.kind, name = clip(e.name, 80), conflict = e.conflict, remap = M.strings(e.remap), slots = M.strings(e.slots) })
 		end
 	end
-	local accounts: { string } = {}
-	for _, a in ghActive.accounts do
-		table.insert(accounts, a)
-	end
-	reply(state, id, { token = token, entries = tern.json.array(entries), slots = M.strings(plan.slots), accounts = M.strings(accounts), problems = M.strings(plan.problems) })
+	reply(state, id, { token = token, entries = tern.json.array(entries), slots = M.strings(plan.slots), accounts = M.strings(ghActive.accounts), problems = M.strings(plan.problems) })
 end
 
 function M.importApply(state: State, id: string, q: any)
@@ -1696,7 +1665,7 @@ function M.workflowRpc(state: State, id: string, q: any)
 end
 
 -- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
-local function rpc(state: State, raw: any)
+function M.rpc(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 120000 then
 		return
 	end
@@ -1846,10 +1815,5 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	add("help", "Configuration")
 	return out
 end
-
-M.rpc = rpc
-M.menu = menu
-M.preparing = preparing
-M.repos = repos
 
 return M

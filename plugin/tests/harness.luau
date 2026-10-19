@@ -15,6 +15,7 @@ export type Jira = typeof(require("../jira"))
 
 -- 2026-10-12T12:00:00Z: where every world's clock starts.
 local EPOCH = 1791806400
+M.EPOCH = EPOCH
 
 -- ---------------------------------------------------------------- assertions
 
@@ -23,6 +24,7 @@ local NULL: any = setmetatable({}, {
 		return "null"
 	end,
 })
+M.NULL = NULL
 local arrayTags: { [any]: boolean } = {}
 
 -- The SDK tags an array with a protected metatable: table.clone refuses it ("table has a protected metatable").
@@ -119,6 +121,7 @@ local function jsonEncode(v: any): string
 	jsonInto(v, out, 0)
 	return table.concat(out)
 end
+M.jsonEncode = jsonEncode
 
 local function jsonDecode(text: string): any
 	local pos = 1
@@ -260,6 +263,7 @@ local function jsonDecode(text: string): any
 	end
 	return if result == NULL then nil else result
 end
+M.jsonDecode = jsonDecode
 
 local function show(v: any): string
 	if type(v) == "string" then
@@ -270,6 +274,7 @@ local function show(v: any): string
 	end
 	return tostring(v)
 end
+M.show = show
 
 -- Assertions are plain functions over `any` (no assert refinement), blaming the calling line.
 local function eq(actual: any, expected: any, what: string)
@@ -277,6 +282,7 @@ local function eq(actual: any, expected: any, what: string)
 		error(what .. ": expected " .. show(expected) .. ", got " .. show(actual), 2)
 	end
 end
+M.eq = eq
 
 local function same(actual: any, expected: any, what: string)
 	local a, b = show(actual), show(expected)
@@ -284,24 +290,28 @@ local function same(actual: any, expected: any, what: string)
 		error(what .. ": expected " .. b .. ", got " .. a, 2)
 	end
 end
+M.same = same
 
 local function yes(cond: any, what: string)
 	if not cond then
 		error(what, 2)
 	end
 end
+M.yes = yes
 
 local function has(text: any, needle: string, what: string)
 	if type(text) ~= "string" or not string.find(text, needle, 1, true) then
 		error(what .. ": expected text containing " .. show(needle) .. ", got " .. show(text), 2)
 	end
 end
+M.has = has
 
 local function lacks(text: any, needle: string, what: string)
 	if type(text) == "string" and string.find(text, needle, 1, true) then
 		error(what .. ": did not expect " .. show(needle) .. " in " .. show(text), 2)
 	end
 end
+M.lacks = lacks
 
 local function keyOf(name: string, mods: string?, text: string?): Key
 	local m = mods or ""
@@ -314,6 +324,7 @@ local function keyOf(name: string, mods: string?, text: string?): Key
 		meta = string.find(m, "m", 1, true) ~= nil,
 	}
 end
+M.keyOf = keyOf
 
 -- ---------------------------------------------------------------- the fake SDK
 
@@ -433,6 +444,7 @@ local function collectTexts(v: any, out: { string })
 		end
 	end
 end
+M.collectTexts = collectTexts
 
 local function parentOf(path: string): string
 	local p = string.match(path, "^(.*)/[^/]*$")
@@ -1293,28 +1305,34 @@ local function newWorld(instantiate: Loader, context: string): World
 	}
 	return world
 end
+M.newWorld = newWorld
 
 -- ---------------------------------------------------------------- cases
 
 export type Case = { name: string, context: string, run: (World) -> () }
 local cases: { Case } = {}
+M.cases = cases
 
 local function case(name: string, run: (World) -> ())
 	table.insert(cases, { name = name, context = "host", run = run })
 end
+M.case = case
 
 local function windowCase(name: string, run: (World) -> ())
 	table.insert(cases, { name = name, context = "window", run = run })
 end
+M.windowCase = windowCase
 
 local function sha(c: string): string
 	return string.rep(c, 40)
 end
+M.sha = sha
 
 local function array(t: { any }): { any }
 	arrayTags[t] = true
 	return t
 end
+M.array = array
 
 local function iso(t: number): string
 	return os.date("!%Y-%m-%dT%H:%M:%SZ", t) :: string
@@ -1348,6 +1366,7 @@ local function searchItem(n: number, repo: string, updated: number, extra: { [st
 	end
 	return item
 end
+M.searchItem = searchItem
 
 -- One issue as `gh api graphql --jq` prints it: the shape github.parseIssuePage reads.
 local function issueItem(n: number, repo: string, updated: number, extra: { [string]: any }?): { [string]: any }
@@ -1371,6 +1390,7 @@ local function issueItem(n: number, repo: string, updated: number, extra: { [str
 	end
 	return item
 end
+M.issueItem = issueItem
 
 -- PRs 1..count of `repo`, the newest update first.
 local function manyItems(repo: string, count: number): { { [string]: any } }
@@ -1380,6 +1400,7 @@ local function manyItems(repo: string, count: number): { { [string]: any } }
 	end
 	return items
 end
+M.manyItems = manyItems
 
 export type GhLimit = { limit: number, remaining: number, reset: number }
 export type GhReq = { kind: string, login: string?, fields: { [string]: string }, call: Call }
@@ -1601,6 +1622,7 @@ local function newGh(w: World): Gh
 	end)
 	return gh
 end
+M.newGh = newGh
 
 export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | sprints | view | projects | other
 export type Acli = {
@@ -1674,6 +1696,7 @@ local function newAcli(w: World): Acli
 	end)
 	return acli
 end
+M.newAcli = newAcli
 
 -- A work item as `acli jira workitem search` prints it; `fields` replaces or adds members of its `fields`.
 local function jiraItem(key: string, summary: string, fields: { [string]: any }?): { [string]: any }
@@ -1693,6 +1716,7 @@ local function jiraItem(key: string, summary: string, fields: { [string]: any }?
 	end
 	return { key = key, fields = f }
 end
+M.jiraItem = jiraItem
 
 -- git's refname rules, as far as generated names can break them (git check-ref-format).
 local function validRef(name: string): boolean
@@ -1715,6 +1739,7 @@ local function validRef(name: string): boolean
 	end
 	return true
 end
+M.validRef = validRef
 
 export type GitWorktree = { path: string, branch: string?, head: string, locked: boolean, prunable: boolean? }
 export type Git = {
@@ -1759,6 +1784,7 @@ local function porcelain(g: Git): string
 	end
 	return table.concat(out)
 end
+M.porcelain = porcelain
 
 local function newGit(w: World, root: string): Git
 	local g: Git = {
@@ -2093,10 +2119,12 @@ local function newGit(w: World, root: string): Git
 	end)
 	return g
 end
+M.newGit = newGit
 
 local function snapshot(g: Git): string
 	return jsonEncode({ refs = g.refs, worktrees = g.worktrees, dirty = g.dirty, config = g.config })
 end
+M.snapshot = snapshot
 
 -- How many logged commands from entry `from`+1 on start with `prefix`.
 local function countLog(g: Git, prefix: string, from: number?): number
@@ -2110,6 +2138,7 @@ local function countLog(g: Git, prefix: string, from: number?): number
 	end
 	return n
 end
+M.countLog = countLog
 
 -- The logged commands from entry `from`+1 on.
 local function logFrom(g: Git, from: number): { string }
@@ -2119,6 +2148,7 @@ local function logFrom(g: Git, from: number): { string }
 	end
 	return out
 end
+M.logFrom = logFrom
 
 -- ---- worktree.luau: names, remotes, wording
 
@@ -2153,6 +2183,7 @@ local function scene(w: World, worktree: Worktree, owner: string, name: string, 
 		launch = root .. "/src",
 	}
 end
+M.scene = scene
 
 -- The commands spawned after entry `from` of the world's calls, every argument joined by spaces.
 local function ranSince(w: World, from: number): { string }
@@ -2162,6 +2193,7 @@ local function ranSince(w: World, from: number): { string }
 	end
 	return out
 end
+M.ranSince = ranSince
 
 -- How many spawned commands read exactly `line`, every argument joined by spaces.
 local function countCalls(w: World, line: string): number
@@ -2173,6 +2205,7 @@ local function countCalls(w: World, line: string): number
 	end
 	return n
 end
+M.countCalls = countCalls
 
 -- The first node of a view (itself included) whose props carry `key`, and `kind` when given.
 local function findKey(node: any, key: string, kind: string?): any
@@ -2194,34 +2227,41 @@ local function findKey(node: any, key: string, kind: string?): any
 	end
 	return nil
 end
+M.findKey = findKey
 
 -- The queue view's picker node, its props, and the PR ids the picker lists in order.
 local function pickerNode(b: Block): any
 	local view: any = b.view()
 	return view.layer.c[1]
 end
+M.pickerNode = pickerNode
 
 local function pickerOf(b: Block): any
 	return pickerNode(b).p
 end
+M.pickerOf = pickerOf
 
 -- Helpers shared by several case files, in one table.
 local hx = {}
+M.hx = hx
 
 -- The settings view's page props: the side sheet in the layer, after the queue's picker.
 local function prefsOf(b: Block): any
 	local view: any = b.view()
 	return findKey(view.layer, "settings", "prefs").p
 end
+M.prefsOf = prefsOf
 
 local function prLink(kind: string, repo: string, n: number): string
 	return "plotroom://github/" .. kind .. "/" .. repo .. "/" .. n
 end
+M.prLink = prLink
 
 -- The link of the card's button that runs saved prompt `id` on PR `repo`#`n`.
 local function runLink(repo: string, n: number, id: string): string
 	return prLink("run", repo, n) .. "/" .. id
 end
+M.runLink = runLink
 
 -- The queue surface of pane 1: the PR's buttons, as Tern shows host.luau's picker. (A linked block adds its own main
 -- region: see `linkQueue`.)
@@ -2242,6 +2282,7 @@ local function listPr(w: World, repo: string, n: number)
 		},
 	}
 end
+M.listPr = listPr
 
 -- The views most cases run on, saved as a user keeps them: ungrouped and unsorted, so the list is the search's order.
 -- A store the case saved already is kept. Cases about the default views (KINDS seeds) clear them first.
@@ -2275,17 +2316,20 @@ local function linkQueue(w: World, s: Scene): Block
 	w.flush()
 	return b
 end
+M.linkQueue = linkQueue
 
 -- The worktree card the block shows for its selected PR, nil when none.
 local function cardOf(b: Block): any
 	return findKey(pickerNode(b), "worktree", "card")
 end
+M.cardOf = cardOf
 
 -- The queue surface of pane 1 as the selected PR's own card shows it: the links of the block's real view, with the ids
 -- Tern gives them. (`listPr` lists links for a PR the block need not be showing.)
 local function cardSurface(w: World, b: Block)
 	w.window.surfaces[1] = { layer = { id = "layer", c = { tspOf(pickerNode(b), "layer.queue") } } }
 end
+M.cardSurface = cardSurface
 
 -- Every string the worktree card shows. (`Block.text` also holds the hidden answers to the window: JSON that can repeat
 -- a reason the card no longer shows.)
@@ -2294,6 +2338,7 @@ local function cardText(b: Block): string
 	collectTexts(cardOf(b), out)
 	return table.concat(out, "\n")
 end
+M.cardText = cardText
 
 -- The shell commands the worktree card offers under `which` (its section's key: "update"), one per line; nil when none.
 local function commandsOf(b: Block, which: string): string?
@@ -2301,6 +2346,7 @@ local function commandsOf(b: Block, which: string): string?
 	local md: any = if section then findKey(section, "commands", "md") else nil
 	return if md then string.match(md.p.text, "^```sh\n(.-)\n```$") else nil
 end
+M.commandsOf = commandsOf
 
 -- The text of the badges in the worktree card's status row, in order.
 local function chipsOf(b: Block): { string }
@@ -2312,17 +2358,20 @@ local function chipsOf(b: Block): { string }
 	end
 	return out
 end
+M.chipsOf = chipsOf
 
 -- A click on the card's button `key`, as Tern sends it: the button's own id, with the action it was given.
 local function pressCard(b: Block, key: string)
 	local item: any = findKey(cardOf(b), key, "item")
 	b.event({ ev = "action", id = "layer.queue.worktree.actions." .. key, act = item.p.actions.click })
 end
+M.pressCard = pressCard
 
 -- The confirm overlay the block shows over the queue; nil when it shows none.
 local function confirmOf(b: Block): any
 	return findKey(b.view().layer, "confirm", "overlay")
 end
+M.confirmOf = confirmOf
 
 -- The Worktree badge of queue row `row` (the first by default); nil when it has none.
 local function badgeOf(b: Block, row: number?): any
@@ -2335,11 +2384,13 @@ local function badgeOf(b: Block, row: number?): any
 	end
 	return nil
 end
+M.badgeOf = badgeOf
 
 -- Moves the queue's selection to PR `n`: its worktree's card and badge are what the block then shows.
 local function showPr(b: Block, n: number)
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_23" .. n })
 end
+M.showPr = showPr
 
 -- The requests the window has sent to blocks' hosts, decoded, oldest first.
 local function requestsSent(w: World): { any }
@@ -2351,12 +2402,14 @@ local function requestsSent(w: World): { any }
 	end
 	return out
 end
+M.requestsSent = requestsSent
 
 -- Sends the block a request the way a window does: act "rpc", a JSON value holding the request's id and op.
 local function request(b: Block, id: string, body: { [string]: any })
 	body.id = id
 	b.event({ ev = "action", act = "rpc", value = jsonEncode(body) })
 end
+M.request = request
 
 -- What the block answered request `id`: its hidden `r<id>` node, decoded; nil when it keeps none.
 local function answerOf(b: Block, id: string): any
@@ -2364,17 +2417,20 @@ local function answerOf(b: Block, id: string): any
 	local node = findKey(view.main, "r" .. id)
 	return if node then jsonDecode(node.p.text) else nil
 end
+M.answerOf = answerOf
 
 -- Saved prompts as kv keeps them: `filters` are the ids of the filters a prompt is offered under, none: every filter;
 -- `key` is its shortcut in the queue.
 local function promptOf(id: string, name: string, text: string, key: string?): { [string]: any }
 	return { id = id, name = name, text = text, key = key }
 end
+M.promptOf = promptOf
 
 -- Makes `list` the saved prompts.
 local function savePrompts(w: World, list: { { [string]: any } })
 	w.kv.put("prompts-prs", { version = 1, nextId = #list + 1, items = array(list) })
 end
+M.savePrompts = savePrompts
 
 -- The pickers of saved prompts the agent flow opened.
 local function promptPicks(w: World): { any }
@@ -2386,6 +2442,7 @@ local function promptPicks(w: World): { any }
 	end
 	return out
 end
+M.promptPicks = promptPicks
 
 -- A window whose Plotroom pane (a linked block opened in the checkout's src directory) lists o/r#5.
 local function agentScene(w: World): (Scene, Block)
@@ -2394,10 +2451,12 @@ local function agentScene(w: World): (Scene, Block)
 	local s = scene(w, worktree, "o", "r", 5)
 	return s, linkQueue(w, s)
 end
+M.agentScene = agentScene
 
 local function always(): boolean
 	return true
 end
+M.always = always
 
 local function checkRun(name: string, status: string, conclusion: string?, startedAt: string?, extra: { [string]: any }?): { [string]: any }
 	local node: { [string]: any } = { name = name, status = status, conclusion = conclusion, startedAt = startedAt }
@@ -2408,6 +2467,7 @@ local function checkRun(name: string, status: string, conclusion: string?, start
 	end
 	return node
 end
+M.checkRun = checkRun
 
 export type SearchOut = { result: any, problem: any, spent: number?, calls: number }
 
@@ -2422,6 +2482,7 @@ local function runSearch(w: World, github: Github, shouldContinue: (() -> boolea
 	w.flush()
 	return out
 end
+M.runSearch = runSearch
 
 export type ChecksOut = { runs: any, total: number?, problem: any, calls: number }
 
@@ -2433,6 +2494,7 @@ local function runChecks(github: Github, shouldContinue: (() -> boolean)?, accou
 	end, shouldContinue)
 	return out
 end
+M.runChecks = runChecks
 
 local function nodes(count: number): { any }
 	local list: { any } = {}
@@ -2441,6 +2503,7 @@ local function nodes(count: number): { any }
 	end
 	return list
 end
+M.nodes = nodes
 
 -- How many acli calls of `kind` were made.
 local function acliCount(acli: Acli, kind: string): number
@@ -2452,6 +2515,7 @@ local function acliCount(acli: Acli, kind: string): number
 	end
 	return n
 end
+M.acliCount = acliCount
 
 export type HostScene = { git: Git, gh: Gh }
 
@@ -2466,24 +2530,22 @@ local function hostScene(w: World, count: number?): HostScene
 	hx.fixtureViews(w)
 	return { git = g, gh = gh }
 end
+M.hostScene = hostScene
 
--- The block of `pane` launched in /work/r, after its repository lookup and first search.
-function hx.openBare(w: World, pane: number?): Block
+-- The block of `pane` launched in /work/r, after its repository lookup and first search: its first row is selected.
+local function openQueue(w: World, pane: number?): Block
 	local b = w.open(pane or 1, { "/work/r" })
 	w.flush()
 	return b
 end
-
--- The block of `pane` launched in /work/r, after its repository lookup and first search: its first row is selected.
-local function openQueue(w: World, pane: number?): Block
-	return hx.openBare(w, pane)
-end
+M.openQueue = openQueue
 
 -- Forgets every saved checkout: opening the queue in /work/r saves that one.
 local function forgetCheckouts(w: World)
 	local store: any = w.kv.store
 	store.checkouts = nil
 end
+M.forgetCheckouts = forgetCheckouts
 
 -- Leaves PR `n` of o/r a worktree in the checkout of `hostScene`, as an earlier version of Plotroom made it: in the folder
 -- the default format names, on branch plotroom/o/r/pr-<n> (not the PR's head branch) at `at` (sha("b") unless given), and
@@ -2496,12 +2558,14 @@ local function leaveWt(w: World, s: HostScene, n: number, at: string?): string
 	w.fs.dirs[path] = true
 	return path
 end
+M.leaveWt = leaveWt
 
 -- Refreshes `b` as its `r` key does and lets everything that starts finish.
 local function refreshNow(w: World, b: Block)
 	b.typeText("r")
 	w.flush()
 end
+M.refreshNow = refreshNow
 
 local function requestsOf(gh: Gh, kind: string): { GhReq }
 	local out: { GhReq } = {}
@@ -2512,6 +2576,7 @@ local function requestsOf(gh: Gh, kind: string): { GhReq }
 	end
 	return out
 end
+M.requestsOf = requestsOf
 
 local function listed(b: Block): { string }
 	local out: { string } = {}
@@ -2521,11 +2586,13 @@ local function listed(b: Block): { string }
 	end
 	return out
 end
+M.listed = listed
 
 -- Clicks sidebar scope `id` of `b`.
 local function pickScope(b: Block, id: string)
 	b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
 end
+M.pickScope = pickScope
 
 local function actionOf(b: Block, id: string): any
 	for _, action in pickerOf(b).actions do
@@ -2535,6 +2602,7 @@ local function actionOf(b: Block, id: string): any
 	end
 	return nil
 end
+M.actionOf = actionOf
 
 -- One row of the settings page by id.
 local function rowIn(b: Block, id: string): any
@@ -2547,6 +2615,7 @@ local function rowIn(b: Block, id: string): any
 	end
 	return nil
 end
+M.rowIn = rowIn
 
 -- The section of the settings page that holds row `id`.
 local function sectionIn(b: Block, id: string): any
@@ -2559,6 +2628,7 @@ local function sectionIn(b: Block, id: string): any
 	end
 	return nil
 end
+M.sectionIn = sectionIn
 
 -- Opens Settings on `page` with its first row focused, as the command palette's Settings does (no key needed): Tab
 -- walks the pages the block offers.
@@ -2575,11 +2645,13 @@ local function goToSettings(b: Block, page: string)
 	eq(prefsOf(b).page, page, "Settings has a " .. page .. " page")
 	b.press("down")
 end
+M.goToSettings = goToSettings
 
 -- Expands the view or prompt whose summary row is `row` ("vopen:<kind>:<id>" / "popen:<kind>:<id>", the kind being prs or issues), as its Edit button does.
 local function expand(b: Block, row: string)
 	b.event({ ev = "action", id = "layer.settings", act = "expand", value = row })
 end
+M.expand = expand
 
 -- Presses `key` on the Keys row of action `id` ("" is Backspace, which removes the shortcut): the warning under the row
 -- afterwards. The row captures one key: Enter starts it, the next key that types text is the shortcut at once. A refused
@@ -2597,6 +2669,7 @@ local function bindKey(b: Block, id: string, key: string): string?
 	end
 	return rowIn(b, row).warning
 end
+M.bindKey = bindKey
 
 -- The shortcut list overlay's rows under `node`: each one's keycap labels and its description.
 local function helpEntries(node: any): { { caps: { string }, text: string } }
@@ -2617,6 +2690,7 @@ local function helpEntries(node: any): { { caps: { string }, text: string } }
 	end
 	return out
 end
+M.helpEntries = helpEntries
 
 -- The rows of a shortcut list overlay found under `node`: each one's key labels, joined by a space, and what it does.
 local function helpRows(node: any): { { keys: string, text: string } }
@@ -2626,6 +2700,7 @@ local function helpRows(node: any): { { keys: string, text: string } }
 	end
 	return out
 end
+M.helpRows = helpRows
 
 -- What the command palette's `menu` answer of block `b` says now: the queue actions' ids in order with their groups, keys,
 -- labels and details by id, and the ids of the window commands that apply, with the group the host gave each (nil: its own).
@@ -2661,6 +2736,7 @@ end
 local function editorCard(b: Block): any
 	return findKey(b.view().layer, "prompt", "col")
 end
+M.editorCard = editorCard
 
 -- Another live block `c`, its Settings open on the Views page with view prs:v1's form open, saves a rename of that view
 -- after `logins` were written to the saved view: the other blocks reload the views and so learn the new logins.
@@ -2673,6 +2749,7 @@ local function loginsSavedBy(w: World, c: Block, logins: { string }, name: strin
 	c.typeText(name)
 	c.press("enter")
 end
+M.loginsSavedBy = loginsSavedBy
 
 -- A checkout of o/r at /work/r whose origin is github.com/o/r and whose remote serves its default branch at sha("b"),
 -- with three issues for the active gh account, the newest first: #12 "Fix login" (labels bug and ui, assigned to ann and
@@ -2692,20 +2769,16 @@ local function issueHost(w: World): HostScene
 	hx.fixtureViews(w)
 	return { git = g, gh = gh }
 end
+M.issueHost = issueHost
 
 -- The Plotroom block of `pane` launched in /work/r and restored on the first issue filter (`v1` of views-issues), after
--- its repository lookup and first search.
-function hx.openIssuesBare(w: World, pane: number?): Block
+-- its repository lookup and first search: its first row is selected.
+local function openIssues(w: World, pane: number?): Block
 	local b = w.open(pane or 1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeKind = "issues", activeViewId = "v1" })
 	w.flush()
 	return b
 end
-
--- The same with its first row selected.
-local function openIssues(w: World, pane: number?): Block
-	local b = hx.openIssuesBare(w, pane)
-	return b
-end
+M.openIssues = openIssues
 
 -- Leaves issue `n` of o/r a worktree in the checkout of `issueHost`, as `omp worktree add` does: in the folder the default
 -- issue format names, on branch <n>-fix-login. Its path. Only git lists it.
@@ -2715,6 +2788,7 @@ local function leaveIssueWt(w: World, s: HostScene, n: number): string
 	w.fs.dirs[path] = true
 	return path
 end
+M.leaveIssueWt = leaveIssueWt
 
 -- A window whose pane 1 is the Plotroom block of `issueHost` on its first issue filter, linked: the window's requests
 -- reach its host half, which runs git and omp, and the answers come back. The window reads the links the block's own
@@ -2727,6 +2801,7 @@ local function issueWindow(w: World): (HostScene, Block)
 	cardSurface(w, b)
 	return s, b
 end
+M.issueWindow = issueWindow
 
 -- The Jira side of the issue filters: project ABC checked out at /work/r (its origin is on GitLab: a Jira project names
 -- no repository) whose remote serves its default branch at sha("b"). acli is signed in to acme.atlassian.net and finds
@@ -2734,6 +2809,7 @@ end
 -- bug" (Done), in that order, as the only issue filter. A Jira filter never searches through gh.
 export type JiraScene = { git: Git, acli: Acli, gh: Gh }
 local JIRA_ASSIGNED = "(assignee = currentUser() AND statusCategory != Done) ORDER BY priority DESC, updated DESC"
+M.JIRA_ASSIGNED = JIRA_ASSIGNED
 
 local function jiraHost(w: World): JiraScene
 	w.load("host")
@@ -2761,20 +2837,24 @@ local function jiraHost(w: World): JiraScene
 	})
 	return { git = g, acli = acli, gh = newGh(w) }
 end
+M.jiraHost = jiraHost
 
 local function issueLink(kind: string, repo: string, ref: string): string
 	return "plotroom://issue/" .. kind .. "/" .. repo .. "/" .. ref
 end
+M.issueLink = issueLink
 
 -- The link of the card's button that runs saved prompt `id` on issue `repo`#`ref`.
 local function issueRunLink(repo: string, ref: string, id: string): string
 	return issueLink("run", repo, ref) .. "/" .. id
 end
+M.issueRunLink = issueRunLink
 
 -- The worktree request a window sends once its chooseBase picker was answered with `base` (main): a new branch from it.
 local function freshAsk(repo: string, ref: string, base: string?): { [string]: any }
 	return { op = "issue", repo = repo, ref = ref, worktree = true, fresh = true, base = base or "main" }
 end
+M.freshAsk = freshAsk
 
 -- A saved issue prompt as kv keeps it: `inWorktree` false runs it in the main checkout, nil leaves the field out.
 local function issuePrompt(id: string, name: string, text: string, inWorktree: boolean?, key: string?): { [string]: any }
@@ -2782,17 +2862,20 @@ local function issuePrompt(id: string, name: string, text: string, inWorktree: b
 	p.worktree = inWorktree
 	return p
 end
+M.issuePrompt = issuePrompt
 
 -- Makes `list` the saved issue prompts.
 local function saveIssuePrompts(w: World, list: { { [string]: any } })
 	w.kv.put("prompts-issues", { version = 1, nextId = #list + 1, items = array(list) })
 end
+M.saveIssuePrompts = saveIssuePrompts
 
 -- The link the selected row's card keeps unseen for button `id`; nil when it keeps none.
 local function buttonLink(b: Block, id: string): string?
 	local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
 	return if node then node.p.href else nil
 end
+M.buttonLink = buttonLink
 
 -- A picker row's detail line as plain text: its strings and the text of its spans.
 local function detailText(row: any): string
@@ -2802,6 +2885,7 @@ local function detailText(row: any): string
 	end
 	return table.concat(out)
 end
+M.detailText = detailText
 
 -- The text of the selected issue's property `key` ("Author", "Assignees", ...); nil when it shows none.
 local function factOf(b: Block, key: string): string?
@@ -2821,6 +2905,7 @@ local function factOf(b: Block, key: string): string?
 	end
 	return nil
 end
+M.factOf = factOf
 
 -- Types `text` over what text row `row` of Settings holds and presses Enter: the warning under the row afterwards. A
 -- refused value leaves the edit open, and the next call for the same row types over its draft.
@@ -2917,8 +3002,9 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
--- Helpers of the cases below, in one table: the suite's main chunk is near Luau's limit of 200 top-level locals.
+-- Helpers of the cases below, grouped in one table.
 local asks = {}
+M.asks = asks
 asks.protocol = "18" -- what host.luau's `main.rpc` node says: the one place the window cases below name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
@@ -2988,7 +3074,7 @@ function asks.several(w: World): (HostScene, Block)
 end
 
 -- BEGIN backend cases
--- Helpers hang on `asks` (one top-level local): this file is at Luau's local limit.
+-- Helpers hang on `asks.bk`, grouping those of the backend cases.
 asks.bk = {}
 
 -- A gh whose every non-read command (kind "other": issue edit, pr create, run view/rerun) goes to `answer` by its argv
@@ -3121,7 +3207,7 @@ end
 
 -- BEGIN host workflow cases
 -- Triage, sorts, agent status, item mutations, draft pull requests, the Worktrees list, export and import, open by URL.
--- Helpers hang on `asks.hx` (one top-level local): this file is at Luau's local limit.
+-- Helpers hang on `asks.hx`, grouping those of these cases.
 asks.hx = {}
 asks.hx.seq = 0
 
@@ -3176,10 +3262,7 @@ end
 -- Sends the block a request as the window does and returns its answer once everything it started has finished.
 function asks.hx.ask(w: World, b: Block, body: { [string]: any }): any
 	asks.hx.seq += 1
-	local id = "h" .. asks.hx.seq
-	request(b, id, body)
-	w.flush()
-	return answerOf(b, id)
+	return hx.ask(w, b, "h" .. asks.hx.seq, body)
 end
 
 -- Makes gh answer every command no model reads (issue edit, pr create, run view and rerun) and returns the command
@@ -3235,16 +3318,22 @@ function asks.hx.nameOf(b: Block, item: any): string
 	error("no board row at " .. path, 2)
 end
 
+-- The picker items by id.
+local function byId(b: Block): { [string]: any }
+	local out: { [string]: any } = {}
+	for _, item in pickerOf(b).items do
+		out[item.id] = item
+	end
+	return out
+end
+
 -- The Worktrees board's rows as "repo/branch", in the order listed (group headings skipped).
 function asks.hx.board(b: Block): { string }
-	local byId: { [string]: any } = {}
-	for _, item in pickerOf(b).items do
-		byId[item.id] = item
-	end
+	local items = byId(b)
 	local out: { string } = {}
 	for _, entry in pickerOf(b).order do
 		if type(entry) ~= "table" then
-			table.insert(out, asks.hx.nameOf(b, byId[entry]))
+			table.insert(out, asks.hx.nameOf(b, items[entry]))
 		end
 	end
 	return out
@@ -3252,12 +3341,9 @@ end
 
 -- The picker id of the board row `name` ("o/r/feature").
 function asks.hx.rowId(b: Block, name: string): string
-	local byId: { [string]: any } = {}
-	for _, item in pickerOf(b).items do
-		byId[item.id] = item
-	end
+	local items = byId(b)
 	for _, entry in pickerOf(b).order do
-		if type(entry) ~= "table" and asks.hx.nameOf(b, byId[entry]) == name then
+		if type(entry) ~= "table" and asks.hx.nameOf(b, items[entry]) == name then
 			return entry
 		end
 	end
@@ -3266,13 +3352,7 @@ end
 
 -- The picker item of the board row `name`.
 function asks.hx.rowItem(b: Block, name: string): any
-	local id = asks.hx.rowId(b, name)
-	for _, item in pickerOf(b).items do
-		if item.id == id then
-			return item
-		end
-	end
-	return nil
+	return byId(b)[asks.hx.rowId(b, name)]
 end
 
 -- The badges of the board row `name`, joined by commas.
@@ -3334,102 +3414,5 @@ function asks.hx.doc(views: number, prompts: number): string
 	return jsonEncode({ format = "plotroom-export", version = 1, views = array(vs), prompts = array(ps) })
 end
 
-M.EPOCH = EPOCH
-M.JIRA_ASSIGNED = JIRA_ASSIGNED
-M.NULL = NULL
-M.acliCount = acliCount
-M.actionOf = actionOf
-M.agentScene = agentScene
-M.always = always
-M.answerOf = answerOf
-M.array = array
-M.asks = asks
-M.badgeOf = badgeOf
-M.bindKey = bindKey
-M.buttonLink = buttonLink
-M.cardOf = cardOf
-M.cardSurface = cardSurface
-M.cardText = cardText
-M.case = case
-M.cases = cases
-M.checkRun = checkRun
-M.chipsOf = chipsOf
-M.collectTexts = collectTexts
-M.commandsOf = commandsOf
-M.confirmOf = confirmOf
-M.countCalls = countCalls
-M.countLog = countLog
-M.detailText = detailText
-M.editorCard = editorCard
-M.eq = eq
-M.expand = expand
-M.factOf = factOf
-M.findKey = findKey
-M.forgetCheckouts = forgetCheckouts
-M.freshAsk = freshAsk
-M.goToSettings = goToSettings
-M.has = has
-M.helpEntries = helpEntries
-M.helpRows = helpRows
-M.hostScene = hostScene
-M.hx = hx
-M.issueHost = issueHost
-M.issueItem = issueItem
-M.issueLink = issueLink
-M.issuePrompt = issuePrompt
-M.issueRunLink = issueRunLink
-M.issueWindow = issueWindow
-M.jiraHost = jiraHost
-M.jiraItem = jiraItem
-M.jsonDecode = jsonDecode
-M.jsonEncode = jsonEncode
-M.keyOf = keyOf
-M.lacks = lacks
-M.leaveIssueWt = leaveIssueWt
-M.leaveWt = leaveWt
-M.linkQueue = linkQueue
-M.listPr = listPr
-M.listed = listed
-M.logFrom = logFrom
-M.loginsSavedBy = loginsSavedBy
-M.manyItems = manyItems
-M.newAcli = newAcli
-M.newGh = newGh
-M.newGit = newGit
-M.newWorld = newWorld
-M.nodes = nodes
-M.openIssues = openIssues
-M.openQueue = openQueue
-M.pickScope = pickScope
-M.pickerNode = pickerNode
-M.pickerOf = pickerOf
-M.porcelain = porcelain
-M.prLink = prLink
-M.prefsOf = prefsOf
-M.pressCard = pressCard
-M.promptOf = promptOf
-M.promptPicks = promptPicks
-M.ranSince = ranSince
-M.refreshNow = refreshNow
-M.request = request
-M.requestsOf = requestsOf
-M.requestsSent = requestsSent
-M.rowIn = rowIn
-M.runChecks = runChecks
-M.runLink = runLink
-M.runSearch = runSearch
-M.same = same
-M.saveIssuePrompts = saveIssuePrompts
-M.savePrompts = savePrompts
-M.scene = scene
-M.searchItem = searchItem
-M.sectionIn = sectionIn
-M.sha = sha
-M.show = show
-M.showPr = showPr
-M.snapshot = snapshot
-M.validRef = validRef
-M.windowCase = windowCase
-M.yes = yes
 
 return M

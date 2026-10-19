@@ -27,12 +27,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import platform
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -40,7 +38,7 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"

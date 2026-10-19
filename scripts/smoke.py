@@ -7,7 +7,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow.
-Smoke prerequisites: Tern 0.8.3, 0.8.4, 0.9.0 or 0.9.1 (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
+Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, Tern directory and log lives under one temporary
 directory that is deleted afterwards.
 
@@ -28,8 +28,6 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from check import PLUGIN, GateError, run, say
-
-SMOKE_TERN_VERSIONS = ("0.8.3", "0.8.4", "0.9.0", "0.9.1")  # runtimes the smoke accepts; `tern --version` must start with `tern <version>`
 
 # Tern variables that would point `tern serve` at the live window or daemon.
 TERN_UNSET = (
@@ -127,15 +125,7 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     given = os.environ.get("TERN")
     tern = str(Path(given).expanduser()) if given else shutil.which("tern")
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
-        raise GateError(
-            "smoke needs Tern %s: %s. Install one, or set TERN=/path/to/tern."
-            % (" or ".join(SMOKE_TERN_VERSIONS), "TERN=%s is not an executable file" % given if given else "no `tern` on PATH")
-        )
-    done = run([tern, "--version"], timeout=30)
-    banner = (done.stdout + done.stderr).strip()
-    reported = re.match(r"(?:tern\s+)?v?(\d+\.\d+\.\d+)(?=[\s(]|$)", banner, re.IGNORECASE)
-    if not reported or reported.group(1) not in SMOKE_TERN_VERSIONS:
-        raise GateError("smoke needs Tern %s; %s reports %r. Install one or set TERN=/path/to/tern." % (" or ".join(SMOKE_TERN_VERSIONS), tern, banner))
+        raise GateError("smoke needs Tern: %s. Install one, or set TERN=/path/to/tern." % ("TERN=%s is not an executable file" % given if given else "no `tern` on PATH"))
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
