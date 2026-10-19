@@ -42,15 +42,6 @@
 
 ## Review
 
-- [ ] Clicking a view in the sidebar always refreshes it.
-  - Branch: todo/clicking-a-view-in-the-sidebar-always-re at /Users/andyhite/Code/tern-plotroom.todo/clicking-a-view-in-the-sidebar-always-re
-  - Clicking a view refreshes it even when its cached snapshot is younger than the refresh interval, and clicking the already-active view refreshes it too (also from the Worktrees board back to the queue). The periodic timer is unchanged.
-  - Gaps: `switchView` skips the refresh when `age < fresh`; `goScope` does nothing for the active scope with the board off.
-  - Unchanged: `refresh` still dedupes in-flight requests for the same `gen`, honors the server rate-limit cooldown and does not retry terminal problems (`auth`, `missing`, `not-found`). A click while another view loads refreshes the new view; the old reply is dropped by the `gen` guard.
-  - Touch points: `engine.switchView` (~`:997`), `engine.goScope` (~`:1311`); mirror the `engine.retry` path.
-  - Cases: switch to a fresh cached view issues a search, click on the active view issues a search, click inside the cooldown does not. README: refresh section.
-  - Decided: `switchView` now always calls `changed` (so other callers like pin, settings and reload refresh too). `goScope` on the active view calls `refresh` and keeps the selection.
-
 ## Done
 
 - [x] Actions can move a Jira issue to a set status when they run.
@@ -70,3 +61,11 @@
   - Decided: several PRs on one head branch show the open one (else the newest); the lookup matches the branch name only, so a fork's PR of the same name can show.
   - Decided: the issue side uses the worktree note the scan had when the detail loaded; a refresh loads it again. The PR side lists the saved checkout with `inventory` (adds a `git worktree list` per PR detail load; two existing list-count cases now expect it).
   - Decided: a failed lookup shows nothing (no error row); the Worktrees board shows the PR section only when one is found, never "not found".
+
+- [x] Clicking a view in the sidebar always refreshes it.
+  - Clicking a view refreshes it even when its cached snapshot is younger than the refresh interval, and clicking the already-active view refreshes it too (also from the Worktrees board back to the queue). The periodic timer is unchanged.
+  - Gaps: `switchView` skips the refresh when `age < fresh`; `goScope` does nothing for the active scope with the board off.
+  - Unchanged: `refresh` still dedupes in-flight requests for the same `gen`, honors the server rate-limit cooldown and does not retry terminal problems (`auth`, `missing`, `not-found`). A click while another view loads refreshes the new view; the old reply is dropped by the `gen` guard.
+  - Touch points: `engine.switchView` (~`:997`), `engine.goScope` (~`:1311`); mirror the `engine.retry` path.
+  - Cases: switch to a fresh cached view issues a search, click on the active view issues a search, click inside the cooldown does not. README: refresh section.
+  - Decided: `switchView` now always calls `changed` (so other callers like pin, settings and reload refresh too). `goScope` on the active view calls `refresh` and keeps the selection.
