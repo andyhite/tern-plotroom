@@ -59,6 +59,9 @@ type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keyboard shortcuts; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
 type KeyHelp = { keys: { string }, actions: { string }?, text: string }
+-- A default view; its id in the kv store is "v<its place in Kind.seeds>". `sprint`: offered only while the Jira site is
+-- known to have sprints (cli.sprints).
+type Seed = { name: string, integration: string, query: string, group: string, sort: string?, sprint: boolean? }
 -- What tells pull request views and issue views apart; the rest is one engine. The active view's is State.kind.
 type Kind = {
 	id: string, -- "prs" | "issues": a View's and a Snap's `kind`, and the prefix of the ids of its views
@@ -69,7 +72,7 @@ type Kind = {
 	viewsKey: string, -- kv key of the saved views
 	promptsKey: string, -- kv key of the saved prompts
 	integrations: { string }, -- the trackers its views may use, the first a new view's: "github" | "jira" (keys TRACKERS and INTEGRATIONS)
-	seeds: { { id: string, name: string, integration: string, query: string, group: string } }, -- the views of a first run, by their id in the kv store
+	seeds: { Seed }, -- the views of a first run and of Settings › Views › Restore defaults, in order
 	keys: { KeyHelp }, -- the `?` list of the queue
 	vars: { { k: { Span }, v: string } }, -- the prompt editor's legend of variables
 	prompts: { { id: string, name: string, text: string, worktree: boolean? } }, -- offered until its saved prompts are first changed
@@ -235,6 +238,9 @@ local cli = {
 	probing = {} :: { [string]: boolean },
 	claims = {} :: { [string]: true }, -- lowercase repositories whose checkout folder is being verified or cloned into, in any pane
 	moved = false, -- an answer of the probes running differs from the one before
+	-- Whether the Jira site has sprints (jira.sprints, asked each time acli is found to start); nil while unknown.
+	sprints = nil :: boolean?,
+	sprintsAsking = false,
 }
 
 -- Whether integration `id` ("github" | "jira") is on: its CLI starts on this host.
@@ -279,12 +285,33 @@ local function isTable(v: any): boolean
 	return type(v) == "table"
 end
 
+-- The default views of `kind` a first run saves. A sprint view left out keeps its id unused, so nextId follows them all.
 local function seedViews(kind: Kind): Views
 	local items: { View } = {}
-	for _, v in kind.seeds do
-		table.insert(items, { id = kind.id .. ":" .. v.id, kind = kind.id, name = v.name, integration = v.integration, query = v.query, logins = {}, group = v.group, prompts = {} })
+	for i, v in kind.seeds do
+		if not v.sprint or cli.sprints == true then
+			table.insert(items, { id = kind.id .. ":v" .. i, kind = kind.id, name = v.name, integration = v.integration, query = v.query, logins = {}, group = v.group, prompts = {}, sort = v.sort })
+		end
 	end
-	return { version = 1, nextId = #items + 1, items = items }
+	return { version = 1, nextId = #kind.seeds + 1, items = items }
+end
+
+-- The default views of `integration` that `views` (one Settings › Views group) has none of the same kind and name of,
+-- in order: what its Restore defaults saves back. An edited default keeps its name, so it is never replaced.
+function flow.missingViews(integration: string, views: { View }): { { kind: Kind, seed: Seed } }
+	local out: { { kind: Kind, seed: Seed } } = {}
+	for _, kind in { KINDS.prs, KINDS.issues } do
+		for _, d in kind.seeds do
+			local found = d.integration ~= integration or (d.sprint == true and cli.sprints ~= true)
+			for _, v in views do
+				found = found or (v.kind == kind.id and v.name == d.name)
+			end
+			if not found then
+				table.insert(out, { kind = kind, seed = d })
+			end
+		end
+	end
+	return out
 end
 
 local function validViews(kind: Kind, v: any): Views?
@@ -364,6 +391,10 @@ local function loadViews(kind: Kind): (Views, boolean, string?)
 	end
 	if v == nil then
 		local s = seedViews(kind)
+		-- Which issue views a first run gets waits on the Jira site's sprints: saved once acli and the site answered.
+		if kind.id == "issues" and (cli.installed.jira == nil or cli.sprintsAsking) then
+			return s, true, nil
+		end
 		local err = writeViews(kind, s)
 		if err then
 			return s, false, "Saved " .. kind.one .. " views could not be written: " .. err
@@ -2144,6 +2175,22 @@ function cli.probe(again: boolean?)
 				cli.probing[c.id] = nil
 				cli.moved = cli.moved or cli.installed[c.id] ~= (result ~= nil)
 				cli.installed[c.id] = result ~= nil
+				if c.id == "jira" and result and not cli.sprintsAsking then
+					-- Before the views are reread below, so a first run's issue views wait for the answer.
+					cli.sprintsAsking = true
+					jira.sprints(function(has: boolean?)
+						cli.sprintsAsking, cli.sprints = false, has
+						if not cli.ready() then
+							return -- the reread once every CLI answered reads it
+						end
+						for _, s in running do
+							if alive(s) then
+								reloadViews(s)
+								s.cx:render()
+							end
+						end
+					end)
+				end
 				if next(cli.probing) ~= nil or not cli.moved then
 					return
 				end
@@ -2243,9 +2290,14 @@ KINDS = {
 		viewsKey = "views-prs",
 		promptsKey = "prompts-prs",
 		integrations = { "github" },
+		-- archived:false: an archived repository's open items can never be acted on. Review requested is direct requests
+		-- only (review-requested also matches every team a login is on); Reviewed by me holds the PRs a review took
+		-- out of the requests, until GitHub asks again.
 		seeds = {
-			{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none" },
-			{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none" },
+			{ name = "My PRs", integration = "github", query = "is:open author:@me archived:false", group = "repo" },
+			{ name = "Review requested", integration = "github", query = "is:open user-review-requested:@me draft:false archived:false", group = "none", sort = "oldest" },
+			{ name = "Team reviews", integration = "github", query = "is:open team-review-requested-user:@me draft:false archived:false", group = "repo" },
+			{ name = "Reviewed by me", integration = "github", query = "is:open reviewed-by:@me -author:@me -review-requested:@me archived:false", group = "repo" },
 		},
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },
@@ -2290,11 +2342,18 @@ KINDS = {
 		viewsKey = "views-issues",
 		promptsKey = "prompts-issues",
 		integrations = { "github", "jira" },
+		-- Jira: hierarchyLevel < 1 keeps epics (level 1, whatever the site calls them) out of all but My epics, and works
+		-- on a site without an Epic type, where `issuetype != Epic` does not parse. Sprint views need a Sprint field.
 		seeds = {
-			{ id = "v1", name = "Assigned to me", integration = "github", query = "is:open assignee:@me", group = "none" },
-			{ id = "v2", name = "Created by me", integration = "github", query = "is:open author:@me", group = "none" },
-			{ id = "v3", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", group = "none" },
-			{ id = "v4", name = "Created by me", integration = "jira", query = "reporter = currentUser() AND statusCategory != Done", group = "none" },
+			{ name = "Assigned to me", integration = "github", query = "is:open assignee:@me archived:false", group = "repo" },
+			{ name = "Created by me", integration = "github", query = "is:open author:@me -assignee:@me archived:false", group = "repo" },
+			{ name = "My sprint", integration = "jira", query = "assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done AND hierarchyLevel < 1", group = "status", sprint = true },
+			{ name = "Up next", integration = "jira", query = 'assignee = currentUser() AND sprint in openSprints() AND statusCategory = "To Do" AND hierarchyLevel < 1', group = "none", sprint = true },
+			{ name = "In progress", integration = "jira", query = 'assignee = currentUser() AND sprint in openSprints() AND statusCategory = "In Progress" AND hierarchyLevel < 1', group = "status", sprint = true },
+			{ name = "Up for grabs", integration = "jira", query = 'assignee is EMPTY AND sprint in openSprints() AND statusCategory = "To Do" AND hierarchyLevel < 1', group = "none", sprint = true },
+			{ name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done AND hierarchyLevel < 1", group = "status" },
+			{ name = "My epics", integration = "jira", query = "assignee = currentUser() AND hierarchyLevel = 1 AND statusCategory != Done", group = "status" },
+			{ name = "Created by me", integration = "jira", query = "reporter = currentUser() AND (assignee is EMPTY OR assignee != currentUser()) AND statusCategory != Done AND hierarchyLevel < 1", group = "assignee" },
 		},
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
@@ -2561,6 +2620,14 @@ local function pageContent(state: State): ({ any }, { Node })
 				local kind = if table.find(state.kind.integrations, g.integration) then state.kind else KINDS.issues
 				section((if #g.views > 0 then "add:" else "add-to:") .. add, if #g.views > 0 then nil else g.label)
 				row({ id = "vadd:" .. add, label = "", disabled = state.locked[kind.id], control = { k = "action", act = "add", label = "Add view" } })
+				local missing = flow.missingViews(g.integration, g.views)
+				if #missing > 0 then
+					local locked: string? = nil
+					for _, m in missing do
+						locked = locked or state.locked[m.kind.id]
+					end
+					row({ id = "vrestore:" .. add, label = "", disabled = locked, control = { k = "action", act = "restore-views", label = "Restore defaults" } })
+				end
 			end
 		end
 	elseif s.page == "prompts" then
@@ -3460,6 +3527,43 @@ local function runAction(state: State, act: string, row: string)
 		addView(state, row)
 	elseif act == "add-prompt" then
 		addPrompt(state, row)
+	elseif act == "restore-views" then
+		-- Saves back the default views the row's group has none of the same kind and name of, as views of that group
+		-- (running as its login, as Add view's do); the others, edited defaults included, stay.
+		local integration, login = string.match(row, "^vrestore:(%a+):(.*)$")
+		if not integration or not login or not cli.on(integration) or not INTEGRATIONS[integration] or not string.match(login, "^[%w%-_]*$") then
+			return
+		end
+		local label = string.lower(INTEGRATIONS[integration].label .. (if login ~= "" then " - " .. login else ""))
+		local group: { View } = {}
+		for _, v in state.views do
+			if v.integration == integration and string.lower(groupLabel(v)) == label then
+				table.insert(group, v)
+			end
+		end
+		local missing = flow.missingViews(integration, group)
+		local err: string? = nil
+		for _, kind in { KINDS.prs, KINDS.issues } do
+			local store, writable, why = loadViews(kind)
+			local added = false
+			for _, m in missing do
+				if m.kind == kind then
+					local d = m.seed
+					table.insert(store.items, { id = kind.id .. ":v" .. store.nextId, kind = kind.id, name = d.name, integration = d.integration, query = d.query, logins = if login ~= "" then { login } else {}, group = d.group, prompts = {}, sort = d.sort })
+					store.nextId += 1
+					added = true
+				end
+			end
+			if added and not err then
+				err = if writable then writeViews(kind, store) else why or "Views cannot be saved."
+			end
+		end
+		s.errors[row] = err
+		loadAll(state)
+		propagate(state)
+		if not err then
+			s.focus = "vadd:" .. integration .. ":" .. login -- the restore button is gone with nothing left to restore
+		end
 	elseif act == "restore-prompts" then
 		-- Saves back the defaults no saved action is named like; the others, edited defaults included, stay.
 		local kind = KINDS[string.match(row, "^prestore:(%a+)$") or ""]
@@ -6458,6 +6562,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 		-- The PR's state sits at the head row's right end; an empty growing column pushes it there.
 		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
 			ui.text({ ui.span("#" .. pr.number, "num") }),
+			ui.node("badge", { key = "integration", text = INTEGRATIONS.github.label, tone = "muted" }),
 			ui.node("icon", {
 				key = "copy",
 				name = "copy",
@@ -6479,7 +6584,6 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 		}),
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
-			ui.node("badge", { key = "integration", text = INTEGRATIONS.github.label, tone = "muted" }),
 		}),
 	}
 	local controls = flow.previewControls(state, pr)
@@ -6673,6 +6777,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 		-- The issue's state sits at the head row's right end; an empty growing column pushes it there.
 		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
 			ui.text({ ui.span(ref, "num") }),
+			ui.node("badge", { key = "integration", text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }),
 			ui.node("icon", {
 				key = "copy",
 				name = "copy",
@@ -6694,7 +6799,6 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 		}),
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
-			ui.node("badge", { key = "integration", text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }),
 		}),
 	}
 	local controls = flow.previewControls(state, issue)
@@ -8271,7 +8375,7 @@ local function blockDef(): BlockDef<State>
 					else
 						s.pick = nil -- a click outside an open choice's menu, or away from a text being edited
 					end
-				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "guide" or act == "expand" or act == "collapse" then
+				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "restore-views" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "guide" or act == "expand" or act == "collapse" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)

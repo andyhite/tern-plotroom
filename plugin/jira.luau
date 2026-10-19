@@ -310,6 +310,18 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 	end)
 end
 
+-- Whether the signed-in site has sprints, i.e. JQL knows a Sprint field (a site that never turned them on, or a user who
+-- may not see it, does not); done(true | false), or done(nil) when acli could not tell (signed out, offline).
+function M.sprints(done: (boolean?) -> ())
+	acli({ "jira", "workitem", "search", "--jql", "sprint is EMPTY", "--count" }, function(out, problem)
+		if out then
+			return done(true)
+		end
+		local why = string.lower(if problem then problem.message else "")
+		done(if string.find(why, "field 'sprint'", 1, true) then false else nil)
+	end)
+end
+
 -- Wraps `s` in `left`/`right`, keeping its edge whitespace outside (markdown ends emphasis at a non-space).
 local function wrap(s: string, left: string, right: string): string
 	local lead, core, trail = string.match(s, "^(%s*)(.-)(%s*)$")
