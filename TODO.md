@@ -1,8 +1,8 @@
 # TODO
 
 ## Backlog
-- [ ] Let users specify the order statuses are listed in, for both sort order and grouping.
-- [ ] Let an action prompt be inserted into a running agent managed by Plotroom (e.g. run the watch action after implement finishes and the PR is open).
+- [ ] For Jira, always order statuses (both items and the groups, when grouped) using the status categories, with in-progress at the top, followed by todo, followed by done (if done is included in the filter)
+- [ ] Add the ability to create "workflows", which chain together actions in some way so that we know what the next action is to dispatch for an agent
 
 ## Todo
 - [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
