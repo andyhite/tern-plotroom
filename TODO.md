@@ -3,6 +3,9 @@
 ## Backlog
 
 ## Todo
+
+## In-Progress
+
 - [ ] An Agents entry in the sidebar lists my live agents and what each is working on.
   - Branch: todo/an-agents-entry-in-the-sidebar-lists-my at /Users/andyhite/Code/tern-plotroom.todo/an-agents-entry-in-the-sidebar-lists-my
   - A special scope after Worktrees list, like it with no view record: rows for agents that are `working`, `waiting_input` or `idle`; `exited` ones are hidden. Each row shows the item title, the action name, the branch and the state badge, grouped by repository. The count shows in the sidebar; it is in the palette's Views group too.
@@ -16,8 +19,6 @@
   - Decided: an `agent-links` row whose action, branch or title is not a string counts as malformed, so the store is never written over.
   - Fix: README.md, plugin/flows.luau, plugin/host/engine.luau, plugin/window.luau - rebase onto main conflicts (main gained the next-action chain work) - rebase onto main, resolve, rerun the gate
   - Fix: plugin/flows.luau (`statusMap`, `INFO_BYTES = 30000`) - unconfirmed: the budget counts raw bytes but the host's 40000-byte cap counts JSON-encoded bytes, so escaped titles or branches could push the report over and drop it - count the escaped size, or lower the budget to about 12000
-
-## In-Progress
 
 ## Review
 
