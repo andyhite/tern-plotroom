@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
   - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
@@ -18,8 +20,6 @@
   - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
   - Fix: plugin/host/lens.luau:41-51 - the Copy item uses Tern's built-in `copy` click action but has no `href`, so the window copies the item's own text instead of the PR URL and never sends an event; the `event` handler is unreachable and the test passes only by calling `def.event` directly (the repo's other copy icons set `href`, `tests/cases/queue.luau:428-429`) - set `href = url` on the Copy item, drop the dead `event` handler, and assert the item's `href` in the case.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
