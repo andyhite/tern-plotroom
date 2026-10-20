@@ -47,6 +47,22 @@
   - Fix: plugin/tests/cases/window.luau:167-168 / Decision "checks cwd, filled branch/repo" - `has(agent.prompt, "feature")` and `has(agent.prompt, "o/r")` always pass through `{title}` ("Add a feature") and `{url}` (`…/o/r/pull/5`), so a wrong `{branch}`/`{base}`/`{remote}` value would not fail the case - derive the expected lines from each default's text (e.g. its first line and the line naming `{branch}`), fill them with the scene's values (number 5, owner o, repo r, branch feature, base main, remote origin) and assert those filled lines appear.
   - Review attempts: 1
 
+- [ ] Every action I can save also exports, imports and runs.
+  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
+  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
+  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
+  - `portable` takes the reserved keys as a parameter instead of a module global.
+  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
+  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
+  - Base: main
+  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
+  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
+  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
+  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
+  - Fix: plugin/portable.luau:580-583 - the new model check runs before `choiceOf`/the skip branch, so an action with an invalid model that is skipped (same name already saved) never records `promptId[p.ref] = found.id`; imported views lose their link to the kept local action and an imported `next` loses its chain, and the note wrongly says it was left out - move the model check below the skip block, just before `local store = work(p.kind).prompts`, with a case covering skip + invalid model.
+  - Fix: plugin/portable.luau:114 - the new key rule (`utf8.len == 1`, no `%s`) accepts ASCII control characters such as `"\u0007"` from an untrusted import file, which Settings can never save (`input.clean` strips them) - also refuse `%c` so import matches Settings' rule.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
@@ -108,19 +124,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Every action I can save also exports, imports and runs.
-  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
-  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
-  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
-  - `portable` takes the reserved keys as a parameter instead of a module global.
-  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
-  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
-  - Base: main
-  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
-  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
-  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
-  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
 
 - [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
   - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
