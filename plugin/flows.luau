@@ -254,18 +254,72 @@ local function signature(map: { [string]: StatusRow }): string
 	return table.concat(parts, "")
 end
 
+local waiting: { number } = {} -- linked agent panes in "waiting_input", ascending
+local waitingSet: { [number]: boolean } = {}
+
+-- How many linked agents wait for input now (what the status line shows).
+function M.waitingCount(): number
+	return #waiting
+end
+
+-- Recomputes the waiting agents from `states`; toasts each agent that just entered waiting_input, and redraws the
+-- status line when the set changed. `links` empty or `states` empty clears it.
+local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: string })
+	local now: { [number]: Link } = {}
+	for _, l in links do
+		if states[l.agent] == "waiting_input" and now[l.agent] == nil then
+			now[l.agent] = l
+		end
+	end
+	local list: { number } = {}
+	local nowSet: { [number]: boolean } = {}
+	for pane in now do
+		table.insert(list, pane)
+		nowSet[pane] = true
+	end
+	table.sort(list)
+	local changed = #list ~= #waiting
+	for _, pane in list do
+		if not waitingSet[pane] then
+			changed = true
+			local l = now[pane]
+			cx:toast("info", l.key .. " needs input", l.action)
+		end
+	end
+	waiting, waitingSet = list, nowSet
+	if changed then
+		tern.chrome.refresh()
+	end
+end
+
+-- Focuses the first agent that waits for input.
+function M.goWaiting(cx: WindowCx)
+	local agent = waiting[1]
+	if not agent then
+		return cx:toast("info", "No agent needs input")
+	end
+	local session = e().sourceSession(cx, agent)
+	if not session then
+		return cx:toast("info", "That agent is not in a tab")
+	end
+	cx.sessions:switch(session)
+	cx.layout:focus(agent)
+end
+
 -- Tells each Plotroom block the full state map of its host's agents whenever the block's own acknowledgement
 -- (hidden `main.agents`: the signature of the map it holds) is absent or differs, so a reloaded host is told again.
 function M.agentSync(cx: WindowCx)
 	local panes = plotroomPanes(cx)
+	local links = readLinks()
 	if #panes == 0 then
+		trackWaiting(cx, {}, {})
 		return
 	end
-	local links = readLinks()
 	local states = agentStates(cx)
 	if not states then
 		return
 	end
+	trackWaiting(cx, links, states)
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
 		if host then

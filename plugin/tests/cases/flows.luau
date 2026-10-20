@@ -153,6 +153,47 @@ windowCase("window flows: an agent started from a block is linked in kv and the 
 	eq(#statusEvents(w), 3, "and then it is quiet")
 end)
 
+windowCase("window status: agents needing input are counted on every pane, toast once, jump on click, and the mismatch warning stays", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	local function texts(pane: number): { string }
+		local out: { string } = {}
+		for _, s in ((w.window.status :: any)({ pane = pane }) or {}) do
+			table.insert(out, s.text)
+		end
+		return out
+	end
+	eq(#texts(1), 0, "no segment while nothing waits")
+	local toasts = #w.toasts
+	local before = w.window.refreshes
+	w.window.agentStates[agent] = "waiting_input"
+	w.advance(4000)
+	same(texts(7), { "1 agent needs input" }, "every pane shows the count")
+	eq(#w.toasts, toasts + 1, "the agent's entry toasts once")
+	eq(w.toasts[#w.toasts].text, "o/r#5 needs input", "naming its item")
+	eq(w.toasts[#w.toasts].sub, "Review", "and its action")
+	eq(w.window.refreshes, before + 1, "the status line was redrawn once")
+	w.advance(12000)
+	eq(#w.toasts, toasts + 1, "staying there toasts nothing more")
+	eq(w.window.refreshes, before + 1, "and redraws nothing")
+	eq(((w.window.status :: any)({ pane = 1 }))[1].command, "plugin.plotroom.agents-waiting", "the segment runs the jump command")
+	w.window.focused = 1
+	w.command("agents-waiting")
+	eq(w.window.focused, agent, "the jump focuses the waiting agent's pane")
+	w.window.surfaces[1] = { main = { id = "main", c = { { id = "main.rpc", p = { text = "9", hidden = true } } } } }
+	w.window.focused = 1
+	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
+	same(texts(1), { "Plotroom protocol mismatch", "1 agent needs input" }, "the mismatch warning still shows beside it")
+	w.window.agentStates[agent] = "working"
+	w.advance(4000)
+	same(texts(7), {}, "the count clears as soon as none waits")
+	w.window.agentStates[agent] = "waiting_input"
+	w.advance(4000)
+	eq(#w.toasts, toasts + 2, "entering again toasts again")
+end)
+
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

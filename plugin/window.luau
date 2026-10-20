@@ -255,11 +255,26 @@ end
 arm(0)
 
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
-	if pane.pane ~= mismatched then
-		return nil
+	local out: { StatusSegment } = {}
+	if pane.pane == mismatched then
+		table.insert(out, { text = "Plotroom protocol mismatch", icon = "warning", tone = "error" })
 	end
-	return { { text = "Plotroom protocol mismatch", icon = "warning", tone = "error" } }
+	local n = flows.waitingCount()
+	if n > 0 then
+		table.insert(out, { text = if n == 1 then "1 agent needs input" else n .. " agents need input", icon = "merge", command = "plugin.plotroom.agents-waiting" })
+	end
+	return if #out > 0 then out else nil
 end)
+
+tern.command({
+	id = "agents-waiting",
+	title = "Plotroom: Go to the first agent that needs input",
+	icon = "merge",
+	available = function(_cx: WindowCx): boolean
+		return flows.waitingCount() > 0
+	end,
+	run = flows.goWaiting,
+})
 
 local answered: (WindowCx, string) -> ()
 
