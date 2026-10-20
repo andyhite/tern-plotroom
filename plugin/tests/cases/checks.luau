@@ -779,6 +779,45 @@ case("host: the card's Remove confirm says what becomes of the branch from git's
 	has(gone, "no longer lists", "a worktree that went detached is not claimed on its branch")
 end)
 
+case("host: a Jira worktree whose mapped checkout is not git's main path has no repo: the confirm says why and d refuses without running git", function(w: World)
+	local s = jiraHost(w)
+	w.fs.dirs["/work/r/sub"] = true
+	w.kv.put("checkouts", { ["o/r"] = "/work/r/sub" })
+	local path = "/wt/plotroom-o_r-issue-ABC-12"
+	table.insert(s.git.worktrees, { path = path, branch = "refs/heads/ABC-12-fix-login", head = sha("b"), locked = false })
+	w.fs.dirs[path] = true
+	local b = openIssues(w)
+	pressCard(b, "remove")
+	local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
+	has(body, "cannot tell which repository", "the confirm gives its fixed reason, not Reading…")
+	lacks(body, "Reading", "")
+	local mark = #s.git.log
+	b.typeText("d")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "Worktree not removed", "d refuses")
+	eq(countLog(s.git, "worktree remove", mark), 0, "and runs no git worktree remove")
+	yes(cardOf(b) ~= nil, "the card stays")
+end)
+
+case("host: a worktree detached after its card was made is refused by git's claim on d: nothing is removed and the card says why", function(w: World)
+	local s = hostScene(w, 1)
+	local path = leaveWt(w, s, 1)
+	local b = openQueue(w)
+	for _, t in s.git.worktrees do
+		if t.path == path then
+			t.branch = nil
+		end
+	end
+	pressCard(b, "remove")
+	w.flush()
+	local mark = #s.git.log
+	b.typeText("d")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "Worktree not removed", "d is refused")
+	has(w.toasts[#w.toasts].sub, "no branch", "because the worktree is on no branch now")
+	eq(countLog(s.git, "worktree remove", mark), 0, "and no worktree is removed")
+end)
+
 case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
 	local s = hostScene(w, 1)
 	s.git.served["refs/pull/1/head"] = sha("b")
