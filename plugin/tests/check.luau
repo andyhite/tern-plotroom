@@ -173,6 +173,11 @@ function M.run()
 	input.key(m, key("left", nil, true), noop)
 	assert(input.selected(m) == "y", "shift-left selects one codepoint")
 	assert(input.undo(m) and curText() == "ab", "undo restores the earlier text")
+	input.insert(m, "q")
+	local before = curText()
+	assert(input.key(m, { name = "z", ctrl = true, alt = false, shift = true, meta = false }, noop) and curText() == before, "ctrl-shift-z does nothing: no redo, no undo")
+	input.key(m, { name = "z", ctrl = true, alt = false, shift = false, meta = false }, noop)
+	assert(curText() ~= before, "ctrl-z still undoes")
 
 	-- multi-line mode
 	assert(input.clean("a\r\nb\rc\td\1") == "a b cd", "single-line clean: breaks become spaces, tabs and controls drop")

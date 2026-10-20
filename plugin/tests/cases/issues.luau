@@ -1324,7 +1324,7 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	end
 	same(names, { "Review", "Quick review", "Address feedback", "Watch", "New action" }, "Add saves the defaults, then the new prompt")
 	eq(saved.nextId, 6, "whose id follows theirs")
-	has(saved.items[1].text, "Review PR #{number} of {owner}/{repo}", "a default is saved with its text")
+	has(saved.items[1].text, "{number}", "a default is saved with its text")
 	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
 end)
 

@@ -245,8 +245,10 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 			if name == "x" then
 				M.insert(m, "")
 			end
-		elseif name == "z" then
+		elseif name == "z" and not key.shift then
 			M.undo(m)
+		elseif name == "z" then
+			return true
 		else
 			return false
 		end

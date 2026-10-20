@@ -389,6 +389,7 @@ end
 -- shell's `last` status if agents trip over a half-done setup.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo)
 	local model, split = job.model, job.split == true
+	local named = if job.id then job.name else nil -- a typed prompt has no name to show
 	if model and not worktree.validModel(model) then
 		return cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
 	end
@@ -439,7 +440,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	if split then
 		if cx.layout:move(agent, pane, "right") then
-			return cx:toast("success", "Agent started beside the queue for " .. t.label, prompt)
+			return cx:toast("success", "Agent started beside the queue for " .. t.label, named)
 		end
 		nameTab(cx, agent, t)
 		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not open beside the queue.")
@@ -447,13 +448,13 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	if tab then
 		local moved, why = cx.layout:move_to_tab(agent, tab)
 		if moved then
-			return cx:toast("success", "Agent started in the tab of " .. t.label, prompt)
+			return cx:toast("success", "Agent started in the tab of " .. t.label, named)
 		end
 		nameTab(cx, agent, t)
 		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 	end
 	nameTab(cx, agent, t)
-	cx:toast("success", "Agent started for " .. t.label, prompt)
+	cx:toast("success", "Agent started for " .. t.label, named)
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.

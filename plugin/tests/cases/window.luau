@@ -151,6 +151,7 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
+	eq(w.toasts[#w.toasts].sub, nil, "a typed prompt has no name, so the toast has no second line")
 end)
 
 windowCase("window: an unreadable agent-recent is not written over by a pick", function(w: World)
@@ -311,6 +312,7 @@ windowCase("window: a prompt set to open in this tab starts its agent beside the
 	eq(#w.window.runs, 1, "the setup commands ran")
 	yes(w.window.panes[w.window.runs[1].pane].tab ~= queueTab, "in a tab of their own")
 	eq(w.toasts[#w.toasts].text, "Agent started beside the queue for o/r#5", "the toast says where")
+	eq(w.toasts[#w.toasts].sub, "Review", "the second line is the action's name, not its prompt")
 end)
 
 windowCase("window: a card button of a prompt the picker's size budget would cut still runs it, the request naming the prompt", function(w: World)
