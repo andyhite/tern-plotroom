@@ -2531,14 +2531,25 @@ local function acliCount(acli: Acli, kind: string): number
 end
 M.acliCount = acliCount
 
+-- Helpers of the cases, grouped in one table; `asks.bk` holds those of the backend cases.
+local asks = {}
+M.asks = asks
+asks.bk = {}
+
+-- A checkout of o/r at /work/r whose origin is github.com/o/r.
+function asks.bk.repo(w: World): Git
+	local g = newGit(w, "/work/r")
+	g.remotes.origin = { "https://github.com/o/r.git" }
+	return g
+end
+
 export type HostScene = { git: Git, gh: Gh }
 
 -- A checkout of o/r at /work/r whose origin is github.com/o/r, and `count` PRs for the active gh account, on the
 -- fixture views.
 local function hostScene(w: World, count: number?): HostScene
 	w.load("host")
-	local g = newGit(w, "/work/r")
-	g.remotes.origin = { "https://github.com/o/r.git" }
+	local g = asks.bk.repo(w)
 	local gh = newGh(w)
 	gh.items.octocat = manyItems("o/r", count or 3)
 	hx.fixtureViews(w)
@@ -2770,8 +2781,7 @@ M.loginsSavedBy = loginsSavedBy
 -- bob), #13 closed as not planned and #14 closed as completed; on the fixture views.
 local function issueHost(w: World): HostScene
 	w.load("host")
-	local g = newGit(w, "/work/r")
-	g.remotes.origin = { "https://github.com/o/r.git" }
+	local g = asks.bk.repo(w)
 	g.served["refs/heads/main"] = sha("b")
 	g.defaultBranch = "main"
 	local gh = newGh(w)
@@ -2804,11 +2814,11 @@ local function leaveIssueWt(w: World, s: HostScene, n: number): string
 end
 M.leaveIssueWt = leaveIssueWt
 
--- A window whose pane 1 is the Plotroom block of `issueHost` on its first issue filter, linked: the window's requests
+-- A window whose pane 1 is the Plotroom block of `host` (default `issueHost`) on its first issue filter, linked: the window's requests
 -- reach its host half, which runs git and omp, and the answers come back. The window reads the links the block's own
 -- view keeps unseen.
-local function issueWindow(w: World): (HostScene, Block)
-	local s = issueHost(w)
+local function issueWindow(w: World, host: ((World) -> HostScene)?): (HostScene, Block)
+	local s = (host or issueHost)(w)
 	w.load("window")
 	local b = openIssues(w)
 	w.link(b)
@@ -2827,8 +2837,7 @@ M.JIRA_ASSIGNED = JIRA_ASSIGNED
 
 local function jiraHost(w: World): JiraScene
 	w.load("host")
-	local g = newGit(w, "/work/r")
-	g.remotes.origin = { "https://github.com/o/r.git" }
+	local g = asks.bk.repo(w)
 	g.served["refs/heads/main"] = sha("b")
 	g.defaultBranch = "main"
 	local acli = newAcli(w)
@@ -3016,9 +3025,6 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
--- Helpers of the cases below, grouped in one table.
-local asks = {}
-M.asks = asks
 asks.protocol = "23" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
@@ -3087,9 +3093,6 @@ function asks.several(w: World): (HostScene, Block)
 	return s, b
 end
 
--- Helpers hang on `asks.bk`, grouping those of the backend cases.
-asks.bk = {}
-
 -- A gh whose every non-read command (kind "other": issue edit, pr create, run view/rerun) goes to `answer` by its argv
 -- joined by spaces; a line it does not model fails. `seen` lists those lines in order.
 function asks.bk.gh(w: World, answer: (string) -> Reply?): (Gh, { string })
@@ -3155,13 +3158,6 @@ function asks.bk.rest(w: World, who: string, list: { any }, post: { status: numb
 		end
 		return nil
 	end)
-end
-
--- A checkout of o/r at /work/r (main at sha("1")) whose origin is github.com/o/r.
-function asks.bk.repo(w: World): Git
-	local g = newGit(w, "/work/r")
-	g.remotes.origin = { "https://github.com/o/r.git" }
-	return g
 end
 
 -- Adds a linked worktree at `path` on `branch` (nil: detached) at `head` (sha("b")); its folder exists unless `gone`.

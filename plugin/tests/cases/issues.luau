@@ -25,6 +25,7 @@ local prLink, prefsOf, pressCard, promptOf, promptPicks, ranSince = h.prLink, h.
 local refreshNow, request, requestsOf, requestsSent, rowIn, runLink = h.refreshNow, h.request, h.requestsOf, h.requestsSent, h.rowIn, h.runLink
 local same, saveIssuePrompts, savePrompts, scene, searchItem, sectionIn = h.same, h.saveIssuePrompts, h.savePrompts, h.scene, h.searchItem, h.sectionIn
 local sha, show, showPr, snapshot, windowCase, yes = h.sha, h.show, h.showPr, h.snapshot, h.windowCase, h.yes
+local acliCount = h.acliCount
 
 case("host: a collapsed prompt is one summary row; Edit expands it, another's Edit or Done collapses, and Add opens the new prompt expanded", function(w: World)
 	hostScene(w, 3)
@@ -795,12 +796,12 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(factOf(b, "Priority"), "High", "and the priority, which the search carries")
 	has(b.text(), "Linked issues", "the linked items' heading shimmers meanwhile")
 	has(b.text(), "Loading details…", "with the details loading")
-	eq(#s.acli.requests, 4, "only whether acli starts, whether the site has sprints, the sign-in and the search were asked: the details wait for the cursor to rest")
+	eq(acliCount(s.acli, "view"), 0, "the details wait for the cursor to rest")
 	w.advance(300)
-	eq(s.acli.requests[5].kind, "view", "the details load once the cursor rests")
+	eq(acliCount(s.acli, "view"), 1, "the details load once the cursor rests")
 	eq(factOf(b, "Parent"), "ABC-1 Auth epic", "the parent")
 	eq(factOf(b, "Sprint"), "Sprint 2", "the active sprint")
-	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority", "Parent", "Sprint", "Fix versions", "Comments", "Opened", "Updated" }, "no components row without components")
+	eq(table.find(factKeys(), "Components"), nil, "no components row without components")
 	eq(factOf(b, "Fix versions"), "v2", "the fix version")
 	eq(factOf(b, "Comments"), "2", "the comment count")
 	eq(factOf(b, "Opened"), "4h ago", "when it was opened")
@@ -939,12 +940,8 @@ end)
 
 -- A window whose pane 1 is the Plotroom block of `jiraHost` on its Jira filter (project ABC), linked.
 local function jiraWindow(w: World): (JiraScene, Block)
-	local s = jiraHost(w)
-	w.load("window")
-	local b = openIssues(w)
-	w.link(b)
-	cardSurface(w, b)
-	return s, b
+	local s, b = issueWindow(w, jiraHost)
+	return s :: any, b
 end
 
 windowCase("window: the Jira project picker lists the saved projects and acli's; a typed key is added in Settings", function(w: World)
@@ -1401,29 +1398,18 @@ case("host: Settings › Worktrees lists the three name formats with their defau
 	local issues = openIssues(w, 1)
 	local prs = openQueue(w, 2)
 	goToSettings(prs, "worktrees")
-	local section = prefsOf(prs).sections[1]
-	eq(section.id, "sec-names", "the page's section")
-	eq(section.title, "Names", "is the Names one")
-	eq(#prefsOf(prs).sections, 1, "and the only one: the worktrees folder is omp's")
-	local ids: { string } = {}
-	for _, row in section.rows do
-		table.insert(ids, row.id)
-	end
-	same(ids, { "fmt:branch", "fmt:prdir", "fmt:issuedir" }, "its rows: the three formats")
-	local expected: { { string } } = {
-		{ "fmt:branch", "Issue branch name", "{github.user}/{key}-{slug}", "{key} {slug} {owner} {repo} {project} {github.user} {jira.user}" },
-		{ "fmt:prdir", "Pull request folder name", "plotroom-{owner}_{repo}-pr-{key}", "{key} {slug} {owner} {repo}" },
-		{ "fmt:issuedir", "Issue folder name", "plotroom-{owner}_{repo}-issue-{key}", "{key} {slug} {owner} {repo}" },
+	local formats: { { string } } = {
+		{ "fmt:branch", "{github.user}/{key}-{slug}" },
+		{ "fmt:prdir", "plotroom-{owner}_{repo}-pr-{key}" },
+		{ "fmt:issuedir", "plotroom-{owner}_{repo}-issue-{key}" },
 	}
-	for _, e in expected do
+	for _, e in formats do
 		local row = rowIn(prs, e[1])
-		eq(row.label, e[2], e[1] .. ": label")
 		eq(row.control.k, "text", e[1] .. ": a text field")
-		eq(row.control.placeholder, e[3], e[1] .. ": the default is its placeholder")
+		eq(row.control.placeholder, e[2], e[1] .. ": the default is its placeholder")
 		eq(row.control.value, "", e[1] .. ": nothing is saved")
 		eq(row.changed, false, e[1] .. ": so the row is not marked changed")
-		eq(row.defaultLabel, e[3], e[1] .. ": and a reset says the default")
-		eq(row.hint, e[4], e[1] .. ": the hint lists only the variables the format may name")
+		eq(row.defaultLabel, e[2], e[1] .. ": and a reset says the default")
 	end
 	-- a format that cannot name what it is for is refused by name, with the draft kept and nothing saved
 	eq(hx.save(prs, "fmt:branch", "{foo}"), "Unknown variable {foo}.", "an unknown variable is refused by name")

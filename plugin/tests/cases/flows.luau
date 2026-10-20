@@ -1390,6 +1390,122 @@ case("host mutations: label-add and label-remove check the label and the issue's
 	}, "each is one gh call with the label as a --flag=value argument")
 end)
 
+-- gh's answer to `gh issue view <n>` of o/r as the guarded writes read it: issue n is in state live[n] ("OPEN" or "CLOSED").
+local function issueViews(live: { [string]: string }): (string) -> Reply?
+	return function(line: string): Reply?
+		local n = string.match(line, "^gh issue view (%d+) ")
+		if n then
+			return { stdout = jsonEncode({ number = tonumber(n), state = live[n], url = "https://github.com/o/r/issues/" .. n }) }
+		end
+		return nil
+	end
+end
+
+local function issueView(n: string): string
+	return "gh issue view " .. n .. " --repo github.com/o/r --json number,state,url"
+end
+
+case("host mutations: close and reopen run gh issue close or reopen on the planned issue, refuse an issue already in that state, and one that changed after the plan", function(w: World)
+	local s = issueHost(w)
+	local live: { [string]: string } = { ["12"] = "OPEN", ["13"] = "CLOSED" }
+	local seen = asks.hx.writes(s.gh, issueViews(live))
+	local b = openIssues(w)
+	local function plan(name: string): any
+		return asks.hx.ask(w, b, { op = "act", name = name })
+	end
+	local function commit(p: any): any
+		return asks.hx.ask(w, b, { op = "commit", token = p.token })
+	end
+	local function refused(name: string, why: string)
+		local p = plan(name)
+		yes(p.problem ~= nil and p.token == nil, why .. ": refused with no plan")
+	end
+	-- #12 is open
+	refused("issue-reopen", "an open issue is not reopened")
+	eq(#seen, 0, "and nothing was sent")
+	eq(commit(plan("issue-close")).ok, true, "closing the open issue commits")
+	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r" }, "it reads the issue, then closes it with no reason or other flag")
+	local stale = plan("issue-close")
+	live["12"] = "CLOSED" -- closed elsewhere after the plan
+	yes(commit(stale).problem ~= nil, "an issue closed after the plan is refused at commit")
+	eq(#seen, 3, "only its state was read again: no second close")
+	-- #13 is closed
+	b.typeText("j")
+	refused("issue-close", "a closed issue is not closed again")
+	eq(#seen, 3, "and nothing was sent")
+	eq(commit(plan("issue-reopen")).ok, true, "reopening the closed issue commits")
+	same({ seen[4], seen[5] }, { issueView("13"), "gh issue reopen 13 --repo github.com/o/r" }, "it reads the issue, then reopens it")
+	local late = plan("issue-reopen")
+	live["13"] = "OPEN" -- reopened elsewhere after the plan
+	yes(commit(late).problem ~= nil, "an issue reopened after the plan is refused at commit")
+	eq(#seen, 6, "only its state was read again: no second reopen")
+end)
+
+case("host mutations: ready for review and convert to draft run gh pr ready, with --undo only for the draft, refuse a pull request already in that state, and one that changed after the plan", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { searchItem(5, "o/r", EPOCH - 60, { isDraft = true }), searchItem(6, "o/r", EPOCH - 120) }
+	local drafts: { [string]: boolean } = { ["5"] = true, ["6"] = false }
+	local seen = asks.hx.writes(s.gh, function(line: string): Reply?
+		local n = string.match(line, "^gh pr view (%d+) ")
+		if n then
+			return { stdout = jsonEncode({ number = tonumber(n), state = "OPEN", isDraft = drafts[n], url = "https://github.com/o/r/pull/" .. n }) }
+		end
+		return nil
+	end)
+	local function view(n: string): string
+		return "gh pr view " .. n .. " --repo github.com/o/r --json number,state,isDraft,url"
+	end
+	local b = openQueue(w)
+	local function plan(name: string): any
+		return asks.hx.ask(w, b, { op = "act", name = name })
+	end
+	local function commit(p: any): any
+		return asks.hx.ask(w, b, { op = "commit", token = p.token })
+	end
+	local function refused(name: string, why: string)
+		local p = plan(name)
+		yes(p.problem ~= nil and p.token == nil, why .. ": refused with no plan")
+	end
+	-- #5 is a draft
+	refused("pr-draft", "a draft is not converted to a draft")
+	eq(#seen, 0, "and nothing was sent")
+	eq(commit(plan("pr-ready")).ok, true, "marking the draft ready commits")
+	same(seen, { view("5"), "gh pr ready 5 --repo github.com/o/r" }, "it reads the pull request, then marks it ready: no --undo")
+	local stale = plan("pr-ready")
+	drafts["5"] = false -- marked ready elsewhere after the plan
+	yes(commit(stale).problem ~= nil, "a pull request marked ready after the plan is refused at commit")
+	eq(#seen, 3, "only its state was read again: nothing more was sent")
+	-- #6 is ready for review
+	b.typeText("j")
+	refused("pr-ready", "a pull request ready for review is not marked ready again")
+	eq(#seen, 3, "and nothing was sent")
+	eq(commit(plan("pr-draft")).ok, true, "converting the ready pull request commits")
+	same({ seen[4], seen[5] }, { view("6"), "gh pr ready 6 --repo github.com/o/r --undo" }, "it reads the pull request, then converts it with --undo")
+	local late = plan("pr-draft")
+	drafts["6"] = true -- converted elsewhere after the plan
+	yes(commit(late).problem ~= nil, "a pull request converted after the plan is refused at commit")
+	eq(#seen, 6, "only its state was read again: nothing more was sent")
+end)
+
+case("host mutations: switching gh's active account between plan and commit still runs the planned login with its token", function(w: World)
+	local s = issueHost(w)
+	local seen = asks.hx.writes(s.gh, issueViews({ ["12"] = "OPEN" }))
+	s.gh.tokens.work = "tok-work"
+	local b = openIssues(w)
+	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close" })
+	has(p.confirm.lines[2], "octocat", "the plan names the account gh was using")
+	s.gh.active = "work" -- `gh auth switch` before the confirm
+	w.advance(30 * 1000)
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed within five minutes")
+	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r" }, "the issue is read and closed")
+	local sent = requestsOf(s.gh, "other")
+	eq(#sent, 2, "both commands ran")
+	for _, req in sent do
+		eq(req.login, "octocat", "as the planned login, not the active one")
+		eq(req.call.env.GH_TOKEN, "tok-octocat", "with that login's token")
+	end
+end)
+
 case("host mutations: on a Jira issue assign-me runs acli, transition lists Jira's own options and plans only one of them, and labels are refused", function(w: World)
 	local s = jiraHost(w)
 	local ran: { string } = {}

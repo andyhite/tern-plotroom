@@ -6,6 +6,7 @@ local h = require("../harness")
 type AcliReq = h.AcliReq
 type Block = h.Block
 type GhReq = h.GhReq
+type HostScene = h.HostScene
 type Reply = h.Reply
 type World = h.World
 
@@ -1938,23 +1939,38 @@ case("host: a checkout of another repository is refused with its draft kept; a r
 	eq(rowIn(b, "checkout:o/r").warning, nil, "without a warning")
 end)
 
-case("host: a folder that does not exist is cloned into with gh, saved once git confirms the clone", function(w: World)
-	local s = hostScene(w, 3)
-	-- the clone's git state exists in the model, but the folder only appears once gh has run
-	local fresh = newGit(w, "/code/r")
-	fresh.remotes.origin = { "https://github.com/o/r.git" }
-	w.fs.dirs["/code/r"] = nil
-	w.fs.dirs["/code/r/.git"] = nil
+-- gh's clone of o/r answers after 5s with a refusal (fail) or after 2s with a clone at /code/r
+local function slowClone(w: World, s: any, fail: boolean)
 	s.gh.override = function(req: GhReq): Reply?
 		if req.kind == "clone" then
+			if fail then
+				return { status = 1, stderr = "fatal: destination path '/elsewhere' already exists and is not an empty directory.\n", delay = 5000 }
+			end
 			w.fs.dirs["/code/r"] = true
 			w.fs.dirs["/code/r/.git"] = true
 			return { stdout = "", delay = 2000 }
 		end
 		return nil
 	end
-	local b = openQueue(w)
+end
+
+-- o/r is listed without a checkout, and gh's clone of it into /code/r takes 2s; panes 1 and 2 hold blocks
+local function cloneScene(w: World): (Block, Block, HostScene)
+	local s = hostScene(w, 3)
+	-- the clone's git state exists in the model, but the folder only appears once gh has run
+	local fresh = newGit(w, "/code/r")
+	fresh.remotes.origin = { "https://github.com/o/r.git" }
+	w.fs.dirs["/code/r"] = nil
+	w.fs.dirs["/code/r/.git"] = nil
+	slowClone(w, s, false)
+	local a = openQueue(w)
+	local b = openQueue(w, 2)
 	w.kv.put("checkouts", { ["o/r"] = "" })
+	return a, b, s
+end
+
+case("host: a folder that does not exist is cloned into with gh, saved once git confirms the clone", function(w: World)
+	local b, _, s = cloneScene(w)
 	goToSettings(b, "repos")
 	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
@@ -2027,21 +2043,6 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 	eq(w.kv.get("checkouts")["o/r"], "", "nothing was ever saved")
 end)
 
--- gh's clone of o/r answers after 5s with a refusal (fail) or after 2s with a clone at /code/r
-local function slowClone(w: World, s: any, fail: boolean)
-	s.gh.override = function(req: GhReq): Reply?
-		if req.kind == "clone" then
-			if fail then
-				return { status = 1, stderr = "fatal: destination path '/elsewhere' already exists and is not an empty directory.\n", delay = 5000 }
-			end
-			w.fs.dirs["/code/r"] = true
-			w.fs.dirs["/code/r/.git"] = true
-			return { stdout = "", delay = 2000 }
-		end
-		return nil
-	end
-end
-
 case("host: a clone that fails late leaves a draft being typed in another row alone", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
@@ -2064,14 +2065,7 @@ case("host: a clone that fails late leaves a draft being typed in another row al
 end)
 
 case("host: a checkout asked in the palette waits out a clone of the same repository", function(w: World)
-	local s = hostScene(w, 3)
-	local fresh = newGit(w, "/code/r")
-	fresh.remotes.origin = { "https://github.com/o/r.git" }
-	w.fs.dirs["/code/r"] = nil
-	w.fs.dirs["/code/r/.git"] = nil
-	slowClone(w, s, false)
-	local b = openQueue(w)
-	w.kv.put("checkouts", { ["o/r"] = "" })
+	local b = cloneScene(w)
 	goToSettings(b, "repos")
 	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
@@ -2087,14 +2081,7 @@ case("host: a checkout asked in the palette waits out a clone of the same reposi
 end)
 
 case("host: removing a repository while it clones does not bring it back", function(w: World)
-	local s = hostScene(w, 3)
-	local fresh = newGit(w, "/code/r")
-	fresh.remotes.origin = { "https://github.com/o/r.git" }
-	w.fs.dirs["/code/r"] = nil
-	w.fs.dirs["/code/r/.git"] = nil
-	slowClone(w, s, false)
-	local b = openQueue(w)
-	w.kv.put("checkouts", { ["o/r"] = "" })
+	local b = cloneScene(w)
 	goToSettings(b, "repos")
 	expand(b, "ropen:o/r")
 	b.event({ ev = "select", id = "layer.settings", item = "checkout:o/r" })
@@ -2107,20 +2094,6 @@ case("host: removing a repository while it clones does not bring it back", funct
 	eq(w.kv.get("checkouts")["o/r"], nil, "the removed repository stays removed")
 	eq(w.toasts[#w.toasts].level, "error", "and the clone's end says why")
 end)
-
--- o/r is listed without a checkout, and gh's clone of it into /code/r takes 2s; panes 1 and 2 hold blocks
-local function cloneScene(w: World): (Block, Block)
-	local s = hostScene(w, 3)
-	local fresh = newGit(w, "/code/r")
-	fresh.remotes.origin = { "https://github.com/o/r.git" }
-	w.fs.dirs["/code/r"] = nil
-	w.fs.dirs["/code/r/.git"] = nil
-	slowClone(w, s, false)
-	local a = openQueue(w)
-	local b = openQueue(w, 2)
-	w.kv.put("checkouts", { ["o/r"] = "" })
-	return a, b
-end
 
 case("host: a Settings checkout refused as busy keeps the typed path", function(w: World)
 	local a, b = cloneScene(w)
