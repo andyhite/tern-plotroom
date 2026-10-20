@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
-  - The CI checkout step sets `persist-credentials: false`.
-  - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
-  - Smoke generates the installed Tern's SDK types and shows a WARN row in the summary when their sha256 differs from the pinned snapshot; the gate does not fail on it.
-  - Luau is pinned to 0.743 with GitHub's published asset digests (luau-lsp 1.70.1 is already the latest), and the workflow step name stops repeating tool versions.
-  - `smoke.py` reuses `Smoke.cd` and `wait_until` instead of its copies, and `check.py` appends the NOT RUN row after the stage loop instead of re-sorting.
-  - Touch points: `.github/workflows/check.yml`, `scripts/check.py` (tool pins, summary, version gate), `scripts/smoke.py`, `plugin/plugin.toml`, AGENTS.md (pins and the version rule), README's remote-host paragraph.
-
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -168,6 +160,16 @@
   - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
   - Base: main
   - Branch: todo/close-reopen-ready-draft-account-switch at /Users/andyhite/Code/tern-plotroom.todo/close-reopen-ready-draft-account-switch
+
+- [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
+  - The CI checkout step sets `persist-credentials: false`.
+  - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
+  - Smoke generates the installed Tern's SDK types and shows a WARN row in the summary when their sha256 differs from the pinned snapshot; the gate does not fail on it.
+  - Luau is pinned to 0.743 with GitHub's published asset digests (luau-lsp 1.70.1 is already the latest), and the workflow step name stops repeating tool versions.
+  - `smoke.py` reuses `Smoke.cd` and `wait_until` instead of its copies, and `check.py` appends the NOT RUN row after the stage loop instead of re-sorting.
+  - Touch points: `.github/workflows/check.yml`, `scripts/check.py` (tool pins, summary, version gate), `scripts/smoke.py`, `plugin/plugin.toml`, AGENTS.md (pins and the version rule), README's remote-host paragraph.
+  - Base: main
+  - Branch: todo/ci-tooling-credential-free-checkout-plug at /Users/andyhite/Code/tern-plotroom.todo/ci-tooling-credential-free-checkout-plug
 
 ## Blocked
 
