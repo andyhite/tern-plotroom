@@ -19,6 +19,25 @@
   - Fix: plugin/host/render.luau:131-132 - the `issueRow` comment still says rows carry the integration badge, which this branch removed - drop "its integration" from the comment.
   - Review attempts: 1
 
+- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+  - Base: main
+  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
+  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
+  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
+  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
+  - Decision: In the Agents list, Go to agent, Interrupt, Stop and Message agent all sit in the "Agents" group (`addAgentCommands` takes the group); the queue keeps them in "Saved actions". `plugin.toml` is `0.24.0`.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (28e76e0): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly, Agents-list and Merge items also use 26, so later landings must rebase and bump); GROUPS keeps Inbox and Agents; gate passed: 543 cases, types clean, smoke 22 scenarios.
+  - Fix: README.md:56 - Keys and the command palette still says "The plain **GitHub** and **Jira** headings are only for operations that need no item.", but this item removes those never-produced groups from `GROUPS` (window.luau:931), so the README names palette headings that do not exist - delete that sentence (and the doubled blank line at README.md:57-58 the branch added).
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -69,24 +88,6 @@
   - Decision: Rebased onto main (f3f997f): protocol "26" and plugin.toml 0.26.0 (replaces the "24" Decisions above; other review items also use 26, so later landings must rebase and bump); core.GIT_LINK is tokened in render and engine.openGit, flows.openGit gets the full link, README Trust names Open in Git; gate passed: 543 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
 
-- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
-  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
-  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
-  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
-  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
-  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
-  - Base: main
-  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
-  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
-  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
-  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
-  - Decision: In the Agents list, Go to agent, Interrupt, Stop and Message agent all sit in the "Agents" group (`addAgentCommands` takes the group); the queue keeps them in "Saved actions". `plugin.toml` is `0.24.0`.
-  - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (c6d64d9) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so the new `menu` shape and Agents-list palette rows ship under main's number with no mismatch warning - rebase onto main and bump all four to the next unused number ("25" unless main moved past it); update the Decision bullet.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (28e76e0): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly, Agents-list and Merge items also use 26, so later landings must rebase and bump); GROUPS keeps Inbox and Agents; gate passed: 543 cases, types clean, smoke 22 scenarios.
-  - Review attempts: 0
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
