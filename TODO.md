@@ -4,6 +4,25 @@
 
 ## Todo
 
+- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
+  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
+  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
+  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
+  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
+  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
+  - Base: main
+  - Branch: todo/action-link-token-head-ref-check at /Users/andyhite/Code/tern-plotroom.todo/action-link-token-head-ref-check
+  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
+  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
+  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
+  - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
+  - Fix: plugin/host/core.luau:611 with plugin/plugin.toml - main (4ac0024) fails `check.py test` unless `plugin.toml`'s version minor equals `RPC_PROTOCOL`; this branch sets "24" and leaves `0.23.0` - rebase onto main and set `version = "0.<protocol>.0"` for the protocol you land with (next number main has not used).
+  - Fix: plugin/host/engine.luau:2033-2042 (`agentHref`) on rebase - main (6b14f7b) rewrote `agentHref(key, act)` to build `agentgo`/`agentint`/`agentstop`/`agentmsg` links, and its `tests/cases/flows.luau:2093,2095` assert them untokened; if main's side wins the conflict the Agents-scope action links stay untokened, breaking "every action link … carries a random token" - token every verb in `agentHref`, switch those assertions to tokened links, keep main's `AGENT_CMD` node next to the `~= full` check in `window.luau`, and name Interrupt/Stop/Message agent in the README Trust line.
+  - Fix: plugin/tests/cases/window.luau:386-392 - `agentScene` has no recorded agent, so choosing "Start another agent" matches nothing and the picker closes before `github.pr` runs; "no agent starts"/"no tab opens" cannot fail and "the user is told" is satisfied by the earlier Worktree toast, so the required "refused for … agents" case is untested - drive the agent path to the host (e.g. "Type a prompt…" with typed text), reset the toast count before it, and assert the head-branch refusal toast.
+  - Review attempts: 2
+
 ## In-Progress
 
 ## Blocked
@@ -20,22 +39,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
-  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
-  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
-  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
-  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
-  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
-  - Base: main
-  - Branch: todo/action-link-token-head-ref-check at /Users/andyhite/Code/tern-plotroom.todo/action-link-token-head-ref-check
-  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
-  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
-  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
-  - Review attempts: 1
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
-  - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
 
 - [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
   - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
