@@ -33,18 +33,6 @@
   - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
   - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
 
-- [ ] An action's Move to status works without PLOTROOM_JIRA_API_TOKEN.
-  - When an issue action with Move to status starts its agent on a Jira issue, Plotroom moves it with `acli jira workitem transition` (key, status, `--yes`) instead of the REST API, so no token is needed.
-  - An issue already in that status is left alone as today; an acli failure (no such status, a transition that needs fields) is an error toast with acli's message, and the agent still runs.
-  - The palette's Jira transition… picker keeps the REST API and the token, since it needs the transition list.
-  - Touch points: a transition-by-status call beside `jira.transition` in `jira.luau` (acli argv style), the Move to status path in `host/requests.luau`.
-  - Docs: README's "Jira transitions need an API token" and Move to status bullets say the token is only for the palette picker; README Trust notes Move to status runs without a confirm, as decided when it shipped; AGENTS.md's Jira transition invariant names the palette picker only.
-  - Cases (`tests/cases/issues.luau`, `tests/cases/flows.luau`): the move runs acli with no token set; already there runs nothing; an acli failure toasts and the agent starts.
-  - Decided: Move to status uses `acli jira workitem transition --status`; the REST API and token stay only for the palette's Jira transition… picker.
-  - Base: main
-  - Branch: todo/action-move-status-works-without-plotroo at /Users/andyhite/Code/tern-plotroom.todo/action-move-status-works-without-plotroo
-  - Decision: `jira.moveTo` runs `acli jira workitem transition --key <key> --status <status> --yes`, validating key and status and returning acli's message as the problem; the cases live in `tests/cases/flows.luau`.
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -378,6 +366,16 @@
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
 
 ## Done
+
+- [x] An action's Move to status works without PLOTROOM_JIRA_API_TOKEN.
+  - When an issue action with Move to status starts its agent on a Jira issue, Plotroom moves it with `acli jira workitem transition` (key, status, `--yes`) instead of the REST API, so no token is needed.
+  - An issue already in that status is left alone as today; an acli failure (no such status, a transition that needs fields) is an error toast with acli's message, and the agent still runs.
+  - The palette's Jira transition… picker keeps the REST API and the token, since it needs the transition list.
+  - Touch points: a transition-by-status call beside `jira.transition` in `jira.luau` (acli argv style), the Move to status path in `host/requests.luau`.
+  - Docs: README's "Jira transitions need an API token" and Move to status bullets say the token is only for the palette picker; README Trust notes Move to status runs without a confirm, as decided when it shipped; AGENTS.md's Jira transition invariant names the palette picker only.
+  - Cases (`tests/cases/issues.luau`, `tests/cases/flows.luau`): the move runs acli with no token set; already there runs nothing; an acli failure toasts and the agent starts.
+  - Decided: Move to status uses `acli jira workitem transition --status`; the REST API and token stay only for the palette's Jira transition… picker.
+  - Decision: `jira.moveTo` runs `acli jira workitem transition --key <key> --status <status> --yes`, validating key and status and returning acli's message as the problem; the cases live in `tests/cases/flows.luau`.
 
 - [x] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
   - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
