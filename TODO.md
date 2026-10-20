@@ -4,22 +4,6 @@
 
 ## Todo
 
-- [ ] Remove every finished worktree in one confirm.
-  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
-  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
-  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
-  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
-  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
-  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
-  - Base: main
-  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
-  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
-  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
-  - Decision: The unchecked-row count in the confirm is not covered by a test.
-  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
-  - Fix: rebase onto main - conflicts in plugin/host.luau (main moved the Worktrees/Agents keys into `listKeys`) - resolve on the item branch; the code review found no blocking defect.
-  - Review attempts: 2
-
 ## In-Progress
 
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
@@ -38,6 +22,22 @@
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: rebase onto main - conflicts in README.md, plugin/host/render.luau (`engine.agentId` became `pickerId("g", …)`), plugin/tests/cases/flows.luau and plugin/tests/harness.luau - resolve on the item branch.
   - Fix: plugin/tests/cases/flows.luau:3048-3051 / Cases "a result survives a reload" - nothing starts the sync timer after the reload (no `window_start`/`pane_created`/`recordAgent`), so `w.advance(4100)` sends nothing and the assertion reads the event the `agent_finished` sync already sent - fire `window_start` after the second `flowHost(w)`, assert exactly one new status event after the advance, and check its `.result`.
+  - Review attempts: 2
+
+- [ ] Remove every finished worktree in one confirm.
+  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
+  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
+  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
+  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
+  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
+  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
+  - Base: main
+  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
+  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
+  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
+  - Decision: The unchecked-row count in the confirm is not covered by a test.
+  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
+  - Fix: rebase onto main - conflicts in plugin/host.luau (main moved the Worktrees/Agents keys into `listKeys`) - resolve on the item branch; the code review found no blocking defect.
   - Review attempts: 2
 
 ## Blocked
