@@ -4,20 +4,6 @@
 
 ## Todo
 
-- [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
-  - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
-  - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
-  - acli output counts as rate-limited only when it says rate limit or shows 429 as a standalone status, never inside a key such as `ABC-429` or an id.
-  - Touch points: `verified()` and `withSite` in `jira.luau` (reset the cached site the way `noted()` does), the acli classifier.
-  - Cases: `tests/cases/mutation.luau` transition with a site switch between list and post; `tests/cases/tracker.luau` an acli failure naming `ABC-429` is not `rate-limit`, "429 Too Many Requests" still is.
-  - Base: main
-  - Branch: todo/jira-writes-current-site at /Users/andyhite/Code/tern-plotroom.todo/jira-writes-current-site
-  - Decision: `verified()` clears the cached site first, so every listed or transition write re-runs `acli jira auth status` and uses that site and email; `noted()` is unchanged.
-  - Decision: acli output is rate-limited when it says rate limit or has 429 as a standalone token (`%f[%w_%-]429%f[^%w_%-]`), so `ABC-429` and `12429` are not.
-  - Decision: The harness `asks.bk.fetch` fixture strips any `https://host` prefix so a case can answer another site.
-  - Fix: plugin/jira.luau:854-858 (`verified`) - a failed `acli jira auth status` re-read before a write reaches the caller as `failed` (or `missing`), not `auth`, because `M.classify` only says `auth` for "unauthorized"/"auth login"; acceptance bullet 2 is unmet and `tests/cases/mutation.luau:490` only checks a problem exists - in `verified()`, call `withSite` first and turn any failure into `kind = "auth"` (keeping acli's line in the message) before `/myself`; leave `withSite` itself unchanged (`tracker.luau` expects a search to pass `missing` through); assert `problem.kind == "auth"` in the case.
-  - Review attempts: 1
-
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
   - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
@@ -138,6 +124,20 @@
   - Decided: the inbox marks threads read, never done, through one batched confirm.
   - Base: main
   - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
+
+- [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
+  - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
+  - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
+  - acli output counts as rate-limited only when it says rate limit or shows 429 as a standalone status, never inside a key such as `ABC-429` or an id.
+  - Touch points: `verified()` and `withSite` in `jira.luau` (reset the cached site the way `noted()` does), the acli classifier.
+  - Cases: `tests/cases/mutation.luau` transition with a site switch between list and post; `tests/cases/tracker.luau` an acli failure naming `ABC-429` is not `rate-limit`, "429 Too Many Requests" still is.
+  - Base: main
+  - Branch: todo/jira-writes-current-site at /Users/andyhite/Code/tern-plotroom.todo/jira-writes-current-site
+  - Decision: `verified()` clears the cached site first, so every listed or transition write re-runs `acli jira auth status` and uses that site and email; `noted()` is unchanged.
+  - Decision: acli output is rate-limited when it says rate limit or has 429 as a standalone token (`%f[%w_%-]429%f[^%w_%-]`), so `ABC-429` and `12429` are not.
+  - Decision: The harness `asks.bk.fetch` fixture strips any `https://host` prefix so a case can answer another site.
+  - Fix: plugin/jira.luau:854-858 (`verified`) - a failed `acli jira auth status` re-read before a write reaches the caller as `failed` (or `missing`), not `auth`, because `M.classify` only says `auth` for "unauthorized"/"auth login"; acceptance bullet 2 is unmet and `tests/cases/mutation.luau:490` only checks a problem exists - in `verified()`, call `withSite` first and turn any failure into `kind = "auth"` (keeping acli's line in the message) before `/myself`; leave `withSite` itself unchanged (`tracker.luau` expects a search to pass `missing` through); assert `problem.kind == "auth"` in the case.
+  - Review attempts: 1
 
 ## Blocked
 
