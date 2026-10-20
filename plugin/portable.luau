@@ -7,9 +7,9 @@
 local M = {}
 
 export type ExView = { id: string, kind: string, name: string, integration: string, query: string, group: string, sort: string?, logins: { string }, prompts: { string } }
-export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
+export type ExPrompt = { id: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, carly: boolean? }
 export type DView = { kind: string, name: string, integration: string, query: string, group: string, sort: string?, slots: { string }, prompts: { string } }
-export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
+export type DPrompt = { ref: string, kind: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, carly: boolean? }
 export type Doc = { views: { DView }, prompts: { DPrompt } }
 export type Existing = { [string]: { views: { items: { any }, nextId: number }, prompts: { items: { any }, nextId: number } } }
 export type Entry = { id: number, type: "view" | "prompt", kind: string, name: string, conflict: ("same-name" | "identical")?, remap: { string }, slots: { string } }
@@ -117,6 +117,8 @@ local function checkPrompt(p: any): string?
 		return "worktree must be true or false"
 	elseif p.split ~= nil and type(p.split) ~= "boolean" then
 		return "split must be true or false"
+	elseif p.carly ~= nil and type(p.carly) ~= "boolean" then
+		return "carly must be true or false"
 	elseif p.model ~= nil and (not clean(p.model, NAME_CAP, false) or p.model == "") then
 		return "invalid model"
 	elseif p.status ~= nil and (p.kind ~= "issues" or not clean(p.status, M.STATUS_CAP, false) or p.status == "") then
@@ -183,7 +185,7 @@ function M.build(views: { ExView }, prompts: { ExPrompt }, secretFree: boolean?,
 			table.insert(notes, "Action '" .. p.name .. "' left out: its text looks like it holds a secret.")
 			failed = secretFree == true
 		else
-			local item = { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nil :: string? }
+			local item = { id = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nil :: string?, carly = p.carly }
 			table.insert(outPrompts, item)
 			included[ref] = true
 			-- The next action travels with it; one that cannot be exported (or no longer exists) is dropped.
@@ -328,7 +330,7 @@ function M.parse(text: string): (Doc?, string?)
 		if type(raw) ~= "table" then
 			return nil, "Action " .. i .. " is invalid: not an action."
 		end
-		local p = { kind = val(raw.kind), name = val(raw.name), text = val(raw.text), key = val(raw.key), worktree = val(raw.worktree), split = val(raw.split), model = val(raw.model), status = val(raw.status) }
+		local p = { kind = val(raw.kind), name = val(raw.name), text = val(raw.text), key = val(raw.key), worktree = val(raw.worktree), split = val(raw.split), model = val(raw.model), status = val(raw.status), carly = val(raw.carly) }
 		local nextRef = val(raw.next)
 		if nextRef ~= nil and (type(nextRef) ~= "string" or not string.match(nextRef, "^%a+:%w+$")) then
 			return nil, "Action " .. i .. " is invalid: next must be the id of another action."
@@ -346,7 +348,7 @@ function M.parse(text: string): (Doc?, string?)
 			return nil, "Action " .. i .. " is invalid: " .. why .. "."
 		end
 		names[nameKey] = true
-		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nextRef }
+		local item: DPrompt = { ref = ref, kind = p.kind, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = nextRef, carly = p.carly }
 		byRef[ref] = item
 		table.insert(doc.prompts, item)
 	end
@@ -431,7 +433,7 @@ local function namesOf(ids: { any }, items: { any }): string
 end
 
 local function samePrompt(p: DPrompt, e: any, nextName: string, savedNextName: string): boolean
-	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.model or "") == (e.model or "") and (p.status or "") == (e.status or "") and nextName == savedNextName
+	return p.text == e.text and p.key == e.key and (p.worktree ~= false) == (e.worktree ~= false) and (p.split == true) == (e.split == true) and (p.carly == true) == (e.carly == true) and (p.model or "") == (e.model or "") and (p.status or "") == (e.status or "") and nextName == savedNextName
 end
 
 -- Who holds `key` among `items` (not the item `skipId`) or the reserved keys; nil when it is free.
@@ -607,7 +609,7 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 			store.nextId += 1
 			table.insert(store.items, target)
 		end
-		target.name, target.text, target.key, target.worktree, target.split, target.model, target.status = name, p.text, key, p.worktree, p.split, p.model, p.status
+		target.name, target.text, target.key, target.worktree, target.split, target.model, target.status, target.carly = name, p.text, key, p.worktree, p.split, p.model, p.status, if p.carly then true else nil
 		applied[p.ref] = target
 		promptId[p.ref] = target.id
 	end

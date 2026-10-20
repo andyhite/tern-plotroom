@@ -2245,7 +2245,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			end
 		end
 	end
-	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "pnext:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in and Opens in after the model, and its next action")
+	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "pcarly:issues:p1", "pnext:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in, Opens in and Tell Carly after the model, and its next action")
 	eq(sectionIn(b, "popen:issues:p1").title, "Issue actions", "keeping the kind's title")
 	local where = rowIn(b, "pwhere:issues:p1")
 	eq(where.label, "Runs in", "label")
@@ -2287,6 +2287,12 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	b.event({ ev = "change", id = "layer.settings", item = "psplit:prs:p1", value = "split" })
 	eq(w.kv.get("prompts-prs").items[1].split, true, "the Beside the queue segment saves split")
 	eq(rowIn(b, "psplit:prs:p1").control.value, "split", "the row shows it")
+	eq(rowIn(b, "pcarly:prs:p1").control.value, "off", "Tell Carly is off until chosen")
+	b.event({ ev = "change", id = "layer.settings", item = "pcarly:prs:p1", value = "on" })
+	eq(w.kv.get("prompts-prs").items[1].carly, true, "On saves carly")
+	eq(rowIn(b, "pcarly:prs:p1").control.value, "on", "the row shows it")
+	b.event({ ev = "change", id = "layer.settings", item = "pcarly:prs:p1", value = "off" })
+	eq(w.kv.get("prompts-prs").items[1].carly, nil, "Off removes it")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
 	eq(#w.kv.get("prompts-prs").items, 2, "Add prompt on the pull request side saves one with the PR prompts")
 	eq(#w.kv.get("prompts-issues").items, 4, "and none with the issue prompts")

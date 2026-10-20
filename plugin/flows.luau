@@ -461,6 +461,22 @@ function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
 	return nil, nil
 end
 
+-- The live linked agents, newest first, for Carly's `plotroom_agents`: item key, action name and state. Read-only.
+function M.agentList(cx: WindowCx): { { item: string, action: string, state: string } }
+	local out = {}
+	local states = agentStates(cx)
+	if not states then
+		return out
+	end
+	for _, l in (readLinks()) do
+		local state = states[l.agent]
+		if state then
+			table.insert(out, { item = l.key, action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "", state = state })
+		end
+	end
+	return out
+end
+
 -- The newest link for `key` on `pane`'s host, and its state; nil link when none, with state "exited" for one whose
 -- agent is gone.
 function M.liveAgent(cx: WindowCx, pane: number, key: string): (Link?, string?)

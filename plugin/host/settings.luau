@@ -298,6 +298,17 @@ local function pageContent(state: State): ({ any }, { Node })
 						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
 					},
 				})
+				row({
+					id = "pcarly:" .. qid,
+					label = "Tell Carly when it finishes",
+					hint = "One fixed message naming the action and item, pointing Carly at plotroom_agents for the result; nothing from the item or the agent",
+					control = {
+						k = "choice",
+						style = "segmented",
+						value = if p.carly then "on" else "off",
+						options = tern.json.array({ { value = "off", label = "Off" }, { value = "on", label = "On" } }),
+					},
+				})
 				local nextOptions: { any } = { { value = "none", label = "None" } }
 				for _, other in list do
 					if other.id ~= p.id and not chainReaches(prompts :: Prompts, p.id, other.id) then
@@ -899,16 +910,20 @@ function M.setValue(state: State, row: string, value: any)
 			p.next = to
 			return nil
 		end)
-	elseif kind == "pwhere" or kind == "psplit" then
-		local on = choice == (if kind == "pwhere" then "worktree" else "split")
-		if not (on or choice == (if kind == "pwhere" then "checkout" else "tab")) then
+	elseif kind == "pwhere" or kind == "psplit" or kind == "pcarly" then
+		local yes = if kind == "pwhere" then "worktree" elseif kind == "psplit" then "split" else "on"
+		local no = if kind == "pwhere" then "checkout" elseif kind == "psplit" then "tab" else "off"
+		local on = choice == yes
+		if not (on or choice == no) then
 			return
 		end
 		s.errors[row] = editPrompt(id, function(_, p)
 			if kind == "pwhere" then
 				p.worktree = on
-			else
+			elseif kind == "psplit" then
 				p.split = on
+			else
+				p.carly = if on then true else nil
 			end
 			return nil
 		end)

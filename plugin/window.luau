@@ -49,7 +49,7 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
 -- chained before it and `tab` is the tab the previous one ran in, which the next one joins.
-type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number? }
+type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, carly: boolean?, depth: number?, tab: number? }
 local MAX_CHAIN = 8 -- actions in one chain; Settings refuses loops, this stops one that got into the store anyway
 
 local function prTarget(owner: string, name: string, n: number): Target
@@ -453,6 +453,22 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch }
 	end
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
+	-- Carly hears of the end of the agent's turn once, in a fixed message: the action's name and the item key, never item
+	-- text or agent output. A failed schedule is a toast; the agent runs regardless.
+	if job.carly and tern.carly then
+		local name = string.gsub(job.name or "", "%c", " ")
+		local cut = utf8.offset(name, 61)
+		if cut then
+			name = string.sub(name, 1, cut - 1)
+		end
+		local message = "Plotroom: the agent for " .. (if name ~= "" then "action \"" .. name .. "\"" else "an action") .. " on " .. string.lower(t.repo) .. "#" .. t.ref .. " has finished its turn. Read plotroom_agents for its state and result."
+		local sent, why = pcall(function()
+			return cx.agents:get(agent):tocarly("finished", message)
+		end)
+		if not sent then
+			cx:toast("error", "Carly was not told when " .. t.label .. "'s agent finishes", tostring(why))
+		end
+	end
 	if split then
 		if cx.layout:move(agent, pane, "right") then
 			return cx:toast("success", "Agent started beside the queue for " .. t.label, named)
@@ -691,7 +707,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil }, it.worktree ~= false)
+				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, carly = it.carly == true }, it.worktree ~= false)
 			end
 		end
 		cx2:toast("error", "That action is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
@@ -730,6 +746,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 					status = if type(it.status) == "string" then it.status else nil,
 					id = if type(it.id) == "string" then it.id else nil,
 					next = if type(it.next) == "string" then it.next else nil,
+					carly = it.carly == true,
 					worktree = it.worktree ~= false,
 					split = it.split == true,
 				})
@@ -768,7 +785,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 				recent[RECENT_CAP + 1] = nil
 				pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
 			end
-			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status, id = item.id, name = item.label, next = item.next }, item.worktree ~= false)
+			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status, id = item.id, name = item.label, next = item.next, carly = item.carly == true }, item.worktree ~= false)
 		end)
 	end)
 end
@@ -1321,6 +1338,16 @@ tern.timer(0, function(cx: WindowCx?)
 	end
 end)
 
+-- Where Carly exists, it can list the window's live linked agents. Read-only: it changes nothing.
+if tern.carly then
+	tern.carly.export("plotroom_agents", {
+		sig = "plotroom_agents(): { { item: string, action: string, state: string } }",
+		doc = "Lists this window's live Plotroom-linked agents: the item key (repo#number or issue key), the action name and the agent's state. Read-only.",
+	}, function(cx: WindowCx)
+		return flows.agentList(cx)
+	end)
+end
+
 tern.on("pane_created", function(_ev: any, cx: WindowCx)
 	flows.ensureSync(cx)
 	checkProtocol(cx)
@@ -1362,6 +1389,7 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 			status = if type(a.status) == "string" then a.status else nil,
 			id = id,
 			name = if type(a.label) == "string" then a.label else nil,
+			carly = a.carly == true,
 			next = if type(a.next) == "string" then a.next else nil,
 			depth = chain.depth + 1,
 			tab = tab,

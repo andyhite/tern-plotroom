@@ -1724,7 +1724,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "pnext:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, and its next action: no shortcut")
+	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "pcarly:prs:p1", "pnext:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, whether Carly is told, and its next action: no shortcut")
 	goToSettings(b, "keys")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Review", "the Keys page has a row for the saved action, named for it")

@@ -131,6 +131,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
 			next = p.next, -- the action that starts when its agent finishes
+			carly = if p.carly then true else nil, -- Carly is told when its agent finishes
 			key = p.key,
 		})
 	end
@@ -1374,7 +1375,7 @@ function M.exportable(state: State, viewIds: any, promptIds: any): ({ any }?, { 
 			return nil, nil, nil, why
 		end
 		for _, p in store.items do
-			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next }
+			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, carly = p.carly }
 			table.insert(pool, entry)
 			if isTable(promptIds) and table.find(promptIds, kind.id .. ":" .. p.id) then
 				table.insert(prompts, entry)
@@ -1786,7 +1787,7 @@ function M.rpc(state: State, raw: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, carly = if p.carly then true else nil, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end

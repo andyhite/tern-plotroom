@@ -367,6 +367,9 @@ export type Win = {
 	agentStates: { [number]: string }, -- agent pane -> state cx.agents:list reports (a started agent is "working"; a closed pane is not listed)
 	agentCalls: { { op: string, pane: number, text: string? } }, -- every cx.agents interrupt / stop / ask
 	askFails: boolean, -- cx.agents:ask raises (the agent cannot take a message now)
+	carlyExports: { [string]: any }, -- tern.carly.export registrations by name: { spec, fn }; the fake tern.carly exists unless a case clears `sdk.carly` before loading the window
+	carlyMessages: { { agent: number, event: string, message: string } }, -- every Agent:tocarly
+	carlyFails: string?, -- when set, Agent:tocarly raises it
 	prompts: { any }, -- every cx:prompt request
 	typedQueue: { string }, -- answers cx:prompt gives first, in order, before `typed`
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
@@ -583,6 +586,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		agentStates = {},
 		agentCalls = {},
 		askFails = false,
+		carlyExports = {},
+		carlyMessages = {},
 		prompts = {},
 		typedQueue = {},
 		hostOf = {},
@@ -815,6 +820,21 @@ local function newWorld(instantiate: Loader, context: string): World
 					error("busy", 0)
 				end
 				table.insert(win.agentCalls, { op = "ask", pane = pane, text = text })
+			end,
+			get = function(_self: any, agent: number): any
+				if win.agentStates[agent] == nil then
+					error("no agent in pane " .. agent, 0)
+				end
+				return {
+					pane = agent,
+					tocarly = function(_a: any, event: string, message: string): number
+						if win.carlyFails then
+							error(win.carlyFails, 0)
+						end
+						table.insert(win.carlyMessages, { agent = agent, event = event, message = message })
+						return #win.carlyMessages
+					end,
+				}
 			end,
 		},
 	}
@@ -1156,6 +1176,11 @@ local function newWorld(instantiate: Loader, context: string): World
 		on = function(name: string, fn: any)
 			win.handlers[name] = fn -- lifecycle events fire only when a case calls win.handlers[name]
 		end,
+		carly = {
+			export = function(name: string, spec: any, fn: any)
+				win.carlyExports[name] = { spec = spec, fn = fn }
+			end,
+		},
 		route = {
 			link = function(fn: any)
 				routes.link = fn
