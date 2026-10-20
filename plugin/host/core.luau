@@ -616,7 +616,7 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "25"
+M.RPC_PROTOCOL = "26"
 
 -- Open in Git: the link of the worktree the card (or the Worktrees list's selected row) offers; its hidden node `git`
 -- under `buttons` carries it, and the window asks the host for the path (rpc `git-path`).

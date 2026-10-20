@@ -1098,7 +1098,7 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		end
 		-- The head branch becomes a git ref, a path and prompt text: only a plain name goes on (its author is not the user).
 		if not string.match(data.ref, "^[%w_][%w_%./%+@%-]*$") then
-			return done(nil, { kind = "failed", message = "The head branch “" .. string.sub(input.clean(data.ref), 1, 80) .. "” has characters Plotroom does not accept in a branch name." }, cx)
+			return done(nil, { kind = "failed", message = "The head branch “" .. input.clean(string.sub(data.ref, 1, 80)) .. "” has characters Plotroom does not accept in a branch name." }, cx)
 		end
 		local function text(v: any): string
 			return if type(v) == "string" then v else ""
