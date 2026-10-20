@@ -30,7 +30,7 @@ Invariants (keep when editing):
 - Jira transitions use `tern.fetch` with `PLOTROOM_JIRA_API_TOKEN` read per call from the host environment; the token is never in kv, argv or a message.
 - Every async mutation captures the concrete gh login at plan time and uses it at commit.
 - Guided mutations are plan-then-commit: the confirm lists Cancel first, and commit runs only after the confirm with that plan's token.
-- Bump `RPC_PROTOCOL` (host) and `PROTOCOL` (window) together when an rpc shape changes.
+- Bump `RPC_PROTOCOL` (host) and `PROTOCOL` (window) together when an rpc shape changes, and set `plugin/plugin.toml`'s `version` to `0.<RPC_PROTOCOL>.0` (`check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart).
 - kv stores that cannot be read or are malformed are never written over (`views-*`, `prompts-*`, `keys`, `triage`, `agent-links`, ...).
 
 ## Key Directories
@@ -44,7 +44,7 @@ Invariants (keep when editing):
 
 ```sh
 tern plugin link ./plugin          # install for local use
-python3 scripts/check.py tools     # download pinned luau 0.742 + luau-lsp 1.70.1 (macOS / Linux x86_64)
+python3 scripts/check.py tools     # download pinned luau 0.743 + luau-lsp 1.70.1 (macOS / Linux x86_64)
 python3 scripts/check.py           # all: test + types + bench + smoke
 python3 scripts/check.py test      # regression suite only (also: types | bench | smoke)
 python3 scripts/check.py --ci      # what CI runs: smoke reported NOT RUN
@@ -81,7 +81,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 
 - Luau (Tern's embedded runtime), not Lua 5.x: no `goto`. Type-checked with luau-lsp 1.70.1 against Tern 0.8.3 definitions.
 - `scripts/*.py` are Python 3.9+, stdlib only; no pip, package.json or Makefile. Do not add dependencies.
-- Smoke needs real `tern` (any version; types stay pinned to 0.8.3), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA.
+- Smoke needs real `tern` (any version; types stay pinned to 0.8.3), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). Smoke generates the installed Tern's SDK types and shows a WARN row (never a failure) when their sha256 differs from the pinned snapshot. CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA, checkout with `persist-credentials: false`.
 - `plugin/tern.d.luau` is gitignored editor output; never commit it or depend on it in checks.
 
 ## Testing & QA

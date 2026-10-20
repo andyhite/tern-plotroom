@@ -1,7 +1,7 @@
 schema = 1
 id = "plotroom"
 name = "Tern Plotroom"
-version = "0.1.0"
+version = "0.23.0"
 description = "One Plotroom block for a live GitHub pull request queue and GitHub or Jira issue lists: a single sidebar of typed filters and saved views across repositories and Jira projects, with Browser links, worktrees and agents."
 icon = "merge"
 host = "host.luau"

@@ -4,7 +4,7 @@
     python3 scripts/check.py            test + types + bench + smoke (the full local gate)
     python3 scripts/check.py --ci       test + types + bench; smoke is reported NOT RUN (Tern is not on CI)
     python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only
-    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only
+    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only (`test` also checks plugin.toml's version against RPC_PROTOCOL)
     python3 scripts/check.py bench      1000-PR queue render benchmark only
     python3 scripts/check.py smoke      isolated headless Tern + real git only
     python3 scripts/check.py tools      download the pinned Luau and luau-lsp (sha256-verified)
@@ -20,7 +20,7 @@ bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH
 smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
-Pinned: Luau 0.742, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
+Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"
 SDK = ROOT / "scripts" / "tern-0.8.3.d.luau"
 SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
-LUAU_VERSION = "0.742"
+LUAU_VERSION = "0.743"
 LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.8.3"  # the SDK pin
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
@@ -56,8 +56,8 @@ TOOLS = {
         "base": "https://github.com/luau-lang/luau/releases/download/%s/" % LUAU_VERSION,
         "member": "luau",
         "assets": {
-            "Darwin": ("luau-macos.zip", "bdd415766fbe03bc090b65fa6141531a4a54608db95a5350a5a0b49862bdac83"),
-            "Linux": ("luau-ubuntu.zip", "152058b98c60ff1f5b5ec9bca0b8eb37793cae161dd3a05608cc3d8738ba1a4d"),
+            "Darwin": ("luau-macos.zip", "4334afbfb0c05ee697c9bfea64a85f950249c1e8f6f7d99aaa5a24ee362b09c3"),
+            "Linux": ("luau-ubuntu.zip", "99d45afb4afaee00ba631c526c8e8c76c67b60f6f119953ce6409be6d6953663"),
         },
     },
     "luau-lsp": {
@@ -345,6 +345,19 @@ def check_bench() -> str:
     return "%d rows, slowest %.1f ms (budget %.0f ms)" % (len(rows), worst, BENCH_BUDGET_MS)
 
 
+def check_version() -> str:
+    """plugin.toml's version minor tracks RPC_PROTOCOL, so `tern plugin list` tells two hosts' builds apart."""
+    core = (PLUGIN / "host" / "core.luau").read_text(encoding="utf-8")
+    proto = re.search(r'^M\.RPC_PROTOCOL = "(\d+)"', core, re.M)
+    version = re.search(r'^version = "([^"]*)"', (PLUGIN / "plugin.toml").read_text(encoding="utf-8"), re.M)
+    if not proto or not version:
+        raise GateError("cannot read RPC_PROTOCOL from plugin/host/core.luau or version from plugin/plugin.toml")
+    want = "0.%s.0" % proto.group(1)
+    if version.group(1) != want:
+        raise GateError("plugin/plugin.toml version is %s but RPC_PROTOCOL is %s: set version = \"%s\"" % (version.group(1), proto.group(1), want))
+    return "plugin %s = protocol %s" % (version.group(1), proto.group(1))
+
+
 def load_smoke():
     sys.modules.setdefault("check", sys.modules[__name__])  # run as __main__: smoke.py must share this module's GateError
     import smoke
@@ -404,17 +417,14 @@ def main(argv: List[str]) -> int:
     plan: List[Tuple[str, Callable[[], str]]] = []
     if args.command in ("all", "test"):
         plan.append(("test", check_test))
+        plan.append(("version", check_version))
     if args.command in ("all", "types"):
         plan.append(("types", check_types))
     if args.command in ("all", "bench"):
         plan.append(("bench", check_bench))
     results: List[Tuple[str, str, str]] = []
-    if args.command in ("all", "smoke"):
-        if args.ci:
-            load_smoke()  # a syntax or import error in smoke.py must still fail CI
-            results.append(("smoke", "NOT RUN", "--ci: Tern is not available on CI; run `python3 scripts/check.py smoke` locally"))
-        else:
-            plan.append(("smoke", check_smoke))
+    if args.command in ("all", "smoke") and not args.ci:
+        plan.append(("smoke", check_smoke))
 
     for name, check in plan:
         say("== %s ==" % name)
@@ -428,8 +438,12 @@ def main(argv: List[str]) -> int:
         except subprocess.TimeoutExpired as error:
             say("%s: FAIL: timed out: %s" % (name, error))
             results.append((name, "FAIL", "timed out"))
-    order = {"test": 0, "types": 1, "bench": 2, "smoke": 3}
-    results.sort(key=lambda row: order[row[0]])
+    if args.command in ("all", "smoke"):
+        if args.ci:
+            load_smoke()  # a syntax or import error in smoke.py must still fail CI
+            results.append(("smoke", "NOT RUN", "--ci: Tern is not available on CI; run `python3 scripts/check.py smoke` locally"))
+        else:
+            results.extend(("smoke", "WARN", warning) for warning in load_smoke().WARNINGS)
     return summarize(results)
 
 

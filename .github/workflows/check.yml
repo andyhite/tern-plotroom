@@ -17,7 +17,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the pinned Luau 0.742 and luau-lsp 1.70.1 (sha256-verified)
+        with:
+          persist-credentials: false
+      - name: Install the pinned tools (sha256-verified)
         run: python3 scripts/check.py tools
       - name: Run the portable gate
         run: python3 scripts/check.py --ci

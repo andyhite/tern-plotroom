@@ -27,7 +27,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from check import PLUGIN, GateError, run, say
+from check import PLUGIN, SDK, SDK_SHA256, GateError, run, say, sha256_file
+
+WARNINGS: List[str] = []  # non-failing findings; check.py shows each as a WARN row
 
 # Tern variables that would point `tern serve` at the live window or daemon.
 TERN_UNSET = (
@@ -1138,13 +1140,7 @@ def sc_remote_host(s: Smoke) -> None:
     s.out(root, "worktree", "add", "-q", "-b", branch, str(wt), ref)
     s.out(root, "config", "branch.%s.remote" % branch, "origin")
     s.ctl_ok("remote", "loopback", "u@devbox")
-    # The shell reports its directory (OSC 7), so Plotroom opens in the checkout.
-    s.ctl_ok("run", json.dumps("cd %s && printf '\\033]7;file://localhost%%s\\033\\\\' \"$PWD\"" % root))
-    deadline = time.monotonic() + SMOKE_TIMEOUT
-    while os.path.realpath(str(s.state()["focused"].get("cwd") or "")) != os.path.realpath(str(root)):  # type: ignore[union-attr]
-        if time.monotonic() > deadline:
-            s.fail("the shell's directory", str(root), s.state()["focused"])
-        time.sleep(0.2)
+    s.cd(root)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
     s.wait_text("the remote block lists the PR", "Remote PR 1")
     s.wait_text("the row of the worktree made before the block, with its place read from git", str(wt))
@@ -1445,21 +1441,13 @@ def sc_workflow(s: Smoke) -> None:
             continue
         if any(t.startswith("Pull request #2") for t in ts):
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
-            deadline = time.monotonic() + SMOKE_TIMEOUT
-            while not (any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts())):
-                if time.monotonic() > deadline or not s.alive():
-                    s.fail("the both-linked preview's fetched titles", "texts with 'Flow PR 2' and 'Flow issue 9'", [t for t in s.texts() if "#2" in t or "#9" in t or "Loading" in t])
-                time.sleep(0.2)
+            s.wait_until("the both-linked preview's fetched titles", lambda: any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts()))
             seen_both = True
             s.eq("no placeholder is left in the both-linked preview", False, any(t.startswith("Loading") and ("#2" in t or "#9" in t) for t in s.texts()))
             s.shot("board-both-preview")
         elif any(t.startswith("Pull request #1") for t in ts):
             # the tracker's answer, not the placeholder
-            deadline = time.monotonic() + SMOKE_TIMEOUT
-            while not any("Flow PR 1" in t for t in s.texts()):
-                if time.monotonic() > deadline or not s.alive():
-                    s.fail("the linked preview's fetched title", "a text with 'Flow PR 1'", [t for t in s.texts() if "#1" in t])
-                time.sleep(0.2)
+            s.wait_until("the linked preview's fetched title", lambda: any("Flow PR 1" in t for t in s.texts()))
             seen_linked = True
             s.eq("the fetched title replaced Loading #1", False, any(t.startswith("Loading #1") for t in s.texts()))
             s.shot("board-linked-preview")
@@ -1562,11 +1550,7 @@ def sc_prompts(s: Smoke) -> None:
 
     export_through(False)
     export_through(True)
-    deadline = time.monotonic() + SMOKE_TIMEOUT
-    while not exported.is_file():
-        if time.monotonic() > deadline:
-            s.fail("the export file", str(exported), "never written")
-        time.sleep(0.2)
+    s.wait_until("the export file", exported.is_file)
     time.sleep(0.5)
     text = exported.read_text(encoding="utf-8")
     try:
@@ -1753,12 +1737,27 @@ SCENARIOS = [
 ]
 
 
+def sdk_drift(tern: str, tmp: Path) -> None:
+    """Warn (never fail) when the installed Tern's own SDK types differ from the pinned snapshot."""
+    out = tmp / "sdk"
+    out.mkdir()
+    shutil.copy(str(PLUGIN / "plugin.toml"), str(out))
+    done = run([tern, "plugin", "types", str(out)], timeout=SMOKE_TIMEOUT)
+    made = out / "tern.d.luau"
+    if done.returncode != 0 or not made.is_file():
+        WARNINGS.append("could not generate the installed Tern's SDK types: %s" % (done.stderr or done.stdout).strip()[:200])
+    elif sha256_file(made) != SDK_SHA256:
+        WARNINGS.append("installed Tern's SDK types differ from the pinned 0.8.3 snapshot (sha256 %s); refresh scripts/%s" % (sha256_file(made)[:16], SDK.name))
+
+
 def check_smoke() -> str:
     tern, git, omp = smoke_prerequisites()
+    WARNINGS.clear()
     started = time.monotonic()
     tmp = Path(tempfile.mkdtemp(prefix="plotroom-smoke-", dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()
     s = Smoke(tern, git, omp, tmp)
     try:
+        sdk_drift(tern, tmp)
         s.repo("o", "r", "r", (1, 2, 3, 6, 7, 10), deleted=(10,))
         s.fork_pr("o/r", 4)
         s.fork_pr("o/r", 5, gone=True)
