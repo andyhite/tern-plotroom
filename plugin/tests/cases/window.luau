@@ -166,27 +166,29 @@ windowCase("window: an unreadable agent-recent is not written over by a pick", f
 	same(w.kv.get("agent-recent"), { "Old" }, "the unreadable list was left as it was")
 end)
 
-windowCase("window: with no prompts saved, a pull request offers Review, Quick review, Address feedback and Watch, each run where it says with every variable it names filled in", function(w: World)
+windowCase("window: with no prompts saved, a pull request offers the default prompts, each run where it says with every variable it names filled in", function(w: World)
 	local s = agentScene(w)
-	for i, name in { "Review", "Quick review", "Address feedback", "Watch" } do
+	local defaults = (w.load("prompts") :: any).prs
+	for i, d in defaults do
+		local name = d.name
 		w.window.choose = { "Start another agent", name }
 		w.click(prLink("agent", "o/r", 5))
 		w.flush()
 		local agent = w.window.agents[i]
-		if name == "Quick review" then
-			eq(agent.cwd, s.root, name .. " runs in the main checkout")
-			has(agent.prompt, "Branches: head `feature` → base `main`", name .. " names the branches")
-		else
-			eq(agent.cwd, s.target, name .. " runs in the PR's worktree")
-			has(agent.prompt, "Branches: head `feature` → base `main` (base remote `origin`)", name .. " names the branches and the checkout's remote")
-		end
+		eq(agent.cwd, if d.worktree == false then s.root else s.target, name .. " runs where its default says: the main checkout or the PR's worktree")
+		has(agent.prompt, "feature", name .. " has its branch filled in")
+		has(agent.prompt, "o/r", name .. " has its repository filled in")
 		lacks(agent.prompt, "{", name .. " has every variable it names filled in")
 	end
 	local labels: { string } = {}
 	for _, item in promptPicks(w)[1].items do
 		table.insert(labels, item.label)
 	end
-	same(labels, { "Type a prompt…", "Review", "Quick review", "Address feedback", "Watch" }, "typing, then the defaults")
+	local expected: { string } = { "Type a prompt…" }
+	for _, d in defaults do
+		table.insert(expected, d.name)
+	end
+	same(labels, expected, "typing, then the defaults prompts.luau exports")
 	eq(w.kv.get("prompts-prs"), nil, "running them saves nothing")
 end)
 

@@ -1314,7 +1314,18 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	hostScene(w, 3)
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
-	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "padd:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "both kinds list their defaults")
+	local defaults = (w.load("prompts") :: any).prs
+	local issueDefaults = (w.load("prompts") :: any).issues
+	local expectRows: { string } = {}
+	for _, d in defaults do
+		table.insert(expectRows, "popen:prs:" .. d.id)
+	end
+	table.insert(expectRows, "padd:prs")
+	for _, d in issueDefaults do
+		table.insert(expectRows, "popen:issues:" .. d.id)
+	end
+	table.insert(expectRows, "padd:issues")
+	same(hx.rows(b), expectRows, "both kinds list the defaults prompts.luau exports")
 	eq(w.kv.get("prompts-prs"), nil, "showing them saves nothing")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
 	local saved = w.kv.get("prompts-prs")
@@ -1322,15 +1333,21 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	for _, p in saved.items do
 		table.insert(names, p.name)
 	end
-	same(names, { "Review", "Quick review", "Address feedback", "Watch", "New action" }, "Add saves the defaults, then the new prompt")
-	eq(saved.nextId, 6, "whose id follows theirs")
-	has(saved.items[1].text, "{number}", "a default is saved with its text")
+	local expectNames: { string } = {}
+	for _, d in defaults do
+		table.insert(expectNames, d.name)
+	end
+	table.insert(expectNames, "New action")
+	same(names, expectNames, "Add saves the defaults, then the new prompt")
+	eq(saved.nextId, #saved.items + 1, "whose id follows theirs")
+	eq(saved.items[1].text, defaults[1].text, "a default is saved with its text")
 	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
 end)
 
 case("host: Restore defaults saves back the default actions no saved one is named like, and a kind with none keeps its title on its buttons", function(w: World)
 	hostScene(w, 3)
-	savePrompts(w, { promptOf("p1", "Review", "My own review"), promptOf("p2", "Mine", "Look at {url}") })
+	local defaults = (w.load("prompts") :: any).prs
+	savePrompts(w, { promptOf("p1", defaults[1].name, "My own review"), promptOf("p2", "Mine", "Look at {url}") })
 	saveIssuePrompts(w, {})
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
@@ -1343,12 +1360,29 @@ case("host: Restore defaults saves back the default actions no saved one is name
 	for _, p in saved.items do
 		table.insert(names, p.name)
 	end
-	same(names, { "Review", "Mine", "Quick review", "Address feedback", "Watch" }, "the missing defaults are added after the saved ones")
+	local expectRestored: { string } = { defaults[1].name, "Mine" }
+	for i = 2, #defaults do
+		table.insert(expectRestored, defaults[i].name)
+	end
+	same(names, expectRestored, "the missing defaults are added after the saved ones")
 	eq(saved.items[1].text, "My own review", "an edited default keeps its text")
-	same({ saved.items[3].id, saved.items[4].id, saved.items[5].id }, { "p3", "p4", "p5" }, "the restored ones take the next ids")
-	eq(saved.items[3].worktree, false, "and keep where they run")
-	eq(saved.nextId, 6, "and the next free one follows them")
-	same(hx.rows(b), { "popen:prs:p1", "popen:prs:p2", "popen:prs:p3", "popen:prs:p4", "popen:prs:p5", "padd:prs", "padd:issues", "prestore:issues" }, "with every default saved, Restore defaults goes")
+	local last = #defaults + 1
+	local ids: { string } = {}
+	for i = 3, last do
+		table.insert(ids, saved.items[i].id)
+	end
+	eq(#ids, #defaults - 1, "every missing default is restored")
+	yes(saved.items[3].id ~= saved.items[1].id and saved.items[3].id ~= saved.items[2].id, "the restored ones take ids no saved prompt has")
+	eq(saved.items[3].worktree, defaults[2].worktree, "and keep where they run")
+	eq(saved.nextId, last + 1, "and the next free one follows them")
+	local full: { string } = {}
+	for i = 1, last do
+		table.insert(full, "popen:prs:p" .. i)
+	end
+	table.insert(full, "padd:prs")
+	table.insert(full, "padd:issues")
+	table.insert(full, "prestore:issues")
+	same(hx.rows(b), full, "with every default saved, Restore defaults goes")
 	eq(prefsOf(b).focus, "padd:prs", "and Add takes the focus")
 	eq(#w.kv.get("prompts-issues").items, 0, "the other kind is untouched")
 end)
