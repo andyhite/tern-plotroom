@@ -36,6 +36,7 @@ local discardEdit = settings.discardEdit
 local M = {}
 
 M.seq = 0 -- confirmation tokens issued by this runtime
+local INBOX_KEY = "\0inbox" -- the key of the Inbox's plan: no item key holds a NUL
 
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
@@ -579,7 +580,7 @@ function M.show(state: State, url: any, force: boolean?): boolean
 		return false
 	end
 	discardEdit(state)
-	state.settings, state.help, state.query, state.focus, state.boardOn, state.agentsOn = nil, false, nil, "list", false, false
+	state.settings, state.help, state.query, state.focus, state.boardOn, state.agentsOn, state.inboxOn = nil, false, nil, "list", false, false, false
 	if needsPin then
 		if not have then
 			table.insert(state.pins, pin)
@@ -636,7 +637,9 @@ function M.commit(state: State, id: string, token: any)
 		return reply(state, id, { problem = "That confirmation is no longer valid; nothing was sent. Ask again." })
 	end
 	local chosen = selected(state)
-	if plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or os.time() - plan.at > 300 or not chosen or chosen.key ~= plan.key then
+	-- The Inbox plan holds while the Inbox list is shown; every other plan, while its item is the selected one.
+	local here = if plan.key == INBOX_KEY then state.inboxOn else chosen ~= nil and chosen.key == plan.key
+	if plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or os.time() - plan.at > 300 or not here then
 		return reply(state, id, { problem = "The selection or the view changed since you were asked; nothing was sent." })
 	end
 	plan.run(function(body: any)
@@ -699,6 +702,49 @@ function M.labelOk(label: any): string?
 	return label
 end
 
+-- The plan of the Inbox list's Mark read…: the listed threads, the gh login they were read as (both settled now: the commit
+-- marks exactly these as exactly that login, whatever the list or gh's active account become) and one confirm. Read, never
+-- done: GitHub keeps the threads.
+function M.inboxPlan(state: State, id: string)
+	local inbox = state.inbox
+	local login = inbox.login
+	if not state.inboxOn or #inbox.rows == 0 or not login then
+		return reply(state, id, { problem = "The Inbox lists no notifications to mark read." })
+	end
+	local ids: { string } = {}
+	local perRepo: { [string]: number } = {}
+	local repos: { string } = {}
+	for _, row in inbox.rows do
+		table.insert(ids, row.id)
+		if not perRepo[row.repo] then
+			perRepo[row.repo] = 0
+			table.insert(repos, row.repo)
+		end
+		perRepo[row.repo] += 1
+	end
+	local n = #ids
+	local things = n .. " notification" .. (if n == 1 then "" else "s")
+	local lines: { string } = { "Account: @" .. login, "Mark " .. things .. " read (GitHub keeps them in the inbox; none is marked done)" }
+	for i, repo in repos do
+		if i > 8 then
+			table.insert(lines, "and " .. (#repos - 8) .. " more repositories")
+			break
+		end
+		table.insert(lines, repo .. ": " .. perRepo[repo])
+	end
+	M.offer(state, id, { key = INBOX_KEY }, { head = "Mark " .. things .. " read?", label = "Mark " .. n .. " read", lines = lines }, function(done)
+		github.markRead(ids, login, function(problem: github.Problem?, marked: number)
+			if alive(state) then
+				engine.inboxRead(state) -- the list reads again: what was marked is gone from it
+			end
+			if problem then
+				return done({ problem = (if marked > 0 then "Marked " .. marked .. " of " .. n .. " read, then stopped: " else "") .. M.whyOf(problem) })
+			end
+			done({ ok = true, message = "Marked " .. things .. " read as @" .. login })
+		end)
+	end)
+end
+
 -- The mutations of the selected item: asks for a confirmation (`offer`), or lists a Jira issue's transitions.
 function M.act(state: State, id: string, q: any)
 	local item, snap = selected(state), state.snap
@@ -712,7 +758,9 @@ function M.act(state: State, id: string, q: any)
 		end
 		return account
 	end
-	if not item or not snap then
+	if q.name == "inbox-read" then
+		return M.inboxPlan(state, id)
+	elseif not item or not snap then
 		return no("Select an item first.")
 	end
 	local name, prs = q.name, snap.kind == "prs"
@@ -1036,7 +1084,10 @@ end
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
 	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" } }
-	local item, snap = if state.boardOn or state.agentsOn then nil else selected(state), state.snap
+	if state.inboxOn and #state.inbox.rows > 0 then
+		table.insert(out, { id = "inbox-read", group = "Inbox" })
+	end
+	local item, snap = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state), state.snap
 	if not item or not snap then
 		return out
 	end
@@ -1793,7 +1844,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			table.insert(out, { id = "scope:" .. scope.id, label = scope.label, key = "", group = "Views", detail = scope.group })
 		end
 	end
-	local item = if state.boardOn or state.agentsOn then nil else selected(state)
+	local item = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state)
 	labels.agentint, labels.agentstop, labels.agentmsg = "Interrupt agent", "Stop agent…", "Message agent…"
 	local function addAgentCommands()
 		for _, id in { "agentint", "agentstop", "agentmsg" } do

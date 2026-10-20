@@ -1269,7 +1269,7 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 	local sidebar: { string } = {}
 	local loaded: any = nil
 	for _, scope in pickerOf(b).scopes do
-		if scope.id ~= "worktrees" and scope.id ~= "agents" then
+		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
 			table.insert(sidebar, scope.group .. ": " .. scope.label)
 		end
 		if scope.id == "issues:v1" then
@@ -1379,7 +1379,7 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	local b = openQueue(w)
 	local entries: { string } = {}
 	for _, scope in pickerOf(b).scopes do
-		if scope.id ~= "worktrees" and scope.id ~= "agents" then
+		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
 			table.insert(entries, scope.id .. " " .. scope.icon .. " " .. scope.label)
 		end
 	end

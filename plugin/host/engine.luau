@@ -589,7 +589,7 @@ end
 -- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
 function M.autoSeen(state: State)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap or state.boardOn or state.agentsOn then
+	if not item or not snap or state.boardOn or state.agentsOn or state.inboxOn then
 		return
 	end
 	local st = M.status(state, snap.kind, item)
@@ -918,6 +918,9 @@ function M.refresh(state: State)
 		state.timer = nil
 	end
 	identify(state)
+	if state.inboxOn then
+		M.inboxRead(state) -- the Inbox list refreshes with the queue (github.notifications sends nothing within GitHub's poll interval)
+	end
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
 		return
@@ -1035,7 +1038,7 @@ function M.retry(state: State)
 end
 
 function M.switchView(state: State, id: string?, activeLogin: string?)
-	state.activeId, state.activeLogin, state.boardOn, state.agentsOn = id, activeLogin, false, false
+	state.activeId, state.activeLogin, state.boardOn, state.agentsOn, state.inboxOn = id, activeLogin, false, false, false
 	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
 	M.changed(state) -- a click always refreshes; refresh itself dedupes, honors the cooldown and skips terminal problems
@@ -1045,13 +1048,13 @@ end
 -- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
 -- key). Until every CLI answered, an active view that is not listed yet stays the active one.
 function M.reloadViews(state: State)
-	local boardOn, agentsOn = state.boardOn, state.agentsOn -- switchView leaves the Worktrees and Agents scopes
+	local boardOn, agentsOn, inboxOn = state.boardOn, state.agentsOn, state.inboxOn -- switchView leaves the Worktrees, Agents and Inbox scopes
 	loadAll(state)
 	local v = M.activeView(state)
 	if not v then
 		if cli.ready() then
 			M.switchView(state, if state.views[1] then state.views[1].id else nil)
-			state.boardOn, state.agentsOn = boardOn, agentsOn
+			state.boardOn, state.agentsOn, state.inboxOn = boardOn, agentsOn, inboxOn
 		end
 	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
 		M.changed(state)
@@ -1322,7 +1325,7 @@ function M.boardLoad(state: State)
 end
 
 function M.openBoard(state: State)
-	state.boardOn, state.agentsOn, state.focus = true, false, "list"
+	state.boardOn, state.agentsOn, state.inboxOn, state.focus = true, false, false, "list"
 	if not state.board.loaded then
 		M.boardLoad(state)
 	end
@@ -1338,11 +1341,14 @@ function M.goScope(state: State, scopeId: any): boolean
 	elseif scopeId == "agents" then
 		M.openAgents(state)
 		return true
+	elseif scopeId == "inbox" then
+		M.openInbox(state)
+		return true
 	end
 	for _, scope in M.orderedViews(state) do
 		if scope.id == scopeId then
 			if ghActive.isActive(state, scope) then
-				state.boardOn, state.agentsOn = false, false -- the view already shown: its selection stays
+				state.boardOn, state.agentsOn, state.inboxOn = false, false, false -- the view already shown: its selection stays
 				M.refresh(state) -- a click refreshes it
 			else
 				M.switchView(state, scope.view.id, scope.login)
@@ -1440,8 +1446,8 @@ end
 
 function M.moveView(state: State, delta: number)
 	local items = M.orderedViews(state)
-	local other = state.boardOn or state.agentsOn -- a scope that is no view is shown
-	local at = if state.agentsOn then #items + 2 elseif state.boardOn then #items + 1 else 0
+	local other = state.boardOn or state.agentsOn or state.inboxOn -- a scope that is no view is shown
+	local at = if state.inboxOn then #items + 3 elseif state.agentsOn then #items + 2 elseif state.boardOn then #items + 1 else 0
 	if not other then
 		for i, scope in items do
 			if ghActive.isActive(state, scope) then
@@ -1449,9 +1455,14 @@ function M.moveView(state: State, delta: number)
 			end
 		end
 	end
-	-- The Worktrees list and then the Agents list are the last entries of the sidebar.
-	local to = math.clamp(at + delta, 1, #items + 2)
-	if to == #items + 2 then
+	-- The Worktrees list, the Agents list and then the Inbox list are the last entries of the sidebar.
+	local to = math.clamp(at + delta, 1, #items + 3)
+	if to == #items + 3 then
+		if not state.inboxOn then
+			M.openInbox(state)
+		end
+		return
+	elseif to == #items + 2 then
 		if not state.agentsOn then
 			M.openAgents(state)
 		end
@@ -1464,7 +1475,7 @@ function M.moveView(state: State, delta: number)
 	end
 	local target = items[to]
 	if target and other and ghActive.isActive(state, target) then
-		state.boardOn, state.agentsOn = false, false
+		state.boardOn, state.agentsOn, state.inboxOn = false, false, false
 	elseif target and (other or not ghActive.isActive(state, target)) then
 		M.switchView(state, target.view.id, target.login)
 	end
@@ -2099,7 +2110,7 @@ end
 
 -- Shows the Agents scope instead of a view or the Worktrees list.
 function M.openAgents(state: State)
-	state.agentsOn, state.boardOn, state.focus = true, false, "list"
+	state.agentsOn, state.boardOn, state.inboxOn, state.focus = true, false, false, "list"
 	M.agentEnsure(state)
 end
 
@@ -2126,6 +2137,91 @@ function M.agentGo(state: State, act: string?)
 	if href then
 		state.cx:open(href)
 	end
+end
+
+-- The Inbox list's rows: the unread notifications gh's active login takes part in, by repository, then newest first.
+function M.inboxRows(state: State): { github.Notice }
+	return state.inbox.rows
+end
+
+-- Reads the Inbox's notifications as gh's active login, which the rows then belong to (`inbox.login`). Without gh, or when
+-- that login cannot read notifications, the list holds the problem and no rows: nothing falls back to another login.
+function M.inboxRead(state: State)
+	local inbox = state.inbox
+	if inbox.busy or not M.alive(state) or not cli.ready() then
+		return
+	end
+	if not cli.on("github") then
+		inbox.rows, inbox.login, inbox.loaded = {}, nil, true
+		inbox.problem = { kind = "missing", message = "The GitHub CLI (gh) does not start on this host. Install it, then run: gh auth login" }
+		return
+	end
+	inbox.busy = true
+	github.login(nil, function(login: string?, problem: github.Problem?)
+		local function landed(rows: { github.Notice }?, why: github.Problem?)
+			if not M.alive(state) then
+				return
+			end
+			inbox.busy, inbox.loaded, inbox.login = false, true, login
+			local sorted: { github.Notice } = {}
+			local listed: { github.Notice } = rows or {}
+			for _, row in listed do
+				table.insert(sorted, row)
+			end
+			table.sort(sorted, function(a: github.Notice, b: github.Notice): boolean
+				if a.repo ~= b.repo then
+					return string.lower(a.repo) < string.lower(b.repo)
+				end
+				return if a.updated ~= b.updated then a.updated > b.updated else a.id < b.id
+			end)
+			inbox.rows, inbox.problem = sorted, if rows then nil else why
+			M.inboxEnsure(state)
+			state.cx:render()
+		end
+		if not login then
+			return landed(nil, problem)
+		end
+		github.notifications(login, landed)
+	end)
+end
+
+-- The picker id of an Inbox row: the thread's, so it has no `/` or `#`.
+function M.inboxId(row: github.Notice): string
+	return "n" .. row.id
+end
+
+-- The row previewed and its place in the list (nil, 0 when there is none).
+function M.inboxSelected(state: State): (github.Notice?, number)
+	for i, row in state.inbox.rows do
+		if row.id == state.inboxAt then
+			return row, i
+		end
+	end
+	return nil, 0
+end
+
+-- Keeps the preview on a listed notification while the scope is shown: the first when none is previewed or it went away.
+function M.inboxEnsure(state: State)
+	if state.inboxOn and select(2, M.inboxSelected(state)) == 0 then
+		local first = state.inbox.rows[1]
+		state.inboxAt = if first then first.id else nil
+	end
+end
+
+-- Moves the previewed notification `delta` rows, clamped to the list.
+function M.inboxMove(state: State, delta: number)
+	local rows = state.inbox.rows
+	if #rows > 0 then
+		local _, at = M.inboxSelected(state)
+		state.inboxAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].id
+	end
+end
+
+-- Shows the Inbox list instead of a view, and reads it.
+function M.openInbox(state: State)
+	state.inboxOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"
+	M.inboxEnsure(state)
+	M.inboxRead(state)
 end
 
 -- A palette command of the window about triage (`triage` event).

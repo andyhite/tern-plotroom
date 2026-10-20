@@ -953,6 +953,30 @@ windowCase("window flows: comment, close, reopen, ready for review, convert to d
 	eq(w.toasts[#w.toasts].text, "Nothing to cancel", "titled for the command")
 end)
 
+windowCase("window flows: Mark read… asks the host to plan the Inbox's threads and commits only a confirmed plan, Cancel first, with the account in the confirm", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local function plan(): any
+		w.command("inbox-read")
+		w.flush()
+		return st.reply("act", { token = "t-inbox", confirm = { head = "Mark 3 notifications read?", label = "Mark 3 read", lines = { "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" } } })
+	end
+	w.window.choose = "Cancel"
+	eq(plan().name, "inbox-read", "asks for the inbox-read plan")
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Mark 3 read", "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" }, "Cancel first, then the choice, then the account and what happens")
+	same(st.ops(), { "act" }, "Cancel commits nothing")
+	w.window.choose = "Mark 3 read"
+	plan()
+	local ops = st.ops()
+	eq(ops[#ops], "commit", "the confirming row commits")
+	eq(st.reply("commit", { ok = true, message = "Marked 3 notifications read as @octocat" }).token, "t-inbox", "with the token of that very plan")
+	eq(w.toasts[#w.toasts].text, "Marked 3 notifications read as @octocat", "the result is told")
+	w.command("inbox-read")
+	w.flush()
+	st.reply("act", { problem = "The Inbox lists no notifications to mark read." })
+	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
+end)
+
 windowCase("window flows: a Worktrees list link opens the path, or focuses the tab already there", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -2062,9 +2086,9 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
-	eq(scopes[#scopes].id, "agents", "the sidebar ends with the Agents scope")
-	eq(scopes[#scopes].label, "Agents", "named so")
-	eq(scopes[#scopes].count, 0, "with no agent to count")
+	eq(scopes[#scopes - 1].id, "agents", "the sidebar's last but one scope is the Agents scope")
+	eq(scopes[#scopes - 1].label, "Agents", "named so")
+	eq(scopes[#scopes - 1].count, 0, "with no agent to count")
 	asks.hx.agents(b, {
 		["o/r#1"] = { state = "working", action = "Review", branch = "fix-1", title = "Fix one" },
 		["o/r#2"] = "waiting_input", -- a link saved before the texts were recorded
@@ -2072,7 +2096,7 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 		["x/y#4"] = { state = "idle", action = "Watch", title = "Other" },
 	})
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes].count, 3, "the exited agent is not counted")
+	eq(scopes[#scopes - 1].count, 3, "the exited agent is not counted")
 	pickScope(b, "agents")
 	w.flush()
 	eq(pickerOf(b).scope, "agents", "opening it makes it the active scope")
@@ -2157,9 +2181,9 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	local s = asks.hx.boardScene(w)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 1].id, "worktrees", "the sidebar's last but one scope is the Worktrees scope")
-	eq(scopes[#scopes - 1].label, "Worktrees list", "named so")
-	eq(scopes[#scopes - 1].count, nil, "with no count until it was read")
+	eq(scopes[#scopes - 2].id, "worktrees", "the sidebar's third-last scope is the Worktrees scope")
+	eq(scopes[#scopes - 2].label, "Worktrees list", "named so")
+	eq(scopes[#scopes - 2].count, nil, "with no count until it was read")
 	eq(pickerOf(b).scope, "prs:v1", "the view is the active scope")
 	pickScope(b, "worktrees")
 	w.flush()
@@ -2167,7 +2191,7 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	eq(pickerOf(b).noun, "worktrees", "the board lists worktrees")
 	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "every checkout's worktrees, grouped by repository, the other repository's too")
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 1].count, 5, "the scope counts them")
+	eq(scopes[#scopes - 2].count, 5, "the scope counts them")
 	has(asks.hx.badges(b, "o/r/main"), "Main", "the main worktree is marked")
 	has(asks.hx.badges(b, "x/y/main"), "Main", "in every repository")
 	has(asks.hx.badges(b, "o/r/lk"), "Locked", "a locked worktree is marked")

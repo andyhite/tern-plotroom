@@ -81,6 +81,19 @@ local function queueAction(state: State, act: string): boolean
 	return true
 end
 
+-- Shows the previewed Inbox notification's pull request or issue in the block, as a linked pull request's row does; a
+-- thread that is about neither (CI, a release) says so.
+local function openNotice(state: State)
+	local row = engine.inboxSelected(state)
+	if not row then
+		return
+	elseif not row.url then
+		state.cx:toast("info", "Nothing to show", "That notification is not about a pull request or an issue.")
+	else
+		requests.show(state, row.url)
+	end
+end
+
 -- The block: one engine for pull request and issue views alike, each taking its search, details and wording from its kind.
 local function blockDef(): BlockDef<State>
 	-- The worktree card's helpers (summaryOf to removeNow) live here, not in a host/ layer: they share this block's
@@ -462,6 +475,9 @@ local function blockDef(): BlockDef<State>
 				agentInfo = {},
 				agentsOn = false,
 				agentAt = nil,
+				inboxOn = false,
+				inboxAt = nil,
+				inbox = { login = nil, rows = {}, problem = nil, busy = false, loaded = false },
 				plan = nil,
 				draft = nil,
 				imported = nil,
@@ -716,6 +732,45 @@ local function blockDef(): BlockDef<State>
 					return false
 				end)
 			end
+			if state.inboxOn then
+				-- The Inbox list: its rows take the list keys and Enter shows the notification's pull request or issue.
+				local onScopes = state.focus == "scopes"
+				local iact = if plain then keys.action((keys.load()), k) else nil
+				if name == "tab" and plain then
+					state.focus = if onScopes then "list" else "scopes"
+				elseif name == "escape" then
+					if onScopes then
+						state.focus = "list"
+					else
+						return false
+					end
+				elseif name == "up" or iact == "up" then
+					if onScopes then
+						moveView(state, -1)
+					else
+						engine.inboxMove(state, -1)
+					end
+				elseif name == "down" or iact == "down" then
+					if onScopes then
+						moveView(state, 1)
+					else
+						engine.inboxMove(state, 1)
+					end
+				elseif name == "page_up" or name == "page_down" then
+					engine.inboxMove(state, if name == "page_up" then -10 else 10)
+				elseif name == "enter" then
+					if onScopes then
+						state.focus = "list"
+					else
+						openNotice(state)
+					end
+				elseif iact == "refresh" or iact == "settings" or iact == "help" or iact == "more" then
+					queueAction(state, iact)
+				else
+					return false
+				end
+				return true
+			end
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"
 			-- The queue action the key is (Settings › Keyboard shortcuts). While searching it is text, and with ctrl, alt or meta it is no shortcut.
@@ -963,6 +1018,18 @@ local function blockDef(): BlockDef<State>
 					leaveEdit(s)
 				end
 				if ev.ev == "select" or ev.ev == "activate" then
+					if state.inboxOn then
+						-- The Inbox list's rows are not the queue's items either.
+						for _, r in engine.inboxRows(state) do
+							if item and engine.inboxId(r) == item then
+								state.inboxAt, state.focus = r.id, "list"
+								if ev.ev == "activate" then
+									openNotice(state)
+								end
+							end
+						end
+						return
+					end
 					if state.agentsOn then
 						-- The Agents scope's rows are not the queue's items either.
 						for _, r in engine.agentRows(state) do

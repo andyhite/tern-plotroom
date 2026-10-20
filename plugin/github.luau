@@ -1221,9 +1221,9 @@ local reading: { [string]: { (any, Problem?) -> () } } = {}
 local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (any, Problem?) -> ())
 	local hit = kept[key]
 	if hit then
-		local value = hit.value
+		local value, answer = hit.value, done -- `done` is replaced below when the value is old: the timer must keep the caller's
 		tern.timer(0, function()
-			done(value, nil)
+			answer(value, nil)
 		end)
 		if os.time() - hit.at < LIST_TTL_S or reading[key] then
 			return
@@ -1734,4 +1734,135 @@ function M.issueItem(repo: string, number: number, account: string?, done: (trac
 		done(issue, nil)
 	end)
 end
+
+-- ---------------------------------------------------------------- notifications inbox
+
+-- One unread, participating notification thread: `id` the thread's (digits), `reason` GitHub's (review_requested,
+-- mention, ci_activity, ...), `kind` "pr" | "issue" | "other" and, for the first two, `number` and `url` (the page).
+export type Notice = { id: string, repo: string, title: string, reason: string, kind: string, number: number?, url: string?, updated: number }
+
+local NOTICE_CAP = 50 -- one page: ponytail: more unread threads than this are left to github.com until they are read
+local NOTICE_POLL_S = 60 -- X-Poll-Interval's default
+local SUBJECT = { pulls = "pull", issues = "issues" }
+
+-- The Notices of the notifications answer's JSON `raw`: a thread that is malformed is left out; the repository, the
+-- reason and the title are untrusted text (cleaned and cut). A pull request or issue subject carries its number and page.
+function M.parseNotices(raw: any): { Notice }
+	local out: { Notice } = {}
+	if type(raw) ~= "table" then
+		return out
+	end
+	for _, t in raw do
+		local subject, repository = field(t, "subject"), field(t, "repository")
+		local id, repo, title, reason = field(t, "id"), field(repository, "full_name"), field(subject, "title"), field(t, "reason")
+		if type(id) == "string" and string.match(id, "^%d+$") and #id <= 20 and repoArg(repo) and type(title) == "string" and type(reason) == "string" and string.match(reason, "^[%l_]+$") then
+			local kind: string, number: number?, url: string? = "other", nil, nil
+			local seg, n = string.match(nonEmpty(field(subject, "url")) or "", "^https://api%.github%.com/repos/[%w%-_%.]+/[%w%-_%.]+/(%a+)/(%d+)$")
+			local page = if seg then SUBJECT[seg] else nil
+			local num = tonumber(n)
+			if page and num and whole32(num) then
+				kind, number, url = if page == "pull" then "pr" else "issue", num, "https://github.com/" .. repo .. "/" .. page .. "/" .. num
+			end
+			table.insert(out, { id = id, repo = repo, title = input.clean(string.sub(title, 1, 200)), reason = string.sub(reason, 1, 40), kind = kind, number = number, url = url, updated = stamp(field(t, "updated_at")) or 0 })
+			if #out == NOTICE_CAP then
+				break
+			end
+		end
+	end
+	return out
+end
+
+-- Status code, headers (lower-case names) and body of the last block of a `gh api --include` answer.
+local function response(text: string): (number?, { [string]: string }, string)
+	local rest = string.gsub(text, "\r\n", "\n")
+	local status: number? = nil
+	local headers: { [string]: string } = {}
+	while string.sub(rest, 1, 5) == "HTTP/" do
+		local cut = string.find(rest, "\n\n", 1, true)
+		local head = if cut then string.sub(rest, 1, cut - 1) else rest
+		rest = if cut then string.sub(rest, cut + 2) else ""
+		status, headers = tonumber(string.match(head, "^HTTP/[%d%.]+ (%d+)")), {}
+		for line in string.gmatch(head, "[^\n]+") do
+			local k, v = string.match(line, "^([%w%-]+):%s*(.-)%s*$")
+			if k and v then
+				headers[string.lower(k)] = v
+			end
+		end
+	end
+	return status, headers, rest
+end
+
+-- What each login's last read answered: its Last-Modified (sent back as If-Modified-Since), the notices and the epoch second
+-- before which GitHub asks not to read again (X-Poll-Interval). One per runtime, as the search quota is.
+local inboxes: { [string]: { lastModified: string?, notices: { Notice }, nextAt: number } } = {}
+
+-- The notices of gh login `account` that are unread and that it takes part in, newest first; done(notices, problem).
+-- Within X-Poll-Interval of the last answer nothing is sent; after it the read is conditional, so an unchanged inbox
+-- (304) answers from memory and costs no quota. A login that cannot read notifications is told the `gh auth refresh`
+-- that grants it; nothing falls back to another login. done never runs before this returns.
+function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
+	local known = inboxes[account]
+	local now = os.time()
+	if known and now < known.nextAt then
+		return later(function()
+			done(known.notices, nil)
+		end)
+	end
+	local args = { "api", "--hostname", "github.com", "--include" }
+	if known and known.lastModified then
+		table.insert(args, "-H")
+		table.insert(args, "If-Modified-Since: " .. known.lastModified)
+	end
+	table.insert(args, "notifications?participating=true&per_page=" .. NOTICE_CAP)
+	M.gh(args, function(out, problem, _, raw)
+		local body = observe(out, raw, problem, account)
+		local status, headers = response(out or raw or "")
+		local at = os.time()
+		local poll = whole(headers["x-poll-interval"] or "") or NOTICE_POLL_S
+		if known and (status == 304 or (problem and string.find(problem.message, "HTTP 304", 1, true))) then
+			known.nextAt = at + poll
+			return done(known.notices, nil)
+		elseif not out then
+			local p: Problem = problem or { kind = "failed", message = "gh did not answer." }
+			if p.kind == "auth" or p.kind == "not-found" then
+				p = { kind = "auth", message = "@" .. account .. " cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" }
+			end
+			return done(nil, p)
+		end
+		local ok, data = pcall(tern.json.decode, body)
+		if not ok or type(data) ~= "table" then
+			return done(nil, { kind = "failed", message = "gh printed something other than the notifications." })
+		end
+		local notices = M.parseNotices(data)
+		inboxes[account] = { lastModified = headers["last-modified"], notices = notices, nextAt = at + poll }
+		done(notices, nil)
+	end, account)
+end
+
+-- Marks the notification threads `ids` (digit strings, as Notice.id) read as gh login `account`, one request each, stopping
+-- at the first that fails; done(problem, marked) with how many were marked. Read, never done: the thread stays in
+-- GitHub's inbox. The login's remembered read is dropped, so the next one is unconditional.
+function M.markRead(ids: { string }, account: string, done: (Problem?, number) -> ())
+	local marked = 0
+	local function step()
+		local id = ids[marked + 1]
+		if id == nil then
+			inboxes[account] = nil
+			return done(nil, marked)
+		elseif not string.match(id, "^%d+$") or #id > 20 then
+			inboxes[account] = nil
+			return done(bad("Unexpected notification thread."), marked)
+		end
+		M.gh({ "api", "--hostname", "github.com", "--method", "PATCH", "notifications/threads/" .. id }, function(_, problem)
+			if problem then
+				inboxes[account] = nil
+				return done(problem, marked)
+			end
+			marked += 1
+			step()
+		end, account)
+	end
+	later(step)
+end
+
 return M

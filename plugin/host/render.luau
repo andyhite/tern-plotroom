@@ -1003,10 +1003,19 @@ function M.scopeRows(state: State): ({ any }, string?)
 		count = if not dropdown then #engine.agentRows(state) else nil,
 		group = if grouped then "Agents" else nil,
 	})
+	table.insert(scopes, {
+		id = "inbox",
+		label = "Inbox",
+		icon = "inbox",
+		count = if not dropdown and state.inbox.loaded then #engine.inboxRows(state) else nil,
+		group = if grouped then "Inbox" else nil,
+	})
 	if state.boardOn then
 		activeScope = "worktrees"
 	elseif state.agentsOn then
 		activeScope = "agents"
+	elseif state.inboxOn then
+		activeScope = "inbox"
 	end
 	return scopes, activeScope
 end
@@ -1208,6 +1217,114 @@ local function agentsProps(state: State, props: { [string]: any })
 	})
 end
 
+-- What GitHub's notification reasons say, and how much each wants you; any other reason is shown as GitHub spelled it.
+local REASON: { [string]: { text: string, tone: string } } = {
+	review_requested = { text = "Review requested", tone = "accent" },
+	mention = { text = "Mention", tone = "accent" },
+	team_mention = { text = "Team mention", tone = "accent" },
+	assign = { text = "Assigned", tone = "accent" },
+	approval_requested = { text = "Approval requested", tone = "accent" },
+	ci_activity = { text = "CI", tone = "warning" },
+	security_alert = { text = "Security alert", tone = "warning" },
+	author = { text = "Your item", tone = "muted" },
+	comment = { text = "Comment", tone = "muted" },
+	state_change = { text = "State change", tone = "muted" },
+	subscribed = { text = "Subscribed", tone = "muted" },
+	manual = { text = "Subscribed by you", tone = "muted" },
+}
+local function reasonOf(reason: string): { text: string, tone: string }
+	local known = REASON[reason]
+	if known then
+		return known
+	end
+	local words = string.gsub(reason, "_", " ")
+	return { text = string.upper(string.sub(words, 1, 1)) .. string.sub(words, 2), tone = "muted" }
+end
+
+-- The Inbox list's preview of the selected notification: its title, why it is listed, and what it is about.
+local function inboxPreview(state: State): { Node }
+	local row = engine.inboxSelected(state)
+	if not row then
+		return {}
+	end
+	local why = reasonOf(row.reason)
+	local about = if row.kind == "pr" then "Pull request #" .. tostring(row.number) elseif row.kind == "issue" then "Issue #" .. tostring(row.number) else "Not a pull request or issue"
+	return {
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "title", spans = { ui.span(printable(row.title), "strong") } }),
+			ui.node("badge", { key = "reason", text = why.text, tone = why.tone }),
+		}),
+		ui.node("kv", {
+			key = "facts",
+			items = withValue({
+				{ k = "Repository", v = { ui.span(printable(row.repo), "mono") } },
+				{ k = "About", v = { ui.span(about) } },
+				{ k = "Updated", v = if row.updated > 0 then { ui.span(os.date("%Y-%m-%d %H:%M", row.updated)) } else nil },
+			}),
+		}),
+		ui.node("text", { key = "enter", spans = { ui.span(if row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it.", "muted") } }),
+	}
+end
+
+-- Turns the queue's picker props into the Inbox list's: a group per repository, each notification's title, reason and item.
+local function inboxProps(state: State, props: { [string]: any })
+	local inbox = state.inbox
+	local rows = engine.inboxRows(state)
+	local current = engine.inboxSelected(state)
+	local map = keys.load()
+	local items: { any } = {}
+	local order: { any } = {}
+	local groups: { [string]: { any } } = {}
+	local names: { string } = {}
+	for _, row in rows do
+		local label = printable(row.title)
+		local why = reasonOf(row.reason)
+		local detail: { any } = { ui.span(why.text) }
+		if row.number then
+			table.insert(detail, " · ")
+			table.insert(detail, ui.span("#" .. row.number, "num"))
+		end
+		local id = engine.inboxId(row)
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { { text = why.text, tone = why.tone, title = "GitHub notified you: " .. why.text } } })
+		if not groups[row.repo] then
+			groups[row.repo] = {}
+			table.insert(names, row.repo)
+		end
+		table.insert(groups[row.repo], id)
+	end
+	for _, name in names do
+		table.insert(order, { group = name, label = printable(name), count = #groups[name] })
+		for _, id in groups[name] do
+			table.insert(order, id)
+		end
+	end
+	local sub: { any } = {}
+	if inbox.busy then
+		local busy: any = ui.span("Reading notifications…", "muted")
+		busy.fx = "shimmer"
+		table.insert(sub, busy)
+	elseif inbox.loaded and not inbox.problem then
+		table.insert(sub, ui.span(#rows .. " unread notification" .. (if #rows == 1 then "" else "s") .. (if inbox.login then " for @" .. inbox.login else ""), "muted"))
+		if #rows > 0 then
+			table.insert(sub, ui.span(" · Commands › Mark read… marks them read", "muted"))
+		end
+	end
+	props.icon, props.title, props.noun = "inbox", { ui.span("Inbox", "strong") }, "notifications"
+	props.subtitle = if #sub > 0 then sub else nil
+	props.placeholder = "Notifications are not searched"
+	props.state = if inbox.problem then "error" elseif not inbox.loaded then "loading" else "ready"
+	props.message = if inbox.problem then spans(ui.span("Inbox", "strong"), "  ", printable(inbox.problem.message)) else nil
+	props.empty = { ui.span("Nothing unread needs you: no review requests, mentions or other threads you take part in.", "muted") }
+	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
+	props.selected = if current then engine.inboxId(current) else nil
+	props.columns, props.query, props.cursor = {}, nil, nil
+	props.actions = keyed({
+		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
+		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
+		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true },
+	})
+end
+
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
@@ -1316,7 +1433,7 @@ function M.queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and #strip > 0 then ".footer-status" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and not state.inboxOn and #strip > 0 then ".footer-status" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1364,6 +1481,10 @@ function M.queuePicker(state: State): Node
 		cancelDetails(state)
 		preview = agentsPreview(state)
 		agentsProps(state, props)
+	elseif state.inboxOn then
+		cancelDetails(state)
+		preview = inboxPreview(state)
+		inboxProps(state, props)
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
 		if #strip > 0 then

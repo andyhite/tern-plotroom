@@ -32,7 +32,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "24" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "25" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -929,7 +929,7 @@ local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typ
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
 -- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue); the provider-only headings (GitHub,
 -- Jira) are for what needs no item.
-local GROUPS = { "Saved actions", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Triage", "Filter & Sort", "Views", "Worktree", "GitHub", "Jira", "Configuration" }
+local GROUPS = { "Saved actions", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "GitHub", "Jira", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
 -- listed: the host names the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`

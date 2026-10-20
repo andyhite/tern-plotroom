@@ -15,6 +15,7 @@ require("./cases/checks")
 require("./cases/issues")
 require("./cases/mutation")
 require("./cases/flows")
+require("./cases/inbox")
 
 type Loader = h.Loader
 

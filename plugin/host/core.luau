@@ -159,6 +159,10 @@ export type Settings = {
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title.
 export type AgentInfo = { action: string?, branch: string?, title: string? }
 
+-- The Inbox list's model: the notifications gh's active login was last read to have (`login`: whose), why they could not be
+-- read (`problem`), whether a read is running and whether one has answered.
+export type Inbox = { login: string?, rows: { github.Notice }, problem: github.Problem?, busy: boolean, loaded: boolean }
+
 export type State = {
 	cx: BlockCx,
 	kind: Kind, -- the active view's, as identify keeps it (a block with no view keeps its last)
@@ -211,6 +215,9 @@ export type State = {
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view
 	agentAt: string?, -- the item key of the Agents row previewed
+	inboxOn: boolean, -- the Inbox list is shown instead of a view
+	inboxAt: string?, -- the thread id of the Inbox row previewed
+	inbox: Inbox,
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	imported: any, -- the parsed import waiting for its choices, nil: none
@@ -599,7 +606,7 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "24"
+M.RPC_PROTOCOL = "25"
 
 -- Open in Git: the link of the worktree the card (or the Worktrees list's selected row) offers; its hidden node `git`
 -- under `buttons` carries it, and the window asks the host for the path (rpc `git-path`).

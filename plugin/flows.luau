@@ -716,6 +716,11 @@ local function cancelRun(cx: WindowCx, pane: number)
 	runAction(cx, pane, "cancel-run", "Nothing to cancel", "No queued or running workflow runs", "Which running workflow run to cancel?")
 end
 
+-- The Inbox list's notifications marked read: the host names the listed threads and the account in the confirm.
+local function inboxRead(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Not marked read", { name = "inbox-read" })
+end
+
 local function issueClose(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Issue not closed", { name = "issue-close" })
 end
@@ -1233,6 +1238,7 @@ export type Command = { id: string, title: string, label: string, group: string?
 
 M.COMMANDS = {
 	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
+	{ id = "inbox-read", title = "Plotroom: Mark the Inbox's notifications read", label = "Mark read…", group = "Inbox", run = inboxRead },
 	{
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
