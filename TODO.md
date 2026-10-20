@@ -4,6 +4,20 @@
 
 ## Todo
 
+- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
+  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
+  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
+  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
+  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
+  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
+  - Base: main
+  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
+  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
+  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
+  - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
+  - Fix: rebase onto main - conflicts in plugin/tests/cases/window.luau (main's agent-chains/interrupt cases touched the same area) - resolve on the item branch; the review of the code itself found no defects.
+  - Review attempts: 2
+
 ## In-Progress
 
 ## Blocked
@@ -36,19 +50,6 @@
   - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
   - Review attempts: 1
   - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
-
-- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
-  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
-  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
-  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
-  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
-  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
-  - Base: main
-  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
-  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
-  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
-  - Review attempts: 1
-  - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
 
 - [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
   - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
