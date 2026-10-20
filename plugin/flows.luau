@@ -419,9 +419,6 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not writeLinks(out) then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The agent links could not be saved.")
 	end
-	pcall(function()
-		cx.session:event(pane, { ev = "action", act = "agent-link", value = tern.json.encode({ key = key, agent = agent }) })
-	end)
 	M.agentSync(cx)
 	M.ensureSync(cx)
 end

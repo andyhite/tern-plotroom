@@ -110,7 +110,7 @@ end
 
 -- The agent picker's rows: `offered`, each with its id so a prompt's run link can name it. With `only`, just that
 -- prompt, so a shortcut never misses its prompt to the picker's size budget. With `palette`, the command palette's
--- queue actions too (M.paletteActions).
+-- queue actions too (M.paletteActions), and no prompt text: the palette shows names and runs actions through their links.
 local function menu(state: State, id: string, only: string?, palette: boolean)
 	local list, problem = offered(state)
 	local active = activeView(state)
@@ -125,7 +125,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			label = clip(printable(p.name), 120),
 			detail = clip(printable((if p.model then p.model .. " · " else "") .. (string.match(p.text, "^%s*([^\n]*)") or "")), 160),
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All actions",
-			send = p.text,
+			send = if palette then nil else p.text,
 			model = p.model,
 			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
@@ -1334,7 +1334,9 @@ function M.draft(state: State, id: string, q: any)
 							return done({ problem = M.whyOf(problem2) })
 						end
 						if alive(state) then
-							state.draft = nil
+							if state.draft == d then -- a draft previewed meanwhile is not the one this plan made
+								state.draft = nil
+							end
 							M.show(state, url, true)
 							state.cx:save() -- landed outside an event: persist the pin now
 							state.cx:render()
@@ -1882,7 +1884,8 @@ end
 -- The queue actions the command palette offers now, in its order, each with its label, key ("": none) and group (and, for
 -- a scope, the sidebar group it sits under as `detail`): the selected item's, then the view's, every sidebar scope
 -- (`scope:<id>`, shown by engine.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
--- its own rows' actions, Refresh, the scopes, Settings and the shortcut list.
+-- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
+-- Settings and the shortcut list.
 function M.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
 	local map = keys.load()
 	local labels: { [string]: string } = { unpin = "Unpin" }
@@ -1900,13 +1903,10 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	end
 	local item = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state)
 	labels.agentint, labels.agentstop, labels.agentmsg = "Interrupt agent", "Stop agent…", "Message agent…"
-	local function addAgentCommands()
+	local function addAgentCommands(group: string)
 		for _, id in { "agentint", "agentstop", "agentmsg" } do
-			add(id, "Saved actions")
+			add(id, group)
 		end
-	end
-	if state.agentsOn and engine.agentSelected(state) then
-		addAgentCommands()
 	end
 	if item then
 		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
@@ -1940,8 +1940,18 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			add("agentgo", "Saved actions")
 		end
 		if state.agents[item.key] and state.agents[item.key] ~= "exited" then
-			addAgentCommands()
+			addAgentCommands("Saved actions")
 		end
+	end
+	if state.agentsOn then
+		if select(2, engine.agentSelected(state)) > 0 then
+			add("agentgo", "Agents")
+			addAgentCommands("Agents")
+		end
+		views()
+		add("settings", "Configuration")
+		add("help", "Configuration")
+		return out
 	end
 	if state.boardOn then
 		local row = engine.boardSelected(state)

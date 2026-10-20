@@ -1183,6 +1183,18 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
+case("host: the command palette's menu answer carries no prompt text, the picker's still does", function(w: World)
+	hostScene(w, 2)
+	local b = openQueue(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
+	request(b, "m1", { op = "menu", palette = true })
+	w.flush()
+	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", worktree = true } }, "names and details only")
+	request(b, "m2", { op = "menu" })
+	w.flush()
+	eq(answerOf(b, "m2").items[1].send, "Review {url}\nthen report", "the picker's menu keeps the text")
+end)
+
 windowCase("window: an agent run notes its worktree on the block as the Worktree key does, and the card replaces the failure before it", function(w: World)
 	local s, b = agentScene(w)
 	w.window.choose, w.window.typed = "Type a prompt…", "go"

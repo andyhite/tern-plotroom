@@ -942,9 +942,8 @@ end
 local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
--- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue); the provider-only headings (GitHub,
--- Jira) are for what needs no item.
-local GROUPS = { "Saved actions", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "GitHub", "Jira", "Configuration" }
+-- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue).
+local GROUPS = { "Saved actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
 -- listed: the host names the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`

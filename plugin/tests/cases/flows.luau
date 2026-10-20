@@ -2191,6 +2191,27 @@ case("host draft: the commit is refused when the remote's copy of the branch cha
 	eq(#seen, 0, "and nothing created")
 end)
 
+case("host draft: a draft previewed again while the commit pushes does not stop the commit", function(w: World)
+	local s = asks.hx.draftScene(w)
+	local created = "https://github.com/o/r/pull/21"
+	asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "pr create", 1, true) then
+			return { stdout = created .. "\n" }
+		end
+		return nil
+	end)
+	s.gh.pulls[created] = searchItem(21, "o/r", EPOCH - 10, { title = "Fix login flow", isDraft = true })
+	local b = openIssues(w)
+	local pv = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
+	local plan = asks.hx.ask(w, b, { op = "draft", phase = "plan", token = pv.token, title = "T", body = "B" })
+	request(b, "late", { op = "commit", token = plan.token })
+	local again = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
+	w.flush()
+	eq(answerOf(b, "late").ok, true, "the commit went through")
+	yes(again.token ~= pv.token, "the second preview is a draft of its own")
+	eq(pickerOf(b).scopes[1].label, "o/r#21", "and the new pull request is pinned")
+end)
+
 case("host mutations: with no known GitHub account every GitHub plan refuses and spawns nothing", function(w: World)
 	local s = asks.hx.draftScene(w)
 	s.gh.items.octocat = manyItems("o/r", 2)
@@ -2320,6 +2341,35 @@ case("host agents: Interrupt, Stop and Message agent are palette rows and hidden
 	eq(w.opened[#w.opened], prLink("agentint", "o/r", 1), "and the pick opens it")
 	asks.hx.agents(b, {})
 	yes(not has3(hx.palette(w, b)), "no agent listed: no rows")
+end)
+
+case("host agents: the palette on the Agents list offers Go to agent, the views, Settings and help, and no queue row", function(w: World)
+	hostScene(w, 3)
+	w.kv.store.keys = nil :: any
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", title = "Fix one" } })
+	pickScope(b, "agents")
+	w.flush()
+	local p = hx.palette(w, b)
+	local expected: { string } = { "agentgo", "agentint", "agentstop", "agentmsg" }
+	for _, scope in pickerOf(b).scopes do
+		table.insert(expected, "scope:" .. scope.id)
+	end
+	table.insert(expected, "settings")
+	table.insert(expected, "help")
+	same(p.ids, expected, "Go to agent and the agent commands, then every scope, Settings and help")
+	eq(p.groups.agentgo, "Agents", "Go to agent is the Agents group")
+	eq(p.groups.agentstop, "Agents", "so are the agent commands")
+	for _, id in { "snooze", "snoozed", "attention", "sort", "search", "refresh", "seen" } do
+		eq(table.find(p.ids, id), nil, id .. " is not offered")
+	end
+	local opened = #w.opened
+	b.event({ ev = "action", act = "queue", value = "snooze" })
+	eq(#w.opened, opened, "a queue row sent anyway does nothing")
+	b.event({ ev = "action", act = "queue", value = "agentgo" })
+	eq(w.opened[#w.opened], "plotroom://github/agentgo/o/r/1", "Go to agent follows the selected row's link")
+	asks.hx.agents(b, { ["o/r#1"] = "exited" })
+	eq(table.find(hx.palette(w, b).ids, "agentgo"), nil, "with no agent row there is nothing to go to")
 end)
 
 case("host agents: agent-status drops texts that are not clean strings within their caps", function(w: World)

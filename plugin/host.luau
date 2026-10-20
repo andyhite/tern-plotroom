@@ -883,12 +883,8 @@ local function blockDef(): BlockDef<State>
 				requests.show(state, ev.value)
 			elseif act == "agent-status" then
 				engine.agentStatus(state, ev.value)
-			elseif act == "agent-link" then
-				-- The window keeps the link itself; its states arrive as `agent-status`.
 			elseif act == "triage" then
 				engine.triageEvent(state, ev.value)
-			elseif act == "seen" then
-				engine.mark(state, "seen")
 			elseif act == "sort" then
 				settings.cycleSort(state)
 			elseif act == "open-worktrees" then
