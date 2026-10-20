@@ -26,7 +26,7 @@ local INTEGRATIONS, KINDS, SETTINGS_ID, clip, groupsOf, printable, cli = core.IN
 local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId, nextOf = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId, storage.nextOf
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
 local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
-local accountOf, activeView, alive, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.alive, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
+local accountOf, activeView, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
 local propagate, retry, snapKey, switchView, trackerOf, viewOf, waitOf, ghActive = engine.propagate, engine.retry, engine.snapKey, engine.switchView, engine.trackerOf, engine.viewOf, engine.waitOf, engine.ghActive
 local helpOverlay, paceLine, queuePicker, rpcNodes = render.helpOverlay, render.paceLine, render.queuePicker, render.rpcNodes
 
@@ -84,6 +84,18 @@ local function pageContent(state: State): ({ any }, { Node })
 		else
 			sections[#sections].id = "form:" .. id
 		end
+	end
+	-- A list row of the open form's kind: closed, a summary row (`prefix` .. `id`) with an Edit button and the hint `hint()`
+	-- says, and true; open, the form's card and the row that closes it (Edit turns Done in place), and false. The form's
+	-- delete button sits right after Done in key order; plotroom.css draws it left of Done, on the summary row.
+	local function summary(prefix: string, id: string, label: string, hint: () -> string): boolean
+		if s.open ~= id then
+			row({ id = prefix .. id, label = label, hint = clip(printable(hint()), 120), control = { k = "action", act = "expand", label = "Edit" } })
+			return true
+		end
+		openCard(id)
+		row({ id = prefix .. id, label = label, control = { k = "action", act = "collapse", label = "Done" } })
+		return false
 	end
 	if s.page == "views" then
 		-- The saved prompts of each kind, read once: a view offers those of its own kind.
@@ -143,18 +155,11 @@ local function pageContent(state: State): ({ any }, { Node })
 				local list = promptLists[v.kind]
 				local locked = state.locked[v.kind]
 				local name = v.name .. (if v.id == state.activeId then " · active" else "")
-				if s.open ~= v.id then
-					row({
-						id = "vopen:" .. v.id,
-						label = name,
-						hint = clip(printable(kind.label .. " · " .. v.query), 120),
-						control = { k = "action", act = "expand", label = "Edit" },
-					})
+				if summary("vopen:", v.id, name, function()
+					return kind.label .. " · " .. v.query
+				end) then
 					continue
 				end
-				openCard(v.id)
-				row({ id = "vopen:" .. v.id, label = name, control = { k = "action", act = "collapse", label = "Done" } })
-				-- Right after Done in key order; plotroom.css draws its button left of Done, on the summary row.
 				row({ id = "delete:" .. v.id, label = "Delete view", disabled = locked, control = { k = "action", act = "delete", label = "Delete" } })
 				row({ id = "name:" .. v.id, label = "Name", disabled = locked, control = { k = "text", value = v.name, placeholder = if v.kind == "issues" then "Assigned to me" else "My PRs" } })
 				-- Its integration and logins are its group's; Type only where the other kind has its integration.
@@ -239,22 +244,15 @@ local function pageContent(state: State): ({ any }, { Node })
 			for _, p in list do
 				local qid = kind.id .. ":" .. p.id
 				local first = string.match(p.text, "^%s*([^\n]*)") or ""
-				if s.open ~= qid then
+				if summary("popen:", qid, p.name, function()
 					local parts: { string } = { if first ~= "" then first else "Empty" }
 					if p.model then
 						table.insert(parts, p.model)
 					end
-					row({
-						id = "popen:" .. qid,
-						label = p.name,
-						hint = clip(printable(table.concat(parts, " · ")), 120),
-						control = { k = "action", act = "expand", label = "Edit" },
-					})
+					return table.concat(parts, " · ")
+				end) then
 					continue
 				end
-				openCard(qid)
-				row({ id = "popen:" .. qid, label = p.name, control = { k = "action", act = "collapse", label = "Done" } })
-				-- Right after Done in key order; plotroom.css draws its button left of Done, on the summary row.
 				row({ id = "pdelete:" .. qid, label = "Delete action", control = { k = "action", act = "delete", label = "Delete" } })
 				row({ id = "pname:" .. qid, label = "Name", control = { k = "text", value = p.name, placeholder = "Review" } })
 				row({
@@ -390,7 +388,7 @@ local function pageContent(state: State): ({ any }, { Node })
 			local mapped = if type(path) == "string" and path ~= "" then path else nil
 			local fmt = if repoFormats then formats.repoOf(repo) else nil
 			local cmds: { string } = if setups then setupOf(setups, repo) else {}
-			if s.open ~= repo then
+			if summary("ropen:", repo, repo, function()
 				local parts: { string } = { mapped or "No local checkout" }
 				if fmt then
 					table.insert(parts, fmt)
@@ -398,17 +396,10 @@ local function pageContent(state: State): ({ any }, { Node })
 				if #cmds > 0 then
 					table.insert(parts, #cmds .. (if #cmds == 1 then " setup command" else " setup commands"))
 				end
-				row({
-					id = "ropen:" .. repo,
-					label = repo,
-					hint = clip(printable(table.concat(parts, " · ")), 120),
-					control = { k = "action", act = "expand", label = "Edit" },
-				})
+				return table.concat(parts, " · ")
+			end) then
 				continue
 			end
-			openCard(repo)
-			row({ id = "ropen:" .. repo, label = repo, control = { k = "action", act = "collapse", label = "Done" } })
-			-- Right after Done in key order; plotroom.css draws its button left of Done, on the summary row.
 			row({ id = "rremove:" .. repo, label = "Remove repository", control = { k = "action", act = "delete", label = "Remove" } })
 			row({
 				id = "checkout:" .. repo,
@@ -469,18 +460,11 @@ local function pageContent(state: State): ({ any }, { Node })
 		section("projects")
 		for _, key in keys do
 			local repos = jiraReposOf(key)
-			if s.open ~= key then
-				row({
-					id = "jopen:" .. key,
-					label = key,
-					hint = clip(printable(if #repos > 0 then table.concat(repos, ", ") else "No repositories"), 120),
-					control = { k = "action", act = "expand", label = "Edit" },
-				})
+			if summary("jopen:", key, key, function()
+				return if #repos > 0 then table.concat(repos, ", ") else "No repositories"
+			end) then
 				continue
 			end
-			openCard(key)
-			row({ id = "jopen:" .. key, label = key, control = { k = "action", act = "collapse", label = "Done" } })
-			-- Right after Done in key order; plotroom.css draws its button left of Done, on the summary row.
 			row({ id = "jremove:" .. key, label = "Remove project", disabled = unreadable, control = { k = "action", act = "delete", label = "Remove" } })
 			row({
 				id = "jrepos:" .. key,
@@ -581,6 +565,23 @@ local PROMPT_FIELD = SETTINGS_ID .. ".prompt.draft"
 local function focusPrompt(state: State, on: boolean)
 	local op: { any } = { "focus", if on then PROMPT_FIELD else tern.json.null }
 	state.cx:frame({ op })
+end
+
+-- Edits prompt `qid` ("<kind id>:<id in that kind's store>") under editPrompts: `fn(store, prompt, kind, saved id)` returns an
+-- error message or nil. A prompt gone elsewhere is "That action was deleted elsewhere.", or with `quiet` no change.
+local function editPrompt(qid: string, fn: (Prompts, Prompt, Kind, string) -> string?, quiet: boolean?): string?
+	local gone = if quiet then nil else "That action was deleted elsewhere."
+	local pk, pid = kindAndId(qid)
+	if not pk then
+		return gone
+	end
+	return editPrompts(pk, function(store: Prompts): string?
+		local p = promptById(store, pid)
+		if not p then
+			return gone
+		end
+		return fn(store, p, pk, pid)
+	end)
 end
 
 -- Opens a text row for editing, or a prompt's text (its "ptext:" row) in the multi-line editor card.
@@ -883,18 +884,14 @@ function M.setValue(state: State, row: string, value: any)
 		return
 	end
 	if kind == "pnext" then
-		local pk, pid = kindAndId(id)
-		if not pk or not choice then
+		if not choice then
 			return
 		end
 		local to: string? = if choice == "none" then nil else choice
-		s.errors[row] = editPrompts(pk, function(store: Prompts): string?
-			local p = promptById(store, pid)
+		s.errors[row] = editPrompt(id, function(store, p, pk, pid)
 			local tk, tid = nextOf(pk, to or "")
 			local tstore = if to == nil then nil elseif tk == pk then store else loadPrompts(tk)
-			if not p then
-				return "That action was deleted elsewhere."
-			elseif to and not (tstore and promptById(tstore, tid)) then
+			if to and not (tstore and promptById(tstore, tid)) then
 				return "That action was deleted elsewhere."
 			elseif to and tk == pk and chainReaches(store, pid, to) then
 				return "That would make a loop of actions."
@@ -904,15 +901,11 @@ function M.setValue(state: State, row: string, value: any)
 		end)
 	elseif kind == "pwhere" or kind == "psplit" then
 		local on = choice == (if kind == "pwhere" then "worktree" else "split")
-		local pk, pid = kindAndId(id)
-		if not pk or not (on or choice == (if kind == "pwhere" then "checkout" else "tab")) then
+		if not (on or choice == (if kind == "pwhere" then "checkout" else "tab")) then
 			return
 		end
-		s.errors[row] = editPrompts(pk, function(store: Prompts): string?
-			local p = promptById(store, pid)
-			if not p then
-				return "That action was deleted elsewhere."
-			elseif kind == "pwhere" then
+		s.errors[row] = editPrompt(id, function(_, p)
+			if kind == "pwhere" then
 				p.worktree = on
 			else
 				p.split = on
@@ -1259,17 +1252,10 @@ function M.commitEdit(state: State)
 		settle(s, row, err)
 	elseif kind == "pstatus" and id then
 		local err: string? = nil
-		local pk, pid = kindAndId(id)
 		if #text > portable.STATUS_CAP or string.find(text, "%c") then
 			err = "A status name on one line, at most " .. portable.STATUS_CAP .. " characters."
-		elseif not pk then
-			err = "That action was deleted elsewhere."
 		else
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if not p then
-					return "That action was deleted elsewhere."
-				end
+			err = editPrompt(id, function(_, p)
 				p.status = if text ~= "" then text else nil
 				return nil
 			end)
@@ -1277,37 +1263,22 @@ function M.commitEdit(state: State)
 		settle(s, row, err)
 	elseif kind == "pmodel" and id then
 		local err: string? = nil
-		local pk, pid = kindAndId(id)
 		if text ~= "" and not worktree.validModel(text) then
 			err = "A model such as opus or provider/model-id, or a role such as @slow."
-		elseif not pk then
-			err = "That action was deleted elsewhere."
 		else
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if not p then
-					return "That action was deleted elsewhere."
-				end
+			err = editPrompt(id, function(_, p)
 				p.model = if text ~= "" then text else nil
 				return nil
 			end)
 		end
 		settle(s, row, err)
 	elseif kind == "pkey" and id then
-		local pk, pid = kindAndId(id)
 		local err: string? = keys.shape(text)
 		if not err and keys.action((keys.load()), text) then
 			err = "The queue already uses " .. text .. "."
 		end
-		if not err and not pk then
-			err = "That action was deleted elsewhere."
-		end
-		if not err and pk then
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if not p then
-					return "That action was deleted elsewhere."
-				end
+		if not err then
+			err = editPrompt(id, function(store, p)
 				for _, other in store.items do
 					if other ~= p and text ~= "" and other.key == text then
 						return "Already the shortcut of " .. other.name .. "."
@@ -1347,19 +1318,12 @@ function M.commitEdit(state: State)
 	elseif (kind == "pname" or kind == "ptext") and id then
 		local err: string? = nil
 		local empty = false
-		local pk, pid = kindAndId(id)
 		if text == "" then
 			err = if kind == "pname" then "A name is required." else "A prompt is required."
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
-		elseif not pk then
-			err = "That action was deleted elsewhere."
 		else
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if not p then
-					return "That action was deleted elsewhere."
-				end
+			err = editPrompt(id, function(_, p)
 				if kind == "pname" then
 					p.name = text
 				else
@@ -1415,32 +1379,13 @@ function M.commitEdit(state: State)
 			return
 		end
 		local key = string.lower(repo)
-		if cli.claims[key] then
-			s.errors[row] = "A checkout of " .. repo .. " is already being set up."
-			return
-		end
+		local draft = s.edit
 		s.edit = nil
-		local before = readCheckouts()[key]
-		cli.claims[key] = true
-		worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
-			cli.claims[key] = nil
-			if not alive(state) then
-				return
-			end
-			local root = if claimed then claimed.root else nil
-			local err: string?
-			if root and readCheckouts()[key] ~= before then
-				err = repo .. "'s checkout was changed or removed while it was being set up" -- saving would undo that
-			elseif root then
-				err = saveCheckout(repo, root)
-			else
-				err = problem or "That path is not a checkout of " .. repo .. "."
-			end
+		local busy = engine.claimCheckout(state, repo, path, "A checkout of " .. repo .. " is already being set up.", repo .. "'s checkout was changed or removed while it was being set up", function(claimed, err)
 			if not err then
 				s.errors[row] = nil
 				local cloned = claimed ~= nil and claimed.cloned
-				state.scanned = nil -- the new checkout may already hold worktrees: the next render scans it
-				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", root)
+				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", if claimed then claimed.root else nil)
 			elseif state.settings == s and s.page == "repos" and not s.edit and readCheckouts()[key] ~= nil then
 				s.open = repo -- its form, should it have been closed meanwhile
 				beginEdit(state, row, text) -- the draft stays for a correction; this clears the row's warning, so set it after
@@ -1450,6 +1395,9 @@ function M.commitEdit(state: State)
 			end
 			state.cx:render()
 		end)
+		if busy then
+			s.edit, s.errors[row] = draft, busy
+		end
 	end
 end
 
@@ -1492,28 +1440,15 @@ function M.resetRow(state: State, row: string)
 		err = formats.saveRepo(id, nil)
 	elseif kind == "fmt" and id and formats.KEYS[id] then
 		err = formats.save(id, "")
-	elseif kind == "pmodel" and id then
-		local pk, pid = kindAndId(id)
-		if pk then
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if p then
-					p.model = nil
-				end
-				return nil
-			end)
-		end
-	elseif kind == "pstatus" and id then
-		local pk, pid = kindAndId(id)
-		if pk then
-			err = editPrompts(pk, function(store: Prompts): string?
-				local p = promptById(store, pid)
-				if p then
-					p.status = nil
-				end
-				return nil
-			end)
-		end
+	elseif (kind == "pmodel" or kind == "pstatus") and id then
+		err = editPrompt(id, function(_, p)
+			if kind == "pmodel" then
+				p.model = nil
+			else
+				p.status = nil
+			end
+			return nil
+		end, true)
 	elseif kind == "key" and id then
 		err = keys.save(id, nil)
 		if not err then

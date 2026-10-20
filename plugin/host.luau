@@ -629,8 +629,51 @@ local function blockDef(): BlockDef<State>
 				return true
 			end
 
+			-- The Worktrees board and the Agents scope share their list keys: the rows move with the arrows, Page Up/Down and Home/End,
+			-- and Enter runs `enter`. `extra` answers the keys only that list has.
+			local function listKeys(move: (number) -> (), enter: () -> (), extra: (string?) -> boolean): boolean
+				local onScopes = state.focus == "scopes"
+				local lact = if plain then keys.action((keys.load()), k) else nil
+				if name == "tab" and plain then
+					state.focus = if onScopes then "list" else "scopes"
+				elseif name == "escape" then
+					if onScopes then
+						state.focus = "list"
+					else
+						return false
+					end
+				elseif name == "up" or lact == "up" or name == "down" or lact == "down" then
+					local d = if name == "up" or lact == "up" then -1 else 1
+					if onScopes then
+						moveView(state, d)
+					else
+						move(d)
+					end
+				elseif name == "page_up" or name == "page_down" then
+					move(if name == "page_up" then -10 else 10)
+				elseif name == "home" or name == "end" then
+					local d = if name == "home" then -100000 else 100000
+					if onScopes then
+						moveView(state, d)
+					else
+						move(d)
+					end
+				elseif name == "enter" then
+					if onScopes then
+						state.focus = "list"
+					else
+						enter()
+					end
+				elseif lact == "refresh" or lact == "settings" or lact == "help" or lact == "more" then
+					queueAction(state, lact)
+				elseif not extra(lact) then
+					return false
+				end
+				return true
+			end
+
 			if state.boardOn then
-				-- The Worktrees board: its rows take the list keys and Enter opens one; cleanup and removal are the keys bound to them.
+				-- The Worktrees board: Enter opens a row; cleanup and removal are the keys bound to them.
 				if state.boardRemoving then
 					if name == "enter" or name == "escape" then
 						engine.boardAct(state, "wt-cancel-remove")
@@ -641,85 +684,31 @@ local function blockDef(): BlockDef<State>
 					end
 					return true
 				end
-				local onScopes = state.focus == "scopes"
-				local bact = if plain then keys.action((keys.load()), k) else nil
-				if name == "tab" and plain then
-					state.focus = if onScopes then "list" else "scopes"
-				elseif name == "escape" then
-					if onScopes then
-						state.focus = "list"
-					else
-						return false
+				return listKeys(function(d)
+					engine.boardMove(state, d)
+				end, function()
+					engine.boardAct(state, "wt-open")
+				end, function(a)
+					if a == "wt-cleanup" or a == "wt-remove" then
+						engine.boardAct(state, a)
+						return true
 					end
-				elseif name == "up" or bact == "up" then
-					if onScopes then
-						moveView(state, -1)
-					else
-						engine.boardMove(state, -1)
-					end
-				elseif name == "down" or bact == "down" then
-					if onScopes then
-						moveView(state, 1)
-					else
-						engine.boardMove(state, 1)
-					end
-				elseif name == "page_up" or name == "page_down" then
-					engine.boardMove(state, if name == "page_up" then -10 else 10)
-				elseif name == "enter" then
-					if onScopes then
-						state.focus = "list"
-					else
-						engine.boardAct(state, "wt-open")
-					end
-				elseif bact == "wt-cleanup" or bact == "wt-remove" then
-					engine.boardAct(state, bact)
-				elseif bact == "refresh" or bact == "settings" or bact == "help" or bact == "more" then
-					queueAction(state, bact)
-				else
 					return false
-				end
-				return true
+				end)
 			end
 			if state.agentsOn then
-				-- The Agents scope: its rows take the list keys and Enter goes to the agent's tab.
-				local onScopes = state.focus == "scopes"
-				local aact = if plain then keys.action((keys.load()), k) else nil
-				if name == "tab" and plain then
-					state.focus = if onScopes then "list" else "scopes"
-				elseif name == "escape" then
-					if onScopes then
-						state.focus = "list"
-					else
-						return false
-					end
-				elseif name == "up" or aact == "up" then
-					if onScopes then
-						moveView(state, -1)
-					else
-						engine.agentMove(state, -1)
-					end
-				elseif name == "down" or aact == "down" then
-					if onScopes then
-						moveView(state, 1)
-					else
-						engine.agentMove(state, 1)
-					end
-				elseif name == "page_up" or name == "page_down" then
-					engine.agentMove(state, if name == "page_up" then -10 else 10)
-				elseif name == "enter" then
-					if onScopes then
-						state.focus = "list"
-					else
-						engine.agentGo(state)
-					end
-				elseif aact == "agentgo" then
+				-- The Agents scope: Enter goes to the agent's tab.
+				return listKeys(function(d)
+					engine.agentMove(state, d)
+				end, function()
 					engine.agentGo(state)
-				elseif aact == "refresh" or aact == "settings" or aact == "help" or aact == "more" then
-					queueAction(state, aact)
-				else
+				end, function(a)
+					if a == "agentgo" then
+						engine.agentGo(state)
+						return true
+					end
 					return false
-				end
-				return true
+				end)
 			end
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"
@@ -971,7 +960,7 @@ local function blockDef(): BlockDef<State>
 					if state.agentsOn then
 						-- The Agents scope's rows are not the queue's items either.
 						for _, r in engine.agentRows(state) do
-							if item and engine.agentId(r) == item then
+							if item and engine.pickerId("g", r.key) == item then
 								state.agentAt, state.focus = r.key, "list"
 								if ev.ev == "activate" then
 									engine.agentGo(state)
@@ -984,7 +973,7 @@ local function blockDef(): BlockDef<State>
 						-- The Worktrees board's rows are not the queue's items.
 						local row: any = nil
 						for _, r in engine.boardRows(state) do
-							if item and engine.boardId(r) == item then
+							if item and engine.pickerId("w", r.id) == item then
 								row = r
 							end
 						end

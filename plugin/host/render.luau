@@ -22,7 +22,7 @@ type State = core.State
 
 local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_ICON, RUN_TONE, SETTINGS_KEYS, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_ICON, core.RUN_TONE, core.SETTINGS_KEYS, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
 local kindAndId, loadPrompts, promptById, readCheckouts = storage.kindAndId, storage.loadPrompts, storage.promptById, storage.readCheckouts
-local TERMINAL, activeView, cancelDetails, codeRepoOf, detailKey, filtered, headOf, helpOf, itemId, offered, openItems, orderedViews, selected, snapKey, viewOf, waitOf, wantDetails, ghActive, me = engine.TERMINAL, engine.activeView, engine.cancelDetails, engine.codeRepoOf, engine.detailKey, engine.filtered, engine.headOf, engine.helpOf, engine.itemId, engine.offered, engine.openItems, engine.orderedViews, engine.selected, engine.snapKey, engine.viewOf, engine.waitOf, engine.wantDetails, engine.ghActive, engine.me
+local TERMINAL, activeView, cancelDetails, codeRepoOf, detailKey, filtered, headOf, helpOf, pickerId, offered, openItems, orderedViews, selected, snapKey, viewOf, waitOf, wantDetails, ghActive, me = engine.TERMINAL, engine.activeView, engine.cancelDetails, engine.codeRepoOf, engine.detailKey, engine.filtered, engine.headOf, engine.helpOf, engine.pickerId, engine.offered, engine.openItems, engine.orderedViews, engine.selected, engine.snapKey, engine.viewOf, engine.waitOf, engine.wantDetails, engine.ghActive, engine.me
 
 local M = {}
 
@@ -121,7 +121,7 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
 	end
 	return {
-		id = itemId(pr),
+		id = pickerId("n", pr.key),
 		label = pr.title,
 		title = pr.title,
 		detail = detail,
@@ -156,7 +156,7 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 		table.insert(detail, " · " .. issue.type)
 	end
 	return {
-		id = itemId(issue),
+		id = pickerId("n", issue.key),
 		label = issue.title,
 		title = issue.title,
 		detail = detail,
@@ -1093,7 +1093,7 @@ local function boardProps(state: State, props: { [string]: any })
 	props.state = if state.boardBusy and not state.board.loaded then "loading" else "ready"
 	props.empty = { ui.span(if next(readCheckouts()) == nil then "No saved checkouts yet: add a repository's checkout in Settings." else "No worktrees found.", "muted") }
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
-	props.selected = if row then engine.boardId(row) else nil
+	props.selected = if row then pickerId("w", row.id) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
 	local actions: { any } = {
 		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
@@ -1154,7 +1154,7 @@ local function agentsProps(state: State, props: { [string]: any })
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
 		end
-		local id = engine.agentId(row)
+		local id = pickerId("g", row.key)
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state] } })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
@@ -1174,7 +1174,7 @@ local function agentsProps(state: State, props: { [string]: any })
 	props.state = "ready"
 	props.empty = { ui.span("No agents are running. Start one from a pull request or issue.", "muted") }
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
-	props.selected = if current then engine.agentId(current) else nil
+	props.selected = if current then pickerId("g", current.key) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
 	props.actions = keyed({
 		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
@@ -1303,7 +1303,7 @@ function M.queuePicker(state: State): Node
 		items = items,
 		order = order,
 		hits = if vis then vis.hits else nil,
-		selected = if item then itemId(item) else nil,
+		selected = if item then pickerId("n", item.key) else nil,
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
 		scope = activeScope,

@@ -293,10 +293,10 @@ function M.parseRepo(raw: any): string?
 	return nil
 end
 
--- Picker ids hold no `/` or `#`: the item's key ("owner/repo#n", or "abc#ABC-12") with every other character spelled
--- `_xx`, `_` included, so two keys never share one.
-function M.itemId(item: any): string
-	return "n" .. (string.gsub(item.key, "[^%w%-]", function(c: string): string
+-- Picker ids hold no `/` or `#`: a kind prefix (n item, w worktree row, g agent row) and the key ("owner/repo#n", or
+-- "abc#ABC-12") with every other character spelled `_xx`, `_` included, so two keys never share one.
+function M.pickerId(prefix: string, key: string): string
+	return prefix .. (string.gsub(key, "[^%w%-]", function(c: string): string
 		return string.format("_%02x", string.byte(c))
 	end))
 end
@@ -305,7 +305,7 @@ function M.itemOf(state: State, id: string): any
 	local snap = state.snap
 	if snap then
 		for _, item in snap.items do
-			if M.itemId(item) == id then
+			if M.pickerId("n", item.key) == id then
 				return item
 			end
 		end
@@ -424,7 +424,7 @@ function M.filtered(state: State): Visible?
 		if ok then
 			table.insert(kept, item)
 			if range then
-				hits[M.itemId(item)] = { range }
+				hits[M.pickerId("n", item.key)] = { range }
 				hasHits = true
 			end
 		end
@@ -474,13 +474,13 @@ function M.filtered(state: State): Visible?
 			table.insert(order, { group = label, label = label, count = #bucket })
 			for _, item in bucket do
 				table.insert(items, item)
-				table.insert(order, M.itemId(item))
+				table.insert(order, M.pickerId("n", item.key))
 			end
 		end
 	else
 		for _, item in kept do
 			table.insert(items, item)
-			table.insert(order, M.itemId(item))
+			table.insert(order, M.pickerId("n", item.key))
 		end
 	end
 	local out: Visible = { snap = snap, needle = text, group = group, rev = state.rev, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
@@ -622,6 +622,38 @@ function M.login(state: State): string?
 	local v = M.activeView(state)
 	local who = if v then M.accountOf(v, state.activeLogin) else ""
 	return if who ~= "" then who else nil
+end
+
+-- Verifies `path` as a checkout of `repo` (a new or empty folder gets a clone) and saves it. Returns `busy` when a setup of
+-- the repository is already running; else `done(claimed, err)` runs once the checkout is saved (err nil) or refused, unless
+-- the block is gone. `moved` is the problem when the saved checkout changed meanwhile.
+function M.claimCheckout(state: State, repo: string, path: string, busy: string, moved: string, done: ({ root: string, cloned: boolean }?, string?) -> ()): string?
+	local key = string.lower(repo)
+	if cli.claims[key] then
+		return busy
+	end
+	local before = readCheckouts()[key]
+	cli.claims[key] = true
+	worktree.claimCheckout(path, repo, M.login(state), function(claimed, problem)
+		cli.claims[key] = nil
+		if not M.alive(state) then
+			return
+		end
+		local root = if claimed then claimed.root else nil
+		local err: string?
+		if root and readCheckouts()[key] ~= before then
+			err = moved -- saving would undo that
+		elseif root then
+			err = storage.saveCheckout(repo, root)
+		else
+			err = problem or "That path is not a checkout of " .. repo .. "."
+		end
+		if not err then
+			state.scanned = nil -- the new checkout may already hold worktrees: the next render scans it
+		end
+		done(claimed, err)
+	end)
+	return nil
 end
 
 -- The active view's integration: what a search, wait or heading of the block belongs to.
@@ -1034,13 +1066,6 @@ function M.boardRows(state: State): { any }
 	return board.rows(state.board)
 end
 
--- The picker id of a row: no `/` or `#`, as an item's.
-function M.boardId(row: any): string
-	return "w" .. (string.gsub(row.id, "[^%w%-]", function(c: string): string
-		return string.format("_%02x", string.byte(c))
-	end))
-end
-
 -- The row previewed (board.selected) and its place in the list (nil, 0 when there is none).
 function M.boardSelected(state: State): (any, number)
 	for i, row in M.boardRows(state) do
@@ -1375,7 +1400,7 @@ function M.boardItems(state: State): ({ any }, { any })
 			table.insert(detail, " · ")
 			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "num"))
 		end
-		local id = M.boardId(row)
+		local id = M.pickerId("w", row.id)
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = board.badges(row, open[row.path] == true) })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
@@ -1986,13 +2011,6 @@ function M.agentRows(state: State): { any }
 		return if a.repo ~= b.repo then a.repo < b.repo else a.key < b.key
 	end)
 	return rows
-end
-
--- The picker id of an Agents row: no `/` or `#`, as an item's.
-function M.agentId(row: any): string
-	return "g" .. (string.gsub(row.key, "[^%w%-]", function(c: string): string
-		return string.format("_%02x", string.byte(c))
-	end))
 end
 
 -- The row previewed and its place in the list (nil, 0 when there is none).

@@ -525,31 +525,15 @@ local function claim(state: State, id: string, repo: string, raw: string)
 	if not path then
 		return reply(state, id, { problem = "That is not a usable path." })
 	end
-	local key = string.lower(repo)
-	if cli.claims[key] then
-		return reply(state, id, { problem = "A checkout of " .. repo .. " is already being set up; try again when it is done." })
-	end
-	local before = readCheckouts()[key]
-	cli.claims[key] = true
-	worktree.claimCheckout(path, repo, login(state), function(claimed, problem)
-		cli.claims[key] = nil
-		if not alive(state) then
-			return
-		end
-		local root = if claimed then claimed.root else nil
-		if not root then
-			return reply(state, id, { problem = problem or "That path is not a checkout of " .. repo .. "." })
-		end
-		if readCheckouts()[key] ~= before then
-			return reply(state, id, { problem = repo .. "'s checkout was changed or removed while it was being set up." })
-		end
-		local err = saveCheckout(repo, root)
-		if err then
+	local busy = engine.claimCheckout(state, repo, path, "A checkout of " .. repo .. " is already being set up; try again when it is done.", repo .. "'s checkout was changed or removed while it was being set up.", function(claimed, err)
+		if err or not claimed then
 			return reply(state, id, { problem = err })
 		end
-		state.scanned = nil -- the new checkout may already hold worktrees: the reply's render scans it
-		reply(state, id, { ok = true, root = root, cloned = claimed ~= nil and claimed.cloned })
+		reply(state, id, { ok = true, root = claimed.root, cloned = claimed.cloned })
 	end)
+	if busy then
+		reply(state, id, { problem = busy })
+	end
 end
 
 -- Adds `repo` to the repositories Jira project `project` is worked in, and lists it in Settings.
