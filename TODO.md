@@ -252,7 +252,9 @@
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
   - Review attempts: 2
 
-- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
+## Done
+
+- [x] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
   - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
   - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
@@ -260,19 +262,14 @@
   - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
   - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
   - Decided: the inbox marks threads read, never done, through one batched confirm.
-  - Base: main
-  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
   - Decision: Mark read… is a palette command only, in a new Inbox group shown while the Inbox has rows; plan act `inbox-read` captures login and thread ids, commits `PATCH notifications/threads/<id>` for exactly those, refuses once the Inbox is left or the view changed, and stops at the first failure ("Marked X of N read, then stopped: …").
   - Decision: `X-Poll-Interval` is strict (a manual Refresh inside it sends nothing); later reads send `If-Modified-Since`, and a 304 keeps rows. Only the first 50 threads show (`ponytail:`).
   - Decision: The scope problem reads "@login cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" for 401/403/404 or a signed-out login; Enter on a non-PR/issue thread toasts "Nothing to show".
   - Decision: Fixed `github.luau`'s shared `cached()`: a caller after the 10-minute TTL had its callback replaced by a no-op, so `github.login` never answered.
   - Decision: `Inbox` has a `gen` counter: `inboxRead` ignores an answer after it changed, and Mark read bumps it, clears `busy` and re-reads, so an older read can't restore marked threads.
-  - Review attempts: 2
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "25" and `plugin.toml` is `0.25.0` (main ships "24").
   - Decision: `github.luau` keeps a per-login `marks` counter bumped by `markRead`; a 200 answer whose counter changed still reaches `done` but skips the cache and `nextAt` writes.
   - Decision: The Inbox keys use main's shared `listKeys` (Home/End), with no extra keys.
-
-## Done
 
 - [x] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
