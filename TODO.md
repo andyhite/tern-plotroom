@@ -4,6 +4,26 @@
 
 ## Todo
 
+- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
+  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
+  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
+  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
+  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
+  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
+  - Decided: the inbox marks threads read, never done, through one batched confirm.
+  - Base: main
+  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
+  - Decision: Mark read… is a palette command only, in a new Inbox group shown while the Inbox has rows; plan act `inbox-read` captures login and thread ids, commits `PATCH notifications/threads/<id>` for exactly those, refuses once the Inbox is left or the view changed, and stops at the first failure ("Marked X of N read, then stopped: …").
+  - Decision: `X-Poll-Interval` is strict (a manual Refresh inside it sends nothing); later reads send `If-Modified-Since`, and a 304 keeps rows. Only the first 50 threads show (`ponytail:`).
+  - Decision: The scope problem reads "@login cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" for 401/403/404 or a signed-out login; Enter on a non-PR/issue thread toasts "Nothing to show".
+  - Decision: Fixed `github.luau`'s shared `cached()`: a caller after the 10-minute TTL had its callback replaced by a no-op, so `github.login` never answered.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Fix: rebase onto main - conflicts in README.md and plugin/host/requests.luau (main changed `paletteActions` for agent commands) - resolve on the item branch; switch the Inbox key block to main's shared `listKeys` helper (Home/End) instead of the copied Agents handler.
+  - Fix: plugin/plugin.toml - main's `check.py` now requires `version = "0.<RPC_PROTOCOL>.0"`; with this item's protocol bump set it to match the protocol you land with (next number main has not used).
+  - Fix: plugin/host/requests.luau:748-751 with plugin/host/engine.luau:2074 - after Mark read… the commit relies on `engine.inboxRead` to drop the marked threads, but `inboxRead` returns at once while a periodic read is in flight, and that older read then writes its pre-mark list back over `markRead`'s cleared cache, so marked threads stay listed and offered - ignore answers to reads started before the mark (e.g. a per-login counter bumped by `markRead`) or queue one more read when busy, with a case.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -34,22 +54,6 @@
   - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
   - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
   - Review attempts: 1
-
-- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
-  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
-  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
-  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
-  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
-  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
-  - Decided: the inbox marks threads read, never done, through one batched confirm.
-  - Base: main
-  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
-  - Decision: Mark read… is a palette command only, in a new Inbox group shown while the Inbox has rows; plan act `inbox-read` captures login and thread ids, commits `PATCH notifications/threads/<id>` for exactly those, refuses once the Inbox is left or the view changed, and stops at the first failure ("Marked X of N read, then stopped: …").
-  - Decision: `X-Poll-Interval` is strict (a manual Refresh inside it sends nothing); later reads send `If-Modified-Since`, and a 304 keeps rows. Only the first 50 threads show (`ponytail:`).
-  - Decision: The scope problem reads "@login cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" for 401/403/404 or a signed-out login; Enter on a non-PR/issue thread toasts "Nothing to show".
-  - Decision: Fixed `github.luau`'s shared `cached()`: a caller after the 10-minute TTL had its callback replaced by a no-op, so `github.login` never answered.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
 
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
