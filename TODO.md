@@ -6,22 +6,6 @@
 
 ## In-Progress
 
-- [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
-  - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
-  - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
-  - The confirm text comes from the row's facts: a noted PR or issue branch goes only if git confirms nothing is lost, an unnoted or inferred branch is kept, a detached worktree has no branch.
-  - The three "worktree remove, then parse modified or untracked" copies in `worktree.luau` become one.
-  - Touch points: `removeEntry`, `remove`, `claim` and `inventoryDirty` in `worktree.luau`; removal in `board.luau`; the card removal in `host.luau` (its note gains `repo`, from `jiraReposOf` for Jira); the remove overlays in `host/render.luau`; the runtime op in `tests/runtime.luau`.
-  - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
-  - Base: main
-  - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
-  - Decision: The card confirm reads git's worktree list when Remove is pressed and takes its text from `board.fate` (via `State.removeFate`), showing "Reading its branch from git…" meanwhile.
-  - Decision: A card whose worktree went detached since the card was made says "Git no longer lists this worktree."; "It has no branch." shows in the Worktrees list.
-  - Decision: `Note` and `Report` gain `repo`: PR `repo` or issue `code`, and for scan-created Jira notes the `jiraReposOf` code whose checkout is the root; a Jira note with no match has none.
-  - Fix: plugin/host.luau:322-325, 351-354 - when the card's note has no `repo` (a Jira note whose mapped checkout isn't exactly git's main-worktree path, which `applyScans.repoOf` allows) `askRemove` sets `state.removing` and returns, so the confirm says "Reading…" forever, and `removeNow` returns silently, so `d` does nothing; the same early return hits a detached worktree (`branch` nil) in `removeNow` - give the confirm a fixed reason and make `removeNow` set `note.refused` and toast "Worktree not removed" when repo is missing; let a detached worktree go through `removeEntry` (no branch to keep), with cases for both.
-  - Fix: plugin/host.luau:161-164 (`applyScans`) with 351-360 - the path-equal branch updates only the head, so after `git switch` inside a Plotroom worktree the card keeps the old branch and every card Remove is refused by `claim` ("…changed; reload the list") with no way to recover, which the card could do before - take git's branch there (`note.branch = f.branch`) and count it as moved.
-  - Review attempts: 1
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -408,6 +392,22 @@
   - Decision: The scope problem reads "@login cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" for 401/403/404 or a signed-out login; Enter on a non-PR/issue thread toasts "Nothing to show".
   - Decision: Fixed `github.luau`'s shared `cached()`: a caller after the 10-minute TTL had its callback replaced by a no-op, so `github.login` never answered.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+
+- [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
+  - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
+  - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
+  - The confirm text comes from the row's facts: a noted PR or issue branch goes only if git confirms nothing is lost, an unnoted or inferred branch is kept, a detached worktree has no branch.
+  - The three "worktree remove, then parse modified or untracked" copies in `worktree.luau` become one.
+  - Touch points: `removeEntry`, `remove`, `claim` and `inventoryDirty` in `worktree.luau`; removal in `board.luau`; the card removal in `host.luau` (its note gains `repo`, from `jiraReposOf` for Jira); the remove overlays in `host/render.luau`; the runtime op in `tests/runtime.luau`.
+  - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
+  - Base: main
+  - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
+  - Decision: The card confirm reads git's worktree list when Remove is pressed and takes its text from `board.fate` (via `State.removeFate`), showing "Reading its branch from git…" meanwhile.
+  - Decision: A card whose worktree went detached since the card was made says "Git no longer lists this worktree."; "It has no branch." shows in the Worktrees list.
+  - Decision: `Note` and `Report` gain `repo`: PR `repo` or issue `code`, and for scan-created Jira notes the `jiraReposOf` code whose checkout is the root; a Jira note with no match has none.
+  - Review attempts: 1
+  - Decision: A note with no `repo` gives the confirm "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused." and `d` toasts "Worktree not removed"; `applyScans` takes git's branch on a path-equal match and counts a switch as moved.
+  - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
 
 ## Done
 
