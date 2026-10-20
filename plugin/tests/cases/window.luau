@@ -153,6 +153,18 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
 end)
 
+windowCase("window: an unreadable agent-recent is not written over by a pick", function(w: World)
+	agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	w.kv.put("agent-recent", { "Old" })
+	w.kv.failGet["agent-recent"] = "disk offline"
+	w.window.choose = "Review"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.agents, 1, "the agent still starts")
+	same(w.kv.get("agent-recent"), { "Old" }, "the unreadable list was left as it was")
+end)
+
 windowCase("window: with no prompts saved, a pull request offers Review, Quick review, Address feedback and Watch, each run where it says with every variable it names filled in", function(w: World)
 	local s = agentScene(w)
 	for i, name in { "Review", "Quick review", "Address feedback", "Watch" } do

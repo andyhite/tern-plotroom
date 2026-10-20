@@ -282,13 +282,22 @@ end
 
 local timer: TimerHandle? = nil
 
--- Whether there is anything to tell: a Plotroom block and a link.
+-- Whether there is anything to tell: a Plotroom block and a linked agent that has not exited.
 local function active(cx: WindowCx): boolean
 	if #plotroomPanes(cx) == 0 then
 		return false
 	end
-	local links = readLinks()
-	return #links > 0
+	local states = agentStates(cx)
+	if not states then
+		return true -- unreadable list: keep watching
+	end
+	for _, l in readLinks() do
+		local s = states[l.agent]
+		if s ~= nil and s ~= "exited" then
+			return true
+		end
+	end
+	return false
 end
 
 local function tick(cx: WindowCx?)
@@ -323,7 +332,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	end
 	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil } }
 	for _, l in links do
-		if not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil then
+		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			table.insert(out, l)
 		end
 	end
@@ -347,19 +356,29 @@ function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
 		return nil, nil
 	end
 	for _, l in links do
-		if l.agent == agent and hostSame(l.host, host) and l.chain and l.chain.next then
+		if l.agent == agent and hostSame(l.host, host) then
+			-- The newest link of the pane only: a pane id reused after a restart never starts an older chain.
+			if not (l.chain and l.chain.next) then
+				return nil, nil
+			end
+			local block: number? = nil
+			for _, p in plotroomPanes(cx) do
+				local ph = hostOf(cx, p)
+				if ph and hostSame(ph, host) then
+					block = p
+					break
+				end
+			end
+			-- No Plotroom block on that host: the next action stays for the agent's next finish.
+			if not block then
+				return table.clone(l.chain), nil
+			end
 			local taken: Chain = table.clone(l.chain)
 			l.chain.next = nil
 			if not writeLinks(links) then
 				return nil, nil
 			end
-			for _, p in plotroomPanes(cx) do
-				local ph = hostOf(cx, p)
-				if ph and hostSame(ph, host) then
-					return taken, p
-				end
-			end
-			return nil, nil
+			return taken, block
 		end
 	end
 	return nil, nil

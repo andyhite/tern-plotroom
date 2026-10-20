@@ -3113,4 +3113,101 @@ case("host action: with a repository and branch it finds the open or draft pull 
 	has(asks.hx.ask(w, b, { op = "action", kind = "pr", pid = "p9", repo = "o/r", branch = "draft" }).problem, "no longer exists", "a deleted action is a problem before any lookup")
 end)
 
+windowCase("window flows: a chain stops after 8 actions and an exited agent stops it, each with a toast", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	local links: any = w.kv.get("agent-links")
+	links[1].chain.depth = 7
+	w.kv.put("agent-links", links)
+	local ops = #st.ops()
+	agentFinished(w, first.agent, "done")
+	eq(#st.ops(), ops, "no request for a ninth action")
+	eq(w.toasts[#w.toasts].sub, "A chain of actions stops after 8.", "the toast says why")
+	local second = startChained(w, st)
+	agentFinished(w, second.agent, "exited")
+	eq(w.toasts[#w.toasts].sub, "The agent's program exited.", "an exited result toasts")
+end)
+
+windowCase("window flows: a finished agent whose host has no Plotroom block keeps its next action and toasts, and its next done finish advances", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	w.window.panes[1].block = nil
+	local ops = #st.ops()
+	agentFinished(w, first.agent, "done")
+	eq(#st.ops(), ops, "nothing is asked")
+	eq(w.toasts[#w.toasts].text, "Next action waits for Plotroom", "the toast says to open Plotroom")
+	eq((w.kv.get("agent-links") :: any)[1].chain.next, "p2", "the next action is kept")
+	w.window.panes[1].block = "plugin.plotroom.prs"
+	agentFinished(w, first.agent, "done")
+	eq(st.ops()[#st.ops()], "action", "the next done finish asks for it")
+end)
+
+windowCase("window flows: a pane id reused by a newer link never starts an older chain, and recording an agent drops older links of its pane", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	local links: any = w.kv.get("agent-links")
+	local newest = table.clone(links[1])
+	newest.chain = nil
+	w.kv.put("agent-links", { newest, links[1] })
+	local ops = #st.ops()
+	agentFinished(w, first.agent, "done")
+	eq(#st.ops(), ops, "the older link's chain is ignored")
+	w.kv.put("agent-links", { links[1] })
+	local f: any = w.load("flows")
+	f.recordAgent(w.cx, 1, "o/r#9", first.agent, nil, nil)
+	local after: any = w.kv.get("agent-links")
+	eq(#after, 1, "one link for the pane")
+	eq(after[1].key, "o/r#9", "the newest")
+end)
+
+windowCase("window flows: a chained issue step reuses the code repository the chain recorded", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
+	w.window.choose = "Implement"
+	w.click("plotroom://issue/agent/o/r/12")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, next = "p2" } } })
+	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "x/code" })
+	local first = (w.kv.get("agent-links") :: any)[1]
+	agentFinished(w, first.agent, "done")
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	local asked = st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = {}, code = "x/code" })
+	eq(asked.target, "x/code", "the host is told the repository, so it asks nothing")
+end)
+
+windowCase("window flows: the status timer stops with no live agent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
+	seedAgent(w, 50, "working", 1, "o/r#5")
+	w.window.handlers.window_start(w.cx)
+	w.window.agentStates[50] = "exited"
+	w.advance(4000)
+	local sent = #statusEvents(w)
+	w.window.agentStates[50] = "working"
+	w.advance(12000)
+	eq(#statusEvents(w), sent, "nothing is watched once no agent is live")
+end)
+
+windowCase("window flows: one pane_closed runs agent sync, redraw and the protocol check", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
+	seedAgent(w, 50, "idle", 1, "o/r#5")
+	w.window.handlers.pane_closed({ pane = 9 }, w.cx)
+	eq(#statusEvents(w), 1, "the agent map was sent")
+	local redraws = 0
+	for _, e in w.window.events do
+		if e.ev.act == "redraw" then
+			redraws += 1
+		end
+	end
+	eq(redraws, 1, "the block was redrawn")
+	eq(protocolWarning(w, 1), nil, "and the protocol check ran")
+end)
+
 return {}

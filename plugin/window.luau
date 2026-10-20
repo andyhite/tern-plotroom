@@ -71,10 +71,13 @@ local requests = 0
 -- Picker labels chosen last, newest first. Kept in tern.kv: Tern reboots plugin VMs now and then, losing module state.
 local RECENT_KEY = "agent-recent"
 
-local function readRecent(): { string }
+-- nil when the stored list cannot be read: it is then never written over.
+local function readRecent(): { string }?
 	local out: { string } = {}
 	local ok, v = pcall(tern.kv.get, RECENT_KEY)
-	if ok and type(v) == "table" then
+	if not ok then
+		return nil
+	elseif type(v) == "table" then
 		for _, label in v do
 			if type(label) == "string" then
 				table.insert(out, label)
@@ -717,7 +720,8 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 			end
 		end
 		local items: { PickItem } = {}
-		for _, label in readRecent() do
+		local recentLabels: { string } = readRecent() or {}
+		for _, label in recentLabels do
 			for _, c in all do
 				if c.label == label then
 					local again = table.clone(c)
@@ -739,13 +743,15 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 				return typePrompt(cx3, pane, t)
 			end
 			local recent = readRecent()
-			local at = table.find(recent, item.label)
-			if at then
-				table.remove(recent, at)
+			if recent then
+				local at = table.find(recent, item.label)
+				if at then
+					table.remove(recent, at)
+				end
+				table.insert(recent, 1, item.label)
+				recent[RECENT_CAP + 1] = nil
+				pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
 			end
-			table.insert(recent, 1, item.label)
-			recent[RECENT_CAP + 1] = nil
-			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
 			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status, id = item.id, name = item.label, next = item.next }, item.worktree ~= false)
 		end)
 	end)
@@ -1197,6 +1203,7 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 			end)
 		end
 	end
+	checkProtocol(cx)
 end)
 
 local function launchPane(cx: WindowCx): number?
@@ -1279,8 +1286,10 @@ end)
 local function advanceChain(cx: WindowCx, agent: number, result: string)
 	local chain, pane = flows.takeChain(cx, agent)
 	local next = if chain then chain.next else nil
-	if not chain or not pane or not next then
+	if not chain or not next then
 		return
+	elseif not pane then
+		return cx:toast("info", "Next action waits for Plotroom", "Open Plotroom on the agent's host; the next time the agent finishes, the action starts.")
 	end
 	local t: Target
 	if chain.kind == "pr" then
@@ -1310,7 +1319,7 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 			next = if type(a.next) == "string" then a.next else nil,
 			depth = chain.depth + 1,
 			tab = tab,
-		}, a.worktree ~= false, {})
+		}, a.worktree ~= false, if chain.kind == "issue" and chain.code then { target = chain.code } else {})
 	end
 	local function stop(cx2: WindowCx, why: string)
 		cx2:toast("error", "Next action not started after " .. label .. " for " .. t.label, why)
@@ -1345,10 +1354,6 @@ tern.on("agent_finished", function(ev: any, cx: WindowCx)
 end)
 
 tern.on("focus", function(_ev: any, cx: WindowCx)
-	checkProtocol(cx)
-end)
-
-tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	checkProtocol(cx)
 end)
 
