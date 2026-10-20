@@ -313,15 +313,21 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				return reply(state, id, { problem = "The pull requests linked to " .. tracker.refLabel(issue.ref) .. " could not be read: " .. (if problem then problem.message else "gh failed") })
 			end
 			local live: { any } = {}
+			local same: { any } = {}
 			for _, p in prs do
 				if p.branch then
-					table.insert(live, { number = p.number, title = clip(printable(p.title), 160), branch = p.branch })
+					local row = { number = p.number, title = clip(printable(p.title), 160), branch = p.branch, fork = if p.fork then clip(printable(p.fork), 100) else nil }
+					table.insert(live, row)
+					if not p.fork then
+						table.insert(same, row)
+					end
 				end
 			end
+			-- A fork's pull request is never picked unasked: only a single same-repository one is.
 			if #live == 0 then
 				return prepareIssue(state, id, repo, ref, wt, target, { fresh = true }, users)
-			elseif #live == 1 then
-				return prepareIssue(state, id, repo, ref, wt, target, { pr = live[1].number, fresh = false }, users)
+			elseif #same == 1 then
+				return prepareIssue(state, id, repo, ref, wt, target, { pr = same[1].number, fresh = false }, users)
 			end
 			reply(state, id, { choosePr = true, prs = tern.json.array(live) })
 		end)

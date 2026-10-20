@@ -30,7 +30,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "22" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "23" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -606,7 +606,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			local items: { PickItem } = {}
 			for _, p in if type(a.prs) == "table" then a.prs else {} do
 				if type(p) == "table" and type(p.number) == "number" and type(p.title) == "string" then
-					table.insert(items, { label = "#" .. p.number .. " " .. p.title, detail = if type(p.branch) == "string" then p.branch else nil, group = "Linked pull requests", pr = p.number })
+					local fork = if type(p.fork) == "string" and p.fork ~= "" then p.fork else nil
+					local branch = if type(p.branch) == "string" then p.branch else nil
+					table.insert(items, { label = "#" .. p.number .. " " .. p.title, detail = if fork then "Fork of " .. fork .. (if branch then " · " .. branch else "") else branch, group = "Linked pull requests", pr = p.number })
 				end
 			end
 			table.insert(items, { label = "New branch…", detail = "Starts from a base branch you pick next", group = "Or", fresh = true })

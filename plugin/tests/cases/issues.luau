@@ -1762,6 +1762,23 @@ case("host: an issue with exactly one linked pull request still on its branch is
 	eq(s.git.refs["refs/plotroom-pr/o/r/pr-45"], nil, "the ref is gone")
 end)
 
+case("host: a fork's linked pull request is never picked unasked: a same-repository one beside it is, alone it is only offered", function(w: World)
+	local s = issueHost(w)
+	local fork = hx.linkedPr(s, 50, "From a fork", "fork-fix", true)
+	fork.fork = "zed"
+	local mine = hx.linkedPr(s, 45, "Fix the login redirect", "fix-login", true)
+	s.gh.linked["o/r#12"] = array({ fork, mine })
+	s.gh.linked["o/r#13"] = array({ fork })
+	local b = openIssues(w)
+	local a = hx.ask(w, b, "a1", { op = "issue", repo = "o/r", ref = "12", worktree = true })
+	eq(a.vars.branch, "fix-login", "the single same-repository PR is picked")
+	local before = snapshot(s.git)
+	a = hx.ask(w, b, "b1", { op = "issue", repo = "o/r", ref = "13", worktree = true })
+	eq(a.choosePr, true, "an issue whose only live PR is a fork asks")
+	same(a.prs, { { number = 50, title = "From a fork", branch = "fork-fix", fork = "zed" } }, "the fork is marked with its owner")
+	eq(snapshot(s.git), before, "and nothing was fetched or made")
+end)
+
 case("host: an issue with several linked pull requests asks which one, and the window's answers decide the rounds that follow", function(w: World)
 	local s = issueHost(w)
 	s.git.served["refs/heads/dev"] = sha("e")

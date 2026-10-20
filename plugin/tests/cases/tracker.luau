@@ -654,6 +654,21 @@ case("github.linkedPrs: an issue number reads its closing references, keeps this
 	eq(#argv, 15, "nothing else is passed")
 end)
 
+case("github.linkedPrs: a fork's PR keeps its head owner, a same-repository one none", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.linked["o/r#12"] = array({
+		{ number = 1, title = "Mine", head = "a", branch = "a", base = "o/r", fork = NULL },
+		{ number = 2, title = "Theirs", head = "b", branch = "b", base = "o/r", fork = "zed" },
+	})
+	local out = ghx.linked(w, github, "12", nil)
+	eq(out.list[1].fork, nil, "a same-repository PR is no fork")
+	eq(out.list[2].fork, "zed", "a fork's PR carries its owner")
+	local argv = requestsOf(gh, "linked")[1].call.argv
+	has(argv[7], "isCrossRepository headRepositoryOwner { login } author { login }", "the query asks for the head repository's owner and the author")
+	has(argv[15], "fork: (if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end)", "the filter names the owner, the author when the fork is gone")
+end)
+
 case("github.linkedPrs: a merged pull request is not offered as the issue's branch, a closed unmerged one still is", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)

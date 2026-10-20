@@ -1114,11 +1114,12 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 	end, account)
 end
 
--- A pull request an issue may be worked on: its number, title, and head branch while that branch still exists.
-export type LinkedPr = { number: number, title: string, branch: string? }
+-- A pull request an issue may be worked on: its number, title, head branch while that branch still exists, and the
+-- owner of its head repository when that is a fork (a deleted fork's is the author).
+export type LinkedPr = { number: number, title: string, branch: string?, fork: string? }
 
-local PR_LINK = "number title state headRefName headRef { name } baseRepository { nameWithOwner }"
-local PR_LINK_JQ = "{number, title, state, head: .headRefName, branch: .headRef.name, base: .baseRepository.nameWithOwner}"
+local PR_LINK = "number title state headRefName headRef { name } baseRepository { nameWithOwner } isCrossRepository headRepositoryOwner { login } author { login }"
+local PR_LINK_JQ = "{number, title, state, head: .headRefName, branch: .headRef.name, base: .baseRepository.nameWithOwner, fork: (if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end)}"
 local CLOSING_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { closedByPullRequestsReferences(first: 25, includeClosedPrs: true) { nodes { " .. PR_LINK .. " } } } } }"
 local CLOSING_JQ = "[(.data.repository.issue.closedByPullRequestsReferences.nodes // [])[] | " .. PR_LINK_JQ .. "]"
 local MENTION_GQL = "query($q: String!) { search(query: $q, type: ISSUE, first: 50) { nodes { ... on PullRequest { " .. PR_LINK .. " } } } }"
@@ -1153,7 +1154,8 @@ function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ Linke
 			-- A pull request into another repository is no checkout of this one, and a merged one's branch is spent:
 			-- new work on it would never reach the base.
 			if type(num) == "number" and type(title) == "string" and type(base) == "string" and string.lower(base) == string.lower(repo) and (names or not mention) and field(n, "state") ~= "MERGED" then
-				table.insert(list, { number = num, title = title, branch = if type(branch) == "string" and branch ~= "" then branch else nil })
+				local fork = field(n, "fork")
+				table.insert(list, { number = num, title = title, branch = if type(branch) == "string" and branch ~= "" then branch else nil, fork = if type(fork) == "string" and fork ~= "" then fork else nil })
 			end
 		end
 		done(list, nil)
