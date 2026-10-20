@@ -17,16 +17,16 @@ export type Plan = { entries: { Entry }, slots: { string }, problems: { string }
 export type Ok = {
 	sortValid: (kind: string, integration: string, sort: string) -> boolean,
 	integrationOn: (id: string) -> boolean,
-	reserved: { [string]: boolean },
+	reserved: { [string]: boolean }, -- keys the queue itself uses
+	modelValid: (model: string) -> boolean,
 }
 
 M.LIMIT = 60000 -- bytes of one export
--- Keys the queue itself uses; the host fills this before `plan` (apply takes the same set as `ok.reserved`).
-M.reservedKeys = {} :: { [string]: boolean }
 
 local FORMAT = "plotroom-export"
 local MAX_ITEMS = 100
-local NAME_CAP = 120
+M.NAME_CAP = 120 -- characters of an action's or view's name
+local NAME_CAP = M.NAME_CAP
 M.STATUS_CAP = 100 -- bytes of an action's target status name
 local QUERY_CAP = 1000
 local TEXT_CAP = 8000
@@ -111,7 +111,7 @@ local function checkPrompt(p: any): string?
 		return "a name must be 1 to " .. NAME_CAP .. " characters on one line"
 	elseif not clean(p.text, TEXT_CAP, true) or p.text == "" then
 		return "the text must be 1 to " .. TEXT_CAP .. " bytes"
-	elseif p.key ~= nil and (type(p.key) ~= "string" or not string.match(p.key, "^%g$")) then
+	elseif p.key ~= nil and (type(p.key) ~= "string" or utf8.len(p.key) ~= 1 or string.find(p.key, "%s")) then
 		return "a shortcut is one visible character"
 	elseif p.worktree ~= nil and type(p.worktree) ~= "boolean" then
 		return "worktree must be true or false"
@@ -447,7 +447,7 @@ local function keyHolder(items: { any }, key: string, reserved: { [string]: bool
 	return nil
 end
 
-function M.plan(doc: Doc, existing: Existing): Plan
+function M.plan(doc: Doc, existing: Existing, reserved: { [string]: boolean }): Plan
 	local plan: Plan = { entries = {}, slots = {}, problems = {} }
 	local refName: { [string]: string } = {}
 	local refQual: { [string]: string } = {}
@@ -519,7 +519,7 @@ function M.plan(doc: Doc, existing: Existing): Plan
 			for _, c in claimed[p.kind] do
 				table.insert(pool, c)
 			end
-			local holder = keyHolder(pool, p.key, M.reservedKeys, if found then found.id else nil)
+			local holder = keyHolder(pool, p.key, reserved, if found then found.id else nil)
 			if holder then
 				table.insert(remap, "shortcut " .. p.key .. " removed: already used by " .. holder)
 			else
@@ -575,6 +575,10 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 		local ex = existing[p.kind]
 		if not ex then
 			table.insert(notes, "Action '" .. p.name .. "' skipped: " .. p.kind .. " cannot be imported into right now.")
+			continue
+		end
+		if p.model and not ok.modelValid(p.model) then
+			table.insert(notes, "Action '" .. p.name .. "' left out: its model is not one omp takes.")
 			continue
 		end
 		local current = if out[p.kind] then out[p.kind].prompts else ex.prompts

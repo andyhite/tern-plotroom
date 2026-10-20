@@ -20,6 +20,9 @@ local ok: portable.Ok = {
 		return true
 	end,
 	reserved = {},
+	modelValid = function(model: string): boolean
+		return string.match(model, "^[%w]+$") ~= nil
+	end,
 }
 
 local function prompt(id: string, name: string, text: string, key: string?): portable.ExPrompt
@@ -71,7 +74,7 @@ function M.run()
 	assert(d and #d.views == 2 and #d.prompts == 1, "the leaky action is not in the document")
 	assert(d.views[1].slots[1] == "account-1" and d.views[1].slots[2] == "account-2" and #d.views[1].prompts == 1, "slots and references parsed")
 	local empty = existing()
-	local plan = portable.plan(d, empty)
+	local plan = portable.plan(d, empty, {})
 	assert(#plan.entries == 3 and #plan.slots == 2, "views then actions, two slots")
 	assert(plan.entries[1].conflict == nil and plan.entries[1].remap[1] == "runs as account slot account-1", "the slot is announced")
 	local map = { ["account-1"] = "alice", ["account-2"] = "" }
@@ -90,7 +93,7 @@ function M.run()
 
 	-- skip / replace / duplicate against what the first import saved
 	local saved = out1
-	local plan2 = portable.plan(d, saved)
+	local plan2 = portable.plan(d, saved, {})
 	assert(plan2.entries[1].conflict == "same-name", "a view with slots is never identical")
 	assert(plan2.entries[2].conflict == "identical" and plan2.entries[3].conflict == "identical", "same content is identical")
 	local out3 = portable.apply(d, plan2, {}, map, saved, ok)
@@ -108,14 +111,14 @@ function M.run()
 	assert(repPrompt and repPrompt.prs and repPrompt.prs.prompts.items[2].name == "Review (imported)" and repPrompt.prs.prompts.items[2].key == nil, "a duplicated action loses a shortcut already in use")
 
 	-- views refused by the host's rules
-	local off: portable.Ok = { sortValid = ok.sortValid, integrationOn = function(id: string): boolean return id ~= "jira" end, reserved = {} }
+	local off: portable.Ok = { sortValid = ok.sortValid, integrationOn = function(id: string): boolean return id ~= "jira" end, reserved = {}, modelValid = ok.modelValid }
 	local outOff, notesOff = portable.apply(d, plan, {}, map, empty, off)
 	assert(outOff and outOff.issues == nil and #notesOff == 1, "an integration that is off skips its view")
 	local badSort = portable.parse(doc(function(x: any)
 		x.views[1].sort = "nope"
 	end))
 	assert(badSort, "an unknown sort still parses")
-	local badPlan = portable.plan(badSort, empty)
+	local badPlan = portable.plan(badSort, empty, {})
 	local outSort, notesSort = portable.apply(badSort, badPlan, {}, {}, empty, ok)
 	assert(outSort and next(outSort) == nil and #notesSort == 1, "an invalid sort skips the view")
 
@@ -125,12 +128,21 @@ function M.run()
 	local taken = existing()
 	table.insert(taken.prs.prompts.items, { id = "p6", name = "Other", text = "x", key = "r" })
 	taken.prs.prompts.nextId = 7
-	portable.reservedKeys = { q = true }
-	local keyPlan = portable.plan(keyed, taken)
-	portable.reservedKeys = {}
+	local keyPlan = portable.plan(keyed, taken, { q = true })
 	assert(keyPlan.entries[1].remap[1] == "shortcut r removed: already used by Other", "an action's shortcut collision is announced")
 	assert(string.find(keyPlan.entries[2].remap[1], "shortcut q removed", 1, true), "a reserved key is announced")
-	local keyOut = portable.apply(keyed, keyPlan, {}, {}, taken, { sortValid = ok.sortValid, integrationOn = ok.integrationOn, reserved = { q = true } })
+	local keyOut = portable.apply(keyed, keyPlan, {}, {}, taken, { sortValid = ok.sortValid, integrationOn = ok.integrationOn, reserved = { q = true }, modelValid = ok.modelValid })
+	-- a non-ASCII key and a bad name or model
+	local wide = portable.parse(portable.build({}, { prompt("p1", "Accent", "Go.", "é") }) or "")
+	assert(wide and wide.prompts[1].key == "é", "a single non-ASCII character round-trips")
+	local wplan = portable.plan(wide, empty, { ["é"] = true })
+	assert(string.find(wplan.entries[1].remap[1], "shortcut é removed", 1, true), "it collides like any other key")
+	local longName, longNotes = portable.build({}, { prompt("p1", string.rep("n", 121), "x"), prompt("p2", "Ok", "y") })
+	assert(longName and #longNotes == 1 and not string.find(longName, string.rep("n", 121), 1, true), "a 121-character name is left out with a note")
+	local modeled = portable.parse(portable.build({}, { { id = "p1", kind = "prs", name = "M", text = "x", model = "a b" } :: portable.ExPrompt }) or "")
+	assert(modeled, "the model parses")
+	local mOut, mNotes = portable.apply(modeled, portable.plan(modeled, empty, {}), {}, {}, empty, ok)
+	assert(mOut and next(mOut) == nil and #mNotes == 1, "an invalid model leaves the action out with a note")
 	local added = keyOut and keyOut.prs and keyOut.prs.prompts.items
 	assert(added and added[2].id == "p7" and added[2].key == nil and added[3].id == "p8" and added[3].key == nil, "colliding shortcuts are dropped, ids are fresh")
 
@@ -140,7 +152,7 @@ function M.run()
 		x.views[1].prompts = tern.json.array({ "prs:p1" })
 	end))
 	assert(linked, "a linked export parses")
-	local linkedOut = portable.apply(linked, portable.plan(linked, taken), {}, {}, taken, ok)
+	local linkedOut = portable.apply(linked, portable.plan(linked, taken, {}), {}, {}, taken, ok)
 	assert(linkedOut and linkedOut.prs and linkedOut.prs.views.items[1].prompts[1] == "p7", "the view lists the action's new id")
 
 	-- strict parse
@@ -208,11 +220,11 @@ function M.run()
 	local moving: portable.ExPrompt = { id = "p1", kind = "issues", name = "Fix", text = "Fix it.", status = "In Review" }
 	local moved = portable.parse(portable.build({}, { moving }) or "")
 	assert(moved and moved.prompts[1].status == "In Review", "the status is exported and parsed")
-	local movedOut = portable.apply(moved, portable.plan(moved, empty), {}, {}, empty, ok)
+	local movedOut = portable.apply(moved, portable.plan(moved, empty, {}), {}, {}, empty, ok)
 	assert(movedOut and movedOut.issues and movedOut.issues.prompts.items[1].status == "In Review", "and saved")
-	assert(portable.plan(moved, movedOut).entries[1].conflict == "identical", "a saved status makes the same action identical")
+	assert(portable.plan(moved, movedOut, {}).entries[1].conflict == "identical", "a saved status makes the same action identical")
 	local other = portable.parse(portable.build({}, { { id = "p1", kind = "issues", name = "Fix", text = "Fix it." } }) or "")
-	assert(other and portable.plan(other, movedOut).entries[1].conflict == "same-name", "another status is a different action")
+	assert(other and portable.plan(other, movedOut, {}).entries[1].conflict == "same-name", "another status is a different action")
 	assert(portable.build({}, { { id = "p1", kind = "prs", name = "R", text = "Review.", status = "Done" } }) == nil, "a pull request action has no status")
 	assert(not portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "issues:p1", kind = "issues", name = "A", text = "t", status = string.rep("s", portable.STATUS_CAP + 1) } })
@@ -222,10 +234,10 @@ function M.run()
 	local chained = portable.parse(portable.build({}, { { id = "p1", kind = "prs", name = "Review", text = "Review.", next = "p2" }, { id = "p2", kind = "prs", name = "Fix", text = "Fix.", next = "p9" } }) or "")
 	assert(chained and chained.prompts[1].next == "prs:p2", "the next action is exported by ref, with its own action")
 	assert(chained and chained.prompts[2].next == nil, "a next action that does not exist is not exported")
-	local chainedOut = chained and portable.apply(chained, portable.plan(chained, taken), {}, {}, taken, ok)
+	local chainedOut = chained and portable.apply(chained, portable.plan(chained, taken, {}), {}, {}, taken, ok)
 	local chainedItems = chainedOut and chainedOut.prs and chainedOut.prs.prompts.items
 	assert(chainedItems and chainedItems[2].next == chainedItems[3].id and chainedItems[3].next == nil, "an import remaps the next action to its new id")
-	assert(chained and chainedOut and portable.plan(chained, chainedOut).entries[1].conflict == "identical", "a saved next action makes the same action identical")
+	assert(chained and chainedOut and portable.plan(chained, chainedOut, {}).entries[1].conflict == "identical", "a saved next action makes the same action identical")
 	local dangling = portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "prs:p9" } })
 	end))
@@ -245,15 +257,15 @@ function M.run()
 	local crossFresh = existing()
 	table.insert(crossFresh.prs.prompts.items, { id = "p4", name = "Other", text = "x" })
 	crossFresh.prs.prompts.nextId = 5
-	local crossOut = cross and portable.apply(cross, portable.plan(cross, crossFresh), {}, {}, crossFresh, ok)
+	local crossOut = cross and portable.apply(cross, portable.plan(cross, crossFresh, {}), {}, {}, crossFresh, ok)
 	assert(crossOut and crossOut.issues and crossOut.issues.prompts.items[1].next == "prs:p5", "an import qualifies the new id of the pull request action")
-	assert(cross and crossOut and portable.plan(cross, crossOut).entries[1].conflict == "identical", "and a saved qualified next makes the same action identical")
+	assert(cross and crossOut and portable.plan(cross, crossOut, {}).entries[1].conflict == "identical", "and a saved qualified next makes the same action identical")
 	-- a saved issue action leading to the issue action "Watch" is not the imported one leading to the pull request action "Watch"
 	local clash = existing()
 	clash.issues.prompts.items = { { id = "p1", name = "Implement", text = "Do it.", next = "p2" }, { id = "p2", name = "Watch", text = "w" } }
 	clash.prs.prompts.items = { { id = "p1", name = "Watch", text = "w" } }
 	local clashDoc = portable.parse(portable.build({}, { { id = "p1", kind = "issues", name = "Implement", text = "Do it.", next = "prs:p1" } }, nil, { { id = "p1", kind = "prs", name = "Watch", text = "w" } }) or "")
-	assert(clashDoc and portable.plan(clashDoc, clash).entries[1].conflict == "same-name", "the same next name in another kind is a different action")
+	assert(clashDoc and portable.plan(clashDoc, clash, {}).entries[1].conflict == "same-name", "the same next name in another kind is a different action")
 	local backwards = portable.parse(doc(function(x: any)
 		x.prompts = tern.json.array({ { id = "prs:p1", kind = "prs", name = "A", text = "t", next = "issues:p1" }, { id = "issues:p1", kind = "issues", name = "B", text = "t" } } :: { any })
 	end))

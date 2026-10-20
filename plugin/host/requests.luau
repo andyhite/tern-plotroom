@@ -1348,15 +1348,14 @@ function M.existing(): ({ [string]: any }?, string?)
 end
 
 -- The queue's reserved keys (every action's current key) for portable.plan: an imported action never takes one.
-function M.reserve()
-	for k in portable.reservedKeys do
-		portable.reservedKeys[k] = nil
-	end
+function M.reserve(): { [string]: boolean }
+	local reserved: { [string]: boolean } = {}
 	for _, key in keys.load() do
 		if key ~= "" then
-			portable.reservedKeys[key] = true
+			reserved[key] = true
 		end
 	end
+	return reserved
 end
 
 -- `q.path` as a file on this host (a path the user typed), nil and why when it is not a usable one.
@@ -1470,8 +1469,7 @@ function M.importPreview(state: State, id: string, q: any)
 	if not existing then
 		return reply(state, id, { problem = ewhy or "Saved views or actions cannot be changed now." })
 	end
-	M.reserve()
-	local plan = portable.plan(doc, existing)
+	local plan = portable.plan(doc, existing, M.reserve())
 	if #plan.entries > 150 then
 		-- The preview lists every entry or none: nothing is written that was not shown.
 		return reply(state, id, { problem = "This import has " .. #plan.entries .. " entries; Plotroom previews up to 150 at once. Export fewer views and actions at a time." })
@@ -1521,11 +1519,12 @@ function M.importApply(state: State, id: string, q: any)
 	if not existing then
 		return reply(state, id, { problem = why or "Saved views or actions cannot be changed now." })
 	end
-	M.reserve()
+	local reserved = M.reserve()
 	local result, notes = portable.apply(held.doc, held.plan, choices, mapping, existing, {
 		sortValid = sorting.valid,
 		integrationOn = cli.on,
-		reserved = portable.reservedKeys,
+		reserved = reserved,
+		modelValid = worktree.validModel,
 	})
 	if not result then
 		return reply(state, id, { problem = notes[1] or "Nothing could be imported.", notes = M.strings(notes) })

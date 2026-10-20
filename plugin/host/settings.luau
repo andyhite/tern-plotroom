@@ -1320,6 +1320,8 @@ function M.commitEdit(state: State)
 		local empty = false
 		if text == "" then
 			err = if kind == "pname" then "A name is required." else "A prompt is required."
+		elseif kind == "pname" and #text > portable.NAME_CAP then
+			err = "A name is at most " .. portable.NAME_CAP .. " characters."
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
 		else
