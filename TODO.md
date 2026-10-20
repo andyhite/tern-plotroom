@@ -4,6 +4,22 @@
 
 ## Todo
 
+## In-Progress
+
+- [ ] Jira views list up to 1000 items instead of stopping at 100.
+  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
+  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
+  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
+  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
+  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
+  - Base: main
+  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
+  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
+  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
+  - Fix: plugin/jira.luau:301-303 - with a parsed count, `complete = count <= M.LIMIT` ignores what the search returned; the count and the search are separate acli calls, so a count of 98 with a full 100-item page (an issue created between them) or a stale count under 1000 with 1000 returned is marked complete and drops the partial marker - pass the requested limit into `search` and let a full list be complete only when the count matches it (`#found < limit or (#found == count and #found <= M.LIMIT)`), with a case.
+  - Fix: rebase onto main - main (dca57bf) already changed `tests/cases/issues.luau:798,800` to `acliCount(s.acli, "view")`; keep main's lines there; also add the new `count` kind to the `AcliReq` comment in `tests/harness.luau`.
+  - Review attempts: 1
+
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -19,22 +35,6 @@
   - Fix: plugin/host/requests.luau:133, 1700 - the `menu` items and `action` answer gain `carly`, an rpc shape change, but `RPC_PROTOCOL`, `PROTOCOL` and `asks.protocol` stay "23" (AGENTS.md: bump together; precedent bd7de6e for `split`), so an older window silently drops the toggle - rebase onto main, bump all three to the next number main has not used at rebase time, and set `plugin/plugin.toml` to `0.<protocol>.0` (main's `check.py` now requires it).
   - Fix: plugin/window.luau:438 - `string.sub(..., 1, 60)` cuts the action name by bytes, so a long non-ASCII name can end the `Agent:tocarly` message in invalid UTF-8 - cut on a character boundary (e.g. `utf8.offset(name, 61)`), as `core.clip` does.
   - Fix: plugin/host/settings.luau:306 - the toggle's hint says the message names "the action, item and result", but the template only names the action and item key and points Carly at `plotroom_agents` - make the hint match the template.
-  - Review attempts: 1
-
-## In-Progress
-
-- [ ] Jira views list up to 1000 items instead of stopping at 100.
-  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
-  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
-  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
-  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
-  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
-  - Base: main
-  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
-  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
-  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
-  - Fix: plugin/jira.luau:301-303 - with a parsed count, `complete = count <= M.LIMIT` ignores what the search returned; the count and the search are separate acli calls, so a count of 98 with a full 100-item page (an issue created between them) or a stale count under 1000 with 1000 returned is marked complete and drops the partial marker - pass the requested limit into `search` and let a full list be complete only when the count matches it (`#found < limit or (#found == count and #found <= M.LIMIT)`), with a case.
-  - Fix: rebase onto main - main (dca57bf) already changed `tests/cases/issues.luau:798,800` to `acliCount(s.acli, "view")`; keep main's lines there; also add the new `count` kind to the `AcliReq` comment in `tests/harness.luau`.
   - Review attempts: 1
 
 ## Blocked
