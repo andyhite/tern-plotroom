@@ -4,13 +4,6 @@
 
 ## Todo
 
-- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
-  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
-  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
-  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
-  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
-  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
-
 - [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
   - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
   - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
@@ -223,6 +216,15 @@
   - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
   - Base: main
   - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
+
+- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
+  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
+  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
+  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
+  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
+  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
+  - Base: main
+  - Branch: todo/rate-limit-pause-gates-reads at /Users/andyhite/Code/tern-plotroom.todo/rate-limit-pause-gates-reads
 
 ## Review
 
