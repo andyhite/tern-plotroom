@@ -21,26 +21,6 @@
 
 ## Review
 
-- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
-  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
-  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
-  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
-  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
-  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
-  - Base: main
-  - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
-  - Decision: The card and a Worktrees list row share `plotroom://worktrees/git` (hidden `layer.queue.buttons.git` node); the window then sends a no-argument `git-path` request and the host answers with the selected row's or card's folder.
-  - Decision: The host can't tell a remote block, so the button shows whenever the folder exists and the window refuses a remote block (`cx.hosts:list()` kind ≠ `local`) with a toast.
-  - Decision: A list row gets Open in Git as a palette action (`wt-git`) only; the card gets a visible button plus `open-git`.
-  - Decision: "N unpushed" is a warning badge, shown only above 0; `worktree.dirty` wraps the new `worktree.status`/`parseStatus`.
-  - Decision: A `git …` finish clears `note.checked` on notes containing the pane's cwd and only the selected card is re-read; a read in flight can predate the command (`ponytail:`).
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
-  - Review attempts: 1
-  - Decision: "N unpushed" survives a Worktree press or agent start: `inspectPath` reads `M.status` and carries `ahead` through `Opened`, `Result`, `Report` and `noteWorktree` (which keeps `checked = state.round`).
-  - Decision: A `git …` finish inside a worktree also clears `s.scanned`, so the scan reruns and the sync badge and pull command refresh.
-  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
-
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
   - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
@@ -299,6 +279,23 @@
   - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
 
 ## Done
+
+- [x] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
+  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
+  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
+  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
+  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
+  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
+  - Decision: The card and a Worktrees list row share `plotroom://worktrees/git` (hidden `layer.queue.buttons.git` node); the window then sends a no-argument `git-path` request and the host answers with the selected row's or card's folder.
+  - Decision: The host can't tell a remote block, so the button shows whenever the folder exists and the window refuses a remote block (`cx.hosts:list()` kind ≠ `local`) with a toast.
+  - Decision: A list row gets Open in Git as a palette action (`wt-git`) only; the card gets a visible button plus `open-git`.
+  - Decision: "N unpushed" is a warning badge, shown only above 0; `worktree.dirty` wraps the new `worktree.status`/`parseStatus`.
+  - Decision: A `git …` finish clears `note.checked` on notes containing the pane's cwd and only the selected card is re-read; a read in flight can predate the command (`ponytail:`).
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Decision: "N unpushed" survives a Worktree press or agent start: `inspectPath` reads `M.status` and carries `ahead` through `Opened`, `Result`, `Report` and `noteWorktree` (which keeps `checked = state.round`).
+  - Decision: A `git …` finish inside a worktree also clears `s.scanned`, so the scan reruns and the sync badge and pull command refresh.
+  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
 
 - [x] Jira views list up to 1000 items instead of stopping at 100.
   - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
