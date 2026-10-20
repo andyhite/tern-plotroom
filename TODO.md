@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] Remove every finished worktree in one confirm.
-  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
-  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
-  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
-  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
-  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
-  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -163,6 +155,16 @@
   - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
   - Base: main
   - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
+
+- [ ] Remove every finished worktree in one confirm.
+  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
+  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
+  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
+  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
+  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
+  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
+  - Base: main
+  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
 
 ## Blocked
 
