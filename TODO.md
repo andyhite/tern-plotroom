@@ -4,22 +4,6 @@
 
 ## Todo
 
-- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
-  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
-  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
-  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
-  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
-  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
-  - Base: main
-  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
-  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
-  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
-  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
-  - Fix: plugin/host/core.luau:601, plugin/window.luau:33, plugin/tests/harness.luau:3022 - main (7cbca60, fork PRs) already took protocol "23", so the new `menu` shape ships under main's number and a mixed host/window pair sees no mismatch - rebase onto main and bump `RPC_PROTOCOL`, `PROTOCOL` and `asks.protocol` to the next number main has not used (check main at rebase time; another queued item also targets "24"); update the Decision bullet to match.
-  - Review attempts: 1
-
 - [ ] The queue's error and empty states say what to do next.
   - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
   - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
@@ -92,6 +76,22 @@
   - Fix: plugin/tests/regression.luau:86-94 (`seen-render`) - the row never loads 1000 seen items: keys are `no/r#i` (the picker-id prefix, not the triage key `o/r#i`), entries lack `at` so `triage.validate` rejects the store, and the block keeps the `state.triage` it already read - seed `o/r#i` with `{ seen = "x", at = EPOCH }` and make the block reread the store (e.g. `b.state().triage = nil`) before timing, so the row fails if `listedCount` hashes each item again.
   - Fix: plugin/host/engine.luau:666-669, 719-729 - `identify` now keeps an `auth`/`missing` problem across an integration change, but `headOf`/`helpOf` (and Settings' pause line) label it by the view now shown, so an acli sign-out shown on a GitHub view reads "GitHub CLI not signed in" / "Run gh auth login" (and the reverse), and `save` persists that - record the integration that raised the problem when it is set and label by it in `headOf`, `helpOf` and `paceLine`.
   - Fix: plugin/tests/cases/queue.luau:2286-2306 - the not-found case switches Jira → PR, which base already cleared through `forget`, so it passes without the change and never asserts the title's "the view itself stays paused" - add a same-integration switch (two Jira views, or two GitHub views of one login) that fails on base, and assert re-clicking the failed view sends no search.
+  - Review attempts: 1
+
+- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+  - Base: main
+  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
+  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
+  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
+  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
+  - Fix: plugin/host/core.luau:601, plugin/window.luau:33, plugin/tests/harness.luau:3022 - main (7cbca60, fork PRs) already took protocol "23", so the new `menu` shape ships under main's number and a mixed host/window pair sees no mismatch - rebase onto main and bump `RPC_PROTOCOL`, `PROTOCOL` and `asks.protocol` to the next number main has not used (check main at rebase time; another queued item also targets "24"); update the Decision bullet to match.
   - Review attempts: 1
 
 ## Blocked
