@@ -38,16 +38,10 @@ function M.define()
 				ui.node("text", { key = "url", spans = { ui.span(url) } }),
 				ui.node("list", { key = "buttons" }, {
 					ui.node("item", { key = "show", label = "Show in Plotroom", icon = "merge", href = "plotroom://lens/show/" .. core.pct(url), actions = { click = "open" } }),
-					ui.node("item", { key = "copy", label = "Copy", icon = "copy", actions = { click = "copy" } }),
+					ui.node("item", { key = "copy", label = "Copy", icon = "copy", href = url, actions = { click = "copy" } }),
 					ui.node("item", { key = "browser", label = "Open in browser", icon = "globe", href = url, actions = { click = "open" } }),
 				}),
 			})
-		end,
-		event = function(state: Lens, ev: UiEvent, cx: EffectCx)
-			if ev.act == "copy" and state.url then
-				cx:copy(state.url)
-				cx:toast("success", "Copied the pull request URL")
-			end
 		end,
 	}
 	tern.lens.define("pr-create", def)
