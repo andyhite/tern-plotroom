@@ -120,16 +120,6 @@
 
 ## In-Progress
 
-- [ ] Interrupt, stop or message the selected item's agent from the command palette.
-  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
-  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
-  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
-  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
-  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
-  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
-  - Base: main
-  - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -388,6 +378,18 @@
   - Decision: "N unpushed" is a warning badge, shown only above 0; `worktree.dirty` wraps the new `worktree.status`/`parseStatus`.
   - Decision: A `git …` finish clears `note.checked` on notes containing the pane's cwd and only the selected card is re-read; a read in flight can predate the command (`ponytail:`).
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+
+- [ ] Interrupt, stop or message the selected item's agent from the command palette.
+  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
+  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
+  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
+  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
+  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
+  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
+  - Base: main
+  - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
+  - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
+  - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
 
 ## Done
 
