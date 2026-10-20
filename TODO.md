@@ -154,24 +154,6 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
-- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
-  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
-  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
-  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
-  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
-  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
-  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
-  - Base: main
-  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
-  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
-  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
-  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
-  - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
-  - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
-  - Fix: plugin/host/lens.luau:28-31 / acceptance "Output without a PR URL (a failed or cancelled create) shows the raw output" - `finish` ignores the exit status, and gh's common failure (`a pull request for branch … already exists:` plus the existing PR's URL, exit 1) gets the lens view for the old PR and hides gh's error - clear `state.url` when `status ~= 0`, and add a status-1 already-exists transcript to the lens case.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -193,6 +175,25 @@
 ## Blocked
 
 ## Review
+
+- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
+  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
+  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
+  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
+  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
+  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
+  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
+  - Base: main
+  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
+  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
+  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
+  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
+  - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
+  - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
+  - Fix: plugin/host/lens.luau:28-31 / acceptance "Output without a PR URL (a failed or cancelled create) shows the raw output" - `finish` ignores the exit status, and gh's common failure (`a pull request for branch … already exists:` plus the existing PR's URL, exit 1) gets the lens view for the old PR and hides gh's error - clear `state.url` when `status ~= 0`, and add a status-1 already-exists transcript to the lens case.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Fixed lens finish to clear the url on non-zero status, with an already-exists case; rebased onto main (b376c20); no protocol bump; gate passed: 543 cases, types clean, smoke 22 scenarios (gate ran without the verify lock after a wait timeout).
+  - Review attempts: 0
 
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
