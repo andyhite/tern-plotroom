@@ -8,6 +8,24 @@
 
 ## Blocked
 
+- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
+  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
+  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
+  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
+  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
+  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
+  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
+  - Base: main
+  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
+  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
+  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
+  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
+  - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
+  - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
+  - Fix: plugin/host/lens.luau:28-31 / acceptance "Output without a PR URL (a failed or cancelled create) shows the raw output" - `finish` ignores the exit status, and gh's common failure (`a pull request for branch … already exists:` plus the existing PR's URL, exit 1) gets the lens view for the old PR and hides gh's error - clear `state.url` when `status ~= 0`, and add a status-1 already-exists transcript to the lens case.
+  - Review attempts: 3
+  - Blocked: changes needed after 3 reviews since last unblock
+
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
   - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
@@ -231,22 +249,6 @@
   - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
   - Review attempts: 2
-
-- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
-  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
-  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
-  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
-  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
-  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
-  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
-  - Base: main
-  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
-  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
-  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
-  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
-  - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
-  - Review attempts: 2
-  - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
 
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
