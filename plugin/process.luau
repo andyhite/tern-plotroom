@@ -44,14 +44,14 @@ function M.extractPath(out: string): string?
 	return path
 end
 
-local function recover(cb: Waiter)
+local function recover(cb: Waiter, reprobe: boolean?)
 	if failed then
 		local msg = failed
 		return defer(function(cx)
 			cb(nil, msg, cx)
 		end)
 	end
-	if recovered then
+	if recovered and not reprobe then
 		local path = recovered
 		return defer(function(cx)
 			cb(path, nil, cx)
@@ -147,17 +147,15 @@ function M.run(argv: { string }, opts: ProcessOptions, done: (ProcessResult?, st
 	end
 	local program = argv[1] or "program"
 	-- A spawn that fails under the PATH found earlier asks the login shell once more: the program may be newly installed.
-	recovered = nil
 	recover(function(path, why, cx)
 		if not path or path == stale then
-			recovered = recovered or stale
 			return done(nil, explain(program, if stale then tostring(err) else why or "unknown"), cx)
 		end
 		local ok2, err2 = start(path)
 		if not ok2 then
 			done(nil, explain(program, tostring(err2)), cx)
 		end
-	end)
+	end, true)
 end
 
 return M
