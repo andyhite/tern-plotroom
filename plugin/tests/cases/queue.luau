@@ -2223,6 +2223,41 @@ case("host: a rejected query pauses only itself: no automatic retry, and another
 	eq(pickerOf(b).state, "error", "and it is rejected again")
 end)
 
+case("host: the error card offers Refresh and Settings with the default keys, though neither has a key", function(w: World)
+	local s = hostScene(w, 3)
+	w.kv.store.keys = nil :: any
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" then
+			return { status = 1, stderr = "gh: Validation Failed (HTTP 422)\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	eq(pickerOf(b).state, "error", "the card shows")
+	local ids: { string } = {}
+	for _, a in pickerOf(b).actions do
+		table.insert(ids, a.id)
+	end
+	same(ids, { "settings", "retry", "more" }, "Settings and Refresh sit beside the palette")
+end)
+
+case("host: a list emptied by snoozing says how many rows are hidden and which key shows them", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("triage", { version = 1, items = { ["o/r#1"] = { at = 1, snoozeUntil = EPOCH + 3600 }, ["o/r#2"] = { at = 1, snoozeUntil = EPOCH + 3600 }, ["o/r#3"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
+	local b = openQueue(w)
+	same(listed(b), {}, "every row is hidden")
+	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; press Z to show them.", "the hint counts them and names the key")
+	w.kv.put("keys", { snoozed = "" })
+	b.render()
+	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; pick Show or hide snoozed in the command palette to show them.", "or the palette row once the key is gone")
+end)
+
+case("host: a view with no matches keeps its plain empty text", function(w: World)
+	hostScene(w, 0)
+	local b = openQueue(w)
+	eq(pickerOf(b).empty[1].t, "No pull requests match My PRs.", "no hidden count")
+end)
+
 case("host: view group-by emits headers", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = { searchItem(1, "o/b", EPOCH - 10), searchItem(2, "o/a", EPOCH - 20), searchItem(3, "o/b", EPOCH - 30) }

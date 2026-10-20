@@ -18,7 +18,7 @@ Triage with the keyboard. One key checks a PR or issue out into its own worktree
  │   Drafts         │  #468  docs: README, but fancy             ○ 0/1        │
  │                  │                                                         │
  │ Auto-refresh: every 60 s, next 14:02:11  ·  4,991 / 5,000 until 14:30     │
- └──────────────────────────────── ?  keys  ·  /  search  ·  w  worktree ─────┘
+└────────────────────────────────────────────────────────── .  commands ─────┘
 ```
 
 ## Install

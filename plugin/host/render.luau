@@ -1295,6 +1295,19 @@ function M.queuePicker(state: State): Node
 	end
 	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true })
 	local actions = keyed(all)
+	if not snap and problem then
+		-- The error card is all there is: it offers Refresh and Settings even without a key.
+		actions = {}
+		for _, a in all do
+			if a.keys or a.id == "settings" or a.id == "retry" then
+				table.insert(actions, a)
+			end
+		end
+	end
+	local hidden = if snap and view then engine.hiddenCount(state, snap) else 0
+	local hiddenBy = if state.attention then "Needs attention only" else "snoozing"
+	local hiddenKey = if state.attention then "attention" else "snoozed"
+	local hiddenHow = if map[hiddenKey] ~= "" then "press " .. map[hiddenKey] else "pick " .. (if state.attention then "Needs attention only" else "Show or hide snoozed") .. " in the command palette"
 
 	-- Neither integration is on: the setup pages in Settings are all there is.
 	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
@@ -1316,7 +1329,7 @@ function M.queuePicker(state: State): Node
 		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
 			ui.span(
-				if view then "No " .. state.kind.many .. " match " .. view.name .. "."
+				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by " .. hiddenBy .. "; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." else "No " .. state.kind.many .. " match " .. view.name .. ".")
 					else (if none then "Neither gh nor acli is installed on this host. " else "No saved views yet. ")
 						.. (if map.settings ~= "" then "Press " .. map.settings .. " to "
 							elseif map.more ~= "" then "Press " .. map.more .. " and pick Settings to "

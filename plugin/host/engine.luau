@@ -386,6 +386,17 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	return n
 end
 
+-- How many of `snap`'s items the attention filter or snoozing keeps off the list.
+function M.hiddenCount(state: State, snap: Snap): number
+	local n = 0
+	for _, item in snap.items do
+		if not M.keep(state, snap.kind, item) then
+			n += 1
+		end
+	end
+	return n
+end
+
 -- The items the local search lets through, in snapshot order, with their picker ids and title hits. Recomputed only when
 -- the snapshot or the search text changes.
 function M.filtered(state: State): Visible?
