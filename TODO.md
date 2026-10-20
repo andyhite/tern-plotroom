@@ -4,13 +4,6 @@
 
 ## Todo
 
-- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
-  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
-  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
-  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
-  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
-  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
-
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
   - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
@@ -192,6 +185,15 @@
   - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
   - Base: main
   - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
+
+- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
+  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
+  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
+  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
+  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
+  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
+  - Base: main
+  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
 
 ## Review
 
