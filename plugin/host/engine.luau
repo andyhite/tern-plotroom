@@ -763,12 +763,12 @@ function M.headOf(state: State, k: string): string?
 	if k == "failed" then
 		return "Could not load " .. state.kind.many
 	end
-	return if M.trackerOf(state) == "jira" then JIRA_HEADS[k] else HEADS[k]
+	return if (state.problemBy or M.trackerOf(state)) == "jira" then JIRA_HEADS[k] else HEADS[k]
 end
 
 -- What to do about problem kind `k`, nil when there is no advice.
 function M.helpOf(state: State, k: string): string?
-	return if M.trackerOf(state) == "jira" then JIRA_HELP[k] else HELP[k]
+	return if (state.problemBy or M.trackerOf(state)) == "jira" then JIRA_HELP[k] else HELP[k]
 end
 
 -- Panes of this runtime that still exist; they share one search quota.
@@ -943,7 +943,7 @@ function M.refresh(state: State)
 	local wait = M.waitOf(state)
 	if wait > 0 then
 		-- Nothing is loading: say why, so an uncached view does not show a spinner until the reset.
-		state.problem = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }
+		state.problem, state.problemBy = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }, "github"
 		return schedule(state, wait * 1000)
 	end
 	local gen, query, integration = state.gen, v.query, v.integration
@@ -986,7 +986,7 @@ function M.refresh(state: State)
 				ghActive.note(state)
 			end
 		else
-			state.problem = problem
+			state.problem, state.problemBy = problem, integration
 		end
 		if spent > 0 then
 			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.

@@ -2368,9 +2368,18 @@ case("host: switching across kinds shows each view's cached list and its sidebar
 end)
 
 case("host: a not-found belongs to its view: another view clears it and searches, while the view itself stays paused", function(w: World)
-	local s, acli = crossScene(w)
+	local _, acli = crossScene(w)
+	-- A second Jira view beside the failing one: the switch keeps the integration.
+	w.kv.put("views-issues", {
+		version = 1,
+		nextId = 3,
+		items = array({
+			{ id = "v1", name = "Unknown project", integration = "jira", query = "project = nopexyz", group = "none", prompts = array({}) },
+			{ id = "v2", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", group = "none", prompts = array({}) },
+		}),
+	})
 	acli.override = function(req: AcliReq): Reply?
-		if req.kind == "search" then
+		if req.kind == "search" and string.find(table.concat(req.argv, " "), "nopexyz", 1, true) then
 			return { status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" }
 		end
 		return nil
@@ -2379,14 +2388,30 @@ case("host: a not-found belongs to its view: another view clears it and searches
 	local function scope(id: string)
 		b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
 	end
+	local function searches(): number
+		local n = 0
+		for _, req in acli.requests do
+			if req.kind == "search" then
+				n += 1
+			end
+		end
+		return n
+	end
 	scope("issues:v1")
 	w.flush()
 	eq(pickerOf(b).state, "error", "the unknown project shows its card")
-	local before = #requestsOf(s.gh, "search")
+	local before = searches()
+	scope("issues:v1")
+	w.flush()
+	eq(pickerOf(b).state, "error", "the view itself stays paused")
+	eq(searches(), before, "re-clicking it sends no search")
+	scope("issues:v2")
+	w.flush()
+	eq(pickerOf(b).state, "ready", "another Jira view does not show it")
+	eq(searches() > before, true, "and searches")
 	scope("prs:v1")
 	w.flush()
-	eq(pickerOf(b).state, "ready", "another view does not show it")
-	eq(#requestsOf(s.gh, "search") > before, true, "and searches")
+	eq(pickerOf(b).state, "ready", "nor does a pull request view")
 end)
 
 case("host: view group-by emits headers", function(w: World)

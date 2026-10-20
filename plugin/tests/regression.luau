@@ -87,9 +87,10 @@ function M.bench(instantiate: Loader)
 	-- 1000 seen items in a cached view: the sidebar's counts read snooze state without hashing each of them.
 	local seen: { [string]: any } = {}
 	for i = 1, 1000 do
-		seen["no/r#" .. i] = { seen = "x" }
+		seen["o/r#" .. i] = { seen = "x", at = EPOCH }
 	end
 	w.kv.put("triage", { version = 1, items = seen })
+	b.state().triage = nil -- the block rereads the store
 	timed("seen-render", 20, function(_i: number)
 		b.render()
 	end)

@@ -187,6 +187,7 @@ export type State = {
 	interval: number?,
 	nextAt: number?,
 	problem: github.Problem?,
+	problemBy: string?, -- the integration that raised `problem`: it labels it, whatever view is shown
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
 	help: boolean, -- the shortcut list is open
