@@ -1606,10 +1606,10 @@ end)
 -- issue 12 on `bob/12-fix-login`, the head branch of fork PR 1 (a fork's worktree is on <owner>/<branch>).
 local function notedScene(w: World): (HostScene, Block)
 	local s = issueHost(w)
-	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { head = "12-fix-login", fork = "bob" }), searchItem(2, "o/r", EPOCH - 120) }
-	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.items.work = { searchItem(1, "o/r", EPOCH - 60, { head = "12-fix-login", fork = "bob" }), searchItem(2, "o/r", EPOCH - 120) }
+	s.gh.tokens.work = "tok-work"
 	local views: any = w.kv.get("views-prs")
-	views.items[1].logins = array({ "octocat" })
+	views.items[1].logins = array({ "work" })
 	w.kv.put("views-prs", views)
 	w.kv.put("branch-formats", { ["o/r"] = "bob/{key}-{slug}" })
 	table.insert(s.git.worktrees, { path = "/wt/iss", branch = "refs/heads/bob/12-fix-login", head = sha("b"), locked = false })
@@ -1636,7 +1636,7 @@ case("host: the pull request preview shows the issue noted for a fork's worktree
 			read = req
 		end
 	end
-	eq(if read then read.login else nil, "octocat", "the issue was read as the view's login, not gh's active one")
+	eq(if read then read.login else nil, "work", "the issue was read as the view's login, not gh's active one (octocat)")
 end)
 
 case("host: selecting a pull request lists no worktrees, and one before its checkout's scan shows no issue", function(w: World)
