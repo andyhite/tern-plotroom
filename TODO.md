@@ -4,6 +4,19 @@
 
 ## Todo
 
+## In-Progress
+
+- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
+  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
+  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
+  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
+  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
+  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
+  - Decided: the inbox marks threads read, never done, through one batched confirm.
+  - Base: main
+  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
+
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
   - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
@@ -19,19 +32,6 @@
   - Fix: plugin/host.luau:322-325, 351-354 - when the card's note has no `repo` (a Jira note whose mapped checkout isn't exactly git's main-worktree path, which `applyScans.repoOf` allows) `askRemove` sets `state.removing` and returns, so the confirm says "Reading…" forever, and `removeNow` returns silently, so `d` does nothing; the same early return hits a detached worktree (`branch` nil) in `removeNow` - give the confirm a fixed reason and make `removeNow` set `note.refused` and toast "Worktree not removed" when repo is missing; let a detached worktree go through `removeEntry` (no branch to keep), with cases for both.
   - Fix: plugin/host.luau:161-164 (`applyScans`) with 351-360 - the path-equal branch updates only the head, so after `git switch` inside a Plotroom worktree the card keeps the old branch and every card Remove is refused by `claim` ("…changed; reload the list") with no way to recover, which the card could do before - take git's branch there (`note.branch = f.branch`) and count it as moved.
   - Review attempts: 1
-
-## In-Progress
-
-- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
-  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
-  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
-  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
-  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
-  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
-  - Decided: the inbox marks threads read, never done, through one batched confirm.
-  - Base: main
-  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
 
 ## Blocked
 
