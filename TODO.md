@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
-  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
-  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
-  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
-  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
-  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
-  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
-
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
   - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
@@ -130,6 +122,16 @@
   - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
   - Base: main
   - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
+
+- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
+  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
+  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
+  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
+  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
+  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
+  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
+  - Base: main
+  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
 
 ## Blocked
 
