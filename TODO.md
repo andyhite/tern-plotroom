@@ -87,27 +87,6 @@
   - Review attempts: 0
 
 
-- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
-  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
-  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
-  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
-  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
-  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
-  - Base: main
-  - Branch: todo/action-link-token-head-ref-check at /Users/andyhite/Code/tern-plotroom.todo/action-link-token-head-ref-check
-  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
-  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
-  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
-  - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
-  - Decision: `agentHref` tokens every agent verb (`agentgo`, `agentint`, `agentstop`, `agentmsg`) through `core.withToken`; rebased onto main keeping its `AGENT_CMD` handling with the full tokened href check.
-  - Decision: `plugin.toml` is `0.24.0`, matching protocol "24".
-  - Fix: plugin/host/core.luau:611, plugin/window.luau:35, plugin/tests/harness.luau:3063, plugin/plugin.toml:4 - main (c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so the new `?k=` link format ships under main's number and a mixed host/window pair sees no mismatch (every action link "malformed"; an issue Open would send the token to GitHub/Jira) - rebase onto main and bump all four to the next unused number ("25" unless main moved past it); update the Decision bullet.
-  - Fix: plugin/host/core.luau:606, render.luau:388,1074, engine.luau:1887,1904 (main's Open in Git) - after the rebase `core.GIT_LINK` (`plotroom://worktrees/git`) is rendered and opened untokened, so a description link can open Tern's Git view and the README Trust claim "every action link … carries a random token" is false - token it (`core.withToken(core.GIT_LINK)`), pass the full link to `flows.openGit`, name Open in Git in the README Trust list, and switch main's `checks.luau:651,653` / `flows.luau:2192,2195` assertions to tokened links; keep `core.withToken` on `worktrees/open/<n>` when resolving the `boardAct`/`boardPreview` conflicts.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (f3f997f): protocol "26" and plugin.toml 0.26.0 (replaces the "24" Decisions above; other review items also use 26, so later landings must rebase and bump); core.GIT_LINK is tokened in render and engine.openGit, flows.openGit gets the full link, README Trust names Open in Git; gate passed: 543 cases, types clean, smoke 22 scenarios.
-  - Review attempts: 0
 
 
 
@@ -547,3 +526,19 @@
   - Decision: Pasted URLs are found by regex, trailing `.,;:!?)]}` stripped, and the first one `engine.pinView` accepts is used.
   - Decision: A paste skips the shortcut lookup, so pasting a key bound to Move up/down toasts "No item URL pasted" instead of moving.
   - Decision: Rebased onto main (d60054c); gate passed: 542 cases, types clean, smoke 22 scenarios; protocol 25.
+
+- [x] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
+  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
+  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
+  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
+  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
+  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
+  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
+  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
+  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
+  - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
+  - Decision: `agentHref` tokens every agent verb (`agentgo`, `agentint`, `agentstop`, `agentmsg`) through `core.withToken`; rebased onto main keeping its `AGENT_CMD` handling with the full tokened href check.
+  - Decision: `plugin.toml` is `0.24.0`, matching protocol "24".
+  - Decision: Rebased onto main (f3f997f): protocol "26" and plugin.toml 0.26.0 (replaces the "24" Decisions above; other review items also use 26, so later landings must rebase and bump); core.GIT_LINK is tokened in render and engine.openGit, flows.openGit gets the full link, README Trust names Open in Git; gate passed: 543 cases, types clean, smoke 22 scenarios.
