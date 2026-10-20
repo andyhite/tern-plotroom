@@ -35,21 +35,6 @@
   - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
   - Review attempts: 1
 
-- [ ] Every action I can save also exports, imports and runs.
-  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
-  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
-  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
-  - `portable` takes the reserved keys as a parameter instead of a module global.
-  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
-  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
-  - Base: main
-  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
-  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
-  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
-  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
-  - Review attempts: 1
-  - Decision: `portable.checkPrompt` refuses `[%s%c]` in a key; the import model check runs after the skip block, so a skipped action with a bad model keeps its saved id and its view/`next` links.
-
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
   - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
@@ -336,6 +321,18 @@
   - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
 
 ## Done
+
+- [x] Every action I can save also exports, imports and runs.
+  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
+  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
+  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
+  - `portable` takes the reserved keys as a parameter instead of a module global.
+  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
+  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
+  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
+  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
+  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
+  - Decision: `portable.checkPrompt` refuses `[%s%c]` in a key; the import model check runs after the skip block, so a skipped action with a bad model keeps its saved id and its view/`next` links.
 
 - [x] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
   - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
