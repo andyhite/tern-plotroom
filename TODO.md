@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
   - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
@@ -20,8 +22,6 @@
   - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
   - Fix: rebase onto main - conflicts in plugin/board.luau (main's shared-checkout change rewrote `load`/rows/`select`) - resolve on the item branch; the code review found no other defect.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
