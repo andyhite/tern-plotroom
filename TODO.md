@@ -136,6 +136,10 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
+## Blocked
+
+## Review
+
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
   - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
@@ -152,11 +156,8 @@
   - Decision: The toasted set keeps an already-toasted agent that still reports `waiting_input` when it drops out of the covered set, so it never toasts again on return; uncovered waiting agents that were never toasted are not marked.
   - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (b1ba564) found no blocking defect.
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (528e100); README conflicts resolved, protocol stays 25; gate passed: 543 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
-
-## Blocked
-
-## Review
 
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
