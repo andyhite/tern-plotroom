@@ -147,6 +147,24 @@
   - Fix: plugin/github.luau:1094 - `string.sub(input.clean(data.ref), 1, 80)` cuts after cleaning, so a long multibyte branch can end in a broken UTF-8 sequence in the reply and toast - clean after cutting: `input.clean(string.sub(data.ref, 1, 80))`, as `flows.clip` does.
   - Review attempts: 1
 
+- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
+  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
+  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
+  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
+  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
+  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
+  - Base: main
+  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
+  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
+  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
+  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
+  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
+  - Fix: plugin/tests/regression.luau:86-94 (`seen-render`) - the row never loads 1000 seen items: keys are `no/r#i` (the picker-id prefix, not the triage key `o/r#i`), entries lack `at` so `triage.validate` rejects the store, and the block keeps the `state.triage` it already read - seed `o/r#i` with `{ seen = "x", at = EPOCH }` and make the block reread the store (e.g. `b.state().triage = nil`) before timing, so the row fails if `listedCount` hashes each item again.
+  - Fix: plugin/host/engine.luau:666-669, 719-729 - `identify` now keeps an `auth`/`missing` problem across an integration change, but `headOf`/`helpOf` (and Settings' pause line) label it by the view now shown, so an acli sign-out shown on a GitHub view reads "GitHub CLI not signed in" / "Run gh auth login" (and the reverse), and `save` persists that - record the integration that raised the problem when it is set and label by it in `headOf`, `helpOf` and `paceLine`.
+  - Fix: plugin/tests/cases/queue.luau:2286-2306 - the not-found case switches Jira → PR, which base already cleared through `forget`, so it passes without the change and never asserts the title's "the view itself stays paused" - add a same-integration switch (two Jira views, or two GitHub views of one login) that fails on base, and assert re-clicking the failed view sends no search.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
@@ -194,20 +212,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
-  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
-  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
-  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
-  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
-  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
-  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
-  - Base: main
-  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
-  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
-  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
-  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
-  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
 
 - [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
   - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
