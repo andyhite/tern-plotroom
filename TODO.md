@@ -41,19 +41,6 @@
   - Decision: A `git …` finish inside a worktree also clears `s.scanned`, so the scan reruns and the sync badge and pull command refresh.
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
 
-- [ ] Jira views list up to 1000 items instead of stopping at 100.
-  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
-  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
-  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
-  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
-  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
-  - Base: main
-  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
-  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
-  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
-  - Review attempts: 1
-  - Decision: `search` takes the requested limit: `complete = #found < limit or (#found == count and #found <= M.LIMIT)`, with `#found` taken before the 1000 cut, so a stale count stays partial.
-
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
   - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
@@ -311,6 +298,16 @@
   - Review attempts: 2
 
 ## Done
+
+- [x] Jira views list up to 1000 items instead of stopping at 100.
+  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
+  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
+  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
+  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
+  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
+  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
+  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
+  - Decision: `search` takes the requested limit: `complete = #found < limit or (#found == count and #found <= M.LIMIT)`, with `#found` taken before the 1000 cut, so a stale count stays partial.
 
 - [x] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
   - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
