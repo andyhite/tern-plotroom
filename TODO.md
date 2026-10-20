@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
-  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
-  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
-  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
-  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
-  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
-  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
-
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
   - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
@@ -138,6 +130,16 @@
   - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
   - Base: main
   - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
+
+- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
+  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
+  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
+  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
+  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
+  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
+  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
+  - Base: main
+  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
 
 ## Blocked
 
