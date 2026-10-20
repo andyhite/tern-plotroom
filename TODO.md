@@ -4,6 +4,22 @@
 
 ## Todo
 
+- [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
+  - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
+  - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
+  - The count covers the agents the Agents list covers, rides the existing 4 s status sync, and clears as soon as none waits.
+  - The protocol-mismatch warning and the new segment come from one `tern.chrome.status` formatter, refreshed only when either changes; tab colors are never touched.
+  - Touch points: the status formatter and `checkProtocol` in `window.luau`; `agentStates`/`agentSync` in `flows.luau`; a new `tern.command` for the jump.
+  - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
+  - Base: main
+  - Branch: todo/status-bar-segment-shows-how-many-agents at /Users/andyhite/Code/tern-plotroom.todo/status-bar-segment-shows-how-many-agents
+  - Decision: Segment reads "1 agent needs input" / "N agents need input"; the first waiting agent is the lowest pane number; the click runs the new `agents-waiting` command.
+  - Decision: Count and toasts are computed in `agentSync`; an agent already waiting at load toasts once at its first sync, and again only after leaving and re-entering `waiting_input`. The toast reads "o/r#5 needs input" with the action as subtitle.
+  - Decision: `trackWaiting` calls `tern.chrome.refresh()` only when the waiting set changes; with no Plotroom pane `agentSync` clears the count.
+  - Fix: plugin/flows.luau:266-272, 321 / acceptance "The count covers the agents the Agents list covers" - `trackWaiting` counts every link in `agent-links` on any host and every link per key, while the Agents list (`statusMap`) covers only hosts with an open Plotroom pane and the newest link per key; an agent on a host with no Plotroom block, or an older chained link of a key whose newest agent is working, is counted, toasted and jumped to though no Agents list shows it waiting - select links as `statusMap` does (per Plotroom pane host via `hostOf`/`hostSame`, first link per key) and track waiting from that set, with a case: a waiting agent on host 2 with only a host-1 block shows no segment.
+  - Fix: plugin/flows.luau:313-316 / Decision "toasts … again only after leaving and re-entering `waiting_input`" - with no Plotroom pane `trackWaiting(cx, {}, {})` also clears `waitingSet`, so closing and reopening Plotroom toasts an agent that never stopped waiting - clear only the shown count there and keep the toasted set until a real `agentStates` read shows the agent left `waiting_input`.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -46,19 +62,6 @@
   - Decision: `plugin.toml` is `0.23.0`, since `RPC_PROTOCOL` is "23" on this base; the gate reads the protocol from `core.luau`.
   - Decision: The version gate is its own `version` row in the `all` and `test` commands, needing neither Tern nor the lock.
   - Decision: `smoke.py` exposes `WARNINGS`; `check.py` turns each into a `smoke … WARN` row after the stage loop and never fails on it. The WARN path itself was not exercised (installed Tern 0.9.5's types matched the pin).
-
-- [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
-  - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
-  - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
-  - The count covers the agents the Agents list covers, rides the existing 4 s status sync, and clears as soon as none waits.
-  - The protocol-mismatch warning and the new segment come from one `tern.chrome.status` formatter, refreshed only when either changes; tab colors are never touched.
-  - Touch points: the status formatter and `checkProtocol` in `window.luau`; `agentStates`/`agentSync` in `flows.luau`; a new `tern.command` for the jump.
-  - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
-  - Base: main
-  - Branch: todo/status-bar-segment-shows-how-many-agents at /Users/andyhite/Code/tern-plotroom.todo/status-bar-segment-shows-how-many-agents
-  - Decision: Segment reads "1 agent needs input" / "N agents need input"; the first waiting agent is the lowest pane number; the click runs the new `agents-waiting` command.
-  - Decision: Count and toasts are computed in `agentSync`; an agent already waiting at load toasts once at its first sync, and again only after leaving and re-entering `waiting_input`. The toast reads "o/r#5 needs input" with the action as subtitle.
-  - Decision: `trackWaiting` calls `tern.chrome.refresh()` only when the waiting set changes; with no Plotroom pane `agentSync` clears the count.
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
