@@ -154,15 +154,6 @@
   - Base: main
   - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
 
-- [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
-  - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
-  - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
-  - The pane title adds the attention count when it isn't zero: "Plotroom · My PRs (12) · 3 new".
-  - Touch points: paste handling and the `title` handler in `host.luau`; `openUrl` in `host/requests.luau`, split so a paste answers with a toast instead of an rpc reply; palette rows in `host/requests.luau`; `cx:copy`.
-  - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
-  - Base: main
-  - Branch: todo/paste-github-jira-url-into-queue-open-co at /Users/andyhite/Code/tern-plotroom.todo/paste-github-jira-url-into-queue-open-co
-
 - [ ] Interrupt, stop or message the selected item's agent from the command palette.
   - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
   - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
@@ -369,6 +360,19 @@
   - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
   - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+
+- [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
+  - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
+  - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
+  - The pane title adds the attention count when it isn't zero: "Plotroom · My PRs (12) · 3 new".
+  - Touch points: paste handling and the `title` handler in `host.luau`; `openUrl` in `host/requests.luau`, split so a paste answers with a toast instead of an rpc reply; palette rows in `host/requests.luau`; `cx:copy`.
+  - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
+  - Base: main
+  - Branch: todo/paste-github-jira-url-into-queue-open-co at /Users/andyhite/Code/tern-plotroom.todo/paste-github-jira-url-into-queue-open-co
+  - Decision: `openUrl` takes `done(problem?, message?)`: the rpc op replies through it and a paste toasts through it; rpc replies and the protocol are unchanged.
+  - Decision: Copy number gives `#N` for GitHub and the key for Jira; Copy branch uses the PR's `head`, else the worktree note's branch.
+  - Decision: "N new" counts `engine.needs` items (new or changed and not snoozed, or an agent waiting); the selected item is marked seen so it drops out.
+  - Decision: Pasted URLs are found by regex, trailing `.,;:!?)]}` stripped, and the first one `engine.pinView` accepts is used.
 
 ## Done
 
