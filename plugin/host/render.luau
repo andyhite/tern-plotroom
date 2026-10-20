@@ -99,8 +99,6 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 	for _, l in pr.labels do
 		table.insert(badges, { text = l })
 	end
-	-- The integration comes first, on the title's row.
-	table.insert(badges, 1, { text = INTEGRATIONS.github.label, tone = "muted" })
 	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
 	-- they don't read as the state and label badges.
 	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span(pr.repo, "mono"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
@@ -125,7 +123,7 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 		label = pr.title,
 		title = pr.title,
 		detail = detail,
-		mark = { text = pr.author, seed = pr.author },
+		mark = { text = pr.author },
 		badges = if #badges > 0 then badges else nil,
 	}
 end
@@ -140,7 +138,6 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 	for _, l in issue.labels do
 		table.insert(badges, { text = l })
 	end
-	table.insert(badges, 1, { text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" })
 	local at = if issue.tracker == "github" then "@" else ""
 	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
 	if issue.tracker == "github" then
@@ -160,7 +157,7 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 		label = issue.title,
 		title = issue.title,
 		detail = detail,
-		mark = { text = issue.author, seed = issue.author },
+		mark = { text = issue.author },
 		badges = if #badges > 0 then badges else nil,
 	}
 end
@@ -1410,7 +1407,7 @@ function M.queuePicker(state: State): Node
 	for _, a in acts do
 		table.insert(all, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
 	end
-	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true })
+	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true })
 	local actions = keyed(all)
 	if not snap and problem then
 		-- The error card is all there is: it offers Refresh and Settings even without a key.

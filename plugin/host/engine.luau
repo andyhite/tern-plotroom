@@ -1971,8 +1971,15 @@ end
 
 -- A pane moved into or out of a PR worktree, or ended: redraw every queue so "In tab" marks follow. Deferred, since
 -- the host's pane list still holds an exiting pane while its event runs (observed: an undeferred redraw kept the mark).
+-- Events within the window share one timer, so a burst renders each block once.
+local redrawPending = false
 local function redrawQueues()
+	if redrawPending then
+		return
+	end
+	redrawPending = true
 	tern.timer(250, function()
+		redrawPending = false
 		for _, s in running do
 			if M.alive(s) then
 				s.cx:render()

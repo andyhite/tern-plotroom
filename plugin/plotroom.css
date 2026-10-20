@@ -50,33 +50,6 @@
 	min-width: 0;
 }
 
-/* The heading's repository name opens the repository picker; it keeps the title's color, not the link's. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-title .sf-link {
-	color: inherit;
-}
-
-/* Tern draws the primary button (GitHub ↗) as a solid pill, taller and set apart; here it is one of the row, drawn as
-   Tern draws the other buttons (`.sf-chat-reader .pk-btn`, its `narrow` variant and hover). Enter still opens it. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar .pk-btn.primary {
-	height: 28px;
-	margin-left: 0;
-	padding: 0 10px;
-	color: var(--t2);
-	background: none;
-	box-shadow: inset 0 0 0 1px var(--l2);
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker.narrow .pk-bar .pk-btn.primary {
-	padding: 0 7px;
-	box-shadow: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-bar .pk-btn.primary:hover {
-	color: var(--t1);
-	background: var(--l1);
-	box-shadow: inset 0 0 0 1px var(--l3);
-}
-
 /* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
 [data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds {
 	display: inline-flex;

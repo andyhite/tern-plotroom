@@ -47,7 +47,8 @@ SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
 LUAU_VERSION = "0.743"
 LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.8.3"  # the SDK pin
-BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "250"))
+BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
+BENCH_PAYLOAD_MAX = 600000
 
 # sha256 of the release assets, as GitHub publishes them.
 TOOLS = {
@@ -340,6 +341,8 @@ def check_bench() -> str:
         fields = dict(re.findall(r"(\w+)=([0-9.]+)", row))
         if "ms" in fields:
             worst = max(worst, float(fields["ms"]))
+        if row.startswith("BENCH payload") and float(fields["bytes"]) >= BENCH_PAYLOAD_MAX:
+            raise GateError("payload %d bytes is not under %d" % (float(fields["bytes"]), BENCH_PAYLOAD_MAX))
     if worst > BENCH_BUDGET_MS:
         raise GateError("slowest render %.1f ms exceeds the %.0f ms budget (PLOTROOM_BENCH_BUDGET_MS)" % (worst, BENCH_BUDGET_MS))
     return "%d rows, slowest %.1f ms (budget %.0f ms)" % (len(rows), worst, BENCH_BUDGET_MS)

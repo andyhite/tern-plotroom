@@ -57,6 +57,12 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	local prHead: any = findKey(pickerNode(b), "head")
 	eq(findKey(prHead, "integration").p.text, "GitHub", "the preview's head row carries the integration badge")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row does not")
+	for _, item in pickerOf(b).items do
+		for _, badge in item.badges or {} do
+			eq(badge.text == "GitHub", false, "a row carries no integration badge")
+		end
+		eq(item.mark.seed, nil, "nor a redundant seed on the author mark")
+	end
 	w.advance(59999)
 	eq(#requestsOf(s.gh, "search"), 1, "no refresh before the minute is up")
 	w.advance(1)
@@ -64,6 +70,21 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	b.close()
 	w.advance(10 * 60 * 1000)
 	eq(#requestsOf(s.gh, "search"), 2, "a closed pane stops polling")
+end)
+
+case("host: any number of cwd and pane_exited events inside the 250 ms window render a block once", function(w: World)
+	hostScene(w, 1)
+	local b = w.open(1, { "/work/r" })
+	w.flush()
+	local before = b.renders()
+	for _ = 1, 3 do
+		w.window.handlers.cwd({}, w.cx)
+	end
+	for _ = 1, 2 do
+		w.window.handlers.pane_exited({}, w.cx)
+	end
+	w.advance(250)
+	eq(b.renders(), before + 1, "five events, one render")
 end)
 
 case("host: running init again for a live pane keeps its list and does not search twice", function(w: World)
@@ -1485,7 +1506,7 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 		return if node then node.p.href else nil
 	end
 	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "one Agent button, none per saved prompt; Seen before the command palette, which is last")
-	eq(action("more").primary, true, "the command palette is the primary button")
+	eq(action("more")["end"], true, "the command palette is last, in the corner")
 	eq(action("more").label, "Commands", "named Commands")
 	same(action("more").keys, { "." }, "with its key")
 	eq(action("open"), nil, "Open is no button of the bar")

@@ -53,7 +53,7 @@ python3 scripts/check.py --ci      # what CI runs: smoke reported NOT RUN
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
 
-Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (`$XDG_CACHE_HOME`) → PATH. Missing tool = failure, not skip. `PLOTROOM_BENCH_BUDGET_MS` (default 250) caps the slowest bench row. `types` fails on **any** luau-lsp diagnostic, warnings included, over `plugin/**/*.luau`.
+Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (`$XDG_CACHE_HOME`) → PATH. Missing tool = failure, not skip. `PLOTROOM_BENCH_BUDGET_MS` (default 25) caps the slowest bench row, and the `BENCH payload` row must stay under 600000 bytes. `types` fails on **any** luau-lsp diagnostic, warnings included, over `plugin/**/*.luau`.
 
 ## Code Conventions & Common Patterns
 
