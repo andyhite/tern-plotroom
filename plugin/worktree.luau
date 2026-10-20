@@ -46,6 +46,7 @@ export type Result = {
 	title: string,
 	author: string,
 	dirty: boolean?,
+	ahead: number?,
 }
 
 -- `ref` and `number` when the worktree is on a linked pull request's branch.
@@ -58,6 +59,7 @@ export type IssueResult = {
 	created: boolean,
 	head: string,
 	dirty: boolean?,
+	ahead: number?,
 	ref: string?,
 	number: number?,
 }
@@ -79,7 +81,7 @@ export type IssuePlan = { dir: string, branch: string, pr: number?, fresh: boole
 type Spot = { info: Repo, root: string, recs: { Record }, target: string }
 
 -- A pull request checkout: the worktree, its local branch and HEAD, whether this call made it, its changes.
-type Opened = { path: string, branch: string, head: string, created: boolean, dirty: boolean?, ref: string }
+type Opened = { path: string, branch: string, head: string, created: boolean, dirty: boolean?, ahead: number?, ref: string }
 
 local LOCAL_MS = 10 * 1000
 local NET_MS = 120 * 1000
@@ -1154,7 +1156,7 @@ end
 -- Confirms `path` is a work tree of the repository whose git common dir is `commonDir`, then reports its HEAD and
 -- whether it has changes. A worktree made just now must sit at `want`; it is read for changes too, since a checkout
 -- hook may have written some.
-local function inspectPath<T>(s: Steps<T>, path: string, commonDir: string, want: string?, step: (string, boolean?, WindowCx?) -> ())
+local function inspectPath<T>(s: Steps<T>, path: string, commonDir: string, want: string?, step: (string, boolean?, WindowCx?, number?) -> ())
 	s.run(path, { "rev-parse", "--show-toplevel" }, LOCAL_MS, function(top, cx1)
 		if trim(top) == "" then
 			return s.finish(nil, path .. " is not a work tree.", cx1)
@@ -1169,9 +1171,9 @@ local function inspectPath<T>(s: Steps<T>, path: string, commonDir: string, want
 					return s.finish(nil, "The new worktree is not at " .. want .. ".", cx3)
 				end
 				-- A failed or slow status leaves `dirty` unknown instead of failing the open.
-				M.dirty(path, function(dirty, cx4)
+				M.status(path, function(status, cx4)
 					s.attempt(cx4, function()
-						step(head, dirty, cx4)
+						step(head, if status then status.dirty else nil, cx4, if status then status.ahead else nil)
 					end)
 				end)
 			end)
@@ -1263,8 +1265,8 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 	local info = spot.info
 
 	local function inspect(m: github.PrMeta, path: string, created: boolean, want: string?, onBranch: string?)
-		inspectPath(s, path, info.commonDir, want, function(head, dirty, cx)
-			step({ path = path, branch = onBranch or branch, head = head, created = created, dirty = dirty, ref = ref }, m, cx)
+		inspectPath(s, path, info.commonDir, want, function(head, dirty, cx, ahead)
+			step({ path = path, branch = onBranch or branch, head = head, created = created, dirty = dirty, ahead = ahead, ref = ref }, m, cx)
 		end)
 	end
 
@@ -1434,6 +1436,7 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 						title = m.title,
 						author = m.author,
 						dirty = o.dirty,
+						ahead = o.ahead,
 					}, nil, cx2)
 				end)
 			end)
@@ -1507,8 +1510,8 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 	local finish, attempt = s.finish, s.attempt
 
 	local function inspect(spot: Spot, path: string, created: boolean, want: string?, rbranch: string)
-		inspectPath(s, path, spot.info.commonDir, want, function(head, dirty, cx)
-			finish({ path = path, root = spot.root, remote = spot.info.remote, branch = rbranch, key = key, created = created, head = head, dirty = dirty }, nil, cx)
+		inspectPath(s, path, spot.info.commonDir, want, function(head, dirty, cx, ahead)
+			finish({ path = path, root = spot.root, remote = spot.info.remote, branch = rbranch, key = key, created = created, head = head, dirty = dirty, ahead = ahead }, nil, cx)
 		end)
 	end
 
@@ -1595,7 +1598,7 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 						return finish(nil, "Pull request #" .. n .. " merges into " .. meta.base .. ", not " .. repo .. ".", cx1)
 					end
 					checkoutPr(s, spot, repo, n, meta, account, cx1, function(o, _, cx2)
-						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ref = o.ref, number = n }, nil, cx2)
+						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ahead = o.ahead, ref = o.ref, number = n }, nil, cx2)
 					end)
 				end)
 			end)

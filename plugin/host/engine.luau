@@ -1697,6 +1697,7 @@ function M.noteWorktree(state: State, key: string, kind: string, r: Report?, pro
 		ok = r ~= nil,
 		current = r ~= nil and r.current,
 		dirty = if r then r.dirty else nil,
+		ahead = if r then r.ahead else nil,
 		root = if r then r.root else nil,
 		path = if r then r.path else nil,
 		branch = if r then r.branch else nil,
@@ -1984,6 +1985,7 @@ tern.on("command_finished", function(ev: any, _cx: any)
 		for _, note in s.notes do
 			if note.ok and note.path and worktree.within(cwd, note.path) then
 				note.checked = nil
+				s.scanned = nil -- the sync badge and update command come from the scan: it runs again too
 				hit = true
 			end
 		end

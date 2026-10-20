@@ -618,6 +618,27 @@ case("host: the card says how many commits are unpushed, and a git command finis
 	same(chipsOf(b), { "Up to date", "Clean" }, "nothing unpushed shows no badge")
 end)
 
+case("host: a Worktree press keeps the unpushed count, and a git finish runs the worktree scan again", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	s.git.unpushed[target] = 3
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	w.advance(400)
+	w.flush()
+	same(chipsOf(b), { "Up to date", "Clean", "3 unpushed" }, "the card reads the count again after the attempt")
+	table.insert(w.panes, { pane = 9, cwd = target })
+	local scans = countLog(s.git, "worktree")
+	local finish: any = w.window.handlers.command_finished
+	finish({ pane = 9, line = "git pull", status = 0, took_ms = 5 }, nil)
+	w.advance(400)
+	w.flush()
+	eq(countLog(s.git, "worktree") > scans, true, "git finishing in the worktree scans the checkouts again")
+end)
+
 case("host: the card and the Worktrees list offer Open in Git while the folder exists, and ask the window to open it", function(w: World)
 	local s = hostScene(w, 1)
 	s.git.served["refs/pull/1/head"] = sha("b")

@@ -145,7 +145,7 @@ export type Note = {
 }
 -- What a worktree attempt found, as the preview notes it: the same for pull requests and issues. `current`: the
 -- worktree holds what it should (a PR's head; an issue's branch always does). `ref`: a pull request's fetched ref.
-export type Report = { root: string, path: string, branch: string, ref: string?, current: boolean, dirty: boolean?, summary: string, update: { string } }
+export type Report = { root: string, path: string, branch: string, ref: string?, current: boolean, dirty: boolean?, ahead: number?, summary: string, update: { string } }
 export type Settings = {
 	page: string, -- "views" | "prompts" | "keys" | "worktrees" | "repos" | "jira" | "connection"
 	focus: string?, -- focused prefs row id
