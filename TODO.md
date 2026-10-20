@@ -8,6 +8,25 @@
 
 ## Blocked
 
+- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
+  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
+  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
+  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
+  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
+  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
+  - Base: main
+  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
+  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
+  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
+  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
+  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
+  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
+  - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
+  - Fix: rebase onto main - conflicts in README.md and plugin/tests/cases/queue.luau (main's queue error/empty states change) - resolve on the item branch and rerun the gate on the rebased commit; the third code review (27b868b) found no blocking defect.
+  - Review attempts: 3
+  - Blocked: changes needed after 3 reviews since last unblock
+
 - [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
   - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
   - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
@@ -72,23 +91,6 @@
   - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
   - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
   - Review attempts: 2
-
-- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
-  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
-  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
-  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
-  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
-  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
-  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
-  - Base: main
-  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
-  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
-  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
-  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
-  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
-  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
-  - Review attempts: 2
-  - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
 
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
