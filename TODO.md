@@ -6,6 +6,10 @@
 
 ## In-Progress
 
+## Blocked
+
+## Review
+
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -24,11 +28,8 @@
   - Decision: Each cached token gets a 60 s `tern.timer` that drops it.
   - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (82bd07d) found no blocking defect.
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (9518d19); README Trust conflict resolved; gate passed: 543 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
-
-## Blocked
-
-## Review
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
   - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
