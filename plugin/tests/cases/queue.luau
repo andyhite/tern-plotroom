@@ -2328,6 +2328,67 @@ case("host: a view with no matches keeps its plain empty text", function(w: Worl
 	eq(pickerOf(b).empty[1].t, "No pull requests match My PRs.", "no hidden count")
 end)
 
+-- A pull request view plus one Jira view; `acli.override` may answer the Jira search.
+local function crossScene(w: World): (h.HostScene, h.Acli)
+	local s = hostScene(w, 3)
+	local acli = newAcli(w)
+	acli.searches[h.JIRA_ASSIGNED] = { h.jiraItem("ABC-12", "Fix login"), h.jiraItem("ABC-13", "Old bug") }
+	w.kv.put("views-issues", {
+		version = 1,
+		nextId = 2,
+		items = array({ { id = "v1", name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done", group = "none", prompts = array({}) } }),
+	})
+	return s, acli
+end
+
+local function countOf(b: Block, id: string): any
+	for _, scope in pickerOf(b).scopes do
+		if scope.id == id then
+			return scope.count
+		end
+	end
+	return nil
+end
+
+case("host: switching across kinds shows each view's cached list and its sidebar count at once", function(w: World)
+	local s = crossScene(w)
+	local b = openQueue(w)
+	local function scope(id: string)
+		b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
+	end
+	scope("issues:v1")
+	w.flush()
+	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "the Jira view lists its issues")
+	eq(countOf(b, "prs:v1"), 3, "the pull request view keeps its count while Jira is shown")
+	scope("prs:v1")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "back to the pull requests: the cached list shows before any search lands")
+	eq(countOf(b, "issues:v1"), 2, "the Jira count stays")
+	w.flush()
+	eq(#requestsOf(s.gh, "search") >= 2, true, "and it refreshed meanwhile")
+end)
+
+case("host: a not-found belongs to its view: another view clears it and searches, while the view itself stays paused", function(w: World)
+	local s, acli = crossScene(w)
+	acli.override = function(req: AcliReq): Reply?
+		if req.kind == "search" then
+			return { status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	local function scope(id: string)
+		b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
+	end
+	scope("issues:v1")
+	w.flush()
+	eq(pickerOf(b).state, "error", "the unknown project shows its card")
+	local before = #requestsOf(s.gh, "search")
+	scope("prs:v1")
+	w.flush()
+	eq(pickerOf(b).state, "ready", "another view does not show it")
+	eq(#requestsOf(s.gh, "search") > before, true, "and searches")
+end)
+
 case("host: view group-by emits headers", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = { searchItem(1, "o/b", EPOCH - 10), searchItem(2, "o/a", EPOCH - 20), searchItem(3, "o/b", EPOCH - 30) }

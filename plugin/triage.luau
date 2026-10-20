@@ -169,6 +169,13 @@ function M.status(store: Store, kind: string, item: any, now: number): Status
 	}
 end
 
+-- Whether `item` is snoozed now: status without hashing the item's signature.
+function M.snoozed(store: Store, item: any, now: number): boolean
+	local key = M.sanitizeKey(item.key)
+	local e = if key then store.items[key] else nil
+	return e ~= nil and e.snoozeUntil ~= nil and now < e.snoozeUntil
+end
+
 local function entry(store: Store, item: any, now: number): Entry?
 	local key = M.sanitizeKey(item.key)
 	if not key then

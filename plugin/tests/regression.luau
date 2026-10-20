@@ -84,6 +84,15 @@ function M.bench(instantiate: Loader)
 	b.press("escape")
 	b.press("escape")
 	local payload = jsonEncode(b.view())
+	-- 1000 seen items in a cached view: the sidebar's counts read snooze state without hashing each of them.
+	local seen: { [string]: any } = {}
+	for i = 1, 1000 do
+		seen["no/r#" .. i] = { seen = "x" }
+	end
+	w.kv.put("triage", { version = 1, items = seen })
+	timed("seen-render", 20, function(_i: number)
+		b.render()
+	end)
 	print(string.format("BENCH payload bytes=%d items=%d", #payload, #shown))
 end
 

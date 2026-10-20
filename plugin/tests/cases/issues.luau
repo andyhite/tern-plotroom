@@ -1245,7 +1245,7 @@ case("host: a request is about what it names, not about the filter on screen: a 
 	b.press("escape")
 	hx.ask(w, b, "j2", { op = "map-jira", project = "ABC", repo = "x/y" })
 	same(w.kv.get("jira-repos").ABC, { "o/r", "x/y" }, "and a repository is mapped to a project")
-	eq(hx.ask(w, b, "i1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false }).problem, "That issue is not loaded here any more; Refresh and try again.", "an issue is answered only while its list is loaded: the pull request filter replaced it")
+	eq(hx.ask(w, b, "i1", { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false }).problem, nil, "an issue is still answered from its cached list while the pull request filter is shown")
 end)
 
 case("host: without gh, an issue action's Next action offers no pull request actions", function(w: World)

@@ -366,8 +366,8 @@ function M.keep(state: State, kind: string, item: any): boolean
 	if state.showSnoozed or state.agents[item.key] == "waiting_input" then
 		return true
 	end
-	local st = M.status(state, kind, item)
-	return not (st and st.snoozed)
+	local store = M.store(state)
+	return not (store and triage.snoozed(store, item, os.time()))
 end
 
 -- How many of `snap`'s items a sidebar scope counts: those its list shows, so snoozed ones are left out (unless shown).
@@ -377,9 +377,10 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 		return #snap.items
 	end
 	local n = 0
+	local store = M.store(state)
+	local now = os.time()
 	for _, item in snap.items do
-		local st = M.status(state, snap.kind, item)
-		if state.agents[item.key] == "waiting_input" or not (st and st.snoozed) then
+		if state.agents[item.key] == "waiting_input" or not (store and triage.snoozed(store, item, now)) then
 			n += 1
 		end
 	end
@@ -689,21 +690,26 @@ function M.detailKey(state: State, item: any): string
 	return state.account .. "\0" .. item.key .. "@" .. item.updated
 end
 
--- Drops everything shown, cached or running under the previous gh identity.
+-- Drops what is loading or loaded for the previous identity (details, in-flight searches). Cached lists stay: they are
+-- keyed by snapKey, which holds the login, integration and kind, so no identity sees another's.
+-- ponytail: cached lists are never pruned (one per view and login visited); evict the oldest if memory ever shows.
 local function forget(state: State)
 	state.gen += 1
-	state.snaps, state.snap, state.vis, state.problem = {}, nil, nil, nil
+	state.snap, state.vis = nil, nil
 	dropDetails(state)
 end
 
 -- `state.account`, `state.tracker` and `state.kind` are the identity everything on screen and in flight belongs to: the
--- active view's gh login, integration and kind. A different one drops all data and problems of the old one.
+-- active view's gh login, integration and kind. A different one drops its details and in-flight work, not the cached lists.
 local function identify(state: State)
 	local v = M.activeView(state)
 	local account = if v then M.accountOf(v, state.activeLogin) else ""
 	local integration = if v then v.integration else state.kind.integrations[1]
 	local kind = if v then KINDS[v.kind] else state.kind
 	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
+		if account ~= state.account and integration == state.tracker then
+			state.problem = nil -- another login's failure is not this one's
+		end
 		state.account, state.tracker, state.kind = account, integration, kind
 		forget(state)
 	end
@@ -1010,7 +1016,10 @@ end
 function M.changed(state: State)
 	state.gen += 1
 	local p = state.problem
-	if p and (p.kind == "invalid" or not TERMINAL[p.kind]) then
+	local v = M.activeView(state)
+	local moved = not v or M.snapKey(v, state.activeLogin) ~= state.applied
+	-- "not-found" belongs to its view: another view clears it and searches; "auth" and "missing" hold every view.
+	if p and (p.kind == "invalid" or not TERMINAL[p.kind] or (moved and p.kind == "not-found")) then
 		state.problem = nil
 	end
 	showSnapshot(state)
