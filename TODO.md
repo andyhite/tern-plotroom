@@ -228,16 +228,6 @@
 
 ## In-Progress
 
-- [ ] Plotroom never checks out a fork's pull request for an issue unless I pick it.
-  - Worktree, and any action that runs in an issue's worktree, auto-pick a linked pull request only when it is the single live same-repository one; a fork's (cross-repository) PR is never picked automatically.
-  - Fork PRs still appear in the "Which branch" choice, marked as forks with their owner, beside same-repository PRs and New branch…; an issue whose only live linked PR is a fork shows that choice and fetches nothing.
-  - A PR from a deleted fork counts as a fork, owned by its author, as `github.pr` already treats it.
-  - Touch points: `github.linkedPrs` (`PR_LINK`/`PR_LINK_JQ` gain `isCrossRepository` and the head owner; `LinkedPr` gains `fork`), `undecided()` in `host/requests.luau`, the `choosePr` rows in `window.luau`.
-  - The `choosePr` reply gains a field: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/tracker.luau` linkedPrs keeps the fork flag; `tests/cases/issues.luau` fork + same-repo auto-picks the same-repo PR, fork only shows the choice. README: the issue-worktree bullet under Worktrees.
-  - Base: main
-  - Branch: todo/fork-pr-never-auto-picked at /Users/andyhite/Code/tern-plotroom.todo/fork-pr-never-auto-picked
-
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
   - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
@@ -258,6 +248,19 @@
   - Branch: todo/jira-writes-current-site at /Users/andyhite/Code/tern-plotroom.todo/jira-writes-current-site
 
 ## Review
+
+- [ ] Plotroom never checks out a fork's pull request for an issue unless I pick it.
+  - Worktree, and any action that runs in an issue's worktree, auto-pick a linked pull request only when it is the single live same-repository one; a fork's (cross-repository) PR is never picked automatically.
+  - Fork PRs still appear in the "Which branch" choice, marked as forks with their owner, beside same-repository PRs and New branch…; an issue whose only live linked PR is a fork shows that choice and fetches nothing.
+  - A PR from a deleted fork counts as a fork, owned by its author, as `github.pr` already treats it.
+  - Touch points: `github.linkedPrs` (`PR_LINK`/`PR_LINK_JQ` gain `isCrossRepository` and the head owner; `LinkedPr` gains `fork`), `undecided()` in `host/requests.luau`, the `choosePr` rows in `window.luau`.
+  - The `choosePr` reply gains a field: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/tracker.luau` linkedPrs keeps the fork flag; `tests/cases/issues.luau` fork + same-repo auto-picks the same-repo PR, fork only shows the choice. README: the issue-worktree bullet under Worktrees.
+  - Base: main
+  - Branch: todo/fork-pr-never-auto-picked at /Users/andyhite/Code/tern-plotroom.todo/fork-pr-never-auto-picked
+  - Decision: The fork owner is clipped to 100 characters in the `choosePr` rows, like titles are clipped to 160.
+  - Decision: A fork row in the picker shows the detail "Fork of <owner> · <branch>"; same-repository rows still show the branch.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
 
 ## Done
 
