@@ -4,6 +4,24 @@
 
 ## Todo
 
+- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
+  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
+  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
+  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
+  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
+  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
+  - Base: main
+  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
+  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
+  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
+  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
+  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
+  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
+  - Fix: plugin/host.luau:385-391, 1033-1037 with plugin/host/engine.luau:719-729 - the block save keeps only `{kind, message}` of a pause and the restore leaves `problemBy` nil, so after a restart a held acli `auth` on a GitHub view is labelled "GitHub CLI not signed in"/"Run gh auth login" (and the reverse) - save `by = state.problemBy` in the pause and restore it when it is "github" or "jira" (optional field, save version unchanged), with a case.
+  - Fix: plugin/host/engine.luau:667-669 / acceptance "`auth` and `missing` still hold every view until Refresh" - a GitHub login change within the GitHub integration clears the problem even when Jira raised it, so an acli sign-out is dropped without Refresh - clear on a login change only when the problem's integration (`state.problemBy or integration`) is the current one, with a case.
+  - Review attempts: 2
+
 ## In-Progress
 
 ## Blocked
@@ -20,22 +38,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
-  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
-  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
-  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
-  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
-  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
-  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
-  - Base: main
-  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
-  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
-  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
-  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
-  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
-  - Review attempts: 1
-  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
 
 - [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
   - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
