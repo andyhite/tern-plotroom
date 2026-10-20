@@ -6,21 +6,6 @@
 
 ## In-Progress
 
-- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
-  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
-  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
-  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
-  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
-  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
-  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
-  - Base: main
-  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
-  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
-  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
-  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
-  - Fix: plugin/host/lens.luau:41-51 - the Copy item uses Tern's built-in `copy` click action but has no `href`, so the window copies the item's own text instead of the PR URL and never sends an event; the `event` handler is unreachable and the test passes only by calling `def.event` directly (the repo's other copy icons set `href`, `tests/cases/queue.luau:428-429`) - set `href = url` on the Copy item, drop the dead `event` handler, and assert the item's `href` in the case.
-  - Review attempts: 1
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -360,6 +345,21 @@
   - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
   - Review attempts: 1
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
+
+- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
+  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
+  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
+  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
+  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
+  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
+  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
+  - Base: main
+  - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
+  - Decision: Manifest `[[lenses]] id = "pr-create"`, `match = ["gh pr create*"]`, inferred from the SDK doc and the binary's `LensDecl` strings; the plugin loads in smoke, but whether the glob claims a real shell command is unconfirmed.
+  - Decision: The lens is `plugin/host/lens.luau` (requires only `core`); the show link is `plotroom://lens/show/<pct URL>`, accepted from any pane only for an `https://host/owner/repo/pull/N` URL of at most 2048 bytes.
+  - Decision: `flows.openIn(cx, pane?, url)` is shared by Open item by URL and `showUrl`, which picks a Plotroom pane on the sender's host or launches one.
+  - Review attempts: 1
+  - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
 
 ## Done
 
