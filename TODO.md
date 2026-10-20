@@ -60,19 +60,6 @@
 
 ## Review
 
-- [ ] The queue's error and empty states say what to do next.
-  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
-  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
-  - The README hero's footer shows only keys bound by default.
-  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
-  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
-  - Base: main
-  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
-  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
-  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
-  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
-  - Review attempts: 2
-
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
   - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
@@ -284,6 +271,16 @@
   - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
 
 ## Done
+
+- [x] The queue's error and empty states say what to do next.
+  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
+  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
+  - The README hero's footer shows only keys bound by default.
+  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
+  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
+  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
+  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
+  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
 
 - [x] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
   - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
