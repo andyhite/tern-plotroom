@@ -17,22 +17,6 @@
   - Base: main
   - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
 
-- [ ] Every action I can save also exports, imports and runs.
-  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
-  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
-  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
-  - `portable` takes the reserved keys as a parameter instead of a module global.
-  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
-  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
-  - Base: main
-  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
-  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
-  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
-  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
-  - Fix: plugin/portable.luau:580-583 - the new model check runs before `choiceOf`/the skip branch, so an action with an invalid model that is skipped (same name already saved) never records `promptId[p.ref] = found.id`; imported views lose their link to the kept local action and an imported `next` loses its chain, and the note wrongly says it was left out - move the model check below the skip block, just before `local store = work(p.kind).prompts`, with a case covering skip + invalid model.
-  - Fix: plugin/portable.luau:114 - the new key rule (`utf8.len == 1`, no `%s`) accepts ASCII control characters such as `"\u0007"` from an untrusted import file, which Settings can never save (`input.clean` strips them) - also refuse `%c` so import matches Settings' rule.
-  - Review attempts: 1
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -401,6 +385,21 @@
   - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
   - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
   - Review attempts: 1
+
+- [ ] Every action I can save also exports, imports and runs.
+  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
+  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
+  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
+  - `portable` takes the reserved keys as a parameter instead of a module global.
+  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
+  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
+  - Base: main
+  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
+  - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
+  - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
+  - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
+  - Review attempts: 1
+  - Decision: `portable.checkPrompt` refuses `[%s%c]` in a key; the import model check runs after the skip block, so a skipped action with a bad model keeps its saved id and its view/`next` links.
 
 ## Done
 
