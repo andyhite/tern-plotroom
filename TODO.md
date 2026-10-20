@@ -4,6 +4,24 @@
 
 ## Todo
 
+- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+  - Base: main
+  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
+  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
+  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
+  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
+  - Fix: rebase onto main - conflicts in README.md and plugin/tests/cases/flows.luau - resolve on the item branch.
+  - Fix: plugin/plugin.toml - main's `check.py` now requires `version = "0.<RPC_PROTOCOL>.0"`; with protocol "24" set `0.24.0` (or the next number main has not used at rebase time).
+  - Fix: plugin/host/requests.luau (Agents-list palette) with plugin/tests/cases/flows.luau - main (6b14f7b) offers Interrupt/Stop/Message agent (`agentint`/`agentstop`/`agentmsg`) for the selected Agents row in "Saved actions"; after the merge this branch's exact `same(p.ids, expected)` Agents-list case fails and the README paragraph omits them - decide their group in the Agents list ("Agents" fits), update the case and the README.
+  - Review attempts: 2
+
 ## In-Progress
 
 ## Blocked
@@ -36,21 +54,6 @@
   - Review attempts: 1
   - Decision: A module-load `tern.timer(0, …)` calling `flows.ensureSync(cx)` is the only restart path after a reload; `active()` is false with no links, and an unreadable agent list counts as live only when links exist.
   - Decision: The reload case reloads `window` after seeding an agent; it can't tell the load-time timer from the `window_start` path.
-
-- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
-  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
-  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
-  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
-  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
-  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
-  - Base: main
-  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
-  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
-  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
-  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
-  - Review attempts: 1
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
 
 - [ ] The queue's error and empty states say what to do next.
   - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
