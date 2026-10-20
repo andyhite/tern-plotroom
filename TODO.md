@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
-  - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
-  - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
-  - The count covers the agents the Agents list covers, rides the existing 4 s status sync, and clears as soon as none waits.
-  - The protocol-mismatch warning and the new segment come from one `tern.chrome.status` formatter, refreshed only when either changes; tab colors are never touched.
-  - Touch points: the status formatter and `checkProtocol` in `window.luau`; `agentStates`/`agentSync` in `flows.luau`; a new `tern.command` for the jump.
-  - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
-
 - [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
   - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
   - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
@@ -170,6 +162,16 @@
   - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
   - Base: main
   - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
+
+- [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
+  - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
+  - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
+  - The count covers the agents the Agents list covers, rides the existing 4 s status sync, and clears as soon as none waits.
+  - The protocol-mismatch warning and the new segment come from one `tern.chrome.status` formatter, refreshed only when either changes; tab colors are never touched.
+  - Touch points: the status formatter and `checkProtocol` in `window.luau`; `agentStates`/`agentSync` in `flows.luau`; a new `tern.command` for the jump.
+  - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
+  - Base: main
+  - Branch: todo/status-bar-segment-shows-how-many-agents at /Users/andyhite/Code/tern-plotroom.todo/status-bar-segment-shows-how-many-agents
 
 ## Blocked
 
