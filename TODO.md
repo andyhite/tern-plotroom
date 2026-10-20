@@ -207,6 +207,10 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
+## Blocked
+
+## Review
+
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -222,11 +226,8 @@
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
   - Fix: rebase onto main - conflicts in the protocol lines (main already shipped "24" for Open in Git and "25" for the Inbox) and around `finishAgent` (main's `named` toast change) - the implementing agent resolves them, bumps `RPC_PROTOCOL`, `PROTOCOL`, `asks.protocol` and `plugin.toml` to the next unused number ("26" unless main moved past it), updates the Decision bullet and reruns the gate before hand-off; the third code review (063f5f6) found no blocking defect.
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
-
-## Blocked
-
-## Review
 
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
