@@ -2201,7 +2201,7 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 		return out
 	end
 	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "Worktree, Agent, no button per prompt, Seen, and the command palette last")
-	eq(buttonLink(b, "open"), "plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12", "Open's link carries the issue's page, percent-encoded")
+	eq(buttonLink(b, "open"), h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"), "Open's link carries the issue's page, percent-encoded")
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, buttonLink(b, "open"), "the preview head's Open icon opens it")
 	eq(globe.p.title, "Open in GitHub", "named for the issue's tracker")
@@ -2222,7 +2222,7 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 	b.typeText("t")
 	eq(w.opened[#w.opened], issueRunLink("o/r", "12", "p1"), "a prompt's key its run link")
 	b.press("enter")
-	eq(w.opened[#w.opened], "plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12", "Enter the Open link")
+	eq(w.opened[#w.opened], h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"), "Enter the Open link")
 	b.typeText("j")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "13"), "the links follow the selection")
 	b.typeText("k")

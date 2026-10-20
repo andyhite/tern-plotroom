@@ -480,6 +480,14 @@ local function tspOf(node: any, id: string): any
 	return out
 end
 
+-- The host token of the latest world: what `M.tokened` appends, as host/core's `withToken` does.
+local linkToken = ""
+
+-- `href` as the host renders it: with its token.
+function M.tokened(href: string): string
+	return href .. "?k=" .. linkToken
+end
+
 local function newWorld(instantiate: Loader, context: string): World
 	local nowMs = 0
 	local seq = 0
@@ -1152,6 +1160,7 @@ local function newWorld(instantiate: Loader, context: string): World
 	}
 
 	local load = instantiate(sdk, fakeOs)
+	linkToken = (load("host/core") :: any).TOKEN -- this world's host token: the links its blocks render carry it
 
 	local function open(pane: number, args: { string }?, savedState: any?): Block
 		local def: any = blocks.prs
@@ -2347,13 +2356,13 @@ end
 M.prefsOf = prefsOf
 
 local function prLink(kind: string, repo: string, n: number): string
-	return "plotroom://github/" .. kind .. "/" .. repo .. "/" .. n
+	return M.tokened("plotroom://github/" .. kind .. "/" .. repo .. "/" .. n)
 end
 M.prLink = prLink
 
 -- The link of the card's button that runs saved prompt `id` on PR `repo`#`n`.
 local function runLink(repo: string, n: number, id: string): string
-	return prLink("run", repo, n) .. "/" .. id
+	return M.tokened("plotroom://github/run/" .. repo .. "/" .. n .. "/" .. id)
 end
 M.runLink = runLink
 
@@ -2943,13 +2952,13 @@ end
 M.jiraHost = jiraHost
 
 local function issueLink(kind: string, repo: string, ref: string): string
-	return "plotroom://issue/" .. kind .. "/" .. repo .. "/" .. ref
+	return M.tokened("plotroom://issue/" .. kind .. "/" .. repo .. "/" .. ref)
 end
 M.issueLink = issueLink
 
 -- The link of the card's button that runs saved prompt `id` on issue `repo`#`ref`.
 local function issueRunLink(repo: string, ref: string, id: string): string
-	return issueLink("run", repo, ref) .. "/" .. id
+	return M.tokened("plotroom://issue/run/" .. repo .. "/" .. ref .. "/" .. id)
 end
 M.issueRunLink = issueRunLink
 

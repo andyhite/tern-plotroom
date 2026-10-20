@@ -1135,7 +1135,7 @@ end)
 
 windowCase("window: Open on an issue opens its URL beside the block it came from, whatever pane has focus", function(w: World)
 	local _, b = issueWindow(w)
-	local open = "plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"
+	local open = h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12")
 	eq(buttonLink(b, "open"), open, "the block's Open link carries the issue's URL")
 	w.window.focused = 7
 	w.click(open)

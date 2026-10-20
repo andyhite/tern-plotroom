@@ -378,6 +378,54 @@ windowCase("window: a run link the card does not show is refused before anything
 	eq(#w.window.picks, 0, "and nothing was offered")
 end)
 
+windowCase("window: a link without the host's token is refused, so text in a description cannot run an action", function(w: World)
+	local _, b = agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	b.render()
+	cardSurface(w, b)
+	local token = string.match(prLink("run", "o/r", 5), "%?k=(%x+)$")
+	yes(token ~= nil and #token >= 24, "the card's links carry a long hex token")
+	eq(h.buttonLink(b, "worktree"), prLink("worktree", "o/r", 5), "the hidden worktree link carries it")
+	eq(h.buttonLink(b, "prompt-p1"), runLink("o/r", 5, "p1"), "so does a saved action's run link")
+	lacks(h.cardText(b), token :: string, "it is never drawn")
+	local sent, ran = #w.window.events, #w.calls
+	local function refused(url: string, what: string)
+		local said = #w.toasts
+		w.click(url)
+		w.flush()
+		eq(w.toasts[said + 1].text, "Plotroom: that pull request is no longer listed", what .. ": no longer listed")
+		lacks(w.toasts[said + 1].text .. (w.toasts[said + 1].sub or ""), token :: string, what .. ": the toast does not show the token")
+	end
+	refused("plotroom://github/run/o/r/5/p1", "a run link with no token")
+	refused("plotroom://github/worktree/o/r/5", "a worktree link with no token")
+	refused("plotroom://github/worktree/o/r/5?k=0123456789abcdef01234567", "a worktree link with a stale token")
+	eq(#w.window.events, sent, "nothing was asked of any host")
+	eq(#w.calls, ran, "nothing ran")
+	eq(#w.window.agents, 0, "no agent started")
+	eq(#w.window.launches, 0, "no tab opened")
+end)
+
+windowCase("window: a pull request whose head branch has shell characters is refused for Worktree and agents", function(w: World)
+	local s = agentScene(w)
+	for _, ref in { "x$(id)", "a;b", "-x", ".hidden" } do
+		s.gh.meta["o/r#5"].ref = ref
+		local said, ran = #w.toasts, #w.calls
+		w.click(prLink("worktree", "o/r", 5))
+		w.flush()
+		has(w.toasts[#w.toasts].text .. (w.toasts[#w.toasts].sub or ""), "head branch", ref .. ": the worktree is refused")
+		w.window.choose = "Start another agent"
+		w.window.typed = "hi"
+		w.click(prLink("agent", "o/r", 5))
+		w.flush()
+		eq(#w.window.agents, 0, ref .. ": no agent starts")
+		eq(#w.window.launches, 0, ref .. ": no tab opens")
+		yes(#w.toasts > said, ref .. ": the user is told")
+		for i = ran + 1, #w.calls do
+			lacks(table.concat(w.calls[i].argv, " "), ref, ref .. ": no command carried the branch")
+		end
+	end
+end)
+
 windowCase("window: a prompt no longer offered once the card was drawn gives a toast and runs nothing", function(w: World)
 	local _, b = agentScene(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })

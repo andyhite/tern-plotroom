@@ -1923,7 +1923,7 @@ function M.boardAct(state: State, act: string): boolean
 		local _, at = M.boardSelected(state)
 		if row and not row.missing then
 			state.cx:render() -- the window reads the row's link from the shown surface
-			state.cx:open(if act == "wt-git" then core.GIT_LINK else "plotroom://worktrees/open/" .. at)
+			state.cx:open(core.withToken(if act == "wt-git" then core.GIT_LINK else "plotroom://worktrees/open/" .. at))
 		end
 	elseif act == "wt-cleanup" then
 		if not state.boardBusy then
@@ -2121,11 +2121,11 @@ function M.agentHref(key: string, act: string?): string?
 	local verb = act or "agentgo"
 	local repo, n = string.match(key, "^([^/#]+/[^/#]+)#(%d+)$")
 	if repo and n then
-		return "plotroom://github/" .. verb .. "/" .. repo .. "/" .. n
+		return core.withToken("plotroom://github/" .. verb .. "/" .. repo .. "/" .. n)
 	end
 	local project, ref = string.match(key, "^([^#]+)#([%w_%-]+)$")
 	if project and ref and not string.find(project, "/", 1, true) then
-		return "plotroom://issue/" .. verb .. "/" .. string.upper(project) .. "/" .. ref
+		return core.withToken("plotroom://issue/" .. verb .. "/" .. string.upper(project) .. "/" .. ref)
 	end
 	return nil
 end

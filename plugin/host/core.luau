@@ -278,25 +278,35 @@ function M.pct(s: string): string
 	end))
 end
 
+-- Made when the host starts and carried by every action link the block renders for the window, so the window's
+-- exact-href check refuses a plotroom:// link typed into a description. Never rendered, toasted or stored.
+-- ponytail: math.random, seeded by Luau from the clock and an address; a stronger source if Tern ever offers one.
+M.TOKEN = string.format("%06x%06x%06x%06x", math.random(0, 0xFFFFFF), math.random(0, 0xFFFFFF), math.random(0, 0xFFFFFF), math.random(0, 0xFFFFFF))
+
+-- `href` with the host's token (the window strips `?k=<token>` before parsing, and compares the whole link).
+function M.withToken(href: string): string
+	return href .. "?k=" .. M.TOKEN
+end
+
 -- The link of action `act` (open | worktree | goto | agent) on `item`: a pull request's carries its repository and
 -- number; an issue's open carries the percent-encoded URL (the window compares it with the one shown), the others the
 -- repository and the issue's ref.
 function M.hrefOf(state: State, item: any, act: string): string
 	if state.kind.id == "issues" then
 		if act == "open" then
-			return "plotroom://issue/open/" .. M.pct(item.url)
+			return M.withToken("plotroom://issue/open/" .. M.pct(item.url))
 		end
-		return "plotroom://issue/" .. act .. "/" .. item.repo .. "/" .. item.ref
+		return M.withToken("plotroom://issue/" .. act .. "/" .. item.repo .. "/" .. item.ref)
 	end
-	return "plotroom://github/" .. act .. "/" .. item.repo .. "/" .. item.number
+	return M.withToken("plotroom://github/" .. act .. "/" .. item.repo .. "/" .. item.number)
 end
 
 -- The link of the button that runs saved prompt `id` (letters and digits) on `item`: the prompt's shortcut opens it.
 function M.runHrefOf(state: State, item: any, id: string): string
 	if state.kind.id == "issues" then
-		return "plotroom://issue/run/" .. item.repo .. "/" .. item.ref .. "/" .. id
+		return M.withToken("plotroom://issue/run/" .. item.repo .. "/" .. item.ref .. "/" .. id)
 	end
-	return "plotroom://github/run/" .. item.repo .. "/" .. item.number .. "/" .. id
+	return M.withToken("plotroom://github/run/" .. item.repo .. "/" .. item.number .. "/" .. id)
 end
 
 -- "45s", "3m 20s", "1h 5m" for a whole number of seconds.

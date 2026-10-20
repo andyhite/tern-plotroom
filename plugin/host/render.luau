@@ -1078,9 +1078,9 @@ local function boardPreview(state: State): { Node }
 	if row.refused then
 		table.insert(kids, ui.node("text", { key = "refused", spans = { ui.span(row.refused, "error") } }))
 	end
-	local links: { Node } = { ui.node("text", { key = "wtopen", href = "plotroom://worktrees/open/" .. at }) }
+	local links: { Node } = { ui.node("text", { key = "wtopen", href = core.withToken("plotroom://worktrees/open/" .. at) }) }
 	if not row.missing then
-		table.insert(links, ui.node("text", { key = "git", href = core.GIT_LINK }))
+		table.insert(links, ui.node("text", { key = "git", href = core.withToken(core.GIT_LINK) }))
 	end
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	return kids

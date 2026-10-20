@@ -1020,8 +1020,11 @@ local function palette(cx: WindowCx, pane: number)
 end
 
 -- Validates a plotroom:// link against the pane's live surface and runs it. `typed`: an agent link asks for a typed
--- prompt straight away (the command palette's Type a prompt…), not the agent picker.
-local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?): boolean
+-- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
+-- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
+-- (written into a description, or from another run of the host) matches no node and is refused as no longer listed.
+local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?): boolean
+	local url = string.gsub(full, "%?k=%x+$", "")
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
 	if rid then
 		answered(cx, rid)
@@ -1060,7 +1063,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		elseif not row or row < 1 or row > 100000 then
 			cx:toast("error", "Plotroom: malformed link")
 		else
-			flows.openWorktree(cx, pane, url, row)
+			flows.openWorktree(cx, pane, full, row)
 		end
 		return true
 	end
@@ -1082,7 +1085,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 			cx:toast("error", "Plotroom: malformed link")
 		elseif not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= url then
+		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= full then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, page)
@@ -1104,7 +1107,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 			return true
 		end
 		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "agentgo" then AGENTGO_NODE elseif AGENT_CMD[act] then BUTTONS_PREFIX .. act elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
-		if nodeProp(readNode(cx, pane, node), "href") ~= url then
+		if nodeProp(readNode(cx, pane, node), "href") ~= full then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 			return true
 		end
@@ -1145,7 +1148,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		elseif AGENT_CMD[kind] then BUTTONS_PREFIX .. kind
 		elseif kind == "run" then PROMPT_NODE .. (id or "")
 		else WORKTREE_NODE
-	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == url
+	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == full
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
 		return true

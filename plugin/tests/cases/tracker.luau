@@ -566,6 +566,29 @@ case("github.pr: the head sha must be 40 hex digits and is lowercased", function
 	has(why.message, "unexpected pull request metadata", "message")
 end)
 
+case("github.pr: a head branch of plain name characters only is accepted, and a refusal names the branch", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local function ask(ref: string): (any, any)
+		gh.meta["o/r#5"] = { base = "o/r", sha = sha("a"), ref = ref, state = "open" }
+		local got, why = nil :: any, nil :: any
+		github.pr("o/r", 5, nil, function(meta, problem, _cx)
+			got, why = meta, problem
+		end)
+		w.flush()
+		return got, why
+	end
+	for _, ok in { "feature", "_x", "9lives", "octocat/fix-1.2_b+c@d" } do
+		eq(select(2, ask(ok)), nil, ok .. " is accepted")
+	end
+	for _, bad in { "a$b", "x;y", "x y", "-rf", ".hidden", "+x", "/x", "é", "a`b`", "a|b", "a\nb" } do
+		local got, why = ask(bad)
+		eq(got, nil, string.format("%q", bad) .. " is refused")
+		has(why.message, "head branch", "naming what is wrong")
+	end
+	has(select(2, ask("a$b")).message, "a$b", "and the branch")
+end)
+
 -- Shared by the github cases.
 local ghx = {
 	-- "<number>:<branch>" of every linked PR, "-" for a deleted branch: one string per PR, in order.
