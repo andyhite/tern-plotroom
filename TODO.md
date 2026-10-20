@@ -260,6 +260,7 @@
   - Review attempts: 2
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "25" and `plugin.toml` is `0.25.0` (main ships "24").
   - Decision: `github.luau` keeps a per-login `marks` counter bumped by `markRead`; a 200 answer whose counter changed still reaches `done` but skips the cache and `nextAt` writes.
+  - Decision: The Inbox keys use main's shared `listKeys` (Home/End), with no extra keys.
 
 ## Done
 
