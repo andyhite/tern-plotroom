@@ -385,7 +385,7 @@ local function buttonLinks(state: State, item: any, acts: { Action }): Node
 		end
 	end
 	if engine.cardPath(state) then
-		table.insert(links, ui.node("text", { key = "git", href = core.GIT_LINK }))
+		table.insert(links, ui.node("text", { key = "git", href = core.withToken(core.GIT_LINK) }))
 	end
 	return ui.node("col", { key = "buttons", hidden = true }, links)
 end

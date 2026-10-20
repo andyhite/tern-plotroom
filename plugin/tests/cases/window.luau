@@ -413,13 +413,15 @@ windowCase("window: a pull request whose head branch has shell characters is ref
 		w.click(prLink("worktree", "o/r", 5))
 		w.flush()
 		has(w.toasts[#w.toasts].text .. (w.toasts[#w.toasts].sub or ""), "head branch", ref .. ": the worktree is refused")
-		w.window.choose = "Start another agent"
+		w.window.choose = "Type a prompt…"
 		w.window.typed = "hi"
+		said = #w.toasts
 		w.click(prLink("agent", "o/r", 5))
 		w.flush()
 		eq(#w.window.agents, 0, ref .. ": no agent starts")
 		eq(#w.window.launches, 0, ref .. ": no tab opens")
 		yes(#w.toasts > said, ref .. ": the user is told")
+		has(w.toasts[#w.toasts].text .. (w.toasts[#w.toasts].sub or ""), "head branch", ref .. ": the agent is refused for the branch")
 		for i = ran + 1, #w.calls do
 			lacks(table.concat(w.calls[i].argv, " "), ref, ref .. ": no command carried the branch")
 		end

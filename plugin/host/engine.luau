@@ -1906,7 +1906,7 @@ function M.openGit(state: State): boolean
 		return false
 	end
 	state.cx:render() -- the window reads the link from the shown surface
-	state.cx:open(core.GIT_LINK)
+	state.cx:open(core.withToken(core.GIT_LINK))
 	return true
 end
 

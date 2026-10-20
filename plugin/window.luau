@@ -1045,7 +1045,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		else
-			flows.openGit(cx, pane, url)
+			flows.openGit(cx, pane, full)
 		end
 		return true
 	end

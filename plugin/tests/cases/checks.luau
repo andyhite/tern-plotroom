@@ -648,9 +648,9 @@ case("host: the card and the Worktrees list offer Open in Git while the folder e
 	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
 	w.flush()
 	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "the card has the button")
-	eq(buttonLink(b, "git"), "plotroom://worktrees/git", "and its link")
+	eq(buttonLink(b, "git"), h.tokened("plotroom://worktrees/git"), "and its link")
 	pressCard(b, "git")
-	eq(w.opened[#w.opened], "plotroom://worktrees/git", "a click opens that link")
+	eq(w.opened[#w.opened], h.tokened("plotroom://worktrees/git"), "a click opens that link")
 	eq(hx.ask(w, b, "g1", { op = "git-path" }).path, target, "the host names the card's folder")
 	w.fs.dirs[target] = nil
 	b.render()
