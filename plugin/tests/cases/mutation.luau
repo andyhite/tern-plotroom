@@ -456,6 +456,39 @@ case("jira.transition: the id must be in the re-listed set, then one POST of exa
 	has(refused.message, "resolution", "carries Jira's own reason")
 end)
 
+case("jira.transition: a site switch between list and post sends to the current site, and a failed status sends nothing", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
+	local reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, nil)
+	jira.transitions("ABC-1", function() end)
+	w.flush()
+	acli.site = "other.atlassian.net"
+	local problem: any = "unset"
+	jira.transition("ABC-1", "31", function(p)
+		problem = p
+	end)
+	w.flush()
+	eq(problem, nil, "the write succeeds")
+	eq(reqs[#reqs].url, "https://other.atlassian.net/rest/api/3/issue/ABC-1/transitions", "the POST goes to the current site")
+	for _, r in reqs do
+		lacks(r.url, "acme", "nothing went to the old site after the switch")
+	end
+	local before = #reqs
+	acli.override = function(req: any): any
+		if req.kind == "auth" then
+			return { status = 1, stderr = "✗ Error: boom\n" }
+		end
+		return nil
+	end
+	jira.transition("ABC-1", "31", function(p)
+		problem = p
+	end)
+	w.flush()
+	eq(#reqs, before, "nothing sent when status fails")
+	eq(problem == nil, false, "a problem is reported")
+end)
+
 case("worktree.inventory: lists every worktree of the checkout, marks main, flags locked, prunable, missing and detached, writes nothing", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.inventoryRepo(w)

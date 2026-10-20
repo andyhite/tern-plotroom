@@ -44,7 +44,7 @@ function M.classify(text: string): Problem
 	if string.find(low, "failed to parse jql", 1, true) then
 		return { kind = if string.find(low, "field 'project'", 1, true) then "not-found" else "invalid", message = line }
 	end
-	if string.find(low, "429", 1, true) or string.find(low, "rate limit", 1, true) then
+	if string.find(low, "%f[%w_%-]429%f[^%w_%-]") or string.find(low, "rate limit", 1, true) then
 		return { kind = "rate-limit", message = line }
 	end
 	return { kind = "failed", message = line }
@@ -865,6 +865,7 @@ end
 
 -- `done` once /myself names the acli account; the REST token may belong to another one, and nothing is sent then.
 local function verified(done: (Problem?) -> ())
+	site = nil -- every write rereads acli's current sign-in; nothing goes to a cached site
 	rest("GET", "/rest/api/3/myself", nil, function(data, problem)
 		if problem then
 			return done(problem)

@@ -3152,7 +3152,7 @@ function asks.bk.fetch(w: World, route: (any) -> { status: number, body: string 
 		end,
 	}
 	w.sdk.fetch = function(url: string, opts: any, cb: (any) -> ())
-		local req = { url = url, method = opts.method, headers = opts.headers, body = opts.body, line = opts.method .. " " .. string.sub(url, #"https://acme.atlassian.net" + 1) }
+		local req = { url = url, method = opts.method, headers = opts.headers, body = opts.body, line = opts.method .. " " .. string.gsub(url, "^https://[^/]+", "") }
 		table.insert(reqs, req)
 		local reply = route(req) or { status = 500, body = "" }
 		w.sdk.timer(0, function()

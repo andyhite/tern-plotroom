@@ -1460,6 +1460,7 @@ case("jira.issues: acli's failures become problems, and a query that cannot be w
 	local gone = searchReplies({ status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" })
 	eq(gone.problem.kind, "not-found", "an unknown project is not found")
 	eq(searchReplies({ status = 1, stderr = "✗ Error: request failed: 429 Too Many Requests\n" }).problem.kind, "rate-limit", "a 429 is a rate limit")
+	eq(searchReplies({ status = 1, stderr = "✗ Error: ABC-429 is not valid\n" }).problem.kind, "failed", "ABC-429 is not a rate limit")
 	local boom = searchReplies({ status = 1, stderr = "✗ Error: boom\n" })
 	eq(boom.problem.kind, "failed", "anything else")
 	eq(boom.problem.message, "boom", "with acli's message")
