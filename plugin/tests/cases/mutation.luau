@@ -463,6 +463,7 @@ case("jira.transition: a site switch between list and post sends to the current 
 	local reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, nil)
 	jira.transitions("ABC-1", function() end)
 	w.flush()
+	local listed = #reqs
 	acli.site = "other.atlassian.net"
 	local problem: any = "unset"
 	jira.transition("ABC-1", "31", function(p)
@@ -471,8 +472,8 @@ case("jira.transition: a site switch between list and post sends to the current 
 	w.flush()
 	eq(problem, nil, "the write succeeds")
 	eq(reqs[#reqs].url, "https://other.atlassian.net/rest/api/3/issue/ABC-1/transitions", "the POST goes to the current site")
-	for _, r in reqs do
-		lacks(r.url, "acme", "nothing went to the old site after the switch")
+	for i = listed + 1, #reqs do
+		lacks(reqs[i].url, "acme", "nothing went to the old site after the switch")
 	end
 	local before = #reqs
 	acli.override = function(req: any): any
