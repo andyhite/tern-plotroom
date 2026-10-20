@@ -4,6 +4,20 @@
 
 ## Todo
 
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+  - Base: main
+  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
+  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
+  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
+  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
+  - Fix: plugin/keys.luau:117 / Decision "A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it" - `save(id, "")` stores nil when the action's default is `""` (every one-key action), so binding `d` through the preset, removing it with Backspace and pressing Use again binds `d` back - store `""` for a removal and nil only for Reset, update the cases that expect `{}` after a removal (`tests/cases/queue.luau` ~351-352), and add a case: preset, remove one key, preset again keeps it unbound.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -32,18 +46,6 @@
   - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
   - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
   - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
-
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
-  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
-  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
-  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
-  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
-  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-  - Base: main
-  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
-  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
-  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
-  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
 
 - [ ] Jira views list up to 1000 items instead of stopping at 100.
   - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
