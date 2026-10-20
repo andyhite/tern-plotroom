@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
-  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
-  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
-  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
-  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
-  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -162,6 +154,16 @@
   - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
   - Base: main
   - Branch: todo/status-bar-segment-shows-how-many-agents at /Users/andyhite/Code/tern-plotroom.todo/status-bar-segment-shows-how-many-agents
+
+- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
+  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
+  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
+  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
+  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
+  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
+  - Base: main
+  - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
 
 ## Blocked
 
