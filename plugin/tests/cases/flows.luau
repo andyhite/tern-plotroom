@@ -973,6 +973,43 @@ windowCase("window flows: a Worktrees list link opens the path, or focuses the t
 	eq(w.toasts[said + 1].level, "error", "a row the node does not carry is refused")
 end)
 
+windowCase("window flows: Open in Git opens Tern's git block on the host's path, and is refused for a remote block, a stale link and a git that fails", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local url = "plotroom://worktrees/git"
+	st.link("layer.queue.buttons.git", url)
+	w.click(url)
+	w.flush()
+	st.reply("git-path", { path = "/wt/one" })
+	same(w.window.gitOpened, { "/wt/one" }, "the git block opens on the folder the host names")
+	w.click(url)
+	w.flush()
+	st.reply("git-path", { problem = "That worktree is no longer there." })
+	eq(w.toasts[#w.toasts].text, "Git not opened", "a host that has no folder any more says so")
+	eq(#w.window.gitOpened, 1, "and nothing opens")
+	w.window.gitFail = "no repository"
+	w.click(url)
+	w.flush()
+	st.reply("git-path", { path = "/wt/one" })
+	w.flush()
+	eq(w.toasts[#w.toasts].sub, "no repository", "a git block that fails to open is told")
+	w.window.gitFail = nil
+	local asked, said = #requestsSent(w), #w.toasts
+	w.window.remoteHost = true
+	w.click(url)
+	w.flush()
+	eq(#requestsSent(w), asked, "a remote block is not even asked")
+	eq(w.toasts[said + 1].level, "error", "it is refused")
+	eq(#w.window.gitOpened, 2, "and nothing opens: Tern's git block reads this machine's repositories")
+	w.window.remoteHost = false
+	local surface: any = w.window.surfaces[1]
+	surface.layer.c = {}
+	said = #w.toasts
+	w.click(url)
+	w.flush()
+	eq(w.toasts[said + 1].level, "error", "a link the block does not carry is refused")
+end)
+
 windowCase("window flows: Open item by URL reuses a Plotroom block, and launches one (waiting for it) when there is none", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -2152,6 +2189,10 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "Home jumps back to the first")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 1 }).path, "/wt/pr5", "the window asks the host for the folder by number")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 3 }).path, "/work/r", "the main worktree's too")
+	eq(findKey(pickerNode(b), "git").p.href, "plotroom://worktrees/git", "the row has its Open in Git link")
+	eq(asks.hx.ask(w, b, { op = "git-path" }).path, "/wt/pr5", "which the host answers with the selected row's folder")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "wt-git" })
+	eq(w.opened[#w.opened], "plotroom://worktrees/git", "the palette's Open in Git opens it")
 	has(asks.hx.ask(w, b, { op = "worktree-path", n = 9 }).problem, "no longer listed", "a number no row has")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = "1" }), nil, "a number that is no number is not answered")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")

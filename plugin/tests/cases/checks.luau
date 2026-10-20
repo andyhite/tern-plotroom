@@ -541,7 +541,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(findKey(path, "v").p.truncate, "middle", "cut in the middle when it is long")
 	eq(findKey(path, "v").p.title, target, "the tooltip has all of it")
 	eq(findKey(path, "copy", "icon").p.href, target, "and so does the copy icon")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "no tab works in it: open one, or remove it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "no tab works in it: open one, remove it, or open Tern's git view on it")
 	local open: any = findKey(cardOf(b), "open", "item")
 	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
 	eq(open.p.actions.click, "worktree", "and is the Worktree button")
@@ -553,7 +553,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "a click opens the Worktree link, as the key does")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
-	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree" }, "while a tab works in it, the button goes there instead")
+	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree", "git:Open in Git" }, "while a tab works in it, the button goes there instead")
 	same(findKey(cardOf(b), "go", "item").p.hint, { "g" }, "wearing the Go to tab key")
 	pressCard(b, "go")
 	eq(w.opened[#w.opened], prLink("goto", "o/r", 1), "and its click opens the Go to tab link")
@@ -579,6 +579,63 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(cardOf(b).p.tone, "error", "a failed attempt is a red card")
 	eq(findKey(cardOf(b), "status"), nil, "with no badges")
 	same(buttonsOf(b), {}, "and no buttons: there is no worktree to go to or remove")
+end)
+
+case("host: the card says how many commits are unpushed, and a git command finishing in the worktree reads it again", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	same(chipsOf(b), { "Up to date", "Clean" }, "no upstream (a fork's worktree): no unpushed badge")
+	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
+	table.insert(w.panes, { pane = 10, cwd = "/work/r" })
+	local finish: any = w.window.handlers.command_finished
+	local function done(pane: number, line: string)
+		finish({ pane = pane, line = line, status = 0, took_ms = 5 }, nil)
+		w.advance(400)
+		w.flush()
+	end
+	s.git.unpushed[target] = 2
+	local reads = countLog(s.git, "status")
+	done(9, "ls -la")
+	done(10, "git commit -m x")
+	done(9, "gitk")
+	eq(countLog(s.git, "status"), reads, "a command that is not git, git outside the worktree, and a program only named git... read nothing")
+	same(chipsOf(b), { "Up to date", "Clean" }, "so the badges stay")
+	done(9, "git commit -m x")
+	eq(countLog(s.git, "status"), reads + 1, "git finishing inside the worktree reads its status once")
+	same(chipsOf(b), { "Up to date", "Clean", "2 unpushed" }, "and the card shows the commits no upstream has")
+	s.git.dirty[target] = " M src/a.lua\n"
+	s.git.unpushed[target] = nil
+	done(9, "git pull")
+	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "the badges follow the next command, and the unpushed count goes")
+	s.git.unpushed[target] = 0
+	s.git.dirty[target] = nil
+	done(9, "git push")
+	same(chipsOf(b), { "Up to date", "Clean" }, "nothing unpushed shows no badge")
+end)
+
+case("host: the card and the Worktrees list offer Open in Git while the folder exists, and ask the window to open it", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "the card has the button")
+	eq(buttonLink(b, "git"), "plotroom://worktrees/git", "and its link")
+	pressCard(b, "git")
+	eq(w.opened[#w.opened], "plotroom://worktrees/git", "a click opens that link")
+	eq(hx.ask(w, b, "g1", { op = "git-path" }).path, target, "the host names the card's folder")
+	w.fs.dirs[target] = nil
+	b.render()
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "a folder that is gone has no button")
+	eq(buttonLink(b, "git"), nil, "and no link")
+	has(hx.ask(w, b, "g2", { op = "git-path" }).problem, "no longer there", "nor a path")
 end)
 
 case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove button takes it away, on the host, with its card and badge", function(w: World)
@@ -761,7 +818,7 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(badgeOf(b, 2), nil, "the PR with no worktree wears none")
 	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "the card: at the PR's head, its changes unread")
 	eq(cardOf(b).p.tone, nil, "no tone either")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "with the buttons that open a tab in it or remove it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "with the buttons that open a tab in it or remove it")
 	has(cardText(b), "plotroom/o/r/pr-1", "its branch")
 	has(cardText(b), path, "and where it is")
 	eq(countLog(s.git, "worktree list"), 1, "git listed the checkout once")
@@ -1784,7 +1841,7 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	has(cardText(b), target, "that says where it is")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "octocat/12-fix-login", "the card shows its branch")
 	same(chipsOf(b), { "Clean" }, "and one badge: an issue has no pull request head to be at")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree" }, "with the buttons to open its tab or remove it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "with the buttons to open its tab or remove it")
 	eq(commandsOf(b, "update"), nil, "and none to update it: the issue has no head to follow")
 	request(b, "a3", freshAsk("o/r", "12"))
 	w.flush()

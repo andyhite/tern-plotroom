@@ -253,7 +253,7 @@ windowCase("worktree: opening again reuses the worktree: no fetch, nothing chang
 	eq(snapshot(s.git), before, "git state is untouched")
 	eq(countLog(s.git, "fetch", mark), 0, "no fetch")
 	eq(countLog(s.git, "worktree add", mark), 0, "no add")
-	eq(countLog(s.git, "status --porcelain --untracked-files=normal", mark), 1, "status is read once")
+	eq(countLog(s.git, "status --porcelain=v2 --branch --untracked-files=normal", mark), 1, "status is read once")
 end)
 
 windowCase("worktree: after the PR advanced a reused worktree stays where it is and says so", function(w: World)

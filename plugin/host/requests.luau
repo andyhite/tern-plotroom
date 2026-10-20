@@ -1621,6 +1621,11 @@ function M.workflowRpc(state: State, id: string, q: any)
 	elseif op == "worktree-path" and type(q.n) == "number" then
 		local row = engine.boardRows(state)[q.n]
 		reply(state, id, if row and not row.missing then { path = row.path } else { problem = "That worktree is no longer listed." })
+	elseif op == "git-path" then
+		-- The worktree Open in Git is about: the Worktrees list's selected row, else the selected item's card.
+		local row = if state.boardOn then engine.boardSelected(state) else nil
+		local path = if state.boardOn then (if row and not row.missing then row.path else nil) else engine.cardPath(state)
+		reply(state, id, if path then { path = path } else { problem = "That worktree is no longer there." })
 	end
 end
 
@@ -1797,9 +1802,13 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	if item then
 		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
 		labels.open = "Open in " .. INTEGRATIONS[tr].label
+		labels["open-git"] = "Open in Git"
 		local group = if state.kind.id ~= "issues" then "GitHub - PR" elseif item.tracker == "jira" then "Jira - Issue" else "GitHub - Issue"
 		add("open", group)
 		add("worktree", group)
+		if engine.cardPath(state) then
+			add("open-git", group)
+		end
 		if openItems(state)[item.key] then
 			add("goto", group)
 		end
@@ -1818,10 +1827,11 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	end
 	if state.boardOn then
 		local row = engine.boardSelected(state)
-		labels["wt-open"], labels["wt-remove"], labels["wt-cleanup"] = "Open worktree tab", "Remove worktree…", "Look for finished worktrees"
+		labels["wt-open"], labels["wt-remove"], labels["wt-cleanup"], labels["wt-git"] = "Open worktree tab", "Remove worktree…", "Look for finished worktrees", "Open in Git"
 		if row then
 			if not row.missing then
 				add("wt-open", "Worktree")
+				add("wt-git", "Worktree")
 			end
 			if not row.main and not row.locked and not row.missing then -- the guard of boardAct and the Remove button
 				add("wt-remove", "Worktree")

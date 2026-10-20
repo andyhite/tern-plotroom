@@ -51,6 +51,7 @@ local MAX_BODY = 8000
 local MAX_ROWS = 40
 local AGENTGO_NODE = "layer.queue.buttons.agentgo"
 local WTOPEN_NODE = "layer.queue.buttons.wtopen"
+local GIT_NODE = "layer.queue.buttons.git"
 
 local env: Env? = nil
 
@@ -454,6 +455,41 @@ function M.openWorktree(cx: WindowCx, pane: number, url: string, n: number)
 			return cx2:toast("error", "Worktree not opened", "The block's host gave no path")
 		end
 		M.openPath(cx2, pane, a.path)
+	end)
+end
+
+-- plotroom://worktrees/git: opens Tern's git block on the worktree the block's card (or selected Worktrees row) is about.
+-- Tern's git block reads this machine's repositories, so a block on a remote host is refused.
+function M.openGit(cx: WindowCx, pane: number, url: string)
+	if e().nodeProp(e().readNode(cx, pane, GIT_NODE), "href") ~= url then
+		return cx:toast("error", "Plotroom: that worktree is no longer listed", "Refresh and try again.")
+	end
+	local ok, hosts = pcall(function()
+		return cx.hosts:list()
+	end)
+	local local_ = false
+	if ok and type(hosts) == "table" then
+		for _, h in hosts do
+			if type(h.panes) == "table" and table.find(h.panes, pane) then
+				local_ = h.kind == "local"
+			end
+		end
+	end
+	if not local_ then
+		return cx:toast("error", "Open in Git works on this machine's worktrees only", "This block runs on another host.")
+	end
+	e().ask(cx, pane, "git-path", {}, ACT_MS, function(a: any, cx2: WindowCx)
+		local why = problemOf(a)
+		if why then
+			return cx2:toast("error", "Git not opened", why)
+		elseif type(a.path) ~= "string" or a.path == "" or #a.path > 4096 or string.find(a.path, "%c") then
+			return cx2:toast("error", "Git not opened", "The block's host gave no usable path")
+		end
+		cx2.git:open(a.path):next(function(_, err, cx3)
+			if err and cx3 then
+				cx3:toast("error", "Git not opened", err)
+			end
+		end)
 	end)
 end
 

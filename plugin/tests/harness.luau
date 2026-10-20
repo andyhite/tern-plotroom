@@ -375,6 +375,8 @@ export type Win = {
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
 	refreshes: number, -- tern.chrome.refresh calls
 	reads: { [number]: number }, -- pane -> cx.session:surface reads
+	gitOpened: { string }, -- every path cx.git:open was asked for
+	gitFail: string?, -- the error cx.git:open answers with
 }
 
 export type Kv = {
@@ -577,6 +579,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		handlers = {},
 		refreshes = 0,
 		reads = {},
+		gitOpened = {},
 	}
 	local nextId = 10
 
@@ -592,6 +595,18 @@ local function newWorld(instantiate: Loader, context: string): World
 	end
 
 	windowCx = {
+		git = {
+			open = function(_self: any, path: string): any
+				table.insert(win.gitOpened, path)
+				return {
+					next = function(_self2: any, fn: (any, any, any) -> ())
+						schedule(0, function()
+							fn(if win.gitFail then nil else 1, win.gitFail, windowCx)
+						end)
+					end,
+				}
+			end,
+		},
 		toast = function(_self: any, level: string, text: string, sub: string?)
 			table.insert(toasts, { level = level, text = text, sub = sub })
 		end,
@@ -1792,7 +1807,8 @@ export type Git = {
 	refs: { [string]: string }, -- local refs -> sha
 	config: { [string]: string }, -- the repository's config as `git config <key> <value>` wrote it
 	worktrees: { GitWorktree }, -- [1] is the main worktree
-	dirty: { [string]: string }, -- worktree path -> `status --porcelain` output
+	dirty: { [string]: string }, -- worktree path -> its changes, the entries of `status --porcelain=v2` output
+	unpushed: { [string]: number }, -- worktree path -> commits its branch holds that its upstream lacks (none: no upstream)
 	ahead: { [string]: boolean }, -- branch -> it holds commits its fetched ref lacks: `merge-base --is-ancestor` says no
 	unmerged: { [string]: boolean }, -- branch -> `branch -d` refuses it: its commits are merged nowhere
 	fail: { [string]: Reply }, -- "fetch", "status", "worktree add", "rev-parse HEAD"... -> the answer instead of the model's
@@ -1838,6 +1854,7 @@ local function newGit(w: World, root: string): Git
 		config = {},
 		worktrees = { { path = root, branch = "refs/heads/main", head = sha("1"), locked = false } },
 		dirty = {},
+		unpushed = {},
 		ahead = {},
 		unmerged = {},
 		fail = {},
@@ -1953,7 +1970,13 @@ local function newGit(w: World, root: string): Git
 			end
 			return { stdout = table.concat(urls, "\n") .. "\n" }
 		elseif sub == "status" then
-			return { stdout = g.dirty[here.path] or "" }
+			-- `--porcelain=v2 --branch`: header lines, then the entries; the upstream lines only for a branch that has one
+			local head = "# branch.oid " .. here.head .. "\n# branch.head main\n"
+			local ahead = g.unpushed[here.path]
+			if ahead then
+				head ..= "# branch.upstream origin/main\n# branch.ab +" .. ahead .. " -0\n"
+			end
+			return { stdout = head .. (g.dirty[here.path] or "") }
 		elseif sub == "config" and args[2] == "--local" and args[3] == "--get-regexp" then
 			local out: { string } = {}
 			for k, v in g.notes do
@@ -3051,7 +3074,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "23" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
+asks.protocol = "24" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

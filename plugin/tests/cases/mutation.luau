@@ -620,7 +620,7 @@ case("worktree.inventoryDirty: re-reads git's list for the path and branch befor
 	local clean = dirty("/wt/pr5", "feature")
 	eq(clean[1], false, "clean")
 	eq(clean[2], nil, "no problem")
-	eq(countLog(g, "status --porcelain --untracked-files=normal"), 1, "status read once")
+	eq(countLog(g, "status --porcelain=v2 --branch --untracked-files=normal"), 1, "status read once")
 	g.dirty["/wt/pr5"] = "?? new.txt\n"
 	eq(dirty("/wt/pr5", "feature")[1], true, "dirty")
 	local marks = countLog(g, "status")
@@ -638,6 +638,33 @@ case("worktree.inventoryDirty: re-reads git's list for the path and branch befor
 	eq(away[1], nil, "a worktree git no longer lists has no answer")
 	has(away[2], "not a worktree", "problem")
 	eq(countLog(g, "status"), marks, "and no status was read")
+end)
+
+case("worktree.status: porcelain v2 header lines are never changes, an ahead count needs an upstream, and a status git could not read is unknown", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = asks.bk.inventoryRepo(w)
+	local function status(): any
+		return asks.bk.pack(w, function(done)
+			worktree.status("/wt/pr5", done)
+		end)[1]
+	end
+	local clean = status()
+	eq(clean.dirty, false, "a clean worktree with headers only is clean")
+	eq(clean.ahead, nil, "and with no upstream there is no ahead count")
+	g.unpushed["/wt/pr5"] = 3
+	local ahead = status()
+	eq(ahead.dirty, false, "commits ahead of the upstream are not changes")
+	eq(ahead.ahead, 3, "they are counted")
+	g.unpushed["/wt/pr5"] = 0
+	eq(status().ahead, 0, "an upstream with nothing ahead counts 0")
+	g.dirty["/wt/pr5"] = "1 .M N... 100644 100644 100644 a b src/a.lua\n? notes.txt\n"
+	eq(status().dirty, true, "a changed file and an untracked one are changes")
+	eq(countLog(g, "status --porcelain=v2 --branch --untracked-files=normal"), 4, "one spawn each")
+	g.fail["status"] = { status = 128, stderr = "fatal: unable to read the index\n" }
+	eq(status(), nil, "a failed status tells nothing")
+	local parsed = worktree.parseStatus("# branch.oid x\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -7\n")
+	eq(parsed.dirty, false, "headers only: clean")
+	eq(parsed.ahead, 2, "the behind count is not used")
 end)
 
 case("worktree.draftPreview: reads the branch and its commits over the base fetched read-only, writing nothing but its tracking ref", function(w: World)

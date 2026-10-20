@@ -61,6 +61,8 @@ local function queueAction(state: State, act: string): boolean
 			return false
 		end
 		openSelected(state, act, false)
+	elseif act == "open-git" then
+		return engine.openGit(state)
 	elseif act == "seen" or act == "snooze" then
 		engine.mark(state, act)
 	elseif act == "snoozed" or act == "attention" then
@@ -282,13 +284,14 @@ local function blockDef(): BlockDef<State>
 				note.checking = nil
 				return -- the cursor moved on or the note went: a render asks again if it still matters
 			end
-			worktree.dirty(path, function(dirty)
+			worktree.status(path, function(status)
 				note.checking = nil
 				note.checked = round
-				if not alive(state) or state.notes[key] ~= note or dirty == nil or dirty == note.dirty then
+				if not alive(state) or state.notes[key] ~= note or status == nil or (status.dirty == note.dirty and status.ahead == note.ahead) then
 					return
 				end
-				note.dirty = dirty
+				note.dirty = status.dirty
+				note.ahead = status.ahead
 				note.summary = summaryOf(note.kind == "issues", note, item) or note.summary
 				state.noteSeq += 1
 				state.cx:render()
@@ -883,7 +886,7 @@ local function blockDef(): BlockDef<State>
 				end
 			elseif act == "cancel-remove" then
 				state.removing = nil
-			elseif act == "goto" or act == "worktree" then
+			elseif act == "goto" or act == "worktree" or act == "open-git" then
 				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
 				queueAction(state, act)
 			elseif act == "unpin" then

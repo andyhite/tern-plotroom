@@ -384,6 +384,9 @@ local function buttonLinks(state: State, item: any, acts: { Action }): Node
 			table.insert(links, ui.node("text", { key = "prompt-" .. id, href = runHrefOf(state, item, id) }))
 		end
 	end
+	if engine.cardPath(state) then
+		table.insert(links, ui.node("text", { key = "git", href = core.GIT_LINK }))
+	end
 	return ui.node("col", { key = "buttons", hidden = true }, links)
 end
 
@@ -453,6 +456,10 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 		tone = if note.dirty == true then "warning" elseif note.dirty == false then "success" else "muted",
 		title = note.summary,
 	}))
+	local ahead = note.ahead or 0
+	if ahead > 0 then
+		table.insert(chips, ui.node("badge", { key = "ahead", text = ahead .. " unpushed", tone = "warning", title = "Commits on this branch its upstream does not have" }))
+	end
 	local body: { Node } = { heading(ui.node("row", { key = "status", gap = "xs", wrap = true }, chips)) }
 	if note.refused then
 		table.insert(body, ui.node("text", { key = "refused", spans = { ui.span("Not removed. " .. note.refused, "error") } }))
@@ -496,6 +503,9 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 		button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } })
 	end
 	button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } })
+	if note.path and tern.fs.exists(note.path) then
+		button({ key = "git", label = "Open in Git", icon = "merge", aria = "Open Tern's git view on this worktree", actions = { click = "open-git" } })
+	end
 	table.insert(body, ui.node("row", { key = "actions", gap = "sm", wrap = true }, buttons))
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
 end
@@ -1059,7 +1069,11 @@ local function boardPreview(state: State): { Node }
 	if row.refused then
 		table.insert(kids, ui.node("text", { key = "refused", spans = { ui.span(row.refused, "error") } }))
 	end
-	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, { ui.node("text", { key = "wtopen", href = "plotroom://worktrees/open/" .. at }) }))
+	local links: { Node } = { ui.node("text", { key = "wtopen", href = "plotroom://worktrees/open/" .. at }) }
+	if not row.missing then
+		table.insert(links, ui.node("text", { key = "git", href = core.GIT_LINK }))
+	end
+	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	return kids
 end
 

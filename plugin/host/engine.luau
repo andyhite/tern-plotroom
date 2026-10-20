@@ -1869,6 +1869,24 @@ function M.offered(state: State): ({ { prompt: Prompt, here: boolean } }, string
 	return out, problem
 end
 
+-- The folder of the selected item's worktree card while it still exists: what Open in Git opens.
+function M.cardPath(state: State): string?
+	local item = M.selected(state)
+	local note = if item then state.notes[item.key] else nil
+	local path = if note and note.ok then note.path else nil
+	return if path and tern.fs.exists(path) then path else nil
+end
+
+-- The card's Open in Git: true when there was a worktree to open.
+function M.openGit(state: State): boolean
+	if not M.cardPath(state) then
+		return false
+	end
+	state.cx:render() -- the window reads the link from the shown surface
+	state.cx:open(core.GIT_LINK)
+	return true
+end
+
 -- The board's own actions (`act`: the action bar's id or its key): true when it was one.
 function M.boardAct(state: State, act: string): boolean
 	local live = aliveFn(state)
@@ -1878,11 +1896,11 @@ function M.boardAct(state: State, act: string): boolean
 			state.board.details = {} -- Refresh reads the previewed pull request and issue again, not only git
 		end
 		M.boardLoad(state)
-	elseif act == "wt-open" then
+	elseif act == "wt-open" or act == "wt-git" then
 		local _, at = M.boardSelected(state)
 		if row and not row.missing then
 			state.cx:render() -- the window reads the row's link from the shown surface
-			state.cx:open("plotroom://worktrees/open/" .. at)
+			state.cx:open(if act == "wt-git" then core.GIT_LINK else "plotroom://worktrees/open/" .. at)
 		end
 	elseif act == "wt-cleanup" then
 		if not state.boardBusy then
@@ -1944,6 +1962,35 @@ tern.on("cwd", function(_ev: any, _cx: any)
 end)
 tern.on("pane_exited", function(_ev: any, _cx: any)
 	redrawQueues()
+end)
+-- A `git …` command finished in a pane inside a worktree some block has a note of: that card is read again at its
+-- next render, so its badges follow `git commit` or `git pull` at once. Only the selected card is ever read.
+-- ponytail: a read already under way when the command ends may predate it; the next finish or refresh corrects it.
+tern.on("command_finished", function(ev: any, _cx: any)
+	if type(ev) ~= "table" or type(ev.line) ~= "string" or type(ev.pane) ~= "number" or string.sub(ev.line, 1, 4) ~= "git " then
+		return
+	end
+	local cwd: string? = nil
+	for _, p in tern.pane.list() do
+		if p.pane == ev.pane then
+			cwd = p.cwd
+		end
+	end
+	if not cwd then
+		return
+	end
+	for _, s in running do
+		local hit = false
+		for _, note in s.notes do
+			if note.ok and note.path and worktree.within(cwd, note.path) then
+				note.checked = nil
+				hit = true
+			end
+		end
+		if hit and M.alive(s) then
+			s.cx:render()
+		end
+	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title? }): replaces
 -- what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted.

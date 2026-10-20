@@ -129,6 +129,7 @@ export type Note = {
 	ok: boolean,
 	current: boolean,
 	dirty: boolean?,
+	ahead: number?, -- commits its branch holds that its upstream lacks, read with `dirty`; nil without an upstream
 	root: string?,
 	path: string?,
 	branch: string?,
@@ -598,6 +599,10 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "23"
+M.RPC_PROTOCOL = "24"
+
+-- Open in Git: the link of the worktree the card (or the Worktrees list's selected row) offers; its hidden node `git`
+-- under `buttons` carries it, and the window asks the host for the path (rpc `git-path`).
+M.GIT_LINK = "plotroom://worktrees/git"
 
 return M

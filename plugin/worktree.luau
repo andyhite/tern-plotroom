@@ -1118,11 +1118,36 @@ local function steps<T>(done: Cb<T>): Steps<T>
 	return { finish = finish, attempt = attempt, run = run }
 end
 
+-- What `git status --porcelain=v2 --branch` says: `dirty` (any line that is not a `# ` header: tracked changes and
+-- untracked files) and `ahead`, the commits the branch holds that its upstream lacks (nil without an upstream: a fork
+-- pull request's worktree, a detached head).
+export type Status = { dirty: boolean, ahead: number? }
+
+function M.parseStatus(out: string): Status
+	local dirty: boolean, ahead: number? = false, nil
+	for line in string.gmatch(out, "[^\n]+") do
+		if string.sub(line, 1, 2) ~= "# " then
+			dirty = true
+		else
+			ahead = tonumber(string.match(line, "^# branch%.ab %+(%d+) %-%d+$")) or ahead
+		end
+	end
+	return { dirty = dirty, ahead = ahead }
+end
+
+-- The worktree's changes and unpushed commits in one spawn; nil when git could not tell: a failed or slow status is
+-- never reported as clean. done(status, cx): cx is nil in the host.
+function M.status(path: string, done: (Status?, WindowCx?) -> ())
+	git(path, { "status", "--porcelain=v2", "--branch", "--untracked-files=normal" }, LOCAL_MS, function(out, _, cx)
+		done(if out then M.parseStatus(out) else nil, cx)
+	end)
+end
+
 -- Whether the worktree at `path` has uncommitted changes (what `git status` lists, untracked files too); nil when git
--- could not tell: a failed or slow status is never reported as clean. done(dirty, cx): cx is nil in the host.
+-- could not tell. done(dirty, cx): cx is nil in the host.
 function M.dirty(path: string, done: (boolean?, WindowCx?) -> ())
-	git(path, { "status", "--porcelain", "--untracked-files=normal" }, LOCAL_MS, function(status, _, cx)
-		done(if status then status ~= "" else nil, cx)
+	M.status(path, function(status, cx)
+		done(if status then status.dirty else nil, cx)
 	end)
 end
 
