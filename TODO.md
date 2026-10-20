@@ -114,6 +114,10 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
+## Blocked
+
+## Review
+
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -134,11 +138,8 @@
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (3a0ef66/c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so `pr-merge`/`pr-approve`/`pr-request-changes`/`pr-update-branch` ship under main's number and a mixed pair answers "does not know that command" with no mismatch warning - the implementing agent rebases onto main, bumps all four to the next unused number ("25" unless main moved past it; other queued items also target it), updates the Decision bullet and reruns the gate before hand-off.
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (ebe89f6): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above; Carly and Agents-list items also use 26, so later landings must rebase and bump); gate passed: 545 cases, types clean, smoke 22 scenarios (gate ran without the verify lock).
   - Review attempts: 0
-
-## Blocked
-
-## Review
 
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
