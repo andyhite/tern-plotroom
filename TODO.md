@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
   - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
   - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
@@ -15,8 +17,6 @@
   - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
   - Decision: The display is awake and unlocked now (`computer.capabilities()`: capture true, screenLocked false); the Commands-last-in-the-corner check in a real Tern window (`tern plugin link <worktree>/plugin`, open Plotroom, confirm, then relink the main plugin) is done at review with a live display; all other bullets are done and gated at 5e1ee9f.
   - Review attempts: 0
-
-## In-Progress
 
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
