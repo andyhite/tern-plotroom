@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
   - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
@@ -20,8 +22,6 @@
   - Fix: plugin/flows.luau:1122-1132 (`showUrl`) / acceptance "opens the PR in the same host's Plotroom block … launching Plotroom first when none is open" - with no Plotroom block on the lens pane's host, `openIn(cx, nil, url)` launches through `launchPane`, which splits whichever pane has focus (or opens a new tab), so the block can open on another host - focus `from` before launching (`cx.layout:focus(from)`, as `openUrl` does), with a window case where another pane has focus.
   - Fix: AGENTS.md - the new `host/lens.luau` module and the `[[lenses]]` manifest entry are not described (host layers list; Important Files says only "one block `prs`") - add both.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
