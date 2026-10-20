@@ -6,23 +6,6 @@
 
 ## In-Progress
 
-- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
-  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
-  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
-  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
-  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
-  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
-  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
-  - Base: main
-  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
-  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
-  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
-  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
-  - Fix: rebase onto main - conflicts in README.md, plugin/tests/harness.luau and plugin/window.luau (main changed `takeChain`/`recordAgent`, the agents fake and window link handling) - resolve on the item branch and run the gate on the rebased commit before hand-off.
-  - Fix: README.md:106 (Trust) - says Carly receives "only what the Tell Carly when it finishes toggle sends … and, when asked, the `plotroom_agents` list", but `plotroom_agents` is registered whenever `tern.carly` exists, independent of the toggle; the item key is also sent as `abc#ABC-12`, not a bare Jira key - state that the message comes from the toggle and that Carly can always read `plotroom_agents`, with the key as sent.
-  - Review attempts: 2
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -310,6 +293,21 @@
   - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
   - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
+  - Review attempts: 2
+
+- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
+  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
+  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
+  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
+  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
+  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
+  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
+  - Base: main
+  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
+  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
+  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
+  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
   - Review attempts: 2
 
 ## Done
