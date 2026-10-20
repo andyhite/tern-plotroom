@@ -447,11 +447,12 @@ local function blockDef(): BlockDef<State>
 				-- A pin's id is its own ("pin:<key>"; an older save's "pin" is its one pin).
 				active = if string.sub(own, 1, 3) == "pin" then own else (if saved.activeKind == "issues" then "issues" else "prs") .. ":" .. own
 			end
-			local sp: { kind: string, message: string }? = nil
+			local sp: { kind: string, message: string, by: string? }? = nil
 			if mine and isTable(saved.pause) and saved.launchCwd == cwd then
 				local k, m = saved.pause.kind, saved.pause.message
 				if type(m) == "string" and (k == "auth" or k == "missing" or k == "not-found" or k == "invalid") then
-					sp = { kind = k :: string, message = m }
+					local by = saved.pause.by
+					sp = { kind = k :: string, message = m, by = if by == "github" or by == "jira" then by :: string else nil }
 				end
 			end
 			-- The pins restored are in the sidebar's Pins group; a pin that is the scope shown opens on its item (ensureCursor).
@@ -494,6 +495,7 @@ local function blockDef(): BlockDef<State>
 				interval = nil,
 				nextAt = nil,
 				problem = if sp then { kind = sp.kind, message = sp.message } else nil,
+				problemBy = if sp then sp.by else nil,
 				timer = nil,
 				query = nil,
 				help = false,
@@ -1121,9 +1123,9 @@ local function blockDef(): BlockDef<State>
 
 		save = function(state: State): any
 			local p = state.problem
-			local pause: { kind: string, message: string }? = nil
+			local pause: { kind: string, message: string, by: string? }? = nil
 			if p and TERMINAL[p.kind] then
-				pause = { kind = p.kind, message = p.message }
+				pause = { kind = p.kind, message = p.message, by = state.problemBy }
 			end
 			-- The active view as its kv store has it: the saved id without the kind, and the kind only for an issue view (a
 			-- save without one is a pull request view's, as the older PR block saved). Read from its id, as one restored

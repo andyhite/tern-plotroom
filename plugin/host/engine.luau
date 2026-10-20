@@ -707,7 +707,7 @@ local function identify(state: State)
 	local integration = if v then v.integration else state.kind.integrations[1]
 	local kind = if v then KINDS[v.kind] else state.kind
 	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
-		if account ~= state.account and integration == state.tracker then
+		if account ~= state.account and integration == state.tracker and (state.problemBy or integration) == integration then
 			state.problem = nil -- another login's failure is not this one's
 		end
 		state.account, state.tracker, state.kind = account, integration, kind

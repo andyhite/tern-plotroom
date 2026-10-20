@@ -2414,6 +2414,58 @@ case("host: a not-found belongs to its view: another view clears it and searches
 	eq(pickerOf(b).state, "ready", "nor does a pull request view")
 end)
 
+local SIGNED_OUT: Reply = { status = 1, stderr = "✗ Error: unauthorized: use 'acli jira auth login' to authenticate\n" }
+
+case("host: an acli sign-out held across a restart is still labelled as Atlassian's, on a GitHub view too", function(w: World)
+	local _, acli = crossScene(w)
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "search" then SIGNED_OUT else nil
+	end
+	local b = openQueue(w)
+	pickScope(b, "issues:v1")
+	w.flush()
+	eq(pickerOf(b).state, "error", "the Jira view shows its card")
+	b.cx:save()
+	local again = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	eq(pickerOf(again).state, "error", "the restored block holds the pause")
+	has(jsonEncode(pickerOf(again).message), "Atlassian CLI not signed in", "labelled by Atlassian")
+	pickScope(again, "prs:v1")
+	w.flush()
+	eq(pickerOf(again).state, "error", "and holds a GitHub view too")
+	has(jsonEncode(pickerOf(again).message), "Atlassian CLI not signed in", "still labelled by Atlassian there")
+	lacks(jsonEncode(pickerOf(again).message), "gh auth login", "not as a GitHub sign-in")
+end)
+
+case("host: a GitHub login change does not drop an acli sign-out held on every view", function(w: World)
+	local s = hostScene(w, 0)
+	local acli = newAcli(w)
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "search" then SIGNED_OUT else nil
+	end
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60) }
+	s.gh.items.work = { searchItem(3, "o/r", EPOCH - 30) }
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Both", integration = "github", query = "is:open author:@me", logins = array({ "octocat", "work" }), group = "none", prompts = array({}) },
+	}) })
+	w.kv.put("views-issues", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Jira", integration = "jira", query = "assignee = currentUser()", group = "none", prompts = array({}) },
+	}) })
+	local b = openQueue(w)
+	pickScope(b, "issues:v1")
+	w.flush()
+	eq(pickerOf(b).state, "error", "Jira is signed out")
+	pickScope(b, "prs:v1@octocat")
+	w.flush()
+	local sent = #requestsOf(s.gh, "search")
+	pickScope(b, "prs:v1@work")
+	w.flush()
+	eq(pickerOf(b).state, "error", "another login's view still shows the sign-out")
+	eq(#requestsOf(s.gh, "search"), sent, "and sends no search until Refresh")
+end)
+
 case("host: view group-by emits headers", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = { searchItem(1, "o/b", EPOCH - 10), searchItem(2, "o/a", EPOCH - 20), searchItem(3, "o/b", EPOCH - 30) }
