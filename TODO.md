@@ -199,15 +199,6 @@
   - Base: main
   - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
 
-- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
-  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
-  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
-  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
-  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
-  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
-  - Base: main
-  - Branch: todo/rate-limit-pause-gates-reads at /Users/andyhite/Code/tern-plotroom.todo/rate-limit-pause-gates-reads
-
 - [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
   - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
   - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
@@ -285,6 +276,17 @@
   - Decision: With no Plotroom block on the agent's host, the toast "Next action waits for Plotroom" shows for any result and the next action is kept.
   - Decision: `active()` counts an unreadable agent list as live, so the 4 s timer keeps running then.
   - Decision: An issue chain step passes `{target = chain.code}` to `prepareTarget`.
+
+- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
+  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
+  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
+  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
+  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
+  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
+  - Base: main
+  - Branch: todo/rate-limit-pause-gates-reads at /Users/andyhite/Code/tern-plotroom.todo/rate-limit-pause-gates-reads
+  - Decision: Pause guards answer `rate-limit` ("GitHub's rate limit is reached; reads resume at HH:MM:SS.") through `tern.timer(0)`, shaped like `M.checks`; a cancelled search under a pause now reports `rate-limit`, not `superseded`.
+  - Decision: `paceLine` no longer requires `state.timer`, so Settings shows the previous "next at" during a refresh.
 
 ## Done
 
