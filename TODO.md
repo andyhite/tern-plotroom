@@ -4,22 +4,6 @@
 
 ## Todo
 
-- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
-  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
-  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
-  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
-  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
-  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
-  - Base: main
-  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
-  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
-  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
-  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
-  - Fix: plugin/host/core.luau:601 with plugin/plugin.toml - main (4ac0024, CI item) now fails `check.py test` unless `plugin.toml`'s version minor equals `RPC_PROTOCOL`; this branch sets protocol "24" but leaves `0.23.0`, so the rebased tree fails the `version` row - rebase onto main and set `version = "0.<protocol>.0"` with the protocol bumped to the next number main has not used at rebase time (other queued items also target "24"); update the Decision bullet to match.
-  - Review attempts: 1
-
 ## In-Progress
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
@@ -40,6 +24,22 @@
   - Fix: plugin/github.luau:1611-1619 - `gh pr merge --auto` merges immediately when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE (cli/cli `merge.go:593, 826-833`); UNSTABLE covers pending non-required checks, so a confirmed "Auto-merge when checks pass" plan can merge mid-CI and toast "Auto-merge enabled", breaking "the confirmed plan is what runs" - read `mergeStateStatus` in the commit-time guard and refuse auto in those three states ("can merge now, so gh would merge it without waiting for its checks; nothing was merged"), and hide the auto row when the preview says the PR is ready/unstable; add a case.
   - Fix: plugin/host/requests.luau:1001-1002 - the auto plan's confirm says "Only commit abc1234 is merged; a push since refuses it", but gh binds `expectedHeadOid` only when enabling auto-merge, and GitHub still merges a later push by anyone with write access once checks pass - for auto, say the head is checked only when auto-merge is enabled and later pushes by writers are merged.
   - Fix: rebase onto main - main now gates `plugin/plugin.toml`'s version minor against `RPC_PROTOCOL` (CI item); with protocol "24" set `version = "0.24.0"` (or the next unused protocol at rebase time) so `check.py` passes.
+  - Review attempts: 1
+
+- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
+  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
+  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
+  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
+  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
+  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
+  - Base: main
+  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
+  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
+  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
+  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Fix: plugin/host/core.luau:601 with plugin/plugin.toml - main (4ac0024, CI item) now fails `check.py test` unless `plugin.toml`'s version minor equals `RPC_PROTOCOL`; this branch sets protocol "24" but leaves `0.23.0`, so the rebased tree fails the `version` row - rebase onto main and set `version = "0.<protocol>.0"` with the protocol bumped to the next number main has not used at rebase time (other queued items also target "24"); update the Decision bullet to match.
   - Review attempts: 1
 
 ## Blocked
