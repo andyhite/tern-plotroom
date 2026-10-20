@@ -1308,6 +1308,9 @@ function M.showUrl(cx: WindowCx, from: number, url: string)
 			break
 		end
 	end
+	if not found then
+		cx.layout:focus(from)
+	end
 	openIn(cx, found, url)
 end
 

@@ -1212,6 +1212,18 @@ windowCase("window flows: the lens's show link works from a shell pane, while an
 	same(st.ops(), { "open-url" }, "and nothing else was asked of the block")
 end)
 
+windowCase("window flows: the lens's show link with no Plotroom block focuses the shell pane before launching one", function(w: World)
+	w.load("window")
+	w.window.panes[1].block = nil
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/lens", tab = 1 }
+	w.window.panes[3] = { block = "plugin.terminal", cwd = "/other", tab = 1 }
+	w.window.focused = 3
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F45", 2)
+	w.flush()
+	eq(#w.window.launches, 1, "a Plotroom block is launched")
+	eq(w.window.launches[1].cwd, "/lens", "beside the pane the lens is in, not the focused one")
+end)
+
 case("host triage: unseen rows are New, the selected row is marked seen on its own and saved to kv triage, a refresh writes nothing, a changed check or review shows Changed on a row nobody reads and is marked again on the row being read", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)

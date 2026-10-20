@@ -17,6 +17,8 @@ Host layers (`plugin/host/`; each module may require only those to its left, no 
 
 `core` (types, constants, `KINDS`/`GROUPS`, badges, the `cli` table, `running`, pure text/href helpers) ← `storage` (kv stores, name `formats`) ← `engine` (lifecycle, identity/refresh, triage, pins, Worktrees board glue, navigation, details, worktree notes, `me`, `ghActive`, CLI probing) ← `render` (rows, previews, checks, help, scopes, hidden rpc nodes) ← `settings` (Settings sheet) ← `requests` (window requests, workflow requests, export/import, palette actions).
 
+`lens` (the `gh pr create` shell lens, manifest lens `pr-create`; requires only `core`, outside the chain above, and `host.luau` calls `lens.define()`). Its show link `plotroom://lens/show/<pct URL>` is the one link the window accepts from a non-Plotroom pane.
+
 Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts` and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree`; `flows` takes what window owns through `flows.setup(Env)`.
 
 A change to a shared store (views, prompts, checkouts, ...) fans out to the other live blocks through `propagate` (engine), which rereads storage and renders them.
@@ -69,7 +71,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 
 ## Important Files
 
-- `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, one block `prs` (title Plotroom, icon `merge`).
+- `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, one block `prs` (title Plotroom, icon `merge`), one `[[lenses]]` entry `pr-create` (`match = ["gh pr create*"]`).
 - `plugin/host.luau` — block entry point; `plugin/host/*.luau` — host logic by layer (see Architecture).
 - `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows. No consent step: agents start once the worktree is ready. `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
 - `plugin/flows.luau` — window workflow flows and `COMMANDS`.
