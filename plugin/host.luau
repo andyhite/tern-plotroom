@@ -338,7 +338,27 @@ local function blockDef(): BlockDef<State>
 		if preparing[chosen.key] then
 			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
 		end
-		state.removing = chosen.key
+		local key = chosen.key
+		state.removing, state.removeFate = key, nil
+		-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
+		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
+		if not root or not repo or not path then
+			return
+		end
+		worktree.inventory(root, repo, function(entries, why)
+			if not alive(state) or state.removing ~= key then
+				return
+			end
+			local fate = why or "Git no longer lists this worktree."
+			local listed: { worktree.Entry } = entries or {}
+			for _, e in listed do
+				if e.path == path and e.branch == branch then
+					fate = board.fate(e)
+				end
+			end
+			state.removeFate = fate
+			state.cx:render()
+		end)
 	end
 	-- Removes the worktree whose removal was confirmed, on this host where git runs (never in a window). A removal drops
 	-- the note in every block of this host, and the row's Worktree badge with it; a refusal keeps the note, with the
@@ -477,6 +497,7 @@ local function blockDef(): BlockDef<State>
 				notes = {},
 				descOpen = nil,
 				removing = nil,
+				removeFate = nil,
 				noteSeq = 0,
 				scanned = nil,
 				scanning = false,

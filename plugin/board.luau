@@ -345,7 +345,7 @@ end
 
 -- What removing `row` does to its branch, from the facts git listed (as `worktree.removeEntry` decides): only a branch
 -- Plotroom noted goes, and only if git confirms nothing is lost; any other branch is kept; a detached worktree has none.
-function M.fate(row: Row): string
+function M.fate(row: { branch: string?, key: string?, number: number?, inferred: boolean? }): string
 	if not row.branch then
 		return "It has no branch."
 	elseif row.key == nil and (row.number == nil or row.inferred == true) then

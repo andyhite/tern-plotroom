@@ -697,9 +697,11 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	b.event({ ev = "action", id = "layer.confirm.buttons.keep", act = keep.p.actions.click })
 	eq(confirmOf(b), nil, "the Keep button keeps it")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed so far")
+	w.flush() -- the reads of the questions above finish before the log is marked
 	local mark = #s.git.log
 	local told = #w.toasts
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	eq(confirmOf(b), nil, "d closes the question")
 	eq(w.toasts[told + 1].level, "info", "and starts the removal")
@@ -708,6 +710,9 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	eq(answerOf(b, "a2").busy, true, "no request for the worktree is served while it is removed")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -741,6 +746,39 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	yes(confirmOf(b) == nil and cardOf(b) ~= nil, "Esc keeps the worktree")
 end)
 
+case("host: the card's Remove confirm says what becomes of the branch from git's own facts: noted, guessed, unnamed or gone", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	local function said(): string
+		pressCard(b, "remove")
+		local shown = findKey(confirmOf(b), "body", "text").p.spans[1].t
+		has(shown, "Reading its branch", "until git answers, the confirm says it is reading")
+		w.flush()
+		local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
+		b.press("escape")
+		return body
+	end
+	has(said(), "only if git confirms", "a noted pull request's branch goes only if git confirms nothing is lost")
+	local notes = s.git.notes
+	s.git.notes = {}
+	local inferred = said()
+	has(inferred, "so the branch is kept", "a branch that is only guessed from the fetched ref is kept")
+	s.git.refs["refs/plotroom-pr/o/r/pr-1"] = nil
+	has(said(), "so the branch is kept", "and so is one nothing names")
+	s.git.notes = notes
+	for _, t in s.git.worktrees do
+		if t.path == "/wt/plotroom-o_r-pr-1" then
+			t.branch = nil
+		end
+	end
+	local gone = said()
+	has(gone, "no longer lists", "a worktree that went detached is not claimed on its branch")
+end)
+
 case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
 	local s = hostScene(w, 1)
 	s.git.served["refs/pull/1/head"] = sha("b")
@@ -754,9 +792,13 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	local before = snapshot(s.git)
 	local mark = #s.git.log
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -791,9 +833,13 @@ case("host: removing a worktree whose branch holds commits of its own keeps the 
 	s.git.unmerged[branch] = true
 	local mark = #s.git.log
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -1923,9 +1969,13 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 	s.git.unmerged["octocat/12-fix-login"] = true
 	local mark = #s.git.log
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",

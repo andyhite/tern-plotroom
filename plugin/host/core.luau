@@ -199,6 +199,7 @@ export type State = {
 	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
 	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
+	removeFate: string?, -- what removal does to that worktree's branch, as git lists it now; nil while it is read
 	noteSeq: number, -- moves whenever a note changes: the picker's cached rows carry the Worktree badges
 	scanned: Snap?, -- the snapshot whose checkouts the last scan was started for; nil: a scan is due (a worktree was made or removed)
 	scanning: boolean, -- a scan of the shown items' checkouts is running

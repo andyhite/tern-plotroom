@@ -1770,9 +1770,13 @@ case("host: an issue with exactly one linked pull request still on its branch is
 	-- removing it takes the pull request's fetched ref with it
 	local mark = #s.git.log
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
