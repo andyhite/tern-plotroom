@@ -79,19 +79,6 @@
 
 ## Review
 
-- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
-  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
-  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
-  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
-  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
-  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
-  - Base: main
-  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
-  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
-  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
-  - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
-  - Review attempts: 2
-
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
   - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
@@ -273,6 +260,16 @@
   - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
 
 ## Done
+
+- [x] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
+  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
+  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
+  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
+  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
+  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
+  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
+  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
+  - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
 
 - [x] The queue's error and empty states say what to do next.
   - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
