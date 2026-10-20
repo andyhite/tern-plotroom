@@ -230,6 +230,7 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 					if mine and not ids[id] then
 						ids[id] = true
 						local prev = old[id]
+						local same = prev ~= nil and prev.branch == e.branch and prev.key == e.key and prev.number == e.number
 						table.insert(rows, {
 							id = id,
 							repo = q.repo,
@@ -245,8 +246,8 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 							missing = e.missing or e.prunable,
 							dirty = if prev and not (e.missing or e.prunable) then prev.dirty else nil,
 							scannedAt = if prev then prev.scannedAt else nil,
-							candidate = if prev then prev.candidate else nil,
-							candidateChecked = if prev then prev.candidateChecked else nil,
+							candidate = if same then prev.candidate else nil,
+							candidateChecked = if same then prev.candidateChecked else nil,
 						})
 					end
 				end

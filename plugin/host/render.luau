@@ -1127,10 +1127,11 @@ local function boardProps(state: State, props: { [string]: any })
 		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh"), disabled = if state.boardBusy then "Reading…" else nil },
 		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
 		{ id = "wt-cleanup", label = "Find finished worktrees", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
-		{ id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
 		{ id = "wt-remove", label = "Remove", keys = keys.caps(map, "wt-remove"), ["end"] = true, disabled = if removable then nil else "The main, locked or missing worktrees are not removed here" },
 	}
 	props.actions = keyed(actions)
+	-- Unkeyed, so `keyed` would drop it: Remove finished is a button with no shortcut.
+	table.insert(props.actions, { id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil })
 end
 
 -- The Agents scope's preview of the selected agent: its item, its action, branch and state, and, hidden, the link the window
@@ -1538,11 +1539,20 @@ local function finishedConfirm(state: State): Node
 		end
 	end
 	local n = #items
+	local tabbed = false
+	local open = engine.boardOpen(state)
+	for _, id in ids do
+		for _, r in engine.boardRows(state) do
+			if r.id == id and open[r.path] then
+				tabbed = true
+			end
+		end
+	end
 	local unchecked = board.unchecked(state.board)
 	local body = "Each worktree's folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses a worktree with uncommitted changes, which is kept; nothing is forced. "
 		.. (if unchecked > 0 then unchecked .. " worktree" .. (if unchecked == 1 then " was" else "s were") .. " not checked yet. " else "")
 		.. "Press d to remove all " .. n .. "; Enter or Esc keeps them."
-	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), nil, "wt-cancel-remove", "wt-confirm-remove")
+	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
 function M.queueView(state: State): BlockView

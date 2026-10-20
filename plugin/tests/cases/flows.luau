@@ -2736,11 +2736,11 @@ case("host worktrees board: with the default keys its bar shows only the command
 		end
 		return ids
 	end
-	same(bar(), { "more" }, "no Find cleanup, Remove or Open button without a key")
+	same(bar(), { "more", "wt-remove-finished" }, "no Find cleanup, Remove or Open button without a key; Remove finished has none and shows")
 	eq(b.press("u", nil, "u"), false, "u is no shortcut by default")
 	w.kv.put("keys", { ["wt-cleanup"] = "u" })
 	b.render()
-	same(bar(), { "more", "wt-cleanup" }, "bound, Find cleanup shows")
+	same(bar(), { "more", "wt-cleanup", "wt-remove-finished" }, "bound, Find cleanup shows")
 	same(actionOf(b, "wt-cleanup").keys, { "u" }, "with its key")
 end)
 
