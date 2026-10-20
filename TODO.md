@@ -139,6 +139,23 @@
   - Fix: plugin/jira.luau:854-858 (`verified`) - a failed `acli jira auth status` re-read before a write reaches the caller as `failed` (or `missing`), not `auth`, because `M.classify` only says `auth` for "unauthorized"/"auth login"; acceptance bullet 2 is unmet and `tests/cases/mutation.luau:490` only checks a problem exists - in `verified()`, call `withSite` first and turn any failure into `kind = "auth"` (keeping acli's line in the message) before `/myself`; leave `withSite` itself unchanged (`tracker.luau` expects a search to pass `missing` through); assert `problem.kind == "auth"` in the case.
   - Review attempts: 1
 
+- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
+  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
+  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
+  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
+  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
+  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
+  - Base: main
+  - Branch: todo/action-link-token-head-ref-check at /Users/andyhite/Code/tern-plotroom.todo/action-link-token-head-ref-check
+  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
+  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
+  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
+  - Fix: plugin/host/core.luau:611, plugin/window.luau:33, plugin/tests/harness.luau:3031 - main (7cbca60, fork PRs) already took protocol "23", so after landing this new `?k=` link format shares main's number and a mixed host/window pair sees no mismatch and fails every link as malformed - rebase onto main and bump `RPC_PROTOCOL`, `PROTOCOL` and `asks.protocol` to the next unused number ("24" unless main has moved past it); update the Decision bullet to match.
+  - Fix: plugin/github.luau:1094 - `string.sub(input.clean(data.ref), 1, 80)` cuts after cleaning, so a long multibyte branch can end in a broken UTF-8 sequence in the reply and toast - clean after cutting: `input.clean(string.sub(data.ref, 1, 80))`, as `flows.clip` does.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
@@ -185,20 +202,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
-  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
-  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
-  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
-  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
-  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
-  - Base: main
-  - Branch: todo/action-link-token-head-ref-check at /Users/andyhite/Code/tern-plotroom.todo/action-link-token-head-ref-check
-  - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
-  - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
-  - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
