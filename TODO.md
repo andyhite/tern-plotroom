@@ -4,6 +4,26 @@
 
 ## Todo
 
+- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
+  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
+  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
+  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
+  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
+  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
+  - Base: main
+  - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
+  - Decision: The card and a Worktrees list row share `plotroom://worktrees/git` (hidden `layer.queue.buttons.git` node); the window then sends a no-argument `git-path` request and the host answers with the selected row's or card's folder.
+  - Decision: The host can't tell a remote block, so the button shows whenever the folder exists and the window refuses a remote block (`cx.hosts:list()` kind ≠ `local`) with a toast.
+  - Decision: A list row gets Open in Git as a palette action (`wt-git`) only; the card gets a visible button plus `open-git`.
+  - Decision: "N unpushed" is a warning badge, shown only above 0; `worktree.dirty` wraps the new `worktree.status`/`parseStatus`.
+  - Decision: A `git …` finish clears `note.checked` on notes containing the pane's cwd and only the selected card is re-read; a read in flight can predate the command (`ponytail:`).
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Fix: plugin/host/core.luau:602 with plugin/plugin.toml - main (4ac0024) now fails `check.py test` unless `plugin.toml`'s version minor equals `RPC_PROTOCOL`; this branch sets "24" and leaves `0.23.0` - rebase onto main, bump to the next protocol number main has not used at rebase time, set `version = "0.<protocol>.0"`, and update the Decision bullet.
+  - Fix: plugin/worktree.luau:1146-1150 with plugin/host/engine.luau:1685 - a Worktree press or agent start re-reads status through `dirty`, which drops the ahead count, and `noteWorktree` writes a note with no `ahead` but `checked = state.round`, so "N unpushed" disappears until the next refresh - carry `ahead` through the attempt's report into the note (or leave `checked` nil there), with a case.
+  - Fix: plugin/host/engine.luau:1960-1970 / acceptance "badges update right after `git commit` or `git pull`" - the `command_finished` hook only clears `note.checked`; the sync badge (`Not at PR head`), `note.update` and `note.head` come from `applyScans`, which runs only when `s.scanned ~= snap`, so after `git pull` the card keeps the stale badge and pull command until the next refresh - also clear `s.scanned` on a hit so the scan reruns, with a case.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -20,22 +40,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
-  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
-  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
-  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
-  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
-  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
-  - Base: main
-  - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
-  - Decision: The card and a Worktrees list row share `plotroom://worktrees/git` (hidden `layer.queue.buttons.git` node); the window then sends a no-argument `git-path` request and the host answers with the selected row's or card's folder.
-  - Decision: The host can't tell a remote block, so the button shows whenever the folder exists and the window refuses a remote block (`cx.hosts:list()` kind ≠ `local`) with a toast.
-  - Decision: A list row gets Open in Git as a palette action (`wt-git`) only; the card gets a visible button plus `open-git`.
-  - Decision: "N unpushed" is a warning badge, shown only above 0; `worktree.dirty` wraps the new `worktree.status`/`parseStatus`.
-  - Decision: A `git …` finish clears `note.checked` on notes containing the pane's cwd and only the selected card is re-read; a read in flight can predate the command (`ponytail:`).
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
 
 - [ ] Interrupt, stop or message the selected item's agent from the command palette.
   - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
