@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
@@ -21,8 +23,6 @@
   - Fix: plugin/host.luau:385-391, 1033-1037 with plugin/host/engine.luau:719-729 - the block save keeps only `{kind, message}` of a pause and the restore leaves `problemBy` nil, so after a restart a held acli `auth` on a GitHub view is labelled "GitHub CLI not signed in"/"Run gh auth login" (and the reverse) - save `by = state.problemBy` in the pause and restore it when it is "github" or "jira" (optional field, save version unchanged), with a case.
   - Fix: plugin/host/engine.luau:667-669 / acceptance "`auth` and `missing` still hold every view until Refresh" - a GitHub login change within the GitHub integration clears the problem even when Jira raised it, so an acli sign-out is dropped without Refresh - clear on a login change only when the problem's integration (`state.problemBy or integration`) is the current one, with a case.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
