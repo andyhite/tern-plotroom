@@ -1124,10 +1124,10 @@ end
 
 -- Reads the issue a worktree was noted for (`key` as parseIssueRef takes it): GitHub's by number, Jira's by key. done(issue,
 -- problem, number, repo, ref): `number` is set for a GitHub issue; no issue and no problem for a key that is neither.
-local function readNoted(key: string, rowRepo: string, live: () -> boolean, done: (tracker.Issue?, github.Problem?, number?, string, string) -> ())
+local function readNoted(key: string, rowRepo: string, account: string?, live: () -> boolean, done: (tracker.Issue?, github.Problem?, number?, string, string) -> ())
 	local n, repo, ref = parseIssueRef(key, rowRepo)
 	if n then
-		github.issueItem(repo, n, nil, function(issue, problem)
+		github.issueItem(repo, n, account, function(issue, problem)
 			done(issue, problem, n, repo, ref)
 		end, live)
 	elseif string.match(ref, "^%u[%u%d_]*%-%d+$") then
@@ -1188,7 +1188,7 @@ function M.boardLinks(state: State): any
 				}
 			end
 			later(row, function()
-				readNoted(key, row.repo, live, function(issue: tracker.Issue?, problem: github.Problem?, n: number?, repo: string, ref: string)
+				readNoted(key, row.repo, nil, live, function(issue: tracker.Issue?, problem: github.Problem?, n: number?, repo: string, ref: string)
 					if not issue then
 						return done(nil, if problem then problem.message else nil)
 					end
@@ -1642,26 +1642,23 @@ loadDetails = function(state: State, key: string)
 			return land(problem, nil, "The checks could not be read.")
 		end
 		local loaded: core.Detail = { runs = runs, total = total, round = round, about = about }
-		-- The issue Plotroom noted for the worktree on this head branch, read from the checkout's git config. Best effort.
+		-- The issue Plotroom noted for the worktree on this head branch, as the last worktree scan knew it (a checkout
+		-- not scanned yet shows none; the next refresh's scan fills it). Two on one branch: the first noted wins.
 		local checkout = readCheckouts()[string.lower(pr.repo)]
-		if type(checkout) ~= "string" or checkout == "" then
+		local branch = worktree.prBranch(pr.head, pr.fork)
+		local noted: string? = nil
+		local first = math.huge
+		for key, n in state.notes do
+			if n.ok and n.kind == "issues" and n.root == checkout and n.branch == branch and n.seq < first then
+				noted, first = key, n.seq
+			end
+		end
+		if not noted then
 			return land(nil, loaded, "")
 		end
-		worktree.inventory(checkout, pr.repo, function(entries)
-			local noted: string? = nil
-			for _, e in entries or ({} :: { worktree.Entry }) do
-				if not e.main and e.branch == pr.head and e.key then
-					noted = e.key
-					break
-				end
-			end
-			if not noted then
-				return land(nil, loaded, "")
-			end
-			readNoted(noted, pr.repo, live, function(issue)
-				loaded.noted = issue
-				land(nil, loaded, "")
-			end)
+		readNoted(noted, pr.repo, M.login(state), live, function(issue)
+			loaded.noted = issue
+			land(nil, loaded, "")
 		end)
 	end, live)
 end

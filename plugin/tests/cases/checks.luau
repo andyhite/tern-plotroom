@@ -773,7 +773,7 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(badgeOf(b).tone, "success", "and the row follows")
 	eq(cardOf(b).p.tone, "success", "and the card")
 	eq(countLog(s.git, "status"), 1, "by one status")
-	eq(countLog(s.git, "worktree list"), 2, "the status read lists nothing again: the second listing is the preview's look for an issue noted on the PR's branch")
+	eq(countLog(s.git, "worktree list"), 1, "the status read lists nothing again, nor does the preview")
 	eq(#w.toasts, 0, "nothing was said")
 end)
 
@@ -946,7 +946,7 @@ case("host: a scan that began before a worktree attempt or a removal ended canno
 	yes(cardOf(b) ~= nil, "the late answer does not list the worktree, and does not take its card away")
 	w.advance(1000)
 	yes(cardOf(b) ~= nil and badgeOf(b, 1) ~= nil and badgeOf(b, 2) ~= nil, "the listing made again confirms it")
-	eq(countLog(s.git, "worktree list"), 5, "the first scan, the refresh's, the attempt's own, the one made again and the preview's look for an issue noted on the branch")
+	eq(countLog(s.git, "worktree list"), 4, "the first scan, the refresh's, the attempt's own and the one made again")
 	-- The same for a removal: a scan that listed the worktree before it went cannot bring it back.
 	slowly(5000)
 	refreshNow(w, b)
@@ -1602,14 +1602,27 @@ case("host: the issue preview does not repeat a pull request the linked list alr
 	eq(findKey(pickerNode(c), "headpr-head"), nil, "and the head lookup does not repeat it")
 end)
 
-case("host: the pull request preview shows the issue Plotroom noted for the worktree on its head branch", function(w: World)
-	local s = hostScene(w, 2)
-	table.insert(s.git.worktrees, { path = "/wt/iss", branch = "refs/heads/branch-1", head = sha("b"), locked = false })
+-- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted
+-- issue 12 on `bob/12-fix-login`, the head branch of fork PR 1 (a fork's worktree is on <owner>/<branch>).
+local function notedScene(w: World): (HostScene, Block)
+	local s = issueHost(w)
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { head = "12-fix-login", fork = "bob" }), searchItem(2, "o/r", EPOCH - 120) }
+	s.gh.tokens.octocat = "tok-octocat"
+	local views: any = w.kv.get("views-prs")
+	views.items[1].logins = array({ "octocat" })
+	w.kv.put("views-prs", views)
+	w.kv.put("branch-formats", { ["o/r"] = "bob/{key}-{slug}" })
+	table.insert(s.git.worktrees, { path = "/wt/iss", branch = "refs/heads/bob/12-fix-login", head = sha("b"), locked = false })
 	w.fs.dirs["/wt/iss"] = true
-	s.git.notes["branch.branch-1.plotroomkey"] = "o/r#12"
-	s.git.notes["branch.branch-1.plotroomrepo"] = "o/r"
 	s.gh.pulls["https://github.com/o/r/issues/12"] = issueItem(12, "o/r", EPOCH - 60, { title = "Fix login" })
-	local b = openQueue(w)
+	local b = openIssues(w)
+	pickScope(b, "prs:v1")
+	w.flush()
+	return s, b
+end
+
+case("host: the pull request preview shows the issue noted for a fork's worktree, read as the view's account", function(w: World)
+	local s, b = notedScene(w)
 	w.advance(300)
 	local item: any = findKey(pickerNode(b), "issue1", "item")
 	eq(item.p.label, "Fix login", "the issue's title")
@@ -1617,6 +1630,29 @@ case("host: the pull request preview shows the issue Plotroom noted for the work
 	eq(item.p.title, "#12 · Open", "and its status")
 	eq(string.sub(item.p.href, 1, 22), "plotroom://issue/open/", "a link that opens it in a Browser block")
 	eq(#requestsOf(s.gh, "head"), 0, "a pull request preview looks up no pull request")
+	local read: GhReq? = nil
+	for _, req in requestsOf(s.gh, "pull") do
+		if req.fields.q == "https://github.com/o/r/issues/12" then
+			read = req
+		end
+	end
+	eq(if read then read.login else nil, "octocat", "the issue was read as the view's login, not gh's active one")
+end)
+
+case("host: selecting a pull request lists no worktrees, and one before its checkout's scan shows no issue", function(w: World)
+	local s, b = notedScene(w)
+	w.advance(300)
+	local mark = #s.git.log
+	showPr(b, 2)
+	w.advance(300)
+	showPr(b, 1)
+	w.advance(300)
+	eq(countLog(s.git, "worktree list", mark), 0, "no listing for the selections")
+	yes(findKey(pickerNode(b), "issue1", "item") ~= nil, "and the issue is still shown")
+	local fresh = w.open(2, { "/work/r" })
+	w.flush()
+	w.advance(300)
+	yes(findKey(pickerNode(fresh), "issue1", "item") == nil, "a block that scanned only its pull requests has noted no issue")
 end)
 
 case("host: a block told to show a pull request selects it where its pull request filter lists it, else looks it up alone in a pinned scope, and from an issue filter always pins", function(w: World)
