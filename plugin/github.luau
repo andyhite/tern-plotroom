@@ -1795,6 +1795,8 @@ end
 -- What each login's last read answered: its Last-Modified (sent back as If-Modified-Since), the notices and the epoch second
 -- before which GitHub asks not to read again (X-Poll-Interval). One per runtime, as the search quota is.
 local inboxes: { [string]: { lastModified: string?, notices: { Notice }, nextAt: number } } = {}
+-- How many times each login's threads were marked read: a read begun before a mark must not refill the cache after it.
+local marks: { [string]: number } = {}
 
 -- The notices of gh login `account` that are unread and that it takes part in, newest first; done(notices, problem).
 -- Within X-Poll-Interval of the last answer nothing is sent; after it the read is conditional, so an unchanged inbox
@@ -1802,6 +1804,7 @@ local inboxes: { [string]: { lastModified: string?, notices: { Notice }, nextAt:
 -- that grants it; nothing falls back to another login. done never runs before this returns.
 function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 	local known = inboxes[account]
+	local mark = marks[account] or 0
 	local now = os.time()
 	if known and now < known.nextAt then
 		return later(function()
@@ -1834,6 +1837,9 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 			return done(nil, { kind = "failed", message = "gh printed something other than the notifications." })
 		end
 		local notices = M.parseNotices(data)
+		if (marks[account] or 0) ~= mark then
+			return done(notices, nil) -- begun before a Mark read: the caller drops it; the cache keeps what the mark cleared
+		end
 		inboxes[account] = { lastModified = headers["last-modified"], notices = notices, nextAt = at + poll }
 		done(notices, nil)
 	end, account)
@@ -1844,6 +1850,7 @@ end
 -- GitHub's inbox. The login's remembered read is dropped, so the next one is unconditional.
 function M.markRead(ids: { string }, account: string, done: (Problem?, number) -> ())
 	local marked = 0
+	marks[account] = (marks[account] or 0) + 1
 	local function step()
 		local id = ids[marked + 1]
 		if id == nil then

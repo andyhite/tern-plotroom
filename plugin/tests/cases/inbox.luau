@@ -192,18 +192,26 @@ case("inbox: a read still in flight when Mark read… commits cannot put the mar
 		if req.kind == "notifications" and stale then
 			stale = false -- the periodic read starts now and answers, with the list as it was, long after the mark
 			local body = '[{"id":"11","unread":true,"reason":"mention","updated_at":"2026-10-19T08:00:00Z","subject":{"title":"Add feature","type":"Issue","url":"https://api.github.com/repos/o/r/issues/2"},"repository":{"full_name":"o/r"}}]'
-			return { stdout = "HTTP/2.0 200 OK\r\nX-Poll-Interval: 1\r\nLast-Modified: Mon, 19 Oct 2026 09:00:00 GMT\r\n\r\n" .. body, delay = 600 * 1000 }
+			return { stdout = "HTTP/2.0 200 OK\r\nX-Poll-Interval: 1\r\nLast-Modified: Mon, 19 Oct 2026 09:00:00 GMT\r\n\r\n" .. body, delay = 20 * 1000 }
 		end
 		return nil
 	end
 	local p = asks.hx.ask(w, b, { op = "act", name = "inbox-read" })
-	w.advance(125 * 1000)
+	for _ = 1, 40 do
+		if not stale then
+			break
+		end
+		w.advance(5 * 1000)
+	end
 	eq(stale, false, "the periodic read is in flight")
 	s.gh.inbox.octocat = {}
 	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
-	w.advance(700 * 1000)
+	w.advance(25 * 1000) -- the older answer lands after the commit
 	w.flush()
 	eq(#pickerOf(b).items, 0, "the older answer is ignored: nothing marked is listed again")
+	w.advance(125 * 1000)
+	w.flush()
+	eq(#pickerOf(b).items, 0, "and the next refresh does not bring them back")
 end)
 
 case("inbox: a mark-read plan is refused after the view changed, when the list is empty, and stops at the first thread that fails", function(w: World)
