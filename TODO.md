@@ -212,15 +212,6 @@
 
 ## In-Progress
 
-- [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
-  - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
-  - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
-  - acli output counts as rate-limited only when it says rate limit or shows 429 as a standalone status, never inside a key such as `ABC-429` or an id.
-  - Touch points: `verified()` and `withSite` in `jira.luau` (reset the cached site the way `noted()` does), the acli classifier.
-  - Cases: `tests/cases/mutation.luau` transition with a site switch between list and post; `tests/cases/tracker.luau` an acli failure naming `ABC-429` is not `rate-limit`, "429 Too Many Requests" still is.
-  - Base: main
-  - Branch: todo/jira-writes-current-site at /Users/andyhite/Code/tern-plotroom.todo/jira-writes-current-site
-
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
@@ -269,6 +260,18 @@
   - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
   - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
+
+- [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
+  - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
+  - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
+  - acli output counts as rate-limited only when it says rate limit or shows 429 as a standalone status, never inside a key such as `ABC-429` or an id.
+  - Touch points: `verified()` and `withSite` in `jira.luau` (reset the cached site the way `noted()` does), the acli classifier.
+  - Cases: `tests/cases/mutation.luau` transition with a site switch between list and post; `tests/cases/tracker.luau` an acli failure naming `ABC-429` is not `rate-limit`, "429 Too Many Requests" still is.
+  - Base: main
+  - Branch: todo/jira-writes-current-site at /Users/andyhite/Code/tern-plotroom.todo/jira-writes-current-site
+  - Decision: `verified()` clears the cached site first, so every listed or transition write re-runs `acli jira auth status` and uses that site and email; `noted()` is unchanged.
+  - Decision: acli output is rate-limited when it says rate limit or has 429 as a standalone token (`%f[%w_%-]429%f[^%w_%-]`), so `ABC-429` and `12429` are not.
+  - Decision: The harness `asks.bk.fetch` fixture strips any `https://host` prefix so a case can answer another site.
 
 ## Done
 
