@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
   - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
@@ -20,8 +22,6 @@
   - Fix: plugin/board.luau:246-247, 357-366 - `load` carries `candidate`/`candidateChecked` from the previous row by path id only, so after `git switch` in a worktree Find marked Merged, Refresh keeps the mark on the new branch and Remove finished removes a worktree whose current item was never checked - carry the mark only when branch, key and number are unchanged, so such rows count as unchecked.
   - Fix: plugin/host/render.luau:1384-1389 - `finishedConfirm` passes `nil` for `tabbed`, so the bulk confirm never shows the "A tab works in it…" warning both single-removal confirms show ("as single removal does") - pass `tabbed` when any listed path is open in a tab (`engine.boardOpen`).
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
