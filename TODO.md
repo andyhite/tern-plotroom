@@ -126,17 +126,6 @@
 
 ## In-Progress
 
-- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
-  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
-  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
-  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
-  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
-  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
-  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
-  - Base: main
-  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
-
 - [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
   - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
   - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
@@ -350,6 +339,22 @@
   - Decision: Segment reads "1 agent needs input" / "N agents need input"; the first waiting agent is the lowest pane number; the click runs the new `agents-waiting` command.
   - Decision: Count and toasts are computed in `agentSync`; an agent already waiting at load toasts once at its first sync, and again only after leaving and re-entering `waiting_input`. The toast reads "o/r#5 needs input" with the action as subtitle.
   - Decision: `trackWaiting` calls `tern.chrome.refresh()` only when the waiting set changes; with no Plotroom pane `agentSync` clears the count.
+
+- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
+  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
+  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
+  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
+  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
+  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
+  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
+  - Base: main
+  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
+  - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
+  - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
+  - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
+  - Decision: Comment, Approve and Request changes share `requests.previewRows`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
 
 ## Done
 
