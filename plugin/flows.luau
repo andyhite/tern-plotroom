@@ -1265,6 +1265,23 @@ local function sendUrl(cx: WindowCx, pane: number, url: string)
 	end)
 end
 
+-- Opens `url` in the Plotroom block `pane`, or in a launched one when there is none.
+local function openIn(cx: WindowCx, pane: number?, url: string)
+	if pane then
+		cx.layout:focus(pane)
+		return whenReady(cx, pane, 0, function(cx3: WindowCx)
+			sendUrl(cx3, pane :: number, url)
+		end)
+	end
+	local launched = e().launch(cx)
+	if not launched then
+		return
+	end
+	whenReady(cx, launched, OPEN_URL_TRIES, function(cx3: WindowCx)
+		sendUrl(cx3, launched, url)
+	end)
+end
+
 -- Plotroom: Open item by URL. A focused Plotroom block takes it, else the lowest existing one, else one is launched.
 function M.openByUrl(cx: WindowCx, _pane: number?)
 	cx:prompt({ placeholder = "GitHub pull request or issue URL, or a Jira issue URL", icon = "merge", action = "open" }):next(function(text, _, cx2)
@@ -1275,21 +1292,23 @@ function M.openByUrl(cx: WindowCx, _pane: number?)
 			return cx2:toast("error", "Not an item URL", "Paste an https:// pull request, issue or Jira URL.")
 		end
 		local focused = cx2.session:focused()
-		local pane: number? = if focused and e().isPlotroom(cx2, focused) then focused else plotroomPanes(cx2)[1]
-		if pane then
-			cx2.layout:focus(pane)
-			return whenReady(cx2, pane, 0, function(cx3: WindowCx)
-				sendUrl(cx3, pane :: number, url)
-			end)
-		end
-		local launched = e().launch(cx2)
-		if not launched then
-			return
-		end
-		whenReady(cx2, launched, OPEN_URL_TRIES, function(cx3: WindowCx)
-			sendUrl(cx3, launched, url)
-		end)
+		openIn(cx2, if focused and e().isPlotroom(cx2, focused) then focused else plotroomPanes(cx2)[1], url)
 	end)
+end
+
+-- The shell lens's Show in Plotroom: `url` opens, as Open item by URL does, in a Plotroom block on the host of `from`
+-- (the pane the lens is in), else a block is launched there.
+function M.showUrl(cx: WindowCx, from: number, url: string)
+	local host = hostOf(cx, from)
+	local found: number? = nil
+	for _, p in plotroomPanes(cx) do
+		local ph = hostOf(cx, p)
+		if host and ph and hostSame(ph, host) then
+			found = p
+			break
+		end
+	end
+	openIn(cx, found, url)
 end
 
 -- ---------------------------------------------------------------- plain events and the command list

@@ -1044,7 +1044,20 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	if rid then
 		answered(cx, rid)
 		return true
-	elseif url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
+	end
+	local shown = string.match(url, "^plotroom://lens/show/(.+)$")
+	if shown then
+		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
+		-- pull request page, which the block's host validates again.
+		local page = unpct(shown)
+		if #page > 2048 or not string.match(page, "^https://[%w%.%-]+/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+			cx:toast("error", "Plotroom: malformed link")
+		else
+			flows.showUrl(cx, pane, page)
+		end
+		return true
+	end
+	if url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then

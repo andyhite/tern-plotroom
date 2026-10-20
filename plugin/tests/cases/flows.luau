@@ -1167,6 +1167,49 @@ windowCase("window flows: Open item by URL reuses a Plotroom block, and launches
 	eq(w.toasts[#w.toasts].text, "Plotroom did not start in time", "a block that never answers is given up on")
 end)
 
+case("lens: a gh pr create transcript offers to show, copy and open the new pull request; output without its URL stays raw", function(w: World)
+	w.load("host")
+	local def: any = w.lenses["pr-create"]
+	yes(def ~= nil, "the manifest's lens is defined")
+	local url = "https://github.com/o/r/pull/45"
+	local function run(lines: { string }): (any, any)
+		local state = def.open({ line = "gh pr create", typed = "gh pr create", program = "gh", args = { "pr", "create" } }, w.cx)
+		for _, text in lines do
+			def.line(state, { text = text, links = {} })
+		end
+		def.finish(state, 0)
+		return state, def.view(state)
+	end
+	local state, view = run({ "Creating pull request for fix into main in o/r", "", url })
+	local show = findKey(view, "show", "item")
+	eq(show.p.label, "Show in Plotroom", "the lens offers Show in Plotroom")
+	eq(show.p.href, "plotroom://lens/show/" .. "https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F45", "as a link carrying the page")
+	eq(findKey(view, "browser", "item").p.href, url, "Open in browser opens the page")
+	eq(findKey(view, "url", "text").p.spans[1].t, url, "the URL is shown")
+	def.event(state, { ev = "action", act = "copy" }, w.cx)
+	same(w.copied, { url }, "Copy copies the URL")
+	local _, none = run({ "aborted: could not push", "pull requests are listed at https://github.com/o/r/pulls" })
+	eq(none, nil, "output without a pull request URL shows the raw output")
+end)
+
+windowCase("window flows: the lens's show link works from a shell pane, while an item link from it is still refused", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	local page = "https://github.com/o/r/pull/45"
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F45", 2)
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, page, "the page goes to the block as Open item by URL sends it")
+	eq(#w.window.launches, 0, "no block is launched while one is open")
+	local said = #w.toasts
+	w.click("plotroom://lens/show/https%3A%2F%2Fevil.example%2Fx", 2)
+	eq(w.toasts[said + 1].text, "Plotroom: malformed link", "a page that is no pull request is refused")
+	st.link("layer.queue.buttons.worktree", "plotroom://github/worktree/o/r/45")
+	w.click("plotroom://github/worktree/o/r/45", 2)
+	eq(w.toasts[said + 2].text, "Plotroom: link did not come from a Plotroom block", "a worktree link from the shell pane is refused")
+	same(st.ops(), { "open-url" }, "and nothing else was asked of the block")
+end)
+
 case("host triage: unseen rows are New, the selected row is marked seen on its own and saved to kv triage, a refresh writes nothing, a changed check or review shows Changed on a row nobody reads and is marked again on the row being read", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)

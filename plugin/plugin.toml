@@ -14,3 +14,7 @@ title = "Plotroom"
 icon = "merge"
 palette = false
 
+[[lenses]]
+id = "pr-create"
+match = ["gh pr create*"]
+

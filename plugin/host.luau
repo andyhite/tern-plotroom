@@ -11,6 +11,7 @@ local engine = require("./host/engine")
 local render = require("./host/render")
 local settings = require("./host/settings")
 local requests = require("./host/requests")
+local lens = require("./host/lens")
 
 type Note = core.Note
 type Prompt = core.Prompt
@@ -1101,3 +1102,4 @@ local function blockDef(): BlockDef<State>
 end
 
 tern.block.define("prs", blockDef())
+lens.define()

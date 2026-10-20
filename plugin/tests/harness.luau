@@ -429,6 +429,7 @@ export type World = {
 	fs: Fs,
 	panes: { PaneRow },
 	blocks: { [string]: any },
+	lenses: { [string]: any }, -- manifest lens id -> its LensDef, as `tern.lens.define` got it
 	open: (number, { string }?, any?) -> Block, -- pane, launch args, saved state: the Plotroom block, `prs`
 	setEncodeViews: (boolean) -> (),
 	window: Win,
@@ -515,6 +516,7 @@ local function newWorld(instantiate: Loader, context: string): World
 	local unmatched: { string } = {}
 	local panes: { PaneRow } = {}
 	local blocks: { [string]: any } = {}
+	local lenses: { [string]: any } = {}
 	local encodeViews = true
 	local windowCx: any = nil
 	local commands: { [string]: any } = {}
@@ -1135,6 +1137,11 @@ local function newWorld(instantiate: Loader, context: string): World
 				blocks[id] = def
 			end,
 		},
+		lens = {
+			define = function(id: string, def: any)
+				lenses[id] = def
+			end,
+		},
 		chrome = {
 			status = function(fn: any)
 				win.status = fn
@@ -1314,6 +1321,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		fs = fs,
 		panes = panes,
 		blocks = blocks,
+		lenses = lenses,
 		open = open,
 		setEncodeViews = function(on: boolean)
 			encodeViews = on
