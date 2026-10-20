@@ -299,6 +299,51 @@ windowCase("window flows: a Jira issue's agentgo link goes to the agent recorded
 	eq(w.window.focused, 50, "the recorded pane is focused")
 end)
 
+windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop's Cancel stops nothing, and an exited agent, a blank message or a refused one only toasts", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	for _, act in { "agentint", "agentstop", "agentmsg" } do
+		st.link("layer.queue.buttons." .. act, "plotroom://github/" .. act .. "/o/r/5")
+	end
+	seedAgent(w, 50, "idle", 1, "o/r#4")
+	seedAgent(w, 51, "working", 1, "o/r#5")
+	local calls = w.window.agentCalls
+	w.click("plotroom://github/agentint/o/r/5")
+	same(calls, { { op = "interrupt", pane = 51 } }, "Interrupt reaches the recorded pane, not its neighbour")
+	eq(w.window.agentStates[51], "working", "and closes nothing")
+	w.window.choose = "Cancel"
+	w.click("plotroom://github/agentstop/o/r/5")
+	w.flush()
+	eq(#calls, 1, "Stop's Cancel stops nothing")
+	eq(w.window.picks[#w.window.picks].items[1].label, "Cancel", "Cancel is the first row")
+	w.window.choose = "Stop agent"
+	w.click("plotroom://github/agentstop/o/r/5")
+	w.flush()
+	same(calls[2], { op = "stop", pane = 51 }, "the Stop row stops it")
+	w.window.typed = "  keep going  "
+	w.click("plotroom://github/agentmsg/o/r/5")
+	w.flush()
+	same(calls[3], { op = "ask", pane = 51, text = "keep going" }, "Message sends the trimmed line")
+	w.window.typed = "   "
+	w.click("plotroom://github/agentmsg/o/r/5")
+	w.flush()
+	eq(#calls, 3, "a blank message sends nothing")
+	eq(w.toasts[#w.toasts].level, "info", "and says so")
+	w.window.typed = "hi"
+	w.window.askFails = true
+	w.click("plotroom://github/agentmsg/o/r/5")
+	w.flush()
+	eq(#calls, 3, "a message the agent cannot take sends nothing")
+	eq(w.toasts[#w.toasts].level, "error", "and toasts")
+	w.window.agentStates[51] = nil
+	w.window.panes[51] = nil
+	w.click("plotroom://github/agentint/o/r/5")
+	eq(#calls, 3, "an exited agent gets nothing")
+	eq(w.toasts[#w.toasts].text, "No agent is running for o/r#5", "and the toast says so")
+	w.click("plotroom://github/agentint/o/r/6")
+	eq(w.toasts[#w.toasts].level, "error", "a link its node does not carry is refused")
+end)
+
 windowCase("window flows: an agent link switches to the exact recorded pane, even with other agents in the same folder", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -2015,6 +2060,41 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 	eq(pickerOf(b).selected, nil, "and none selected")
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the Agents scope")
+end)
+
+case("host agents: Interrupt, Stop and Message agent are palette rows and hidden links only while the selected item or Agents row has a live agent, and open the window's link", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local function has3(p: any): boolean
+		return table.find(p.ids, "agentint") ~= nil and table.find(p.ids, "agentstop") ~= nil and table.find(p.ids, "agentmsg") ~= nil
+	end
+	yes(not has3(hx.palette(w, b)), "no agent: no rows")
+	asks.hx.agents(b, { ["o/r#1"] = "exited" })
+	yes(table.find(hx.palette(w, b).ids, "agentint") == nil, "an exited agent: no rows")
+	eq(findKey(pickerNode(b), "agentint"), nil, "nor hidden link")
+	asks.hx.agents(b, { ["o/r#1"] = "working", ["o/r#2"] = "idle" })
+	local p = hx.palette(w, b)
+	yes(has3(p), "a live agent: the three rows")
+	eq(p.labels.agentint, "Interrupt agent", "named so")
+	eq(p.labels.agentstop, "Stop agent…", "Stop asks first")
+	eq(p.labels.agentmsg, "Message agent…", "and Message asks for a line")
+	eq(p.groups.agentstop, "Saved actions", "in the Saved actions group")
+	eq(findKey(pickerNode(b), "agentstop").p.href, prLink("agentstop", "o/r", 1), "the hidden link the window checks")
+	b.event({ ev = "action", act = "queue", value = "agentmsg" })
+	eq(w.opened[#w.opened], prLink("agentmsg", "o/r", 1), "the palette pick opens the selected item's link")
+	b.typeText("j")
+	b.typeText("j")
+	local opened = #w.opened
+	b.event({ ev = "action", act = "queue", value = "agentint" })
+	eq(#w.opened, opened, "a row with no agent opens nothing")
+	pickScope(b, "agents")
+	w.flush()
+	yes(has3(hx.palette(w, b)), "the Agents scope offers them for the selected agent")
+	eq(findKey(pickerNode(b), "agentint").p.href, "plotroom://github/agentint/o/r/1", "its hidden link names that agent")
+	b.event({ ev = "action", act = "queue", value = "agentint" })
+	eq(w.opened[#w.opened], "plotroom://github/agentint/o/r/1", "and the pick opens it")
+	asks.hx.agents(b, {})
+	yes(not has3(hx.palette(w, b)), "no agent listed: no rows")
 end)
 
 case("host agents: agent-status drops texts that are not clean strings within their caps", function(w: World)

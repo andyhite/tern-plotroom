@@ -33,6 +33,8 @@ local focusRows, openSettings, pressOption, resetRow, rowById = settings.focusRo
 local runAction, runRow, setValue, settingsView, showPage = settings.runAction, settings.runRow, settings.setValue, settings.settingsView, settings.showPage
 local preparing, rpc = requests.preparing, requests.rpc
 
+local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg = true }
+
 -- Runs queue action `act` (keys.ACTIONS' ids but the moves, and `open`) as its key does: false when it is none, or
 -- needs a selected item, a tab or an agent the selection lacks.
 local function queueAction(state: State, act: string): boolean
@@ -47,14 +49,15 @@ local function queueAction(state: State, act: string): boolean
 		else
 			retry(state)
 		end
-	elseif act == "agentgo" and state.agentsOn then
-		engine.agentGo(state)
+	elseif AGENT_ACTS[act] and state.agentsOn then
+		engine.agentGo(state, act)
 	elseif act == "settings" then
 		openSettings(state)
 	elseif act == "more" then
 		state.cx:open("plotroom://more")
-	elseif act == "open" or act == "worktree" or act == "agent" or act == "goto" or act == "agentgo" then
-		if not chosen or (act == "goto" and not openItems(state)[chosen.key]) or (act == "agentgo" and not state.agents[chosen.key]) then
+	elseif act == "open" or act == "worktree" or act == "agent" or act == "goto" or AGENT_ACTS[act] then
+		-- an agent command needs an agent not exited (Go to agent shows any state it knows)
+		if not chosen or (act == "goto" and not openItems(state)[chosen.key]) or (AGENT_ACTS[act] and (state.agents[chosen.key] == nil or (act ~= "agentgo" and state.agents[chosen.key] == "exited"))) then
 			return false
 		end
 		openSelected(state, act, false)

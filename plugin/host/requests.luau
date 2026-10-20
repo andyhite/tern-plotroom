@@ -1786,6 +1786,15 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 	end
 	local item = if state.boardOn or state.agentsOn then nil else selected(state)
+	labels.agentint, labels.agentstop, labels.agentmsg = "Interrupt agent", "Stop agent…", "Message agent…"
+	local function addAgentCommands()
+		for _, id in { "agentint", "agentstop", "agentmsg" } do
+			add(id, "Saved actions")
+		end
+	end
+	if state.agentsOn and engine.agentSelected(state) then
+		addAgentCommands()
+	end
 	if item then
 		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
 		labels.open = "Open in " .. INTEGRATIONS[tr].label
@@ -1803,6 +1812,9 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		-- The agent picker is no row: the saved actions and Type a prompt are listed beside this.
 		if state.agents[item.key] then
 			add("agentgo", "Saved actions")
+		end
+		if state.agents[item.key] and state.agents[item.key] ~= "exited" then
+			addAgentCommands()
 		end
 	end
 	if state.boardOn then

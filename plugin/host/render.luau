@@ -341,6 +341,7 @@ end
 -- agent and Seen. A missing repository or checkout is asked for in the window's palette when one is needed. An
 -- action's `keys` are its keycap: its configured key (Settings › Keyboard shortcuts); the action bar shows only those
 -- that have one.
+local AGENT_COMMANDS = { "agentint", "agentstop", "agentmsg" } -- Interrupt, Stop and Message the selected item's live agent
 type Action = { id: string, label: string, keys: { string }?, href: string }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
 	local map = keys.load()
@@ -355,6 +356,12 @@ local function itemActions(state: State, item: any, open: { [string]: boolean })
 	-- The window's link to the agent it recorded for this item, offered only while it has reported that agent's state.
 	if state.agents[item.key] then
 		table.insert(out, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), href = hrefOf(state, item, "agentgo") })
+	end
+	-- The agent commands (palette only, no key): linked only while the agent is not exited.
+	if state.agents[item.key] and state.agents[item.key] ~= "exited" then
+		for _, act in AGENT_COMMANDS do
+			table.insert(out, { id = act, label = act, href = hrefOf(state, item, act) })
+		end
 	end
 	-- Triage is the block's own (no link).
 	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
@@ -1127,7 +1134,11 @@ local function agentsPreview(state: State): { Node }
 		ui.node("kv", { key = "facts", items = facts }),
 	}
 	if href then
-		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, { ui.node("text", { key = "agentgo", href = href }) }))
+		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
+		for _, act in AGENT_COMMANDS do
+			table.insert(links, ui.node("text", { key = act, href = engine.agentHref(row.key, act) }))
+		end
+		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	end
 	return kids
 end

@@ -453,6 +453,46 @@ local function confirmPick(cx: WindowCx, head: string, label: string, lines: { s
 	end)
 end
 
+-- Interrupt, Stop or Message (`act`: agentint | agentstop | agentmsg) the live agent recorded for `key`. Stop asks first;
+-- each step looks the agent up again, so one that exited meanwhile only toasts.
+function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
+	local function run(cx2: WindowCx, what: string, fn: (number) -> ...any)
+		local link = M.liveAgent(cx2, pane, key)
+		if not link then
+			return cx2:toast("info", "No agent is running for " .. key)
+		end
+		local ok, err = pcall(fn, link.agent)
+		if not ok then
+			cx2:toast("error", "Could not " .. what .. " the agent for " .. key, tostring(err))
+		end
+	end
+	if not M.liveAgent(cx, pane, key) then
+		return cx:toast("info", "No agent is running for " .. key)
+	end
+	if act == "agentint" then
+		run(cx, "interrupt", function(agent)
+			cx.agents:interrupt(agent)
+		end)
+	elseif act == "agentstop" then
+		confirmPick(cx, "Stop the agent for " .. key .. "?", "Stop agent", { key }, function(cx2)
+			run(cx2, "stop", function(agent)
+				cx2.agents:stop(agent)
+			end)
+		end)
+	elseif act == "agentmsg" then
+		cx:prompt({ placeholder = "Message for the agent of " .. key, icon = "merge", action = "send" }):next(function(text, _, cx2)
+			local line = if text then trim(text) else ""
+			if cx2 and line ~= "" then
+				run(cx2, "message", function(agent)
+					cx2.agents:ask(agent, line)
+				end)
+			elseif cx2 and text then
+				cx2:toast("info", "Nothing to send: the message was blank")
+			end
+		end)
+	end
+end
+
 local function planOf(a: any): Plan?
 	local c = a.confirm
 	if type(a.token) ~= "string" or a.token == "" or type(c) ~= "table" or type(c.head) ~= "string" or type(c.label) ~= "string" then

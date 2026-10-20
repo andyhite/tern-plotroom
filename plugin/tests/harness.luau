@@ -365,6 +365,8 @@ export type Win = {
 	typed: string?, -- what cx:prompt answers with; nil dismisses it
 	agents: { any }, -- every cx.agents:start request
 	agentStates: { [number]: string }, -- agent pane -> state cx.agents:list reports (a started agent is "working"; a closed pane is not listed)
+	agentCalls: { { op: string, pane: number, text: string? } }, -- every cx.agents interrupt / stop / ask
+	askFails: boolean, -- cx.agents:ask raises (the agent cannot take a message now)
 	prompts: { any }, -- every cx:prompt request
 	typedQueue: { string }, -- answers cx:prompt gives first, in order, before `typed`
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
@@ -567,6 +569,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		agents = {},
 		runs = {},
 		agentStates = {},
+		agentCalls = {},
+		askFails = false,
 		prompts = {},
 		typedQueue = {},
 		hostOf = {},
@@ -774,6 +778,18 @@ local function newWorld(instantiate: Loader, context: string): World
 					end
 				end
 				return rows
+			end,
+			interrupt = function(_self: any, pane: number)
+				table.insert(win.agentCalls, { op = "interrupt", pane = pane })
+			end,
+			stop = function(_self: any, pane: number)
+				table.insert(win.agentCalls, { op = "stop", pane = pane })
+			end,
+			ask = function(_self: any, pane: number, text: string)
+				if win.askFails then
+					error("busy", 0)
+				end
+				table.insert(win.agentCalls, { op = "ask", pane = pane, text = text })
 			end,
 		},
 	}

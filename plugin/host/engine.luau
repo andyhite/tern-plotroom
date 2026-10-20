@@ -2046,24 +2046,26 @@ function M.openAgents(state: State)
 	M.agentEnsure(state)
 end
 
--- The link the window follows to the agent of item `key` ("repo#ref"): a pull request's or GitHub issue's number, or a Jira
--- issue's key (its project upper case, as the window's issue links take it). nil for a key that is neither.
-function M.agentHref(key: string): string?
+-- The link the window follows for agent command `act` (agentgo, the default; agentint | agentstop | agentmsg) on item
+-- `key` ("repo#ref"): a pull request's or GitHub issue's number, or a Jira issue's key (its project upper case, as the
+-- window's issue links take it). nil for a key that is neither.
+function M.agentHref(key: string, act: string?): string?
+	local verb = act or "agentgo"
 	local repo, n = string.match(key, "^([^/#]+/[^/#]+)#(%d+)$")
 	if repo and n then
-		return "plotroom://github/agentgo/" .. repo .. "/" .. n
+		return "plotroom://github/" .. verb .. "/" .. repo .. "/" .. n
 	end
 	local project, ref = string.match(key, "^([^#]+)#([%w_%-]+)$")
 	if project and ref and not string.find(project, "/", 1, true) then
-		return "plotroom://issue/agentgo/" .. string.upper(project) .. "/" .. ref
+		return "plotroom://issue/" .. verb .. "/" .. string.upper(project) .. "/" .. ref
 	end
 	return nil
 end
 
--- Goes to the previewed agent's tab: the window follows the link its hidden node carries.
-function M.agentGo(state: State)
+-- Runs agent command `act` (agentgo by default) on the previewed agent: the window follows the link its hidden node carries.
+function M.agentGo(state: State, act: string?)
 	local row = M.agentSelected(state)
-	local href = if row then M.agentHref(row.key) else nil
+	local href = if row then M.agentHref(row.key, act) else nil
 	if href then
 		state.cx:open(href)
 	end

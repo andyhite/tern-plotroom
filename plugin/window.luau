@@ -19,6 +19,8 @@ local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = "layer.queue.buttons.agentgo" -- hidden: Go to the item's recorded agent
+local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg: the hidden links of the agent commands
+local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true } -- Interrupt, Stop, Message
 local MORE_NODE = "main.more" -- hidden: the command palette
 local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
@@ -143,7 +145,7 @@ local function parseLink(url: string): (string?, string?, string?, number?, stri
 		kind = if id then "run" else nil
 	end
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "agentgo" and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "agentgo" and not AGENT_CMD[kind or ""] and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -1078,7 +1080,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		if not act then
 			act, repo, ref = string.match(url, "^plotroom://issue/(%a+)/(.+)/([%w_%-]+)$")
 		end
-		if (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "agentgo" and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
+		if not act or (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "agentgo" and not AGENT_CMD[act or ""] and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
 			cx:toast("error", "Plotroom: malformed link")
 			return true
 		end
@@ -1086,7 +1088,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 			return true
 		end
-		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "agentgo" then AGENTGO_NODE elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
+		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "agentgo" then AGENTGO_NODE elseif AGENT_CMD[act] then BUTTONS_PREFIX .. act elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
 		if nodeProp(readNode(cx, pane, node), "href") ~= url then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 			return true
@@ -1094,6 +1096,8 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		local t = issueTarget(repo, ref)
 		if act == "goto" then
 			gotoTarget(cx, pane, t)
+		elseif AGENT_CMD[act] then
+			flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, act)
 		elseif act == "agentgo" then
 			flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 		elseif act == "agent" then
@@ -1123,6 +1127,7 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		elseif kind == "goto" then GOTO_NODE
 		elseif kind == "agent" then AGENT_NODE
 		elseif kind == "agentgo" then AGENTGO_NODE
+		elseif AGENT_CMD[kind] then BUTTONS_PREFIX .. kind
 		elseif kind == "run" then PROMPT_NODE .. (id or "")
 		else WORKTREE_NODE
 	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == url
@@ -1138,6 +1143,8 @@ local function handle(cx: WindowCx, url: string, pane: number, typed: boolean?):
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
 		gotoTarget(cx, pane, t)
+	elseif AGENT_CMD[kind] then
+		flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, kind)
 	elseif kind == "agentgo" then
 		flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 	elseif kind == "agent" then
