@@ -24,20 +24,6 @@
   - Fix: plugin/host/requests.luau (Agents-list palette) with plugin/tests/cases/flows.luau - main (6b14f7b) offers Interrupt/Stop/Message agent (`agentint`/`agentstop`/`agentmsg`) for the selected Agents row in "Saved actions"; after the merge this branch's exact `same(p.ids, expected)` Agents-list case fails and the README paragraph omits them - decide their group in the Agents list ("Agents" fits), update the case and the README.
   - Review attempts: 2
 
-- [ ] The queue's error and empty states say what to do next.
-  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
-  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
-  - The README hero's footer shows only keys bound by default.
-  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
-  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
-  - Base: main
-  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
-  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
-  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
-  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
-  - Fix: rebase onto main - conflicts in README.md (line 55, the `.` paragraph main extended with Interrupt/Stop/Message agent) - resolve on the item branch keeping both changes.
-  - Review attempts: 2
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -352,6 +338,19 @@
   - Review attempts: 2
   - Decision: `agentHref` tokens every agent verb (`agentgo`, `agentint`, `agentstop`, `agentmsg`) through `core.withToken`; rebased onto main keeping its `AGENT_CMD` handling with the full tokened href check.
   - Decision: `plugin.toml` is `0.24.0`, matching protocol "24".
+
+- [ ] The queue's error and empty states say what to do next.
+  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
+  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
+  - The README hero's footer shows only keys bound by default.
+  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
+  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
+  - Base: main
+  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
+  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
+  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
+  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
+  - Review attempts: 2
 
 ## Done
 
