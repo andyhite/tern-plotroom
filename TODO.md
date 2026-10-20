@@ -8,6 +8,23 @@
 
 ## Blocked
 
+- [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
+  - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
+  - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
+  - The pane title adds the attention count when it isn't zero: "Plotroom · My PRs (12) · 3 new".
+  - Touch points: paste handling and the `title` handler in `host.luau`; `openUrl` in `host/requests.luau`, split so a paste answers with a toast instead of an rpc reply; palette rows in `host/requests.luau`; `cx:copy`.
+  - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
+  - Base: main
+  - Branch: todo/paste-github-jira-url-into-queue-open-co at /Users/andyhite/Code/tern-plotroom.todo/paste-github-jira-url-into-queue-open-co
+  - Decision: `openUrl` takes `done(problem?, message?)`: the rpc op replies through it and a paste toasts through it; rpc replies and the protocol are unchanged.
+  - Decision: Copy number gives `#N` for GitHub and the key for Jira; Copy branch uses the PR's `head`, else the worktree note's branch.
+  - Decision: "N new" counts `engine.needs` items (new or changed and not snoozed, or an agent waiting); the selected item is marked seen so it drops out.
+  - Decision: Pasted URLs are found by regex, trailing `.,;:!?)]}` stripped, and the first one `engine.pinView` accepts is used.
+  - Decision: A paste skips the shortcut lookup, so pasting a key bound to Move up/down toasts "No item URL pasted" instead of moving.
+  - Fix: rebase onto main - conflicts in plugin/host.luau (main's key handling and Inbox scope) - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (a4bc55c) found no blocking defect.
+  - Review attempts: 3
+  - Blocked: changes needed after 3 reviews since last unblock
+
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -225,21 +242,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
-  - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
-  - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
-  - The pane title adds the attention count when it isn't zero: "Plotroom · My PRs (12) · 3 new".
-  - Touch points: paste handling and the `title` handler in `host.luau`; `openUrl` in `host/requests.luau`, split so a paste answers with a toast instead of an rpc reply; palette rows in `host/requests.luau`; `cx:copy`.
-  - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
-  - Base: main
-  - Branch: todo/paste-github-jira-url-into-queue-open-co at /Users/andyhite/Code/tern-plotroom.todo/paste-github-jira-url-into-queue-open-co
-  - Decision: `openUrl` takes `done(problem?, message?)`: the rpc op replies through it and a paste toasts through it; rpc replies and the protocol are unchanged.
-  - Decision: Copy number gives `#N` for GitHub and the key for Jira; Copy branch uses the PR's `head`, else the worktree note's branch.
-  - Decision: "N new" counts `engine.needs` items (new or changed and not snoozed, or an agent waiting); the selected item is marked seen so it drops out.
-  - Decision: Pasted URLs are found by regex, trailing `.,;:!?)]}` stripped, and the first one `engine.pinView` accepts is used.
-  - Decision: A paste skips the shortcut lookup, so pasting a key bound to Move up/down toasts "No item URL pasted" instead of moving.
-  - Review attempts: 2
 
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
