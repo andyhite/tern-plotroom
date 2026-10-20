@@ -4,28 +4,6 @@
 
 ## Todo
 
-- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
-  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
-  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
-  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
-  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
-  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
-  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
-  - Base: main
-  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
-  - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
-  - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
-  - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
-  - Decision: Comment, Approve and Request changes share `requests.previewRows`.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
-  - Decision: Auto-merge is hidden and refused while the preview's `about.merge` is `ready` or `unstable`, and `setPrMerge` refuses auto at commit when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE; with no loaded preview the auto row is still offered and the commit guard protects it.
-  - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
-  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
-  - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (3a0ef66/c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so `pr-merge`/`pr-approve`/`pr-request-changes`/`pr-update-branch` ship under main's number and a mixed pair answers "does not know that command" with no mismatch warning - the implementing agent rebases onto main, bumps all four to the next unused number ("25" unless main moved past it; other queued items also target it), updates the Decision bullet and reruns the gate before hand-off.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -135,6 +113,28 @@
   - Review attempts: 0
 
 ## In-Progress
+
+- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
+  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
+  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
+  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
+  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
+  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
+  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
+  - Base: main
+  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
+  - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
+  - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
+  - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
+  - Decision: Comment, Approve and Request changes share `requests.previewRows`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Decision: Auto-merge is hidden and refused while the preview's `about.merge` is `ready` or `unstable`, and `setPrMerge` refuses auto at commit when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE; with no loaded preview the auto row is still offered and the commit guard protects it.
+  - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
+  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
+  - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (3a0ef66/c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so `pr-merge`/`pr-approve`/`pr-request-changes`/`pr-update-branch` ship under main's number and a mixed pair answers "does not know that command" with no mismatch warning - the implementing agent rebases onto main, bumps all four to the next unused number ("25" unless main moved past it; other queued items also target it), updates the Decision bullet and reruns the gate before hand-off.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
