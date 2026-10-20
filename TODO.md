@@ -129,16 +129,6 @@
   - Base: main
   - Branch: todo/worktree-card-opens-tern-git-view-shows at /Users/andyhite/Code/tern-plotroom.todo/worktree-card-opens-tern-git-view-shows
 
-- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
-  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
-  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
-  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
-  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
-  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
-  - Base: main
-  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
-
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
   - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
@@ -356,6 +346,20 @@
   - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
   - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
   - Decision: Comment, Approve and Request changes share `requests.previewRows`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+
+- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
+  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
+  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
+  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
+  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
+  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
+  - Base: main
+  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
+  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
+  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
+  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
 
 ## Done
