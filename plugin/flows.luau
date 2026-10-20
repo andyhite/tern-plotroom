@@ -289,6 +289,12 @@ local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: s
 	end
 	waiting = list
 	if states then
+		-- keep every toasted pane still waiting, even one the covered set dropped, so it is not toasted again on return
+		for pane in waitingSet do
+			if states[pane] == "waiting_input" then
+				nowSet[pane] = true
+			end
+		end
 		waitingSet = nowSet
 	end
 	if changed then

@@ -227,6 +227,27 @@ windowCase("window status: only agents the Agents list covers count, and closing
 	eq(#w.toasts, toasts + 1, "reopening toasts an agent that never stopped waiting nothing")
 end)
 
+windowCase("window status: an agent that leaves the covered set while still waiting is not toasted again when it returns", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	w.window.panes[8] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.hostOf[8] = 2
+	w.window.agentStates[agent] = "waiting_input"
+	local toasts = #w.toasts
+	w.advance(4000)
+	eq(#w.toasts, toasts + 1, "toasted once")
+	local block = w.window.panes[1].block
+	w.window.panes[1].block = nil
+	w.advance(4000)
+	eq(#w.toasts, toasts + 1, "host 1's block closed while host 2's stays: nothing more")
+	w.window.panes[1].block = block
+	w.window.handlers.pane_created({ pane = 1 }, w.cx)
+	w.advance(4000)
+	eq(#w.toasts, toasts + 1, "reopened: still no second toast")
+end)
+
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
