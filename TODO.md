@@ -79,21 +79,6 @@
   - Fix: plugin/tests/cases/queue.luau:2286-2306 - the not-found case switches Jira → PR, which base already cleared through `forget`, so it passes without the change and never asserts the title's "the view itself stays paused" - add a same-integration switch (two Jira views, or two GitHub views of one login) that fails on base, and assert re-clicking the failed view sends no search.
   - Review attempts: 1
 
-- [ ] The queue's error and empty states say what to do next.
-  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
-  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
-  - The README hero's footer shows only keys bound by default.
-  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
-  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
-  - Base: main
-  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
-  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
-  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
-  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
-  - Fix: README.md:21 - the new hero footer lost its leading space, so `└`/`┘` sit one column off the box's borders (lines 14-20 are 79 columns, this one 78) - restore the leading space so the footer is 79 columns and aligns.
-  - Fix: README.md:55 - "The action bar at the bottom of the queue shows only the buttons that have a key" is now wrong: the error card with no list shows Refresh and Settings without keys - say that the error card with no list also shows Refresh and Settings.
-  - Review attempts: 1
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -406,6 +391,19 @@
   - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
   - Review attempts: 1
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
+
+- [ ] The queue's error and empty states say what to do next.
+  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
+  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
+  - The README hero's footer shows only keys bound by default.
+  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
+  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
+  - Base: main
+  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
+  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
+  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
+  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
+  - Review attempts: 1
 
 ## Done
 
