@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
   - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
@@ -22,8 +24,6 @@
   - Fix: plugin/host/engine.luau:2033-2042 (`agentHref`) on rebase - main (6b14f7b) rewrote `agentHref(key, act)` to build `agentgo`/`agentint`/`agentstop`/`agentmsg` links, and its `tests/cases/flows.luau:2093,2095` assert them untokened; if main's side wins the conflict the Agents-scope action links stay untokened, breaking "every action link … carries a random token" - token every verb in `agentHref`, switch those assertions to tokened links, keep main's `AGENT_CMD` node next to the `~= full` check in `window.luau`, and name Interrupt/Stop/Message agent in the README Trust line.
   - Fix: plugin/tests/cases/window.luau:386-392 - `agentScene` has no recorded agent, so choosing "Start another agent" matches nothing and the picker closes before `github.pr` runs; "no agent starts"/"no tab opens" cannot fail and "the user is told" is satisfied by the earlier Worktree toast, so the required "refused for … agents" case is untested - drive the agent path to the host (e.g. "Type a prompt…" with typed text), reset the toast count before it, and assert the head-branch refusal toast.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
