@@ -635,6 +635,7 @@ case("worktree.status: porcelain v2 header lines are never changes, an ahead cou
 	eq(parsed.dirty, false, "headers only: clean")
 	eq(parsed.ahead, 2, "the behind count is not used")
 end)
+
 case("worktree.draftPreview: reads the branch and its commits over the base fetched read-only, writing nothing but its tracking ref", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.drafted(w)
