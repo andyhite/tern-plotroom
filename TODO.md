@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -17,8 +19,6 @@
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
   - Fix: plugin/keys.luau:117 / Decision "A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it" - `save(id, "")` stores nil when the action's default is `""` (every one-key action), so binding `d` through the preset, removing it with Backspace and pressing Use again binds `d` back - store `""` for a removal and nil only for Reset, update the cases that expect `{}` after a removal (`tests/cases/queue.luau` ~351-352), and add a case: preset, remove one key, preset again keeps it unbound.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
