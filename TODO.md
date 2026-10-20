@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
   - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
@@ -17,8 +19,6 @@
   - Decision: The window case fills each default's first line and every `{branch}`/`{base}`/`{remote}` line with the scene's values and asserts they appear; lines also naming `{github.user}` are skipped (covered by `lacks "{"`).
   - Fix: rebase onto main - conflicts in plugin/tests/cases/window.luau (main's agent-chains/interrupt cases touched the same area) - resolve on the item branch; the review of the code itself found no defects.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
