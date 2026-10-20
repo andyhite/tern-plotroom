@@ -50,6 +50,19 @@
   - Fix: plugin/tests/cases/checks.luau:1609-1612, 1639 - `notedScene` gives the PR view login `octocat`, which is also the fake gh's active account (`harness.luau:1433`), so the read is credited to `octocat` whether or not `readNoted` gets `M.login(state)`; the required "issue read passes the view's login" case cannot fail - run the view as another login (e.g. `work` with `s.gh.tokens.work`) and expect `"work"`.
   - Review attempts: 1
 
+- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
+  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
+  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
+  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
+  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
+  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
+  - Base: main
+  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
+  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
+  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
+  - Fix: plugin/tests/cases/window.luau:167-168 / Decision "checks cwd, filled branch/repo" - `has(agent.prompt, "feature")` and `has(agent.prompt, "o/r")` always pass through `{title}` ("Add a feature") and `{url}` (`…/o/r/pull/5`), so a wrong `{branch}`/`{base}`/`{remote}` value would not fail the case - derive the expected lines from each default's text (e.g. its first line and the line naming `{branch}`), fill them with the scene's values (number 5, owner o, repo r, branch feature, base main, remote origin) and assert those filled lines appear.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
@@ -112,17 +125,6 @@
   - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
-
-- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
-  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
-  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
-  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
-  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
-  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
-  - Base: main
-  - Branch: todo/default-prompts-don-contradict-themselve at /Users/andyhite/Code/tern-plotroom.todo/default-prompts-don-contradict-themselve
-  - Decision: A typed prompt is told apart by `job.id == nil`, since the typed path sets `name = "Typed prompt"`.
-  - Decision: The prompt cases read names and text from `prompts.luau`'s exported defaults; the window case loops over them and checks cwd, filled branch/repo and no leftover `{`.
 
 - [ ] Every action I can save also exports, imports and runs.
   - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
