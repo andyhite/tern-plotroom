@@ -508,10 +508,16 @@ case("host: pasting into the queue opens and pins the first item URL in the text
 	eq(#w.toasts, toasts + 1, "text without an item URL toasts")
 	eq(w.toasts[#w.toasts].text, "No item URL pasted", "saying so")
 	eq(pickerOf(b).scope, "pin:o/r#45", "and changes nothing")
+	local before = pickerOf(b).cursor
+	for _, t in { "j", "k" } do
+		b.press("paste", nil, t)
+	end
+	eq(#w.toasts, toasts + 3, "pasting a bound movement key toasts too")
+	eq(pickerOf(b).cursor, before, "and does not move the cursor")
 	b.typeText("/")
 	b.press("paste", nil, "login")
 	eq(pickerOf(b).query, "login", "a paste during search edits the search")
-	eq(#w.toasts, toasts + 1, "with no toast")
+	eq(#w.toasts, toasts + 3, "with no toast")
 end)
 
 case("host: the palette copies the selected item's link, number and branch, and the title counts what is new", function(w: World)

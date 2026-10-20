@@ -758,7 +758,7 @@ local function blockDef(): BlockDef<State>
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"
 			-- The queue action the key is (Settings › Keyboard shortcuts). While searching it is text, and with ctrl, alt or meta it is no shortcut.
-			local act = if plain and not searching then keys.action((keys.load()), k) else nil
+			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
 			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "attention" or act == "sort" or act == "more" then
 				local owned: { { prompt: Prompt, here: boolean } } = {}
