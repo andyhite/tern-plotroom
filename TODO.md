@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
   - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
   - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
@@ -23,8 +25,6 @@
   - Fix: plugin/worktree.luau:1146-1150 with plugin/host/engine.luau:1685 - a Worktree press or agent start re-reads status through `dirty`, which drops the ahead count, and `noteWorktree` writes a note with no `ahead` but `checked = state.round`, so "N unpushed" disappears until the next refresh - carry `ahead` through the attempt's report into the note (or leave `checked` nil there), with a case.
   - Fix: plugin/host/engine.luau:1960-1970 / acceptance "badges update right after `git commit` or `git pull`" - the `command_finished` hook only clears `note.checked`; the sync badge (`Not at PR head`), `note.update` and `note.head` come from `applyScans`, which runs only when `s.scanned ~= snap`, so after `git pull` the card keeps the stale badge and pull command until the next refresh - also clear `s.scanned` on a hit so the scan reruns, with a case.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
