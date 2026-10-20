@@ -866,7 +866,12 @@ end
 -- `done` once /myself names the acli account; the REST token may belong to another one, and nothing is sent then.
 local function verified(done: (Problem?) -> ())
 	site = nil -- every write rereads acli's current sign-in; nothing goes to a cached site
-	rest("GET", "/rest/api/3/myself", nil, function(data, problem)
+	withSite(function(base, siteProblem)
+		if not base then
+			local why = if siteProblem then siteProblem.message else ""
+			return done({ kind = "auth", message = "Could not read acli's Jira sign-in; nothing was sent. " .. why })
+		end
+		rest("GET", "/rest/api/3/myself", nil, function(data, problem)
 		if problem then
 			return done(problem)
 		end
@@ -878,6 +883,7 @@ local function verified(done: (Problem?) -> ())
 			return done({ kind = "auth", message = "PLOTROOM_JIRA_API_TOKEN belongs to " .. who .. ", not the acli account " .. email .. "; nothing was sent." })
 		end
 		done(nil)
+	end)
 	end)
 end
 

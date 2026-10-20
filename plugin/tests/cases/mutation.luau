@@ -487,7 +487,7 @@ case("jira.transition: a site switch between list and post sends to the current 
 	end)
 	w.flush()
 	eq(#reqs, before, "nothing sent when status fails")
-	eq(problem == nil, false, "a problem is reported")
+	eq(problem and problem.kind, "auth", "a failed status read is an auth problem")
 end)
 
 case("worktree.inventory: lists every worktree of the checkout, marks main, flags locked, prunable, missing and detached, writes nothing", function(w: World)
