@@ -4,13 +4,6 @@
 
 ## Todo
 
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
-  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
-  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
-  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
-  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
-  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-
 - [ ] An action's Move to status works without PLOTROOM_JIRA_API_TOKEN.
   - When an issue action with Move to status starts its agent on a Jira issue, Plotroom moves it with `acli jira workitem transition` (key, status, `--yes`) instead of the REST API, so no token is needed.
   - An issue already in that status is left alone as today; an acli failure (no such status, a transition that needs fields) is an error toast with acli's message, and the agent still runs.
@@ -155,6 +148,15 @@
   - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
   - Base: main
   - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
+
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+  - Base: main
+  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
 
 ## Blocked
 
