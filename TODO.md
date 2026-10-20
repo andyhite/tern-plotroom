@@ -172,23 +172,6 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
-- [ ] Remove every finished worktree in one confirm.
-  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
-  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
-  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
-  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
-  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
-  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
-  - Base: main
-  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
-  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
-  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
-  - Decision: The unchecked-row count in the confirm is not covered by a test.
-  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
-  - Fix: rebase onto main - conflicts in README.md and plugin/host/requests.luau:1821 (main added `labels["wt-git"] = "Open in Git"` on the line that still overrides `wt-cleanup`) - the implementing agent resolves them on the item branch keeping `wt-git` and `wt-remove-finished` and dropping the `wt-cleanup` override (one name), then reruns the gate before hand-off; the third code review (742db44) found no blocking defect.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -210,6 +193,24 @@
 ## Blocked
 
 ## Review
+
+- [ ] Remove every finished worktree in one confirm.
+  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
+  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
+  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
+  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
+  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
+  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
+  - Base: main
+  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
+  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
+  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
+  - Decision: The unchecked-row count in the confirm is not covered by a test.
+  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
+  - Fix: rebase onto main - conflicts in README.md and plugin/host/requests.luau:1821 (main added `labels["wt-git"] = "Open in Git"` on the line that still overrides `wt-cleanup`) - the implementing agent resolves them on the item branch keeping `wt-git` and `wt-remove-finished` and dropping the `wt-cleanup` override (one name), then reruns the gate before hand-off; the third code review (742db44) found no blocking defect.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (6a95ec9); wt-cleanup label override dropped, wt-git and wt-remove-finished kept; gate passed: 541 cases, types clean, smoke 22 scenarios.
+  - Review attempts: 0
 
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
