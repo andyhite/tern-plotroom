@@ -76,6 +76,7 @@ case("host: any number of cwd and pane_exited events inside the 250 ms window re
 	hostScene(w, 1)
 	local b = w.open(1, { "/work/r" })
 	w.flush()
+	w.advance(2000) -- the opening's own detail timers fire first, so only redraws are counted below
 	local before = b.renders()
 	for _ = 1, 3 do
 		w.window.handlers.cwd({}, w.cx)
@@ -85,6 +86,11 @@ case("host: any number of cwd and pane_exited events inside the 250 ms window re
 	end
 	w.advance(250)
 	eq(b.renders(), before + 1, "five events, one render")
+	local mid = b.renders()
+	w.advance(250)
+	w.window.handlers.cwd({}, w.cx)
+	w.advance(250)
+	eq(b.renders(), mid + 1, "a second burst after the window renders once more")
 end)
 
 case("host: running init again for a live pane keeps its list and does not search twice", function(w: World)
