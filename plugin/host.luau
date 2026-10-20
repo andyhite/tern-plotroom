@@ -477,7 +477,7 @@ local function blockDef(): BlockDef<State>
 				agentAt = nil,
 				inboxOn = false,
 				inboxAt = nil,
-				inbox = { login = nil, rows = {}, problem = nil, busy = false, loaded = false },
+				inbox = { login = nil, rows = {}, problem = nil, busy = false, loaded = false, gen = 0 },
 				plan = nil,
 				draft = nil,
 				imported = nil,
@@ -733,43 +733,14 @@ local function blockDef(): BlockDef<State>
 				end)
 			end
 			if state.inboxOn then
-				-- The Inbox list: its rows take the list keys and Enter shows the notification's pull request or issue.
-				local onScopes = state.focus == "scopes"
-				local iact = if plain then keys.action((keys.load()), k) else nil
-				if name == "tab" and plain then
-					state.focus = if onScopes then "list" else "scopes"
-				elseif name == "escape" then
-					if onScopes then
-						state.focus = "list"
-					else
-						return false
-					end
-				elseif name == "up" or iact == "up" then
-					if onScopes then
-						moveView(state, -1)
-					else
-						engine.inboxMove(state, -1)
-					end
-				elseif name == "down" or iact == "down" then
-					if onScopes then
-						moveView(state, 1)
-					else
-						engine.inboxMove(state, 1)
-					end
-				elseif name == "page_up" or name == "page_down" then
-					engine.inboxMove(state, if name == "page_up" then -10 else 10)
-				elseif name == "enter" then
-					if onScopes then
-						state.focus = "list"
-					else
-						openNotice(state)
-					end
-				elseif iact == "refresh" or iact == "settings" or iact == "help" or iact == "more" then
-					queueAction(state, iact)
-				else
+				-- The Inbox list: Enter shows the notification's pull request or issue.
+				return listKeys(function(d)
+					engine.inboxMove(state, d)
+				end, function()
+					openNotice(state)
+				end, function()
 					return false
-				end
-				return true
+				end)
 			end
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"

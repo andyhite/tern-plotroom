@@ -2157,10 +2157,11 @@ function M.inboxRead(state: State)
 		return
 	end
 	inbox.busy = true
+	local gen = inbox.gen
 	github.login(nil, function(login: string?, problem: github.Problem?)
 		local function landed(rows: { github.Notice }?, why: github.Problem?)
-			if not M.alive(state) then
-				return
+			if not M.alive(state) or gen ~= inbox.gen then
+				return -- a Mark read since this read began: its answer is older than the marks
 			end
 			inbox.busy, inbox.loaded, inbox.login = false, true, login
 			local sorted: { github.Notice } = {}

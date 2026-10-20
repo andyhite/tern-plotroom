@@ -735,6 +735,8 @@ function M.inboxPlan(state: State, id: string)
 	M.offer(state, id, { key = INBOX_KEY }, { head = "Mark " .. things .. " read?", label = "Mark " .. n .. " read", lines = lines }, function(done)
 		github.markRead(ids, login, function(problem: github.Problem?, marked: number)
 			if alive(state) then
+				state.inbox.gen += 1 -- reads begun before this mark are stale; one fresh read replaces them
+				state.inbox.busy = false
 				engine.inboxRead(state) -- the list reads again: what was marked is gone from it
 			end
 			if problem then

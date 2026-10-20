@@ -182,6 +182,30 @@ case("inbox: Mark read… plans the listed threads as the login captured then, a
 	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "no longer valid", "a plan commits once")
 end)
 
+case("inbox: a read still in flight when Mark read… commits cannot put the marked threads back", function(w: World)
+	local s, b = inboxScene(w)
+	s.gh.inboxPoll = 1
+	pickScope(b, "inbox")
+	w.flush()
+	local stale = true
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "notifications" and stale then
+			stale = false -- the periodic read starts now and answers, with the list as it was, long after the mark
+			local body = '[{"id":"11","unread":true,"reason":"mention","updated_at":"2026-10-19T08:00:00Z","subject":{"title":"Add feature","type":"Issue","url":"https://api.github.com/repos/o/r/issues/2"},"repository":{"full_name":"o/r"}}]'
+			return { stdout = "HTTP/2.0 200 OK\r\nX-Poll-Interval: 1\r\nLast-Modified: Mon, 19 Oct 2026 09:00:00 GMT\r\n\r\n" .. body, delay = 600 * 1000 }
+		end
+		return nil
+	end
+	local p = asks.hx.ask(w, b, { op = "act", name = "inbox-read" })
+	w.advance(125 * 1000)
+	eq(stale, false, "the periodic read is in flight")
+	s.gh.inbox.octocat = {}
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	w.advance(700 * 1000)
+	w.flush()
+	eq(#pickerOf(b).items, 0, "the older answer is ignored: nothing marked is listed again")
+end)
+
 case("inbox: a mark-read plan is refused after the view changed, when the list is empty, and stops at the first thread that fails", function(w: World)
 	local s, b = inboxScene(w)
 	has(asks.hx.ask(w, b, { op = "act", name = "inbox-read" }).problem, "lists no notifications", "the Inbox is not shown")

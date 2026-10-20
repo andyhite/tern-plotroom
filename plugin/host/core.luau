@@ -161,7 +161,7 @@ export type AgentInfo = { action: string?, branch: string?, title: string? }
 
 -- The Inbox list's model: the notifications gh's active login was last read to have (`login`: whose), why they could not be
 -- read (`problem`), whether a read is running and whether one has answered.
-export type Inbox = { login: string?, rows: { github.Notice }, problem: github.Problem?, busy: boolean, loaded: boolean }
+export type Inbox = { login: string?, rows: { github.Notice }, problem: github.Problem?, busy: boolean, loaded: boolean, gen: number } -- gen: bumped by Mark read, so a read that began before it is ignored
 
 export type State = {
 	cx: BlockCx,
