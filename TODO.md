@@ -57,19 +57,6 @@
 
 ## Review
 
-- [ ] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
-  - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
-  - The two list key handlers in `host.luau` become one helper taking the move, Enter and extra-action functions.
-  - The eight edit-one-action copies (`kindAndId` → `editPrompts` → `promptById` → deleted elsewhere) and the four Edit/Done summary rows in `host/settings.luau` become one local helper each.
-  - The checkout-claim flow of `host/requests.luau` and `host/settings.luau` becomes one engine helper, and `itemId`/`boardId`/`agentId` become one id builder with byte-identical output.
-  - Nothing else changes for the user: picker ids, Settings rows and messages stay the same.
-  - Cases: Home/End on the Worktrees list (`tests/cases/flows.luau` board cases) and the Agents list (`tests/cases/checks.luau`); existing Settings and claim cases pass unchanged.
-  - Base: main
-  - Branch: todo/worktrees-agents-lists-take-home-end-lik at /Users/andyhite/Code/tern-plotroom.todo/worktrees-agents-lists-take-home-end-lik
-  - Decision: Neither the Worktrees nor the Agents list has a search box, so there is no search guard for Home/End.
-  - Decision: Helpers: `listKeys(move, enter, extra)` (host), `editPrompt(qid, fn, quiet?)` and `summary(prefix, id, label, hint)` (settings), `engine.claimCheckout(state, repo, path, busy, moved, done)`, `engine.pickerId(prefix, key)`; the claim messages that differ are passed in so they stay byte-identical.
-  - Decision: `pnext` and `pwhere`/`psplit` with a malformed prompt id now say "That action was deleted elsewhere."; sheet rows never produce such an id.
-
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
   - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
@@ -383,6 +370,17 @@
   - Decision: `trackWaiting` takes only the links `statusMap` covers (per Plotroom pane: its host, newest link per key); with no Plotroom pane it clears the shown count but keeps the toasted set, and a membership change (not just size) counts as changed.
 
 ## Done
+
+- [x] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
+  - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
+  - The two list key handlers in `host.luau` become one helper taking the move, Enter and extra-action functions.
+  - The eight edit-one-action copies (`kindAndId` → `editPrompts` → `promptById` → deleted elsewhere) and the four Edit/Done summary rows in `host/settings.luau` become one local helper each.
+  - The checkout-claim flow of `host/requests.luau` and `host/settings.luau` becomes one engine helper, and `itemId`/`boardId`/`agentId` become one id builder with byte-identical output.
+  - Nothing else changes for the user: picker ids, Settings rows and messages stay the same.
+  - Cases: Home/End on the Worktrees list (`tests/cases/flows.luau` board cases) and the Agents list (`tests/cases/checks.luau`); existing Settings and claim cases pass unchanged.
+  - Decision: Neither the Worktrees nor the Agents list has a search box, so there is no search guard for Home/End.
+  - Decision: Helpers: `listKeys(move, enter, extra)` (host), `editPrompt(qid, fn, quiet?)` and `summary(prefix, id, label, hint)` (settings), `engine.claimCheckout(state, repo, path, busy, moved, done)`, `engine.pickerId(prefix, key)`; the claim messages that differ are passed in so they stay byte-identical.
+  - Decision: `pnext` and `pwhere`/`psplit` with a malformed prompt id now say "That action was deleted elsewhere."; sheet rows never produce such an id.
 
 - [x] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
   - The CI checkout step sets `persist-credentials: false`.
