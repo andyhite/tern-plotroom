@@ -4,21 +4,6 @@
 
 ## Todo
 
-- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
-  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
-  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
-  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
-  - Two issues noted on one branch: the first wins, as today.
-  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
-  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
-  - Base: main
-  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
-  - Decision: The preview matches an ok `issues` note in the PR repo's checkout whose branch equals `worktree.prBranch(pr.head, pr.fork)`; of two notes on one branch the lowest `seq` (first noted) wins.
-  - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
-  - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
-  - Fix: plugin/tests/cases/checks.luau:1609-1612, 1639 - `notedScene` gives the PR view login `octocat`, which is also the fake gh's active account (`harness.luau:1433`), so the read is credited to `octocat` whether or not `readNoted` gets `M.login(state)`; the required "issue read passes the view's login" case cannot fail - run the view as another login (e.g. `work` with `s.gh.tokens.work`) and expect `"work"`.
-  - Review attempts: 1
-
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
   - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
@@ -77,6 +62,21 @@
   - Fix: plugin/tests/regression.luau:86-94 (`seen-render`) - the row never loads 1000 seen items: keys are `no/r#i` (the picker-id prefix, not the triage key `o/r#i`), entries lack `at` so `triage.validate` rejects the store, and the block keeps the `state.triage` it already read - seed `o/r#i` with `{ seen = "x", at = EPOCH }` and make the block reread the store (e.g. `b.state().triage = nil`) before timing, so the row fails if `listedCount` hashes each item again.
   - Fix: plugin/host/engine.luau:666-669, 719-729 - `identify` now keeps an `auth`/`missing` problem across an integration change, but `headOf`/`helpOf` (and Settings' pause line) label it by the view now shown, so an acli sign-out shown on a GitHub view reads "GitHub CLI not signed in" / "Run gh auth login" (and the reverse), and `save` persists that - record the integration that raised the problem when it is set and label by it in `headOf`, `helpOf` and `paceLine`.
   - Fix: plugin/tests/cases/queue.luau:2286-2306 - the not-found case switches Jira → PR, which base already cleared through `forget`, so it passes without the change and never asserts the title's "the view itself stays paused" - add a same-integration switch (two Jira views, or two GitHub views of one login) that fails on base, and assert re-clicking the failed view sends no search.
+  - Review attempts: 1
+
+- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
+  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
+  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
+  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
+  - Two issues noted on one branch: the first wins, as today.
+  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
+  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
+  - Base: main
+  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
+  - Decision: The preview matches an ok `issues` note in the PR repo's checkout whose branch equals `worktree.prBranch(pr.head, pr.fork)`; of two notes on one branch the lowest `seq` (first noted) wins.
+  - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
+  - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
+  - Fix: plugin/tests/cases/checks.luau:1609-1612, 1639 - `notedScene` gives the PR view login `octocat`, which is also the fake gh's active account (`harness.luau:1433`), so the read is credited to `octocat` whether or not `readNoted` gets `M.login(state)`; the required "issue read passes the view's login" case cannot fail - run the view as another login (e.g. `work` with `s.gh.tokens.work`) and expect `"work"`.
   - Review attempts: 1
 
 ## Blocked
