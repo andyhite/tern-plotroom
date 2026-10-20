@@ -4,26 +4,6 @@
 
 ## Todo
 
-- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
-  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
-  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
-  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
-  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
-  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
-  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
-  - Decided: gh tokens are cached in memory for 60 s per login.
-  - Base: main
-  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
-  - Decision: The token cache is keyed by lowercased login, in memory only, 60 s TTL.
-  - Decision: `tracker.reconcile` is generic (keyed on `.key`/`.updated`); `parsePage(stdout, normalize)` takes `github.normalize` or `github.normalizeIssue`, and `searchAll` takes the normalizer.
-  - Decision: `rerunFailed` goes through `guarded`, which checks the run URL against the repo more strictly.
-  - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
-  - Decision: A spawn failing under the kept PATH re-probes the login shell with the kept PATH left in place (`recover(cb, true)` skips its cached shortcut); a spawn started meanwhile still runs under the kept PATH. A failed probe or the same PATH reports the spawn's error; a new PATH retries once.
-  - Decision: Each cached token gets a 60 s `tern.timer` that drops it.
-  - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (82bd07d) found no blocking defect.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
   - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
@@ -113,6 +93,26 @@
   - Review attempts: 0
 
 ## In-Progress
+
+- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
+  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
+  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
+  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
+  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
+  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
+  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
+  - Decided: gh tokens are cached in memory for 60 s per login.
+  - Base: main
+  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
+  - Decision: The token cache is keyed by lowercased login, in memory only, 60 s TTL.
+  - Decision: `tracker.reconcile` is generic (keyed on `.key`/`.updated`); `parsePage(stdout, normalize)` takes `github.normalize` or `github.normalizeIssue`, and `searchAll` takes the normalizer.
+  - Decision: `rerunFailed` goes through `guarded`, which checks the run URL against the repo more strictly.
+  - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
+  - Decision: A spawn failing under the kept PATH re-probes the login shell with the kept PATH left in place (`recover(cb, true)` skips its cached shortcut); a spawn started meanwhile still runs under the kept PATH. A failed probe or the same PATH reports the spawn's error; a new PATH retries once.
+  - Decision: Each cached token gets a 60 s `tern.timer` that drops it.
+  - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (82bd07d) found no blocking defect.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
