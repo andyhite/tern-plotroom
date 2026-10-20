@@ -739,6 +739,7 @@ export type Entry = {
 	number: number?,
 	ref: string?,
 	inferred: boolean?, -- `number` was guessed from an older Plotroom's ref or branch, not noted
+	repo: string?, -- the repository the branch's note names (nil: no note)
 }
 
 -- Every worktree of the checkout at `checkout`, the main one first, with the item Plotroom noted for each branch.
@@ -814,6 +815,7 @@ function M.inventory(checkout: string, repo: string, done: ({ Entry }?, string?)
 						number = n,
 						ref = if n then M.prRef(owner, name, n) else nil,
 						inferred = if inferred then true else nil,
+						repo = if branch then repos[branch] else nil,
 					})
 				end
 				done(entries, nil)
@@ -1328,13 +1330,35 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 			return inspect(meta, r.path, false, nil, on)
 		end
 	end
-	local verdict, what = M.reconcile(spot.recs, branch, spot.target)
-	if verdict == "error" then
-		return s.finish(nil, what :: string, cx0)
-	elseif verdict == "reuse" then
-		return inspect(meta, (what :: Record).path, false, nil)
+	local function decide(cx: WindowCx?)
+		local verdict, what = M.reconcile(spot.recs, branch, spot.target)
+		if verdict == "error" then
+			return s.finish(nil, what :: string, cx)
+		elseif verdict == "reuse" then
+			return inspect(meta, (what :: Record).path, false, nil)
+		end
+		fetch(meta)
 	end
-	fetch(meta)
+	-- A branch noted for another pull request is never reused or moved: `alice/x` (a same-repository head) and alice's
+	-- fork branch `x` share a local name.
+	git(info.root, { "config", "--local", "--get-regexp", "^branch\\..*\\.plotroom(pr|repo)$" }, LOCAL_MS, function(cfg, _, cxn)
+		s.attempt(cxn or cx0, function()
+			local other: number?
+			local at = repo
+			for l in string.gmatch(cfg or "", "[^\n]+") do
+				local b, what, v = string.match(l, "^branch%.(.+)%.plotroom(%a+) (.+)$")
+				if b == branch and what == "pr" then
+					other = tonumber(v)
+				elseif b == branch and what == "repo" then
+					at = v :: string
+				end
+			end
+			if not other or (other == number and string.lower(at) == string.lower(repo)) then
+				return decide(cxn or cx0)
+			end
+			s.finish(nil, "Branch " .. branch .. " is already the worktree branch of " .. at .. "#" .. other .. "; " .. repo .. "#" .. number .. " would need the same local branch. Remove that worktree first.", cxn or cx0)
+		end)
+	end)
 end
 
 -- Creates or reuses the worktree of pull request `number` of `repo` (checkoutPr) in the worktrees folder, under the

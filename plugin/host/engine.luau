@@ -1031,7 +1031,7 @@ end
 -- removed on its own, never forced. The model is board.luau's; git is read only on this host.
 
 function M.boardRows(state: State): { any }
-	return board.rows(state.board, { showMain = true })
+	return board.rows(state.board)
 end
 
 -- The picker id of a row: no `/` or `#`, as an item's.
@@ -1074,15 +1074,15 @@ function M.boardApi(state: State): any
 		inventory = worktree.inventory,
 		inventoryDirty = worktree.inventoryDirty,
 		removeEntry = worktree.removeEntry,
-		dirty = function(path: string, done: (boolean?, string?) -> ())
+		dirty = function(path: string, done: (boolean?) -> ())
 			for _, r in state.board.rows do
 				if r.path == path then
 					return worktree.dirty(path, function(dirty: boolean?)
-						done(dirty, if dirty == nil then "git status could not tell" else nil)
+						done(dirty)
 					end)
 				end
 			end
-			done(nil, "That folder is not a listed worktree.")
+			done(nil)
 		end,
 	}
 end

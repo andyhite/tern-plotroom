@@ -47,7 +47,7 @@ local function fake(inv: { [string]: { board.Entry } }): Fake
 		dirty = function(path, done)
 			enter("dirty:" .. path)
 			busy -= 1
-			done(f.dirty[path] == true, nil)
+			done(f.dirty[path] == true)
 		end,
 		inventoryDirty = function(_, _, path, _, done)
 			enter("dirty:" .. path)
@@ -91,15 +91,23 @@ function M.run()
 		["/a"] = { entry("/a", { main = true }), entry("/w1", { key = "#1", number = 1 }), entry("/shared") },
 		["/b"] = { entry("/b", { main = true }), entry("/w2", { locked = true }), entry("/gone", { prunable = true }) },
 	})
-	-- spans checkouts, dedupes a shared path, skips '', stays sequential, reports a failing checkout
+	-- spans checkouts, lists a shared path once per repo (unnoted rows stay with the first), skips '', stays sequential, reports a failing checkout
 	local b = loaded(f, { ["o/z"] = "/b", ["o/a"] = "/a", ["o/dup"] = "/a", ["o/none"] = "", ["o/bad"] = "/nowhere" })
 	assert(f.max == 1)
-	assert(#f.calls == 3 and f.calls[1] == "inv:o/a" and f.calls[2] == "inv:o/bad" and f.calls[3] == "inv:o/z")
+	assert(#f.calls == 4 and f.calls[1] == "inv:o/a" and f.calls[2] == "inv:o/bad" and f.calls[3] == "inv:o/dup" and f.calls[4] == "inv:o/z")
 	assert(#b.rows == 6 and #b.problems == 1)
-	assert(#board.rows(b, {}) == 4 and #board.rows(b, { showMain = true }) == 6)
-	assert(board.rows(b, {})[1].repo == "o/a")
-	local w1 = board.rows(b, {})[1]
+	assert(board.rows(b)[1].repo == "o/a")
+	local w1 = board.rows(b)[1]
 	assert(w1.id == w1.repo .. "\0" .. w1.path)
+
+	-- one checkout saved for a fork and its upstream: each row takes the repository its note names
+	local fsh = fake({ ["/s"] = { entry("/s", { main = true }), entry("/p1", { repo = "O/Up" }), entry("/p2", { repo = "o/fork" }), entry("/p3") } })
+	local bsh = loaded(fsh, { ["o/fork"] = "/s", ["o/up"] = "/s" })
+	local seenBy: { [string]: string } = {}
+	for _, r in bsh.rows do
+		seenBy[r.path] = r.repo
+	end
+	assert(#bsh.rows == 4 and seenBy["/p1"] == "o/up" and seenBy["/p2"] == "o/fork" and seenBy["/s"] == "o/fork" and seenBy["/p3"] == "o/fork")
 
 	-- remove refusals
 	local function row(path: string): board.Row
@@ -140,7 +148,7 @@ function M.run()
 	local realDirty = fl.api.dirty
 	fl.api.dirty = function(path, d)
 		if path == "/q50" then
-			return d(nil, "boom")
+			return d(nil)
 		end
 		realDirty(path, d)
 	end
@@ -290,7 +298,7 @@ function M.run()
 	fo.api.dirty = function(path, d)
 		table.insert(fo.calls, path)
 		on = false
-		d(true, nil)
+		d(true)
 	end
 	board.scan(bo, fo.api, 0, function()
 		return on
@@ -306,16 +314,16 @@ function M.run()
 	-- failure is unknown, not clean; stale answers after reload are ignored
 	local ff = fake({ ["/a"] = { entry("/w1") } })
 	local bf = loaded(ff, { ["o/a"] = "/a" })
-	local held: ((boolean?, string?) -> ())? = nil
+	local held: ((boolean?) -> ())? = nil
 	ff.api.dirty = function(_, d)
 		held = d
 	end
 	board.scan(bf, ff.api, 0, yes, function() end)
 	board.load(bf, ff.api, { ["o/a"] = "/a" }, yes, function() end);
-	(held :: (boolean?, string?) -> ())(false, nil)
+	(held :: (boolean?) -> ())(false)
 	assert(bf.rows[1].dirty == nil and not bf.scanning)
 	ff.api.dirty = function(_, d)
-		d(nil, "git failed")
+		d(nil)
 	end
 	board.scan(bf, ff.api, 0, yes, function() end)
 	assert(bf.rows[1].dirty == nil and bf.rows[1].scannedAt == 0)
@@ -347,7 +355,10 @@ function M.run()
 	assert(dpr and dpr.info)
 	local ex = dpr.info.excerpt :: string
 	assert(dpr.state == "ready" and utf8.len(ex) ~= nil and #ex <= board.EXCERPT + 3)
-	board.select(bb, lk, a, yes, function() end, true) -- explicit refresh reads again
+	board.select(bb, lk, a, yes, function() end) -- a finished read is not asked again
+	assert(nPr == 1)
+	bb.details[a] = nil -- forget it: the next select reads again
+	board.select(bb, lk, a, yes, function() end)
 	assert(nPr == 2)
 	board.load(bb, fb.api, { ["o/m"] = "/m" }, yes, function() end) -- reload mid-read: asked again, never stuck loading
 	local function prOf(id: string?): board.Section
@@ -390,14 +401,14 @@ function M.run()
 	for _, r in bm.rows do
 		assert(not r.missing or r.dirty ~= false)
 	end
-	local held3: ((boolean?, string?) -> ())? = nil
+	local held3: ((boolean?) -> ())? = nil
 	fm.api.dirty = function(_, d)
 		held3 = d
 	end
 	assert(board.scan(bm, fm.api, 6, yes, function() end, true) and bm.scanning)
 	board.stop(bm)
 	assert(not bm.scanning and bm.scanAt == nil);
-	(held3 :: (boolean?, string?) -> ())(true, nil) -- the cancelled scan's late answer changes nothing
+	(held3 :: (boolean?) -> ())(true) -- the cancelled scan's late answer changes nothing
 	for _, r in bm.rows do
 		assert(r.dirty ~= true)
 	end
@@ -412,7 +423,7 @@ function M.run()
 		pr = function(_, n, d)
 			table.insert(asked2, "pr" .. n)
 			if n == 8 then
-				return d({ ref = "#8", title = "T", state = "open", tracker = "github o/p", excerpt = "  a\n\n b  ", related = { key = "PRJ-2" } }, nil)
+				return d({ ref = "#8", title = "T", state = "open", tracker = "github o/p", excerpt = "  a\n\n b  " }, nil)
 			end
 			d({ ref = "#7", title = "Seven", state = "open", person = "ann", tracker = "github o/p" }, nil)
 		end,
@@ -447,19 +458,19 @@ function M.run()
 	-- cached: reselect asks nothing; a different row's late answer is ignored
 	board.select(bp, links, idOf("/p/one"), yes, function() end)
 	assert(#asked2 == 2)
-	-- one identifier known: the verified related key fills in the issue; excerpt is plain and short
+	-- the excerpt is plain and short
 	board.select(bp, links, idOf("/p/two"), yes, function() end)
-	assert(asked2[3] == "pr8" and asked2[4] == "PRJ-2")
+	assert(asked2[3] == "pr8" and #asked2 == 3)
 	assert(sec("/p/two", "pr").info and (sec("/p/two", "pr").info :: board.Info).excerpt == "a b")
 	board.select(bp, links, idOf("/p/one"), yes, function() end)
-	held2["PRJ-2"]({ ref = "PRJ-2", title = "late", state = "x", tracker = "jira PRJ" }, nil)
-	assert(sec("/p/two", "issue").state == "loading")
+	assert((bp.details[idOf("/p/two")] :: board.Details).issue == nil)
 	-- error then retry; unlinked row has no sections; close ignores in-flight answers
 	local bad = false
 	links.pr = function(_, _, d)
 		d(nil, if bad then "offline" else nil)
 	end
 	bad = true
+	bp.details[idOf("/p/two")] = nil
 	board.select(bp, links, idOf("/p/two"), yes, function() end)
 	assert(sec("/p/two", "pr").state == "error" and sec("/p/two", "pr").problem == "offline")
 	board.select(bp, links, idOf("/p/three"), yes, function() end)
@@ -513,7 +524,7 @@ function M.run()
 	local cheap: { string } = {}
 	fd.api.dirty = function(path, d)
 		table.insert(cheap, path)
-		d(path == "/w1", nil)
+		d(path == "/w1")
 	end
 	local invCalls = #fd.calls
 	board.scan(bd2, fd.api, 0, yes, function() end)

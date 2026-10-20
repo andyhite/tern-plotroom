@@ -14,6 +14,7 @@ type World = h.World
 local case, countCalls, countLog, eq, has, jsonEncode = h.case, h.countCalls, h.countLog, h.eq, h.has, h.jsonEncode
 local lacks, newGh, newGit, ranSince, same, scene = h.lacks, h.newGh, h.newGit, h.ranSince, h.same, h.scene
 local sha, show, snapshot, validRef, windowCase, yes = h.sha, h.show, h.snapshot, h.validRef, h.windowCase, h.yes
+local asks = h.asks
 
 case("worktree: git-illegal names that GitHub allows are encoded in the fetched ref, never rejected", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
@@ -62,6 +63,36 @@ case("worktree: fetched ref names are injective and git-acceptable for every leg
 	end
 	visit("", 0)
 	yes(count > 20000, "only " .. count .. " names were generated")
+end)
+
+case("worktree.inventory: a checkout saved for two repositories lists each one's notes, every row under the repository its note names", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local board = w.load("board") :: typeof(require("../../board"))
+	asks.bk.inventoryRepo(w) -- /wt/pr5 and /wt/issue are o/r's, /wt/foreign is x/y's
+	local api: any = {
+		inventory = worktree.inventory,
+		dirty = function(_, done)
+			done(false)
+		end,
+		inventoryDirty = worktree.inventoryDirty,
+		removeEntry = worktree.removeEntry,
+	}
+	local b = board.new()
+	board.load(b, api, { ["o/r"] = "/work/r", ["x/y"] = "/work/r" }, function()
+		return true
+	end, function() end)
+	w.flush()
+	local by: { [string]: string } = {}
+	for _, r in b.rows do
+		by[r.path] = r.repo .. (if r.number or r.key then " noted" else " unnoted")
+	end
+	eq(by["/wt/pr5"], "o/r noted", "o/r's pull request")
+	eq(by["/wt/issue"], "o/r noted", "o/r's issue")
+	eq(by["/wt/foreign"], "x/y noted", "x/y's issue is listed under x/y, noted")
+	eq(by["/wt/lk"], "o/r unnoted", "an unnoted worktree stays with the first repository")
+	eq(by["/work/r"], "o/r unnoted", "as does the main one")
+	eq(#b.rows, 8, "each worktree is listed once")
+	eq(#b.problems, 0, "no problem")
 end)
 
 case("worktree: a branch checked out in the main checkout is never reused as an item's worktree", function(w: World)
@@ -474,7 +505,7 @@ local function worktreeWrites(w: World, from: number?): { string }
 	local out: { string } = {}
 	for i = (from or 0) + 1, #w.calls do
 		local a = w.calls[i].argv
-		local readOnly = reads[a[4] or ""] or (a[4] == "worktree" and a[5] == "list")
+		local readOnly = reads[a[4] or ""] or (a[4] == "worktree" and a[5] == "list") or (a[4] == "config" and a[6] == "--get-regexp")
 		local note = a[4] == "config" and a[5] == "--local" and string.match(a[6] or "", "^branch%..+%.plotroom%a+$") ~= nil
 		if not note and ((a[1] == "omp" and a[2] == "worktree") or (a[1] == "git" and a[2] == "-C" and not readOnly)) then
 			table.insert(out, table.concat(a, " "))
@@ -555,7 +586,7 @@ windowCase("worktree.open: the tracking fetch and the upstream write are best ef
 	eq(untracked.result.created, true, "created")
 	eq(untracked.result.branch, "feature", "branch")
 	eq(untracked.result.head, sha("b"), "head")
-	eq(countLog(u.git, "config"), 2, "both settings were tried")
+	eq(countLog(u.git, "config"), 3, "the notes were read, then both settings were tried")
 	same(u.git.config, {}, "and none was written")
 end)
 
@@ -729,6 +760,30 @@ windowCase("worktree.open: the worktree that already holds the PR's branch is re
 	same(worktreeWrites(w), {}, "nothing was fetched, added or configured")
 	eq(snapshot(s.git), before, "git state is untouched")
 	eq(#w.fs.mkdirs, 0, "no directory was made")
+end)
+
+windowCase("worktree.open: a branch noted for another pull request is refused, naming both, and nothing is reused or moved", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s = scene(w, worktree, "o", "r", 5)
+	table.insert(s.git.worktrees, { path = "/wt/elsewhere", branch = "refs/heads/feature", head = sha("d"), locked = false })
+	s.git.refs["refs/heads/feature"] = sha("d")
+	w.fs.dirs["/wt/elsewhere"] = true
+	s.git.notes["branch.feature.plotroompr"] = "9"
+	s.git.notes["branch.feature.plotroomrepo"] = "o/r"
+	local before = snapshot(s.git)
+	local out = openWt(w, worktree, s, nil, nil)
+	eq(out.calls, 1, "done calls")
+	eq(out.result, nil, "no result")
+	has(out.problem, "o/r#9", "names the PR that holds the branch")
+	has(out.problem, "o/r#5", "and the one refused")
+	same(worktreeWrites(w), {}, "nothing fetched, added or configured")
+	eq(snapshot(s.git), before, "git state is untouched")
+	-- the same PR (a note without a repository counts as this one) is reused as before
+	s.git.notes["branch.feature.plotroompr"] = "5"
+	s.git.notes["branch.feature.plotroomrepo"] = nil
+	local again = openWt(w, worktree, s, nil, nil)
+	eq(again.problem, nil, "the PR's own note does not collide")
+	eq(again.result.path, "/wt/elsewhere", "and its worktree is reused")
 end)
 
 windowCase("worktree.open: a plain folder at the PR's folder, or a locked or missing worktree there or of its branch, ends the open, touching nothing", function(w: World)

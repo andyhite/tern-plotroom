@@ -26,11 +26,12 @@ export type Entry = {
 	number: number?,
 	ref: string?,
 	inferred: boolean?,
+	repo: string?, -- the repository the branch's note names
 }
 export type Api = {
 	inventory: (checkout: string, repo: string, done: (entries: { Entry }?, problem: string?) -> ()) -> (),
 	-- Read-only status of a path the last `inventory` listed (the host refuses any other path), for the automatic scan.
-	dirty: (path: string, done: (dirty: boolean?, problem: string?) -> ()) -> (),
+	dirty: (path: string, done: (dirty: boolean?) -> ()) -> (),
 	inventoryDirty: (
 		checkout: string,
 		repo: string,
@@ -58,7 +59,7 @@ export type Info = {
 	excerpt: string?,
 	url: string?,
 	tracker: string,
-	related: { key: string?, number: number? }?,
+	related: { number: number? }?,
 }
 export type Links = {
 	pr: (row: Row, number: number, done: (info: Info?, problem: string?) -> ()) -> (),
@@ -84,7 +85,6 @@ export type Row = {
 	locked: boolean,
 	missing: boolean,
 	dirty: boolean?,
-	checking: boolean?,
 	candidate: "closed" | "merged" | nil,
 	candidateChecked: boolean?,
 	refused: string?,
@@ -142,7 +142,9 @@ local function order(a: Row, b: Row): boolean
 	return a.path < b.path
 end
 
--- Loads one checkout at a time, repos in sorted order; a checkout path given for two repos is read once (first repo).
+-- Loads one checkout at a time, repos in sorted order. A checkout path saved for several repos is listed once per repo
+-- and each listing keeps the rows whose note names that repo; a row noted for none of the path's repos (or not noted)
+-- belongs to the path's first repo.
 -- ponytail: a full reload re-reads every checkout; per-checkout refresh if that ever hurts.
 function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: () -> boolean, done: () -> ())
 	board.round += 1
@@ -161,18 +163,23 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 		end
 	end
 	table.sort(repos)
+	local sharing: { [string]: { [string]: boolean } } = {}
+	for _, repo in repos do
+		local path = checkouts[repo]
+		sharing[path] = sharing[path] or {}
+		sharing[path][string.lower(repo)] = true
+	end
 	local seen: { [string]: boolean } = {}
-	local queue: { { repo: string, path: string } } = {}
+	local queue: { { repo: string, path: string, first: boolean, group: { [string]: boolean } } } = {}
 	local problems: { string } = {}
 	for _, repo in repos do
 		local path = checkouts[repo]
-		if not seen[path] then
-			seen[path] = true
-			if #queue < M.CAP_CHECKOUTS then
-				table.insert(queue, { repo = repo, path = path })
-			else
-				table.insert(problems, repo .. ": skipped, more than " .. M.CAP_CHECKOUTS .. " checkouts")
-			end
+		local first = not seen[path]
+		seen[path] = true
+		if #queue < M.CAP_CHECKOUTS then
+			table.insert(queue, { repo = repo, path = path, first = first, group = sharing[path] })
+		else
+			table.insert(problems, repo .. ": skipped, more than " .. M.CAP_CHECKOUTS .. " checkouts")
 		end
 	end
 
@@ -224,8 +231,10 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 				table.insert(problems, q.repo .. ": " .. (problem or "could not list worktrees"))
 			else
 				for _, e in entries do
+					local noted = if e.repo then string.lower(e.repo) else nil
+					local mine = if noted and q.group[noted] then noted == string.lower(q.repo) else q.first
 					local id = q.repo .. "\0" .. e.path
-					if not ids[id] then
+					if mine and not ids[id] then
 						ids[id] = true
 						local prev = old[id]
 						table.insert(rows, {
@@ -255,12 +264,10 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 	step(1)
 end
 
-function M.rows(board: Board, opts: { showMain: boolean? }): { Row }
+function M.rows(board: Board): { Row }
 	local out: { Row } = {}
 	for _, r in board.rows do
-		if opts.showMain == true or not r.main then
-			table.insert(out, r)
-		end
+		table.insert(out, r)
 	end
 	table.sort(out, order)
 	return out
@@ -359,10 +366,6 @@ function M.label(row: Row): string
 	return string.match(row.path, "([^/\\]+)[/\\]*$") or row.branch or "(detached)"
 end
 
-function M.detail(row: Row): string
-	return row.branch or "(detached)"
-end
-
 local function short(s: string, n: number): string
 	return if #s > n then string.sub(s, 1, n) else s
 end
@@ -414,7 +417,7 @@ end
 -- GitHub's pull request whose head is the row's branch (`links.head`: a head-ref match is GitHub's answer, not a
 -- guess); branch text itself never does. `done` runs after every visible change; a superseded, closed or removed
 -- preview is ignored.
-function M.select(board: Board, links: Links, id: string?, live: () -> boolean, done: () -> (), refresh: boolean?)
+function M.select(board: Board, links: Links, id: string?, live: () -> boolean, done: () -> ())
 	local row = if id then find(board, id) else nil
 	if not row then
 		board.detailRound += 1
@@ -426,7 +429,7 @@ function M.select(board: Board, links: Links, id: string?, live: () -> boolean, 
 	local sig = table.concat({ row.key or "", tostring(row.number or ""), row.branch or "", row.head or "" }, "\0")
 	board.links = links
 	local d = board.details[rid]
-	if d and d.sig == sig and refresh ~= true then
+	if d and d.sig == sig then
 		local loading, failed = false, false
 		for _, s in { d.pr, d.issue } do
 			if s and s.state == "loading" then
@@ -485,9 +488,7 @@ function M.select(board: Board, links: Links, id: string?, live: () -> boolean, 
 		end
 		local from = (dd.pr or dd.issue) :: Section?
 		local rel = if from and from.info then from.info.related else nil
-		if rel and not dd.issue and rel.key then
-			return fetchIssue(rel.key, function() end)
-		elseif rel and not dd.pr and rel.number then
+		if rel and not dd.pr and rel.number then
 			return fetchPr(rel.number, function() end)
 		end
 		-- An issue and no PR its tracker links: GitHub may still know one whose head is the worktree's branch.
