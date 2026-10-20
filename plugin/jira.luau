@@ -13,8 +13,9 @@ local M = {}
 type Problem = { kind: string, message: string }
 
 local TIMEOUT_MS = 60 * 1000
--- ponytail: the newest 100 by update per view; page with --paginate if views need more
-M.LIMIT = 100
+-- ponytail: a view lists the newest 1000 by priority then update; more is partial, raise it if views need more
+M.LIMIT = 1000
+local PAGE = 100 -- what one acli search returns without --paginate
 -- The only fields acli's search accepts; a work item's dates and comment count come with its details.
 local SEARCH_FIELDS = "key,summary,status,issuetype,priority,assignee,reporter,labels"
 local BODY_CHARS = 20000
@@ -276,24 +277,44 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 			return fail(superseded)
 		end
 		local jql = "(" .. query .. ") ORDER BY priority DESC, updated DESC"
-		acli({ "jira", "workitem", "search", "--jql", jql, "--limit", tostring(M.LIMIT), "--json", "--fields", SEARCH_FIELDS }, function(out, problem2)
-			if not out then
-				return finish(nil, noted(problem2))
-			end
-			local ok, data = decode(out)
-			local found = if ok then elements(data) else nil
-			if not found then
-				return finish(nil, { kind = "failed", message = "acli printed something other than a search result" })
-			end
-			local issues: { tracker.Issue } = {}
-			for _, item in found do
-				local issue, reason = M.normalize(item, base)
-				if not issue then
-					return finish(nil, { kind = "failed", message = reason or "acli printed something other than a search result" })
+		local function search(argv: { string }, count: number?)
+			acli(argv, function(out, problem2)
+				if not out then
+					return finish(nil, noted(problem2))
 				end
-				table.insert(issues, issue)
+				local ok, data = decode(out)
+				local found = if ok then elements(data) else nil
+				if not found then
+					return finish(nil, { kind = "failed", message = "acli printed something other than a search result" })
+				end
+				local issues: { tracker.Issue } = {}
+				for _, item in found do
+					if #issues >= M.LIMIT then
+						break
+					end
+					local issue, reason = M.normalize(item, base)
+					if not issue then
+						return finish(nil, { kind = "failed", message = reason or "acli printed something other than a search result" })
+					end
+					table.insert(issues, issue)
+				end
+				-- Without a count a full page may have more behind it.
+				local complete = if count then count <= M.LIMIT else #issues < PAGE
+				finish({ issues = issues, total = math.max(count or 0, #issues), complete = complete }, nil)
+			end)
+		end
+		-- The count decides whether to paginate; a failed count keeps the single page.
+		acli({ "jira", "workitem", "search", "--jql", jql, "--count" }, function(counted)
+			local count = if counted then tonumber(string.match(counted, "(%d+)%s*$")) else nil
+			if not shouldContinue() then
+				return finish(nil, superseded)
 			end
-			finish({ issues = issues, total = #issues, complete = #issues < M.LIMIT }, nil)
+			local limit = if count and count > PAGE then M.LIMIT else PAGE
+			local argv = { "jira", "workitem", "search", "--jql", jql, "--limit", tostring(limit), "--json", "--fields", SEARCH_FIELDS }
+			if limit > PAGE then
+				table.insert(argv, "--paginate")
+			end
+			search(argv, count)
 		end)
 	end)
 end

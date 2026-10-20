@@ -1682,7 +1682,7 @@ local function newAcli(w: World): Acli
 		elseif argv[2] == "jira" and argv[3] == "auth" and argv[4] == "status" then
 			kind = "auth"
 		elseif argv[2] == "jira" and argv[3] == "workitem" and (argv[4] == "search" or argv[4] == "view") then
-			kind = if argv[#argv] == "--count" then "sprints" else argv[4]
+			kind = if argv[#argv] ~= "--count" then argv[4] elseif argv[6] == "sprint is EMPTY" then "sprints" else "count"
 		elseif argv[2] == "jira" and argv[3] == "project" and argv[4] == "list" then
 			kind = "projects"
 		end
@@ -1706,6 +1706,8 @@ local function newAcli(w: World): Acli
 				return { stdout = "✓ Number of work items in the search: 0\n" }
 			end
 			return { status = 1, stderr = "✗ Error: failed to parse JQL query: field 'sprint' does not exist or you do not have permission to view it.\n" }
+		elseif kind == "count" then
+			return { stdout = "✓ Number of work items in the search: " .. #(acli.searches[argv[6]] or {}) .. "\n" }
 		elseif kind == "search" then
 			local jql = ""
 			for i = 5, #argv - 1 do
@@ -1714,6 +1716,14 @@ local function newAcli(w: World): Acli
 				end
 			end
 			local items = acli.searches[jql] or {}
+			local cap = if table.find(argv, "--paginate") then nil else tonumber(argv[table.find(argv, "--limit") and (table.find(argv, "--limit") :: number) + 1 or 0])
+			if cap and #items > cap then
+				local cut: { any } = {}
+				for i = 1, cap do
+					cut[i] = items[i]
+				end
+				items = cut
+			end
 			return { stdout = if #items > 0 then jsonEncode(array(items)) .. "\n" else "[\n  null\n]\n" }
 		elseif kind == "view" then
 			local item = acli.views[argv[5] or ""]
