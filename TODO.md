@@ -21,18 +21,6 @@
 
 ## Review
 
-- [ ] Interrupt, stop or message the selected item's agent from the command palette.
-  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
-  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
-  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
-  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
-  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
-  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
-  - Base: main
-  - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
-  - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
-  - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
-
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
   - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
@@ -372,6 +360,16 @@
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
 
 ## Done
+
+- [x] Interrupt, stop or message the selected item's agent from the command palette.
+  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
+  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
+  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
+  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
+  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
+  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
+  - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
+  - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
 
 - [x] An action's Move to status works without PLOTROOM_JIRA_API_TOKEN.
   - When an issue action with Move to status starts its agent on a Jira issue, Plotroom moves it with `acli jira workitem transition` (key, status, `--yes`) instead of the REST API, so no token is needed.
