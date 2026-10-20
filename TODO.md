@@ -171,17 +171,6 @@
 
 ## Review
 
-- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
-  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
-  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
-  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
-  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
-  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
-  - Base: main
-  - Branch: todo/rate-limit-pause-gates-reads at /Users/andyhite/Code/tern-plotroom.todo/rate-limit-pause-gates-reads
-  - Decision: Pause guards answer `rate-limit` ("GitHub's rate limit is reached; reads resume at HH:MM:SS.") through `tern.timer(0)`, shaped like `M.checks`; a cancelled search under a pause now reports `rate-limit`, not `superseded`.
-  - Decision: `paceLine` no longer requires `state.timer`, so Settings shows the previous "next at" during a refresh.
-
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
   - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
@@ -407,6 +396,15 @@
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
 
 ## Done
+
+- [x] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
+  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
+  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
+  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
+  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
+  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
+  - Decision: Pause guards answer `rate-limit` ("GitHub's rate limit is reached; reads resume at HH:MM:SS.") through `tern.timer(0)`, shaped like `M.checks`; a cancelled search under a pause now reports `rate-limit`, not `superseded`.
+  - Decision: `paceLine` no longer requires `state.timer`, so Settings shows the previous "next at" during a refresh.
 
 - [x] Plotroom never checks out a fork's pull request for an issue unless I pick it.
   - Worktree, and any action that runs in an issue's worktree, auto-pick a linked pull request only when it is the single live same-repository one; a fork's (cross-repository) PR is never picked automatically.
