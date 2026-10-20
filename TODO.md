@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -22,8 +24,6 @@
   - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
   - Fix: plugin/process.luau:148-154 / acceptance "Refresh keeps the login-shell PATH found earlier" - `run` still sets `recovered = nil` for the whole re-probe, so any spawn entered meanwhile runs under Tern's own PATH, fails, joins the probe and, if the probe fails, is reported `missing` (e.g. the queue's `gh` search becomes a terminal "GitHub CLI not found" while `gh` works under the kept PATH); the new joined-spawn case never checks that spawn's outcome - keep `recovered` in place during the re-probe (let `recover` skip its cached shortcut for this call instead of clearing it), drop the restore, update the Decision bullet's "clears it" wording, and make the joined spawn a `gh` call asserted to start under the kept PATH.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
