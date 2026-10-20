@@ -444,7 +444,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (2)", "the title names the filter and counts the issues")
+	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "the title names the filter and counts the issues and the new one")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
 		if scope.id == "issues:v1" then
@@ -494,7 +494,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(saved.activeKind, "issues", "and its kind: a PR filter may have the same id")
 	local again = w.open(2, { "/work/r" }, saved)
 	w.flush()
-	eq(again.title(), "Plotroom · Assigned to me (2)", "a restored block shows the same view")
+	eq(again.title(), "Plotroom · Assigned to me (2) · 1 new", "a restored block shows the same view")
 end)
 
 case("host: issues always list In Progress, then To Do, then Done, in acli's priority order within each; a saved status order and Settings change nothing", function(w: World)
@@ -1266,7 +1266,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
-	eq(b.title(), "Plotroom · Assigned to me (2)", "and shown in place of the GitHub view restored")
+	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 4, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")

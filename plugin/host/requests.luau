@@ -1623,13 +1623,14 @@ function M.importApply(state: State, id: string, q: any)
 end
 
 -- Opens the item at `url` in this block: fetched first (gh or acli), so a missing or foreign item is reported, then shown
--- as the pin. Nothing is opened in a browser.
-function M.openUrl(state: State, id: string, url: any)
+-- as the pin. Nothing is opened in a browser. `done(problem, message)` tells the outcome: a window request replies with it,
+-- a paste toasts it.
+function M.openUrl(state: State, url: any, done: (string?, string?) -> ())
 	local pin = engine.pinView(url)
 	if not pin then
-		return reply(state, id, { problem = "That is not a GitHub pull request or issue URL, or a Jira issue URL." })
+		return done("That is not a GitHub pull request or issue URL, or a Jira issue URL.")
 	elseif not cli.on(pin.integration) then
-		return reply(state, id, { problem = (if pin.integration == "github" then "The GitHub CLI (gh)" else "The Atlassian CLI (acli)") .. " does not start on this host." })
+		return done((if pin.integration == "github" then "The GitHub CLI (gh)" else "The Atlassian CLI (acli)") .. " does not start on this host.")
 	end
 	engine.fetchPin(state, pin, function(): boolean
 		return alive(state)
@@ -1638,20 +1639,69 @@ function M.openUrl(state: State, id: string, url: any)
 			return
 		end
 		if not result then
-			return reply(state, id, { problem = M.whyOf(problem) })
+			return done(M.whyOf(problem))
 		end
 		-- What was fetched is shown at once; the pin's own refresh follows.
 		local items = if pin.kind == "issues" then result.issues else result.prs
 		if #items == 0 then
-			return reply(state, id, { problem = "No " .. (if pin.kind == "issues" then "issue" else "pull request") .. " was found at that URL (it does not exist or this account cannot see it)." })
+			return done("No " .. (if pin.kind == "issues" then "issue" else "pull request") .. " was found at that URL (it does not exist or this account cannot see it).")
 		end
 		state.snaps[snapKey(pin, nil)] = { kind = pin.kind, items = items, total = result.total, complete = result.complete, fetched = os.time() }
 		if not M.show(state, pin.query, true) then
-			return reply(state, id, { problem = "Pins are full: unpin one of the " .. engine.PIN_CAP .. " pinned items first." })
+			return done("Pins are full: unpin one of the " .. engine.PIN_CAP .. " pinned items first.")
 		end
 		state.cx:save() -- this landed outside a key or event: the pin is persisted now
-		reply(state, id, { ok = true, message = "Showing " .. pin.name .. " in Plotroom" })
+		done(nil, "Showing " .. pin.name .. " in Plotroom")
 	end)
+end
+
+-- A paste into the queue (not while searching): opens the first item URL in `text` as Open item by URL does, the answer
+-- a toast; text with none says so.
+function M.paste(state: State, text: string)
+	local found: string? = nil
+	for url in string.gmatch(text, "https?://[^%s<>\"']+") do
+		local clean = string.gsub(url, "[%.,;:!%?%)%]}]+$", "")
+		if not found and #clean <= 2048 and engine.pinView(clean) then
+			found = clean
+		end
+	end
+	if not found then
+		return state.cx:toast("info", "No item URL pasted", "Paste a GitHub pull request or issue URL, or a Jira issue URL.")
+	end
+	M.openUrl(state, found, function(problem: string?, message: string?)
+		if problem then
+			state.cx:toast("error", "Could not open the item", problem)
+		else
+			state.cx:toast("success", message or "Opened")
+		end
+		state.cx:render()
+	end)
+end
+
+-- The selected item's link, number (`#N`, or the Jira key) and branch (a pull request's head, else its worktree's); the
+-- branch is nil when it has none.
+function M.copyTexts(state: State): { link: string, number: string, branch: string? }?
+	local item = selected(state)
+	if not item or state.boardOn or state.agentsOn then
+		return nil
+	end
+	local prs = state.kind.id ~= "issues"
+	local note = state.notes[item.key]
+	local branch: string? = if prs and type(item.head) == "string" then item.head elseif note and note.ok then note.branch else nil
+	local number = if prs then "#" .. item.number elseif item.tracker == "jira" then item.ref else "#" .. item.ref
+	return { link = item.url, number = number, branch = if branch and branch ~= "" then branch else nil }
+end
+
+-- Copies the selected item's `what` ("copy-link", "copy-number" or "copy-branch"); false when it has none.
+function M.copy(state: State, what: string): boolean
+	local t = M.copyTexts(state)
+	local text = if not t then nil elseif what == "copy-link" then t.link elseif what == "copy-number" then t.number else t.branch
+	if not text then
+		return false
+	end
+	state.cx:copy(text)
+	state.cx:toast("success", "Copied", text)
+	return true
 end
 
 -- Window requests of flows.luau's workflows (rpc's last branch).
@@ -1674,7 +1724,9 @@ function M.workflowRpc(state: State, id: string, q: any)
 	elseif op == "import" and q.phase == "apply" and type(q.token) == "string" then
 		M.importApply(state, id, q)
 	elseif op == "open-url" and type(q.url) == "string" and #q.url <= 2048 then
-		M.openUrl(state, id, q.url)
+		M.openUrl(state, q.url, function(problem: string?, message: string?)
+			reply(state, id, if problem then { problem = problem } else { ok = true, message = message })
+		end)
 	elseif op == "worktree-path" and type(q.n) == "number" then
 		local row = engine.boardRows(state)[q.n]
 		reply(state, id, if row and not row.missing then { path = row.path } else { problem = "That worktree is no longer listed." })
@@ -1868,6 +1920,15 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 		if openItems(state)[item.key] then
 			add("goto", group)
+		end
+		local copy = M.copyTexts(state)
+		if copy then
+			labels["copy-link"], labels["copy-number"], labels["copy-branch"] = "Copy link", "Copy number", "Copy branch"
+			add("copy-link", group)
+			add("copy-number", group)
+			if copy.branch then
+				add("copy-branch", group)
+			end
 		end
 		add("seen", "Triage")
 		add("snooze", "Triage")

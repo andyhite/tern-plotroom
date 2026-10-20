@@ -63,6 +63,8 @@ local function queueAction(state: State, act: string): boolean
 		openSelected(state, act, false)
 	elseif act == "open-git" then
 		return engine.openGit(state)
+	elseif string.sub(act, 1, 5) == "copy-" then
+		return requests.copy(state, act)
 	elseif act == "seen" or act == "snooze" then
 		engine.mark(state, act)
 	elseif act == "snoozed" or act == "attention" then
@@ -528,7 +530,18 @@ local function blockDef(): BlockDef<State>
 		title = function(state: State): string?
 			local snap = state.snap
 			local v = activeView(state)
-			return if v then "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") else "Plotroom"
+			if not v then
+				return "Plotroom"
+			end
+			local need = 0
+			if snap then
+				for _, item in snap.items do
+					if engine.needs(state, snap.kind, item) then
+						need += 1
+					end
+				end
+			end
+			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. (if need > 0 then " · " .. need .. " new" else "")
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView
@@ -799,6 +812,8 @@ local function blockDef(): BlockDef<State>
 				else
 					openSelected(state, "open", false)
 				end
+			elseif name == "paste" and not searching then
+				requests.paste(state, key.text or "")
 			elseif state.query then
 				local q = state.query
 				local before = q.text

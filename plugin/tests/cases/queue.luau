@@ -450,7 +450,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local b = openQueue(w)
 	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
 	local p = hx.palette(w, b)
-	local expectedIds: { string } = { "open", "worktree", "seen", "snooze", "snoozed", "attention", "sort", "search", "refresh" }
+	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "attention", "sort", "search", "refresh" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expectedIds, "scope:" .. scope.id)
 	end
@@ -491,6 +491,42 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(#requestsOf(s.gh, "search"), 2, "Refresh searches again")
 	b.event({ ev = "action", act = "queue", value = "search" })
 	eq(pickerOf(b).query, "", "Search opens the search")
+end)
+
+case("host: pasting into the queue opens and pins the first item URL in the text, text without one toasts, and a paste during search edits the query", function(w: World)
+	local s = hostScene(w, 3)
+	local url = "https://github.com/o/r/pull/45"
+	s.gh.pulls[url] = searchItem(45, "o/r", EPOCH - 600, { title = "Fix the login redirect" })
+	local b = openQueue(w)
+	b.press("paste", nil, "see https://example.com/x then (" .. url .. "), thanks")
+	w.flush()
+	eq(pickerOf(b).scope, "pin:o/r#45", "the URL is fetched and pinned")
+	eq(requestsOf(s.gh, "pull")[1].fields.q, url, "gh looked it up by the URL, without the closing parenthesis and comma")
+	eq(w.toasts[#w.toasts].text, "Showing o/r#45 in Plotroom", "and the outcome is a toast")
+	local toasts = #w.toasts
+	b.press("paste", nil, "nothing to open here")
+	eq(#w.toasts, toasts + 1, "text without an item URL toasts")
+	eq(w.toasts[#w.toasts].text, "No item URL pasted", "saying so")
+	eq(pickerOf(b).scope, "pin:o/r#45", "and changes nothing")
+	b.typeText("/")
+	b.press("paste", nil, "login")
+	eq(pickerOf(b).query, "login", "a paste during search edits the search")
+	eq(#w.toasts, toasts + 1, "with no toast")
+end)
+
+case("host: the palette copies the selected item's link, number and branch, and the title counts what is new", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	local p = hx.palette(w, b)
+	eq(p.labels["copy-link"], "Copy link", "Copy link is offered")
+	eq(p.labels["copy-number"], "Copy number", "so is Copy number")
+	eq(p.labels["copy-branch"], "Copy branch", "and Copy branch for a pull request's head")
+	local item = s.gh.items.octocat[1]
+	b.event({ ev = "action", act = "queue", value = "copy-link" })
+	b.event({ ev = "action", act = "queue", value = "copy-number" })
+	b.event({ ev = "action", act = "queue", value = "copy-branch" })
+	same(w.copied, { item.url, "#" .. item.number, item.head }, "each row copies its text")
+	eq(b.title(), "Plotroom · My PRs (3) · 2 new", "the selected one is marked seen as it is read: two are still new")
 end)
 
 case("host: the palette's Views rows show the sidebar's scopes as a click does, and a scope the sidebar no longer lists is refused", function(w: World)
