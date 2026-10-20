@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -23,8 +25,6 @@
   - Fix: plugin/host/requests.luau:1001-1002 - the auto plan's confirm says "Only commit abc1234 is merged; a push since refuses it", but gh binds `expectedHeadOid` only when enabling auto-merge, and GitHub still merges a later push by anyone with write access once checks pass - for auto, say the head is checked only when auto-merge is enabled and later pushes by writers are merged.
   - Fix: rebase onto main - main now gates `plugin/plugin.toml`'s version minor against `RPC_PROTOCOL` (CI item); with protocol "24" set `version = "0.24.0"` (or the next unused protocol at rebase time) so `check.py` passes.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
