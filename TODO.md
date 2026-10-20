@@ -159,16 +159,6 @@
 
 ## In-Progress
 
-- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
-  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
-  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
-  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
-  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
-  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
-  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
-  - Base: main
-  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
-
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
   - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
@@ -187,6 +177,19 @@
   - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
   - Base: main
   - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
+
+## Blocked
+
+- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
+  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
+  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
+  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
+  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
+  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
+  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
+  - Base: main
+  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
+  - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
 
 ## Review
 
