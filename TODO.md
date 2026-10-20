@@ -4,6 +4,20 @@
 
 ## Todo
 
+- [ ] Jira views list up to 1000 items instead of stopping at 100.
+  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
+  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
+  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
+  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
+  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
+  - Base: main
+  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
+  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
+  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
+  - Fix: plugin/jira.luau:301-303 - with a parsed count, `complete = count <= M.LIMIT` ignores what the search returned; the count and the search are separate acli calls, so a count of 98 with a full 100-item page (an issue created between them) or a stale count under 1000 with 1000 returned is marked complete and drops the partial marker - pass the requested limit into `search` and let a full list be complete only when the count matches it (`#found < limit or (#found == count and #found <= M.LIMIT)`), with a case.
+  - Fix: rebase onto main - main (dca57bf) already changed `tests/cases/issues.luau:798,800` to `acliCount(s.acli, "view")`; keep main's lines there; also add the new `count` kind to the `AcliReq` comment in `tests/harness.luau`.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -32,17 +46,6 @@
   - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
   - Decision: Palette ids and link kinds are `agentint`, `agentstop`, `agentmsg`; they are not in `keys.ACTIONS`, so no key bindings, Settings rows or action-bar buttons, only hidden link nodes (also on the Agents preview node).
   - Decision: Go to agent is still offered for any known state; the three new rows need a non-exited agent, and Stop/Message re-check it when they act. Interrupt shows no success toast.
-
-- [ ] Jira views list up to 1000 items instead of stopping at 100.
-  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
-  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
-  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
-  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
-  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
-  - Base: main
-  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
-  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
-  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
 
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
