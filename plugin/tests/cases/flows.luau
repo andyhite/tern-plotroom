@@ -194,6 +194,39 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	eq(#w.toasts, toasts + 2, "entering again toasts again")
 end)
 
+windowCase("window status: only agents the Agents list covers count, and closing Plotroom does not re-toast a waiting agent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local links = w.kv.get("agent-links") :: any
+	local agent = links[1].agent
+	local older: any = table.clone(links[1])
+	older.host = table.clone(older.host)
+	older.host.id += 1
+	w.kv.put("agent-links", { older })
+	w.window.agentStates[agent] = "waiting_input"
+	local toasts = #w.toasts
+	local function shown(): number
+		return #((w.window.status :: any)({ pane = 7 }) or {})
+	end
+	w.advance(4000)
+	eq(shown(), 0, "a waiting agent on a host with no Plotroom block is not counted")
+	eq(#w.toasts, toasts, "nor toasted")
+	w.kv.put("agent-links", links)
+	w.advance(4000)
+	eq(shown(), 1, "on the block's host it is counted")
+	eq(#w.toasts, toasts + 1, "and toasted once")
+	local block = w.window.panes[1].block
+	w.window.panes[1].block = nil
+	w.advance(4000)
+	eq(shown(), 0, "with no Plotroom pane the shown count clears")
+	w.window.panes[1].block = block
+	w.window.handlers.pane_created({ pane = 1 }, w.cx)
+	w.advance(4000)
+	eq(shown(), 1, "reopening shows it again")
+	eq(#w.toasts, toasts + 1, "reopening toasts an agent that never stopped waiting nothing")
+end)
+
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

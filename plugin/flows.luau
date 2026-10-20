@@ -262,12 +262,13 @@ function M.waitingCount(): number
 	return #waiting
 end
 
--- Recomputes the waiting agents from `states`; toasts each agent that just entered waiting_input, and redraws the
--- status line when the set changed. `links` empty or `states` empty clears it.
-local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: string })
+-- Recomputes the waiting agents among `links` (only the ones the Agents list covers: see agentSync) from `states`;
+-- toasts each agent that just entered waiting_input, and redraws the status line when the shown set changed. `states`
+-- nil (no Plotroom pane) only clears the shown count: the toasted set stays until a real read shows an agent left.
+local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: string }?)
 	local now: { [number]: Link } = {}
 	for _, l in links do
-		if states[l.agent] == "waiting_input" and now[l.agent] == nil then
+		if states and states[l.agent] == "waiting_input" and now[l.agent] == nil then
 			now[l.agent] = l
 		end
 	end
@@ -279,14 +280,17 @@ local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: s
 	end
 	table.sort(list)
 	local changed = #list ~= #waiting
-	for _, pane in list do
+	for i, pane in list do
+		changed = changed or waiting[i] ~= pane
 		if not waitingSet[pane] then
-			changed = true
 			local l = now[pane]
 			cx:toast("info", l.key .. " needs input", l.action)
 		end
 	end
-	waiting, waitingSet = list, nowSet
+	waiting = list
+	if states then
+		waitingSet = nowSet
+	end
 	if changed then
 		tern.chrome.refresh()
 	end
@@ -312,14 +316,25 @@ function M.agentSync(cx: WindowCx)
 	local panes = plotroomPanes(cx)
 	local links = readLinks()
 	if #panes == 0 then
-		trackWaiting(cx, {}, {})
+		trackWaiting(cx, {}, nil)
 		return
 	end
 	local states = agentStates(cx)
 	if not states then
 		return
 	end
-	trackWaiting(cx, links, states)
+	local covered: { Link } = {} -- the newest link per key on each Plotroom pane's host, as statusMap picks
+	for _, pane in panes do
+		local host = hostOf(cx, pane)
+		local seen: { [string]: boolean } = {}
+		for _, l in links do
+			if host and not seen[l.key] and hostSame(l.host, host) then
+				seen[l.key] = true
+				table.insert(covered, l)
+			end
+		end
+	end
+	trackWaiting(cx, covered, states)
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
 		if host then
