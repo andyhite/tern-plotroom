@@ -207,6 +207,7 @@ case("process: a failed re-probe keeps the PATH even when another spawn joined i
 	run("acli")
 	run("jira")
 	w.flush()
+	w.advance(100)
 	eq(#outcomes, 3, "both failed spawns are answered")
 	has(outcomes[2], "no such file", "the spawn's error, not the probe's, is reported")
 	run("gh")
