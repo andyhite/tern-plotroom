@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -24,8 +26,6 @@
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: rebase onto main - conflicts in README.md - resolve on the item branch (keep protocol/`plugin.toml` at the next number main has not used); the code review found no blocking defect.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
