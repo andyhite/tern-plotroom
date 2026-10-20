@@ -27,7 +27,7 @@ Invariants (keep when editing):
 - Worktrees always go in omp's worktree directory; there is no Plotroom setting for it. The worktree card is a memory cache of git, never the source.
 - Views span repositories; checkouts are kv `checkouts` (`""` = listed without a checkout) and are requested from the window when missing.
 - Block `save` is version 2 (any other version restores fresh).
-- Jira transitions use `tern.fetch` with `PLOTROOM_JIRA_API_TOKEN` read per call from the host environment; the token is never in kv, argv or a message.
+- The palette's Jira transition… picker uses `tern.fetch` with `PLOTROOM_JIRA_API_TOKEN` read per call from the host environment; the token is never in kv, argv or a message. An action's Move to status uses `acli jira workitem transition --status` and needs no token.
 - Every async mutation captures the concrete gh login at plan time and uses it at commit.
 - Guided mutations are plan-then-commit: the confirm lists Cancel first, and commit runs only after the confirm with that plan's token.
 - Bump `RPC_PROTOCOL` (host) and `PROTOCOL` (window) together when an rpc shape changes, and set `plugin/plugin.toml`'s `version` to `0.<RPC_PROTOCOL>.0` (`check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart).

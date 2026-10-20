@@ -2818,47 +2818,36 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	eq(sig(b), "o/r#4=working|Review|fix|Fix it;", "the recorded texts are part of it")
 end)
 
-case("host move-status: moves a Jira issue to the status by its transitions' target, and says why when it cannot, with nothing posted", function(w: World)
+case("host move-status: moves a Jira issue with acli and no API token, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
 	local s = jiraHost(w)
 	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login", { status = { name = "In Progress", statusCategory = { key = "indeterminate" } } })
-	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
-	local reqs = asks.bk.fetch(w, function(req: any): { status: number, body: string }?
-		if req.line == "GET /rest/api/3/myself" then
-			return { status = 200, body = jsonEncode({ emailAddress = "ann@example.com" }) }
-		elseif req.line == "GET /rest/api/3/issue/ABC-12/transitions" then
-			return { status = 200, body = jsonEncode({ transitions = array({ { id = "31", name = "Finish", to = { name = "Done" } }, { id = "41", name = "Back" } }) }) }
-		elseif req.line == "POST /rest/api/3/issue/ABC-12/transitions" then
-			return { status = 204, body = "" }
+	w.env.PLOTROOM_JIRA_API_TOKEN = nil
+	local ran: { string } = {}
+	local refuse = false
+	s.acli.override = function(req: AcliReq): Reply?
+		if req.kind == "other" then
+			table.insert(ran, table.concat(req.argv, " "))
+			return if refuse then { status = 1, stderr = "✗ Error: status 'Blocked' not found\n" } else { stdout = "✓ done\n" }
 		end
+		return nil
+	end
+	local reqs = asks.bk.fetch(w, function(_req: any): { status: number, body: string }?
 		return nil
 	end)
 	local b = openIssues(w)
 	local function move(status: string, ref: string?): any
 		return asks.hx.ask(w, b, { op = "move-status", ref = ref or "ABC-12", status = status })
 	end
-	local function posts(): number
-		local n = 0
-		for _, r in reqs do
-			if r.method == "POST" then
-				n += 1
-			end
-		end
-		return n
-	end
 	eq(move("in progress").already, true, "an issue already there (any case) is left alone")
-	eq(#reqs, 0, "and Jira's API is not asked")
+	eq(#ran, 0, "and acli runs nothing")
 	eq(move("12", "12").skipped, true, "a GitHub issue's number is no Jira key")
+	eq(move("Done").moved, "Done", "no token set: the move works")
+	same(ran, { "acli jira workitem transition --key ABC-12 --status Done --yes" }, "by one acli transition of the key to the status")
+	refuse = true
 	local none = move("Blocked")
-	has(none.problem, "No transition of ABC-12 leads to “Blocked”", "no matching target names the status")
-	has(none.problem, "Done", "and what Jira offers")
-	eq(posts(), 0, "nothing was posted")
-	eq(move("dONE").moved, "Done", "the first transition whose target matches, in any case")
-	eq(posts(), 1, "one POST")
-	eq(reqs[#reqs].body, '{"transition":{"id":"31"}}', "of exactly that transition")
-	w.env.PLOTROOM_JIRA_API_TOKEN = nil
-	local before = #reqs
-	has(move("Done").problem, "PLOTROOM_JIRA_API_TOKEN", "no API token: the problem names the setup")
-	eq(#reqs, before, "and nothing was requested")
+	has(none.problem, "status 'Blocked' not found", "an acli failure is the problem, in acli's words")
+	eq(#ran, 2, "it was tried once")
+	eq(#reqs, 0, "Jira's REST API was never asked")
 end)
 
 -- Starts the action Review (p1, next p2) on o/r#5 through the real link flow and returns its link.
@@ -2952,6 +2941,23 @@ local function startIssueChained(w: World, st: FlowStub, wt: boolean): any
 	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = vars, code = "o/r" })
 	return (w.kv.get("agent-links") :: any)[1]
 end
+
+windowCase("window flows: an action's Move to status that acli refuses is an error toast with acli's message, and the agent has started", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
+	w.window.choose = "Implement"
+	w.click("plotroom://issue/agent/o/r/12")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, status = "Blocked" } } })
+	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", title = "Fix login", branch = "12-fix" }, code = "o/r" })
+	eq(#w.window.agents, 1, "the agent started")
+	local asked = st.reply("move-status", { problem = "status 'Blocked' not found" })
+	eq(asked.status, "Blocked", "the host was asked for the action's status")
+	local last = w.toasts[#w.toasts]
+	eq(last.level, "error", "an error toast")
+	has(last.sub, "status 'Blocked' not found", "with acli's message")
+end)
 
 windowCase("window flows: an issue action whose next is a pull request action runs it on the pull request of the worktree's branch, in the same worktree and tab", function(w: World)
 	w.load("window")

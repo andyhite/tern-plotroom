@@ -745,6 +745,19 @@ function M.assignMe(key: string, done: (Problem?) -> ())
 	end)
 end
 
+-- Moves `key` to the status named `status` with `acli jira workitem transition` (no REST, no API token); acli's own
+-- refusal (no such status, a transition that needs fields) is the problem. done(problem).
+function M.moveTo(key: string, status: string, done: (Problem?) -> ())
+	if type(key) ~= "string" or not string.match(key, KEY) or type(status) ~= "string" or status == "" then
+		return later(function()
+			done({ kind = "invalid", message = "Unexpected issue key or status." })
+		end)
+	end
+	acli({ "jira", "workitem", "transition", "--key", key, "--status", status, "--yes" }, function(_, problem)
+		done(noted(problem))
+	end)
+end
+
 -- Adds `text` (github.commentText: trimmed, nonempty, bounded) as a comment on `key` as the account `who` (M.identity: its
 -- full email and site, read again here and required to match), read first so a missing item is a not-found;
 -- `acli jira workitem comment create --key <KEY> --body=<text>` (one item, project-default visibility). done(problem).

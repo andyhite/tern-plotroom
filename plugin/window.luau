@@ -507,7 +507,7 @@ local function fillVars(prompt: string, vars: any): string
 	end))
 end
 
--- Asks the host to move a Jira issue to the status an action names (the token lives in the host's environment) and
+-- Asks the host to move a Jira issue to the status an action names (the host runs acli, no API token) and
 -- toasts what came of it; nothing for an issue already there or one that is not Jira's. The agent does not wait for it.
 local function moveStatus(cx: WindowCx, pane: number, t: Target, status: string)
 	ask(cx, pane, "move-status", { ref = t.ref, status = status }, PREPARE_MS, function(a: any, cx2: WindowCx)

@@ -1626,9 +1626,10 @@ function M.workflowRpc(state: State, id: string, q: any)
 end
 
 -- Moves Jira issue `ref` to the status named `status`, as an action's setting asks when its agent starts: nothing when
--- the issue is there already, else the first transition whose target matches (case-insensitively). Replies
--- {moved = <status>}, {already = true}, {skipped = true} (not a Jira key) or {problem}. No confirm: the action's
--- status is the user's own setting. A transition that needs fields is Jira's refusal, and its text the problem.
+-- the issue is there already (compared case-insensitively), else `acli jira workitem transition --status`, so no API
+-- token is needed. Replies {moved = <status>}, {already = true}, {skipped = true} (not a Jira key) or {problem}. No
+-- confirm: the action's status is the user's own setting. acli's refusal (no such status, a transition that needs
+-- fields) is the problem.
 local function moveStatus(state: State, id: string, ref: string, status: string)
 	if not string.match(ref, "^[A-Z][A-Z0-9_]*%-%d+$") then
 		return reply(state, id, { skipped = true })
@@ -1640,23 +1641,11 @@ local function moveStatus(state: State, id: string, ref: string, status: string)
 		elseif issue.status and string.lower(issue.status.text) == want then
 			return reply(state, id, { already = true })
 		end
-		jira.transitions(ref, function(list, problem2)
-			if not list then
+		jira.moveTo(ref, status, function(problem2: github.Problem?)
+			if problem2 then
 				return reply(state, id, { problem = M.whyOf(problem2) })
 			end
-			local names: { string } = {}
-			for _, t in list do
-				if t.to and string.lower(t.to) == want then
-					return jira.transition(ref, t.id, function(problem3: github.Problem?)
-						if problem3 then
-							return reply(state, id, { problem = M.whyOf(problem3) })
-						end
-						reply(state, id, { moved = t.to })
-					end)
-				end
-				table.insert(names, t.to or t.name)
-			end
-			reply(state, id, { problem = "No transition of " .. ref .. " leads to “" .. printable(status) .. "”" .. (if #names > 0 then "; Jira offers: " .. table.concat(names, ", ") else "") .. "." })
+			reply(state, id, { moved = status })
 		end)
 	end)
 end
