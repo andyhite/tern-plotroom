@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
   - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
@@ -25,8 +27,6 @@
   - Fix: plugin/github.luau:1836-1838 - a 200 notifications answer always writes `inboxes[account]`, however old its request, so a read sent before Mark read finishes (queue refresh, Refresh, another block on the host) refills the cache with the pre-mark threads after `markRead` cleared it, and they show again - capture a per-login counter that `markRead` bumps before `M.gh` and skip the cache write and `nextAt` update when it changed.
   - Fix: plugin/tests/cases/inbox.luau:195-201 - the in-flight read uses a 600 s delay, longer than `M.gh`'s 30 s timeout, so the stale 200 never arrives and the case passes with or without the guard - use a delay under 30 s that lands after the commit, then assert the marked threads stay gone after the next refresh.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
