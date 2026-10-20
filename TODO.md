@@ -4,6 +4,22 @@
 
 ## Todo
 
+- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
+  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
+  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
+  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
+  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
+  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
+  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
+  - Base: main
+  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
+  - Decision: The display is awake and unlocked now (`computer.capabilities()`: capture true, screenLocked false); the Commands-last-in-the-corner check in a real Tern window (`tern plugin link <worktree>/plugin`, open Plotroom, confirm, then relink the main plugin) is done at review with a live display; all other bullets are done and gated at 5e1ee9f.
+  - Decision: Rebased onto main cleanly (bb6f397); gate passed: 541 cases, types clean, bench 3.7 ms, payload 506242 bytes, smoke 22 scenarios. Smoke scenario 20 (a filter toggled and undone keeps the selection steady) failed once with 'HEAD is detached; check out a branch first' and passed on two reruns; cause not investigated. Still open for review: Commands last in the corner in a real Tern window (needs a live display).
+  - Fix: plugin/host/render.luau:1321 - the Inbox's Commands action still sets `primary = true`, but this branch deletes the primary-button restyle in plotroom.css, so with the Inbox open Commands draws as Tern's native solid primary pill instead of matching the bar - set `["end"] = true` instead of `primary = true`, as the queue bar does, and include the Inbox in the live-window Commands-last check.
+  - Fix: plugin/host/render.luau:131-132 - the `issueRow` comment still says rows carry the integration badge, which this branch removed - drop "its integration" from the comment.
+  - Fix: acceptance "Commands still last in the corner in a real Tern window" - still unverified (no live-window evidence) - after the fix, confirm in a linked Tern window (queue and Inbox) and record the evidence in a Decision bullet.
+  - Review attempts: 1
+
 ## In-Progress
 
 ## Blocked
@@ -31,18 +47,6 @@
   - Decision: Rebased onto main (9518d19); README Trust conflict resolved; gate passed: 543 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
 
-- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
-  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
-  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
-  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
-  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
-  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
-  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
-  - Base: main
-  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
-  - Decision: The display is awake and unlocked now (`computer.capabilities()`: capture true, screenLocked false); the Commands-last-in-the-corner check in a real Tern window (`tern plugin link <worktree>/plugin`, open Plotroom, confirm, then relink the main plugin) is done at review with a live display; all other bullets are done and gated at 5e1ee9f.
-  - Decision: Rebased onto main cleanly (bb6f397); gate passed: 541 cases, types clean, bench 3.7 ms, payload 506242 bytes, smoke 22 scenarios. Smoke scenario 20 (a filter toggled and undone keeps the selection steady) failed once with 'HEAD is detached; check out a branch first' and passed on two reruns; cause not investigated. Still open for review: Commands last in the corner in a real Tern window (needs a live display).
-  - Review attempts: 0
 
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
