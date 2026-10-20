@@ -207,22 +207,6 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
-  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
-  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
-  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
-  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
-  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-  - Base: main
-  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
-  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
-  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
-  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
-  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
-  - Fix: rebase onto main - conflicts in README.md (line 55, main's Inbox text) - the implementing agent resolves them on the item branch and reruns the gate before hand-off; while there, make README line 55 and the row hint (`host/settings.luau:333`) say a removed shortcut stays removed, per the Decision. The third code review (df630e1) found no other defect.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -243,6 +227,23 @@
 ## Blocked
 
 ## Review
+
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+  - Base: main
+  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
+  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
+  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
+  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
+  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
+  - Fix: rebase onto main - conflicts in README.md (line 55, main's Inbox text) - the implementing agent resolves them on the item branch and reruns the gate before hand-off; while there, make README line 55 and the row hint (`host/settings.luau:333`) say a removed shortcut stays removed, per the Decision. The third code review (df630e1) found no other defect.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
+  - Review attempts: 0
 
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
