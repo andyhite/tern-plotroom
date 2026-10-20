@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] Interrupt, stop or message the selected item's agent from the command palette.
-  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
-  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
-  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
-  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
-  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
-  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
-
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
   - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
@@ -137,6 +129,16 @@
   - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
   - Base: main
   - Branch: todo/paste-github-jira-url-into-queue-open-co at /Users/andyhite/Code/tern-plotroom.todo/paste-github-jira-url-into-queue-open-co
+
+- [ ] Interrupt, stop or message the selected item's agent from the command palette.
+  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
+  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
+  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
+  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
+  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
+  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
+  - Base: main
+  - Branch: todo/interrupt-stop-message-selected-item-age at /Users/andyhite/Code/tern-plotroom.todo/interrupt-stop-message-selected-item-age
 
 ## Blocked
 
