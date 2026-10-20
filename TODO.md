@@ -174,16 +174,6 @@
 
 ## In-Progress
 
-- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
-  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
-  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
-  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
-  - Two issues noted on one branch: the first wins, as today.
-  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
-  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
-  - Base: main
-  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
-
 - [ ] The queue's error and empty states say what to do next.
   - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
   - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
@@ -282,6 +272,19 @@
   - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
   - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
   - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
+
+- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
+  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
+  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
+  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
+  - Two issues noted on one branch: the first wins, as today.
+  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
+  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
+  - Base: main
+  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
+  - Decision: The preview matches an ok `issues` note in the PR repo's checkout whose branch equals `worktree.prBranch(pr.head, pr.fork)`; of two notes on one branch the lowest `seq` (first noted) wins.
+  - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
+  - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
 
 ## Done
 
