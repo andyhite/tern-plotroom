@@ -159,16 +159,6 @@
   - Base: main
   - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
 
-- [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
-  - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
-  - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
-  - README gives the push command for fork PR worktrees (`git push <fork remote> HEAD:<branch>`), whose local branch name differs from the fork's.
-  - Board dead code goes: `M.detail`, `Row.checking`, `select`'s `refresh` parameter, the never-hit `rel.key` branch, the always-true `showMain`, and the dropped problem argument of `Api.dirty`.
-  - Touch points: `load`, `rows` and `select` in `board.luau`; `prBranch`, `reconcile` and `checkoutPr` in `worktree.luau`; board row ids (`repo\0path`) and `engine.boardId`.
-  - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
-  - Base: main
-  - Branch: todo/worktrees-list-shows-every-repository-wo at /Users/andyhite/Code/tern-plotroom.todo/worktrees-list-shows-every-repository-wo
-
 - [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
   - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
   - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
@@ -308,6 +298,19 @@
   - Decision: The key shape rule (one UTF-8 character, no whitespace) is duplicated in `portable.checkPrompt` rather than passed through `Ok`, because `build`/`parse` take no `Ok`; the model rule is passed as `Ok.modelValid` (= `worktree.validModel`) and checked in `apply`.
   - Decision: `portable.NAME_CAP` is public and Settings uses it: "A name is at most 120 characters."
   - Decision: `plan(doc, existing, reserved)` and `ok.reserved` replace the `portable.reservedKeys` global; `requests.reserve()` returns a fresh table.
+
+- [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
+  - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
+  - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
+  - README gives the push command for fork PR worktrees (`git push <fork remote> HEAD:<branch>`), whose local branch name differs from the fork's.
+  - Board dead code goes: `M.detail`, `Row.checking`, `select`'s `refresh` parameter, the never-hit `rel.key` branch, the always-true `showMain`, and the dropped problem argument of `Api.dirty`.
+  - Touch points: `load`, `rows` and `select` in `board.luau`; `prBranch`, `reconcile` and `checkoutPr` in `worktree.luau`; board row ids (`repo\0path`) and `engine.boardId`.
+  - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
+  - Base: main
+  - Branch: todo/worktrees-list-shows-every-repository-wo at /Users/andyhite/Code/tern-plotroom.todo/worktrees-list-shows-every-repository-wo
+  - Decision: A shared checkout is read once per saved repository with that repository's notes; each row goes to the repository its note names, else to the path's first repository in sorted order. `Entry.repo` carries the note's repository.
+  - Decision: The branch-collision check is in `checkoutPr`, reading `plotroompr`/`plotroomrepo` with one `git config --local --get-regexp`; a note with no repository counts as the current one.
+  - Decision: With `rel.key` gone, a PR's related Jira key no longer fills the issue (`Info.related` is `{ number: number? }`); without `select`'s `refresh`, a finished preview is not re-read on a plain re-select.
 
 ## Done
 
