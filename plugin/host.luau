@@ -181,8 +181,9 @@ local function blockDef(): BlockDef<State>
 			local sha: string? = if item and not issues then item.headSha else nil
 			if note and note.ok and note.path == f.path then
 				local current = if sha then f.head == sha else note.current
-				local moved = note.git == true and (f.head ~= note.head or current ~= note.current)
-				note.git, note.head, note.at = true, f.head, now
+				local switched = note.branch ~= f.branch
+				local moved = note.git == true and (f.head ~= note.head or current ~= note.current or switched)
+				note.git, note.head, note.at, note.branch = true, f.head, now, f.branch
 				if moved then
 					note.current = current
 					if current then
@@ -343,6 +344,8 @@ local function blockDef(): BlockDef<State>
 		-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
 		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
 		if not root or not repo or not path then
+			state.removeFate = "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused."
+			state.cx:render()
 			return
 		end
 		worktree.inventory(root, repo, function(entries, why)
@@ -371,7 +374,12 @@ local function blockDef(): BlockDef<State>
 			return
 		end
 		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
-		if not root or not repo or not path or not branch then
+		if not root or not repo or not path then
+			local why = "Plotroom cannot tell which repository this worktree belongs to; remove it with git."
+			note.refused = why
+			state.noteSeq += 1
+			state.cx:toast("error", "Worktree not removed", why)
+			state.cx:render()
 			return
 		end
 		if preparing[key] then
