@@ -21,22 +21,6 @@
 
 ## Review
 
-- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
-  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
-  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
-  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
-  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
-  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
-  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
-  - Base: main
-  - Branch: todo/agent-chains-never-stop-silently at /Users/andyhite/Code/tern-plotroom.todo/agent-chains-never-stop-silently
-  - Decision: With no Plotroom block on the agent's host, the toast "Next action waits for Plotroom" shows for any result and the next action is kept.
-  - Decision: `active()` counts an unreadable agent list as live, so the 4 s timer keeps running then.
-  - Decision: An issue chain step passes `{target = chain.code}` to `prepareTarget`.
-  - Review attempts: 1
-  - Decision: A module-load `tern.timer(0, …)` calling `flows.ensureSync(cx)` is the only restart path after a reload; `active()` is false with no links, and an unreadable agent list counts as live only when links exist.
-  - Decision: The reload case reloads `window` after seeding an agent; it can't tell the load-time timer from the `window_start` path.
-
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
@@ -351,6 +335,19 @@
   - Decision: In the Agents list, Go to agent, Interrupt, Stop and Message agent all sit in the "Agents" group (`addAgentCommands` takes the group); the queue keeps them in "Saved actions". `plugin.toml` is `0.24.0`.
 
 ## Done
+
+- [x] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
+  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
+  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
+  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
+  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
+  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
+  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
+  - Decision: With no Plotroom block on the agent's host, the toast "Next action waits for Plotroom" shows for any result and the next action is kept.
+  - Decision: `active()` counts an unreadable agent list as live, so the 4 s timer keeps running then.
+  - Decision: An issue chain step passes `{target = chain.code}` to `prepareTarget`.
+  - Decision: A module-load `tern.timer(0, …)` calling `flows.ensureSync(cx)` is the only restart path after a reload; `active()` is false with no links, and an unreadable agent list counts as live only when links exist.
+  - Decision: The reload case reloads `window` after seeding an agent; it can't tell the load-time timer from the `window_start` path.
 
 - [x] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
   - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
