@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
-  - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
-  - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
-  - Cases pinning incidental copy assert behavior instead: Settings section and row ids and hints (`tests/cases/issues.luau` ~1404-1427), sort labels already asserted as toasts (`tests/check.luau` ~371), the acli startup request count (`issues.luau` ~798; count `view` calls), and the full fact order (`issues.luau` ~803; check the one missing fact).
-  - Duplicated fixtures collapse: `issueHost`/`jiraHost` reuse `asks.bk.repo`, `jiraWindow` reuses `issueWindow` with a host parameter, and `queue.luau`'s four clone setups use `cloneScene`.
-  - Test-only: no plugin source changes.
-  - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
-
 - [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
   - The CI checkout step sets `persist-credentials: false`.
   - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
@@ -162,6 +154,16 @@
   - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
   - Base: main
   - Branch: todo/worktrees-list-shows-every-repository-wo at /Users/andyhite/Code/tern-plotroom.todo/worktrees-list-shows-every-repository-wo
+
+- [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
+  - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
+  - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
+  - Cases pinning incidental copy assert behavior instead: Settings section and row ids and hints (`tests/cases/issues.luau` ~1404-1427), sort labels already asserted as toasts (`tests/check.luau` ~371), the acli startup request count (`issues.luau` ~798; count `view` calls), and the full fact order (`issues.luau` ~803; check the one missing fact).
+  - Duplicated fixtures collapse: `issueHost`/`jiraHost` reuse `asks.bk.repo`, `jiraWindow` reuses `issueWindow` with a host parameter, and `queue.luau`'s four clone setups use `cloneScene`.
+  - Test-only: no plugin source changes.
+  - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
+  - Base: main
+  - Branch: todo/close-reopen-ready-draft-account-switch at /Users/andyhite/Code/tern-plotroom.todo/close-reopen-ready-draft-account-switch
 
 ## Blocked
 
