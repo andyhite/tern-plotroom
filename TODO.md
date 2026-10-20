@@ -169,17 +169,6 @@
   - Base: main
   - Branch: todo/ci-tooling-credential-free-checkout-plug at /Users/andyhite/Code/tern-plotroom.todo/ci-tooling-credential-free-checkout-plug
 
-- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
-  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
-  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
-  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
-  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
-  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
-  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
-  - Decided: gh tokens are cached in memory for 60 s per login.
-  - Base: main
-  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
-
 - [ ] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
   - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
   - The two list key handlers in `host.luau` become one helper taking the move, Enter and extra-action functions.
@@ -329,6 +318,21 @@
   - Branch: todo/close-reopen-ready-draft-account-switch at /Users/andyhite/Code/tern-plotroom.todo/close-reopen-ready-draft-account-switch
   - Decision: Close/reopen, ready/draft and account-switch cases live in `tests/cases/flows.luau`.
   - Decision: `issueWindow` takes an optional host (`jiraWindow` = `issueWindow(w, jiraHost)`); `asks`/`asks.bk.repo` moved above `hostScene` in the harness; `cloneScene`/`slowClone` return the scene.
+
+- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
+  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
+  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
+  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
+  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
+  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
+  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
+  - Decided: gh tokens are cached in memory for 60 s per login.
+  - Base: main
+  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
+  - Decision: The token cache is keyed by lowercased login, in memory only, 60 s TTL.
+  - Decision: `tracker.reconcile` is generic (keyed on `.key`/`.updated`); `parsePage(stdout, normalize)` takes `github.normalize` or `github.normalizeIssue`, and `searchAll` takes the normalizer.
+  - Decision: A spawn failing under the kept PATH clears it and re-probes the login shell; same PATH or a failed probe restores the old PATH and reports the spawn error, otherwise it retries once.
+  - Decision: `rerunFailed` goes through `guarded`, which checks the run URL against the repo more strictly.
 
 ## Done
 
