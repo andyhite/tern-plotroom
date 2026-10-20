@@ -127,15 +127,6 @@
 
 ## In-Progress
 
-- [ ] Jira views list up to 1000 items instead of stopping at 100.
-  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
-  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
-  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
-  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
-  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
-  - Base: main
-  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -394,6 +385,17 @@
   - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
   - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
+
+- [ ] Jira views list up to 1000 items instead of stopping at 100.
+  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
+  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
+  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
+  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
+  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
+  - Base: main
+  - Branch: todo/jira-views-list-up-1000-items-instead-st at /Users/andyhite/Code/tern-plotroom.todo/jira-views-list-up-1000-items-instead-st
+  - Decision: Over 100, the search passes `--paginate --limit 1000` and `jira.luau` also cuts the parsed list at 1000; real acli behavior past 100 is untested (only the fake acli).
+  - Decision: Completeness is set in `jira.luau`; `tracker.luau` needed no change. The harness fake acli answers the count call and applies `--limit` unless `--paginate`.
 
 ## Done
 
