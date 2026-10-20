@@ -277,7 +277,7 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 			return fail(superseded)
 		end
 		local jql = "(" .. query .. ") ORDER BY priority DESC, updated DESC"
-		local function search(argv: { string }, count: number?)
+		local function search(argv: { string }, limit: number, count: number?)
 			acli(argv, function(out, problem2)
 				if not out then
 					return finish(nil, noted(problem2))
@@ -298,8 +298,8 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 					end
 					table.insert(issues, issue)
 				end
-				-- Without a count a full page may have more behind it.
-				local complete = if count then count <= M.LIMIT else #issues < PAGE
+				-- A full list is complete only when the count agrees: the count and the search are separate calls.
+				local complete = #found < limit or (#found == count and #found <= M.LIMIT)
 				finish({ issues = issues, total = math.max(count or 0, #issues), complete = complete }, nil)
 			end)
 		end
@@ -314,7 +314,7 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 			if limit > PAGE then
 				table.insert(argv, "--paginate")
 			end
-			search(argv, count)
+			search(argv, limit, count)
 		end)
 	end)
 end

@@ -1431,6 +1431,13 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	local blind = runJira(w, jira, query, nil)
 	eq(#blind.result.issues, 100, "one page")
 	eq(blind.result.complete, false, "a full page without a count may have more")
+	-- a count that disagrees with a full list (an issue created between the two calls) is partial
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "count" then { stdout = "✓ Number of work items in the search: 98\n" } else nil
+	end
+	local stale = runJira(w, jira, query, nil)
+	eq(#stale.result.issues, 100, "the full page")
+	eq(stale.result.complete, false, "a count of 98 under a full page is partial")
 	acli.override = nil
 	-- the site is read once per sign-in
 	eq(acliCount(acli, "auth"), 1, "the site is asked for once")

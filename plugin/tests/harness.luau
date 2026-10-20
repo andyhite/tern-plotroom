@@ -1656,7 +1656,7 @@ local function newGh(w: World): Gh
 end
 M.newGh = newGh
 
-export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | sprints | view | projects | other
+export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | count | sprints | view | projects | other
 export type Acli = {
 	site: string?, -- the Jira site `acli jira auth status` names; nil: signed out, every jira command fails as unauthorized
 	searches: { [string]: { any } }, -- --jql value -> the work items it finds, in the order acli prints them; an unlisted query finds none
