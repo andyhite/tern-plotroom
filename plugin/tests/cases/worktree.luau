@@ -74,7 +74,6 @@ case("worktree.inventory: a checkout saved for two repositories lists each one's
 		dirty = function(_, done)
 			done(false)
 		end,
-		inventoryDirty = worktree.inventoryDirty,
 		removeEntry = worktree.removeEntry,
 	}
 	local b = board.new()
