@@ -287,11 +287,15 @@ local function active(cx: WindowCx): boolean
 	if #plotroomPanes(cx) == 0 then
 		return false
 	end
+	local links = readLinks()
+	if #links == 0 then
+		return false
+	end
 	local states = agentStates(cx)
 	if not states then
 		return true -- unreadable list: keep watching
 	end
-	for _, l in readLinks() do
+	for _, l in links do
 		local s = states[l.agent]
 		if s ~= nil and s ~= "exited" then
 			return true

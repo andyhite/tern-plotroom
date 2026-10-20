@@ -158,8 +158,6 @@ windowCase("window flows: links survive a plugin VM reboot (kv) and the timer st
 	local st = flowHost(w)
 	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
 	seedAgent(w, 50, "idle", 1, "o/r#5")
-	w.advance(10000)
-	eq(#statusEvents(w), 0, "nothing runs before a window event starts the timer")
 	local start: any = w.window.handlers.window_start
 	start(w.cx)
 	w.advance(4100)
@@ -167,6 +165,16 @@ windowCase("window flows: links survive a plugin VM reboot (kv) and the timer st
 	w.window.choose = nil
 	w.click("plotroom://github/agentgo/o/r/5")
 	eq(w.window.focused, 50, "the link focuses the recorded agent")
+end)
+
+windowCase("window flows: a reload with a live linked agent restarts the status timer", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
+	seedAgent(w, 50, "idle", 1, "o/r#5")
+	w.load("window") -- the plugin reloads with the link saved in kv
+	w.advance(4100)
+	eq(#statusEvents(w) >= 1, true, "the load itself started the timer")
 end)
 
 local function announce(w: World, pane: number, text: string?)
@@ -3198,6 +3206,7 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 	local st = flowHost(w)
 	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
 	seedAgent(w, 50, "idle", 1, "o/r#5")
+	announce(w, 1, "2")
 	w.window.handlers.pane_closed({ pane = 9 }, w.cx)
 	eq(#statusEvents(w), 1, "the agent map was sent")
 	local redraws = 0
@@ -3207,7 +3216,7 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 		end
 	end
 	eq(redraws, 1, "the block was redrawn")
-	eq(protocolWarning(w, 1), nil, "and the protocol check ran")
+	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "and the protocol check ran")
 end)
 
 return {}

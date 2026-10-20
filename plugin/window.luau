@@ -1275,6 +1275,13 @@ tern.on("window_start", function(cx: WindowCx)
 	checkProtocol(cx)
 end)
 
+-- A plugin reload fires no lifecycle event (see `arm(0)`): a live linked agent's timer starts again from here.
+tern.timer(0, function(cx: WindowCx?)
+	if cx then
+		flows.ensureSync(cx)
+	end
+end)
+
 tern.on("pane_created", function(_ev: any, cx: WindowCx)
 	flows.ensureSync(cx)
 	checkProtocol(cx)
