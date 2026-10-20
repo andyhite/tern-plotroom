@@ -4,15 +4,6 @@
 
 ## Todo
 
-- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
-  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
-  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
-  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
-  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
-  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
-  - Decided: the inbox marks threads read, never done, through one batched confirm.
-
 - [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
   - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
   - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
@@ -146,6 +137,17 @@
   - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
   - Base: main
   - Branch: todo/after-gh-pr-create-shell-lens-offers-sho at /Users/andyhite/Code/tern-plotroom.todo/after-gh-pr-create-shell-lens-offers-sho
+
+- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
+  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
+  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
+  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
+  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
+  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
+  - Decided: the inbox marks threads read, never done, through one batched confirm.
+  - Base: main
+  - Branch: todo/github-notifications-inbox-lists-what-ne at /Users/andyhite/Code/tern-plotroom.todo/github-notifications-inbox-lists-what-ne
 
 ## Blocked
 
