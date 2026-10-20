@@ -176,8 +176,22 @@ windowCase("window: with no prompts saved, a pull request offers the default pro
 		w.flush()
 		local agent = w.window.agents[i]
 		eq(agent.cwd, if d.worktree == false then s.root else s.target, name .. " runs where its default says: the main checkout or the PR's worktree")
-		has(agent.prompt, "feature", name .. " has its branch filled in")
-		has(agent.prompt, "o/r", name .. " has its repository filled in")
+		local values: { [string]: string } = { number = "5", owner = "o", repo = "r", branch = "feature", base = "main", remote = "origin" }
+		local lines = string.split(agent.prompt, "\n")
+		local function present(line: string, what: string)
+			local want = line:gsub("{(%w+)}", function(k)
+				return values[k]
+			end)
+			eq(table.find(lines, want) ~= nil, true, name .. " has its " .. what .. " line filled in: " .. want)
+		end
+		local textLines = string.split(d.text, "\n")
+		present(textLines[1], "first")
+		for _, line in textLines do
+			local names = line:find("{branch}", 1, true) or line:find("{base}", 1, true) or line:find("{remote}", 1, true)
+			if names and not line:find("{github.user}", 1, true) then
+				present(line, "branch/base/remote")
+			end
+		end
 		lacks(agent.prompt, "{", name .. " has every variable it names filled in")
 	end
 	local labels: { string } = {}
