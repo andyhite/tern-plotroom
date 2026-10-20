@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -23,8 +25,6 @@
   - Fix: plugin/github.luau:538-541 / Decided "cached in memory for 60 s", README Trust "kept in memory up to 60 s" - an expired entry is only skipped, never dropped, so a login no longer used keeps its token in memory for the runtime's life - drop expired entries (on lookup and/or a timer) so no token outlives 60 s, or make README and the decision say "reused for up to 60 s" if that is the intent; also update README.md:104 and the `process.luau` header, which still say the login shell runs once.
   - Fix: rebase onto main - `fdd14e1` (rate-limit pause) adds `M.wait` right after the `pullByHead` account normalization this patch deletes; expect a conflict there and keep the pause guard after normalizing in `M.gh`'s new place.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
