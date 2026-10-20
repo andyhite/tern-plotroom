@@ -17,7 +17,6 @@
   - Decision: Rebased onto main cleanly (bb6f397); gate passed: 541 cases, types clean, bench 3.7 ms, payload 506242 bytes, smoke 22 scenarios. Smoke scenario 20 (a filter toggled and undone keeps the selection steady) failed once with 'HEAD is detached; check out a branch first' and passed on two reruns; cause not investigated. Still open for review: Commands last in the corner in a real Tern window (needs a live display).
   - Fix: plugin/host/render.luau:1321 - the Inbox's Commands action still sets `primary = true`, but this branch deletes the primary-button restyle in plotroom.css, so with the Inbox open Commands draws as Tern's native solid primary pill instead of matching the bar - set `["end"] = true` instead of `primary = true`, as the queue bar does, and include the Inbox in the live-window Commands-last check.
   - Fix: plugin/host/render.luau:131-132 - the `issueRow` comment still says rows carry the integration badge, which this branch removed - drop "its integration" from the comment.
-  - Fix: acceptance "Commands still last in the corner in a real Tern window" - still unverified (no live-window evidence) - after the fix, confirm in a linked Tern window (queue and Inbox) and record the evidence in a Decision bullet.
   - Review attempts: 1
 
 ## In-Progress
