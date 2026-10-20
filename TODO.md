@@ -4,23 +4,6 @@
 
 ## Todo
 
-- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
-  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
-  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
-  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
-  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
-  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
-  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
-  - Base: main
-  - Branch: todo/agent-chains-never-stop-silently at /Users/andyhite/Code/tern-plotroom.todo/agent-chains-never-stop-silently
-  - Decision: With no Plotroom block on the agent's host, the toast "Next action waits for Plotroom" shows for any result and the next action is kept.
-  - Decision: `active()` counts an unreadable agent list as live, so the 4 s timer keeps running then.
-  - Decision: An issue chain step passes `{target = chain.code}` to `prepareTarget`.
-  - Fix: plugin/window.luau:252, 1262-1267 / acceptance "starts again after a plugin reload" - the timer still starts only from `window_start`/`pane_created`, but this file documents that a plugin reload fires no lifecycle event (hence the load-time `arm(0)`), so after a reload a live agent's status stays stale until a pane is created - start it at module load too (a `tern.timer(0, …)` calling `flows.ensureSync(cx)`, like `arm(0)`), with a case that a reload with a live linked agent restarts the timer.
-  - Fix: plugin/flows.luau:286-294 (`active`) - returns true when `cx.agents:list()` is unreadable before looking at links, so with zero links the 4 s timer keeps re-arming although no linked agent exists - return false when `readLinks()` is empty, then treat an unreadable list as live.
-  - Fix: plugin/tests/cases/flows.luau:2991-3000 - `flowHost` announces the matching protocol, so `protocolWarning(w, 1)` is nil whether or not the merged `pane_closed` handler calls `checkProtocol`; the named "one `pane_closed` runs … the protocol check" case proves nothing - make the block announce another protocol before the event and assert the mismatch warning appears.
-  - Review attempts: 1
-
 - [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
   - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
   - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
@@ -96,6 +79,23 @@
   - Fix: plugin/tests/regression.luau:86-94 (`seen-render`) - the row never loads 1000 seen items: keys are `no/r#i` (the picker-id prefix, not the triage key `o/r#i`), entries lack `at` so `triage.validate` rejects the store, and the block keeps the `state.triage` it already read - seed `o/r#i` with `{ seen = "x", at = EPOCH }` and make the block reread the store (e.g. `b.state().triage = nil`) before timing, so the row fails if `listedCount` hashes each item again.
   - Fix: plugin/host/engine.luau:666-669, 719-729 - `identify` now keeps an `auth`/`missing` problem across an integration change, but `headOf`/`helpOf` (and Settings' pause line) label it by the view now shown, so an acli sign-out shown on a GitHub view reads "GitHub CLI not signed in" / "Run gh auth login" (and the reverse), and `save` persists that - record the integration that raised the problem when it is set and label by it in `headOf`, `helpOf` and `paceLine`.
   - Fix: plugin/tests/cases/queue.luau:2286-2306 - the not-found case switches Jira → PR, which base already cleared through `forget`, so it passes without the change and never asserts the title's "the view itself stays paused" - add a same-integration switch (two Jira views, or two GitHub views of one login) that fails on base, and assert re-clicking the failed view sends no search.
+  - Review attempts: 1
+
+- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
+  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
+  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
+  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
+  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
+  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
+  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
+  - Base: main
+  - Branch: todo/agent-chains-never-stop-silently at /Users/andyhite/Code/tern-plotroom.todo/agent-chains-never-stop-silently
+  - Decision: With no Plotroom block on the agent's host, the toast "Next action waits for Plotroom" shows for any result and the next action is kept.
+  - Decision: `active()` counts an unreadable agent list as live, so the 4 s timer keeps running then.
+  - Decision: An issue chain step passes `{target = chain.code}` to `prepareTarget`.
+  - Fix: plugin/window.luau:252, 1262-1267 / acceptance "starts again after a plugin reload" - the timer still starts only from `window_start`/`pane_created`, but this file documents that a plugin reload fires no lifecycle event (hence the load-time `arm(0)`), so after a reload a live agent's status stays stale until a pane is created - start it at module load too (a `tern.timer(0, …)` calling `flows.ensureSync(cx)`, like `arm(0)`), with a case that a reload with a live linked agent restarts the timer.
+  - Fix: plugin/flows.luau:286-294 (`active`) - returns true when `cx.agents:list()` is unreadable before looking at links, so with zero links the 4 s timer keeps re-arming although no linked agent exists - return false when `readLinks()` is empty, then treat an unreadable list as live.
+  - Fix: plugin/tests/cases/flows.luau:2991-3000 - `flowHost` announces the matching protocol, so `protocolWarning(w, 1)` is nil whether or not the merged `pane_closed` handler calls `checkProtocol`; the named "one `pane_closed` runs … the protocol check" case proves nothing - make the block announce another protocol before the event and assert the mismatch warning appears.
   - Review attempts: 1
 
 ## Blocked
