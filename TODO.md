@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
   - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
@@ -19,8 +21,6 @@
   - Fix: plugin/flows.luau:266-272, 321 / acceptance "The count covers the agents the Agents list covers" - `trackWaiting` counts every link in `agent-links` on any host and every link per key, while the Agents list (`statusMap`) covers only hosts with an open Plotroom pane and the newest link per key; an agent on a host with no Plotroom block, or an older chained link of a key whose newest agent is working, is counted, toasted and jumped to though no Agents list shows it waiting - select links as `statusMap` does (per Plotroom pane host via `hostOf`/`hostSame`, first link per key) and track waiting from that set, with a case: a waiting agent on host 2 with only a host-1 block shows no segment.
   - Fix: plugin/flows.luau:313-316 / Decision "toasts … again only after leaving and re-entering `waiting_input`" - with no Plotroom pane `trackWaiting(cx, {}, {})` also clears `waitingSet`, so closing and reopening Plotroom toasts an agent that never stopped waiting - clear only the shown count there and keep the toasted set until a real `agentStates` read shows the agent left `waiting_input`.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
