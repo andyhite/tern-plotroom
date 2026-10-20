@@ -4,10 +4,6 @@
 
 ## Todo
 
-## In-Progress
-
-## Blocked
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -22,8 +18,8 @@
   - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
   - Fix: rebase onto main - conflicts in the protocol lines (main already shipped "24" for Open in Git and "25" for the Inbox) and around `finishAgent` (main's `named` toast change) - the implementing agent resolves them, bumps `RPC_PROTOCOL`, `PROTOCOL`, `asks.protocol` and `plugin.toml` to the next unused number ("26" unless main moved past it), updates the Decision bullet and reruns the gate before hand-off; the third code review (063f5f6) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
@@ -39,8 +35,8 @@
   - Decision: Pasted URLs are found by regex, trailing `.,;:!?)]}` stripped, and the first one `engine.pinView` accepts is used.
   - Decision: A paste skips the shortcut lookup, so pasting a key bound to Move up/down toasts "No item URL pasted" instead of moving.
   - Fix: rebase onto main - conflicts in plugin/host.luau (main's key handling and Inbox scope) - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (a4bc55c) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
@@ -55,8 +51,8 @@
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
   - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
   - Fix: rebase onto main - conflicts in README.md (line 55, main's Inbox text) - the implementing agent resolves them on the item branch and reruns the gate before hand-off; while there, make README line 55 and the row hint (`host/settings.luau:333`) say a removed shortcut stays removed, per the Decision. The third code review (df630e1) found no other defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
@@ -73,8 +69,8 @@
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: rebase onto main - conflicts in the protocol lines (`core.luau`, `window.luau`, `harness.luau`, `plugin.toml`), README (main's Agents-list wording "before the Inbox"), `engine.luau` near `INFO_CAPS` and `harness.luau` `Win`/`newWorld`; main already used protocol "24" and "25" for other rpc changes - the implementing agent resolves the conflicts, bumps all four to the next unused number ("26" unless main moved past it) and updates the Decision bullet, then reruns the gate before hand-off; the third code review (8a6c295) found no other defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
@@ -90,8 +86,8 @@
   - Decision: The unchecked-row count in the confirm is not covered by a test.
   - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
   - Fix: rebase onto main - conflicts in README.md and plugin/host/requests.luau:1821 (main added `labels["wt-git"] = "Open in Git"` on the line that still overrides `wt-cleanup`) - the implementing agent resolves them on the item branch keeping `wt-git` and `wt-remove-finished` and dropping the `wt-cleanup` override (one name), then reruns the gate before hand-off; the third code review (742db44) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
@@ -108,8 +104,8 @@
   - Decision: The lens Copy item sets `href = url` so Tern's built-in `copy` copies it; the unreachable lens `event` handler is removed.
   - Decision: With no Plotroom pane on the lens's host, `showUrl` focuses the lens pane (`cx.layout:focus(from)`) before launching; the case asserts the launch `cwd`, since the harness doesn't record focus.
   - Fix: plugin/host/lens.luau:28-31 / acceptance "Output without a PR URL (a failed or cancelled create) shows the raw output" - `finish` ignores the exit status, and gh's common failure (`a pull request for branch … already exists:` plus the existing PR's URL, exit 1) gets the lens view for the old PR and hides gh's error - clear `state.url` when `status ~= 0`, and add a status-1 already-exists transcript to the lens case.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
   - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
@@ -126,8 +122,8 @@
   - Decision: `trackWaiting` takes only the links `statusMap` covers (per Plotroom pane: its host, newest link per key); with no Plotroom pane it clears the shown count but keeps the toasted set, and a membership change (not just size) counts as changed.
   - Decision: The toasted set keeps an already-toasted agent that still reports `waiting_input` when it drops out of the covered set, so it never toasts again on return; uncovered waiting agents that were never toasted are not marked.
   - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (b1ba564) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
@@ -148,8 +144,8 @@
   - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (3a0ef66/c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so `pr-merge`/`pr-approve`/`pr-request-changes`/`pr-update-branch` ship under main's number and a mixed pair answers "does not know that command" with no mismatch warning - the implementing agent rebases onto main, bumps all four to the next unused number ("25" unless main moved past it; other queued items also target it), updates the Decision bullet and reruns the gate before hand-off.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
@@ -168,8 +164,8 @@
   - Decision: A spawn failing under the kept PATH re-probes the login shell with the kept PATH left in place (`recover(cb, true)` skips its cached shortcut); a spawn started meanwhile still runs under the kept PATH. A failed probe or the same PATH reports the spawn's error; a new PATH retries once.
   - Decision: Each cached token gets a 60 s `tern.timer` that drops it.
   - Fix: rebase onto main - conflicts in README.md - the implementing agent resolves them on the item branch and reruns the gate on the rebased commit before hand-off; the third code review (82bd07d) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
@@ -186,8 +182,8 @@
   - Decision: A note with no `repo` gives the confirm "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused." and `d` toasts "Worktree not removed"; `applyScans` takes git's branch on a path-equal match and counts a switch as moved.
   - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
   - Fix: rebase onto main - conflicts in README.md, plugin/host/core.luau and plugin/tests/cases/mutation.luau (main's Open in Git and other landings) - resolve on the item branch and rerun the gate on the rebased commit; the third code review (5566e09) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
@@ -205,8 +201,8 @@
   - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
   - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
   - Fix: rebase onto main - conflicts in README.md and plugin/tests/cases/queue.luau (main's queue error/empty states change) - resolve on the item branch and rerun the gate on the rebased commit; the third code review (27b868b) found no blocking defect.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
   - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
@@ -223,8 +219,8 @@
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
   - Decision: In the Agents list, Go to agent, Interrupt, Stop and Message agent all sit in the "Agents" group (`addAgentCommands` takes the group); the queue keeps them in "Saved actions". `plugin.toml` is `0.24.0`.
   - Fix: plugin/host/core.luau:601, plugin/window.luau:35, plugin/tests/harness.luau:3044, plugin/plugin.toml:4 - main (c6d64d9) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so the new `menu` shape and Agents-list palette rows ship under main's number with no mismatch warning - rebase onto main and bump all four to the next unused number ("25" unless main moved past it); update the Decision bullet.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
@@ -244,8 +240,8 @@
   - Decision: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: plugin/host/core.luau:611, plugin/window.luau:35, plugin/tests/harness.luau:3063, plugin/plugin.toml:4 - main (c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so the new `?k=` link format ships under main's number and a mixed host/window pair sees no mismatch (every action link "malformed"; an issue Open would send the token to GitHub/Jira) - rebase onto main and bump all four to the next unused number ("25" unless main moved past it); update the Decision bullet.
   - Fix: plugin/host/core.luau:606, render.luau:388,1074, engine.luau:1887,1904 (main's Open in Git) - after the rebase `core.GIT_LINK` (`plotroom://worktrees/git`) is rendered and opened untokened, so a description link can open Tern's Git view and the README Trust claim "every action link … carries a random token" is false - token it (`core.withToken(core.GIT_LINK)`), pass the full link to `flows.openGit`, name Open in Git in the README Trust list, and switch main's `checks.luau:651,653` / `flows.luau:2192,2195` assertions to tokened links; keep `core.withToken` on `worktrees/open/<n>` when resolving the `boardAct`/`boardPreview` conflicts.
-  - Review attempts: 3
-  - Blocked: changes needed after 3 reviews since last unblock
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Review attempts: 0
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
   - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
@@ -256,7 +252,12 @@
   - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
   - Base: main
   - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
-  - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
+  - Decision: The display is awake and unlocked now (`computer.capabilities()`: capture true, screenLocked false); the Commands-last-in-the-corner check in a real Tern window (`tern plugin link <worktree>/plugin`, open Plotroom, confirm, then relink the main plugin) is done at review with a live display; all other bullets are done and gated at 5e1ee9f.
+  - Review attempts: 0
+
+## In-Progress
+
+## Blocked
 
 ## Review
 
