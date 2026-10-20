@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -20,8 +22,6 @@
   - Fix: rebase onto main - conflicts in README.md, plugin/tests/harness.luau and plugin/window.luau (main changed `takeChain`/`recordAgent`, the agents fake and window link handling) - resolve on the item branch and run the gate on the rebased commit before hand-off.
   - Fix: README.md:106 (Trust) - says Carly receives "only what the Tell Carly when it finishes toggle sends … and, when asked, the `plotroom_agents` list", but `plotroom_agents` is registered whenever `tern.carly` exists, independent of the toggle; the item key is also sent as `abc#ABC-12`, not a bare Jira key - state that the message comes from the toggle and that Carly can always read `plotroom_agents`, with the key as sent.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
