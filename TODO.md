@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
-  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
-  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
-  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
-  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
-  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
-
 - [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
   - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
   - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
@@ -231,6 +223,16 @@
   - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
   - Base: main
   - Branch: todo/agent-chains-never-stop-silently at /Users/andyhite/Code/tern-plotroom.todo/agent-chains-never-stop-silently
+
+- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+  - Base: main
+  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
 
 ## Review
 
