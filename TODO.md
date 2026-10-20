@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] Every action I can save also exports, imports and runs.
-  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
-  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
-  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
-  - `portable` takes the reserved keys as a parameter instead of a module global.
-  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
-  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
-
 - [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
   - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
   - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
@@ -177,6 +169,16 @@
   - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
   - Base: main
   - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
+
+- [ ] Every action I can save also exports, imports and runs.
+  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
+  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
+  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
+  - `portable` takes the reserved keys as a parameter instead of a module global.
+  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
+  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
+  - Base: main
+  - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
 
 ## Blocked
 
