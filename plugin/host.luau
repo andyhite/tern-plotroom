@@ -755,7 +755,7 @@ local function blockDef(): BlockDef<State>
 
 			if state.boardOn then
 				-- The Worktrees board: Enter opens a row; cleanup and removal are the keys bound to them.
-				if state.boardRemoving then
+				if state.boardRemoving or state.boardFinished then
 					if name == "enter" or name == "escape" then
 						engine.boardAct(state, "wt-cancel-remove")
 					elseif plain and k == "d" then

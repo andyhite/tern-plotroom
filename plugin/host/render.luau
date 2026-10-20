@@ -1126,7 +1126,8 @@ local function boardProps(state: State, props: { [string]: any })
 		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
 		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh"), disabled = if state.boardBusy then "Reading…" else nil },
 		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
-		{ id = "wt-cleanup", label = "Find cleanup", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
+		{ id = "wt-cleanup", label = "Find finished worktrees", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
+		{ id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
 		{ id = "wt-remove", label = "Remove", keys = keys.caps(map, "wt-remove"), ["end"] = true, disabled = if removable then nil else "The main, locked or missing worktrees are not removed here" },
 	}
 	props.actions = keyed(actions)
@@ -1525,6 +1526,25 @@ local function boardConfirm(state: State): Node
 	return removeOverlay("Remove this worktree?", body, facts, row and engine.boardOpen(state)[row.path], "wt-cancel-remove", "wt-confirm-remove")
 end
 
+-- The modal that asks once before every finished worktree is removed: only the rows Find finished worktrees marked.
+local function finishedConfirm(state: State): Node
+	local items: { any } = {}
+	local ids: { string } = state.boardFinished or {}
+	for _, id in ids do
+		for _, r in engine.boardRows(state) do
+			if r.id == id then
+				table.insert(items, { k = if r.branch then r.branch else board.label(r), v = { ui.span(r.path, "code") } })
+			end
+		end
+	end
+	local n = #items
+	local unchecked = board.unchecked(state.board)
+	local body = "Each worktree's folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses a worktree with uncommitted changes, which is kept; nothing is forced. "
+		.. (if unchecked > 0 then unchecked .. " worktree" .. (if unchecked == 1 then " was" else "s were") .. " not checked yet. " else "")
+		.. "Press d to remove all " .. n .. "; Enter or Esc keeps them."
+	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), nil, "wt-cancel-remove", "wt-confirm-remove")
+end
+
 function M.queueView(state: State): BlockView
 	local layer: { Node } = { M.queuePicker(state) }
 	local removing = state.removing
@@ -1538,8 +1558,8 @@ function M.queueView(state: State): BlockView
 		local body = if state.removeRefusal then state.removeRefusal .. " Enter or Esc closes this."
 			else "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
 		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
-	elseif state.boardOn and state.boardRemoving then
-		table.insert(layer, boardConfirm(state))
+	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
+		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

@@ -230,6 +230,7 @@ export type State = {
 	boardTimer: TimerHandle?, -- the next automatic read of the board's worktree changes, while the board is shown
 	boardWait: boolean?, -- the next preview read of a picked worktree waits out DETAIL_DEBOUNCE_MS, so scrolling does not read every row
 	boardRemoving: string?, -- the board row whose removal is being confirmed
+	boardFinished: { string }?, -- the board rows whose removal is being confirmed together (Remove finished worktrees)
 	boardBusy: boolean, -- an inventory, a changes read, a cleanup check or a removal is running
 	boardAt: number?, -- the previewed row's place in the list: a removed row hands the preview to the row that took its place
 }

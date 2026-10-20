@@ -1958,7 +1958,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	end
 	if state.boardOn then
 		local row = engine.boardSelected(state)
-		labels["wt-open"], labels["wt-remove"], labels["wt-cleanup"], labels["wt-git"] = "Open worktree tab", "Remove worktree…", "Look for finished worktrees", "Open in Git"
+		labels["wt-open"], labels["wt-remove"], labels["wt-remove-finished"], labels["wt-git"] = "Open worktree tab", "Remove worktree…", "Remove finished worktrees…", "Open in Git"
 		if row then
 			if not row.missing then
 				add("wt-open", "Worktree")
@@ -1969,6 +1969,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			end
 		end
 		add("wt-cleanup", "Worktree")
+		add("wt-remove-finished", "Worktree")
 		add("refresh", "Filter & Sort")
 		views()
 		add("settings", "Configuration")

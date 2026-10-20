@@ -1941,25 +1941,51 @@ function M.boardAct(state: State, act: string): boolean
 		elseif row and not row.main and not row.locked and not row.missing then
 			state.boardRemoving = row.id
 		end
+	elseif act == "wt-remove-finished" then
+		if state.boardBusy then
+			state.cx:toast("info", "Still reading", "Remove them once the read has finished.")
+		else
+			local ids: { string } = {}
+			for _, r in board.finished(state.board) do
+				table.insert(ids, r.id)
+			end
+			if #ids == 0 then
+				state.cx:toast("info", "No finished worktrees", "Run Find finished worktrees first; it marks the merged and closed ones.")
+			else
+				state.boardFinished = ids
+			end
+		end
 	elseif act == "wt-cancel-remove" then
 		state.boardRemoving = nil
+		state.boardFinished = nil
 	elseif act == "wt-confirm-remove" then
-		local id = state.boardRemoving
-		state.boardRemoving = nil
-		if id and not state.boardBusy then
+		local id, ids = state.boardRemoving, state.boardFinished
+		state.boardRemoving, state.boardFinished = nil, nil
+		local function landed()
+			M.boardEnsure(state)
+			for _, s in running do
+				s.scanned = nil -- every block reads its notes from git again
+				s.noteSeq += 1
+				if s ~= state and M.alive(s) then
+					s.cx:render()
+				end
+			end
+			state.cx:render()
+		end
+		if ids and not state.boardBusy then
+			state.boardBusy = true
+			board.removeFinished(state.board, M.boardApi(state), ids, live, function(removed: number, kept: number)
+				state.boardBusy = false
+				state.cx:toast(if removed > 0 then "success" else "error", "Removed " .. removed .. ", kept " .. kept, if kept > 0 then "Kept worktrees have changes or could not be removed; nothing is forced" else nil)
+				landed()
+			end)
+			state.cx:render()
+		elseif id and not state.boardBusy then
 			state.boardBusy = true
 			board.remove(state.board, M.boardApi(state), id, live, function(ok: boolean, message: string)
 				state.boardBusy = false
 				state.cx:toast(if ok then "success" else "error", if ok then "Worktree removed" else "Worktree not removed", message)
-				M.boardEnsure(state)
-				for _, s in running do
-					s.scanned = nil -- every block reads its notes from git again
-					s.noteSeq += 1
-					if s ~= state and M.alive(s) then
-						s.cx:render()
-					end
-				end
-				state.cx:render()
+				landed()
 			end)
 			state.cx:render()
 		end

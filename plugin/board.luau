@@ -354,6 +354,46 @@ function M.fate(row: { branch: string?, key: string?, number: number?, inferred:
 	return "Its branch is deleted too only if git confirms its commits are saved elsewhere; otherwise it is kept."
 end
 
+-- The rows Find finished worktrees marked merged or closed and that can be removed at all, in list order.
+function M.finished(board: Board): { Row }
+	local out: { Row } = {}
+	for _, r in board.rows do
+		if (r.candidate == "merged" or r.candidate == "closed") and not r.main and not r.locked and not r.missing then
+			table.insert(out, r)
+		end
+	end
+	table.sort(out, order)
+	return out
+end
+
+-- Rows Find finished worktrees has not checked yet (those it could check at all): the confirm says how many.
+function M.unchecked(board: Board): number
+	local n = 0
+	for _, r in board.rows do
+		if not r.main and not r.locked and not r.missing and (r.key ~= nil or r.number ~= nil) and r.inferred ~= true and r.candidateChecked ~= true then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- Removes `ids` one at a time through `remove` (never forced): a refused row stays. done(removed, kept).
+function M.removeFinished(board: Board, api: Api, ids: { string }, live: () -> boolean, done: (removed: number, kept: number) -> ())
+	local removed = 0
+	local function step(i: number)
+		if i > #ids then
+			return done(removed, #ids - removed)
+		end
+		M.remove(board, api, ids[i], live, function(ok)
+			if ok then
+				removed += 1
+			end
+			step(i + 1)
+		end)
+	end
+	step(1)
+end
+
 -- The visible name: the folder's own name, which is what the user called the worktree. Branch, repository and path are
 -- secondary facts (`M.facts`).
 function M.label(row: Row): string
