@@ -8,19 +8,6 @@
 
 ## Blocked
 
-- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
-  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
-  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
-  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
-  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
-  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
-  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
-  - Base: main
-  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
-  - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
-
-## Review
-
 - [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
   - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
   - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
@@ -35,9 +22,25 @@
   - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
   - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
-  - Review attempts: 2
   - Decision: `agentHref` tokens every agent verb (`agentgo`, `agentint`, `agentstop`, `agentmsg`) through `core.withToken`; rebased onto main keeping its `AGENT_CMD` handling with the full tokened href check.
   - Decision: `plugin.toml` is `0.24.0`, matching protocol "24".
+  - Fix: plugin/host/core.luau:611, plugin/window.luau:35, plugin/tests/harness.luau:3063, plugin/plugin.toml:4 - main (c6d64d9, Open in Git) already ships protocol "24"/`0.24.0`; this branch's identical 23→24 bump merges silently, so the new `?k=` link format ships under main's number and a mixed host/window pair sees no mismatch (every action link "malformed"; an issue Open would send the token to GitHub/Jira) - rebase onto main and bump all four to the next unused number ("25" unless main moved past it); update the Decision bullet.
+  - Fix: plugin/host/core.luau:606, render.luau:388,1074, engine.luau:1887,1904 (main's Open in Git) - after the rebase `core.GIT_LINK` (`plotroom://worktrees/git`) is rendered and opened untokened, so a description link can open Tern's Git view and the README Trust claim "every action link … carries a random token" is false - token it (`core.withToken(core.GIT_LINK)`), pass the full link to `flows.openGit`, name Open in Git in the README Trust list, and switch main's `checks.luau:651,653` / `flows.luau:2192,2195` assertions to tokened links; keep `core.withToken` on `worktrees/open/<n>` when resolving the `boardAct`/`boardPreview` conflicts.
+  - Review attempts: 3
+  - Blocked: changes needed after 3 reviews since last unblock
+
+- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
+  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
+  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
+  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
+  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
+  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
+  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
+  - Base: main
+  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
+  - Blocked: Commands-last-in-the-corner needs a real Tern window check; the display was asleep and locked (`computer.capabilities()`: capture false, screenLocked true). All other bullets are done and gated at 5e1ee9f. To check: `tern plugin link <worktree>/plugin`, open Plotroom, confirm Commands is last in the action-bar corner, then `tern plugin link /Users/andyhite/Code/tern-plotroom/plugin`.
+
+## Review
 
 - [ ] The queue's error and empty states say what to do next.
   - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
