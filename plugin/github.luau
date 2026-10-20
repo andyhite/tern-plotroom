@@ -783,6 +783,13 @@ local function searchAll(
 	local function finish(cut: boolean)
 		done(all, total, not cut and loaded >= total and total <= CAP, nil, spent)
 	end
+	local wait = M.wait(os.time(), account)
+	if wait > 0 then
+		tern.timer(0, function()
+			done(nil, 0, false, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }, 0)
+		end)
+		return
+	end
 	local function fetch(after: string?, page: number)
 		if not shouldContinue() then
 			return done(nil, 0, false, superseded, spent)
@@ -1169,6 +1176,13 @@ export type HeadPr = { number: number, title: string, state: string, url: string
 function M.pullByHead(repo: string, branch: string, account: string?, done: (HeadPr?, Problem?) -> ())
 	if account == "" then
 		account = nil
+	end
+	local wait = M.wait(os.time(), account)
+	if wait > 0 then
+		tern.timer(0, function()
+			done(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
+		end)
+		return
 	end
 	-- `--head=` keeps a branch that starts with a dash from being read as a flag.
 	M.gh({ "pr", "list", "--repo", repo, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url,isCrossRepository" }, function(out, problem)

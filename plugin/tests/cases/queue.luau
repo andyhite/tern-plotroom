@@ -2271,6 +2271,22 @@ case("host: view group-by emits headers", function(w: World)
 	same(pickerOf(plain).order, { "no_2fb_231", "no_2fa_232", "no_2fb_233" }, "without a group-by the order is the PRs alone, with no header")
 end)
 
+case("host: Settings keeps the refresh pace while a refresh runs", function(w: World)
+	local s = hostScene(w, 3)
+	local slow = false
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and slow then
+			return { delay = 5000, stdout = jsonEncode({ total = 3, next = NULL, cost = 1, items = s.gh.items.octocat }) }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	slow = true
+	b.typeText("r")
+	goToSettings(b, "connection")
+	has(rowIn(b, "refresh").hint, "Auto-refresh every", "the pace shows while the refresh is still running")
+end)
+
 case("host: a rate limit holds every refresh, the manual one included, until it resets", function(w: World)
 	local s = hostScene(w, 3)
 	local limited = true

@@ -477,6 +477,25 @@ case("github.checks: a repeated cursor stops silently with what arrived", functi
 	yes(#out.runs > 0, "runs")
 end)
 
+case("github.search and pullByHead: a paused quota sends nothing", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	github.record({ remaining = 0, reset = w.seconds() + 60, limit = 30 }, w.seconds(), nil)
+	local out = runSearch(w, github, nil)
+	eq(out.problem.kind, "rate-limit", "the first search page is refused")
+	eq(out.result, nil, "no result")
+	local pr: any = nil
+	local pulled = 0
+	github.pullByHead("o/r", "feature", nil, function(found, problem)
+		pulled += 1
+		pr = problem
+	end)
+	w.flush()
+	eq(pulled, 1, "pullByHead answers once")
+	eq(pr.kind, "rate-limit", "pullByHead is refused")
+	eq(#gh.requests, 0, "no gh was spawned")
+end)
+
 case("github.checks: a paused quota or an unusable account sends nothing, and cancellation wins everywhere", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)

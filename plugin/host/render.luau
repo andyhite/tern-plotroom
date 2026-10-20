@@ -37,7 +37,7 @@ function M.paceLine(state: State): string?
 	local wait = waitOf(state)
 	if wait > 0 then
 		return "Paused by GitHub rate limit until " .. os.date("%H:%M:%S", now + wait)
-	elseif state.interval and state.nextAt and state.timer then
+	elseif state.interval and state.nextAt then
 		return "Auto-refresh every " .. duration(state.interval / 1000) .. ", next at " .. os.date("%H:%M", state.nextAt) .. "."
 	end
 	return nil
