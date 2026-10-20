@@ -1111,7 +1111,6 @@ end
 function M.boardApi(state: State): any
 	return {
 		inventory = worktree.inventory,
-		inventoryDirty = worktree.inventoryDirty,
 		removeEntry = worktree.removeEntry,
 		dirty = function(path: string, done: (boolean?) -> ())
 			for _, r in state.board.rows do
@@ -1721,6 +1720,7 @@ function M.noteWorktree(state: State, key: string, kind: string, r: Report?, pro
 		dirty = if r then r.dirty else nil,
 		ahead = if r then r.ahead else nil,
 		root = if r then r.root else nil,
+		repo = if r then r.repo else nil,
 		path = if r then r.path else nil,
 		branch = if r then r.branch else nil,
 		ref = if r then r.ref else nil,

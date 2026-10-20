@@ -77,7 +77,7 @@ end
 -- (the host half's read, which has no window context to report) answers { ok, scan?, problem? }.
 -- The local-git reads and writes of the worktree inventory and draft PRs likewise answer { ok, data?, problem? }
 -- (`data` is what the call returned: entries, a Draft, or { pushed = true } / { branch = <Removal's sentence> }):
---   { op = "inventory" }   { op = "inventoryDirty", path, branch? }   { op = "removeEntry", path, branch? }
+--   { op = "inventory" }   { op = "removeEntry", path, branch? }
 --   { op = "draft", path, base }   { op = "push", draft = <a Draft as "draft" answered it> }
 -- A second `done` writes duplicate.json.
 function M.run(cx: WindowCx)
@@ -100,7 +100,7 @@ function M.run(cx: WindowCx)
 			or (request.op == "branches" and type(request.repo) == "string")
 			or (request.op == "scan" and wants ~= nil)
 			or (request.op == "inventory" and type(request.repo) == "string")
-			or ((request.op == "inventoryDirty" or request.op == "removeEntry") and type(request.repo) == "string" and type(request.path) == "string" and (request.branch == nil or type(request.branch) == "string"))
+			or (request.op == "removeEntry" and type(request.repo) == "string" and type(request.path) == "string" and (request.branch == nil or type(request.branch) == "string"))
 			or (request.op == "draft" and type(request.repo) == "string" and type(request.path) == "string" and type(request.base) == "string")
 			or (request.op == "push" and type(request.draft) == "table")
 		)
@@ -159,10 +159,6 @@ function M.run(cx: WindowCx)
 			elseif op == "inventory" then
 				worktree.inventory(request.checkout, request.repo, function(entries, problem)
 					answered(if entries then tern.json.array(entries) else nil, problem)
-				end)
-			elseif op == "inventoryDirty" then
-				worktree.inventoryDirty(request.checkout, request.repo, request.path, request.branch, function(dirty, problem)
-					answered({ dirty = dirty }, problem)
 				end)
 			elseif op == "removeEntry" then
 				worktree.removeEntry(request.checkout, request.repo, request.path, request.branch, function(removal, problem, dirty)

@@ -49,14 +49,12 @@ local function fake(inv: { [string]: { board.Entry } }): Fake
 			busy -= 1
 			done(f.dirty[path] == true)
 		end,
-		inventoryDirty = function(_, _, path, _, done)
-			enter("dirty:" .. path)
-			busy -= 1
-			done(f.dirty[path] == true, nil)
-		end,
 		removeEntry = function(_, _, path, _, done)
 			enter("rm:" .. path)
 			busy -= 1
+			if f.dirty[path] then
+				return done(nil, "It has uncommitted changes; commit, stash or remove it yourself.", true)
+			end
 			table.insert(f.removed, path)
 			done({ branch = "deleted" }, nil, nil)
 		end,
@@ -123,14 +121,19 @@ function M.run()
 		assert(not ok and row(p).refused ~= nil)
 	end
 	assert(#f.removed == 0)
-	-- dirty is re-read right before removal
+	-- git's own refusal of changes comes back from removeEntry, and marks the row dirty
 	f.dirty["/w1"] = true
-	local before = #f.calls
 	local ok = removeOf(b, f, row("/w1").id)
-	assert(not ok and f.calls[before + 1] == "dirty:/w1" and #f.removed == 0 and row("/w1").dirty == true)
+	assert(not ok and f.calls[#f.calls] == "rm:/w1" and #f.removed == 0 and row("/w1").dirty == true)
 	f.dirty["/w1"] = false
 	local ok2 = removeOf(b, f, row("/w1").id)
 	assert(ok2 and #f.removed == 1 and #b.rows == 5)
+	-- the confirm's branch sentence follows the row's facts
+	assert(board.fate({ branch = nil } :: board.Row):find("no branch"))
+	assert(board.fate({ branch = "b", key = "#1" } :: board.Row):find("only if git confirms"))
+	assert(board.fate({ branch = "b", number = 3 } :: board.Row):find("only if git confirms"))
+	assert(board.fate({ branch = "b", number = 3, inferred = true } :: board.Row):find("is kept"))
+	assert(board.fate({ branch = "b" } :: board.Row):find("is kept"))
 	assert(not removeOf(b, f, "gone"))
 
 	-- reload keeps dirty info for rows still present
@@ -235,7 +238,7 @@ function M.run()
 	end, function()
 		gone = true
 	end)
-	assert(not gone and #f5.removed == 0)
+	assert(not gone) -- a stale answer is dropped
 	-- a newer load supersedes an older one
 	local pending: (() -> ())? = nil
 	local slow = fake({})

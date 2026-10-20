@@ -199,6 +199,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				local summary = worktree.describe(r)
 				noteWorktree(state, key, "prs", {
 					root = r.root,
+					repo = repo,
 					path = r.path,
 					branch = r.branch,
 					ref = r.ref,
@@ -404,6 +405,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				local summary = worktree.describeIssue(r)
 				noteWorktree(state, key, "issues", {
 					root = r.root,
+					repo = code,
 					path = r.path,
 					branch = r.branch,
 					ref = r.ref,

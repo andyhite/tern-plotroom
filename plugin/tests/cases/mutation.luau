@@ -609,37 +609,6 @@ case("worktree.removeEntry: a dirty worktree is never forced, a clean one goes w
 	eq(countLog(g, "branch -D"), 0, "and none was ever forced")
 end)
 
-case("worktree.inventoryDirty: re-reads git's list for the path and branch before reading its status", function(w: World)
-	local worktree = w.load("worktree") :: Worktree
-	local g = asks.bk.inventoryRepo(w)
-	local function dirty(path: string, branch: string?): any
-		return asks.bk.pack(w, function(done)
-			worktree.inventoryDirty("/work/r", "o/r", path, branch, done)
-		end)
-	end
-	local clean = dirty("/wt/pr5", "feature")
-	eq(clean[1], false, "clean")
-	eq(clean[2], nil, "no problem")
-	eq(countLog(g, "status --porcelain=v2 --branch --untracked-files=normal"), 1, "status read once")
-	g.dirty["/wt/pr5"] = "?? new.txt\n"
-	eq(dirty("/wt/pr5", "feature")[1], true, "dirty")
-	local marks = countLog(g, "status")
-	has(dirty("/work/r", "main")[2], "main checkout", "the main checkout is refused")
-	has(dirty("/wt/pr5", "changed")[2], "changed", "another branch than remembered is refused")
-	has(dirty("/wt/gone", "gn")[2], "gone", "a missing folder is reported")
-	eq(countLog(g, "status"), marks, "none of them read a status")
-	for i, t in g.worktrees do
-		if t.path == "/wt/pr5" then
-			table.remove(g.worktrees, i)
-			break
-		end
-	end
-	local away = dirty("/wt/pr5", "feature")
-	eq(away[1], nil, "a worktree git no longer lists has no answer")
-	has(away[2], "not a worktree", "problem")
-	eq(countLog(g, "status"), marks, "and no status was read")
-end)
-
 case("worktree.status: porcelain v2 header lines are never changes, an ahead count needs an upstream, and a status git could not read is unknown", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.inventoryRepo(w)
@@ -666,7 +635,6 @@ case("worktree.status: porcelain v2 header lines are never changes, an ahead cou
 	eq(parsed.dirty, false, "headers only: clean")
 	eq(parsed.ahead, 2, "the behind count is not used")
 end)
-
 case("worktree.draftPreview: reads the branch and its commits over the base fetched read-only, writing nothing but its tracking ref", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.drafted(w)

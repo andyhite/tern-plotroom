@@ -1521,7 +1521,7 @@ local function boardConfirm(state: State): Node
 		{ k = "Path", v = if row then { ui.span(row.path, "code") } else nil },
 		{ k = "Branch", v = if row and row.branch then { ui.span(row.branch, "code") } else nil },
 	})
-	local body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it."
+	local body = "Its folder is deleted. " .. (if row then board.fate(row) else "") .. " Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it."
 	return removeOverlay("Remove this worktree?", body, facts, row and engine.boardOpen(state)[row.path], "wt-cancel-remove", "wt-confirm-remove")
 end
 
@@ -1535,7 +1535,7 @@ function M.queueView(state: State): BlockView
 			{ k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil },
 			{ k = "Branch", v = if note.branch then { ui.span(note.branch, "code") } else nil },
 		})
-		local body = "Its folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
+		local body = "Its folder is deleted. Its branch goes too only if Plotroom noted it and git confirms its commits are saved elsewhere; otherwise it is kept. Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
 		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
 	elseif state.boardOn and state.boardRemoving then
 		table.insert(layer, boardConfirm(state))

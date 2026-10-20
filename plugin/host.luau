@@ -159,6 +159,19 @@ local function blockDef(): BlockDef<State>
 			end
 		end
 		local now = os.time()
+		local saved = readCheckouts()
+		-- The repository whose checkout is `root`: the item's own, or for a Jira issue the mapped one saved at `root`.
+		local function repoOf(item: any, root: string): string?
+			if item.tracker == "jira" then
+				for _, code in jiraReposOf(item.repo) do
+					if saved[string.lower(code)] == root then
+						return code
+					end
+				end
+				return nil
+			end
+			return item.repo
+		end
 		for key, f in pick do
 			local item = listed[key]
 			local note = state.notes[key]
@@ -190,6 +203,7 @@ local function blockDef(): BlockDef<State>
 					current = current,
 					dirty = nil,
 					root = f.root,
+					repo = repoOf(item, f.root),
 					path = f.path,
 					branch = f.branch,
 					ref = f.ref,
@@ -336,8 +350,8 @@ local function blockDef(): BlockDef<State>
 		if not key or not note or not note.ok then
 			return
 		end
-		local root, path, branch = note.root, note.path, note.branch
-		if not root or not path or not branch then
+		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
+		if not root or not repo or not path or not branch then
 			return
 		end
 		if preparing[key] then
@@ -345,7 +359,7 @@ local function blockDef(): BlockDef<State>
 		end
 		preparing[key] = true
 		state.cx:toast("info", "Removing the worktree of " .. key .. "…")
-		worktree.remove({ root = root, path = path, branch = branch, ref = note.ref }, function(removal, why, dirty)
+		worktree.removeEntry(root, repo, path, branch, function(removal, why, dirty)
 			preparing[key] = nil
 			if not alive(state) then
 				return

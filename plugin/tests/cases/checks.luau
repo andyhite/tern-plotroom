@@ -708,6 +708,9 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	eq(answerOf(b, "a2").busy, true, "no request for the worktree is served while it is removed")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree remove " .. target,
 		"merge-base --is-ancestor refs/heads/" .. branch .. " " .. ref,
 		"branch -D " .. branch,
@@ -754,6 +757,9 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree remove " .. target,
 		"worktree list --porcelain -z",
 	}, "git was asked once, without --force, and only read the checkout afterwards")
@@ -788,6 +794,9 @@ case("host: removing a worktree whose branch holds commits of its own keeps the 
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree remove " .. target,
 		"merge-base --is-ancestor refs/heads/" .. branch .. " " .. ref,
 		"branch -d " .. branch,
@@ -1916,7 +1925,14 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 	pressCard(b, "remove")
 	b.typeText("d")
 	w.flush()
-	same(logFrom(s.git, mark), { "worktree remove " .. target, "branch -d octocat/12-fix-login", "worktree list --porcelain -z" }, "-d only: no ancestry check, no -D, no ref; then a read of the checkout")
+	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"worktree remove " .. target,
+		"branch -d octocat/12-fix-login",
+		"worktree list --porcelain -z",
+	}, "claimed from git's list first; -d only: no ancestry check, no -D, no ref; then a read of the checkout")
 	eq(cardOf(b), nil, "the card goes")
 	eq(badgeOf(b), nil, "and the row's badge")
 	eq(w.toasts[#w.toasts].sub, "Branch octocat/12-fix-login was kept. The branch 'octocat/12-fix-login' is not fully merged.", "the branch git kept is named")

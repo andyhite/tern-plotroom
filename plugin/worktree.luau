@@ -662,6 +662,18 @@ local function reasonOf(problem: string?): string
 	return if string.find(why, "[%.!%?]$") then why else why .. "."
 end
 
+-- `git worktree remove` without force: git refuses a worktree with changes (`dirty`), and that, like any refusal, goes to
+-- `done(nil, why, dirty)`; `removed` runs once the worktree is gone. The one place a removal's refusal is read.
+local function removeTree(root: string, path: string, done: (Removal?, string?, boolean?) -> (), removed: () -> ())
+	git(root, { "worktree", "remove", path }, REMOVE_MS, function(_, err, _, status)
+		if status ~= 0 then
+			local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
+			return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
+		end
+		removed()
+	end)
+end
+
 -- Removes the worktree of `t`, then its branch, and forces nothing: git itself stops at uncommitted changes (then
 -- nothing is done: done(nil, why, dirty), `dirty` when that was the reason) and `branch -d` at commits merged nowhere.
 -- A pull request's branch goes with `-D` when `merge-base --is-ancestor` says the fetched ref already holds every commit
@@ -688,11 +700,7 @@ function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
 			dropRef("Branch " .. branch .. " was deleted too.")
 		end)
 	end
-	git(t.root, { "worktree", "remove", t.path }, REMOVE_MS, function(_, err, _, status)
-		if status ~= 0 then
-			local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
-			return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
-		end
+	removeTree(t.root, t.path, done, function()
 		if not ref then
 			return dropBranch("-d")
 		end
@@ -847,25 +855,10 @@ local function claim(checkout: string, repo: string, path: string, branch: strin
 	end)
 end
 
--- Whether the worktree at `path` (checked against git's list as `claim` does) has uncommitted changes.
--- done(dirty, problem); dirty nil when git could not tell.
-function M.inventoryDirty(checkout: string, repo: string, path: string, branch: string?, done: (boolean?, string?) -> ())
-	claim(checkout, repo, path, branch, function(e, why)
-		if not e then
-			return done(nil, why)
-		elseif e.missing then
-			return done(nil, "The folder " .. path .. " is gone.")
-		end
-		M.dirty(e.path, function(dirty)
-			done(dirty, nil)
-		end)
-	end)
-end
-
 -- Removes one inventory worktree without force, as `remove` does for an item's: a locked, prunable or missing one, the
 -- main checkout and one that is no longer at `path` on `branch` are refused. Only a branch Plotroom noted (an issue key
 -- or a pull request number, not a guessed one) goes with the worktree, as `remove` does it; any other branch is kept,
--- and a detached worktree has no branch to drop.
+-- and a detached worktree has no branch to drop. Git itself refuses a worktree with changes.
 -- done(removal, problem, dirty).
 function M.removeEntry(checkout: string, repo: string, path: string, branch: string?, done: (Removal?, string?, boolean?) -> ())
 	claim(checkout, repo, path, branch, function(e, why)
@@ -876,20 +869,12 @@ function M.removeEntry(checkout: string, repo: string, path: string, branch: str
 		end
 		local b = e.branch
 		if not b then
-			return git(e.root, { "worktree", "remove", e.path }, REMOVE_MS, function(_, err, _, status)
-				if status ~= 0 then
-					local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
-					return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
-				end
+			return removeTree(e.root, e.path, done, function()
 				done({ branch = "It had no branch." }, nil, nil)
 			end)
 		end
 		if e.key == nil and (e.number == nil or e.inferred == true) then
-			return git(e.root, { "worktree", "remove", e.path }, REMOVE_MS, function(_, err, _, status)
-				if status ~= 0 then
-					local dirty = err ~= nil and string.find(err, "modified or untracked", 1, true) ~= nil
-					return done(nil, if dirty then "It has uncommitted changes; commit, stash or remove it yourself." else reasonOf(err), dirty)
-				end
+			return removeTree(e.root, e.path, done, function()
 				done({ branch = "Branch " .. b .. " was kept." }, nil, nil)
 			end)
 		end

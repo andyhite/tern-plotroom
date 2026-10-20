@@ -1161,8 +1161,8 @@ def sc_remote_host(s: Smoke) -> None:
 
 def sc_inventory(s: Smoke) -> None:
     """worktree.inventory lists the checkout's worktrees as git does (the main one first, never removable), with the pull request Plotroom noted for a
-    branch; inventoryDirty and removeEntry act only on the worktree git still lists at that path and branch: never the main checkout, a locked, prunable
-    or changed one, never one with uncommitted changes (nothing is forced). A clean one goes, its branch with it, and a detached one has none to drop."""
+    branch; removeEntry acts only on the worktree git still lists at that path and branch: never the main checkout, a locked, prunable or changed one,
+    never one with uncommitted changes (git refuses it; nothing is forced). A clean one goes, its branch with it, and a detached one has none to drop."""
     root, key = s.checkout("inv"), "i/nv"
     base = s.tmp / "wts"
     base.mkdir(exist_ok=True)
@@ -1211,12 +1211,7 @@ def sc_inventory(s: Smoke) -> None:
     s.eq("d: folder missing", True, at(d).get("missing"))
     s.eq("the folder a was never touched by listing", True, a.is_dir())
 
-    clean = call("inventoryDirty", path=str(a), branch="plotroom-a")
-    s.eq("clean: ok (problem: %r)" % clean.get("problem"), True, clean.get("ok"))
-    s.eq("clean a", False, (clean.get("data") or {}).get("dirty"))  # type: ignore[union-attr]
     (a / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
-    s.eq("dirty a", True, (call("inventoryDirty", path=str(a), branch="plotroom-a").get("data") or {}).get("dirty"))  # type: ignore[union-attr]
-
     refused("the main checkout", "main checkout", path=str(root), branch="main")
     refused("a branch that changed", "changed", path=str(a), branch="somewhere-else")
     refused("a locked worktree", "locked", path=str(c), branch="locked-c")

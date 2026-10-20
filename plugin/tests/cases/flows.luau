@@ -2662,14 +2662,14 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 	w.flush()
 	eq(w.toasts[#w.toasts].level, "error", "a dirty worktree is refused")
 	eq(w.toasts[#w.toasts].text, "Worktree not removed", "the toast says so")
-	eq(w.toasts[#w.toasts].sub, "The worktree has uncommitted changes.", "and why")
-	eq(countLog(s.git, "worktree remove"), 0, "git was never asked to remove it")
+	eq(w.toasts[#w.toasts].sub, "It has uncommitted changes; commit, stash or remove it yourself.", "and why: git's own refusal")
+	eq(countLog(s.git, "worktree remove /wt/pr5"), 1, "git was asked once, and refused")
 	s.git.dirty["/wt/pr5"] = nil
 	b.typeText("d")
 	b.typeText("d")
 	w.flush()
 	eq(w.toasts[#w.toasts].text, "Worktree removed", "a clean one is removed")
-	eq(countLog(s.git, "worktree remove /wt/pr5"), 1, "by one git command")
+	eq(countLog(s.git, "worktree remove /wt/pr5"), 2, "by one more git command")
 	for _, line in s.git.log do
 		if string.sub(line, 1, 15) == "worktree remove" then
 			lacks(line, "--force", "never forced")

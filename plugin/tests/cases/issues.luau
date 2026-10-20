@@ -1773,6 +1773,9 @@ case("host: an issue with exactly one linked pull request still on its branch is
 	b.typeText("d")
 	w.flush()
 	same(logFrom(s.git, mark), {
+		"worktree list --porcelain -z",
+		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
+		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
 		"worktree remove /wt/plotroom-o_r-issue-12",
 		"merge-base --is-ancestor refs/heads/fix-login refs/plotroom-pr/o/r/pr-45",
 		"branch -D fix-login",

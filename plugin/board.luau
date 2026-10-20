@@ -32,13 +32,6 @@ export type Api = {
 	inventory: (checkout: string, repo: string, done: (entries: { Entry }?, problem: string?) -> ()) -> (),
 	-- Read-only status of a path the last `inventory` listed (the host refuses any other path), for the automatic scan.
 	dirty: (path: string, done: (dirty: boolean?) -> ()) -> (),
-	inventoryDirty: (
-		checkout: string,
-		repo: string,
-		path: string,
-		branch: string?,
-		done: (dirty: boolean?, problem: string?) -> ()
-	) -> (),
 	removeEntry: (
 		checkout: string,
 		repo: string,
@@ -332,32 +325,33 @@ function M.remove(board: Board, api: Api, id: string, live: () -> boolean, done:
 		return refuse("The worktree folder is missing; prune it with git.")
 	end
 	row.refused = nil
-	api.inventoryDirty(row.checkout, row.repo, row.path, row.branch, function(dirty, problem)
+	api.removeEntry(row.checkout, row.repo, row.path, row.branch, function(removal, why, dirty)
 		if not live() then
 			return
 		end
-		if dirty ~= false then
-			row.dirty = dirty
-			return refuse(if dirty then "The worktree has uncommitted changes." else problem or "Could not tell whether the worktree is clean.")
+		if not removal then
+			if dirty then
+				row.dirty = true
+			end
+			return refuse(why or "Could not remove the worktree.")
 		end
-		row.dirty = false
-		api.removeEntry(row.checkout, row.repo, row.path, row.branch, function(removal, why, nowDirty)
-			if not live() then
-				return
-			end
-			if not removal then
-				if nowDirty then
-					row.dirty = true
-				end
-				return refuse(why or "Could not remove the worktree.")
-			end
-			local at = table.find(board.rows, row)
-			if at then
-				table.remove(board.rows, at)
-			end
-			done(true, removal.branch)
-		end)
+		local at = table.find(board.rows, row)
+		if at then
+			table.remove(board.rows, at)
+		end
+		done(true, removal.branch)
 	end)
+end
+
+-- What removing `row` does to its branch, from the facts git listed (as `worktree.removeEntry` decides): only a branch
+-- Plotroom noted goes, and only if git confirms nothing is lost; any other branch is kept; a detached worktree has none.
+function M.fate(row: Row): string
+	if not row.branch then
+		return "It has no branch."
+	elseif row.key == nil and (row.number == nil or row.inferred == true) then
+		return "Plotroom never noted its branch, so the branch is kept."
+	end
+	return "Its branch is deleted too only if git confirms its commits are saved elsewhere; otherwise it is kept."
 end
 
 -- The visible name: the folder's own name, which is what the user called the worktree. Branch, repository and path are
