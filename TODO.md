@@ -6,25 +6,6 @@
 
 ## In-Progress
 
-- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
-  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
-  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
-  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
-  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
-  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
-  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
-  - Decided: gh tokens are cached in memory for 60 s per login.
-  - Base: main
-  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
-  - Decision: The token cache is keyed by lowercased login, in memory only, 60 s TTL.
-  - Decision: `tracker.reconcile` is generic (keyed on `.key`/`.updated`); `parsePage(stdout, normalize)` takes `github.normalize` or `github.normalizeIssue`, and `searchAll` takes the normalizer.
-  - Decision: A spawn failing under the kept PATH clears it and re-probes the login shell; same PATH or a failed probe restores the old PATH and reports the spawn error, otherwise it retries once.
-  - Decision: `rerunFailed` goes through `guarded`, which checks the run URL against the repo more strictly.
-  - Decision: Each cached token gets a 60 s `tern.timer` that drops it; `process.run` keeps the stale PATH when a joined probe fails, and the problem reports the spawn's error when a PATH was kept.
-  - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
-  - Fix: plugin/process.luau:148-154 / acceptance "Refresh keeps the login-shell PATH found earlier" - `run` still sets `recovered = nil` for the whole re-probe, so any spawn entered meanwhile runs under Tern's own PATH, fails, joins the probe and, if the probe fails, is reported `missing` (e.g. the queue's `gh` search becomes a terminal "GitHub CLI not found" while `gh` works under the kept PATH); the new joined-spawn case never checks that spawn's outcome - keep `recovered` in place during the re-probe (let `recover` skip its cached shortcut for this call instead of clearing it), drop the restore, update the Decision bullet's "clears it" wording, and make the joined spawn a `gh` call asserted to start under the kept PATH.
-  - Review attempts: 2
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -323,6 +304,24 @@
   - Decision: A note with no `repo` gives the confirm "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused." and `d` toasts "Worktree not removed"; `applyScans` takes git's branch on a path-equal match and counts a switch as moved.
   - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
   - Review attempts: 2
+
+- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
+  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
+  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
+  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
+  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
+  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
+  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
+  - Decided: gh tokens are cached in memory for 60 s per login.
+  - Base: main
+  - Branch: todo/github-calls-spawn-fewer-processes-githu at /Users/andyhite/Code/tern-plotroom.todo/github-calls-spawn-fewer-processes-githu
+  - Decision: The token cache is keyed by lowercased login, in memory only, 60 s TTL.
+  - Decision: `tracker.reconcile` is generic (keyed on `.key`/`.updated`); `parsePage(stdout, normalize)` takes `github.normalize` or `github.normalizeIssue`, and `searchAll` takes the normalizer.
+  - Decision: `rerunFailed` goes through `guarded`, which checks the run URL against the repo more strictly.
+  - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
+  - Review attempts: 2
+  - Decision: A spawn failing under the kept PATH re-probes the login shell with the kept PATH left in place (`recover(cb, true)` skips its cached shortcut); a spawn started meanwhile still runs under the kept PATH. A failed probe or the same PATH reports the spawn's error; a new PATH retries once.
+  - Decision: Each cached token gets a 60 s `tern.timer` that drops it.
 
 ## Done
 
