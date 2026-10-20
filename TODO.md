@@ -154,6 +154,10 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
+## Blocked
+
+## Review
+
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -170,11 +174,8 @@
   - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
   - Fix: rebase onto main - conflicts in the protocol lines (`core.luau`, `window.luau`, `harness.luau`, `plugin.toml`), README (main's Agents-list wording "before the Inbox"), `engine.luau` near `INFO_CAPS` and `harness.luau` `Win`/`newWorld`; main already used protocol "24" and "25" for other rpc changes - the implementing agent resolves the conflicts, bumps all four to the next unused number ("26" unless main moved past it) and updates the Decision bullet, then reruns the gate before hand-off; the third code review (8a6c295) found no other defect.
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Review attempts: 0
-
-## Blocked
-
-## Review
 
 - [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
   - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
