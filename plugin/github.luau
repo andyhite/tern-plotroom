@@ -1529,13 +1529,16 @@ function M.setPrMerge(repo: string, number: number, method: string, auto: boolea
 		end)
 	end
 	local planned = string.lower(sha)
-	guarded("pr", "number,state,isDraft,headRefOid,url", { "pull" }, repo, tostring(number), account, function(d)
+	guarded("pr", "number,state,isDraft,headRefOid,mergeStateStatus,url", { "pull" }, repo, tostring(number), account, function(d)
 		if field(d, "state") ~= "OPEN" then
 			return "Pull request #" .. number .. " is not open."
 		elseif field(d, "isDraft") ~= false then
 			return "Pull request #" .. number .. " is a draft."
 		elseif string.lower(tostring(field(d, "headRefOid"))) ~= planned then
 			return "Pull request #" .. number .. " was pushed to since it was planned; nothing was merged."
+		elseif auto and (field(d, "mergeStateStatus") == "CLEAN" or field(d, "mergeStateStatus") == "HAS_HOOKS" or field(d, "mergeStateStatus") == "UNSTABLE") then
+			-- gh merges at once in these states instead of waiting for checks.
+			return "Pull request #" .. number .. " can merge now, so gh would merge it without waiting for its checks; nothing was merged."
 		end
 		return nil
 	end, function(_, id)

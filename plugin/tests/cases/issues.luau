@@ -2994,6 +2994,36 @@ case("host mutations: approve and request changes show their comment in full, re
 	eq(#writesOf(seen, "pr review"), 3, "three reviews were sent, no more")
 end)
 
+case("host mutations: auto-merge is not offered when the preview says the PR can merge now, and a commit that finds it so merges nothing", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { headSha = sha("a"), checks = "PENDING" }), searchItem(2, "o/r", EPOCH - 120, { headSha = sha("b"), checks = "PENDING" }) }
+	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array({}) }
+	s.gh.about["o/r#2"] = { mergeable = "MERGEABLE", merge = "UNSTABLE", body = "", reviews = array({}), requested = array({}) }
+	local live: { [string]: any } = { number = 1, state = "OPEN", isDraft = false, headRefOid = sha("a"), mergeStateStatus = "BEHIND", url = "https://github.com/o/r/pull/1" }
+	local seen = asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "gh repo view ", 1, true) then
+			return { stdout = jsonEncode({ squashMergeAllowed = true, mergeCommitAllowed = false, rebaseMergeAllowed = false }) }
+		elseif string.find(line, "gh pr view ", 1, true) then
+			return { stdout = jsonEncode(live) }
+		end
+		return nil
+	end)
+	local b = openQueue(w)
+	w.advance(300)
+	local plan = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true })
+	has(plan.confirm.lines[4], "later push", "the confirm says later pushes by writers are merged")
+	for _, state in { "CLEAN", "HAS_HOOKS", "UNSTABLE" } do
+		live.mergeStateStatus = state
+		has(asks.hx.ask(w, b, { op = "commit", token = plan.token }).problem, "without waiting", state .. " would be merged by gh at once, so it is refused")
+		plan = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true })
+	end
+	eq(#writesOf(seen, "pr merge"), 0, "nothing was merged")
+	b.typeText("j")
+	w.advance(300)
+	eq(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).auto, false, "no auto row while the preview shows it mergeable now")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true }).problem, "cannot merge yet", "and none planned")
+end)
+
 case("host mutations: update branch is offered and planned only while the preview shows the branch behind, and runs gh's default update", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { headSha = sha("a") }), searchItem(2, "o/r", EPOCH - 120, { headSha = sha("b") }) }

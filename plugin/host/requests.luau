@@ -718,6 +718,13 @@ local METHODS: { [string]: string } = {
 	rebase = "Rebase and merge",
 }
 
+-- The preview says the PR can merge now (ready or unstable): `gh pr merge --auto` would merge it at once, not wait for checks.
+local function mergesNow(state: State, item: any): boolean
+	local d = state.details[detailKey(state, item)]
+	local merge = if d and d.about then d.about.merge else nil
+	return merge == "ready" or merge == "unstable"
+end
+
 function M.labelOk(label: any): string?
 	if type(label) ~= "string" or label == "" or #label > 50 or string.find(label, "[%c,]") or string.sub(label, 1, 1) == "-" then
 		return nil
@@ -1002,8 +1009,8 @@ function M.act(state: State, id: string, q: any)
 		local method, auto = q.method, q.auto == true
 		if method ~= nil and (type(method) ~= "string" or not METHODS[method]) then
 			return no("That is not a merge method.")
-		elseif auto and item.checks ~= "pending" then
-			return no("Auto-merge is offered while checks are pending.")
+		elseif auto and (item.checks ~= "pending" or mergesNow(state, item)) then
+			return no("Auto-merge is offered while checks are pending and the pull request cannot merge yet.")
 		end
 		local key, gen = item.key, state.gen
 		-- The methods are read from the repository's settings at both steps: only one it allows is ever planned.
@@ -1024,7 +1031,7 @@ function M.act(state: State, id: string, q: any)
 				for _, m in allowed do
 					table.insert(options, { id = m, label = METHODS[m] })
 				end
-				return reply(state, id, { methods = tern.json.array(options), auto = chosen.checks == "pending" })
+				return reply(state, id, { methods = tern.json.array(options), auto = chosen.checks == "pending" and not mergesNow(state, chosen) })
 			elseif not table.find(allowed, method) then
 				return no("The repository does not allow that merge method.")
 			end
@@ -1040,7 +1047,7 @@ function M.act(state: State, id: string, q: any)
 					target .. ": " .. printable(chosen.title),
 					"Account: @" .. account,
 					"Method: " .. how .. (if auto then " when checks pass" else ""),
-					"Only commit " .. string.sub(sha, 1, 7) .. " is merged; a push since refuses it",
+					if auto then "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass" else "Only commit " .. string.sub(sha, 1, 7) .. " is merged; a push since refuses it",
 					"The branch is kept",
 				},
 			}, function(done)
