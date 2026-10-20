@@ -400,7 +400,6 @@
   - Decision: The link token is four `math.random` 24-bit draws made when the host module loads (`ponytail:` comment); the window strips `?k=<token>` before parsing and compares the full href with the hidden node's.
   - Decision: Tokened: button, saved-action run, worktree, agent, goto, agentgo and the Worktrees list's open link; `show`, `check`, `more`, `repos`, `confirm` and `rpc` links stay untokened.
   - Decision: An unsafe head branch is a `failed` problem from `github.pr`, naming the branch cleaned and cut to 80 bytes.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "23".
   - Review attempts: 1
   - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
   - Decision: `github.pr` cuts the branch to 80 bytes, then cleans it.
