@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
-  - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
-  - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
-  - README gives the push command for fork PR worktrees (`git push <fork remote> HEAD:<branch>`), whose local branch name differs from the fork's.
-  - Board dead code goes: `M.detail`, `Row.checking`, `select`'s `refresh` parameter, the never-hit `rel.key` branch, the always-true `showMain`, and the dropped problem argument of `Api.dirty`.
-  - Touch points: `load`, `rows` and `select` in `board.luau`; `prBranch`, `reconcile` and `checkoutPr` in `worktree.luau`; board row ids (`repo\0path`) and `engine.boardId`.
-  - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
-
 - [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
   - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
   - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
@@ -170,6 +162,16 @@
   - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
   - Base: main
   - Branch: todo/every-action-can-save-also-exports-impor at /Users/andyhite/Code/tern-plotroom.todo/every-action-can-save-also-exports-impor
+
+- [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
+  - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
+  - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
+  - README gives the push command for fork PR worktrees (`git push <fork remote> HEAD:<branch>`), whose local branch name differs from the fork's.
+  - Board dead code goes: `M.detail`, `Row.checking`, `select`'s `refresh` parameter, the never-hit `rel.key` branch, the always-true `showMain`, and the dropped problem argument of `Api.dirty`.
+  - Touch points: `load`, `rows` and `select` in `board.luau`; `prBranch`, `reconcile` and `checkoutPr` in `worktree.luau`; board row ids (`repo\0path`) and `engine.boardId`.
+  - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
+  - Base: main
+  - Branch: todo/worktrees-list-shows-every-repository-wo at /Users/andyhite/Code/tern-plotroom.todo/worktrees-list-shows-every-repository-wo
 
 ## Blocked
 
