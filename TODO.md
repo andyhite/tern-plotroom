@@ -21,18 +21,6 @@
 
 ## Review
 
-- [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
-  - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
-  - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
-  - Cases pinning incidental copy assert behavior instead: Settings section and row ids and hints (`tests/cases/issues.luau` ~1404-1427), sort labels already asserted as toasts (`tests/check.luau` ~371), the acli startup request count (`issues.luau` ~798; count `view` calls), and the full fact order (`issues.luau` ~803; check the one missing fact).
-  - Duplicated fixtures collapse: `issueHost`/`jiraHost` reuse `asks.bk.repo`, `jiraWindow` reuses `issueWindow` with a host parameter, and `queue.luau`'s four clone setups use `cloneScene`.
-  - Test-only: no plugin source changes.
-  - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
-  - Base: main
-  - Branch: todo/close-reopen-ready-draft-account-switch at /Users/andyhite/Code/tern-plotroom.todo/close-reopen-ready-draft-account-switch
-  - Decision: Close/reopen, ready/draft and account-switch cases live in `tests/cases/flows.luau`.
-  - Decision: `issueWindow` takes an optional host (`jiraWindow` = `issueWindow(w, jiraHost)`); `asks`/`asks.bk.repo` moved above `hostScene` in the harness; `cloneScene`/`slowClone` return the scene.
-
 - [ ] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
   - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
   - The two list key handlers in `host.luau` become one helper taking the move, Enter and extra-action functions.
@@ -400,6 +388,16 @@
   - Decision: Rebased onto main: `pullByHead` keeps the `M.wait` pause guard (keyed on `account or ""`) and drops only the account normalization.
 
 ## Done
+
+- [x] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
+  - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
+  - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
+  - Cases pinning incidental copy assert behavior instead: Settings section and row ids and hints (`tests/cases/issues.luau` ~1404-1427), sort labels already asserted as toasts (`tests/check.luau` ~371), the acli startup request count (`issues.luau` ~798; count `view` calls), and the full fact order (`issues.luau` ~803; check the one missing fact).
+  - Duplicated fixtures collapse: `issueHost`/`jiraHost` reuse `asks.bk.repo`, `jiraWindow` reuses `issueWindow` with a host parameter, and `queue.luau`'s four clone setups use `cloneScene`.
+  - Test-only: no plugin source changes.
+  - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
+  - Decision: Close/reopen, ready/draft and account-switch cases live in `tests/cases/flows.luau`.
+  - Decision: `issueWindow` takes an optional host (`jiraWindow` = `issueWindow(w, jiraHost)`); `asks`/`asks.bk.repo` moved above `hostScene` in the harness; `cloneScene`/`slowClone` return the scene.
 
 - [x] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
   - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
