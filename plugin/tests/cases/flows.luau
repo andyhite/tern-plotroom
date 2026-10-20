@@ -1996,6 +1996,7 @@ case("host mutations: a gh account that cannot sign in fails the commit closed: 
 	local p = asks.hx.ask(w, b, { op = "act", name = "assign-me" })
 	eq(p.confirm.lines[2], "Account: @work", "the plan names the view's account")
 	s.gh.tokens["work"] = nil :: any
+	w.advance(61000) -- the token cached by the plan's reads has expired
 	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
 	has(r.problem, "not signed in", "the commit says the account is not signed in")
 	eq(r.ok, nil, "and is no success")
@@ -2003,6 +2004,7 @@ case("host mutations: a gh account that cannot sign in fails the commit closed: 
 	s.gh.tokens.work = "tok-work"
 	local l = asks.hx.ask(w, b, { op = "act", name = "label-add", label = "x" })
 	s.gh.tokens["work"] = nil :: any
+	w.advance(61000)
 	has(asks.hx.ask(w, b, { op = "commit", token = l.token }).problem, "not signed in", "a label edit fails closed the same way")
 	eq(#seen, 0, "still nothing was sent")
 end)

@@ -8,8 +8,8 @@ local tracker = require("./tracker")
 
 local M = {}
 
--- Problem kinds: auth | missing | rate-limit | invalid | not-found | failed (gh, the API or a timeout), account (the
--- saved gh login of the repository cannot be used; nothing was sent) and superseded (the caller cancelled the request).
+-- Problem kinds: auth | missing | rate-limit | invalid | not-found | failed (gh, the API or a timeout) and
+-- superseded (the caller cancelled the request).
 export type Problem = { kind: string, message: string }
 -- status: failure | pending | success | neutral; detail spells it out ("Passed · 3s"); took is the bare duration of a
 -- finished check run, when GitHub gives one.
@@ -359,26 +359,29 @@ function M.normalize(item: any): (Pr?, string?)
 	}, nil
 end
 
--- One page of the search JSON: total, next cursor, points cost, raw item count, PRs.
-function M.parsePage(stdout: string): ({ total: number, next: string?, cost: number, raw: number, prs: { Pr } }?, string?)
+type Page = { total: number, next: string?, cost: number, raw: number, items: { any } }
+
+-- One page of the search JSON: total, next cursor, points cost, raw item count, items as `normalize` makes them (it
+-- rejects an item that is not of the kind searched).
+function M.parsePage(stdout: string, normalize: (any) -> (any?, string?)): (Page?, string?)
 	local ok, data = pcall(tern.json.decode, stdout)
 	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total) ~= "number" then
 		return nil, "gh printed something other than a search result"
 	end
-	local prs: { Pr } = {}
+	local items: { any } = {}
 	for _, item in data.items do
-		local pr, why = M.normalize(item)
-		if not pr then
+		local one, why = normalize(item)
+		if not one then
 			return nil, why
 		end
-		table.insert(prs, pr)
+		table.insert(items, one)
 	end
 	return {
 		total = data.total,
 		next = if type(data.next) == "string" and data.next ~= "" then data.next else nil,
 		cost = if type(data.cost) == "number" and data.cost > 0 then data.cost else 1,
 		raw = #data.items,
-		prs = prs,
+		items = items,
 	}, nil
 end
 
@@ -436,29 +439,6 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 	}, nil
 end
 
--- One page of the issue search JSON: total, next cursor, points cost, raw item count, issues.
-function M.parseIssuePage(stdout: string): ({ total: number, next: string?, cost: number, raw: number, issues: { tracker.Issue } }?, string?)
-	local ok, data = pcall(tern.json.decode, stdout)
-	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total) ~= "number" then
-		return nil, "gh printed something other than a search result"
-	end
-	local issues: { tracker.Issue } = {}
-	for _, item in data.items do
-		local issue, why = M.normalizeIssue(item)
-		if not issue then
-			return nil, why
-		end
-		table.insert(issues, issue)
-	end
-	return {
-		total = data.total,
-		next = if type(data.next) == "string" and data.next ~= "" then data.next else nil,
-		cost = if type(data.cost) == "number" and data.cost > 0 then data.cost else 1,
-		raw = #data.items,
-		issues = issues,
-	}, nil
-end
-
 -- Local search over loaded PRs: whether `pr` matches, and the matched UTF-16
 -- range in its title (nil when the match is elsewhere or the needle is blank).
 function M.match(pr: Pr, needle: string): (boolean, { number }?)
@@ -471,25 +451,6 @@ function M.match(pr: Pr, needle: string): (boolean, { number }?)
 		return true, { input.u16(pr.title, at - 1), input.u16(pr.title, at - 1 + #q) }
 	end
 	return string.find(string.lower("#" .. pr.number .. " " .. pr.author .. " " .. pr.head), q, 1, true) ~= nil, nil
-end
-
--- Deduplicated by identity, newest update first, identity as the tie-break.
-function M.reconcile(prs: { Pr }): { Pr }
-	local seen: { [string]: boolean } = {}
-	local out: { Pr } = {}
-	for _, pr in prs do
-		if not seen[pr.key] then
-			seen[pr.key] = true
-			table.insert(out, pr)
-		end
-	end
-	table.sort(out, function(a, b)
-		if a.updated ~= b.updated then
-			return a.updated > b.updated
-		end
-		return a.key < b.key
-	end)
-	return out
 end
 
 local function firstLines(text: string, n: number): string
@@ -532,30 +493,51 @@ function M.classify(result: ProcessResult, limit: string?): Problem
 	}
 end
 
--- Runs `gh <args>` as `account` (nil = active account); done(stdout, problem, cx,
+local TOKEN_TTL_S = 60
+-- One gh login's token, read with `gh auth token`; memory only, never written anywhere.
+local tokens: { [string]: { token: string, at: number } } = {}
+
+-- Runs `gh <args>` as `account` (nil or "" = active account); done(stdout, problem, cx,
 -- failedStdout). A failed run still passes its stdout (with `--include`, the
--- response headers) as the 4th value. An account's token is read per call with
--- `gh auth token` and kept in memory only: no answer in time is `failed`
--- (retryable); only a definite refusal is `auth`.
+-- response headers) as the 4th value. An account's token is read with
+-- `gh auth token` and kept in memory for TOKEN_TTL_S seconds, dropped on any `auth`
+-- problem: no answer in time is `failed` (retryable); only a definite refusal is `auth`.
 function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> (), account: string?, timeoutMs: number?)
 	local argv: { string } = { "gh" }
 	for _, a in args do
 		table.insert(argv, a)
 	end
 	local limit = if timeoutMs then (timeoutMs // 60000) .. " minutes" else nil
+	local key = if account and account ~= "" then string.lower(account) else nil
 	local function run(env: { [string]: string })
 		process.run(argv, { timeout_ms = timeoutMs or GH_TIMEOUT_MS, env = env }, function(result, perr, cx)
 			if not result then
 				return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
 			end
 			if result.status ~= 0 or result.timed_out then
-				return done(nil, M.classify(result, limit), cx, result.stdout)
+				local problem = M.classify(result, limit)
+				if key and problem.kind == "auth" then
+					tokens[key] = nil
+				end
+				return done(nil, problem, cx, result.stdout)
 			end
 			done(result.stdout, nil, cx, nil)
 		end)
 	end
-	if not account then
+	if not key or not account then
 		return run(ENV)
+	end
+	local function withToken(token: string)
+		local env: { [string]: string } = {}
+		for k, v in ENV do
+			env[k] = v
+		end
+		env.GH_TOKEN = token
+		run(env)
+	end
+	local hit = tokens[key]
+	if hit and os.time() - hit.at < TOKEN_TTL_S then
+		return withToken(hit.token)
 	end
 	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
 		if not r then
@@ -569,12 +551,15 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 		if r.status ~= 0 or not token then
 			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx, nil)
 		end
-		local env: { [string]: string } = {}
-		for k, v in ENV do
-			env[k] = v
-		end
-		env.GH_TOKEN = token
-		run(env)
+		local entry = { token = token, at = os.time() }
+		tokens[key] = entry
+		-- No token outlives its TTL, even for a login no call asks for again.
+		tern.timer(TOKEN_TTL_S * 1000, function()
+			if tokens[key] == entry then
+				tokens[key] = nil
+			end
+		end)
+		withToken(token)
 	end)
 end
 
@@ -583,9 +568,6 @@ local CLONE_MS = 10 * 60 * 1000
 -- Clones `repo` into the absolute `path` with `gh repo clone`, as the repository's saved gh account: gh's own protocol
 -- and credentials, so private repositories work. git makes the folder and refuses a non-empty one.
 function M.clone(repo: string, path: string, account: string?, done: (Problem?, WindowCx?) -> ())
-	if account == "" then
-		account = nil
-	end
 	M.gh({ "repo", "clone", repo, path }, function(_, problem, cx)
 		done(problem, cx)
 	end, account, CLONE_MS)
@@ -745,8 +727,6 @@ local function observe(out: string?, raw: string?, problem: Problem?, account: s
 	return body
 end
 
-type Page = { total: number, next: string?, cost: number, raw: number, items: { any } }
-
 -- All pages of the search, sequentially; `done(items, total, complete, problem, spent)` at the end.
 -- `shouldContinue` is checked before every page and after every response; a
 -- false answer ends with kind="superseded" and no further page runs. At most
@@ -760,7 +740,7 @@ local function searchAll(
 	qualifier: string,
 	gql: string,
 	jq: string,
-	parse: (string) -> (Page?, string?),
+	normalize: (any) -> (any?, string?),
 	shouldContinue: () -> boolean,
 	done: ({ any }?, number, boolean, Problem?, number) -> ()
 )
@@ -770,9 +750,6 @@ local function searchAll(
 			done(nil, 0, false, { kind = "failed", message = "The view's query is empty." }, 0)
 		end)
 		return
-	end
-	if account == "" then
-		account = nil
 	end
 	query = query .. qualifier
 	local superseded: Problem = { kind = "superseded", message = "" }
@@ -810,7 +787,7 @@ local function searchAll(
 			if not out then
 				return done(nil, 0, false, problem, spent)
 			end
-			local pg, why = parse(body)
+			local pg, why = M.parsePage(body, normalize)
 			if not pg then
 				return done(nil, 0, false, { kind = "failed", message = why or "malformed response" }, spent)
 			end
@@ -837,17 +814,11 @@ end
 
 -- searchAll over pull requests; one swap-ready SearchResult at the end.
 local function searchPrs(account: string?, query: string, qualifier: string, gql: string, jq: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
-	searchAll(account, query, qualifier, gql, jq, function(body)
-		local pg, why = M.parsePage(body)
-		if not pg then
-			return nil, why
-		end
-		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.prs }, nil
-	end, shouldContinue, function(items, total, complete, problem, spent)
+	searchAll(account, query, qualifier, gql, jq, M.normalize, shouldContinue, function(items, total, complete, problem, spent)
 		if not items then
 			return done(nil, problem, spent)
 		end
-		done({ prs = M.reconcile(items :: { Pr }), total = total, complete = complete }, nil, spent)
+		done({ prs = tracker.reconcile(items :: { Pr }), total = total, complete = complete }, nil, spent)
 	end)
 end
 
@@ -868,13 +839,7 @@ function M.issues(
 	shouldContinue: () -> boolean,
 	done: (tracker.IssueResult?, Problem?, number) -> ()
 )
-	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, function(body)
-		local pg, why = M.parseIssuePage(body)
-		if not pg then
-			return nil, why
-		end
-		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.issues }, nil
-	end, shouldContinue, function(items, total, complete, problem, spent)
+	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, M.normalizeIssue, shouldContinue, function(items, total, complete, problem, spent)
 		if not items then
 			return done(nil, problem, spent)
 		end
@@ -887,7 +852,7 @@ local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
 	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } }"
-local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { rateLimit { cost } repository(owner: $o, name: $r) { pullRequest(number: $n) { "
+local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { repository(owner: $o, name: $r) { pullRequest(number: $n) { "
 	.. ABOUT_FIELDS
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
@@ -938,8 +903,8 @@ function M.about(raw: any): About
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
--- says `about` the PR; done(runs, total, problem, about). Nothing is sent while the saved login is unusable (kind
--- "account") or the account's quota is paused (kind "rate-limit"). `shouldContinue` (optional) is checked before every
+-- says `about` the PR; done(runs, total, problem, about). Nothing is sent while the account's quota is paused (kind
+-- "rate-limit"). `shouldContinue` (optional) is checked before every
 -- page and after every response; a false answer ends with kind="superseded". done never runs before this call
 -- returns, and nothing is cached here: what a failure is worth is the caller's call.
 function M.checks(repo: string, number: number, account: string?, done: ({ Run }?, number, Problem?, About?) -> (), shouldContinue: (() -> boolean)?)
@@ -959,9 +924,6 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
 	if not owner or not name then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
-	end
-	if account == "" then
-		account = nil
 	end
 	if shouldContinue and not shouldContinue() then
 		return fail(superseded)
@@ -1010,7 +972,7 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	fetch(nil, 1)
 end
 
-local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { rateLimit { cost } repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
+local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
 local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}]}"
 
 -- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
@@ -1031,9 +993,6 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
 	if not owner or not name then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
-	end
-	if account == "" then
-		account = nil
 	end
 	if shouldContinue and not shouldContinue() then
 		return fail(superseded)
@@ -1077,9 +1036,6 @@ export type PrMeta = { base: string, sha: string, ref: string, state: string, ba
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
-	if account == "" then
-		account = nil
-	end
 	M.gh({ "api", "--hostname", "github.com", "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
 		if not out then
 			return done(nil, problem, cx)
@@ -1140,9 +1096,6 @@ local MENTION_JQ = "[(.data.search.nodes // [])[] | select(.number != null) | " 
 -- for a Jira key those whose title or head branch names it. done(prs, problem).
 function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ LinkedPr }?, Problem?) -> ())
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
-	if account == "" then
-		account = nil
-	end
 	local mention = string.match(ref, "^%d+$") == nil
 	local args = if mention
 		then { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. repo .. " is:pr " .. ref, "--jq", MENTION_JQ }
@@ -1178,9 +1131,6 @@ end
 -- An open one wins, else the newest. `state` is "open", "draft", "merged" or "closed". done(nil, nil): none.
 export type HeadPr = { number: number, title: string, state: string, url: string }
 function M.pullByHead(repo: string, branch: string, account: string?, done: (HeadPr?, Problem?) -> ())
-	if account == "" then
-		account = nil
-	end
 	local wait = M.wait(os.time(), account)
 	if wait > 0 then
 		tern.timer(0, function()
@@ -1424,9 +1374,6 @@ function M.editIssue(e: IssueEdit, account: string?, done: (Problem?) -> ())
 			done(p)
 		end)
 	end
-	if account == "" then
-		account = nil
-	end
 	M.gh(args, function(_, p)
 		done(p)
 	end, account)
@@ -1437,49 +1384,6 @@ end
 function M.runIdOf(url: any): string?
 	local id = if type(url) == "string" then string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)/") or string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)$") else nil
 	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
-end
-
-local RERUNNABLE: { [string]: boolean } = { failure = true, timed_out = true, cancelled = true, startup_failure = true }
-
--- Re-runs the failed jobs of workflow run `runId` (a `Run.runId`: never a check suite or check run id). The run is
--- read first and must belong to `repo`, be finished and have failed; a missing run id is a not-found, never remapped.
-function M.rerunFailed(repo: string, runId: string, account: string?, done: (Problem?) -> ())
-	local target = repoArg(repo)
-	local problem: Problem? = nil
-	if not target then
-		problem = bad("Unexpected repository name.")
-	elseif type(runId) ~= "string" or not string.match(runId, "^%d+$") or #runId > 15 or tonumber(runId) == 0 then
-		problem = bad("Unexpected workflow run id.")
-	end
-	if problem then
-		local p = problem
-		return later(function()
-			done(p)
-		end)
-	end
-	if account == "" then
-		account = nil
-	end
-	M.gh({ "run", "view", runId, "--repo", target or "", "--json", "databaseId,status,conclusion,url" }, function(out, p)
-		if not out then
-			return done(p)
-		end
-		local ok, data = pcall(tern.json.decode, out)
-		local url = field(data, "url")
-		if not ok or tostring(field(data, "databaseId")) ~= runId or type(url) ~= "string" or not string.find(url, "/actions/runs/" .. runId, 1, true) then
-			return done({ kind = "failed", message = "gh printed unexpected run data." })
-		end
-		if field(data, "status") ~= "completed" then
-			return done(bad("Workflow run " .. runId .. " has not finished."))
-		end
-		local conclusion = field(data, "conclusion")
-		if type(conclusion) ~= "string" or not RERUNNABLE[conclusion] then
-			return done(bad("Workflow run " .. runId .. " did not fail (" .. tostring(conclusion) .. ")."))
-		end
-		M.gh({ "run", "rerun", runId, "--repo", target or "", "--failed" }, function(_, p2)
-			done(p2)
-		end, account)
-	end, account)
 end
 
 -- ---------------------------------------------------------------- confirmed item and run operations
@@ -1501,7 +1405,7 @@ function M.commentText(v: any): string?
 	return t
 end
 
--- Reads `gh <kind> view <id>` of `repo` as `account` (normalized once: the read and the write run as the same login),
+-- Reads `gh <kind> view <id>` of `repo` as `account` (the read and the write run as the same login),
 -- requires the answered number/id and its https://github.com/<owner>/<repo>/<seg>/<id> URL to match the target exactly,
 -- then runs the argv `act(seg)` returns. `check(data)` returns a refusal text or nil. `id` is a validated digit string.
 local function guarded(kind: string, fields: string, segs: { string }, repo: string, id: any, account: string?, check: (any) -> string?, act: (string, string) -> { string }, done: (Problem?) -> ())
@@ -1519,7 +1423,6 @@ local function guarded(kind: string, fields: string, segs: { string }, repo: str
 		end)
 	end
 	local repoFlag = target or ""
-	local who: string? = if account == "" then nil else account
 	M.gh({ kind, "view", id, "--repo", repoFlag, "--json", fields }, function(out, p)
 		if not out then
 			return done(p)
@@ -1539,8 +1442,8 @@ local function guarded(kind: string, fields: string, segs: { string }, repo: str
 		end
 		M.gh(act(seg, id), function(_, p2)
 			done(p2)
-		end, who)
-	end, who)
+		end, account)
+	end, account)
 end
 
 -- op "close" closes the open issue (gh's default reason), "reopen" reopens the closed one.
@@ -1630,6 +1533,25 @@ function M.rerunAll(repo: string, runId: string, account: string?, done: (Proble
 	end, done)
 end
 
+local RERUNNABLE: { [string]: boolean } = { failure = true, timed_out = true, cancelled = true, startup_failure = true }
+
+-- Re-runs the failed jobs of workflow run `runId` (a `Run.runId`: never a check suite or check run id), guarded as
+-- rerunAll is: the run is read first and must belong to `repo`, be finished and have failed.
+function M.rerunFailed(repo: string, runId: string, account: string?, done: (Problem?) -> ())
+	guarded("run", "databaseId,status,conclusion,url", { "actions/runs" }, repo, runId, account, function(d)
+		if field(d, "status") ~= "completed" then
+			return "Workflow run " .. runId .. " has not finished."
+		end
+		local conclusion = field(d, "conclusion")
+		if type(conclusion) ~= "string" or not RERUNNABLE[conclusion] then
+			return "Workflow run " .. runId .. " did not fail (" .. tostring(conclusion) .. ")."
+		end
+		return nil
+	end, function(_, id)
+		return { "run", "rerun", id, "--repo", repoArg(repo) or "", "--failed" }
+	end, done)
+end
+
 export type NewPr = { repo: string, base: string, head: string, title: string, body: string, draft: boolean }
 
 -- A branch name as git allows it, or `owner:branch` for a head on a fork; nil otherwise.
@@ -1679,9 +1601,6 @@ function M.createPr(d: NewPr, account: string?, done: (string?, Problem?) -> ())
 			done(nil, p)
 		end)
 	end
-	if account == "" then
-		account = nil
-	end
 	local args = { "pr", "create", "--repo", repo or "", "--draft", "--base=" .. d.base, "--head=" .. d.head, "--title=" .. d.title, "--body=" .. d.body }
 	M.gh(args, function(out, p)
 		if not out then
@@ -1724,13 +1643,7 @@ function M.issueItem(repo: string, number: number, account: string?, done: (trac
 			done(nil, bad("Unexpected issue address."))
 		end)
 	end
-	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, function(body)
-		local pg, why = M.parseIssuePage(body)
-		if not pg then
-			return nil, why
-		end
-		return { total = pg.total, next = pg.next, cost = pg.cost, raw = pg.raw, items = pg.issues }, nil
-	end, live, function(items, _, _, problem)
+	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, M.normalizeIssue, live, function(items, _, _, problem)
 		local issue = if items then (items :: { tracker.Issue })[1] else nil
 		if not issue then
 			return done(nil, problem or { kind = "not-found", message = "This GitHub account sees no issue " .. repo .. "#" .. number .. "." })

@@ -50,36 +50,40 @@ end
 
 function M.run()
 	-- search pages: rejection, empty, dedupe, order
-	assert(github.parsePage("not json") == nil, "malformed JSON is rejected")
-	assert(github.parsePage("{}") == nil, "missing items are rejected")
-	assert(github.parsePage(page({ {} })) == nil, "non-PR nodes are rejected")
-	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { url = "https://evil.example/a/b/pull/1" }) })) == nil, "foreign URLs are rejected")
-	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { number = 2 }) })) == nil, "mismatched numbers are rejected")
-	local empty = github.parsePage(page({}))
-	assert(empty and #empty.prs == 0 and empty.total == 0, "empty results parse")
-	local pg = github.parsePage(page({
+	local function parse(s: string)
+		return github.parsePage(s, github.normalize)
+	end
+	assert(parse("not json") == nil, "malformed JSON is rejected")
+	assert(parse("{}") == nil, "missing items are rejected")
+	assert(parse(page({ {} })) == nil, "non-PR nodes are rejected")
+	assert(parse(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { url = "https://evil.example/a/b/pull/1" }) })) == nil, "foreign URLs are rejected")
+	assert(parse(page({ item(1, "a/b", "2026-01-01T00:00:00Z", { number = 2 }) })) == nil, "mismatched numbers are rejected")
+	assert(github.parsePage(page({ item(1, "a/b", "2026-01-01T00:00:00Z") }), github.normalizeIssue) == nil, "the issue normalizer rejects a pull request")
+	local empty = parse(page({}))
+	assert(empty and #empty.items == 0 and empty.total == 0, "empty results parse")
+	local pg = parse(page({
 		item(1, "A/B", "2026-01-01T00:00:00Z"),
 		item(2, "a/b", "2026-03-01T00:00:00Z", { isDraft = true }),
 		item(1, "a/b", "2026-01-01T00:00:00Z"),
 		item(3, "a/b", "2026-03-01T00:00:00Z", { state = "MERGED" }),
 	}))
-	assert(pg and #pg.prs == 4, "four items parsed")
-	local rec = github.reconcile(pg.prs)
+	assert(pg and #pg.items == 4, "four items parsed")
+	local rec = tracker.reconcile(pg.items)
 	assert(#rec == 3, "duplicates are folded by lowercase identity")
 	assert(rec[1].key == "a/b#2" and rec[2].key == "a/b#3" and rec[3].key == "a/b#1", "updated desc, key tie-break")
 	assert(rec[1].draft and rec[2].state == "merged", "draft and merged states")
 	assert(rec[3].repo == "A/B", "display spelling preserved")
-	local rich = github.parsePage(page({ item(5, "a/b", "2026-01-01T00:00:00Z", { review = "CHANGES_REQUESTED", checks = "ERROR", labels = tern.json.array({ "bug" }) }) }))
-	local rp = rich and rich.prs[1]
+	local rich = parse(page({ item(5, "a/b", "2026-01-01T00:00:00Z", { review = "CHANGES_REQUESTED", checks = "ERROR", labels = tern.json.array({ "bug" }) }) }))
+	local rp = rich and rich.items[1]
 	assert(rp and rp.review == "changes" and rp.checks == "failure" and rp.labels[1] == "bug", "review, checks, labels")
 	assert(rp and rp.additions == 1 and rp.files == 3 and rp.comments == 4 and rp.head == "b5" and rp.base == "main", "counts and branches")
 	local ghost = item(6, "a/b", "2026-01-01T00:00:00Z")
 	ghost.author = nil
 	local gp = github.normalize(ghost)
 	assert(gp and gp.author == "ghost", "missing author is ghost")
-	local paged = github.parsePage(page({}, 250, "Y3Vy"))
+	local paged = parse(page({}, 250, "Y3Vy"))
 	assert(paged and paged.next == "Y3Vy", "cursor parses")
-	local bare = github.parsePage(tern.json.encode({ total = 0, items = tern.json.array({}) }))
+	local bare = parse(tern.json.encode({ total = 0, items = tern.json.array({}) }))
 	assert(bare and bare.cost == 1 and bare.next == nil, "cost and next default")
 	assert(github.epoch("1970-01-02T00:00:00Z") == 86400, "epoch")
 	assert(github.epoch("2026-05-27T09:38:49.512-0500") == github.epoch("2026-05-27T14:38:49Z"), "an offset moves the time to UTC")

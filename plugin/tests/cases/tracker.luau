@@ -63,6 +63,53 @@ case("github.gh: a token that times out is 'failed' after one spawn, a refusal i
 	eq(w.calls[before + 2].env.GH_TOKEN, "tok", "the token is in the environment only")
 end)
 
+case("github.gh: a login's token is read once within 60 s, and any auth reply drops it", function(w: World)
+	local github = w.load("github") :: Github
+	local ghStatus = 0
+	w.respond(function(call: Call): Reply?
+		if call.argv[2] == "auth" then
+			return { stdout = "tok\n" }
+		end
+		return if ghStatus == 0 then { stdout = "ok" } else { status = ghStatus, stderr = "HTTP 401: Bad credentials\n" }
+	end)
+	local outcome: { out: string?, problem: any } = { out = nil, problem = nil }
+	local function ask(account: string?)
+		outcome.out, outcome.problem = nil, nil
+		github.gh({ "api", "user" }, function(out, problem)
+			outcome.out, outcome.problem = out, problem
+		end, account)
+		w.flush()
+	end
+	local function tokenReads(): number
+		local n = 0
+		for _, c in w.calls do
+			if c.argv[2] == "auth" and c.argv[3] == "token" then
+				n += 1
+			end
+		end
+		return n
+	end
+	ask("cat")
+	ask("cat")
+	ask("CAT")
+	eq(outcome.out, "ok", "answered")
+	eq(tokenReads(), 1, "one token read for calls within 60 s, whatever the login's case")
+	eq(w.calls[#w.calls].env.GH_TOKEN, "tok", "the cached token still travels in GH_TOKEN")
+	ask("")
+	eq(w.calls[#w.calls].env.GH_TOKEN, nil, "an empty account is gh's active one")
+	eq(tokenReads(), 1, "and reads no token")
+	w.advance(61000)
+	ask("cat")
+	eq(tokenReads(), 2, "the token is read again after 60 s")
+	ghStatus = 1
+	ask("cat")
+	eq(outcome.problem.kind, "auth", "an auth reply")
+	eq(tokenReads(), 2, "was sent with the cached token")
+	ghStatus = 0
+	ask("cat")
+	eq(tokenReads(), 3, "and dropped it: the next call reads the token again")
+end)
+
 case("github.runs: same-named checks of different suites are independent rows, the failing one stays visible", function(w: World)
 	local github = w.load("github") :: Github
 	local runs = github.runs({
@@ -851,6 +898,7 @@ case("github.linkedPrs: runs as the given account, else as gh's active one", fun
 	gh.linked["o/r#12"] = array({ { number = 3, title = "Fix", head = "fix", branch = "fix", base = "o/r" } })
 	gh.linked["o/r#ABC-12"] = array({ { number = 5, title = "ABC-12", head = "abc", branch = "abc", base = "o/r" } })
 	for _, ref in { "12", "ABC-12" } do
+		w.advance(61000) -- past the cached token of the previous round
 		local as = ghx.linked(w, github, ref, "work")
 		eq(#as.list, 1, "the PR is listed for " .. ref)
 		eq(gh.requests[1].kind, "token", "the account's token is read first for " .. ref)

@@ -143,21 +143,23 @@ function M.byStatus(issues: { Issue })
 	end)
 end
 
--- Deduplicated by identity, newest update first, identity as the tie-break.
-function M.reconcile(issues: { Issue }): { Issue }
+-- Deduplicated by `key`, newest `updated` first, `key` as the tie-break (PRs and issues alike).
+function M.reconcile<T>(items: { T }): { T }
 	local seen: { [string]: boolean } = {}
-	local out: { Issue } = {}
-	for _, issue in issues do
-		if not seen[issue.key] then
-			seen[issue.key] = true
-			table.insert(out, issue)
+	local out: { T } = {}
+	for _, item in items do
+		local key = (item :: any).key
+		if not seen[key] then
+			seen[key] = true
+			table.insert(out, item)
 		end
 	end
 	table.sort(out, function(a, b)
-		if a.updated ~= b.updated then
-			return a.updated > b.updated
+		local x, y = a :: any, b :: any
+		if x.updated ~= y.updated then
+			return x.updated > y.updated
 		end
-		return a.key < b.key
+		return x.key < y.key
 	end)
 	return out
 end

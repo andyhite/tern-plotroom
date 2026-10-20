@@ -145,6 +145,75 @@ case("process: the recovered PATH retries the same argv once and later runs star
 	eq(probeCount(w), 1, "the PATH is probed once")
 end)
 
+case("process: reset keeps the recovered PATH, and a spawn failing under it probes the login shell once more", function(w: World)
+	local process = w.load("process") :: Process
+	w.env.SHELL = "/bin/zsh"
+	w.fs.files["/bin/zsh"] = ""
+	local shellPath = "/opt/tools/bin:/usr/bin"
+	w.respond(function(call: Call): Reply?
+		if isProbe(call) then
+			return { stdout = "\0PLOTROOM_PATH\0" .. shellPath .. "\n\0PLOTROOM_END\0" }
+		end
+		local path = call.env.PATH
+		local found = path and string.find(path, if call.argv[1] == "acli" then "/new/bin" else "/opt/tools/bin", 1, true)
+		return if found then { stdout = "ok\n" } else { raise = "no such file or directory" }
+	end)
+	local outcomes: { string } = {}
+	local function run(program: string)
+		process.run({ program, "--version" }, {}, function(result, problem, _cx)
+			table.insert(outcomes, if result then result.stdout else ("problem: " .. (problem or "?")))
+		end)
+		w.flush()
+	end
+	run("gh")
+	eq(probeCount(w), 1, "the first failed spawn probes")
+	process.reset()
+	local before = #w.calls
+	run("gh")
+	eq(#w.calls - before, 1, "after a reset the next spawn starts with the kept PATH, no probe")
+	eq(w.calls[#w.calls].env.PATH, shellPath, "the kept PATH")
+	run("acli")
+	eq(probeCount(w), 2, "a spawn that fails under the kept PATH probes the login shell once more")
+	has(outcomes[3], "acli", "and is still not found: the problem names it")
+	shellPath = "/opt/tools/bin:/new/bin:/usr/bin"
+	run("acli")
+	eq(probeCount(w), 3, "another failed lookup probes again")
+	eq(outcomes[4], "ok\n", "a newly installed program is found under the new PATH")
+	run("gh")
+	eq(w.calls[#w.calls].env.PATH, shellPath, "the new PATH is the one kept")
+end)
+
+case("process: a failed re-probe keeps the PATH even when another spawn joined it", function(w: World)
+	local process = w.load("process") :: Process
+	w.env.SHELL = "/bin/zsh"
+	w.fs.files["/bin/zsh"] = ""
+	local probeOk = true
+	w.respond(function(call: Call): Reply?
+		if isProbe(call) then
+			return if probeOk then { stdout = PROBE } else { status = 1, delay = 100 }
+		end
+		local path = call.env.PATH
+		return if path and string.find(path, "/opt/tools/bin", 1, true) and call.argv[1] == "gh" then { stdout = "ok\n" } else { raise = "no such file or directory" }
+	end)
+	local outcomes: { string } = {}
+	local function run(program: string)
+		process.run({ program }, {}, function(result, problem, _cx)
+			table.insert(outcomes, if result then result.stdout else ("problem: " .. (problem or "?")))
+		end)
+	end
+	run("gh")
+	w.flush()
+	probeOk = false
+	run("acli")
+	run("jira")
+	w.flush()
+	eq(#outcomes, 3, "both failed spawns are answered")
+	has(outcomes[2], "no such file", "the spawn's error, not the probe's, is reported")
+	run("gh")
+	w.flush()
+	eq(outcomes[4], "ok\n", "the kept PATH survives the failed probe")
+end)
+
 case("process: a started program that exits nonzero is a result, never a discovery retry", function(w: World)
 	local process = w.load("process") :: Process
 	w.env.SHELL = "/bin/zsh"

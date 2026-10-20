@@ -1,8 +1,8 @@
 --!strict
 -- The one process runner gh and git share. The bare program name is spawned
 -- first (the SDK looks it up on PATH). Only when the spawn itself fails is
--- the PATH of the user's login shell recovered once, cached in memory, and
--- the same argv retried with it. A started process that exits nonzero is
+-- the PATH of the user's login shell recovered, cached in memory, and
+-- the same argv retried with it; a later failure under that PATH probes the login shell again (a newly installed program). A started process that exits nonzero is
 -- never retried: that is an auth/API/git failure, not a discovery failure.
 
 local M = {}
@@ -112,10 +112,10 @@ local function explain(program: string, why: string): string
 		.. "). It must be installed and available in the PATH of your configured shell; Tern looked in its own PATH and in the PATH of your login shell."
 end
 
--- Forget what was recovered or failed, so corrected shell configuration is
--- found without restarting Tern. Explicit Retry calls this.
+-- Forget failed lookups, so corrected shell configuration is found without
+-- restarting Tern. The PATH recovered earlier is kept: a spawn that fails under
+-- it probes the login shell again (see run). Explicit Retry calls this.
 function M.reset()
-	recovered = nil
 	failed = nil
 end
 
@@ -140,20 +140,18 @@ function M.run(argv: { string }, opts: ProcessOptions, done: (ProcessResult?, st
 			end)
 		end)
 	end
-	local ok, err = start(recovered)
+	local stale = recovered
+	local ok, err = start(stale)
 	if ok then
 		return
 	end
 	local program = argv[1] or "program"
-	if recovered then
-		local msg = explain(program, tostring(err))
-		return defer(function(cx)
-			done(nil, msg, cx)
-		end)
-	end
+	-- A spawn that fails under the PATH found earlier asks the login shell once more: the program may be newly installed.
+	recovered = nil
 	recover(function(path, why, cx)
-		if not path then
-			return done(nil, explain(program, why or "unknown"), cx)
+		if not path or path == stale then
+			recovered = recovered or stale
+			return done(nil, explain(program, if stale then tostring(err) else why or "unknown"), cx)
 		end
 		local ok2, err2 = start(path)
 		if not ok2 then
