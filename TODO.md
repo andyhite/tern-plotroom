@@ -6,27 +6,6 @@
 
 ## In-Progress
 
-- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
-  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
-  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
-  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
-  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
-  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
-  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
-  - Base: main
-  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
-  - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
-  - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
-  - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
-  - Decision: Comment, Approve and Request changes share `requests.previewRows`.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
-  - Decision: Auto-merge is hidden and refused while the preview's `about.merge` is `ready` or `unstable`, and `setPrMerge` refuses auto at commit when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE; with no loaded preview the auto row is still offered and the commit guard protects it.
-  - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
-  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
-  - Fix: rebase onto main - conflicts in README.md - resolve on the item branch (keep protocol/`plugin.toml` at the next number main has not used); the code review found no blocking defect.
-  - Review attempts: 2
-
 ## Blocked
 
 - [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
@@ -310,6 +289,26 @@
   - Decision: `trackWaiting` takes only the links `statusMap` covers (per Plotroom pane: its host, newest link per key); with no Plotroom pane it clears the shown count but keeps the toasted set, and a membership change (not just size) counts as changed.
   - Review attempts: 2
   - Decision: The toasted set keeps an already-toasted agent that still reports `waiting_input` when it drops out of the covered set, so it never toasts again on return; uncovered waiting agents that were never toasted are not marked.
+
+- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
+  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
+  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
+  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
+  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
+  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
+  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
+  - Base: main
+  - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
+  - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
+  - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
+  - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
+  - Decision: Comment, Approve and Request changes share `requests.previewRows`.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Decision: Auto-merge is hidden and refused while the preview's `about.merge` is `ready` or `unstable`, and `setPrMerge` refuses auto at commit when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE; with no loaded preview the auto row is still offered and the commit guard protects it.
+  - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
+  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
+  - Review attempts: 2
 
 ## Done
 
