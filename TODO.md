@@ -110,6 +110,21 @@
   - Fix: README.md:55 - "The action bar at the bottom of the queue shows only the buttons that have a key" is now wrong: the error card with no list shows Refresh and Settings without keys - say that the error card with no list also shows Refresh and Settings.
   - Review attempts: 1
 
+- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
+  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
+  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
+  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
+  - Two issues noted on one branch: the first wins, as today.
+  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
+  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
+  - Base: main
+  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
+  - Decision: The preview matches an ok `issues` note in the PR repo's checkout whose branch equals `worktree.prBranch(pr.head, pr.fork)`; of two notes on one branch the lowest `seq` (first noted) wins.
+  - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
+  - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
+  - Fix: plugin/tests/cases/checks.luau:1609-1612, 1639 - `notedScene` gives the PR view login `octocat`, which is also the fake gh's active account (`harness.luau:1433`), so the read is credited to `octocat` whether or not `readNoted` gets `M.login(state)`; the required "issue read passes the view's login" case cannot fail - run the view as another login (e.g. `work` with `s.gh.tokens.work`) and expect `"work"`.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] Jira views list up to 1000 items instead of stopping at 100.
@@ -166,19 +181,6 @@
   - Branch: todo/rate-limit-pause-gates-reads at /Users/andyhite/Code/tern-plotroom.todo/rate-limit-pause-gates-reads
   - Decision: Pause guards answer `rate-limit` ("GitHub's rate limit is reached; reads resume at HH:MM:SS.") through `tern.timer(0)`, shaped like `M.checks`; a cancelled search under a pause now reports `rate-limit`, not `superseded`.
   - Decision: `paceLine` no longer requires `state.timer`, so Settings shows the previous "next at" during a refresh.
-
-- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
-  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
-  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
-  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
-  - Two issues noted on one branch: the first wins, as today.
-  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
-  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
-  - Base: main
-  - Branch: todo/pr-preview-finds-fork-worktree-noted-iss at /Users/andyhite/Code/tern-plotroom.todo/pr-preview-finds-fork-worktree-noted-iss
-  - Decision: The preview matches an ok `issues` note in the PR repo's checkout whose branch equals `worktree.prBranch(pr.head, pr.fork)`; of two notes on one branch the lowest `seq` (first noted) wins.
-  - Decision: `readNoted(key, rowRepo, account, live, done)`: the PR preview passes `M.login(state)`, the Worktrees board passes `nil`.
-  - Decision: An issue's worktree is noted only after an issue list was scanned, so a PR preview before that shows no Issue section (README).
 
 - [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
   - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
