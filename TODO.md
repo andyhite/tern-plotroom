@@ -142,16 +142,6 @@
 
 ## In-Progress
 
-- [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
-  - The CI checkout step sets `persist-credentials: false`.
-  - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
-  - Smoke generates the installed Tern's SDK types and shows a WARN row in the summary when their sha256 differs from the pinned snapshot; the gate does not fail on it.
-  - Luau is pinned to 0.743 with GitHub's published asset digests (luau-lsp 1.70.1 is already the latest), and the workflow step name stops repeating tool versions.
-  - `smoke.py` reuses `Smoke.cd` and `wait_until` instead of its copies, and `check.py` appends the NOT RUN row after the stage loop instead of re-sorting.
-  - Touch points: `.github/workflows/check.yml`, `scripts/check.py` (tool pins, summary, version gate), `scripts/smoke.py`, `plugin/plugin.toml`, AGENTS.md (pins and the version rule), README's remote-host paragraph.
-  - Base: main
-  - Branch: todo/ci-tooling-credential-free-checkout-plug at /Users/andyhite/Code/tern-plotroom.todo/ci-tooling-credential-free-checkout-plug
-
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -340,6 +330,19 @@
   - Decision: Neither the Worktrees nor the Agents list has a search box, so there is no search guard for Home/End.
   - Decision: Helpers: `listKeys(move, enter, extra)` (host), `editPrompt(qid, fn, quiet?)` and `summary(prefix, id, label, hint)` (settings), `engine.claimCheckout(state, repo, path, busy, moved, done)`, `engine.pickerId(prefix, key)`; the claim messages that differ are passed in so they stay byte-identical.
   - Decision: `pnext` and `pwhere`/`psplit` with a malformed prompt id now say "That action was deleted elsewhere."; sheet rows never produce such an id.
+
+- [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
+  - The CI checkout step sets `persist-credentials: false`.
+  - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
+  - Smoke generates the installed Tern's SDK types and shows a WARN row in the summary when their sha256 differs from the pinned snapshot; the gate does not fail on it.
+  - Luau is pinned to 0.743 with GitHub's published asset digests (luau-lsp 1.70.1 is already the latest), and the workflow step name stops repeating tool versions.
+  - `smoke.py` reuses `Smoke.cd` and `wait_until` instead of its copies, and `check.py` appends the NOT RUN row after the stage loop instead of re-sorting.
+  - Touch points: `.github/workflows/check.yml`, `scripts/check.py` (tool pins, summary, version gate), `scripts/smoke.py`, `plugin/plugin.toml`, AGENTS.md (pins and the version rule), README's remote-host paragraph.
+  - Base: main
+  - Branch: todo/ci-tooling-credential-free-checkout-plug at /Users/andyhite/Code/tern-plotroom.todo/ci-tooling-credential-free-checkout-plug
+  - Decision: `plugin.toml` is `0.23.0`, since `RPC_PROTOCOL` is "23" on this base; the gate reads the protocol from `core.luau`.
+  - Decision: The version gate is its own `version` row in the `all` and `test` commands, needing neither Tern nor the lock.
+  - Decision: `smoke.py` exposes `WARNINGS`; `check.py` turns each into a `smoke … WARN` row after the stage loop and never fails on it. The WARN path itself was not exercised (installed Tern 0.9.5's types matched the pin).
 
 ## Done
 
