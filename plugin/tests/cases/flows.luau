@@ -1007,6 +1007,10 @@ windowCase("window flows: palette commands send plain events, and the command pa
 			{ id = "rerun-all", group = "GitHub - PR" },
 			{ id = "cancel-run", group = "GitHub - PR" },
 			{ id = "pr-ready", group = "GitHub - PR" },
+			{ id = "pr-merge", group = "GitHub - PR" },
+			{ id = "pr-approve", group = "GitHub - PR" },
+			{ id = "pr-request-changes", group = "GitHub - PR" },
+			{ id = "pr-update-branch", group = "GitHub - PR" },
 			{ id = "comment", group = "GitHub - PR" },
 			{ id = "jira-transition", group = "Jira - Issue" },
 			{ id = "label-add", group = "GitHub - Issue" },
@@ -1020,7 +1024,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		},
 	}
 	listed = palette(nil, every)
-	same(listed, { "Type a prompt…", "Review", "Jira transition…", "Comment…", "Ready for review…", "Re-run failed checks", "Re-run all jobs…", "Cancel running workflow…", "Add label…", "Draft PR…", "Open item by URL…", "Export views and actions…", "Import views and actions…", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
+	same(listed, { "Type a prompt…", "Review", "Jira transition…", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Re-run failed checks", "Re-run all jobs…", "Cancel running workflow…", "Add label…", "Draft PR…", "Open item by URL…", "Export views and actions…", "Import views and actions…", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
 	palette("Mark seen", issue)
 	same(last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
 	palette("Assign to me", issue)
@@ -1131,6 +1135,61 @@ windowCase("window flows: Mark read… asks the host to plan the Inbox's threads
 	w.flush()
 	st.reply("act", { problem = "The Inbox lists no notifications to mark read." })
 	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
+end)
+
+windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch plans; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local function lastAsk(): any
+		return requestsSent(w)[#requestsSent(w)]
+	end
+	local lines = { "o/r#7: Fix login", "Account: @octocat" }
+	w.window.choose = "Rebase and merge"
+	w.command("pr-merge")
+	w.flush()
+	st.reply("act", { methods = { { id = "squash", label = "Squash and merge" }, { id = "rebase", label = "Rebase and merge" } }, auto = true })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Squash and merge", "Rebase and merge", "Auto-merge when checks pass", "Auto-merge when checks pass" }, "the allowed methods, then auto-merge for each while checks are pending")
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().method) .. ":" .. tostring(lastAsk().auto), "pr-merge:rebase:false", "the picked method is planned, not auto")
+	w.window.choose = "Cancel"
+	st.reply("act", { token = "t-merge", confirm = { head = "Merge o/r#7?", label = "Merge", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Merge", "o/r#7: Fix login", "Account: @octocat" }, "Cancel first, then the choice, then the plan's lines")
+	w.window.choose = "Auto-merge when checks pass"
+	w.command("pr-merge")
+	w.flush()
+	st.reply("act", { methods = { { id = "squash", label = "Squash and merge" } }, auto = true })
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().method) .. ":" .. tostring(lastAsk().auto), "pr-merge:squash:true", "auto-merge plans its method with auto")
+	w.window.choose = "Cancel"
+	st.reply("act", { problem = "stop" })
+	w.window.typed = "  Ship it  "
+	w.command("pr-approve")
+	w.flush()
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-approve:Ship it", "Approve sends the trimmed comment")
+	st.reply("act", { token = "t-approve", confirm = { head = "Approve o/r#7?", label = "Approve", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Approve", "o/r#7: Fix login", "Account: @octocat" }, "Approve is Cancel first")
+	w.window.typed = "   "
+	w.command("pr-approve")
+	w.flush()
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-approve:nil", "a blank approval comment is none")
+	st.reply("act", { problem = "stop" })
+	local before = #requestsSent(w)
+	w.command("pr-request-changes")
+	w.flush()
+	eq(#requestsSent(w), before, "a blank request for changes asks nothing")
+	w.window.typed = "Please add tests"
+	w.command("pr-request-changes")
+	w.flush()
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-request-changes:Please add tests", "Request changes sends its comment")
+	st.reply("act", { token = "t-changes", confirm = { head = "Request changes on o/r#7?", label = "Request changes", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Request changes", "o/r#7: Fix login", "Account: @octocat" }, "Request changes is Cancel first")
+	w.window.typed = nil
+	w.command("pr-update-branch")
+	w.flush()
+	eq(lastAsk().name, "pr-update-branch", "Update branch asks for its plan")
+	st.reply("act", { token = "t-update", confirm = { head = "Update the branch of o/r#7?", label = "Update branch", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Update branch", "o/r#7: Fix login", "Account: @octocat" }, "Update branch is Cancel first")
+	for _, op in st.ops() do
+		yes(op ~= "commit", "Cancel committed nothing")
+	end
 end)
 
 windowCase("window flows: a Worktrees list link opens the path, or focuses the tab already there", function(w: World)

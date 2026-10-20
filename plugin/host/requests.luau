@@ -698,6 +698,26 @@ function M.ctx(state: State, id: string)
 	reply(state, id, { item = tern.json.null })
 end
 
+-- The whole normalized text as confirmation rows, a row per 100 characters (newlines as ⏎); nil when it would not fit the
+-- window's rows, so no tail goes unpreviewed.
+function M.previewRows(body: string): { string }?
+	local shown = string.gsub(body, "\n", " ⏎ ")
+	local rows: { string } = {}
+	local from, total = 1, utf8.len(shown) or #shown
+	while from <= total do
+		local a, b = utf8.offset(shown, from), utf8.offset(shown, from + 100)
+		table.insert(rows, string.sub(shown, a, if b then b - 1 else #shown))
+		from += 100
+	end
+	return if #rows > COMMENT_ROWS then nil else rows
+end
+
+local METHODS: { [string]: string } = {
+	squash = "Squash and merge",
+	merge = "Create a merge commit",
+	rebase = "Rebase and merge",
+}
+
 function M.labelOk(label: any): string?
 	if type(label) ~= "string" or label == "" or #label > 50 or string.find(label, "[%c,]") or string.sub(label, 1, 1) == "-" then
 		return nil
@@ -967,6 +987,127 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, (if ready then "Marked ready for review: " else "Converted to draft: ") .. target)
 			end)
 		end)
+	elseif name == "pr-merge" then
+		if not prs then
+			return no("Merging is for pull requests.")
+		elseif item.state ~= "open" or item.draft then
+			return no("That pull request is not open and ready for review.")
+		elseif not item.headSha then
+			return no("GitHub did not say which commit this pull request is at; Refresh, then try again.")
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		local method, auto = q.method, q.auto == true
+		if method ~= nil and (type(method) ~= "string" or not METHODS[method]) then
+			return no("That is not a merge method.")
+		elseif auto and item.checks ~= "pending" then
+			return no("Auto-merge is offered while checks are pending.")
+		end
+		local key, gen = item.key, state.gen
+		-- The methods are read from the repository's settings at both steps: only one it allows is ever planned.
+		github.mergeMethods(item.repo, account, function(allowed: { string }?, problem: github.Problem?)
+			if not alive(state) then
+				return
+			end
+			local chosen = selected(state)
+			if state.gen ~= gen or not chosen or chosen.key ~= key then
+				return no("The selection changed; ask again.")
+			elseif not allowed then
+				return no(M.whyOf(problem))
+			elseif #allowed == 0 then
+				return no("The repository allows no merge method.")
+			end
+			if method == nil then
+				local options: { any } = {}
+				for _, m in allowed do
+					table.insert(options, { id = m, label = METHODS[m] })
+				end
+				return reply(state, id, { methods = tern.json.array(options), auto = chosen.checks == "pending" })
+			elseif not table.find(allowed, method) then
+				return no("The repository does not allow that merge method.")
+			end
+			local sha = chosen.headSha
+			if not sha or sha ~= item.headSha then
+				return no("The pull request moved since you were asked; Refresh, then try again.")
+			end
+			local how: string = METHODS[method]
+			M.offer(state, id, chosen, {
+				head = (if auto then "Auto-merge " else "Merge ") .. target .. "?",
+				label = if auto then "Merge when checks pass" else "Merge",
+				lines = {
+					target .. ": " .. printable(chosen.title),
+					"Account: @" .. account,
+					"Method: " .. how .. (if auto then " when checks pass" else ""),
+					"Only commit " .. string.sub(sha, 1, 7) .. " is merged; a push since refuses it",
+					"The branch is kept",
+				},
+			}, function(done)
+				github.setPrMerge(item.repo, item.number, method, auto, sha, account, function(problem2: github.Problem?)
+					M.landed(state, done, problem2, (if auto then "Auto-merge enabled: " else "Merged: ") .. target)
+				end)
+			end)
+		end)
+		return
+	elseif name == "pr-approve" or name == "pr-request-changes" then
+		if not prs then
+			return no("Reviews are for pull requests.")
+		elseif item.state ~= "open" then
+			return no("That pull request is not open.")
+		end
+		local approve = name == "pr-approve"
+		local body = if q.text == nil then nil else github.commentText(q.text)
+		if q.text ~= nil and not body then
+			return no("A comment is plain text without control characters, up to 4000 characters.")
+		elseif not approve and not body then
+			return no("Requesting changes needs a comment.")
+		end
+		local rows = if body then M.previewRows(body) else {}
+		if not rows then
+			return no("That comment is too long to show in full for confirmation; shorten it.")
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		local lines = { target .. ": " .. printable(item.title), "Account: @" .. account }
+		if body then
+			table.insert(lines, "Comment (" .. (utf8.len(body) or #body) .. " characters):")
+			table.move(rows, 1, #rows, #lines + 1, lines)
+		else
+			table.insert(lines, "No comment")
+		end
+		return M.offer(state, id, item, {
+			head = (if approve then "Approve " else "Request changes on ") .. target .. "?",
+			label = if approve then "Approve" else "Request changes",
+			lines = lines,
+		}, function(done)
+			github.reviewPr(item.repo, item.number, approve, body, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, (if approve then "Approved " else "Requested changes on ") .. target)
+			end)
+		end)
+	elseif name == "pr-update-branch" then
+		if not prs then
+			return no("Updating a branch is for pull requests.")
+		end
+		local d = state.details[detailKey(state, item)]
+		if item.state ~= "open" or not d or not d.about or d.about.merge ~= "behind" then
+			return no("That pull request is not open and behind its base branch.")
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		return M.offer(state, id, item, {
+			head = "Update the branch of " .. target .. "?",
+			label = "Update branch",
+			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, "Merge " .. printable(item.base) .. " into " .. printable(item.head) .. " (GitHub's default update)" },
+		}, function(done)
+			github.updatePrBranch(item.repo, item.number, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, "Updated the branch of " .. target)
+			end)
+		end)
 	elseif name == "comment" then
 		local body = github.commentText(q.text)
 		if not body then
@@ -977,17 +1118,8 @@ function M.act(state: State, id: string, q: any)
 		if not isJira and not account then
 			return
 		end
-		-- The whole normalized text is shown, a row per 100 characters (newlines as ⏎); a text that would not fit the
-		-- window's rows is refused, so no tail goes unpreviewed.
-		local shown = string.gsub(body, "\n", " ⏎ ")
-		local rows: { string } = {}
-		local from, total = 1, utf8.len(shown) or #shown
-		while from <= total do
-			local a, b = utf8.offset(shown, from), utf8.offset(shown, from + 100)
-			table.insert(rows, string.sub(shown, a, if b then b - 1 else #shown))
-			from += 100
-		end
-		if #rows > COMMENT_ROWS then
+		local rows = M.previewRows(body)
+		if not rows then
 			return no("That comment is too long to show in full for confirmation; shorten it.")
 		end
 		-- `who` is the Jira account (full email and site) acli runs as, read now and read again at commit by jira.comment:
@@ -1122,6 +1254,15 @@ function M.commands(state: State): { { id: string, group: string? } }
 		end
 		if item.state == "open" then
 			add(if item.draft then "pr-ready" else "pr-draft")
+			if not item.draft and item.headSha then
+				add("pr-merge")
+			end
+			add("pr-approve")
+			add("pr-request-changes")
+			local d = state.details[detailKey(state, item)]
+			if d and d.about and d.about.merge == "behind" then
+				add("pr-update-branch")
+			end
 		end
 		add("comment")
 		return out

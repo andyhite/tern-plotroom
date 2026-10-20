@@ -855,6 +855,59 @@ local function prDraft(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not converted to a draft", { name = "pr-draft" })
 end
 
+-- The host answers the methods the repository allows (and whether auto-merge applies); the plan comes with the choice.
+local function prMerge(cx: WindowCx, pane: number)
+	e().ask(cx, pane, "act", { name = "pr-merge" }, ACT_MS, function(a: any, cx2: WindowCx)
+		local why = problemOf(a)
+		if why then
+			return cx2:toast("error", "Not merged", why)
+		end
+		local items: { PickItem } = {}
+		local methods: { { id: string, label: string } } = {}
+		for _, m in if type(a.methods) == "table" then a.methods else {} do
+			if type(m) == "table" and type(m.id) == "string" and type(m.label) == "string" then
+				table.insert(methods, { id = m.id, label = m.label })
+				table.insert(items, { label = m.label, method = m.id, group = "Merge now" })
+			end
+		end
+		if a.auto == true then
+			for _, m in methods do
+				table.insert(items, { label = "Auto-merge when checks pass", detail = m.label, method = m.id, auto = true, group = "Checks pending" })
+			end
+		end
+		if #items == 0 then
+			return cx2:toast("info", "The repository offers no merge method")
+		end
+		cx2:pick({ items = items, placeholder = "Merge the selected PR…", icon = "merge", action = "plan" }):next(function(picked, _, cx3)
+			if picked and cx3 then
+				planAct(cx3, pane, "Not merged", { name = "pr-merge", method = picked.method, auto = picked.auto == true })
+			end
+		end)
+	end)
+end
+
+-- One-line prompt; an approval's comment is optional (empty sends none), a request for changes needs one.
+local function prApprove(cx: WindowCx, pane: number)
+	cx:prompt({ placeholder = "Approval comment (optional)", icon = "merge", action = "plan" }):next(function(text, _, cx2)
+		if cx2 and text then
+			local t = trim(text)
+			planAct(cx2, pane, "Not approved", { name = "pr-approve", text = if t == "" then nil else t })
+		end
+	end)
+end
+
+local function prRequestChanges(cx: WindowCx, pane: number)
+	cx:prompt({ placeholder = "What needs to change on the selected PR?", icon = "merge", action = "plan" }):next(function(text, _, cx2)
+		if cx2 and text and trim(text) ~= "" then
+			planAct(cx2, pane, "Changes not requested", { name = "pr-request-changes", text = trim(text) })
+		end
+	end)
+end
+
+local function prUpdateBranch(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Branch not updated", { name = "pr-update-branch" })
+end
+
 -- One-line prompt; the host validates the text and shows exactly what it will post when it asks for the confirmation.
 local function comment(cx: WindowCx, pane: number)
 	cx:prompt({ placeholder = "Comment to add to the selected item", icon = "merge", action = "review" }):next(function(text, _, cx2)
@@ -1397,6 +1450,10 @@ M.COMMANDS = {
 	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
 	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
 	{ id = "pr-draft", title = "Plotroom: Convert the selected PR to a draft", label = "Convert to draft…", run = prDraft },
+	{ id = "pr-merge", title = "Plotroom: Merge the selected PR", label = "Merge…", run = prMerge },
+	{ id = "pr-approve", title = "Plotroom: Approve the selected PR", label = "Approve…", run = prApprove },
+	{ id = "pr-request-changes", title = "Plotroom: Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
+	{ id = "pr-update-branch", title = "Plotroom: Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
 	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", run = jiraTransition },
 	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
 	{ id = "rerun-all", title = "Plotroom: Re-run every job of one of the selected PR's finished runs", label = "Re-run all jobs…", run = rerunAll },

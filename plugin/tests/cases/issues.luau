@@ -2888,4 +2888,142 @@ case("host: an issue action's Move to status is an issue-side row that saves, re
 	eq(w.kv.get("prompts-issues").items[1].status, nil, "reset clears it")
 end)
 
+-- A queue of two PRs (#1 at sha a, checks pending; #2 at sha b, checks passing) whose gh answers the repository's merge
+-- settings and the live PR; returns the block, the command lines gh was given and the live PR to edit.
+local function mergeScene(w: World): (Block, { string }, { [string]: any }, { [string]: any })
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { headSha = sha("a"), checks = "PENDING" }),
+		searchItem(2, "o/r", EPOCH - 120, { headSha = sha("b"), checks = "SUCCESS" }),
+	}
+	local settings: { [string]: any } = { squashMergeAllowed = true, mergeCommitAllowed = false, rebaseMergeAllowed = true }
+	local live: { [string]: any } = { number = 1, state = "OPEN", isDraft = false, headRefOid = sha("a"), mergeStateStatus = "BEHIND", url = "https://github.com/o/r/pull/1" }
+	local seen = asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "gh repo view ", 1, true) then
+			return { stdout = jsonEncode(settings) }
+		elseif string.find(line, "gh pr view ", 1, true) then
+			return { stdout = jsonEncode(live) }
+		end
+		return nil
+	end)
+	local b = openQueue(w)
+	w.advance(300)
+	return b, seen, live, settings
+end
+
+local function writesOf(seen: { string }, what: string): { string }
+	local out: { string } = {}
+	for _, line in seen do
+		if string.find(line, what, 1, true) then
+			table.insert(out, line)
+		end
+	end
+	return out
+end
+
+case("host mutations: merge offers the repository's allowed methods, auto-merge only while checks are pending, binds the planned head and never deletes the branch or uses admin", function(w: World)
+	local b, seen, live, settings = mergeScene(w)
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-merge" })
+	local ids: { string } = {}
+	for _, m in p.methods do
+		table.insert(ids, m.id)
+	end
+	same(ids, { "squash", "rebase" }, "only the methods the repository allows, as its settings say")
+	eq(p.auto, true, "auto-merge is offered while checks are pending")
+	eq(seen[1], "gh repo view github.com/o/r --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed", "the settings are read from the repository")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "merge" }).problem, "does not allow", "a method the repository forbids is not planned")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "--admin" }).problem, "not a merge method", "nor one that is no method")
+	local plan = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" })
+	eq(plan.confirm.head, "Merge o/r#1?", "the question names the pull request")
+	eq(plan.confirm.label, "Merge", "the confirming choice")
+	eq(plan.confirm.lines[2], "Account: @octocat", "the account")
+	has(plan.confirm.lines[3], "Squash and merge", "the method")
+	has(plan.confirm.lines[4], string.sub(sha("a"), 1, 7), "the head commit it is bound to")
+	eq(plan.confirm.lines[5], "The branch is kept", "and that the branch stays")
+	eq(#writesOf(seen, "pr merge"), 0, "planning merged nothing")
+	eq(asks.hx.ask(w, b, { op = "commit", token = plan.token }).ok, true, "committed")
+	eq(writesOf(seen, "pr merge")[1], "gh pr merge 1 --repo github.com/o/r --squash --match-head-commit " .. sha("a"), "one squash merge of exactly the planned commit")
+	local auto = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "rebase", auto = true })
+	eq(auto.confirm.head, "Auto-merge o/r#1?", "auto-merge is named as such")
+	eq(auto.confirm.label, "Merge when checks pass", "and confirms as such")
+	asks.hx.ask(w, b, { op = "commit", token = auto.token })
+	eq(writesOf(seen, "pr merge")[2], "gh pr merge 1 --repo github.com/o/r --rebase --auto --match-head-commit " .. sha("a"), "auto-merge adds --auto only")
+	-- a push after planning refuses the commit
+	local moved = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" })
+	live.headRefOid = sha("c")
+	has(asks.hx.ask(w, b, { op = "commit", token = moved.token }).problem, "pushed to since", "a moved head is refused")
+	eq(#writesOf(seen, "pr merge"), 2, "and merged nothing")
+	live.headRefOid = sha("a")
+	live.isDraft = true
+	has(asks.hx.ask(w, b, { op = "commit", token = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" }).token }).problem, "draft", "a draft is not merged")
+	settings.squashMergeAllowed = false
+	settings.rebaseMergeAllowed = false
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).problem, "allows no merge method", "no allowed method, nothing to offer")
+	for _, line in seen do
+		yes(not string.find(line, "--delete-branch", 1, true) and not string.find(line, "--admin", 1, true), "never deletes the branch or overrides: " .. line)
+	end
+	b.typeText("j")
+	w.advance(300)
+	settings.squashMergeAllowed = true
+	local second = asks.hx.ask(w, b, { op = "act", name = "pr-merge" })
+	eq(second.auto, false, "no auto-merge offered once checks are not pending")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true }).problem, "while checks are pending", "and none planned")
+end)
+
+case("host mutations: approve and request changes show their comment in full, request changes needs one, and a comment that cannot fit is refused", function(w: World)
+	local b, seen = mergeScene(w)
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-approve" })
+	eq(p.confirm.head, "Approve o/r#1?", "the question")
+	eq(p.confirm.lines[3], "No comment", "an approval may have none")
+	asks.hx.ask(w, b, { op = "commit", token = p.token })
+	eq(writesOf(seen, "pr review")[1], "gh pr review 1 --repo github.com/o/r --approve", "no body without a comment")
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-approve", text = "  Looks good\nto me " })
+	eq(p.confirm.lines[3], "Comment (16 characters):", "the comment's size")
+	eq(p.confirm.lines[4], "Looks good ⏎ to me", "its whole text")
+	asks.hx.ask(w, b, { op = "commit", token = p.token })
+	eq(writesOf(seen, "pr review")[2], "gh pr review 1 --repo github.com/o/r --approve --body=Looks good\nto me", "sent as shown")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-changes" }).problem, "needs a comment", "requesting changes needs a comment")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-changes", text = "  " }).problem, "plain text", "a blank one is no comment")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-approve", text = string.rep("x", 3800) }).problem, "too long to show in full", "a comment too long to show is refused")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-approve", text = "bell\7" }).problem, "plain text", "control characters are refused")
+	local r = asks.hx.ask(w, b, { op = "act", name = "pr-request-changes", text = "Add tests" })
+	eq(r.confirm.head, "Request changes on o/r#1?", "the question")
+	eq(r.confirm.label, "Request changes", "the confirming choice")
+	asks.hx.ask(w, b, { op = "commit", token = r.token })
+	eq(writesOf(seen, "pr review")[3], "gh pr review 1 --repo github.com/o/r --request-changes --body=Add tests", "the verdict and its body")
+	eq(#writesOf(seen, "pr review"), 3, "three reviews were sent, no more")
+end)
+
+case("host mutations: update branch is offered and planned only while the preview shows the branch behind, and runs gh's default update", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { headSha = sha("a") }), searchItem(2, "o/r", EPOCH - 120, { headSha = sha("b") }) }
+	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BEHIND", body = "", reviews = array({}), requested = array({}) }
+	s.gh.about["o/r#2"] = { mergeable = "MERGEABLE", merge = "CLEAN", body = "", reviews = array({}), requested = array({}) }
+	local live: { [string]: any } = { number = 1, state = "OPEN", mergeStateStatus = "BEHIND", url = "https://github.com/o/r/pull/1" }
+	local seen = asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "gh pr view ", 1, true) then
+			return { stdout = jsonEncode(live) }
+		end
+		return nil
+	end)
+	local b = openQueue(w)
+	w.advance(300)
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
+	yes(table.find(hx.palette(w, b).commands, "pr-update-branch") ~= nil, "the palette offers it while the preview shows the branch behind")
+	b.typeText("j")
+	w.advance(300)
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" }).problem, "not open and behind", "refused while the preview shows it ready")
+	eq(table.find(hx.palette(w, b).commands, "pr-update-branch"), nil, "and the palette does not offer it")
+	b.typeText("k")
+	w.advance(300)
+	eq(p.confirm.head, "Update the branch of o/r#1?", "the question")
+	eq(#writesOf(seen, "update-branch"), 0, "planning sent nothing")
+	live.mergeStateStatus = "CLEAN"
+	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "not behind", "a branch that caught up is not updated")
+	live.mergeStateStatus = "BEHIND"
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	eq(writesOf(seen, "update-branch")[1], "gh pr update-branch 1 --repo github.com/o/r", "GitHub's default update, nothing else")
+end)
+
 return {}

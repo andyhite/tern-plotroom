@@ -1490,6 +1490,107 @@ function M.setPrReady(repo: string, number: number, ready: boolean, account: str
 	end, done)
 end
 
+local MERGE_FLAG: { [string]: string } = { squash = "--squash", merge = "--merge", rebase = "--rebase" }
+
+-- The merge methods `repo`'s settings allow, in the order squash, merge, rebase; done(methods, problem).
+function M.mergeMethods(repo: string, account: string?, done: ({ string }?, Problem?) -> ())
+	local target = repoArg(repo)
+	if not target then
+		return later(function()
+			done(nil, bad("Unexpected repository name."))
+		end)
+	end
+	M.gh({ "repo", "view", target, "--json", "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed" }, function(out, p)
+		if not out then
+			return done(nil, p)
+		end
+		local ok, data = pcall(tern.json.decode, out)
+		if not ok or type(data) ~= "table" then
+			return done(nil, { kind = "failed", message = "gh printed unexpected repository data." })
+		end
+		local methods: { string } = {}
+		for _, m in { { "squash", "squashMergeAllowed" }, { "merge", "mergeCommitAllowed" }, { "rebase", "rebaseMergeAllowed" } } do
+			if field(data, m[2]) == true then
+				table.insert(methods, m[1])
+			end
+		end
+		done(methods, nil)
+	end, if account == "" then nil else account)
+end
+
+-- Merges the open, ready pull request with `method` (squash | merge | rebase), or with `auto` queues the merge for when
+-- its checks pass. `sha` is the head commit that was planned: a head that moved is refused here and again by GitHub
+-- (--match-head-commit). Never `--delete-branch` (a worktree may sit on it), never `--admin`.
+function M.setPrMerge(repo: string, number: number, method: string, auto: boolean, sha: string, account: string?, done: (Problem?) -> ())
+	local flag = MERGE_FLAG[method]
+	if not whole32(number) or not flag or type(sha) ~= "string" or #sha ~= 40 or not string.match(sha, "^%x+$") then
+		return later(function()
+			done(bad(if whole32(number) then "Unexpected merge request." else "Unexpected pull request number."))
+		end)
+	end
+	local planned = string.lower(sha)
+	guarded("pr", "number,state,isDraft,headRefOid,url", { "pull" }, repo, tostring(number), account, function(d)
+		if field(d, "state") ~= "OPEN" then
+			return "Pull request #" .. number .. " is not open."
+		elseif field(d, "isDraft") ~= false then
+			return "Pull request #" .. number .. " is a draft."
+		elseif string.lower(tostring(field(d, "headRefOid"))) ~= planned then
+			return "Pull request #" .. number .. " was pushed to since it was planned; nothing was merged."
+		end
+		return nil
+	end, function(_, id)
+		local args = { "pr", "merge", id, "--repo", repoArg(repo) or "", flag }
+		if auto then
+			table.insert(args, "--auto")
+		end
+		table.insert(args, "--match-head-commit")
+		table.insert(args, planned)
+		return args
+	end, done)
+end
+
+-- Approves (`approve`) or requests changes on the open pull request; `text` (M.commentText) is optional for an approval
+-- and required to request changes.
+function M.reviewPr(repo: string, number: number, approve: boolean, text: string?, account: string?, done: (Problem?) -> ())
+	local body = if text == nil then nil else M.commentText(text)
+	if not whole32(number) or (text ~= nil and not body) or (not approve and not body) then
+		return later(function()
+			done(bad(if whole32(number) then "The comment is empty, too long or has control characters." else "Unexpected pull request number."))
+		end)
+	end
+	guarded("pr", "number,state,url", { "pull" }, repo, tostring(number), account, function(d)
+		if field(d, "state") ~= "OPEN" then
+			return "Pull request #" .. number .. " is not open."
+		end
+		return nil
+	end, function(_, id)
+		local args = { "pr", "review", id, "--repo", repoArg(repo) or "", if approve then "--approve" else "--request-changes" }
+		if body then
+			table.insert(args, "--body=" .. body)
+		end
+		return args
+	end, done)
+end
+
+-- Merges the base branch into the open pull request's branch (GitHub's default update), only while it is behind.
+function M.updatePrBranch(repo: string, number: number, account: string?, done: (Problem?) -> ())
+	if not whole32(number) then
+		return later(function()
+			done(bad("Unexpected pull request number."))
+		end)
+	end
+	guarded("pr", "number,state,mergeStateStatus,url", { "pull" }, repo, tostring(number), account, function(d)
+		if field(d, "state") ~= "OPEN" then
+			return "Pull request #" .. number .. " is not open."
+		elseif field(d, "mergeStateStatus") ~= "BEHIND" then
+			return "Pull request #" .. number .. " is not behind its base branch."
+		end
+		return nil
+	end, function(_, id)
+		return { "pr", "update-branch", id, "--repo", repoArg(repo) or "" }
+	end, done)
+end
+
 -- Adds `text` (M.commentText) to an existing issue or pull request of `repo`, any state.
 function M.comment(repo: string, number: number, text: string, account: string?, done: (Problem?) -> ())
 	local body = M.commentText(text)
