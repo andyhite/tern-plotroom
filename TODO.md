@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
   - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
@@ -19,8 +21,6 @@
   - Decision: A paste skips the shortcut lookup, so pasting a key bound to Move up/down toasts "No item URL pasted" instead of moving.
   - Fix: rebase onto main - conflicts in README.md - resolve on the item branch and run the gate on the rebased commit before hand-off; the code review found no blocking defect.
   - Review attempts: 2
-
-## In-Progress
 
 ## Blocked
 
