@@ -2067,9 +2067,10 @@ tern.on("command_finished", function(ev: any, _cx: any)
 		end
 	end
 end)
--- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title? }): replaces
--- what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256 }
+-- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
+-- result?, ended? }): replaces what the rows show. An optional text that is not a clean string within its cap is dropped,
+-- never trusted.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10 }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -2100,7 +2101,12 @@ function M.agentStatus(state: State, raw: any)
 	local same = true
 	for k, v in map do
 		local was, now = state.agentInfo[k], infos[k]
-		same = same and state.agents[k] == v and was ~= nil and was.action == now.action and was.branch == now.branch and was.title == now.title
+		same = same and state.agents[k] == v and was ~= nil
+		if was then
+			for field in INFO_CAPS do
+				same = same and (was :: any)[field] == (now :: any)[field]
+			end
+		end
 	end
 	for k in state.agents do
 		same = same and map[k] ~= nil
@@ -2123,7 +2129,7 @@ function M.agentRows(state: State): { any }
 	for key, st in state.agents do
 		if st ~= "exited" then
 			local info: AgentInfo = state.agentInfo[key] or {}
-			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title })
+			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended })
 		end
 	end
 	table.sort(rows, function(a: any, b: any): boolean

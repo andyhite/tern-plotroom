@@ -1421,9 +1421,11 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 end
 
 tern.on("agent_finished", function(ev: any, cx: WindowCx)
-	flows.agentSync(cx)
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
 		flows.recordResult(cx, ev.pane, ev.result)
+	end
+	flows.agentSync(cx)
+	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
 		advanceChain(cx, ev.pane, ev.result)
 	end
 end)

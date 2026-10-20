@@ -238,7 +238,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1147,6 +1147,9 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Item", v = { ui.span(printable(row.key), "mono") } },
 		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
+		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
+		{ k = "Last message", v = if row.last then { ui.span(printable(row.last)) } else nil },
+		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
 	local kids: { Node } = {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
@@ -1178,7 +1181,9 @@ local function agentsProps(state: State, props: { [string]: any })
 		local label = printable(row.title or row.key)
 		local detail: { any } = {}
 		if row.action then
-			table.insert(detail, ui.span(printable(row.action)))
+			table.insert(detail, ui.span(printable(row.action .. (if row.result then ": " .. row.result .. (if row.ended then " " .. row.ended else "") else ""))))
+		elseif row.result then
+			table.insert(detail, ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))))
 		end
 		if row.branch then
 			table.insert(detail, if #detail > 0 then " · " else "")
@@ -1186,6 +1191,14 @@ local function agentsProps(state: State, props: { [string]: any })
 		end
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
+		end
+		if row.err then
+			table.insert(detail, " · ")
+			table.insert(detail, ui.span(printable(row.err), "error"))
+		end
+		if row.last then
+			table.insert(detail, " · ")
+			table.insert(detail, ui.span(printable(row.last), "muted"))
 		end
 		local id = pickerId("g", row.key)
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state] } })

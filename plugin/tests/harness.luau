@@ -370,6 +370,7 @@ export type Win = {
 	carlyExports: { [string]: any }, -- tern.carly.export registrations by name: { spec, fn }; the fake tern.carly exists unless a case clears `sdk.carly` before loading the window
 	carlyMessages: { { agent: number, event: string, message: string } }, -- every Agent:tocarly
 	carlyFails: string?, -- when set, Agent:tocarly raises it
+	agentNotes: { [number]: { last_message: string?, delivery_error: string? } }, -- agent pane -> what cx.agents:list also reports
 	prompts: { any }, -- every cx:prompt request
 	typedQueue: { string }, -- answers cx:prompt gives first, in order, before `typed`
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
@@ -588,6 +589,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		askFails = false,
 		carlyExports = {},
 		carlyMessages = {},
+		agentNotes = {},
 		prompts = {},
 		typedQueue = {},
 		hostOf = {},
@@ -804,7 +806,8 @@ local function newWorld(instantiate: Loader, context: string): World
 				local rows: { any } = {}
 				for pane, state in win.agentStates do
 					if win.panes[pane] then
-						table.insert(rows, { pane = pane, state = state, cwd = win.panes[pane].cwd })
+						local note: { last_message: string?, delivery_error: string? } = win.agentNotes[pane] or {}
+						table.insert(rows, { pane = pane, state = state, cwd = win.panes[pane].cwd, last_message = note.last_message, delivery_error = note.delivery_error })
 					end
 				end
 				return rows

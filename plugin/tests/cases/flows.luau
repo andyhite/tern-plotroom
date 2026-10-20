@@ -42,7 +42,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -3295,16 +3295,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working|||;o/r#2=idle|||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working|||||||;o/r#2=idle|||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input|||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input|||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
 	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it;", "the recorded texts are part of it")
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it||||;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli and no API token, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -3618,6 +3618,67 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 	end
 	eq(redraws, 1, "the block was redrawn")
 	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "and the protocol check ran")
+end)
+
+windowCase("window flows: the status map carries an agent's last message cut to 200 bytes and its delivery error", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
+	seedAgent(w, 50, "idle", 1, "o/r#5")
+	w.window.agentNotes[50] = { last_message = string.rep("x", 300), delivery_error = "omp needs updating" }
+	w.window.handlers.window_start(w.cx)
+	w.advance(4100)
+	local row: any = statusEvents(w)[1].map["o/r#5"]
+	eq(#row.last, 200, "the last message is cut to 200 bytes")
+	eq(row.err, "omp needs updating", "the delivery error is sent")
+	local links: any = w.kv.get("agent-links")
+	eq(links[1].last, nil, "neither is saved on the link")
+end)
+
+windowCase("window flows: an agent's result and time are saved on its link and survive a reload", function(w: World)
+	w.load("window")
+	flowHost(w)
+	seedAgent(w, 50, "idle", 1, "o/r#5")
+	agentFinished(w, 50, "done")
+	local links: any = w.kv.get("agent-links")
+	eq(links[1].result, "done", "the result is saved")
+	yes(string.match(links[1].ended, "^%d%d:%d%d$") ~= nil, "with the time")
+	local sent = statusEvents(w)
+	eq(sent[#sent].map["o/r#5"].result, "done", "the block hears it")
+	eq(sent[#sent].map["o/r#5"].ended, links[1].ended, "with the time")
+	local reloaded = flowHost(w) -- a block that has lost the map
+	w.window.handlers.window_start(w.cx)
+	local before = #statusEvents(w)
+	w.advance(4100)
+	eq(#statusEvents(w), before + 1, "the reload sends the map again")
+	eq(statusEvents(w)[before + 1].map["o/r#5"].result, "done", "a reloaded block is told the saved result again")
+	reloaded.ops()
+end)
+
+windowCase("window flows: an agent-links row whose result is not a string is malformed and never written over", function(w: World)
+	w.load("window")
+	flowHost(w)
+	seedAgent(w, 50, "idle", 1, "o/r#4")
+	local links: any = w.kv.get("agent-links")
+	links[1].result = 5
+	w.kv.put("agent-links", links)
+	local before = w.kv.store["agent-links"]
+	agentFinished(w, 50, "done")
+	eq(w.kv.store["agent-links"], before, "the store is as it was")
+end)
+
+case("host agents: the Agents list shows the last message, delivery error and last run", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Review", last = "All checks pass", err = "omp needs updating", result = "done", ended = "14:02" } })
+	pickScope(b, "agents")
+	w.flush()
+	local detail = detailText(pickerOf(b).items[1])
+	has(detail, "Review: done 14:02", "the row says how the last run ended")
+	has(detail, "All checks pass", "the last message")
+	has(detail, "omp needs updating", "and the delivery error")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", last = "bad\ntext", result = 5 } })
+	same(b.state().agentInfo["o/r#1"], {}, "texts that are not clean strings are dropped")
 end)
 
 return {}

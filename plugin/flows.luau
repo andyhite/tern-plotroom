@@ -29,16 +29,18 @@ type HostId = { id: number, name: string, address: string }
 -- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
 -- counts the actions chained before it.
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string? }
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string? }
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain.
 export type AgentInfo = { action: string?, branch: string?, title: string?, code: string? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
+type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
 local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 100, 100 -- the host takes up to 120, 200 and 256
+local LAST_CAP, RESULT_CAP = 200, 10 -- an agent's last message or delivery error; a run's result and its HH:MM
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
@@ -137,7 +139,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result" } do
+	for _, field in { "action", "branch", "title", "result", "ended" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -153,7 +155,8 @@ local function linkOf(row: any): Link?
 		action = clip(texts.action, ACTION_CAP),
 		branch = clip(texts.branch, BRANCH_CAP),
 		title = clip(texts.title, TITLE_CAP),
-		result = clip(texts.result, 20),
+		result = clip(texts.result, RESULT_CAP),
+		ended = clip(texts.ended, RESULT_CAP),
 	}
 end
 
@@ -183,26 +186,32 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
 
--- pane -> state of every agent block now listed; nil when the list cannot be read.
-local function agentStates(cx: WindowCx): { [number]: string }?
+-- pane -> state of every agent block now listed, and pane -> its last message and delivery error (each cut to
+-- LAST_CAP bytes); nil states when the list cannot be read.
+local function agentStates(cx: WindowCx): ({ [number]: string }?, Notes)
 	local ok, list = pcall(function()
 		return cx.agents:list()
 	end)
+	local notes: Notes = {}
 	if not ok or type(list) ~= "table" then
-		return nil
+		return nil, notes
 	end
 	local out: { [number]: string } = {}
 	for _, a in list do
 		if type(a) == "table" and type(a.pane) == "number" then
 			out[a.pane] = if type(a.state) == "string" and STATES[a.state] then a.state else "idle"
+			notes[a.pane] = {
+				last = if type(a.last_message) == "string" then clip(a.last_message, LAST_CAP) else nil,
+				err = if type(a.delivery_error) == "string" then clip(a.delivery_error, LAST_CAP) else nil,
+			}
 		end
 	end
-	return out
+	return out, notes
 end
 
 local function plotroomPanes(cx: WindowCx): { number }
@@ -220,17 +229,19 @@ end
 -- counts); an agent pane no longer listed is exited. An exited agent carries no text: its row is not shown, and the
 -- report stays small. ponytail: the texts stop at INFO_BYTES of JSON-encoded size (escapes count: the host's cap is on the
 -- encoded report), so a report of many live agents stays under its 40000-byte cap with state only for the rest; raise the host's cap with the count of agents if that is ever too few.
-local function statusMap(links: { Link }, host: HostId, states: { [number]: string }): { [string]: StatusRow }
+local function statusMap(links: { Link }, host: HostId, states: { [number]: string }, notes: Notes): { [string]: StatusRow }
 	local map: { [string]: StatusRow } = {}
 	local count = 0
 	local bytes = 0
 	for _, l in links do
 		if map[l.key] == nil and hostSame(l.host, host) and count < LINKS_CAP then
 			local state = states[l.agent] or "exited"
+			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
-			local size = #tern.json.encode({ [l.key] = { state = state, action = l.action, branch = l.branch, title = l.title } }) + 1
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended }
+			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
-				row.action, row.branch, row.title = l.action, l.branch, l.title
+				row = full
 				bytes += size
 			end
 			map[l.key] = row
@@ -240,7 +251,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title;" per key in order: host/render's `agentSig` spells it the same.
+-- "key=state|action|branch|title|last|err|result|ended;" per key in order: host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
@@ -250,7 +261,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -326,7 +337,7 @@ function M.agentSync(cx: WindowCx)
 		trackWaiting(cx, {}, nil)
 		return
 	end
-	local states = agentStates(cx)
+	local states, notes = agentStates(cx)
 	if not states then
 		return
 	end
@@ -345,7 +356,7 @@ function M.agentSync(cx: WindowCx)
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
 		if host then
-			local map = statusMap(links, host, states)
+			local map = statusMap(links, host, states, notes)
 			local sig = signature(map)
 			local ack = e().nodeProp(e().readNode(cx, pane, "main.agents"), "text")
 			if ack ~= sig and not (ack == nil and sig == "") then
@@ -462,16 +473,17 @@ function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
 	return nil, nil
 end
 
--- Records how the agent in `pane` ended (done, failed, exited, closed) on its link, for Carly's `plotroom_agents`.
-function M.recordResult(cx: WindowCx, pane: number, result: string)
+-- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed) and when (HH:MM) on its link, for the
+-- Agents list and Carly's `plotroom_agents`. Nothing for an agent with no link or a store that cannot be read.
+function M.recordResult(cx: WindowCx, agent: number, result: string)
+	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
-	local host = hostOf(cx, pane)
 	if not healthy or not host then
 		return
 	end
 	for _, l in links do
-		if l.agent == pane and hostSame(l.host, host) then
-			l.result = clip(result, 20)
+		if l.agent == agent and hostSame(l.host, host) then
+			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
 			writeLinks(links)
 			return
 		end

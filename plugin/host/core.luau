@@ -158,7 +158,7 @@ export type Settings = {
 }
 
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title.
-export type AgentInfo = { action: string?, branch: string?, title: string? }
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
 
 -- The Inbox list's model: the notifications gh's active login was last read to have (`login`: whose), why they could not be
 -- read (`problem`), whether a read is running and whether one has answered.
