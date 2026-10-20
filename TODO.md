@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Jira views list up to 1000 items instead of stopping at 100.
   - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
   - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
@@ -17,8 +19,6 @@
   - Fix: plugin/jira.luau:301-303 - with a parsed count, `complete = count <= M.LIMIT` ignores what the search returned; the count and the search are separate acli calls, so a count of 98 with a full 100-item page (an issue created between them) or a stale count under 1000 with 1000 returned is marked complete and drops the partial marker - pass the requested limit into `search` and let a full list be complete only when the count matches it (`#found < limit or (#found == count and #found <= M.LIMIT)`), with a case.
   - Fix: rebase onto main - main (dca57bf) already changed `tests/cases/issues.luau:798,800` to `acliCount(s.acli, "view")`; keep main's lines there; also add the new `count` kind to the `AcliReq` comment in `tests/harness.luau`.
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
