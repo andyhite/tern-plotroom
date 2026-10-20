@@ -4,6 +4,22 @@
 
 ## Todo
 
+- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
+  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
+  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
+  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
+  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
+  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
+  - Base: main
+  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
+  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
+  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
+  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Fix: plugin/host/core.luau:601 with plugin/plugin.toml - main (4ac0024, CI item) now fails `check.py test` unless `plugin.toml`'s version minor equals `RPC_PROTOCOL`; this branch sets protocol "24" but leaves `0.23.0`, so the rebased tree fails the `version` row - rebase onto main and set `version = "0.<protocol>.0"` with the protocol bumped to the next number main has not used at rebase time (other queued items also target "24"); update the Decision bullet to match.
+  - Review attempts: 1
+
 ## In-Progress
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
@@ -53,20 +69,6 @@
   - Decision: Neither the Worktrees nor the Agents list has a search box, so there is no search guard for Home/End.
   - Decision: Helpers: `listKeys(move, enter, extra)` (host), `editPrompt(qid, fn, quiet?)` and `summary(prefix, id, label, hint)` (settings), `engine.claimCheckout(state, repo, path, busy, moved, done)`, `engine.pickerId(prefix, key)`; the claim messages that differ are passed in so they stay byte-identical.
   - Decision: `pnext` and `pwhere`/`psplit` with a malformed prompt id now say "That action was deleted elsewhere."; sheet rows never produce such an id.
-
-- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
-  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
-  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
-  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
-  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
-  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
-  - Base: main
-  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
-  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
-  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
-  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
 
 - [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
   - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
