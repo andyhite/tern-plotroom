@@ -4,6 +4,251 @@
 
 ## Todo
 
+- [ ] Plotroom never checks out a fork's pull request for an issue unless I pick it.
+  - Worktree, and any action that runs in an issue's worktree, auto-pick a linked pull request only when it is the single live same-repository one; a fork's (cross-repository) PR is never picked automatically.
+  - Fork PRs still appear in the "Which branch" choice, marked as forks with their owner, beside same-repository PRs and New branch…; an issue whose only live linked PR is a fork shows that choice and fetches nothing.
+  - A PR from a deleted fork counts as a fork, owned by its author, as `github.pr` already treats it.
+  - Touch points: `github.linkedPrs` (`PR_LINK`/`PR_LINK_JQ` gain `isCrossRepository` and the head owner; `LinkedPr` gains `fork`), `undecided()` in `host/requests.luau`, the `choosePr` rows in `window.luau`.
+  - The `choosePr` reply gains a field: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/tracker.luau` linkedPrs keeps the fork flag; `tests/cases/issues.luau` fork + same-repo auto-picks the same-repo PR, fork only shows the choice. README: the issue-worktree bullet under Worktrees.
+
+- [ ] Links inside PR or issue text can't run Plotroom actions, and unsafe head branch names never reach agent prompts.
+  - Every action link the block renders for the window (button, saved-action run, worktree, agent, goto, agentgo) carries a random token made when the host starts; the window's exact-href check then refuses a `plotroom://` link written into a description, which lacks it.
+  - A tokenless or stale link gets the existing "no longer listed" toast and starts nothing; the token never appears in rendered markdown, toasts or kv.
+  - `github.pr` refuses a head branch with characters outside letters, digits and `_ . / + @ -`, or one not starting with a letter, digit or `_`, naming the branch; Worktree and agents refuse that PR while the queue still lists it.
+  - Touch points: `buttonLinks` and the other hidden hrefs in `host/render.luau`, `parseLink`/`handle` in `window.luau`, the head ref check in `github.pr`, the link builders `prLink`/`issueLink` in `tests/harness.luau`.
+  - The link format changes: bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: hidden hrefs carry the token; a tokenless run or worktree link is refused; a PR whose head branch contains `$` or `;` is refused for Worktree and agents. README Trust: one line for each guard.
+
+- [ ] Jira writes always go to the site acli is signed in to now, and a "429" inside other text is not a rate limit.
+  - Before any REST write (the palette's Jira transition…), Plotroom re-reads acli's site and email, so after `acli jira auth switch` the write goes to the current site or is refused; nothing is posted to a cached site.
+  - A failed `acli jira auth status` during that read is an `auth` problem, and nothing is sent.
+  - acli output counts as rate-limited only when it says rate limit or shows 429 as a standalone status, never inside a key such as `ABC-429` or an id.
+  - Touch points: `verified()` and `withSite` in `jira.luau` (reset the cached site the way `noted()` does), the acli classifier.
+  - Cases: `tests/cases/mutation.luau` transition with a site switch between list and post; `tests/cases/tracker.luau` an acli failure naming `ABC-429` is not `rate-limit`, "429 Too Many Requests" still is.
+
+- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
+  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
+  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
+  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
+  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
+  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
+
+- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
+  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
+  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
+  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
+  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
+  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
+  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
+
+- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+
+- [ ] A GitHub rate-limit pause stops every automatic GitHub read, and Settings always shows the refresh pace.
+  - While GitHub's pause holds (quota 0 or Retry-After), the first page of every search and the head-branch lookup answer rate-limited without spawning `gh`, and so does everything built on them (board preview, noted-issue reads).
+  - Confirmed writes (assign, comment, labels, re-runs, draft PR) stay ungated: they are user-initiated, and GitHub reports its own limit.
+  - Settings › Refresh keeps showing the interval and the last "next at" while a refresh runs instead of going blank.
+  - Touch points: `searchAll` (a guard before the first page, shaped like the one in `M.checks`) and `pullByHead` in `github.luau`; `paceLine` in `host/render.luau` and its Settings caller.
+  - Cases: `tests/cases/tracker.luau` first search page and `pullByHead` during a pause spawn nothing and answer `rate-limit`; `tests/cases/queue.luau` the pace hint is non-empty during a refresh. README Finer points: the pause covers every automatic read, not confirmed writes.
+
+- [ ] A PR's preview finds its fork worktree and noted issue without listing every worktree, and reads that issue as the view's account.
+  - The PR preview takes the noted issue from the last worktree scan (`state.notes`), matching the PR's local branch including a fork's `<owner>/<branch>`, instead of running `git worktree list` on every PR selection (replacing the per-PR `inventory` read added with the both-halves preview).
+  - Before a checkout's first scan the preview shows no Issue section; the next refresh's scan fills it.
+  - The noted issue is read as the view's gh login (`M.login(state)`), not gh's active one; the Worktrees board keeps its own account.
+  - Two issues noted on one branch: the first wins, as today.
+  - Touch points: the PR branch of the detail load and `readNoted` (gains a login parameter) in `host/engine.luau`.
+  - Cases (`tests/cases/checks.luau`): a fork PR's preview shows its noted issue; the issue read passes the view's login; selecting a PR runs no `worktree list` (update the two list-count cases that expect one).
+
+- [ ] The queue's error and empty states say what to do next.
+  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
+  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
+  - The README hero's footer shows only keys bound by default.
+  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
+  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
+
+- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
+  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
+  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
+  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
+  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
+  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
+  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
+
+- [ ] Default prompts don't contradict themselves, agent toasts show the action's name, and ⌘⇧Z no longer undoes.
+  - Review's "NEVER edit tracked files" exempts its step-1 `git pull --ff-only` sync, Quick review's read-only rule exempts its `git fetch`, and Plan lists an epic's children with `--paginate`.
+  - The agent-start toast's second line is the action's name, or nothing for a typed prompt, instead of the whole filled prompt.
+  - ⌘⇧Z (Ctrl⇧Z) in a text field does nothing instead of undoing; there is still no redo.
+  - Touch points: Review, Quick review and Plan in `prompts.luau`; the start toasts in `window.luau`; the undo key in `input.luau`.
+  - Cases: `tests/cases/window.luau` toast detail; `tests/check.luau` undo ignores shift; the cases pinning default prompt names and text (`tests/cases/issues.luau` ~1320-1354, `tests/cases/window.luau` ~158, ~176) assert behavior instead of wording.
+
+- [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
+  - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
+  - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
+  - The confirm text comes from the row's facts: a noted PR or issue branch goes only if git confirms nothing is lost, an unnoted or inferred branch is kept, a detached worktree has no branch.
+  - The three "worktree remove, then parse modified or untracked" copies in `worktree.luau` become one.
+  - Touch points: `removeEntry`, `remove`, `claim` and `inventoryDirty` in `worktree.luau`; removal in `board.luau`; the card removal in `host.luau` (its note gains `repo`, from `jiraReposOf` for Jira); the remove overlays in `host/render.luau`; the runtime op in `tests/runtime.luau`.
+  - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
+
+- [ ] Every action I can save also exports, imports and runs.
+  - Export keeps an action whose shortcut is any single visible character, non-ASCII such as `é` included, by the same rule Settings applies; import accepts it unless the queue already uses that key.
+  - Settings refuses an action name over 120 characters with a message, matching the export limit and the palette's clip.
+  - Import checks an action's model by the same rule as Settings and the window; an invalid model leaves that action out with a note instead of saving an action that can never start.
+  - `portable` takes the reserved keys as a parameter instead of a module global.
+  - Touch points: key, name and model checks and `reservedKeys` in `portable.luau` (shared rules passed in through its `Ok` table, since it requires nothing); key shape in `keys.luau`; `worktree.validModel`; the name row in `host/settings.luau`; `reserve` in `host/requests.luau`.
+  - Cases: `tests/portable_check.luau` round-trips an `é` key and leaves out a 121-character name and the model `a b`; a Settings name-cap case. README: export and import.
+
+- [ ] The Worktrees list shows every repository's worktrees when two repositories share a checkout, and two PRs never share one local branch.
+  - A checkout saved for two repositories (a fork and its upstream) is listed once per path; each row takes the repository its note names, so the second repository's worktrees no longer show as Unnoted.
+  - Checking out a PR whose local branch is already noted for another PR (a same-repository head `alice/x` vs alice's fork branch `x`) is refused with a message naming both PRs; nothing is reused or moved.
+  - README gives the push command for fork PR worktrees (`git push <fork remote> HEAD:<branch>`), whose local branch name differs from the fork's.
+  - Board dead code goes: `M.detail`, `Row.checking`, `select`'s `refresh` parameter, the never-hit `rel.key` branch, the always-true `showMain`, and the dropped problem argument of `Api.dirty`.
+  - Touch points: `load`, `rows` and `select` in `board.luau`; `prBranch`, `reconcile` and `checkoutPr` in `worktree.luau`; board row ids (`repo\0path`) and `engine.boardId`.
+  - Cases: `tests/cases/worktree.luau` a shared checkout lists both repositories' notes and a branch collision is refused; `tests/board_check.luau` updated. README: the fork PR line under Worktrees.
+
+- [ ] Close/reopen, ready/draft and an account switch between plan and commit are covered by tests, and tests stop pinning incidental copy.
+  - Host cases for issue close and reopen and PR ready and draft check the committed argv per action (`--undo` only for draft) and the refusal when the item is already in that state.
+  - A case plans a mutation, switches gh's active account, commits within 5 minutes, and asserts the planned login and its token are used.
+  - Cases pinning incidental copy assert behavior instead: Settings section and row ids and hints (`tests/cases/issues.luau` ~1404-1427), sort labels already asserted as toasts (`tests/check.luau` ~371), the acli startup request count (`issues.luau` ~798; count `view` calls), and the full fact order (`issues.luau` ~803; check the one missing fact).
+  - Duplicated fixtures collapse: `issueHost`/`jiraHost` reuse `asks.bk.repo`, `jiraWindow` reuses `issueWindow` with a host parameter, and `queue.luau`'s four clone setups use `cloneScene`.
+  - Test-only: no plugin source changes.
+  - Touch points: `tests/cases/issues.luau`, `tests/cases/queue.luau`, `tests/harness.luau`, `tests/check.luau`; the code under test is close/reopen/ready/draft in `host/requests.luau` and `github.setIssueState`/`setPrReady`.
+
+- [ ] CI and tooling: a credential-free checkout, a plugin version that tracks the protocol, an SDK drift warning, and Luau 0.743.
+  - The CI checkout step sets `persist-credentials: false`.
+  - `plugin.toml`'s version minor equals `RPC_PROTOCOL` (`0.22.0` while the protocol is 22), and `check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart.
+  - Smoke generates the installed Tern's SDK types and shows a WARN row in the summary when their sha256 differs from the pinned snapshot; the gate does not fail on it.
+  - Luau is pinned to 0.743 with GitHub's published asset digests (luau-lsp 1.70.1 is already the latest), and the workflow step name stops repeating tool versions.
+  - `smoke.py` reuses `Smoke.cd` and `wait_until` instead of its copies, and `check.py` appends the NOT RUN row after the stage loop instead of re-sorting.
+  - Touch points: `.github/workflows/check.yml`, `scripts/check.py` (tool pins, summary, version gate), `scripts/smoke.py`, `plugin/plugin.toml`, AGENTS.md (pins and the version rule), README's remote-host paragraph.
+
+- [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
+  - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
+  - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
+  - Refresh keeps the login-shell PATH found earlier and clears only failed lookups; a spawn that fails under that PATH probes the login shell once more, so a newly installed CLI is still found.
+  - One search-page parser with the normalizer passed in replaces `parsePage` and `parseIssuePage`, `tracker.reconcile` replaces `github.reconcile`, `rerunFailed` goes through `guarded`, and the unread `rateLimit { cost }` fields leave the checks and issue-detail queries.
+  - Touch points: `M.gh`, the parsers and `rerunFailed` in `github.luau`; `tracker.reconcile`; `reset`/`run` in `process.luau`.
+  - Cases: `tests/cases/tracker.luau` a second call within 60 s spawns no `gh auth token` and an `auth` reply clears it; a `process` reset keeps the recovered PATH; `tests/check.luau` parser names; `tests/cases/mutation.luau` rerun unchanged. README Trust and Finer points › Accounts: tokens are kept in memory up to 60 s.
+  - Decided: gh tokens are cached in memory for 60 s per login.
+
+- [ ] The Worktrees and Agents lists take Home and End like the queue, and Settings edits go through shared helpers.
+  - Home and End jump to the first and last row of the Worktrees list and the Agents list, as in the queue, and are ignored while searching.
+  - The two list key handlers in `host.luau` become one helper taking the move, Enter and extra-action functions.
+  - The eight edit-one-action copies (`kindAndId` → `editPrompts` → `promptById` → deleted elsewhere) and the four Edit/Done summary rows in `host/settings.luau` become one local helper each.
+  - The checkout-claim flow of `host/requests.luau` and `host/settings.luau` becomes one engine helper, and `itemId`/`boardId`/`agentId` become one id builder with byte-identical output.
+  - Nothing else changes for the user: picker ids, Settings rows and messages stay the same.
+  - Cases: Home/End on the Worktrees list (`tests/cases/flows.luau` board cases) and the Agents list (`tests/cases/checks.luau`); existing Settings and claim cases pass unchanged.
+
+- [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
+  - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
+  - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
+  - Merge never deletes the branch (a worktree may sit on it) and never uses admin override.
+  - Request changes requires a comment and Approve takes an optional one, each shown in full in the confirm and refused when it can't fit, as comments are; Update branch is offered only while the preview shows the branch behind its base, using GitHub's default merge update.
+  - Touch points: `COMMANDS` and `planAct` in `flows.luau`; act dispatch and the plan/commit guards in `host/requests.luau`; new writes on `guarded` beside `setPrReady` in `github.luau`; new act names, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/issues.luau` argv per command, methods from repository settings, auto-merge only with pending checks, no branch deletion, a moved head refused; `tests/cases/flows.luau` Cancel-first plans and palette groups. README: What it does and the Trust list of confirmed writes.
+  - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
+
+- [ ] A status-bar segment shows how many of my agents need input and jumps to the first one.
+  - While any linked agent is in `waiting_input`, every pane's status line shows "N agents need input"; clicking it focuses the first waiting agent's pane, as Go to agent does.
+  - Each agent that enters `waiting_input` gets one toast naming its item and action; staying there toasts nothing more.
+  - The count covers the agents the Agents list covers, rides the existing 4 s status sync, and clears as soon as none waits.
+  - The protocol-mismatch warning and the new segment come from one `tern.chrome.status` formatter, refreshed only when either changes; tab colors are never touched.
+  - Touch points: the status formatter and `checkProtocol` in `window.luau`; `agentStates`/`agentSync` in `flows.luau`; a new `tern.command` for the jump.
+  - Cases (`tests/cases/flows.luau`): the count appears and clears, a click focuses the first waiting pane, one toast per entry, the mismatch warning still shows. README: Triage, agents and commands.
+
+- [ ] The worktree card opens Tern's Git view, shows unpushed commits, and refreshes after git commands.
+  - The worktree card and a Worktrees list row offer Open in Git, which opens Tern's git block on that worktree; it shows only for a local block whose worktree folder exists.
+  - The card's changes read uses `git status --porcelain=v2 --branch`, so the same spawn gives ahead/behind: a worktree with unpushed commits shows "N unpushed", and nothing shows when the branch has no upstream (fork PR worktrees).
+  - A command whose line starts with `git ` finishing in a pane inside a known worktree marks that card for a fresh read, so badges update right after `git commit` or `git pull`.
+  - Touch points: `dirty` in `worktree.luau` (porcelain v2 header lines never count as changes); the card in `host/render.luau`; `inspectSelected` in `host.luau`; host `command_finished` beside the existing hooks in `host/engine.luau`; an `openWorktree`-style link in `flows.luau`/`window.luau` calling `cx.git:open`.
+  - Read-only, so no plan-then-commit; the new link and path request bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: porcelain v2 parsing (clean with an ahead count, dirty, no upstream) in `tests/cases/mutation.luau`/`checks.luau`; a `git commit` finish refreshes the card; Open in Git is refused for a remote block. README Worktrees: the card's badges and buttons.
+
+- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
+  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
+  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
+  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
+  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
+  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
+
+- [ ] Paste a GitHub or Jira URL into the queue to open it, copy an item's link, number or branch, and see new counts in the pane title.
+  - Pasting into the queue outside search opens the first GitHub PR/issue or Jira issue URL in the text as Open item by URL does (fetched, then pinned); text without one gets a toast; a paste during search still edits the search.
+  - The palette offers Copy link, Copy number (`#N` or the Jira key) and, when the item has a head or worktree branch, Copy branch for the selected item.
+  - The pane title adds the attention count when it isn't zero: "Plotroom · My PRs (12) · 3 new".
+  - Touch points: paste handling and the `title` handler in `host.luau`; `openUrl` in `host/requests.luau`, split so a paste answers with a toast instead of an rpc reply; palette rows in `host/requests.luau`; `cx:copy`.
+  - Cases (`tests/cases/queue.luau`): a paste opens and pins, a paste without a URL toasts, a paste during search edits the query, each copy row copies its text, the title shows "· 3 new". README: Keys and the command palette, Open item by URL.
+
+- [ ] Interrupt, stop or message the selected item's agent from the command palette.
+  - The palette's Saved actions group offers Interrupt agent, Stop agent… and Message agent… while the selected item, or the selected Agents row, has a live agent.
+  - Interrupt sends Ctrl-C to the agent's current turn without closing it; Message asks for one line and sends it to the agent.
+  - Stop asks first in a pick listing Cancel first, then closes the agent block and ends its program.
+  - An exited agent, a blank message, or a message the agent can't take now gives a toast and changes nothing.
+  - Touch points: pane resolution through `liveAgent`/`goAgent` in `flows.luau`; link kinds, `parseLink` and the hidden-node check in `window.luau`; palette rows in `host/requests.luau`; `cx.agents:interrupt`, `stop` and `ask`.
+  - Cases (`tests/cases/flows.luau`): each command reaches the right pane, Stop's Cancel stops nothing, an exited agent toasts, the rows show only with a live agent. README: Keys and the command palette; Triage, agents and commands.
+
+- [ ] Remove every finished worktree in one confirm.
+  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
+  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
+  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
+  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
+  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
+  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
+
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+
+- [ ] An action's Move to status works without PLOTROOM_JIRA_API_TOKEN.
+  - When an issue action with Move to status starts its agent on a Jira issue, Plotroom moves it with `acli jira workitem transition` (key, status, `--yes`) instead of the REST API, so no token is needed.
+  - An issue already in that status is left alone as today; an acli failure (no such status, a transition that needs fields) is an error toast with acli's message, and the agent still runs.
+  - The palette's Jira transition… picker keeps the REST API and the token, since it needs the transition list.
+  - Touch points: a transition-by-status call beside `jira.transition` in `jira.luau` (acli argv style), the Move to status path in `host/requests.luau`.
+  - Docs: README's "Jira transitions need an API token" and Move to status bullets say the token is only for the palette picker; README Trust notes Move to status runs without a confirm, as decided when it shipped; AGENTS.md's Jira transition invariant names the palette picker only.
+  - Cases (`tests/cases/issues.luau`, `tests/cases/flows.luau`): the move runs acli with no token set; already there runs nothing; an acli failure toasts and the agent starts.
+  - Decided: Move to status uses `acli jira workitem transition --status`; the REST API and token stay only for the palette's Jira transition… picker.
+
+- [ ] Jira views list up to 1000 items instead of stopping at 100.
+  - A Jira view fetches its JQL results past 100, up to 1000 items like GitHub's cap; more than 1000 marks the view partial, as a cut list does today.
+  - The view takes its total from acli's count, so exactly 100 results no longer shows as partial.
+  - A failed count keeps today's single-page behavior; each acli call keeps its 60 s timeout.
+  - Touch points: the search call, `LIMIT` (with its `ponytail:` comment) and the completeness rule in `jira.luau`; the completeness rule in `tracker.luau`.
+  - Cases (`tests/cases/tracker.luau`): more than 100 paginates, exactly 100 is complete, a failed count falls back; update the `--limit 100` and "full page not complete" cases. README Finer points: Jira's limit.
+
+- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
+  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
+  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
+  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
+  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
+  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
+  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
+
+- [ ] After `gh pr create` in a shell, a lens offers to show the new PR in Plotroom.
+  - A command lens claims `gh pr create`; when the output holds a PR URL, the lens view shows it with Show in Plotroom, Copy and Open in browser.
+  - Show in Plotroom opens the PR in the same host's Plotroom block as Open item by URL does (fetched, pinned), launching Plotroom first when none is open; the lens runs nothing else.
+  - Output without a PR URL (a failed or cancelled create) shows the raw output; pipelines and redirects are never lensed, by Tern's rule.
+  - The window accepts this one read-only show link from a non-Plotroom pane; worktree, agent and run links still refuse anything not from a Plotroom block.
+  - Touch points: `[[lenses]]` in `plugin/plugin.toml`; `tern.lens.define` registered in `host.luau` with the lens in a host module that respects the layer rules; `route.link`/`handle` and `openByUrl` in `window.luau`/`flows.luau`.
+  - Cases: a `gh pr create` transcript yields the lens view; the show link from a non-Plotroom pane opens and pins the PR; a worktree link from that pane is still refused (the harness gains a lens fake). README: What it does.
+
+- [ ] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
+  - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
+  - Enter shows that PR or issue in the block, as a linked PR does; the list refreshes with the queue and obeys GitHub's `X-Poll-Interval` and `Last-Modified`, so an unchanged inbox (304) costs nothing.
+  - Mark read… marks the listed threads read after one confirm, Cancel first, that shows their count and the account; the gh login is captured at plan time.
+  - Without gh, or when the login can't read notifications, the list shows the problem and the `gh auth refresh` command that fixes it; nothing falls back to another login.
+  - Touch points: a notifications read and a mark-read write in `github.luau`; host state in `host/core.luau`, glue in `host/engine.luau`, rows in `host/render.luau` (mirroring the Agents list); plan/commit in `host/requests.luau` and the confirm in `flows.luau`; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: rows from a fake notifications reply, a 304 spends nothing, mark-read plan and commit with the captured login, the scope problem message. README: What it does, the sidebar, and the Trust list of confirmed writes.
+  - Decided: the inbox marks threads read, never done, through one batched confirm.
+
 ## In-Progress
 
 ## Review
