@@ -1172,12 +1172,12 @@ case("lens: a gh pr create transcript offers to show, copy and open the new pull
 	local def: any = w.lenses["pr-create"]
 	yes(def ~= nil, "the manifest's lens is defined")
 	local url = "https://github.com/o/r/pull/45"
-	local function run(lines: { string }): (any, any)
+	local function run(lines: { string }, status: number?): (any, any)
 		local state = def.open({ line = "gh pr create", typed = "gh pr create", program = "gh", args = { "pr", "create" } }, w.cx)
 		for _, text in lines do
 			def.line(state, { text = text, links = {} })
 		end
-		def.finish(state, 0)
+		def.finish(state, status or 0)
 		return state, def.view(state)
 	end
 	local _, view = run({ "Creating pull request for fix into main in o/r", "", url })
@@ -1192,6 +1192,8 @@ case("lens: a gh pr create transcript offers to show, copy and open the new pull
 	eq(def.event, nil, "the lens handles no events of its own")
 	local _, none = run({ "aborted: could not push", "pull requests are listed at https://github.com/o/r/pulls" })
 	eq(none, nil, "output without a pull request URL shows the raw output")
+	local _, exists = run({ "a pull request for branch \"fix\" into branch \"main\" already exists:", url }, 1)
+	eq(exists, nil, "gh's already-exists failure (exit 1) shows its raw output, not the old pull request")
 end)
 
 windowCase("window flows: the lens's show link works from a shell pane, while an item link from it is still refused", function(w: World)

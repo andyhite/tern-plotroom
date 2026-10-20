@@ -28,7 +28,11 @@ function M.define()
 		line = function(state: Lens, l: LensLine)
 			state.url = M.urlIn(l.text) or state.url
 		end,
-		finish = function(_state: Lens, _status: number) end,
+		finish = function(state: Lens, status: number)
+			if status ~= 0 then
+				state.url = nil
+			end
+		end,
 		view = function(state: Lens): Node?
 			local url = state.url
 			if not url then
