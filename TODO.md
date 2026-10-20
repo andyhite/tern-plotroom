@@ -57,25 +57,6 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Review attempts: 0
 
-- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
-  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
-  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
-  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
-  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
-  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
-  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
-  - Base: main
-  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
-  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
-  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
-  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
-  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
-  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
-  - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
-  - Fix: rebase onto main - conflicts in README.md and plugin/tests/cases/queue.luau (main's queue error/empty states change) - resolve on the item branch and rerun the gate on the rebased commit; the third code review (27b868b) found no blocking defect.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Review attempts: 0
-
 - [ ] GitHub calls spawn fewer processes, and `github.luau` keeps one search parser, one account rule and one guarded write path.
   - `M.gh` reuses a login's token for up to 60 s in memory and drops it on any `auth` problem; tokens are still never written to disk, and a failed token read still sends nothing.
   - An empty or missing account is normalized once inside `M.gh`; the eleven per-function copies and the never-produced `account` problem kind go.
@@ -99,6 +80,26 @@
 ## Blocked
 
 ## Review
+
+- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+  - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
+  - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
+  - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
+  - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
+  - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
+  - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
+  - Base: main
+  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
+  - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
+  - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
+  - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
+  - Decision: Snooze-only lookup is `triage.snoozed`, used by `keep` and `listedCount`; bench row `seen-render`.
+  - Decision: `state.problemBy` (set in `refresh`/`landed`, read by `headOf`/`helpOf`) records which integration raised the problem, so an acli sign-out on a GitHub view reads as Atlassian and the reverse; it is a `State` field, not on `github.Problem`.
+  - Decision: The saved pause stores optional `by = state.problemBy` (restored only as `github`/`jira`; save version unchanged); `identify` clears the problem on a login change only when `(state.problemBy or integration) == integration`.
+  - Fix: rebase onto main - conflicts in README.md and plugin/tests/cases/queue.luau (main's queue error/empty states change) - resolve on the item branch and rerun the gate on the rebased commit; the third code review (27b868b) found no blocking defect.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (786c9b0); README and queue.luau conflicts resolved; gate passed: 544 cases, types clean, smoke 22 scenarios. Open for review: README tail says 422 belongs to its view and clears on a view switch, which the worker did not check in code or tests.
+  - Review attempts: 0
 
 - [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
