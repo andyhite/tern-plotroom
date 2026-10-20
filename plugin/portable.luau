@@ -111,7 +111,7 @@ local function checkPrompt(p: any): string?
 		return "a name must be 1 to " .. NAME_CAP .. " characters on one line"
 	elseif not clean(p.text, TEXT_CAP, true) or p.text == "" then
 		return "the text must be 1 to " .. TEXT_CAP .. " bytes"
-	elseif p.key ~= nil and (type(p.key) ~= "string" or utf8.len(p.key) ~= 1 or string.find(p.key, "%s")) then
+	elseif p.key ~= nil and (type(p.key) ~= "string" or utf8.len(p.key) ~= 1 or string.find(p.key, "[%s%c]")) then
 		return "a shortcut is one visible character"
 	elseif p.worktree ~= nil and type(p.worktree) ~= "boolean" then
 		return "worktree must be true or false"
@@ -577,10 +577,6 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 			table.insert(notes, "Action '" .. p.name .. "' skipped: " .. p.kind .. " cannot be imported into right now.")
 			continue
 		end
-		if p.model and not ok.modelValid(p.model) then
-			table.insert(notes, "Action '" .. p.name .. "' left out: its model is not one omp takes.")
-			continue
-		end
 		local current = if out[p.kind] then out[p.kind].prompts else ex.prompts
 		local found = findByName(current.items, p.name)
 		local choice = choiceOf(#doc.views + i, found ~= nil)
@@ -589,6 +585,10 @@ function M.apply(doc: Doc, plan: Plan, choices: { [number]: string }, mapping: {
 				promptId[p.ref] = found.id
 			end
 			table.insert(notes, "Action '" .. p.name .. "' skipped.")
+			continue
+		end
+		if p.model and not ok.modelValid(p.model) then
+			table.insert(notes, "Action '" .. p.name .. "' left out: its model is not one omp takes.")
 			continue
 		end
 		local store = work(p.kind).prompts
