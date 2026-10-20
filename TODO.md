@@ -4,6 +4,20 @@
 
 ## Todo
 
+- [ ] The queue's error and empty states say what to do next.
+  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
+  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
+  - The README hero's footer shows only keys bound by default.
+  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
+  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
+  - Base: main
+  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
+  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
+  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
+  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
+  - Fix: rebase onto main - conflicts in README.md (line 55, the `.` paragraph main extended with Interrupt/Stop/Message agent) - resolve on the item branch keeping both changes.
+  - Review attempts: 2
+
 ## In-Progress
 
 - [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
@@ -54,19 +68,6 @@
   - Review attempts: 1
   - Decision: A module-load `tern.timer(0, …)` calling `flows.ensureSync(cx)` is the only restart path after a reload; `active()` is false with no links, and an unreadable agent list counts as live only when links exist.
   - Decision: The reload case reloads `window` after seeding an agent; it can't tell the load-time timer from the `window_start` path.
-
-- [ ] The queue's error and empty states say what to do next.
-  - A view with an error and no list shows Refresh and Settings buttons on its card even when those actions have no key (only `.` is bound by default); with a list on screen the bar is unchanged.
-  - An empty list emptied by Needs attention only or snoozing says how many items are hidden and by which filter, naming its key or palette row; a view with no matches keeps today's text.
-  - The README hero's footer shows only keys bound by default.
-  - Touch points: the action list, `keyed` filter, error card and empty text in `host/render.luau`; `keep`/`listedCount` in `host/engine.luau` for the hidden count.
-  - Cases (`tests/cases/queue.luau`): the error card with default keys has Refresh and Settings; Needs attention hiding every item shows the hidden count. README: the hero block.
-  - Base: main
-  - Branch: todo/queue-error-empty-states-say-what-do-nex at /Users/andyhite/Code/tern-plotroom.todo/queue-error-empty-states-say-what-do-nex
-  - Decision: The hidden-count text shows only when the filter hides every item in the snapshot: "N pull requests hidden by Needs attention only; press <key> to show them.", or the palette row name when no key is bound; snoozing reads the same way.
-  - Decision: The README hero footer reads `.  commands`; Settings and Refresh are already in the header.
-  - Decision: The named Needs attention case is covered by the snooze case instead: the open selection stays listed under Needs attention, so that list never empties.
-  - Review attempts: 1
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
