@@ -4,14 +4,6 @@
 
 ## Todo
 
-- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
-  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
-  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
-  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
-  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
-  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
-  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
-
 - [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
   - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
   - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
@@ -238,6 +230,16 @@
   - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
   - Base: main
   - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
+
+- [ ] Agent chains never stop silently, and agent status syncing runs only while an agent is alive.
+  - A finished agent whose host has no open Plotroom block keeps its next action and gets a toast to open Plotroom on that host; its next `done` finish then advances the chain.
+  - A chained issue step reuses the code repository the chain recorded, so a Jira project mapped to several repositories is not asked about again mid-chain.
+  - A finished pane maps only to its newest link, so a pane id reused after a restart never starts an old chain; recording an agent drops older links for that pane.
+  - The 4 s status timer re-arms only while a linked, non-exited agent exists and starts again after a plugin reload; the two `pane_closed` handlers merge into one; `agent-recent` is never written after a failed read.
+  - Touch points: `takeChain`, `recordAgent`, `agentSync`, `tick` and `ensureSync` in `flows.luau`; `advanceChain`, the `pane_closed`/`window_start` handlers and `readRecent` in `window.luau`.
+  - Cases (`tests/cases/flows.luau`, `tests/cases/window.luau`): a chain stops after 8 with its toast; an `exited` result toasts; no block → toast and the next action kept; a stale pane link is ignored; the timer stops with no live agent; one `pane_closed` runs agent sync, redraw and the protocol check; an unreadable `agent-recent` is not written. README: the Next action bullet.
+  - Base: main
+  - Branch: todo/agent-chains-never-stop-silently at /Users/andyhite/Code/tern-plotroom.todo/agent-chains-never-stop-silently
 
 ## Review
 
