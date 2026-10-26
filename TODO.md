@@ -4,25 +4,6 @@
 
 ## Todo
 
-- [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
-  - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
-  - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
-  - The confirm text comes from the row's facts: a noted PR or issue branch goes only if git confirms nothing is lost, an unnoted or inferred branch is kept, a detached worktree has no branch.
-  - The three "worktree remove, then parse modified or untracked" copies in `worktree.luau` become one.
-  - Touch points: `removeEntry`, `remove`, `claim` and `inventoryDirty` in `worktree.luau`; removal in `board.luau`; the card removal in `host.luau` (its note gains `repo`, from `jiraReposOf` for Jira); the remove overlays in `host/render.luau`; the runtime op in `tests/runtime.luau`.
-  - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
-  - Base: main
-  - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
-  - Decision: The card confirm reads git's worktree list when Remove is pressed and takes its text from `board.fate` (via `State.removeFate`), showing "Reading its branch from git…" meanwhile.
-  - Decision: A card whose worktree went detached since the card was made says "Git no longer lists this worktree."; "It has no branch." shows in the Worktrees list.
-  - Decision: `Note` and `Report` gain `repo`: PR `repo` or issue `code`, and for scan-created Jira notes the `jiraReposOf` code whose checkout is the root; a Jira note with no match has none.
-  - Decision: A note with no `repo` gives the confirm "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused." and `d` toasts "Worktree not removed"; `applyScans` takes git's branch on a path-equal match and counts a switch as moved.
-  - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (7d41709); conflicts in README, core.luau (Report keeps repo and ahead) and mutation.luau resolved; gate passed: 542 cases, types clean, smoke 22 scenarios.
-  - Fix: plugin/host/render.luau:1541 with plugin/host.luau:345-354 - the card confirm always prefixes "Its folder is deleted." and "Press d to remove it" to `state.removeFate`, but on the no-repo path, the "Git no longer lists this worktree." path and an `inventory` error the fate is a refusal, so the confirm says the folder goes and then that removal will be refused (and an error without a final period runs into the next sentence) - show "Its folder is deleted." and the remove prompt only when the text comes from `board.fate`; on a refusal, say only the refusal (and Enter or Esc to close); add a case for the no-repo confirm text.
-  - Review attempts: 1
-
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
   - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
@@ -120,6 +101,25 @@
   - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Fix: README.md:65-66 - the README conflict resolution replaced base lines 65-66 with the new Agents bullet alone, deleting the whole "The Inbox list" bullet (Mark read…, polling, Cancel-first confirm, no fallback login) though the Inbox code is untouched - restore that bullet unchanged after the new Agents bullet.
   - Fix: plugin/host/core.luau:609, plugin/window.luau:35, plugin/tests/harness.luau:3111, plugin/plugin.toml:4 - main now ships protocol "26"/`0.26.0` (the action-link token item landed), so this branch's identical 25→26 bump merges silently and the new `last`/`err`/`result`/`ended` status fields would ship under main's number with no mismatch warning - rebase onto main, bump all four to the next unused number ("27" unless main moved past it), update the Decision bullet and rerun the gate on the rebased commit.
+  - Review attempts: 1
+
+- [ ] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
+  - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
+  - The `inventoryDirty` pre-check goes: `git worktree remove` without `--force` already refuses a worktree with changes, and that refusal is reported as today.
+  - The confirm text comes from the row's facts: a noted PR or issue branch goes only if git confirms nothing is lost, an unnoted or inferred branch is kept, a detached worktree has no branch.
+  - The three "worktree remove, then parse modified or untracked" copies in `worktree.luau` become one.
+  - Touch points: `removeEntry`, `remove`, `claim` and `inventoryDirty` in `worktree.luau`; removal in `board.luau`; the card removal in `host.luau` (its note gains `repo`, from `jiraReposOf` for Jira); the remove overlays in `host/render.luau`; the runtime op in `tests/runtime.luau`.
+  - Cases: `tests/cases/mutation.luau` removeEntry (the inventoryDirty cases go), `tests/cases/checks.luau` card removal order, the `tests/board_check.luau` fake, the `scripts/smoke.py` removal scenario. README: Remove worktree.
+  - Base: main
+  - Branch: todo/removing-worktree-takes-one-safe-path-co at /Users/andyhite/Code/tern-plotroom.todo/removing-worktree-takes-one-safe-path-co
+  - Decision: The card confirm reads git's worktree list when Remove is pressed and takes its text from `board.fate` (via `State.removeFate`), showing "Reading its branch from git…" meanwhile.
+  - Decision: A card whose worktree went detached since the card was made says "Git no longer lists this worktree."; "It has no branch." shows in the Worktrees list.
+  - Decision: `Note` and `Report` gain `repo`: PR `repo` or issue `code`, and for scan-created Jira notes the `jiraReposOf` code whose checkout is the root; a Jira note with no match has none.
+  - Decision: A note with no `repo` gives the confirm "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused." and `d` toasts "Worktree not removed"; `applyScans` takes git's branch on a path-equal match and counts a switch as moved.
+  - Decision: The `branch == nil` path in `removeNow` is unreachable from the harness (notes always carry a branch); a worktree detached after its card was made is refused by git's claim, which has a case. The `git switch` path has no case: a switched worktree loses its scan note.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (7d41709); conflicts in README, core.luau (Report keeps repo and ahead) and mutation.luau resolved; gate passed: 542 cases, types clean, smoke 22 scenarios.
+  - Fix: plugin/host/render.luau:1541 with plugin/host.luau:345-354 - the card confirm always prefixes "Its folder is deleted." and "Press d to remove it" to `state.removeFate`, but on the no-repo path, the "Git no longer lists this worktree." path and an `inventory` error the fate is a refusal, so the confirm says the folder goes and then that removal will be refused (and an error without a final period runs into the next sentence) - show "Its folder is deleted." and the remove prompt only when the text comes from `board.fate`; on a refusal, say only the refusal (and Enter or Esc to close); add a case for the no-repo confirm text.
   - Review attempts: 1
 
 ## Blocked
