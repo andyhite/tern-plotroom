@@ -128,7 +128,7 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 	}
 end
 
--- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its integration, workflow
+-- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its workflow
 -- status or, once closed, its state, and its labels as badges. The preview lists the assignees; the rows do not.
 local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string): { [string]: any }
 	local badges = tabBadges("issue", note, open, go)
@@ -1318,7 +1318,7 @@ local function inboxProps(state: State, props: { [string]: any })
 	props.actions = keyed({
 		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
 		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), primary = true },
+		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true },
 	})
 end
 
