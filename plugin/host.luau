@@ -496,6 +496,8 @@ local function blockDef(): BlockDef<State>
 				nextAt = nil,
 				problem = if sp then { kind = sp.kind, message = sp.message } else nil,
 				problemBy = if sp then sp.by else nil,
+				problemAccount = nil,
+				restoredId = active,
 				timer = nil,
 				query = nil,
 				help = false,
@@ -556,6 +558,7 @@ local function blockDef(): BlockDef<State>
 				state.activeLogin = if #first.logins > 1 then accountOf(first, picked) else nil
 				state.kind = KINDS[first.kind]
 				state.account, state.tracker, state.applied = accountOf(first, state.activeLogin), first.integration, snapKey(first, state.activeLogin)
+				state.problemAccount = if state.problem then state.account else nil
 			end
 			running[cx.pane] = state
 			engine.probeClis() -- the first block of this runtime: its views are listed once the CLIs answer

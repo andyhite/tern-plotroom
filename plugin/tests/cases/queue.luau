@@ -2466,6 +2466,65 @@ case("host: a GitHub login change does not drop an acli sign-out held on every v
 	eq(#requestsOf(s.gh, "search"), sent, "and sends no search until Refresh")
 end)
 
+case("host: a GitHub sign-in failure of one login is cleared by another login's view, though a Jira view came between", function(w: World)
+	local s = hostScene(w, 0)
+	newAcli(w)
+	s.gh.tokens.octocat = "tok-octo"
+	s.gh.tokens.work = "tok-work"
+	s.gh.items.work = { searchItem(3, "o/r", EPOCH - 30) }
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and req.login == "octocat" then
+			return { status = 1, stderr = "gh: Bad credentials (HTTP 401)\n" }
+		end
+		return nil
+	end
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Both", integration = "github", query = "is:open author:@me", logins = array({ "octocat", "work" }), group = "none", prompts = array({}) },
+	}) })
+	w.kv.put("views-issues", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Jira", integration = "jira", query = "assignee = currentUser()", group = "none", prompts = array({}) },
+	}) })
+	local b = openQueue(w)
+	pickScope(b, "prs:v1@octocat")
+	w.flush()
+	eq(pickerOf(b).state, "error", "octocat's sign-in fails")
+	pickScope(b, "issues:v1")
+	w.flush()
+	pickScope(b, "prs:v1@work")
+	w.flush()
+	eq(pickerOf(b).state, "ready", "the other login does not wear it")
+	same(listed(b), { "no_2fr_233" }, "and searches")
+end)
+
+case("host: a not-found held across a restart still holds when its restored view is first listed", function(w: World)
+	local _, acli = crossScene(w)
+	acli.override = function(req: AcliReq): Reply?
+		if req.kind == "search" then
+			return { status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	pickScope(b, "issues:v1")
+	w.flush()
+	eq(pickerOf(b).state, "error", "the view is paused")
+	local function searches(): number
+		local n = 0
+		for _, req in acli.requests do
+			if req.kind == "search" then
+				n += 1
+			end
+		end
+		return n
+	end
+	local sent = searches()
+	b.cx:save()
+	local again = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	eq(pickerOf(again).state, "error", "the restored block holds the pause")
+	eq(searches(), sent, "and searches nothing until Refresh")
+end)
+
 case("host: view group-by emits headers", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = { searchItem(1, "o/b", EPOCH - 10), searchItem(2, "o/a", EPOCH - 20), searchItem(3, "o/b", EPOCH - 30) }

@@ -707,8 +707,13 @@ local function identify(state: State)
 	local integration = if v then v.integration else state.kind.integrations[1]
 	local kind = if v then KINDS[v.kind] else state.kind
 	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
-		if account ~= state.account and integration == state.tracker and (state.problemBy or integration) == integration then
-			state.problem = nil -- another login's failure is not this one's
+		if state.problem then
+			-- A problem of this integration belongs to the login that raised it; one restored without it adopts this one.
+			if state.problemAccount == nil then
+				state.problemAccount = account
+			elseif (state.problemBy or integration) == integration and account ~= state.problemAccount then
+				state.problem = nil -- another login's failure is not this one's
+			end
 		end
 		state.account, state.tracker, state.kind = account, integration, kind
 		forget(state)
@@ -943,7 +948,7 @@ function M.refresh(state: State)
 	local wait = M.waitOf(state)
 	if wait > 0 then
 		-- Nothing is loading: say why, so an uncached view does not show a spinner until the reset.
-		state.problem, state.problemBy = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }, "github"
+		state.problem, state.problemBy, state.problemAccount = { kind = "rate-limit", message = "GitHub's rate limit is reached; searches resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }, "github", state.account
 		return schedule(state, wait * 1000)
 	end
 	local gen, query, integration = state.gen, v.query, v.integration
@@ -986,7 +991,7 @@ function M.refresh(state: State)
 				ghActive.note(state)
 			end
 		else
-			state.problem, state.problemBy = problem, integration
+			state.problem, state.problemBy, state.problemAccount = problem, integration, state.account
 		end
 		if spent > 0 then
 			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.
@@ -1017,7 +1022,10 @@ function M.changed(state: State)
 	state.gen += 1
 	local p = state.problem
 	local v = M.activeView(state)
-	local moved = not v or M.snapKey(v, state.activeLogin) ~= state.applied
+	-- A restored view is listed for the first time once the CLIs answer (applied is nil then): not a move.
+	local first = state.applied == nil and v ~= nil and v.id == state.restoredId
+	state.restoredId = nil
+	local moved = not v or (M.snapKey(v, state.activeLogin) ~= state.applied and not first)
 	-- "not-found" belongs to its view: another view clears it and searches; "auth" and "missing" hold every view.
 	if p and (p.kind == "invalid" or not TERMINAL[p.kind] or (moved and p.kind == "not-found")) then
 		state.problem = nil

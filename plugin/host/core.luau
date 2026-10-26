@@ -188,6 +188,8 @@ export type State = {
 	nextAt: number?,
 	problem: github.Problem?,
 	problemBy: string?, -- the integration that raised `problem`: it labels it, whatever view is shown
+	problemAccount: string?, -- the account that raised it; nil on a restored pause until the first identify adopts one
+	restoredId: string?, -- the view id the block was restored on, until its first listing (changed)
 	timer: TimerHandle?,
 	query: input.Model?, -- nil: the search is hidden
 	help: boolean, -- the shortcut list is open
