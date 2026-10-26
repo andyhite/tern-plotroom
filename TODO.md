@@ -109,12 +109,6 @@
   - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 2
 
-## In-Progress
-
-## Blocked
-
-## Review
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -124,6 +118,8 @@
   - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
   - Base: main
   - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
+  - Fix: plugin/host/core.luau (`RPC_PROTOCOL`), plugin/window.luau (`PROTOCOL`), plugin/tests/harness.luau (`asks.protocol`), plugin/plugin.toml - the `menu` and rpc `action` replies gained `carly`, but the branch, rebased by review onto main (9f545ef) as 52a7d50, ends at "27", which the palette item already shipped, so the protocol did not change with the rpc shape - bump all three to "28" and `plugin.toml` to `0.28.0`, then rerun the gate (the Agents-list item also needs "28": whichever lands second must rebase and bump again).
+  - Fix: plugin/window.luau:464 and the `plotroom_agents` rows (window.luau:1342-1350, flows.luau:467-481) - the message tells Carly to "Read plotroom_agents for its state and result", but the export carries only `state` (idle|working|waiting_input|exited), so done and failed both read `idle` and a closed agent drops out; the acceptance names the result - record `ev.result` (done/failed/exited/closed) on the agent's link when `agent_finished` fires and add `result` to each `plotroom_agents` row (the Agents-list item adds the same link field `result`; reuse its name and validation if it lands first), with a case and the README line on what Carly receives. Otherwise the code review found no defects (gate was green at b451878).
   - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
   - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
   - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
@@ -131,7 +127,13 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (b451878): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette, Merge and Agents-list items also use 27, so later landings must rebase and bump); README and `flows.luau` conflicts kept both sides; gate passed: 558 cases, types clean, smoke 22 scenarios.
-  - Review attempts: 1
+  - Review attempts: 2
+
+## In-Progress
+
+## Blocked
+
+## Review
 
 
 
