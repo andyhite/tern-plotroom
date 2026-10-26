@@ -6,24 +6,6 @@
 
 ## In-Progress
 
-- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
-  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
-  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
-  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
-  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
-  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
-  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
-  - Base: main
-  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
-  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
-  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
-  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
-  - Fix: plugin/host/core.luau:609, plugin/window.luau:35, plugin/tests/harness.luau:3133, plugin/plugin.toml:4 - main now ships protocol "26"/`0.26.0` (the action-link token item landed), so this branch's identical 25→26 bump merges silently and the `carly` field in `menu`/`action` replies would ship under main's number with no mismatch warning - rebase onto main, bump all four to the next unused number on main at that time ("27" unless main moved past it; the Merge and Agents-list items also target it), update the Decision bullet and rerun the gate on the rebased commit.
-  - Review attempts: 1
-
 ## Blocked
 
 ## Review
@@ -180,6 +162,24 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Review attempts: 1
+
+- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
+  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
+  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
+  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
+  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
+  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
+  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
+  - Base: main
+  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
+  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
+  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
+  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (b451878): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette, Merge and Agents-list items also use 27, so later landings must rebase and bump); README and `flows.luau` conflicts kept both sides; gate passed: 558 cases, types clean, smoke 22 scenarios.
   - Review attempts: 1
 
 
