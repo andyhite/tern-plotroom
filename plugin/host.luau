@@ -340,11 +340,11 @@ local function blockDef(): BlockDef<State>
 			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
 		end
 		local key = chosen.key
-		state.removing, state.removeFate = key, nil
+		state.removing, state.removeFate, state.removeRefusal = key, nil, nil
 		-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
 		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
 		if not root or not repo or not path then
-			state.removeFate = "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused."
+			state.removeRefusal = "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused."
 			state.cx:render()
 			return
 		end
@@ -352,14 +352,15 @@ local function blockDef(): BlockDef<State>
 			if not alive(state) or state.removing ~= key then
 				return
 			end
-			local fate = why or "Git no longer lists this worktree."
+			local refusal: string? = if why then why:gsub("%s*%.?$", ".") else "Git no longer lists this worktree."
 			local listed: { worktree.Entry } = entries or {}
 			for _, e in listed do
 				if e.path == path and e.branch == branch then
-					fate = board.fate(e)
+					state.removeFate = board.fate(e)
+					refusal = nil
 				end
 			end
-			state.removeFate = fate
+			state.removeRefusal = refusal
 			state.cx:render()
 		end)
 	end
@@ -506,6 +507,7 @@ local function blockDef(): BlockDef<State>
 				descOpen = nil,
 				removing = nil,
 				removeFate = nil,
+				removeRefusal = nil,
 				noteSeq = 0,
 				scanned = nil,
 				scanning = false,

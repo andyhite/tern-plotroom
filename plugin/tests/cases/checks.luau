@@ -791,6 +791,8 @@ case("host: a Jira worktree whose mapped checkout is not git's main path has no 
 	local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
 	has(body, "cannot tell which repository", "the confirm gives its fixed reason, not Reading…")
 	lacks(body, "Reading", "")
+	lacks(body, "folder is deleted", "a refusal does not say the folder goes")
+	lacks(body, "Press d", "nor offer d")
 	local mark = #s.git.log
 	b.typeText("d")
 	w.flush()

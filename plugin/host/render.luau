@@ -1535,7 +1535,8 @@ function M.queueView(state: State): BlockView
 			{ k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil },
 			{ k = "Branch", v = if note.branch then { ui.span(note.branch, "code") } else nil },
 		})
-		local body = "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
+		local body = if state.removeRefusal then state.removeRefusal .. " Enter or Esc closes this."
+			else "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
 		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
 	elseif state.boardOn and state.boardRemoving then
 		table.insert(layer, boardConfirm(state))
