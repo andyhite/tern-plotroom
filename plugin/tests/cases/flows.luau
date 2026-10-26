@@ -2367,7 +2367,7 @@ case("host agents: the palette on the Agents list offers Go to agent, the views,
 	b.event({ ev = "action", act = "queue", value = "snooze" })
 	eq(#w.opened, opened, "a queue row sent anyway does nothing")
 	b.event({ ev = "action", act = "queue", value = "agentgo" })
-	eq(w.opened[#w.opened], "plotroom://github/agentgo/o/r/1", "Go to agent follows the selected row's link")
+	eq(w.opened[#w.opened], h.tokened("plotroom://github/agentgo/o/r/1"), "Go to agent follows the selected row's link")
 	asks.hx.agents(b, { ["o/r#1"] = "exited" })
 	eq(table.find(hx.palette(w, b).ids, "agentgo"), nil, "with no agent row there is nothing to go to")
 end)
