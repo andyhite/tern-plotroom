@@ -34,25 +34,6 @@
   - Decision: Fixes done, rebased onto main (de9f2ec); gate passed: 560 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 1
 
-- [ ] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
-  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
-  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
-  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
-  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
-  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
-  - Base: main
-  - Branch: todo/palette-sends-what-it-shows at /Users/andyhite/Code/tern-plotroom.todo/palette-sends-what-it-shows
-  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`.
-  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
-  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" (rebased onto main at "23").
-  - Decision: In the Agents list, Go to agent, Interrupt, Stop and Message agent all sit in the "Agents" group (`addAgentCommands` takes the group); the queue keeps them in "Saved actions". `plugin.toml` is `0.24.0`.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (28e76e0): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly, Agents-list and Merge items also use 26, so later landings must rebase and bump); GROUPS keeps Inbox and Agents; gate passed: 543 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (9bc40c6): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "26" Decision above; the Merge and Agents-list items may also pick 27, so later landings must rebase and bump); the Agents-list case now compares against `h.tokened(...)` links; README sentence and doubled blank line removed; gate passed: 557 cases, types clean, smoke 22 scenarios (an earlier, superseded gate run overlapped another item's verify lock).
-  - Review attempts: 1
-
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -182,6 +163,18 @@
 
 
 ## Done
+
+- [x] The command palette sends only what it shows, and in the Agents list it offers agent commands instead of queue ones.
+  - The palette's `menu` answer omits each saved action's prompt text (the palette runs actions through their hidden links), so pressing `.` no longer adds every prompt to the block's frame and long prompts no longer push actions out of the palette.
+  - The agent picker and saved-action runs keep getting the prompt text from their own `menu` request.
+  - Opened from the Agents list, the palette offers Go to agent for the selected row, the views, Settings and help, and none of the queue's snooze, attention, sort, search or refresh rows.
+  - Dead paths go: the ignored `agent-link` event, the `seen` event branch that repeats `queueAction`, and the never-produced "GitHub" and "Jira" palette groups; a draft PR preview is cleared only while it is still the one that plan made.
+  - Touch points: `menu` and `paletteActions` in `host/requests.luau`, the draft clear in the draft PR commit, `GROUPS` in `window.luau`, event dispatch in `host.luau`; the `menu` answer changes, so bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Cases: `tests/cases/checks.luau` palette answer has no prompt text (update its pin); the palette on the Agents list; a draft replaced during a push survives. README: Keys and the command palette.
+  - Decision: The Agents-list Go to agent row is in a new "Agents" palette group, after "Saved actions" in `GROUPS`; Go to agent, Interrupt, Stop and Message agent all sit in it there (`addAgentCommands` takes the group), while the queue keeps them in "Saved actions".
+  - Decision: `flows.luau` no longer sends the ignored `agent-link` event.
+  - Decision: The draft-replaced case only checks the commit finishes and pins the new PR; it cannot tell the fix from the old clear, because the pin bumps `state.gen`.
+  - Decision: Landed with `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` at "27" and `plugin.toml` at `0.27.0`; gate passed at review: 558 cases, types clean, bench slowest 4.2 ms, smoke 22 scenarios.
 
 - [x] Queue rows show the badges that matter, and the bench gate fails on real regressions.
   - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
