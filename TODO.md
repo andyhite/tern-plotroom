@@ -10,20 +10,6 @@
 
 ## Review
 
-- [ ] Queue rows show the badges that matter, and the bench gate fails on real regressions.
-  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
-  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
-  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
-  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
-  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
-  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
-  - Base: main
-  - Branch: todo/queue-rows-show-badges-that-matter-bench at /Users/andyhite/Code/tern-plotroom.todo/queue-rows-show-badges-that-matter-bench
-  - Decision: The display is awake and unlocked now (`computer.capabilities()`: capture true, screenLocked false); the Commands-last-in-the-corner check in a real Tern window (`tern plugin link <worktree>/plugin`, open Plotroom, confirm, then relink the main plugin) is done at review with a live display; all other bullets are done and gated at 5e1ee9f.
-  - Decision: Rebased onto main cleanly (bb6f397); gate passed: 541 cases, types clean, bench 3.7 ms, payload 506242 bytes, smoke 22 scenarios. Smoke scenario 20 (a filter toggled and undone keeps the selection steady) failed once with 'HEAD is detached; check out a branch first' and passed on two reruns; cause not investigated. Still open for review: Commands last in the corner in a real Tern window (needs a live display).
-  - Decision: Fixes done and rebased onto main (d8ff79e): Inbox Commands uses `end`, the `issueRow` comment drops "its integration"; gate passed: 555 cases, types clean, bench 3.2 ms (budget 25 ms), payload 506458 bytes, smoke 22 scenarios. Still open for review: Commands last in the corner in a real Tern window, Inbox included (relinking the plugin would touch the user's installed link).
-  - Review attempts: 1
-
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
@@ -196,6 +182,15 @@
 
 
 ## Done
+
+- [x] Queue rows show the badges that matter, and the bench gate fails on real regressions.
+  - Rows drop the GitHub/Jira integration badge (the same on every row of a view; the preview head keeps it), freeing a badge slot for status, Draft or Merged, and drop the redundant `seed` on the author mark.
+  - Any number of `cwd`/`pane_exited` events within `redrawQueues`' 250 ms window render each block once.
+  - The primary-button CSS restyle gives way to the `end` prop, with Commands still last in the corner in a real Tern window, and the CSS rule for linked picker titles, which matches nothing, goes.
+  - The bench budget default drops to 25 ms, and the `BENCH payload` row must stay under 600000 bytes, so either regression fails `check.py`.
+  - Touch points: row builders and the action list in `host/render.luau`, `redrawQueues` in `host/engine.luau`, `plugin/plotroom.css`, `check_bench` in `scripts/check.py`, AGENTS.md's `PLOTROOM_BENCH_BUDGET_MS` default.
+  - Cases (`tests/cases/queue.luau`): rows carry no integration badge while the preview head does; five redraw events render once.
+  - Decision: Gate passed at review: 555 cases, types clean, bench 3.0 ms (budget 25 ms), payload 506458 bytes, smoke 22 scenarios. Commands-last-in-the-corner was not checked in a live Tern window (it would relink the user's installed plugin); `end` placement confirmed from Tern's docs and the css-clean smoke check.
 
 - [x] A GitHub notifications inbox lists what needs me, and marks threads read in one confirm.
   - A new Inbox list in the sidebar, after Agents (a list like Worktrees and Agents, not a view kind), shows gh's active login's unread, participating notifications, grouped by repository, each with its reason (review requested, mention, CI…) and the PR or issue it's about.
