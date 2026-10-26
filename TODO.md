@@ -6,26 +6,6 @@
 
 ## In-Progress
 
-- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
-  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
-  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
-  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
-  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
-  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
-  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
-  - Base: main
-  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
-  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
-  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
-  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
-  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
-  - Fix: README.md:65-66 - the README conflict resolution replaced base lines 65-66 with the new Agents bullet alone, deleting the whole "The Inbox list" bullet (Mark read…, polling, Cancel-first confirm, no fallback login) though the Inbox code is untouched - restore that bullet unchanged after the new Agents bullet.
-  - Fix: plugin/host/core.luau:609, plugin/window.luau:35, plugin/tests/harness.luau:3111, plugin/plugin.toml:4 - main now ships protocol "26"/`0.26.0` (the action-link token item landed), so this branch's identical 25→26 bump merges silently and the new `last`/`err`/`result`/`ended` status fields would ship under main's number with no mismatch warning - rebase onto main, bump all four to the next unused number ("27" unless main moved past it), update the Decision bullet and rerun the gate on the rebased commit.
-  - Review attempts: 1
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -181,6 +161,25 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (6a95ec9); wt-cleanup label override dropped, wt-git and wt-remove-finished kept; gate passed: 541 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Review attempts: 1
+
+- [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
+  - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
+  - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
+  - An `agent-links` row whose new fields aren't strings counts as malformed, so the store is never written over; older links without them still show.
+  - The status map carries the new texts within its 30000-byte cap and the host's 40000-byte limit; bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together.
+  - Touch points: `agentStates`, `statusMap`, the link record and `writeLinks` in `flows.luau`; `agent_finished` in `window.luau`; `agentStatus`, `INFO_CAPS` and `agentRows` in `host/engine.luau`; Agents rows, preview and `agentSig` in `host/render.luau`.
+  - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
+  - Base: main
+  - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
+  - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
+  - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
+  - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24".
+  - Decision: Rebased onto main: `plugin.toml` is `0.24.0`, matching protocol "24".
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (ed17261): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette and Merge items also use 27, so later landings must rebase and bump); the Inbox list README bullet is restored unchanged; README and `flows.luau` conflicts resolved (`agentSync` reads links once and takes `states, notes` from `agentStates`); gate passed: 558 cases, types clean, smoke 22 scenarios.
   - Review attempts: 1
 
 
