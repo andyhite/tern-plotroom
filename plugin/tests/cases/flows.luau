@@ -246,6 +246,7 @@ windowCase("window status: an agent that leaves the covered set while still wait
 	w.window.handlers.pane_created({ pane = 1 }, w.cx)
 	w.advance(4000)
 	eq(#w.toasts, toasts + 1, "reopened: still no second toast")
+end)
 
 local function startWithCarly(w: World, carly: boolean?, n: number?)
 	local num = n or 5
