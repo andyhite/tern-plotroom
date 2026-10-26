@@ -69,12 +69,6 @@
   - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 2
 
-## In-Progress
-
-## Blocked
-
-## Review
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -84,6 +78,9 @@
   - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
   - Base: main
   - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
+  - Fix: plugin/host/core.luau (`RPC_PROTOCOL`), plugin/window.luau (`PROTOCOL`), plugin/tests/harness.luau (`asks.protocol`), plugin/plugin.toml - the status map's shape changed but the branch, rebased by review onto main (ccca24c/20cab59) as 5da8a06 (git dropped its protocol-bump commit as already in main), now leaves the protocol at "27", which the palette item already shipped, so the acceptance "bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together" is unmet - bump all three to "28" and `plugin.toml` to `0.28.0`, then rerun the gate (`check.py` fails on a mismatch).
+  - Fix: README.md:69 - the Agents bullet says agents started before the texts were recorded show "item key and state only", which is no longer true (they show Tern's last message and delivery error from `agentStates`, and a result after the next turn ends) - correct the sentence.
+  - Fix: plugin/host/render.luau:232-234 - the `agentSig` comment still documents `"key=state|action|branch|title;"` and says flows.luau's `signature` spells it the same way, but both now produce `key=state|action|branch|title|last|err|result|ended;` - update the comment.
   - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
   - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
   - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
@@ -92,7 +89,13 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (ed17261): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette and Merge items also use 27, so later landings must rebase and bump); the Inbox list README bullet is restored unchanged; README and `flows.luau` conflicts resolved (`agentSync` reads links once and takes `states, notes` from `agentStates`); gate passed: 558 cases, types clean, smoke 22 scenarios.
-  - Review attempts: 1
+  - Review attempts: 2
+
+## In-Progress
+
+## Blocked
+
+## Review
 
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
