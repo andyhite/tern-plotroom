@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -26,8 +28,6 @@
   - Decision: Rebased onto main (b0bff4b): the README palette-paragraph conflict kept main's wording plus this item's Merge…, Approve…, Request changes… and Update branch… additions; the old 27→28 bump commit was dropped since main has it; `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` are now "29" and `plugin.toml` is `0.29.0` (replaces the "28" Decision above; the Agents-list item also needs 29, so whichever lands second must rebase and bump again); gate passed at ddafa1a: 578 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios.
   - Fix: rebase onto main - conflicts in README.md (main now has the landed Agents-list item, which also uses protocol "29" / 0.29.0) - resolve on the item branch keeping both sides, and bump `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` to "30" and `plugin.toml` to `0.30.0` (one past main's)
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
