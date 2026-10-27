@@ -111,6 +111,10 @@
   - Decision: Fixes done, rebased onto main (de9f2ec); gate passed: 560 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 2
 
+## Blocked
+
+## Review
+
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -121,7 +125,6 @@
   - Decided: Merge offers the repository's allowed methods plus auto-merge while checks are pending; it never passes `--delete-branch` or `--admin`.
   - Base: main
   - Branch: todo/merge-approve-request-changes-update-pr at /Users/andyhite/Code/tern-plotroom.todo/merge-approve-request-changes-update-pr
-  - Fix: rebase onto main (ccca24c) - conflicts in README.md (the palette item landed with protocol "27", so `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` and `plugin.toml` must become "28"/`0.28.0`; other Review items also bump, so whichever lands second must rebase and bump again) - resolve on the item branch, rerun the gate, then return to Review. Review found no code defects (gate was green at a30e028; non-blocking notes: auto-merge is offered without reading the repository's allow-auto-merge setting, an UNKNOWN merge state passes the auto guard, and a merge-queue branch reads "Merged").
   - Decision: Auto-merge is a per-method picker row ("Auto-merge when checks pass", method as detail), since `gh pr merge --auto` needs a method.
   - Decision: Merge runs `gh pr merge <n> --repo … <--squash|--merge|--rebase> [--auto] --match-head-commit <planned sha>`, and the host re-reads `headRefOid` at commit; allowed methods come from `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`, read at the list and plan steps.
   - Decision: Merge is offered for open non-draft PRs with a known head sha; Approve/Request changes for any open PR; Update branch only while the preview's `about.merge` is `behind`, re-checked live as `BEHIND` at commit.
@@ -129,11 +132,8 @@
   - Decision: Auto-merge is hidden and refused while the preview's `about.merge` is `ready` or `unstable`, and `setPrMerge` refuses auto at commit when `mergeStateStatus` is CLEAN, HAS_HOOKS or UNSTABLE; with no loaded preview the auto row is still offered and the commit guard protects it.
   - Decision: The auto confirm says "Auto-merge is enabled with this commit; GitHub then merges a later push by anyone with write access once checks pass".
   - Decision: Rebased onto main (a30e028): `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0`; the README Trust conflict kept main's wording plus this item's writes; What it does gains a "🔀 Merge and review" row; gate passed: 559 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (4b4a098): README palette-paragraph conflict kept main's wording plus this item's Merge…, Approve…, Request changes… and Update branch… additions; `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "27" Decision above; the Agents-list and Carly items also bump, so later landings must rebase and bump again); gate passed at c142ffb: 565 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios.
   - Review attempts: 2
-
-## Blocked
-
-## Review
 
 
 
