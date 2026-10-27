@@ -44,6 +44,10 @@
   - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 2
 
+## Blocked
+
+## Review
+
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -53,9 +57,6 @@
   - Cases (`tests/cases/flows.luau`): the last message is cut, a delivery error shows, a result survives a reload, a malformed link is not written over. README: the Agents list and the Trust list of kv contents.
   - Base: main
   - Branch: todo/agents-list-shows-what-each-agent-last-s at /Users/andyhite/Code/tern-plotroom.todo/agents-list-shows-what-each-agent-last-s
-  - Fix: plugin/host/core.luau (`RPC_PROTOCOL`), plugin/window.luau (`PROTOCOL`), plugin/tests/harness.luau (`asks.protocol`), plugin/plugin.toml - the status map's shape changed but the branch, rebased by review onto main (ccca24c/20cab59) as 5da8a06 (git dropped its protocol-bump commit as already in main), now leaves the protocol at "27", which the palette item already shipped, so the acceptance "bump `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` together" is unmet - bump all three to "28" and `plugin.toml` to `0.28.0`, then rerun the gate (`check.py` fails on a mismatch).
-  - Fix: README.md:69 - the Agents bullet says agents started before the texts were recorded show "item key and state only", which is no longer true (they show Tern's last message and delivery error from `agentStates`, and a result after the next turn ends) - correct the sentence.
-  - Fix: plugin/host/render.luau:232-234 - the `agentSig` comment still documents `"key=state|action|branch|title;"` and says flows.luau's `signature` spells it the same way, but both now produce `key=state|action|branch|title|last|err|result|ended;` - update the comment.
   - Decision: New link fields `result` (done/failed/exited/closed) and `ended` (`HH:MM`), both strings; a link keeps its last result until the next turn ends.
   - Decision: `agentStates` returns per-pane notes (last message, delivery error, cut to 200 bytes) from `cx.agents:list`, never saved on the link.
   - Decision: A row reads "Action: result time · branch · error · last message"; the preview adds Last run, Last message and Not delivered facts.
@@ -64,11 +65,9 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (cb5e45f): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decisions above; Carly's item also uses 26, so whichever lands second must rebase and bump); gate passed: 544 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (ed17261): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette and Merge items also use 27, so later landings must rebase and bump); the Inbox list README bullet is restored unchanged; README and `flows.luau` conflicts resolved (`agentSync` reads links once and takes `states, notes` from `agentStates`); gate passed: 558 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (8a817d7) without conflicts; `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "24", "26" and "27" Decisions above; the Merge and Carly items also use 28, so later landings must rebase and bump); the `agentSig` comment documents `key=state|action|branch|title|last|err|result|ended;`; README's Agents bullet says an agent started before the link fields were saved shows no action, branch or title but still its last message, delivery error and next result.
+  - Decision: Gate passed at ad7854e: 564 cases, types clean, bench slowest 3.2 ms, smoke 22 scenarios.
   - Review attempts: 2
-
-## Blocked
-
-## Review
 
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
