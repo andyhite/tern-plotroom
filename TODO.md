@@ -29,8 +29,6 @@
   - Blocked: changes needed after 3 reviews since last unblock
   - Review attempts: 3
 
-## Review
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -50,7 +48,11 @@
   - Decision: Rebased onto main (ed17261): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette and Merge items also use 27, so later landings must rebase and bump); the Inbox list README bullet is restored unchanged; README and `flows.luau` conflicts resolved (`agentSync` reads links once and takes `states, notes` from `agentStates`); gate passed: 558 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (8a817d7) without conflicts; `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "24", "26" and "27" Decisions above; the Merge and Carly items also use 28, so later landings must rebase and bump); the `agentSig` comment documents `key=state|action|branch|title|last|err|result|ended;`; README's Agents bullet says an agent started before the link fields were saved shows no action, branch or title but still its last message, delivery error and next result.
   - Decision: Gate passed at ad7854e: 564 cases, types clean, bench slowest 3.2 ms, smoke 22 scenarios.
-  - Review attempts: 2
+  - Fix: rebase onto main - conflicts in README.md, plugin/flows.luau, plugin/tests/harness.luau (main now has the landed Carly item, which adds the same `result` link field via `recordResult` and uses protocol 28) - resolve on the item branch keeping one `result` field and one validation, and bump `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` to "29" and `plugin.toml` to `0.29.0`
+  - Blocked: changes needed after 3 reviews since last unblock
+  - Review attempts: 3
+
+## Review
 
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
