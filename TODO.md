@@ -4,25 +4,6 @@
 
 ## Todo
 
-- [ ] Remove every finished worktree in one confirm.
-  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
-  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
-  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
-  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
-  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
-  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
-  - Base: main
-  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
-  - Fix: rebase onto main (c40a094) - conflicts in README.md (the rebase stops at 140551e, where the committed conflict marker, removed only by 88de332, makes git unable to parse the hunks) - resolve on the item branch, squashing the marker-removing commit into the one that added it if wanted, no markers left, then rerun the gate and return to Review. Review found no blocking code defects at 88de332 (gate was green; non-blocking note: Remove finished clicked while Settings is open sets `boardFinished` but Settings hides the confirm, so call `engine.boardAct` from `host.luau` at the `wt-` branch and close Settings as the card's Remove does at `host.luau:918-923` if desired).
-  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
-  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
-  - Decision: The unchecked-row count in the confirm is not covered by a test.
-  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (6a95ec9); wt-cleanup label override dropped, wt-git and wt-remove-finished kept; gate passed: 541 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
-  - Review attempts: 2
-
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
   - When an agent's turn ends, its result (done, failed, exited, closed) and time are saved on its `agent-links` entry and shown on its row ("Review: done 14:02"); exited agents stay hidden as today.
@@ -84,6 +65,25 @@
   - Review attempts: 2
 
 ## In-Progress
+
+- [ ] Remove every finished worktree in one confirm.
+  - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
+  - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
+  - Only rows Find finished worktrees already checked are included; unchecked, main, locked and missing rows are skipped, and the confirm says how many weren't checked.
+  - It is refused while another board operation runs; the Find action has one name, "Find finished worktrees", in the bar, the palette and README.
+  - Touch points: `findCandidates` and removal in `board.luau`; `wt-cleanup` and removal in `host/engine.luau`; the remove overlay in `host/render.luau`; palette rows in `host/requests.luau`.
+  - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
+  - Base: main
+  - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
+  - Fix: rebase onto main (c40a094) - conflicts in README.md (the rebase stops at 140551e, where the committed conflict marker, removed only by 88de332, makes git unable to parse the hunks) - resolve on the item branch, squashing the marker-removing commit into the one that added it if wanted, no markers left, then rerun the gate and return to Review. Review found no blocking code defects at 88de332 (gate was green; non-blocking note: Remove finished clicked while Settings is open sets `boardFinished` but Settings hides the confirm, so call `engine.boardAct` from `host.luau` at the `wt-` branch and close Settings as the card's Remove does at `host.luau:918-923` if desired).
+  - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
+  - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
+  - Decision: The unchecked-row count in the confirm is not covered by a test.
+  - Decision: Remove finished is appended after the `keyed` filter, so the Worktrees bar shows it with no key, last in the bar. A Find mark carries across a refresh only when branch, key and number are unchanged; the stale-mark and tab-warning fixes have no new cases.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (6a95ec9); wt-cleanup label override dropped, wt-git and wt-remove-finished kept; gate passed: 541 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Review attempts: 2
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
