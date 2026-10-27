@@ -4,12 +4,6 @@
 
 ## Todo
 
-## In-Progress
-
-## Blocked
-
-## Review
-
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
   - Merge offers the methods the repository allows (squash, merge, rebase), plus "Auto-merge when checks pass" while checks are pending; the commit is bound to the planned head commit, so a push after planning refuses it.
@@ -30,7 +24,14 @@
   - Decision: Rebased onto main (4b4a098): README palette-paragraph conflict kept main's wording plus this item's Merge…, Approve…, Request changes… and Update branch… additions; `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "27" Decision above; the Agents-list and Carly items also bump, so later landings must rebase and bump again); gate passed at c142ffb: 565 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios.
   - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done (the Agents-list item also needs protocol 29, so whichever lands second rebases and bumps again).
   - Decision: Rebased onto main (b0bff4b): the README palette-paragraph conflict kept main's wording plus this item's Merge…, Approve…, Request changes… and Update branch… additions; the old 27→28 bump commit was dropped since main has it; `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` are now "29" and `plugin.toml` is `0.29.0` (replaces the "28" Decision above; the Agents-list item also needs 29, so whichever lands second must rebase and bump again); gate passed at ddafa1a: 578 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios.
-  - Review attempts: 0
+  - Fix: rebase onto main - conflicts in README.md (main now has the landed Agents-list item, which also uses protocol "29" / 0.29.0) - resolve on the item branch keeping both sides, and bump `RPC_PROTOCOL`, `PROTOCOL`, harness `asks.protocol` to "30" and `plugin.toml` to `0.30.0` (one past main's)
+  - Review attempts: 1
+
+## In-Progress
+
+## Blocked
+
+## Review
 
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
