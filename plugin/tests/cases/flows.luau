@@ -2585,7 +2585,7 @@ case("host worktrees board: Remove finished worktrees asks once for only the row
 	b.typeText("d")
 	w.flush()
 	eq(countLog(s.git, "worktree remove /wt/iss"), 1, "the clean one went through git")
-	eq(countLog(s.git, "worktree remove /wt/pr5"), 0, "the dirty one never reached git")
+	eq(countLog(s.git, "worktree remove /wt/pr5"), 1, "git was asked about the dirty one once, and refused")
 	for _, line in s.git.log do
 		lacks(line, "--force", "never forced")
 	end
