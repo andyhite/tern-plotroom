@@ -2496,33 +2496,56 @@ case("host: a GitHub sign-in failure of one login is cleared by another login's 
 	same(listed(b), { "no_2fr_233" }, "and searches")
 end)
 
-case("host: a not-found held across a restart still holds when its restored view is first listed", function(w: World)
-	local _, acli = crossScene(w)
-	acli.override = function(req: AcliReq): Reply?
-		if req.kind == "search" then
-			return { status = 1, stderr = "✗ Error: failed to parse JQL query: the value 'nopexyz' does not exist for the field 'project'.\n" }
+-- The first block of a world, restored with `pause` on view `v1` (of `kind`) while gh's probe is still out, so its
+-- first listing comes from the probe's answer, not from init.
+local function openRestored(w: World, kind: string?, pause: { kind: string, message: string, by: string }): Block
+	w.respond(function(call: h.Call): Reply?
+		if call.argv[1] == "gh" and call.argv[2] == "--version" then
+			return { delay = 1000, stdout = "gh version 2.98.0\n" }
 		end
 		return nil
+	end)
+	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1", activeKind = kind, pause = pause })
+	w.advance(1000)
+	w.flush()
+	return b
+end
+
+local function searchesOf(acli: h.Acli): number
+	local n = 0
+	for _, req in acli.requests do
+		if req.kind == "search" then
+			n += 1
+		end
 	end
-	local b = openQueue(w)
+	return n
+end
+
+case("host: a not-found held across a restart still holds when its restored view is first listed", function(w: World)
+	local _, acli = crossScene(w)
+	local b = openRestored(w, "issues", { kind = "not-found", message = "the project nopexyz does not exist", by = "jira" })
+	eq(pickerOf(b).state, "error", "the restored block holds the pause")
+	eq(searchesOf(acli), 0, "and searches nothing until Refresh")
+end)
+
+case("host: a restored acli sign-out is not adopted by a GitHub view's login, so a Jira view keeps it", function(w: World)
+	local _, acli = crossScene(w)
+	local b = openRestored(w, nil, { kind = "auth", message = "not signed in", by = "jira" })
+	eq(pickerOf(b).state, "error", "the GitHub view the block restored on holds the sign-out")
 	pickScope(b, "issues:v1")
 	w.flush()
-	eq(pickerOf(b).state, "error", "the view is paused")
-	local function searches(): number
-		local n = 0
-		for _, req in acli.requests do
-			if req.kind == "search" then
-				n += 1
-			end
-		end
-		return n
-	end
-	local sent = searches()
-	b.cx:save()
-	local again = w.open(2, { "/work/r" }, b.saved())
+	eq(pickerOf(b).state, "error", "the Jira view holds it too")
+	eq(searchesOf(acli), 0, "and sends no search until Refresh")
+end)
+
+case("host: a restored GitHub sign-in failure on a Jira view is adopted by the first GitHub login, which keeps it", function(w: World)
+	local s, _ = crossScene(w)
+	local b = openRestored(w, "issues", { kind = "auth", message = "Bad credentials", by = "github" })
+	eq(pickerOf(b).state, "error", "the Jira view the block restored on holds the failure")
+	pickScope(b, "prs:v1")
 	w.flush()
-	eq(pickerOf(again).state, "error", "the restored block holds the pause")
-	eq(searches(), sent, "and searches nothing until Refresh")
+	eq(pickerOf(b).state, "error", "the GitHub view keeps it")
+	eq(#requestsOf(s.gh, "search"), 0, "and sends no search until Refresh")
 end)
 
 case("host: view group-by emits headers", function(w: World)

@@ -706,15 +706,16 @@ local function identify(state: State)
 	local account = if v then M.accountOf(v, state.activeLogin) else ""
 	local integration = if v then v.integration else state.kind.integrations[1]
 	local kind = if v then KINDS[v.kind] else state.kind
-	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
-		if state.problem then
-			-- A problem of this integration belongs to the login that raised it; one restored without it adopts this one.
-			if state.problemAccount == nil then
-				state.problemAccount = account
-			elseif (state.problemBy or integration) == integration and account ~= state.problemAccount then
-				state.problem = nil -- another login's failure is not this one's
-			end
+	-- A problem of this integration belongs to the login that raised it; one restored without it adopts the first
+	-- login of its integration that is listed, whatever view came before.
+	if state.problem and v and (state.problemBy or integration) == integration then
+		if state.problemAccount == nil then
+			state.problemAccount = account
+		elseif account ~= state.problemAccount then
+			state.problem = nil -- another login's failure is not this one's
 		end
+	end
+	if account ~= state.account or integration ~= state.tracker or kind ~= state.kind then
 		state.account, state.tracker, state.kind = account, integration, kind
 		forget(state)
 	end
