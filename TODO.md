@@ -4,24 +4,6 @@
 
 ## Todo
 
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
-  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
-  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
-  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
-  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
-  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-  - Base: main
-  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
-  - Fix: rebase onto main (aee9c8b) - conflicts in README.md (rebase stops at 2010d42; commits 2010d42, b270b6c and 678559c carry `issues.luau` conflict markers that only 771fc94 removes) - resolve on the item branch, squash the marker-removing commit into the commits that carry the markers so none reach main, no markers left, then rerun the gate and return to Review. Review found no code defects at 771fc94 (gate was green; non-blocking notes: the `keys.luau:137` comment says `ONE_KEY` is in the order `preset` binds them, but it binds in `ACTIONS` order; no case covers saved-action keys counting as taken or an unreadable prompt store refusing the preset).
-  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
-  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
-  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
-  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
-  - Review attempts: 2
-
 - [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
   - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
   - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
@@ -43,6 +25,24 @@
   - Review attempts: 2
 
 ## In-Progress
+
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+  - Base: main
+  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
+  - Fix: rebase onto main (aee9c8b) - conflicts in README.md (rebase stops at 2010d42; commits 2010d42, b270b6c and 678559c carry `issues.luau` conflict markers that only 771fc94 removes) - resolve on the item branch, squash the marker-removing commit into the commits that carry the markers so none reach main, no markers left, then rerun the gate and return to Review. Review found no code defects at 771fc94 (gate was green; non-blocking notes: the `keys.luau:137` comment says `ONE_KEY` is in the order `preset` binds them, but it binds in `ACTIONS` order; no case covers saved-action keys counting as taken or an unreadable prompt store refusing the preset).
+  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
+  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
+  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
+  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Review attempts: 2
 
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
