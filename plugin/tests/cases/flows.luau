@@ -277,6 +277,10 @@ windowCase("window flows: a start with Tell Carly on schedules one fixed message
 	w.window.agentStates[sent.agent] = "idle"
 	eq(export.fn(w.cx)[1].state, "idle", "and follows its state")
 	eq(#w.kv.get("agent-links"), 1, "it changes nothing")
+	w.window.agentStates[sent.agent] = nil
+	w.window.handlers.agent_finished({ pane = sent.agent, result = "failed" }, w.cx)
+	w.flush()
+	same(export.fn(w.cx), { { item = "o/r#5", action = "Review", state = "exited", result = "failed" } }, "a finished agent keeps its result, even once closed")
 end)
 
 windowCase("window flows: a start with Tell Carly off, or with Carly missing, or with the schedule failing, still starts the agent", function(w: World)

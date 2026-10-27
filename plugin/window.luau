@@ -32,7 +32,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "27" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "28" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -1341,8 +1341,8 @@ end)
 -- Where Carly exists, it can list the window's live linked agents. Read-only: it changes nothing.
 if tern.carly then
 	tern.carly.export("plotroom_agents", {
-		sig = "plotroom_agents(): { { item: string, action: string, state: string } }",
-		doc = "Lists this window's live Plotroom-linked agents: the item key (repo#number or issue key), the action name and the agent's state. Read-only.",
+		sig = "plotroom_agents(): { { item: string, action: string, state: string, result: string? } }",
+		doc = "Lists this window's Plotroom-linked agents: the item key (repo#number or issue key), the action name, the agent's state and, once its turn ended, its result (done, failed, exited or closed). Read-only.",
 	}, function(cx: WindowCx)
 		return flows.agentList(cx)
 	end)
@@ -1423,6 +1423,7 @@ end
 tern.on("agent_finished", function(ev: any, cx: WindowCx)
 	flows.agentSync(cx)
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
+		flows.recordResult(cx, ev.pane, ev.result)
 		advanceChain(cx, ev.pane, ev.result)
 	end
 end)

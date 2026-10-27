@@ -29,7 +29,7 @@ type HostId = { id: number, name: string, address: string }
 -- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
 -- counts the actions chained before it.
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string? }
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string? }
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain.
 export type AgentInfo = { action: string?, branch: string?, title: string?, code: string? }
@@ -137,7 +137,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title" } do
+	for _, field in { "action", "branch", "title", "result" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -153,6 +153,7 @@ local function linkOf(row: any): Link?
 		action = clip(texts.action, ACTION_CAP),
 		branch = clip(texts.branch, BRANCH_CAP),
 		title = clip(texts.title, TITLE_CAP),
+		result = clip(texts.result, 20),
 	}
 end
 
@@ -182,7 +183,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -461,17 +462,34 @@ function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
 	return nil, nil
 end
 
--- The live linked agents, newest first, for Carly's `plotroom_agents`: item key, action name and state. Read-only.
-function M.agentList(cx: WindowCx): { { item: string, action: string, state: string } }
+-- Records how the agent in `pane` ended (done, failed, exited, closed) on its link, for Carly's `plotroom_agents`.
+function M.recordResult(cx: WindowCx, pane: number, result: string)
+	local links, healthy = readLinks()
+	local host = hostOf(cx, pane)
+	if not healthy or not host then
+		return
+	end
+	for _, l in links do
+		if l.agent == pane and hostSame(l.host, host) then
+			l.result = clip(result, 20)
+			writeLinks(links)
+			return
+		end
+	end
+end
+
+-- The linked agents, newest first, for Carly's `plotroom_agents`: item key, action name, state and (once its turn
+-- ended) result. A finished agent that is gone stays listed with state "exited". Read-only.
+function M.agentList(cx: WindowCx): { { item: string, action: string, state: string, result: string? } }
 	local out = {}
 	local states = agentStates(cx)
 	if not states then
 		return out
 	end
 	for _, l in (readLinks()) do
-		local state = states[l.agent]
+		local state = states[l.agent] or (if l.result then "exited" else nil)
 		if state then
-			table.insert(out, { item = l.key, action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "", state = state })
+			table.insert(out, { item = l.key, action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "", state = state, result = l.result })
 		end
 	end
 	return out
