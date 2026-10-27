@@ -66,6 +66,10 @@
   - Decision: Rebased onto main (ed17261): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette and Merge items also use 27, so later landings must rebase and bump); the Inbox list README bullet is restored unchanged; README and `flows.luau` conflicts resolved (`agentSync` reads links once and takes `states, notes` from `agentStates`); gate passed: 558 cases, types clean, smoke 22 scenarios.
   - Review attempts: 2
 
+## Blocked
+
+## Review
+
 - [ ] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
   - Each goes through `removeEntry` one at a time, never forced: a worktree with changes is refused and kept, a branch whose commits aren't all in the fetched ref is kept, and the toast counts removed and kept rows.
@@ -75,7 +79,6 @@
   - Cases (`tests/cases/flows.luau` cleanup cases): the confirm lists only marked rows, Esc keeps all, `d` removes clean ones and keeps a dirty one. README: the Worktrees list bullet.
   - Base: main
   - Branch: todo/remove-every-finished-worktree-one-confi at /Users/andyhite/Code/tern-plotroom.todo/remove-every-finished-worktree-one-confi
-  - Fix: rebase onto main (c40a094) - conflicts in README.md (the rebase stops at 140551e, where the committed conflict marker, removed only by 88de332, makes git unable to parse the hunks) - resolve on the item branch, squashing the marker-removing commit into the one that added it if wanted, no markers left, then rerun the gate and return to Review. Review found no blocking code defects at 88de332 (gate was green; non-blocking note: Remove finished clicked while Settings is open sets `boardFinished` but Settings hides the confirm, so call `engine.boardAct` from `host.luau` at the `wt-` branch and close Settings as the card's Remove does at `host.luau:918-923` if desired).
   - Decision: Remove finished is an action-bar button and a palette row (act `wt-remove-finished`), no new key; each row goes through `board.remove`.
   - Decision: The toast reads "Removed N, kept M" (a removed worktree whose branch is kept counts as removed); with no marked rows it toasts "No finished worktrees" and says to run Find first.
   - Decision: The unchecked-row count in the confirm is not covered by a test.
@@ -83,11 +86,10 @@
   - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
   - Decision: Rebased onto main (6a95ec9); wt-cleanup label override dropped, wt-git and wt-remove-finished kept; gate passed: 541 cases, types clean, smoke 22 scenarios.
   - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Decision: Rebased onto main (4b4a098): `board.luau` conflict kept both sides; README palette paragraph uses main's text plus "(the Worktrees list's Remove finished button needs none)"; marker-removing commit 88de332 squashed into 140551e (now 1009bab), so no commit in main..HEAD carries conflict markers. The Settings-open note was not implemented.
+  - Decision: Remove finished hands a dirty row to `board.remove` and git refuses it without `--force`, so the row stays and counts as kept; the flows case now expects one unforced `worktree remove` for that row (61d5fb5).
+  - Decision: Gate passed at 61d5fb5: 561 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios; protocol unchanged at 27.
   - Review attempts: 2
-
-## Blocked
-
-## Review
 
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
