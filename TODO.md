@@ -4,12 +4,6 @@
 
 ## Todo
 
-## In-Progress
-
-## Blocked
-
-## Review
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -30,7 +24,14 @@
   - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done.
   - Decision: README's "The palette lists only names, details and keys…" paragraph is restored verbatim as its own paragraph after line 57 (7f8aae5); the branch was not rebased (still on 4933efd); gate passed at 7f8aae5: 562 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios; protocol unchanged at 27.
   - Decision: Rebased onto main (fb017c0): the README conflict kept main's palette paragraph (with "(the Worktrees list's Remove finished button needs none)") plus the "Use one-key shortcuts" sentence, and the separate "The palette lists only names, details and keys…" paragraph; protocol is main's 28; gate passed at 0774625: 575 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios.
-  - Review attempts: 1
+  - Fix: README.md:58-61 - commit 0774625 re-added the "The palette lists only names, details and keys…" paragraph that the rebased base already had, so it now appears twice (lines 59 and 61) under "Keys and the command palette" - delete the added copy (lines 58–59) so the paragraph appears once, and end line 57's "Use one-key shortcuts" sentence with a period; then rebase onto current main (it has since landed the Agents-list item) and rerun the gate
+  - Review attempts: 2
+
+## In-Progress
+
+## Blocked
+
+## Review
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
