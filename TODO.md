@@ -85,6 +85,10 @@
   - Decision: Rebased onto main (68b9e29) and the README conflict marker removed with its blank line restored (88de332); no conflict markers remain (git grep); gate passed: 555 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
   - Review attempts: 2
 
+## Blocked
+
+## Review
+
 - [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
@@ -94,8 +98,6 @@
   - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
   - Base: main
   - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
-  - Fix: plugin/host/engine.luau:710-716 and plugin/host.luau:516 - a restored pause adopts the first identified account whatever its integration, so an acli sign-out (`by = "jira"`) restored while a GitHub view with its own login is shown records that login and the Jira view then clears the pause and searches without Refresh (and the mirror case for a GitHub pause restored on a Jira view); in a fresh runtime a restored GitHub `auth`/`missing` pause on a login-less view is never adopted at the first listing, so the next switch to a view with its own login adopts that login and keeps the pause instead of clearing it - adopt `problemAccount` outside the identity-change branch, only when the view is listed and `(state.problemBy or integration) == integration`, clear only when `problemAccount ~= nil`, and make the `host.luau:516` adoption follow the same integration check (or drop it).
-  - Fix: plugin/tests/cases/queue.luau:2494-2498 - the restore case reopens the block after block 1 already probed the CLIs, so `cli.ready()` is true, `host.luau:512-516` sets `applied` at init and `changed` never runs; it never reaches the `first`/`restoredId` branch (engine.luau:1025-1028) and passes with that branch deleted - open the restored block as the world's first block with a delayed CLI probe (see `issues.luau:1409-1427`), saved state carrying `pause = {kind = "not-found", …, by = "jira"}`, advance past the probe, assert the error state and no acli search; add cases for the wrong-integration and fresh-runtime adoption above.
   - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
   - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
   - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
@@ -109,11 +111,10 @@
   - Decision: `state.restoredId` keeps the restored view's first listing from counting as a move, so a restored `not-found` holds until Refresh.
   - Decision: The README tail's 422 (`invalid`) claim matches the code: `changed` always clears `invalid`, covered by the existing 422 case; no README change.
   - Decision: Fixes done, rebased onto main (de9f2ec); gate passed: 560 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios; protocol unchanged at 26.
+  - Decision: A restored pause is adopted only by a listed view of the integration that raised it (`(problemBy or integration) == integration`), outside the identity-change branch, at `identify` and at block init; a problem is cleared only when `problemAccount` is known and differs (replaces the "adopts the first identified account" Decision above).
+  - Decision: The restore case now opens the restored block as the world's first block with a delayed gh probe and asserts the error state and no acli search; new cases cover a restored Jira sign-out on a GitHub view and a restored GitHub `auth` pause on a Jira view. The worker did not delete the `first`/`restoredId` branch to confirm the restore case fails without it.
+  - Decision: Rebased onto main (4b4a098); gate passed at 65ae274: 568 cases, types clean, bench slowest 2.8 ms, smoke 22 scenarios; protocol unchanged at 27.
   - Review attempts: 2
-
-## Blocked
-
-## Review
 
 - [ ] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
