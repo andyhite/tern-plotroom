@@ -10,27 +10,6 @@
 
 ## Review
 
-- [ ] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
-  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
-  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
-  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
-  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
-  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
-  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
-  - Base: main
-  - Branch: todo/action-can-have-carly-summarize-run-when at /Users/andyhite/Code/tern-plotroom.todo/action-can-have-carly-summarize-run-when
-  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
-  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
-  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
-  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (b451878): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette, Merge and Agents-list items also use 27, so later landings must rebase and bump); README and `flows.luau` conflicts kept both sides; gate passed: 558 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (50f984b) without conflicts; `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "24", "26" and "27" Decisions above; the Merge and Agents-list items also use 28, so later landings must rebase and bump).
-  - Decision: `agent_finished` records `ev.result` on the agent's link as `result` (`recordResult` in `flows.luau`), a string clipped to 20 characters and validated like the other link text fields, not against a fixed set; each `plotroom_agents` row is `{item, action, state, result?}`, and a finished agent that has since closed stays listed with `state = "exited"` and its result. The Agents-list item (in Review) adds the same `result` link field; whichever lands second must keep one field and one validation.
-  - Decision: Gate passed at 0742ea0: 564 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios.
-  - Review attempts: 2
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -153,6 +132,25 @@
 
 
 ## Done
+
+- [x] An action can have Carly summarize its run when it finishes, and Carly can see my live agents.
+  - Settings › Actions gets an off-by-default "Tell Carly when it finishes" toggle; when on, the started agent schedules one Carly message for the end of its turn (`Agent:tocarly`).
+  - The message is a fixed template naming the action, item key and result; no PR or issue text and no agent output goes into it.
+  - A read-only Carly export named `plotroom_agents` lists the window's linked agents with item key, action name and state; it changes nothing.
+  - Where Carly isn't available, the toggle does nothing and the export isn't registered; a failed schedule is a toast, and the agent runs regardless.
+  - Touch points: the new `Prompt` field through core, the storage validator and save, `portable` export/import and the Settings › Actions row; the start path in `window.luau` (`cx.agents:get`, then `tocarly`); `tern.carly.export` registered from `window.luau`.
+  - Cases: the toggle round-trips through save and export/import; a start with it on schedules one message with no item text (the harness gains carly and `agents:get` fakes); the export lists linked agents. README: the actions section and Trust (what Carly receives).
+  - Decision: The `Prompt` field is `carly: boolean?`, stored as `true` or absent; the Settings row is an Off/On segmented choice after "Opens in" (no native toggle kind).
+  - Decision: The result isn't known when the message is scheduled, so the template names the action and item and points Carly at `plotroom_agents` for the result: `Plotroom: the agent for action "<name>" on <repo#ref> has finished its turn. Read plotroom_agents for its state and result.` (name control-stripped, cut to 60).
+  - Decision: `plotroom_agents` returns `{item, action, state}` for live linked agents only; `agents:get`/`tocarly` run in a `pcall`, a failure toasts and the agent runs.
+  - Decision: `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "24" and `plugin.toml` is `0.24.0`; the action name in the Carly message is cut on a character boundary (`utf8.offset(name, 61)`).
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (f45615d): RPC_PROTOCOL, PROTOCOL and harness asks.protocol are now "26" and plugin.toml is 0.26.0 (replaces the "24" Decision above); gate passed: 544 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (b451878): `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "27" and `plugin.toml` is `0.27.0` (replaces the "24" and "26" Decisions above; the palette, Merge and Agents-list items also use 27, so later landings must rebase and bump); README and `flows.luau` conflicts kept both sides; gate passed: 558 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (50f984b) without conflicts; `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "28" and `plugin.toml` is `0.28.0` (replaces the "24", "26" and "27" Decisions above; the Merge and Agents-list items also use 28, so later landings must rebase and bump).
+  - Decision: `agent_finished` records `ev.result` on the agent's link as `result` (`recordResult` in `flows.luau`), a string clipped to 20 characters and validated like the other link text fields, not against a fixed set; each `plotroom_agents` row is `{item, action, state, result?}`, and a finished agent that has since closed stays listed with `state = "exited"` and its result. The Agents-list item (in Review) adds the same `result` link field; whichever lands second must keep one field and one validation.
+  - Decision: Gate passed at 0742ea0: 564 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios.
+  - Decision: Landed after a clean rebase onto main (068ac6f); gate passed at review on 0742ea0: 564 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios; protocol 28.
 
 - [x] Removing a worktree takes one safe path, and its confirm says exactly what happens to the branch.
   - The worktree card's Remove goes through `removeEntry`, as the Worktrees list does: it re-reads the claim first and keeps a branch Plotroom never noted.
