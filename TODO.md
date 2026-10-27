@@ -76,15 +76,28 @@
 
 ## Review
 
-- [ ] Switching views shows each view's cached list at once, and one view's error never stalls the others.
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Done
+
+- [x] Switching views shows each view's cached list at once, and one view's error never stalls the others.
   - Switching between pull request, GitHub issue and Jira views keeps every cached list: a view shows its last result immediately while it refreshes, and other groups' sidebar counts stay.
   - A `not-found` (an unknown Jira project, a pin no longer visible) belongs to its view: switching to another view clears it and that view searches; `auth` and `missing` still hold every view until Refresh.
   - Sidebar counts and Needs attention only read snooze state without hashing each seen item, so render cost does not grow with seen items in cached views.
   - Cached lists stay keyed by `snapKey` (kind, integration, login, query), so no identity sees another's list; they are not pruned, and a `ponytail:` comment names that ceiling.
   - Touch points: `forget`, `identify`, `changed`, `keep` and `listedCount` in `host/engine.luau`; a snooze-only lookup beside `status` in `triage.luau`.
   - Cases (`tests/cases/queue.luau`): a cross-kind switch shows the cached list and its count; `not-found` on one view does not block another; a bench row with 1000 seen items in `tests/regression.luau`. README Finer points › Refresh: terminal errors include `not-found`, cleared by a view switch.
-  - Base: main
-  - Branch: todo/view-cache-per-view-errors at /Users/andyhite/Code/tern-plotroom.todo/view-cache-per-view-errors
   - Decision: A login change within one integration still clears the problem; a switch that changes integration or kind keeps `auth` and `missing`.
   - Decision: `changed` clears `not-found` only when the view moved (`snapKey` differs from `applied`); re-clicking the same view keeps it.
   - Decision: The `issues.luau` case "a request is about what it names…" now expects no problem, since the cached Jira list stays.
@@ -101,22 +114,7 @@
   - Decision: A restored pause is adopted only by a listed view of the integration that raised it (`(problemBy or integration) == integration`), outside the identity-change branch, at `identify` and at block init; a problem is cleared only when `problemAccount` is known and differs (replaces the "adopts the first identified account" Decision above).
   - Decision: The restore case now opens the restored block as the world's first block with a delayed gh probe and asserts the error state and no acli search; new cases cover a restored Jira sign-out on a GitHub view and a restored GitHub `auth` pause on a Jira view. The worker did not delete the `first`/`restoredId` branch to confirm the restore case fails without it.
   - Decision: Rebased onto main (4b4a098); gate passed at 65ae274: 568 cases, types clean, bench slowest 2.8 ms, smoke 22 scenarios; protocol unchanged at 27.
-  - Review attempts: 2
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Done
+  - Decision: Landed after rebasing onto main (re-reviewed and re-gated at c6039b8 after main gained the Carly and Remove finished items): gate passed: 573 cases, types clean, bench slowest 2.7 ms, smoke 22 scenarios; protocol unchanged at 28 (main's).
 
 - [x] Remove every finished worktree in one confirm.
   - After Find finished worktrees, a Remove finished row (palette and Worktrees list) lists every row it marked Merged or Closed and asks once: `d` removes them all, Enter or Esc keeps them, as single removal does.
