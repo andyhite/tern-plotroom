@@ -8,8 +8,6 @@
 
 ## Blocked
 
-## Review
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -27,7 +25,11 @@
   - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
   - Decision: Rebased onto main (4933efd): README conflict kept main's palette paragraph plus the "Use one-key shortcuts" sentence; the `issues.luau` marker fix is squashed into the feature commit, so no commit in main..HEAD carries conflict markers; the `ONE_KEY` comment now says `preset` binds in `ACTIONS` order (486bd50). No new case covers saved-action keys counting as taken or an unreadable prompt store refusing the preset.
   - Decision: Gate passed at 486bd50: 562 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios; protocol unchanged at 27.
-  - Review attempts: 2
+  - Fix: README.md:57 - the rebase (b1763f6) replaced main's second "Keys and the command palette" paragraph ("The palette lists only names, details and keys: a saved action's prompt text is not sent with it ... none of the queue's Snooze, attention, sort, search or Refresh rows.") with the "Use one-key shortcuts" sentence - restore that paragraph verbatim as its own paragraph after line 57, keeping the new sentence at the end of line 57
+  - Blocked: changes needed after 3 reviews since last unblock
+  - Review attempts: 3
+
+## Review
 
 - [ ] The Agents list shows what each agent last said, why a prompt wasn't delivered, and how its last run ended.
   - Each Agents row and its preview show the agent's last message, cut to 200 bytes, and its delivery error when there is one, both read from the `agents:list` call the status sync already makes.
