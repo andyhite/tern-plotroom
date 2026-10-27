@@ -6,28 +6,6 @@
 
 ## In-Progress
 
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
-  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
-  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
-  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
-  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
-  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-  - Base: main
-  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
-  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
-  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
-  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
-  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
-  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
-  - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
-  - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
-  - Decision: Rebased onto main (4933efd): README conflict kept main's palette paragraph plus the "Use one-key shortcuts" sentence; the `issues.luau` marker fix is squashed into the feature commit, so no commit in main..HEAD carries conflict markers; the `ONE_KEY` comment now says `preset` binds in `ACTIONS` order (486bd50). No new case covers saved-action keys counting as taken or an unreadable prompt store refusing the preset.
-  - Decision: Gate passed at 486bd50: 562 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios; protocol unchanged at 27.
-  - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done.
-  - Decision: README's "The palette lists only names, details and keys…" paragraph is restored verbatim as its own paragraph after line 57 (7f8aae5); the branch was not rebased (still on 4933efd); gate passed at 7f8aae5: 562 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios; protocol unchanged at 27.
-  - Fix: rebase onto main - conflicts in README.md (line 57, the "Keys and the command palette" paragraph: main added "(the Worktrees list's Remove finished button needs none)" to the same line this branch extends with the "Use one-key shortcuts" sentence) - resolve on the item branch keeping both changes and the restored second palette paragraph
-  - Review attempts: 1
-
 ## Blocked
 
 ## Review
@@ -77,6 +55,28 @@
   - Decision: Rebased onto main (b0bff4b), resolving conflicts in README.md, `plugin/flows.luau` and `plugin/tests/harness.luau`: Carly's `recordResult` and this item's merged into one `result` link field plus `ended` (`HH:MM`), written by a single `recordResult` and validated once; Carly's Trust bullet is kept and this item's kv-contents bullet replaces the unchanged one; `RPC_PROTOCOL`, `PROTOCOL` and harness `asks.protocol` are now "29" and `plugin.toml` is `0.29.0` (replaces the earlier protocol Decisions; the Merge item also uses 29, so whichever lands second must rebase and bump).
   - Decision: Gate passed at 5746b5b: 577 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios.
   - Review attempts: 0
+
+- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+  - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
+  - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
+  - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
+  - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
+  - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
+  - Base: main
+  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
+  - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
+  - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
+  - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
+  - Decision: `keys.save` stores `""` for a removal (nil only for Reset or a key equal to a non-empty default), so a removal on an action whose default is `""` is a saved choice the preset keeps.
+  - Decision: Requeued by the user after the third review since last unblock; the Fix above is still to be done.
+  - Decision: Rebased onto main (71c4cb1); README line 55 and the row hint say a removed shortcut stays removed; gate passed: 542 cases, types clean, smoke 22 scenarios.
+  - Decision: Rebased onto main (771fc94): the `issues.luau` conflict keeps both changes (title ends "· 1 new", PR view count 5); the rebased feature commit carried conflict markers that the separate follow-up commit 771fc94 removes (squash at landing if wanted); no markers remain; gate passed: 556 cases, types clean, smoke 22 scenarios; protocol unchanged at 26.
+  - Decision: Rebased onto main (4933efd): README conflict kept main's palette paragraph plus the "Use one-key shortcuts" sentence; the `issues.luau` marker fix is squashed into the feature commit, so no commit in main..HEAD carries conflict markers; the `ONE_KEY` comment now says `preset` binds in `ACTIONS` order (486bd50). No new case covers saved-action keys counting as taken or an unreadable prompt store refusing the preset.
+  - Decision: Gate passed at 486bd50: 562 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios; protocol unchanged at 27.
+  - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done.
+  - Decision: README's "The palette lists only names, details and keys…" paragraph is restored verbatim as its own paragraph after line 57 (7f8aae5); the branch was not rebased (still on 4933efd); gate passed at 7f8aae5: 562 cases, types clean, bench slowest 3.0 ms, smoke 22 scenarios; protocol unchanged at 27.
+  - Decision: Rebased onto main (fb017c0): the README conflict kept main's palette paragraph (with "(the Worktrees list's Remove finished button needs none)") plus the "Use one-key shortcuts" sentence, and the separate "The palette lists only names, details and keys…" paragraph; protocol is main's 28; gate passed at 0774625: 575 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios.
+  - Review attempts: 1
 
 ## Done
 
