@@ -226,7 +226,7 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title;" per entry in key order: the hidden
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended;" per entry in key order: the hidden
 -- `main.agents` node says it, so a window that sent its map to an earlier run of this block (a reload) sees the block no
 -- longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
