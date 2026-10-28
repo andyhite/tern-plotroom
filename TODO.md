@@ -4,10 +4,6 @@
 
 ## Todo
 
-## In-Progress
-
-## Blocked
-
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -30,8 +26,12 @@
   - Decision: Rebased onto main (fb017c0): the README conflict kept main's palette paragraph (with "(the Worktrees list's Remove finished button needs none)") plus the "Use one-key shortcuts" sentence, and the separate "The palette lists only names, details and keys…" paragraph; protocol is main's 28; gate passed at 0774625: 575 cases, types clean, bench slowest 2.9 ms, smoke 22 scenarios.
   - Decision: Rebased onto main (fdae85e) without conflicts; protocol is main's 29; the duplicated "The palette lists only names, details and keys…" paragraph is deleted so it appears once, and line 57's "Use one-key shortcuts" sentence ends with a period (04718c5); gate passed at 04718c5: 579 cases, types clean, bench slowest 3.1 ms, smoke 22 scenarios.
   - Fix: rebase onto main - conflicts in README.md (main has since landed the Merge/Approve/Request changes/Update branch item, which edits the "Keys and the command palette" paragraph) - resolve on the item branch keeping both sides, with the "The palette lists only names, details and keys…" paragraph appearing exactly once
-  - Blocked: changes needed after 3 reviews since last unblock
-  - Review attempts: 3
+  - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done.
+  - Review attempts: 0
+
+## In-Progress
+
+## Blocked
 
 ## Review
 
