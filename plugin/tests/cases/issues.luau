@@ -422,7 +422,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	local before = w.kv.get("views-issues")
 	local b = openIssues(w)
 	same(w.kv.get("views-issues"), before, "the saved Jira filters are read, never seeded over or rewritten")
-	eq(#w.kv.get("views-prs").items, 4, "the PR filters, absent until now, are seeded beside them")
+	eq(#w.kv.get("views-prs").items, 5, "the PR filters, absent until now, are seeded beside them")
 	-- How many searches acli was asked for.
 	local function searched(): number
 		local n = 0
@@ -1267,7 +1267,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
 	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "and shown in place of the GitHub view restored")
-	eq(#w.kv.get("views-prs").items, 4, "the GitHub views stay saved")
+	eq(#w.kv.get("views-prs").items, 5, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
 	b.press("escape")
@@ -1304,6 +1304,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 		"Review requested @ GitHub - octocat = prs:v2",
 		"Team reviews @ GitHub - octocat = prs:v3",
 		"Reviewed by me @ GitHub - octocat = prs:v4",
+		"Ready to merge @ GitHub - octocat = prs:v5",
 		"Assigned to me @ Jira = issues:v1",
 	}, "the GitHub views are listed again")
 	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")

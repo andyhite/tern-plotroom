@@ -341,6 +341,7 @@ local function pageContent(state: State): ({ any }, { Node })
 	elseif s.page == "keys" then
 		local map, unreadable = keys.load()
 		section("keys", "Queue")
+		row({ id = "kpreset", label = "Use one-key shortcuts", hint = "Binds j k w g a G m z Z n o / r s ? u d to the actions with no key; a shortcut you removed stays removed", disabled = unreadable, control = { k = "action", act = "preset-keys", label = "Use" } })
 		for _, a in keys.ACTIONS do
 			row({
 				id = "key:" .. a.id,
@@ -1107,6 +1108,34 @@ function M.runAction(state: State, act: string, row: string)
 		addView(state, row)
 	elseif act == "add-prompt" then
 		addPrompt(state, row)
+	elseif act == "preset-keys" then
+		-- Keys of saved prompt actions are as taken as another action's.
+		local used: { [string]: boolean } = {}
+		local err: string? = select(2, keys.load())
+		for _, other in { KINDS.prs, KINDS.issues } do
+			if err then
+				break
+			end
+			local prompts, bad = loadPrompts(other)
+			if not prompts then
+				err = bad
+				break
+			end
+			for _, p in prompts.items do
+				if p.key then
+					used[p.key] = true
+				end
+			end
+		end
+		local skipped: { string }? = nil
+		if not err then
+			skipped, err = keys.preset(used)
+		end
+		s.errors[row] = err
+		if skipped then
+			propagate(state)
+			state.cx:toast("success", "One-key shortcuts set", if #skipped > 0 then "Skipped, key in use: " .. table.concat(skipped, ", ") else nil)
+		end
 	elseif act == "restore-views" then
 		-- Saves back the default views the row's group has none of the same kind and name of, as views of that group
 		-- (running as its login, as Add view's do); the others, edited defaults included, stay.

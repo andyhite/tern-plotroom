@@ -464,6 +464,7 @@ local KINDS: { [string]: Kind } = {
 			{ name = "Review requested", integration = "github", query = "is:open user-review-requested:@me draft:false archived:false", group = "none", sort = "oldest" },
 			{ name = "Team reviews", integration = "github", query = "is:open team-review-requested-user:@me draft:false archived:false", group = "repo" },
 			{ name = "Reviewed by me", integration = "github", query = "is:open reviewed-by:@me -author:@me -review-requested:@me archived:false", group = "repo" },
+			{ name = "Ready to merge", integration = "github", query = "is:open author:@me review:approved status:success archived:false", group = "repo" },
 		},
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },

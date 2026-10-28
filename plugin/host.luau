@@ -1019,7 +1019,7 @@ local function blockDef(): BlockDef<State>
 					else
 						s.pick = nil -- a click outside an open choice's menu, or away from a text being edited
 					end
-				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "restore-views" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "guide" or act == "expand" or act == "collapse" then
+				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "restore-views" or act == "preset-keys" or act == "edit-prompt" or act == "delete" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "guide" or act == "expand" or act == "collapse" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)

@@ -269,7 +269,7 @@ case("host: Settings › Keys binds an action to a key: the key works, ? and the
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "key:down", "key:up", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Queue", "under the queue's title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
@@ -332,9 +332,55 @@ case("host: Settings › Keys binds an action to a key: the key works, ? and the
 	eq(bindKey(b, "refresh", "R"), nil, "a key can be bound again")
 	same(w.kv.get("keys"), { refresh = "R" }, "and is saved")
 	eq(bindKey(b, "refresh", ""), nil, "and removed")
-	same(w.kv.get("keys"), {}, "which is no change: nothing stays saved")
+	same(w.kv.get("keys"), { refresh = "" }, "which is saved as no key")
 	b.press("escape")
 	eq(b.press("w", nil, "w"), false, "the reset key is the pane's again")
+end)
+
+case("host: Use one-key shortcuts binds the classic set to actions with no key, keeps a saved key, skips a clash and says so, and refuses unreadable keys", function(w: World)
+	hostScene(w, 3)
+	w.kv.store.keys = nil :: any
+	w.kv.put("keys", { worktree = "x", ["goto"] = "j" })
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	local function press()
+		b.event({ ev = "action", id = "layer.settings", act = "preset-keys", value = "kpreset" })
+	end
+	press()
+	local saved: any = w.kv.get("keys")
+	eq(saved.worktree, "x", "a saved key keeps its action")
+	eq(saved["goto"], "j", "even when it is a preset key")
+	eq(saved.down, nil, "a preset key another action holds is skipped")
+	eq(saved.up, "k", "a free action gets its preset key")
+	eq(saved.agentgo, "G", "uppercase keys too")
+	eq(saved["wt-remove"], "d", "and the Worktrees list's")
+	eq(saved.more, nil, "an action with a default is not saved")
+	local toast = w.toasts[#w.toasts]
+	eq(toast.text, "One-key shortcuts set", "the toast says it is done")
+	eq(toast.sub, "Skipped, key in use: Move down (j)", "and lists what was skipped")
+	eq(rowIn(b, "key:up").control.value, "k", "the row shows the key")
+	local before = w.kv.store["keys"]
+	press()
+	eq(w.kv.store["keys"], before, "pressing again changes nothing")
+	w.kv.put("keys", "garbage")
+	press()
+	has(rowIn(b, "kpreset").warning, "malformed", "unreadable keys are refused with the existing message")
+	eq(w.kv.get("keys"), "garbage", "and never written over")
+end)
+
+case("host: a key removed after Use one-key shortcuts stays removed when it is used again", function(w: World)
+	hostScene(w, 3)
+	w.kv.store.keys = nil :: any
+	local b = openQueue(w)
+	goToSettings(b, "keys")
+	local function press()
+		b.event({ ev = "action", id = "layer.settings", act = "preset-keys", value = "kpreset" })
+	end
+	press()
+	eq((w.kv.get("keys") :: any)["wt-remove"], "d", "the set binds d")
+	eq(bindKey(b, "wt-remove", ""), nil, "Backspace removes it")
+	press()
+	eq((w.kv.get("keys") :: any)["wt-remove"], "", "using the set again keeps it unbound")
 end)
 
 case("host: an empty Keys row removes a shortcut: no key does it, ? and the action bar leave it out, and the command palette's Reset brings its . back", function(w: World)
@@ -346,7 +392,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	end
 	local saved = w.kv.get("keys")
 	for _, id in { "worktree", "agent", "search", "down", "up" } do
-		eq(saved[id], nil, "no key is the default, so nothing is saved for it: " .. id)
+		eq(saved[id], "", "a removal is saved as no key, a choice the one-key set keeps: " .. id)
 	end
 	eq(saved.more, "", "the command palette's removal is saved")
 	local row = rowIn(b, "key:worktree")
@@ -788,6 +834,7 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 		"v2 Review requested · github · none · oldest",
 		"v3 Team reviews · github · repo",
 		"v4 Reviewed by me · github · repo",
+		"v5 Ready to merge · github · repo",
 	}, "the default pull request views were saved: the review queue oldest first, the others by repository")
 	same(hx.viewRows(w, "views-issues"), {
 		"v1 Assigned to me · github · repo",
@@ -813,11 +860,11 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	eq(rowIn(b, "vrestore:jira:"), nil, "nor has Jira")
 	b.event({ ev = "select", id = "layer.settings", item = "vadd:github:octocat" })
 	b.press("enter")
-	eq(#w.kv.get("views-prs").items, 5, "the signed-in account's Add saved a new view")
-	same(w.kv.get("views-prs").items[5].logins, { "octocat" }, "for that account")
-	eq(prefsOf(b).editing.row, "name:prs:v5", "and starts naming it")
+	eq(#w.kv.get("views-prs").items, 6, "the signed-in account's Add saved a new view")
+	same(w.kv.get("views-prs").items[6].logins, { "octocat" }, "for that account")
+	eq(prefsOf(b).editing.row, "name:prs:v6", "and starts naming it")
 	b.press("escape")
-	eq(w.kv.get("views-prs").items[5].name, "New view", "cancelling the naming keeps the placeholder name")
+	eq(w.kv.get("views-prs").items[6].name, "New view", "cancelling the naming keeps the placeholder name")
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "the new view became the active one and was searched")
 	has(b.title(), "New view", "the title shows it")
@@ -830,27 +877,27 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	eq(w.opened[#w.opened], "plotroom://confirm", "through the window's link")
 	eq(findKey(b.view().layer, "confirm"), nil, "Settings draws no overlay of its own")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v3" })
-	eq(#w.kv.get("views-prs").items, 5, "a confirmation of another row deletes nothing")
+	eq(#w.kv.get("views-prs").items, 6, "a confirmation of another row deletes nothing")
 	b.typeText("d")
 	b.press("enter")
-	eq(#w.kv.get("views-prs").items, 5, "d and Enter do not confirm it")
+	eq(#w.kv.get("views-prs").items, 6, "d and Enter do not confirm it")
 	b.event({ ev = "action", id = "layer.settings", act = "cancel-delete", value = ask.row })
 	eq(pendingOf(b), nil, "cancelling clears the question")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
-	eq(#w.kv.get("views-prs").items, 5, "and a late confirmation deletes nothing")
+	eq(#w.kv.get("views-prs").items, 6, "and a late confirmation deletes nothing")
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
 	b.press("enter")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
 	eq(pendingOf(b), nil, "confirming closes the question")
 	local items = w.kv.get("views-prs").items
-	eq(#items, 4, "and deletes the view")
+	eq(#items, 5, "and deletes the view")
 	eq(items[2].id, "v3", "the other views stay")
-	expand(b, "vopen:prs:v5")
-	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v5" })
+	expand(b, "vopen:prs:v6")
+	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v6" })
 	b.press("enter")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v5" })
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v6" })
 	w.flush()
-	eq(#w.kv.get("views-prs").items, 3, "the active view can be deleted too")
+	eq(#w.kv.get("views-prs").items, 4, "the active view can be deleted too")
 	eq(pickerOf(b).scope, "issues:v1", "the filter now at its place in the list is shown: the pull request filters are followed by the issue filters")
 end)
 
@@ -913,8 +960,10 @@ case("host: an account's Restore defaults saves back the default views its group
 		"v2 Review requested · github · none",
 		"v3 Team reviews · github · repo",
 		"v4 Reviewed by me · github · repo",
+		"v5 Ready to merge · github · repo",
 	}, "the views named like a default stay as saved; the missing pull request views follow them")
 	same(w.kv.get("views-prs").items[3].logins, { "octocat" }, "running as the group's account")
+	eq(w.kv.get("views-prs").items[5].query, "is:open author:@me review:approved status:success archived:false", "Restore defaults offers Ready to merge")
 	same(hx.viewRows(w, "views-issues"), {
 		"v1 Assigned to me · github · none",
 		"v2 Assigned to me · jira · none",
@@ -1804,7 +1853,7 @@ case("host: a Keys row refuses a key another action or a saved prompt of either 
 	eq(prefsOf(b).editing, nil, "Esc cancels a capture")
 	same(w.kv.get("keys"), { ["goto"] = "g", worktree = "x" }, "and keeps the old key")
 	eq(bindKey(b, "worktree", ""), nil, "Backspace is accepted")
-	same(w.kv.get("keys"), { ["goto"] = "g" }, "and removes the shortcut, no key being the default")
+	same(w.kv.get("keys"), { ["goto"] = "g", worktree = "" }, "and removes the shortcut, saved as a deliberate no key")
 	eq(bindKey(b, "goto", "Q"), nil, "an action's key is free once it has moved")
 	eq(bindKey(b, "worktree", "g"), nil, "and another action can have it")
 	same(w.kv.get("keys"), { ["goto"] = "Q", worktree = "g" }, "both are saved")

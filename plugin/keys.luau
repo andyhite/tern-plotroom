@@ -114,7 +114,7 @@ function M.save(id: string, key: string?): string?
 	if not a or not mine then
 		return why or "That is no shortcut of the queue."
 	end
-	mine[id] = if key == a.default then nil else key
+	mine[id] = if key == nil or (key == a.default and key ~= "") then nil else key
 	-- tern.kv.set raises on failure and returns nothing.
 	local ok, err = pcall(function(): string?
 		tern.kv.set(KV, mine)
@@ -132,6 +132,54 @@ function M.problem(map: Map, id: string, text: string): string?
 	local other = M.action(map, text)
 	local a = if other and other ~= id then actionOf(other) else nil
 	return if a then "Already the shortcut of " .. a.label .. "." else nil
+end
+
+-- The classic one-key set, action id -> key; `preset` binds them in `ACTIONS` order.
+local ONE_KEY = {
+	down = "j", up = "k", worktree = "w", goto = "g", agent = "a", agentgo = "G", seen = "m", snooze = "z",
+	snoozed = "Z", attention = "n", sort = "o", search = "/", refresh = "r", settings = "s", help = "?",
+	["wt-cleanup"] = "u", ["wt-remove"] = "d",
+} :: { [string]: string }
+
+-- Binds the one-key set to the actions with no key and no saved choice. A preset key another action or `used` (the
+-- keys of saved prompt actions) already holds is skipped. Returns the labels of the skipped actions, or nil and why.
+function M.preset(used: { [string]: boolean }): ({ string }?, string?)
+	local mine, why = saved(pcall(tern.kv.get, KV))
+	if not mine then
+		return nil, why
+	end
+	local map = M.load()
+	local taken: { [string]: boolean } = {}
+	for k in used do
+		taken[k] = true
+	end
+	for _, key in map do
+		taken[key] = true
+	end
+	local skipped: { string } = {}
+	local changed = false
+	for _, a in M.ACTIONS do
+		local key = ONE_KEY[a.id]
+		if key and map[a.id] == "" and mine[a.id] == nil then
+			if taken[key] then
+				table.insert(skipped, a.label .. " (" .. key .. ")")
+			else
+				mine[a.id] = key
+				taken[key] = true
+				changed = true
+			end
+		end
+	end
+	if changed then
+		local ok, err = pcall(function(): string?
+			tern.kv.set(KV, mine)
+			return nil
+		end)
+		if not ok then
+			return nil, "Could not save: " .. tostring(err)
+		end
+	end
+	return skipped, nil
 end
 
 -- The keycaps of action `id`'s button: its key, none when removed.
