@@ -10,14 +10,14 @@
 
 ## Review
 
-- [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
+## Done
+
+- [x] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
   - A new default pull request view "Ready to merge" (`is:open author:@me review:approved status:success archived:false`, grouped by repository) is seeded on first run and reaches existing users through Restore defaults in Settings › Views.
   - Touch points: `ACTIONS`, `save` and `problem` in `keys.luau`; the Keys page rows in `host/settings.luau` (row pattern of `restore-views`); PR seeds in `KINDS` in `host/core.luau`; `storage.missingViews`.
   - Cases (`tests/cases/queue.luau` keys page, clearing `keys` first): the preset fills unbound actions, keeps a saved key, and skips a clash; the default views include Ready to merge and Restore defaults offers it. README: Keys and the command palette, Default views.
-  - Base: main
-  - Branch: todo/settings-offers-one-key-shortcut-set-one at /Users/andyhite/Code/tern-plotroom.todo/settings-offers-one-key-shortcut-set-one
   - Decision: A key deliberately removed (saved as `""`) counts as a saved choice, so the preset does not rebind it.
   - Decision: Keys held by saved actions of both kinds count as taken; an unreadable prompt store refuses the preset like an unreadable `keys` store.
   - Decision: "Ready to merge" is the last PR seed (`v5` on a fresh install).
@@ -34,9 +34,7 @@
   - Decision: Requeued from Blocked by the user after 3 reviews; the Fix above is still to be done.
   - Decision: Rebased onto main (2ca1a9f) after squashing the branch into one commit (4aeb878): the README conflict kept main's "Keys and the command palette" paragraph with the "Use one-key shortcuts" sentence appended (ending in a period); "The palette lists only names, details and keys…" appears exactly once; no conflict markers remain; protocol stays at main's 30; gate passed at 4aeb878: 584 cases, types clean, bench slowest 2.7 ms, smoke 22 scenarios.
   - Decision: README.md:58 now ends `listed in a toast.` (515e4b1, a follow-up commit; not rebased since main gained only TODO commits); protocol stays at 30; gate passed at 515e4b1: 584 cases, types clean, bench slowest 2.8 ms, smoke 22 scenarios.
-  - Review attempts: 1
-
-## Done
+  - Decision: Landed after a clean rebase onto main; gate passed at review on 515e4b1: 584 cases, types clean, bench slowest 2.8 ms, smoke 22 scenarios; protocol unchanged at 30 (main's).
 
 - [x] Merge, approve, request changes and update a PR's branch from Plotroom.
   - The palette's GitHub - PR group gains Merge…, Approve…, Request changes… and Update branch…; each is plan-then-commit with Cancel first, names the PR and account, and captures the gh login at plan time.
