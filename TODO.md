@@ -4,6 +4,8 @@
 
 ## Todo
 
+## In-Progress
+
 - [ ] Settings offers the one-key shortcut set in one click, and a Ready to merge view joins the defaults.
   - Settings › Keyboard shortcuts gets a "Use one-key shortcuts" row that binds the classic set (`j`/`k` move, `w` worktree, `g` go to tab, `a` agent picker, `G` go to agent, `m` mark seen, `z`/`Z` snooze, `n` attention, `o` sort, `/` search, `r` refresh, `s` settings, `?` help, `u` find finished, `d` remove) to actions that have no key.
   - A key you already saved keeps its action, a preset key already used by another action or a saved action is skipped, a toast lists what was skipped, and an unreadable `keys` store is refused with the existing message.
@@ -29,8 +31,6 @@
   - Decision: Rebased onto main (2ca1a9f) after squashing the branch into one commit (4aeb878): the README conflict kept main's "Keys and the command palette" paragraph with the "Use one-key shortcuts" sentence appended (ending in a period); "The palette lists only names, details and keys…" appears exactly once; no conflict markers remain; protocol stays at main's 30; gate passed at 4aeb878: 584 cases, types clean, bench slowest 2.7 ms, smoke 22 scenarios.
   - Fix: README.md:58 - the "Use one-key shortcuts" sentence ends `listed in a toast..` (doubled period, reintroduced by the squash/rebase; contradicts the Decision that it ends in a period) - change it to `listed in a toast.`
   - Review attempts: 1
-
-## In-Progress
 
 ## Blocked
 
