@@ -191,11 +191,38 @@ local function targetPane(cx: WindowCx, path: string): (number?, number?, number
 	return nil, nil, nil
 end
 
--- Opens `url` beside `pane` as a plain link open would. Not `cx.browser`'s `open`: its `owner` is in the window's
--- global block ids, and a remote host's pane ids reach Luau translated, so it answers "no block" for a remote pane.
+-- Opens `url` beside `pane` as a plain link open would.
 local function openUrl(cx: WindowCx, pane: number, url: string)
 	cx.layout:focus(pane)
 	cx:open(url, "beside")
+end
+
+-- Opens `url` as a floating Browser over `pane`: the page opens beside it as a plain link open would (the same path, so a
+-- remote pane works: `cx.browser`'s open owner is a global block id and answers "no block" for a remote pane in Tern 0.9.8),
+-- then the new Browser block floats top right over `pane` (the split it opened in collapses back, the tiled layout is as it
+-- was) and `pane` keeps focus. If it cannot float, only that new Browser is closed and the error says so.
+local function previewUrl(cx: WindowCx, pane: number, url: string)
+	local seen: { [number]: boolean } = {}
+	for _, p in cx.session:panes() do
+		seen[p.pane] = true
+	end
+	openUrl(cx, pane, url)
+	local browser: number? = nil
+	for _, p in cx.session:panes() do
+		if not seen[p.pane] and p.kind == "browser" then
+			browser = p.pane
+		end
+	end
+	if not browser then
+		return cx:toast("error", "Could not open the floating preview", "Tern opened the page outside a Browser block.")
+	end
+	local ok, why = cx.layout:float(browser, pane, "tr", { focus = false })
+	if not ok then
+		cx.layout:close(browser)
+		cx.layout:focus(pane)
+		return cx:toast("error", "Could not open the floating preview", why or "Tern would not float the Browser.")
+	end
+	cx.layout:focus(pane)
 end
 
 -- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host/requests' `show`).
@@ -217,6 +244,7 @@ end
 -- focused (a remote reload changes the announcement either way); a missing marker is a host still loading, not a mismatch.
 local WATCH_MS = 2000
 local mismatched: number? = nil -- the focused pane whose host announces another protocol
+local pausedHooks: { [string]: boolean } = {} -- this plugin's own hooks paused over their budget (the `budget` event)
 local watch: TimerHandle? = nil
 local checkProtocol: (WindowCx) -> ()
 
@@ -258,6 +286,10 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
 	if pane.pane == mismatched then
 		table.insert(out, { text = "Plotroom protocol mismatch", icon = "warning", tone = "error" })
+	end
+	local paused = next(pausedHooks)
+	if paused ~= nil then
+		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warning", tone = "error" })
 	end
 	local n = flows.waitingCount()
 	if n > 0 then
@@ -956,7 +988,12 @@ local function linkedListed(cx: WindowCx, pane: number, url: string): boolean
 	return false
 end
 
-local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
+local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?) -> ()
+
+-- What an agent command link does: its own act, except the Message link, which `mode` "agentpick" turns into the page-element send.
+local function agentAct(kind: string, mode: string?): string
+	return if kind == "agentmsg" and mode == "agentpick" then mode else kind
+end
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
 -- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue).
@@ -1054,7 +1091,7 @@ end
 -- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
 -- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
 -- (written into a description, or from another run of the host) matches no node and is refused as no longer listed.
-local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?): boolean
+local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?, mode: string?): boolean
 	local url = string.gsub(full, "%?k=%x+$", "")
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
 	if rid then
@@ -1132,7 +1169,11 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= full then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 		else
-			openUrl(cx, pane, page)
+			if mode == "preview" then
+				previewUrl(cx, pane, page)
+			else
+				openUrl(cx, pane, page)
+			end
 		end
 		return true
 	end
@@ -1159,7 +1200,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		if act == "goto" then
 			gotoTarget(cx, pane, t)
 		elseif AGENT_CMD[act] then
-			flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, act)
+			flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agentAct(act, mode))
 		elseif act == "agentgo" then
 			flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 		elseif act == "agent" then
@@ -1200,13 +1241,17 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	local t = prTarget(owner, repo, n)
 	local page = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
 	if kind == "open" then
-		openUrl(cx, pane, page)
+		if mode == "preview" then
+			previewUrl(cx, pane, page)
+		else
+			openUrl(cx, pane, page)
+		end
 	elseif kind == "show" then
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
 		gotoTarget(cx, pane, t)
 	elseif AGENT_CMD[kind] then
-		flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, kind)
+		flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agentAct(kind, mode))
 	elseif kind == "agentgo" then
 		flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 	elseif kind == "agent" then
@@ -1224,12 +1269,12 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 end
 
 -- Follows the hidden link node `nodeId` of `pane` (`typed`: as handle's).
-function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?)
+function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?)
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
 		return cx:toast("info", missing or "Nothing is selected")
 	end
-	handle(cx, href, pane, typed)
+	handle(cx, href, pane, typed, mode)
 end
 
 local function selected(cx: WindowCx, nodeId: string, missing: string?)
@@ -1262,10 +1307,13 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	checkProtocol(cx)
 end)
 
-local function launchPane(cx: WindowCx): number?
+-- A Plotroom block beside the focused pane, or in a tab of its own when none is focused; `folder` (the Files pane's
+-- folder) is its starting folder instead of the focused pane's working directory. The block's host saves a checkout for
+-- the repository of that folder when none is saved yet (host.luau: it never replaces a saved one), as for any launch there.
+local function launchPane(cx: WindowCx, folder: string?): number?
 	local source = cx.session:focused()
-	local cwd: string? = nil
-	if source then
+	local cwd: string? = folder
+	if not cwd and source then
 		local info = cx.session:pane(source)
 		if info and info.cwd and info.cwd ~= "" then
 			cwd = info.cwd
@@ -1282,6 +1330,40 @@ end
 local function launch(cx: WindowCx)
 	launchPane(cx)
 end
+
+-- Files pane header button: Plotroom beside it, on the folder it shows. The new block runs on the host of the focused pane,
+-- so a folder on another host is refused (a path of one host means nothing on the other). Nothing else is set up from it.
+tern.files.button({
+	id = "open-plotroom",
+	title = "Open Plotroom",
+	icon = "merge",
+	run = function(files: FilesInfo, cx: WindowCx)
+		local folder: string? = files.root
+		if folder and (folder == "" or #folder > 4096 or string.find(folder, "%c")) then
+			return cx:toast("error", "Plotroom not opened", "The folder's path is not usable.")
+		end
+		if folder and files.host ~= "" then
+			local focused = cx.session:focused()
+			local ok, hosts = pcall(function()
+				return cx.hosts:list()
+			end)
+			local name: string? = nil
+			if focused and ok and type(hosts) == "table" then
+				for _, h in hosts do
+					if type(h.panes) == "table" and table.find(h.panes, focused) then
+						if files.host == h.name or files.host == h.address or (h.kind == "local" and files.host == "local") then
+							name = files.host
+						end
+					end
+				end
+			end
+			if not name then
+				return cx:toast("error", "Plotroom not opened", "Files shows a folder on " .. files.host .. ". Focus a pane on that host first.")
+			end
+		end
+		launchPane(cx, folder)
+	end,
+})
 
 tern.command({
 	id = "open",
@@ -1348,9 +1430,61 @@ if tern.carly then
 	end)
 end
 
-tern.on("pane_created", function(_ev: any, cx: WindowCx)
+-- Fires for every kind of block: the agents' timer may need starting whatever opened, but only a new Plotroom block
+-- is worth a surface read (a protocol check), so a shell, file or Browser block opening costs no more than that.
+tern.on("pane_created", function(ev: any, cx: WindowCx)
 	flows.ensureSync(cx)
-	checkProtocol(cx)
+	if type(ev) ~= "table" or type(ev.pane) ~= "number" or isPlotroom(cx, ev.pane) then
+		checkProtocol(cx)
+	end
+end)
+
+-- Tern holds its state while it dispatches an agent event, so that handler reads nothing (no agents list, no surface):
+-- it only queues one sync for the next frame (a timer of 0 ms, with a fresh cx), which several events share.
+local syncQueued = false
+local function syncSoon()
+	if not syncQueued then
+		syncQueued = true
+		tern.timer(0, function(cx: WindowCx?)
+			syncQueued = false
+			if cx then
+				flows.agentSync(cx)
+				flows.ensureSync(cx)
+			end
+		end)
+	end
+end
+
+-- A linked agent changed state (finished a turn, began waiting for input): tell the blocks now, not at the next tick.
+-- The 4 s timer stays for what no event carries (an agent's last message, a delivery error) and for a reloaded host.
+tern.on("agent_state", function(ev: any, _cx: WindowCx)
+	if type(ev) == "table" and type(ev.pane) == "number" then
+		syncSoon()
+	end
+end)
+
+-- One of this plugin's own hooks was paused for running over its budget (Tern resumes it by itself): say so, since
+-- the agents' status and the blocks' links wait while it is paused.
+tern.on("budget", function(ev: any, cx: WindowCx?)
+	if type(ev) ~= "table" or type(ev.hook) ~= "string" then
+		return
+	end
+	if ev.state == "paused" then
+		local first = next(pausedHooks) == nil
+		pausedHooks[ev.hook] = true
+		if first and cx then
+			cx:toast("error", "Plotroom paused: " .. ev.hook, "It ran over its time budget" .. (if type(ev.paused_ms) == "number" then "; back in " .. math.ceil(ev.paused_ms / 1000) .. " s" else "") .. ".")
+		end
+	elseif ev.state == "resumed" then
+		pausedHooks[ev.hook] = nil
+		if cx and next(pausedHooks) == nil then
+			cx:toast("info", "Plotroom resumed")
+			syncSoon()
+		end
+	else
+		return
+	end
+	tern.chrome.refresh()
 end)
 
 -- A finished agent's next action: starts for the same item, in the tab the agent ran in, when the agent's turn ended "done".
@@ -1488,6 +1622,13 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 		title = "Plotroom: Worktree smoke",
 		run = function(cx: WindowCx)
 			require("./tests/runtime").run(cx)
+		end,
+	})
+	tern.command({
+		id = "layout",
+		title = "Plotroom: Layout dump",
+		run = function(cx: WindowCx)
+			require("./tests/runtime").layout(cx)
 		end,
 	})
 end

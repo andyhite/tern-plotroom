@@ -1,5 +1,5 @@
 /* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. Only syntax Tern's engine accepts
-   (docs.stencil.so/tern/styles/css.md): no logical properties such as padding-block, no rem/ch units, no :has().
+   (docs.stencil.so/tern/styles/css.md): ch units are supported in Tern 0.9.8; no logical properties such as padding-block, rem, or :has().
    Everything else is drawn by Tern's own kinds (picker, prefs, list, overlay, md…): add a rule only where no kind or
    prop covers it. */
 

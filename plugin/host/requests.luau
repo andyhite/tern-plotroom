@@ -1239,6 +1239,10 @@ function M.commands(state: State): { { id: string, group: string? } }
 	local function add(cmd: string)
 		table.insert(out, { id = cmd, group = group })
 	end
+	add("open-preview")
+	if state.agents[item.key] ~= nil and state.agents[item.key] ~= "exited" then
+		table.insert(out, { id = "agent-pick-page" }) -- no type group: the command's own (Saved actions) stands, as Message's does
+	end
 	if snap.kind == "prs" then
 		local failed, pending = false, false
 		local open = M.pendingRuns(state, item) -- a run with any unfinished job is not finished

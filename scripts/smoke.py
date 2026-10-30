@@ -7,7 +7,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow.
-Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.8.3), git >= 2.36, omp on PATH,
+Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.8), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, Tern directory and log lives under one temporary
 directory that is deleted afterwards.
 
@@ -25,7 +25,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from check import PLUGIN, SDK, SDK_SHA256, GateError, run, say, sha256_file
 
@@ -1647,7 +1647,7 @@ def sc_agent(s: Smoke) -> None:
     back_to_queue()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
     s.wait_text("the duplicate-launch offer", "An agent already works on")
-    s.wait_text("Go to agent comes first", "Go to agent (")
+    s.wait_text("Go to agent comes first, with the agent's state", "Go to agent (working)")
     s.wait_text("Start another agent is the other choice", "Start another agent")
     s.shot("agent-offer")
     s.ctl_ok("picker", "esc")
@@ -1659,6 +1659,113 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("picker", "enter")  # Go to agent
     s.wait_until("the offer's Go to agent focuses the agent", agent_focused)
     s.eq("still one agent's tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+
+    # No `ctl alert waiting/finished` stimulus here: in Tern 0.9.8 native `ctl alert` deadlocks while any foreground non-shell process (this fake
+    # agent) runs in the focused pane, with or without the plugin. Real lifecycle transitions are used instead (launch -> working, pane close ->
+    # exited). waiting_input is not proved by this smoke; the regression cases cover event-triggered updates.
+
+    # Selection message: review the actual selected text, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
+    picked = s.tmp / "selected.txt"
+    picked.write_text("é😀\nsmoke selected text\n", encoding="utf-8")
+    back_to_queue()
+    tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
+    s.ctl_ok("file", "open", str(picked), "split")
+    s.ctl_ok("file", "wait")
+    s.ctl_ok("key", "Meta+a")  # the opened file block holds focus: select all
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-message-selection")
+    s.wait_text("the agent picker counts the selection", "Send the selection (")
+    s.ctl_ok("picker", "enter")
+    s.wait_text("the review picker", "Send the selection to the agent of")
+    s.wait_text("the review shows the non-ASCII line (native byte offsets)", "é😀")
+    s.wait_text("the review shows the whole last line (a UTF-16 head would cut it)", "smoke selected text")
+    s.wait_text("the review offers Cancel", "Cancel")
+    s.shot("agent-message-confirm")
+    s.ctl_ok("picker", "esc")
+    time.sleep(0.7)
+    s.eq("the review is gone", False, any("Send the selection to the agent of" in t for t in s.texts()))
+    s.eq("cancelling shows no success toast", False, any(t.startswith("Sent to the agent of") for t in s.texts()))
+    s.eq("cancelling opened no tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.ctl_ok("close")  # the file block
+
+    # Files header button: opens a Plotroom beside the pane whose cwd is the Files root.
+    s.ctl_ok("files", "show")
+    s.ctl_ok("files", "root", str(root))
+    before = len(s.state()["tabs"])  # type: ignore[arg-type]
+    s.ctl_ok("click", ".ft-plugin[data-id=open-plotroom]")
+    s.wait_text("the new Plotroom", "Agent PR 1")
+    s.eq("it opened beside, not in a new tab", before, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("its directory is the Files root", os.path.realpath(str(root)), os.path.realpath(str(s.state()["focused"].get("cwd") or "")))  # type: ignore[union-attr]
+    s.ctl_ok("close")  # the extra Plotroom
+    s.ctl_ok("files", "hide")
+
+    # Open preview: a native floating Browser (a PiP over the Plotroom) shows the item's URL; the tiled tree is exactly as before and the Plotroom stays
+    # unparked, and closing the float leaves the same tree. Read from the plugin's selftest `layout` command (the window's own view of panes, each tab's
+    # tiled root and its floats); headless Tern tests this placement, not live page content.
+    back_to_queue()  # closing the extra Plotroom left focus on the first tab's shell, not the queue's
+    layout_file = s.smoke / "layout.json"
+
+    def layout() -> Dict[str, Any]:
+        if layout_file.exists():
+            layout_file.unlink()
+        s.ctl_ok("plugins", "run", "plugin.plotroom.layout")
+        s.wait_until("the layout report is written", layout_file.exists)
+        return json.loads(layout_file.read_text(encoding="utf-8"))
+
+    def tab_of(rep: Dict[str, Any], pane: int) -> Dict[str, Any]:
+        row = next((p for p in rep["panes"] if p["pane"] == pane), None)
+        if row is None:
+            s.fail("the layout report lists the focused pane", pane, [(p["pane"], p["kind"]) for p in rep["panes"]])
+        return next(t for t in rep["tabs"] if t["tab"] == row["tab"])
+
+    def focused() -> int:
+        """Use the plugin's own focus id; native CLI ids are a different namespace."""
+        return int(layout()["focused"])
+
+    owner = focused()
+    before = layout()
+    before_tab = tab_of(before, owner)
+    known = {p["pane"] for p in before["panes"]}
+    s.eq("no float before", [], before_tab["floats"])
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open-preview")
+    state: Dict[str, Any] = {}
+
+    def floated() -> bool:
+        s.ctl_ok("wait", "300")  # lets the Browser's async open land
+        state["rep"] = layout()
+        return any(p["pane"] not in known and p["kind"] == "browser" for p in state["rep"]["panes"])
+
+    s.wait_until("a Browser pane opens (headless Tern opened none?)", floated)
+    during = state["rep"]
+    new = [p for p in during["panes"] if p["pane"] not in known]
+    s.eq("exactly one new pane, a floating Browser on the item's URL", [("browser", True, "https://github.com/a/gent/pull/1")], [(p["kind"], p["floating"], p["url"]) for p in new])
+    browser = new[0]["pane"]
+    during_tab = tab_of(during, owner)
+    s.eq("the Plotroom stays unparked", False, next(p for p in during["panes"] if p["pane"] == owner)["parked"])
+    s.eq("the tiled tree is exactly as before", before_tab["root"], during_tab["root"])
+    s.eq("the float sits over the Plotroom", [{"pane": browser, "over": owner, "corner": "tr"}], during_tab["floats"])
+    s.shot("open-floating")
+    s.ctl_ok("pip", "focus")  # native open keeps the owner focused; focusing the float is what a double-click does
+    s.wait_until("the float takes focus", lambda: focused() == browser)
+    s.ctl_ok("close")
+    s.wait_until("closing the float returns focus to the Plotroom", lambda: focused() == owner)
+    after = layout()
+    after_tab = tab_of(after, owner)
+    s.eq("the float is gone", False, any(p["pane"] == browser for p in after["panes"]))
+    s.eq("no float remains", [], after_tab["floats"])
+    s.eq("the tiled tree is exactly as before", before_tab["root"], after_tab["root"])
+    s.wait_text("the Plotroom is still showing the queue", "Agent PR 1")
+
+    # Agent lifecycle, natural transitions: the fake agent has been live since its launch and the offer above listed it as working; closing its pane
+    # must end it for Plotroom (no live agent: Go to agent has none and a new launch is offered, not the duplicate offer).
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
+    s.wait_until("the agent's pane is focused to close it", agent_focused)
+    s.ctl_ok("close")
+    s.wait_until("the agent's pane is gone", lambda: not agent_focused())
+    back_to_queue()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+    s.wait_text("a closed agent is not offered again: the action picker opens", "Run on ")
+    s.eq("no duplicate-launch offer for an exited agent", False, any("An agent already works on" in t for t in s.texts()))
+    s.ctl_ok("picker", "esc")
 
     # Draft PR: only an issue with a worktree can start one (it starts from the issue's branch), so pin a GitHub issue by URL, make its worktree, commit
     # in it, and walk the draft up to its review: destination picker first, then the bases, then the review. Dismissing the review writes nothing
@@ -1742,7 +1849,7 @@ def sdk_drift(tern: str, tmp: Path) -> None:
     if done.returncode != 0 or not made.is_file():
         WARNINGS.append("could not generate the installed Tern's SDK types: %s" % (done.stderr or done.stdout).strip()[:200])
     elif sha256_file(made) != SDK_SHA256:
-        WARNINGS.append("installed Tern's SDK types differ from the pinned 0.8.3 snapshot (sha256 %s); refresh scripts/%s" % (sha256_file(made)[:16], SDK.name))
+        WARNINGS.append("installed Tern's SDK types differ from the pinned 0.9.8 snapshot (sha256 %s); refresh scripts/%s" % (sha256_file(made)[:16], SDK.name))
 
 
 def check_smoke() -> str:

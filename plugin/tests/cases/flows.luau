@@ -3740,4 +3740,453 @@ case("host agents: the Agents list shows the last message, delivery error and la
 	same(b.state().agentInfo["o/r#1"], {}, "texts that are not clean strings are dropped")
 end)
 
+-- ---------------------------------------------------------------- agent events, floating preview, Files, selection, page pick
+
+local OPEN_NODE, MSG_NODE = "layer.queue.buttons.open", "layer.queue.buttons.agentmsg"
+
+local function reviewWith(w: World, label: (string, number) -> string?)
+	local reviews = 0
+	w.window.decide = function(opts: any): (string?, boolean?)
+		local ph: string = opts.placeholder or ""
+		if string.find(ph, "^Send the selection %(") or string.find(ph, "^Pick an element") then
+			return (if string.find(ph, "^Pick an element") then "Browser" else "o/r#5"), nil
+		end
+		reviews += 1
+		return label(ph, reviews), nil
+	end
+end
+
+local function pickRows(pick: any): { string }
+	local out: { string } = {}
+	for _, item in pick.items do
+		table.insert(out, item.label)
+	end
+	return out
+end
+
+windowCase("window events: agent_state tells the blocks at once and toasts a waiting agent; the 4 s timer still carries last messages and delivery errors", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	local told, toasts = #statusEvents(w), #w.toasts
+	local reads = w.window.reads[1] or 0
+	w.window.agentStates[agent] = "waiting_input"
+	w.window.handlers.agent_state({ pane = agent, old = "working", new = "waiting_input" }, w.cx)
+	w.window.handlers.agent_state({ pane = agent, old = "working", new = "waiting_input" }, w.cx)
+	eq(#statusEvents(w), told, "the handler itself reads and sends nothing: Tern holds its state while it dispatches")
+	eq(w.window.reads[1] or 0, reads, "no surface was read inside the event")
+	w.advance(1)
+	eq(#statusEvents(w), told + 1, "the next frame sends the new state once, long before the 4 s tick, though two events came")
+	eq(statusEvents(w)[told + 1].map["o/r#5"].state, "waiting_input", "which is the new one")
+	eq(w.toasts[toasts + 1].text, "o/r#5 needs input", "and the waiting agent is toasted")
+	w.window.handlers.agent_state("nonsense", w.cx)
+	w.window.handlers.agent_state({ new = "idle" }, w.cx)
+	w.advance(1)
+	eq(#statusEvents(w), told + 1, "an event with no pane does nothing")
+	w.window.agentNotes[agent] = { last_message = "All done", delivery_error = "omp busy" }
+	w.advance(4000)
+	local map = statusEvents(w)[told + 2].map["o/r#5"]
+	eq(map.last, "All done", "the timer's reconciliation carries the last message, which no event does")
+	eq(map.err, "omp busy", "and the delivery error")
+end)
+
+windowCase("window events: pane_created of any block kind starts the agents' timer, and only a new Plotroom block pays for a protocol read", function(w: World)
+	w.load("window")
+	flowHost(w)
+	w.advance(1)
+	seedAgent(w, 5, "working", 1, "o/r#5")
+	w.window.panes[6] = { block = nil, cwd = "/x", tab = 6, kind = "browser" }
+	local reads = w.window.reads[1] or 0
+	w.window.handlers.pane_created({ pane = 6 }, w.cx)
+	eq(w.window.reads[1] or 0, reads, "a Browser block opening reads no surface for the protocol check")
+	w.window.agentStates[5] = "waiting_input"
+	w.advance(4000)
+	eq(w.toasts[#w.toasts].text, "o/r#5 needs input", "yet the timer it started saw the waiting agent")
+	local before = w.window.reads[1] or 0
+	w.window.handlers.pane_created({ pane = 1 }, w.cx)
+	eq((w.window.reads[1] or 0) > before, true, "a new Plotroom block is checked")
+end)
+
+windowCase("window events: a hook paused over budget shows in the status line and toasts once, and resuming says so", function(w: World)
+	w.load("window")
+	w.advance(1)
+	local function texts(): { string }
+		local out: { string } = {}
+		for _, s in ((w.window.status :: any)({ pane = 7 }) or {}) do
+			table.insert(out, s.text)
+		end
+		return out
+	end
+	local toasts, refreshes = #w.toasts, w.window.refreshes
+	w.window.handlers.budget({ hook = "timer", state = "paused", ms = 5, paused_ms = 5000 }, w.cx)
+	eq(w.toasts[toasts + 1].text, "Plotroom paused: timer", "named")
+	eq(w.toasts[toasts + 1].level, "error", "as an error")
+	same(texts(), { "Plotroom paused: timer" }, "and shown on every pane's status line")
+	eq(w.window.refreshes, refreshes + 1, "which was redrawn")
+	w.window.handlers.budget({ hook = "status", state = "paused", ms = 4, paused_ms = 5000 }, w.cx)
+	eq(#w.toasts, toasts + 1, "a second pause adds no toast")
+	w.window.handlers.budget({ hook = "timer", state = "resumed" }, w.cx)
+	eq(#w.toasts, toasts + 1, "one still paused: nothing said")
+	w.window.handlers.budget({ hook = "status", state = "resumed" }, w.cx)
+	eq(w.toasts[#w.toasts].text, "Plotroom resumed", "the last resume is said")
+	same(texts(), {}, "and the status line is clean")
+	w.window.handlers.budget({ hook = 5, state = "paused" }, w.cx)
+	w.window.handlers.budget("x", w.cx)
+	same(texts(), {}, "malformed events change nothing")
+end)
+
+windowCase("window open preview: the page opens beside, then the new Browser floats top right over the block and the block keeps focus; Open stays beside; a missing item is said", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link(OPEN_NODE, "plotroom://github/open/o/r/5")
+	w.window.opensBrowser = true
+	w.command("open-preview")
+	same(w.window.browser, { { url = "https://github.com/o/r/pull/5", how = "beside", beside = 1 } }, "the page is opened as a plain link open would")
+	same(w.window.floats, { { pane = 11, over = 1, corner = "tr", focus = false } }, "the new Browser floats over the block, top right, without taking focus")
+	eq(w.window.focused, 1, "the block keeps focus")
+	eq(#w.window.closedPanes, 0, "nothing is closed")
+	eq(#w.toasts, 0, "and nothing said")
+	w.window.opensBrowser = false
+	w.command("open-selected")
+	eq(#w.window.floats, 1, "the default Open floats nothing")
+	eq(w.window.browser[2].how, "beside", "and is unchanged: beside")
+	local issue = "https://acme.example/browse/ABC-1"
+	local node = flowHost(w)
+	node.link(OPEN_NODE, "plotroom://issue/open/" .. string.gsub(issue, ":", "%%3A"):gsub("/", "%%2F"))
+	w.window.opensBrowser = true
+	w.command("open-preview")
+	eq(w.window.browser[3].url, issue, "an issue's page floats too, the one its link names")
+	eq(#w.window.floats, 2, "floated")
+	local empty = flowHost(w)
+	empty.ops()
+	w.command("open-preview")
+	eq(#w.window.floats, 2, "with no item selected nothing opens")
+	eq(w.toasts[#w.toasts].text, "Select a pull request or issue first", "and it says so")
+	w.window.focused = 2
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	w.command("open-preview")
+	eq(#w.window.floats, 2, "elsewhere than a Plotroom block it opens nothing")
+	eq(w.toasts[#w.toasts].text, "Focus a Plotroom block first", "and says so")
+end)
+
+windowCase("window open preview: a Browser Tern would not float is closed (only it) with the reason; a page opened outside a Browser block says so", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link(OPEN_NODE, "plotroom://github/open/o/r/5")
+	w.window.opensBrowser = true
+	w.window.floatFails = "tab is zoomed"
+	w.command("open-preview")
+	same(w.window.closedPanes, { 11 }, "only the Browser this opened is closed")
+	eq(w.window.panes[1] ~= nil, true, "the Plotroom block is untouched")
+	eq(w.window.focused, 1, "a failed preview returns focus to Plotroom")
+	eq(w.toasts[#w.toasts].level, "error", "an error")
+	eq(w.toasts[#w.toasts].text, "Could not open the floating preview", "says what failed")
+	eq(w.toasts[#w.toasts].sub, "tab is zoomed", "with Tern's reason")
+	w.window.opensBrowser = false
+	w.command("open-preview")
+	eq(#w.window.closedPanes, 1, "no Browser appeared: nothing is closed")
+	eq(w.toasts[#w.toasts].sub, "Tern opened the page outside a Browser block.", "and it is said")
+end)
+
+windowCase("window files: the Files button opens Plotroom on the folder it shows, refuses another host's folder, and writes nothing", function(w: World)
+	w.load("window")
+	local button = w.window.filesButtons["open-plotroom"]
+	eq(button.title, "Open Plotroom", "the button's tooltip")
+	local kv: { [string]: string } = {}
+	for k, v in w.kv.store do
+		kv[k] = v
+	end
+	button.run({ root = "/work/other", host = "", selection = {}, tab = "files" }, w.cx)
+	local launched = w.window.launches[#w.window.launches]
+	eq(launched.block, "plotroom.prs", "a Plotroom block")
+	eq(launched.cwd, "/work/other", "on the Files folder")
+	same(launched.args, { "/work/other" }, "which it is given as its argument")
+	same(w.kv.store, kv, "no store was written")
+	local count = #w.window.launches
+	button.run({ root = "/home/me/x", host = "elsewhere", selection = {}, tab = "files" }, w.cx)
+	eq(#w.window.launches, count, "a folder on another host opens nothing")
+	eq(w.toasts[#w.toasts].text, "Plotroom not opened", "and says so")
+	has(w.toasts[#w.toasts].sub, "elsewhere", "naming the host")
+	button.run({ root = "/bad\npath", host = "", selection = {}, tab = "files" }, w.cx)
+	eq(#w.window.launches, count, "a path with a control character opens nothing")
+	button.run({ root = nil, host = "", selection = {}, tab = "files" }, w.cx)
+	eq(w.window.launches[#w.window.launches].cwd, "/work/r", "with no folder it opens as Open does, in the focused pane's directory")
+end)
+
+windowCase("window selection: the user picks the agent, reviews every line and sends only by the Send row; cancelling, a dead agent and a refused delivery send nothing", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	w.window.selection = { pane = 1, kind = "terminal", text = "local x = 1\r\n\treturn x" }
+	reviewWith(w, function(_ph, _n)
+		return "Cancel"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	eq(w.window.selectionAsks[1].max_chars, 4000, "the selection is read with an explicit cap")
+	same(pickRows(w.window.picks[#w.window.picks - 1]), { "o/r#5" }, "the agents to choose from: each live linked one")
+	same(pickRows(w.window.picks[#w.window.picks]), { "Cancel", "Send to o/r#5", "Add a note…", "Selected in the terminal block:", "local x = 1", "\treturn x" }, "the review: Cancel first, then Send, then every line as it will be sent")
+	eq(#w.window.agentCalls, 0, "Cancel sends nothing")
+	reviewWith(w, function(_ph, _n)
+		return nil
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	eq(#w.window.agentCalls, 0, "dismissing the review sends nothing")
+	reviewWith(w, function(_ph, _n)
+		return "Send to o/r#5"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	same(w.window.agentCalls, { { op = "ask", pane = agent, text = "Selected in the terminal block:\nlocal x = 1\n\treturn x" } }, "Send delivers it whole, newlines kept")
+	eq(w.toasts[#w.toasts].text, "Sent to the agent of o/r#5", "and says so")
+	w.window.askFails = true
+	w.command("agent-message-selection")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "Could not message the agent for o/r#5", "a refused delivery is an error")
+	w.window.askFails = false
+	w.window.agentStates[agent] = "exited"
+	local calls = #w.window.agentCalls
+	w.command("agent-message-selection")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "No linked agent is running", "an exited agent is not offered")
+	eq(#w.window.agentCalls, calls, "and nothing is sent")
+end)
+
+windowCase("window selection: a note is added by one line, a long selection is clipped in view and in the send, and a file's selection comes from read", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local lines: { string } = {}
+	for i = 1, 50 do
+		table.insert(lines, "line " .. i)
+	end
+	w.window.selection = { pane = 1, kind = "terminal", text = table.concat(lines, "\n"), chars_clipped = true }
+	w.window.typed = "see this"
+	local sent = ""
+	reviewWith(w, function(_ph, n)
+		if n == 1 then
+			return "Add a note…"
+		end
+		return "Send to o/r#5"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	local review = w.window.picks[#w.window.picks]
+	has(review.items[3].label, "Edit note", "after a note the row offers to edit it")
+	eq(review.items[4].label, "see this", "the note is shown first, in its own group")
+	local rows = pickRows(review)
+	eq(rows[#rows], "[clipped: first 40 of 50 lines]", "the cut is a row, so it is explicit")
+	eq(rows[#rows - 1], "line 40", "after the 40th line")
+	sent = (w.window.agentCalls[1] :: any).text
+	eq(string.sub(sent, 1, #"see this\n\nSelected in the terminal block:\nline 1"), "see this\n\nSelected in the terminal block:\nline 1", "the note leads the message")
+	eq(string.find(sent, "line 41", 1, true), nil, "no line past the shown ones is sent")
+	has(w.window.picks[#w.window.picks - 2].placeholder, "clipped", "the picker says the reader clipped it")
+	w.window.agentCalls = {}
+	w.window.typed = string.rep("x", 401)
+	reviewWith(w, function(_ph, n)
+		return if n == 1 then "Add a note…" else "Send to o/r#5"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	eq(#w.window.agentCalls, 0, "a note over its cap is refused")
+	w.window.selection = nil
+	w.window.docs["/work/f.txt"] = "alpha\nbeta"
+	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 10 } }
+	w.window.typed = nil
+	reviewWith(w, function(_ph, _n)
+		return "Send to o/r#5"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\nalpha\nbeta", "a file's selection is read from its text by its offsets")
+	w.window.fileRead = nil
+	w.command("agent-message-selection")
+	eq(w.toasts[#w.toasts].text, "Select some text first", "no selection at all is said, and nothing is offered")
+end)
+
+windowCase("window selection: a file's selection is only byte offsets, so its text is read from the file: reversed, nonzero and multibyte ranges are cut exactly, and anything unsure is refused", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local text = "héllo wörld\nline2"
+	w.window.docs["/work/f.txt"] = text
+	local function select(anchor: number, head: number)
+		w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = anchor, head = head }, size = #text }
+	end
+	reviewWith(w, function(_ph, _n)
+		return "Send to o/r#5"
+	end)
+	local function run()
+		w.window.agentCalls = {}
+		w.command("agent-message-selection")
+		w.flush()
+	end
+	select(0, 6)
+	run()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\nhéllo", "a multibyte range from the start")
+	same(w.window.docReads, { "/work/f.txt" }, "the file was read once")
+	select(13, 7)
+	run()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\nwörld", "a reversed nonzero range")
+	select(0, #text)
+	run()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\nhéllo wörld\nline2", "select all keeps the line break")
+	local said = #w.toasts
+	select(2, 5)
+	run()
+	eq(#w.window.agentCalls, 0, "a start inside a character sends nothing")
+	eq(w.toasts[#w.toasts].text, "The selection could not be read", "and says so")
+	select(0, 99)
+	run()
+	eq(#w.window.agentCalls, 0, "an end past the file sends nothing")
+	has(w.toasts[#w.toasts].sub, "changed", "the file changed since")
+	select(4, 4)
+	run()
+	eq(w.toasts[#w.toasts].text, "Select some text first", "an empty range is no selection")
+	eq(#w.toasts > said, true, "each refusal toasted")
+	select(0, 6)
+	w.window.agentCalls = {}
+	w.command("agent-message-selection")
+	select(1, 6) -- the user moved the selection while the file was being read
+	w.flush()
+	eq(#w.window.agentCalls, 0, "a selection that moved during the read sends nothing")
+	eq(w.toasts[#w.toasts].text, "The selection changed while the file was read", "and says so")
+	w.window.docs["/work/f.txt"] = nil
+	select(0, 6)
+	run()
+	eq(w.toasts[#w.toasts].text, "The file could not be read", "a file that cannot be read is an error")
+	w.window.docs["/work/f.txt"] = text
+	w.window.hostOf[1] = 2
+	local reads = #w.window.docReads
+	run()
+	eq(w.toasts[#w.toasts].text, "That file is on another host", "a file of another host is refused")
+	eq(#w.window.docReads, reads, "and never read")
+	w.window.hostOf[1] = nil
+	w.window.docs["/work/f.txt"] = string.rep("line\n", 1000)
+	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 5000 }, size = 5000 }
+	run()
+	has((w.window.agentCalls[1] :: any).text, "[clipped: first 40 of 800 lines]", "a big range is cut at the 4000-byte cap, then shown and sent as 40 lines")
+	has(w.window.picks[#w.window.picks - 1].placeholder, "4000 characters, clipped", "and the picker says it was clipped")
+end)
+
+windowCase("window page pick: a picked Browser element goes to the item's agent after review, with no field value; cancel, errors and a missing Browser say so", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	st.link(MSG_NODE, "plotroom://github/agentmsg/o/r/5")
+	w.command("agent-pick-page")
+	eq(w.toasts[#w.toasts].text, "Open a Browser block first", "with no Browser block open nothing is asked of Browser")
+	eq(#w.window.browserCalls, 0, "and no Browser was opened for it")
+	w.window.panes[6] = { block = nil, cwd = "", tab = 1, kind = "browser", url = "https://x.test/", title = "X" }
+	w.window.browserAnswer = { ok = { picked = { tag = "input", role = "textbox", name = "Token", selector = "#tok", text = "hello", value = "s3cret", box = {} }, url = "https://x.test/", title = "X" } }
+	reviewWith(w, function(ph, _n)
+		has(ph, "page element", "the review asks about the page element")
+		return "Send to o/r#5"
+	end)
+	w.command("agent-pick-page")
+	w.flush()
+	same(w.window.browserCalls, { { op = "pick", block = 6 } }, "the one Browser block is asked to pick")
+	eq(w.window.focused, 6, "and is focused so the click lands there")
+	local text = (w.window.agentCalls[1] :: any).text
+	eq(text, 'Page: X <https://x.test/>\nElement: input role=textbox name="Token"\nSelector: #tok\nText: hello', "the agent gets the page, element, selector and text")
+	eq(string.find(text, "s3cret", 1, true), nil, "never the element's value")
+	eq(w.window.agentCalls[1].pane, agent, "the item's own agent")
+	w.window.agentCalls = {}
+	w.window.browserAnswer = { ok = { cancelled = true, url = "u", title = "t" } }
+	w.window.focused = 1
+	w.command("agent-pick-page")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "Nothing picked", "Escape in Browser is said")
+	w.window.browserAnswer = { error = { kind = "x", message = "no page" } }
+	w.window.focused = 1
+	w.command("agent-pick-page")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "Could not pick a page element", "a Browser failure is an error")
+	eq(w.toasts[#w.toasts].sub, "no page", "with its message")
+	eq(#w.window.agentCalls, 0, "none of them sent anything")
+end)
+
+windowCase("window selection: with a file focused another block's old selection is never taken for it, and the count is characters", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	w.window.panes[2] = { block = nil, cwd = "/", tab = 1, kind = "terminal" }
+	w.window.selection = { pane = 2, kind = "terminal", text = "stale terminal text" }
+	w.window.panes[1].kind = "file"
+	w.window.docs["/work/f.txt"] = "日本語 text"
+	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 9 }, size = 14 }
+	reviewWith(w, function(_ph, _n)
+		return "Send to o/r#5"
+	end)
+	w.command("agent-message-selection")
+	w.flush()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\n日本語", "the focused file's own range is what is offered")
+	has(w.window.picks[#w.window.picks - 1].placeholder, "(3 characters)", "counted in characters, not bytes")
+	w.window.panes[1].kind = nil
+	w.window.agentCalls = {}
+	w.command("agent-message-selection")
+	w.flush()
+	eq((w.window.agentCalls[1] :: any).text, "Selected in the terminal block:\nstale terminal text", "with no file focused the plain selection call is used, as before")
+end)
+
+windowCase("window selection: only an agent on the host its link recorded is offered, and another host's is named", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local links = w.kv.get("agent-links") :: any
+	links[1].host = { id = 2, name = "", address = "host2" }
+	w.kv.put("agent-links", links)
+	w.window.selection = { pane = 1, kind = "terminal", text = "x" }
+	w.command("agent-message-selection")
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "No linked agent is running", "a link whose host is not the agent pane's is not offered (a pane id may be reused)")
+	seedAgent(w, 5, "working", 2, "x/y#1")
+	w.window.decide = function(_opts: any): (string?, boolean?)
+		return "Cancel", nil
+	end
+	w.command("agent-message-selection")
+	w.flush()
+	local rows = w.window.picks[#w.window.picks].items
+	eq(#rows, 1, "the one matching agent is offered")
+	eq(rows[1].label, "x/y#1", "by its item")
+	has(rows[1].detail, "host2", "with the host it runs on")
+	eq(#w.window.agentCalls, 0, "nothing was sent")
+end)
+
+windowCase("window page pick: a parked Browser block is not offered, and the Browser's session is switched to before it is focused", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	st.link(MSG_NODE, "plotroom://github/agentmsg/o/r/5")
+	w.window.panes[6] = { block = nil, cwd = "", tab = 1, kind = "browser", url = "https://x.test/", title = "X", parked = true }
+	w.command("agent-pick-page")
+	eq(w.toasts[#w.toasts].text, "Open a Browser block first", "a parked one cannot be clicked, so it is no Browser block here")
+	eq(w.toasts[#w.toasts].sub, "Use Open in Browser on the item, then run this again.", "and the advice is not to park Plotroom")
+	w.window.panes[7] = { block = nil, cwd = "", tab = 2, kind = "browser", url = "https://y.test/", title = "Y" }
+	table.insert(w.window.tabs, { id = 2, session = 2 })
+	table.insert(w.window.sessions, 2)
+	w.window.browserAnswer = { ok = { cancelled = true } }
+	w.window.focused = 1
+	w.command("agent-pick-page")
+	w.flush()
+	eq(w.window.switches[#w.window.switches], 2, "the session of the Browser is shown")
+	eq(w.window.focused, 7, "then the Browser focused")
+	same(w.window.browserCalls, { { op = "pick", block = 7 } }, "and asked to pick")
+end)
+
+case("host palette: Send page element to agent is offered only for a live agent, and under no item group", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = "working" })
+	local p = hx.palette(w, b)
+	yes(table.find(p.commands, "agent-pick-page") ~= nil, "a working agent offers it")
+	eq(p.commandGroups["agent-pick-page"], nil, "its own heading (Saved actions) stands")
+	asks.hx.agents(b, { ["o/r#1"] = "exited" })
+	eq(table.find(hx.palette(w, b).commands, "agent-pick-page"), nil, "an exited agent does not")
+end)
+
 return {}

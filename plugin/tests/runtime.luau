@@ -190,4 +190,26 @@ function M.run(cx: WindowCx)
 	end)
 end
 
+-- `plugin.plotroom.layout`: writes $PLOTROOM_SMOKE_DIR/layout.json, what the window's panes and splits are now:
+-- { focused = pane?, panes = { { pane, kind, tab?, parked, focused, floating, url? } },
+--   tabs = { { tab, root, floats = { { pane, over, corner } }, focus } } } (root: the SDK's TabTree; url: the pane's full URL).
+-- Smoke asserts the floating preview from it: the tiled root is unchanged while a Browser float over the block is open.
+function M.layout(cx: WindowCx)
+	local dir = tern.getenv("PLOTROOM_SMOKE_DIR")
+	if not dir or dir == "" then
+		return
+	end
+	local panes, tabs = {}, {}
+	for _, p in cx.session:panes() do
+		table.insert(panes, { pane = p.pane, kind = p.kind, tab = p.tab, parked = p.parked == true, focused = p.focused == true, floating = p.floating == true, url = p.url })
+	end
+	for _, t in cx.session:tabs() do
+		local lay = cx.session:layout(t.id)
+		if lay then
+			table.insert(tabs, { tab = t.id, root = lay.root, floats = tern.json.array(lay.floats), focus = lay.focus })
+		end
+	end
+	write(dir, "layout.json", { focused = cx.session:focused(), panes = tern.json.array(panes), tabs = tern.json.array(tabs) })
+end
+
 return M

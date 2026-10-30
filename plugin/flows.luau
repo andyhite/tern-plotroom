@@ -18,8 +18,9 @@ export type Env = {
 	targetPane: (cx: WindowCx, path: string) -> (number?, number?, number?),
 	launch: (cx: WindowCx) -> number?,
 	-- Follows the hidden link node `nodeId` of `pane` (the same validation as a click on it); `missing` is said when
-	-- the node has none.
-	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?) -> (),
+	-- the node has none; `typed` asks for a typed prompt; `mode` varies what the link does ("preview": opens the page in a
+	-- floating Browser over the block; "agentpick": the Message link sends a picked page element).
+	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?) -> (),
 }
 
 -- A Plotroom block's host: Tern's slot id and its address ("" for this machine), the name only for people.
@@ -52,6 +53,8 @@ local MAX_TITLE = 256
 local MAX_BODY = 8000
 local MAX_ROWS = 40
 local AGENTGO_NODE = "layer.queue.buttons.agentgo"
+local OPEN_NODE = "layer.queue.buttons.open"
+local AGENTMSG_NODE = "layer.queue.buttons.agentmsg" -- hidden: the Message link, whose node also says an agent is recorded
 local WTOPEN_NODE = "layer.queue.buttons.wtopen"
 local GIT_NODE = "layer.queue.buttons.git"
 
@@ -372,11 +375,8 @@ local timer: TimerHandle? = nil
 
 -- Whether there is anything to tell: a Plotroom block and a linked agent that has not exited.
 local function active(cx: WindowCx): boolean
-	if #plotroomPanes(cx) == 0 then
-		return false
-	end
-	local links = readLinks()
-	if #links == 0 then
+	local links = readLinks() -- the cheap read first: pane_created fires for every kind of block
+	if #links == 0 or #plotroomPanes(cx) == 0 then
 		return false
 	end
 	local states = agentStates(cx)
@@ -667,7 +667,323 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 				cx2:toast("info", "Nothing to send: the message was blank")
 			end
 		end)
+	elseif act == "agentpick" then
+		local link = M.liveAgent(cx, pane, key)
+		if link then
+			M.pickPage(cx, key, link.agent)
+		end
 	end
+end
+
+-- ---------------------------------------------------------------- context for an agent
+
+local SEL_CHARS = 4000 -- the most of a selection or a picked element's text put in a draft; more is clipped, and the draft says so
+
+-- Whether the agent in `pane` is listed and has not exited.
+local function agentLive(cx: WindowCx, agent: number): boolean
+	local states = agentStates(cx)
+	local s = if states then states[agent] else nil
+	return s ~= nil and s ~= "exited"
+end
+
+local LINE_CHARS = 300 -- a context line is shown (and sent) up to this many bytes
+local NOTE_CHARS = 400
+
+-- `text` as the lines that are both shown in the review and sent (so what is read is what goes): at most MAX_ROWS lines
+-- of LINE_CHARS bytes; each cut is said by a closing line. `clipped`: the text was already cut by the reader.
+local function contextLines(text: string, clipped: boolean): { string }
+	local out: { string } = {}
+	local total, cut = 0, false
+	local body = (string.gsub((string.gsub(text, "\r\n?", "\n")), "\n+$", ""))
+	for line in string.gmatch(body .. "\n", "([^\n]*)\n") do
+		total += 1
+		if #out < MAX_ROWS then
+			if #line > LINE_CHARS then
+				local at = LINE_CHARS
+				while at > 0 and string.byte(line, at + 1) and bit32.band(string.byte(line, at + 1), 0xC0) == 0x80 do
+					at -= 1 -- never cut inside a UTF-8 character
+				end
+				line, cut = string.sub(line, 1, at) .. "…", true
+			end
+			table.insert(out, line)
+		end
+	end
+	if total > #out or cut or clipped then
+		table.insert(out, "[clipped: " .. (if total > #out then "first " .. #out .. " of " .. total .. " lines" else "long lines or the end of the text cut") .. "]")
+	end
+	return out
+end
+
+-- Sends `body` to `agent` by `agents:ask`; an agent that exited meanwhile or a refused delivery sends nothing and says why.
+local function sendTo(cx: WindowCx, agent: number, key: string, body: string)
+	if not agentLive(cx, agent) then
+		return cx:toast("info", "No agent is running for " .. key)
+	end
+	local ok, err = pcall(function()
+		cx.agents:ask(agent, body)
+	end)
+	if ok then
+		cx:toast("success", "Sent to the agent of " .. key)
+	else
+		cx:toast("error", "Could not message the agent for " .. key, tostring(err))
+	end
+end
+
+-- The review of a message for `agent`: the picker lists, Cancel first, Send, a one-line note the user types (the prompt
+-- is one line, so the note is the editable part) and then every line of `context` as it will be sent, newlines
+-- kept. Nothing is sent but by the Send row; Escape or Cancel sends nothing.
+local function review(cx: WindowCx, agent: number, key: string, head: string, context: { string }, note: string)
+	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pencil", edit = true } }
+	if note ~= "" then
+		table.insert(items, { label = note, group = "Note", icon = "merge" })
+	end
+	for _, line in context do
+		table.insert(items, { label = if line == "" then " " else line, group = "Message" })
+	end
+	cx:pick({ items = items, placeholder = head, icon = "merge", action = "confirm" }):next(function(item, _, cx2)
+		if not cx2 or not item then
+			return
+		elseif item.edit == true then
+			cx2:prompt({ value = note, placeholder = "A note for the agent of " .. key .. " (one line)", icon = "merge", action = "review" }):next(function(text, _, cx3)
+				if not cx3 or not text then
+					return
+				end
+				local line = trim((string.gsub(text, "%c", " ")))
+				if (utf8.len(line) or #line) > NOTE_CHARS then
+					return cx3:toast("error", "The note is too long", "At most " .. NOTE_CHARS .. " characters.")
+				end
+				review(cx3, agent, key, head, context, line)
+			end)
+		elseif item.confirm == true then
+			sendTo(cx2, agent, key, (if note ~= "" then note .. "\n\n" else "") .. table.concat(context, "\n"))
+		end
+	end)
+end
+
+type Picked = { pane: number, kind: string, text: string, clipped: boolean }
+-- A selected range of a file block: `session:read` gives a file's selection only as `{anchor, head}` byte offsets into
+-- its text, and `session:selection` gives none, so the text is read from the file (`docs:read`, with unsaved edits).
+type FileSel = { pane: number, path: string, lo: number, hi: number, size: number? }
+
+-- The selection now, read at once (before any picker, prompt or the file read moves focus or time on): a Picked text
+-- for the focused block's, else any block's (`session:selection`); or, for a focused file with a range selected, the
+-- offsets to cut its text by. Nothing for neither.
+local function captureSelection(cx: WindowCx): (Picked?, FileSel?)
+	local focused = cx.session:focused()
+	local focusedInfo = if focused then cx.session:pane(focused) else nil
+	-- `selection(nil)` is the focused block's, else any block's, and a file's range is never in it: with a file focused,
+	-- ask for it by its pane, so another block's old selection is not taken for it.
+	local onFile = focusedInfo ~= nil and focusedInfo.kind == "file"
+	local ok, sel = pcall(function()
+		return cx.session:selection(if onFile then focused else nil, { max_chars = SEL_CHARS })
+	end)
+	if ok and type(sel) == "table" and type(sel.text) == "string" and sel.text ~= "" then
+		return { pane = sel.pane, kind = sel.kind, text = sel.text, clipped = sel.chars_clipped == true }, nil
+	end
+	if not focused then
+		return nil, nil
+	end
+	local okRead, readAny = pcall(function()
+		return cx.session:read(focused, { lines = 1 })
+	end)
+	local read: any = readAny
+	if okRead and type(read) == "table" and read.kind == "file" and type(read.path) == "string" and read.path ~= "" and type(read.selection) == "table" then
+		local a, b = read.selection.anchor, read.selection.head
+		if type(a) == "number" and type(b) == "number" and a >= 0 and b >= 0 and a == math.floor(a) and b == math.floor(b) and a ~= b then
+			return nil, { pane = focused, path = read.path, lo = math.min(a, b), hi = math.max(a, b), size = if type(read.size) == "number" then read.size else nil }
+		end
+	end
+	return nil, nil
+end
+
+-- The bytes [lo, hi) of `text` when both ends fall on character boundaries (never silently moved), cut to SEL_CHARS
+-- bytes on a boundary; and whether it was cut. Nothing, and why, when it cannot be cut.
+local function sliceFile(text: string, lo: number, hi: number): (string?, boolean, string?)
+	local function inside(at: number): boolean -- the byte at 0-based `at` continues a character
+		local b = string.byte(text, at + 1)
+		return b ~= nil and bit32.band(b, 0xC0) == 0x80
+	end
+	if hi > #text then
+		return nil, false, "The file changed since it was selected."
+	elseif inside(lo) or inside(hi) then
+		return nil, false, "The selection does not fall on character boundaries."
+	end
+	local stop, clipped = hi, false
+	if hi - lo > SEL_CHARS then
+		stop, clipped = lo + SEL_CHARS, true
+		while stop > lo and inside(stop) do
+			stop -= 1
+		end
+	end
+	return string.sub(text, lo + 1, stop), clipped, nil
+end
+
+-- Whether `pane` runs on this machine (the one `docs:read` reads files of).
+local function isLocalPane(cx: WindowCx, pane: number): boolean
+	local ok, hosts = pcall(function()
+		return cx.hosts:list()
+	end)
+	if ok and type(hosts) == "table" then
+		for _, h in hosts do
+			if type(h.panes) == "table" and table.find(h.panes, pane) then
+				return h.kind == "local"
+			end
+		end
+	end
+	return false
+end
+
+-- The agent picker, then the review, for the selection `sel`.
+local function offerSelection(cx: WindowCx, sel: Picked)
+	local links, healthy = readLinks()
+	local states = agentStates(cx)
+	if not healthy or not states then
+		return cx:toast("error", "The linked agents could not be read", "Try again in a moment.")
+	end
+	local items: { PickItem } = {}
+	local seen: { [number]: boolean } = {}
+	for _, l in links do
+		local state = states[l.agent]
+		if state and state ~= "exited" and not seen[l.agent] then
+			local host = hostOf(cx, l.agent)
+			-- A pane id is reused after a restart: only an agent on the recorded host belongs to the link.
+			if host and hostSame(host, l.host) then
+				seen[l.agent] = true
+				local where = if l.host.address ~= "" then " · " .. (if l.host.name ~= "" then l.host.name else l.host.address) else ""
+				table.insert(items, { label = l.key, detail = (l.action or "agent") .. " · " .. M.stateLabel(state) .. where, icon = "merge", agent = l.agent })
+			end
+		end
+	end
+	if #items == 0 then
+		return cx:toast("info", "No linked agent is running", "Start an agent from a Plotroom item first.")
+	end
+	local info = cx.session:pane(sel.pane)
+	local shown = if info and type(info.title) == "string" then clip(info.title, 80) else nil
+	local title = if shown then ' "' .. shown .. '"' else ""
+	local head = "Selected in the " .. sel.kind .. " block" .. title .. ":"
+	local context = contextLines(sel.text, sel.clipped)
+	table.insert(context, 1, head)
+	local placeholder = "Send the selection (" .. (utf8.len(sel.text) or #sel.text) .. " characters" .. (if sel.clipped then ", clipped" else "") .. ") to which agent?"
+	cx:pick({ items = items, placeholder = placeholder, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+		if not cx2 or not item or type(item.agent) ~= "number" then
+			return
+		end
+		review(cx2, item.agent, item.label, "Send the selection to the agent of " .. item.label .. "?", context, "")
+	end)
+end
+
+-- Plotroom: Message an agent with the selection…: the selection is read first and kept; the user then picks which linked
+-- agent takes it (each live agent once) and reviews the message, which names the block it came from and says when it
+-- was clipped. A file's text is read from the file after the offsets were taken; the offsets are used only while that
+-- block still shows the same selection (and size) once the text arrived, and only on this machine.
+-- ponytail: an edit that keeps the size and the selection between the two reads goes unseen; re-read until stable if it matters.
+function M.messageSelection(cx: WindowCx)
+	local sel, file = captureSelection(cx)
+	if sel then
+		return offerSelection(cx, sel)
+	elseif not file then
+		return cx:toast("info", "Select some text first", "In a terminal, agent, Browser, file or Plotroom block, then run the command again.")
+	elseif not isLocalPane(cx, file.pane) then
+		return cx:toast("error", "That file is on another host", "A file's selection is read on this machine only.")
+	end
+	cx.docs:read(file.path):next(function(text, err, cx2)
+		if not cx2 then
+			return
+		elseif err or type(text) ~= "string" then
+			return cx2:toast("error", "The file could not be read", if err then tostring(err) else nil)
+		end
+		local again, now = captureSelection(cx2)
+		if again or not now or now.pane ~= file.pane or now.path ~= file.path or now.lo ~= file.lo or now.hi ~= file.hi or now.size ~= file.size then
+			return cx2:toast("info", "The selection changed while the file was read", "Select it again.")
+		end
+		local slice, clipped, why = sliceFile(text, file.lo, file.hi)
+		if not slice then
+			return cx2:toast("error", "The selection could not be read", why)
+		end
+		offerSelection(cx2, { pane = file.pane, kind = "file", text = slice, clipped = clipped })
+	end)
+end
+
+-- The Browser blocks this window shows (the ones `cx.browser`'s pick can drive), as picker rows.
+local function browserRows(cx: WindowCx): { PickItem }
+	local rows: { PickItem } = {}
+	for _, p in cx.session:panes() do
+		if p.kind == "browser" and p.parked ~= true and p.tab ~= nil then -- one the user can see and click
+			local title = if type(p.title) == "string" and p.title ~= "" then p.title else "Browser"
+			table.insert(rows, { label = title, detail = p.url, icon = "globe", browser = p.pane })
+		end
+	end
+	table.sort(rows, function(a: PickItem, b: PickItem)
+		return (a.browser :: number) < (b.browser :: number)
+	end)
+	return rows
+end
+
+-- The picked element as a draft: the page, then the element's role, name, selector and (clipped) text. Its value is left
+-- out on purpose: a form field may hold a password.
+local function pickDraft(picked: any, url: any, title: any): string
+	local lines: { string } = {}
+	local page = clip(if type(title) == "string" then title else nil, 200)
+	table.insert(lines, "Page: " .. (page or "(untitled)") .. " <" .. (clip(if type(url) == "string" then url else nil, 500) or "") .. ">")
+	local what = clip(if type(picked.tag) == "string" then picked.tag else nil, 40) or "element"
+	if type(picked.role) == "string" and picked.role ~= "" then
+		what ..= " role=" .. (clip(picked.role, 40) or "")
+	end
+	if type(picked.name) == "string" and picked.name ~= "" then
+		what ..= ' name="' .. (clip(picked.name, 200) or "") .. '"'
+	end
+	table.insert(lines, "Element: " .. what)
+	if type(picked.selector) == "string" and picked.selector ~= "" then
+		table.insert(lines, "Selector: " .. (clip(picked.selector, 300) or ""))
+	end
+	if type(picked.text) == "string" and picked.text ~= "" then
+		local text = clip(picked.text, SEL_CHARS) or ""
+		table.insert(lines, "Text: " .. text .. (if #picked.text > SEL_CHARS then " … [clipped to " .. SEL_CHARS .. " bytes]" else ""))
+	end
+	return table.concat(lines, "\n")
+end
+
+-- Plotroom: Send a Browser page element to the selected item's agent…: the user picks (if several) one of the window's
+-- Browser blocks and clicks an element in it (`cx.browser` pick; Escape cancels); the element and its page are the draft
+-- the user edits before it is sent to `agent`. Only a Browser block already open is used: none is opened here (the
+-- Open commands do, on the link path, and whatever profile Tern gives that Browser block is the one the page is read in).
+function M.pickPage(cx: WindowCx, key: string, agent: number)
+	local rows = browserRows(cx)
+	if #rows == 0 then
+		return cx:toast("info", "Open a Browser block first", "Use Open in Browser on the item, then run this again.")
+	end
+	local function start(cx2: WindowCx, block: number)
+		local session = e().sourceSession(cx2, block)
+		if session then
+			cx2.sessions:switch(session)
+		end
+		cx2.layout:focus(block)
+		cx2:toast("info", "Click an element in the Browser", "Escape cancels.")
+		cx2.browser:call({ op = "pick", block = block }):next(function(result, err, cx3)
+			if not cx3 then
+				return
+			end
+			local bad = if err then tostring(err) elseif type(result) ~= "table" then "Browser gave no answer" elseif result.error then tostring(result.error.message) else nil
+			local ok: any = if type(result) == "table" then result.ok else nil
+			if bad or type(ok) ~= "table" then
+				return cx3:toast("error", "Could not pick a page element", bad or "Browser gave no answer")
+			elseif ok.cancelled == true then
+				return cx3:toast("info", "Nothing picked", "The pick was cancelled.")
+			elseif type(ok.picked) ~= "table" then
+				return cx3:toast("error", "Could not pick a page element", "Browser gave no element")
+			end
+			local context = contextLines(pickDraft(ok.picked, ok.url, ok.title), false)
+			review(cx3, agent, key, "Send this page element to the agent of " .. key .. "?", context, "")
+		end)
+	end
+	if #rows == 1 then
+		return start(cx, rows[1].browser :: number)
+	end
+	cx:pick({ items = rows, placeholder = "Pick an element in which Browser?", icon = "globe", action = "pick" }):next(function(item, _, cx2)
+		if cx2 and item and type(item.browser) == "number" then
+			start(cx2, item.browser)
+		end
+	end)
 end
 
 local function planOf(a: any): Plan?
@@ -1431,6 +1747,34 @@ export type Command = { id: string, title: string, label: string, group: string?
 
 M.COMMANDS = {
 	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
+	{
+		id = "open-preview",
+		title = "Plotroom: Preview the selected PR or issue",
+		label = "Open floating preview",
+		keyed = false,
+		run = function(cx: WindowCx, pane: number)
+			e().follow(cx, pane, OPEN_NODE, "Select a pull request or issue first", nil, "preview")
+		end,
+	},
+	{
+		id = "agent-pick-page",
+		title = "Plotroom: Send a Browser page element to the selected item's agent…",
+		label = "Send page element to agent…",
+		group = "Saved actions",
+		run = function(cx: WindowCx, pane: number)
+			e().follow(cx, pane, AGENTMSG_NODE, "The selected item has no agent", nil, "agentpick")
+		end,
+	},
+	{
+		id = "agent-message-selection",
+		title = "Plotroom: Message an agent with the selection…",
+		label = "Message an agent with the selection…",
+		group = "Saved actions",
+		run = function(cx: WindowCx, _pane: number)
+			M.messageSelection(cx)
+		end,
+		anywhere = true,
+	},
 	{ id = "inbox-read", title = "Plotroom: Mark the Inbox's notifications read", label = "Mark read…", group = "Inbox", run = inboxRead },
 	{
 		id = "agent-go",

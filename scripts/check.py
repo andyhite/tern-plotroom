@@ -13,14 +13,14 @@ test    plugin/tests/regression.luau (which also runs the plugin/tests/check.lua
         Luau CLI from a temporary bundle: every plugin/**/*.luau module (subfolders included) wrapped as function(tern, require, os),
         so each case gets a fresh fake SDK (virtual clock, process, kv, fs, json, ui, blocks) and fresh
         module state. No network, no git, no files outside a temporary directory.
-types   luau-lsp analyze --platform standard against scripts/tern-0.8.3.d.luau (a copy of the SDK that
+types   luau-lsp analyze --platform standard against scripts/tern-0.9.8.d.luau (a copy of the SDK that
         `tern plugin types` writes), over plugin/**/*.luau (subfolders included). Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
 smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
-Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.8.3 (e2b8656). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
+Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.9.8 (f21d9a3). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
 """
 
 from __future__ import annotations
@@ -42,11 +42,11 @@ from typing import Callable, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"
-SDK = ROOT / "scripts" / "tern-0.8.3.d.luau"
-SDK_SHA256 = "9de89a72134645d64ea6adf595691b04a24ab6aae3f9f90ecd89a0bb79c4e95e"
+SDK = ROOT / "scripts" / "tern-0.9.8.d.luau"
+SDK_SHA256 = "f56084a35c5cdb24e33b7bacda8baa9a3d1504fd3e31a20d3a8c31f3e0c0a32b"
 LUAU_VERSION = "0.743"
 LSP_VERSION = "1.70.1"
-TERN_VERSION = "0.8.3"  # the SDK pin
+TERN_VERSION = "0.9.8"  # the SDK pin
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
 BENCH_PAYLOAD_MAX = 600000
 

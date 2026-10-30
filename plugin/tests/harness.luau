@@ -342,7 +342,7 @@ export type Reply = {
 export type Responder = (Call) -> Reply?
 export type PaneRow = { pane: number, cwd: string? }
 export type Event = { at: number, seq: number, run: () -> (), live: boolean }
-export type WinPane = { block: string?, cwd: string, tab: number }
+export type WinPane = { block: string?, cwd: string, tab: number, kind: string?, url: string?, title: string?, parked: boolean? }
 
 -- The window half of the world: sessions, tabs and panes that answer like cx.session/layout/hosts do. A nil from
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
@@ -381,6 +381,18 @@ export type Win = {
 	reads: { [number]: number }, -- pane -> cx.session:surface reads
 	gitOpened: { string }, -- every path cx.git:open was asked for
 	gitFail: string?, -- the error cx.git:open answers with
+	selection: any?, -- what cx.session:selection answers with (a BlockSelection; nil: nothing selected)
+	selectionAsks: { any }, -- the options of every cx.session:selection call
+	fileRead: any?, -- what cx.session:read answers with (a file block's BlockRead)
+	browserCalls: { any }, -- every cx.browser:call op
+	browserAnswer: any?, -- what cx.browser:call resolves with (a BrowserResult)
+	filesButtons: { [string]: any }, -- tern.files.button registrations by id
+	docs: { [string]: string }, -- path -> the text cx.docs:read answers with (a missing path fails)
+	docReads: { string }, -- every path cx.docs:read was asked for
+	opensBrowser: boolean, -- cx:open adds a Browser pane (the next id) to tab 1, as Tern does for a page opened beside
+	floatFails: string?, -- cx.layout:float answers false with this reason
+	floats: { { pane: number, over: number?, corner: string?, focus: boolean? } }, -- every cx.layout:float
+	closedPanes: { number }, -- every cx.layout:close
 }
 
 export type Kv = {
@@ -597,6 +609,18 @@ local function newWorld(instantiate: Loader, context: string): World
 		refreshes = 0,
 		reads = {},
 		gitOpened = {},
+		selection = nil,
+		selectionAsks = {},
+		fileRead = nil,
+		browserCalls = {},
+		browserAnswer = nil,
+		filesButtons = {},
+		docs = {},
+		docReads = {},
+		opensBrowser = false,
+		floatFails = nil,
+		floats = {},
+		closedPanes = {},
 	}
 	local nextId = 10
 
@@ -636,7 +660,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				if p == nil then
 					return nil
 				end
-				return { pane = id, block = p.block, cwd = p.cwd }
+				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "" }
 			end,
 			surface = function(_self: any, id: number, _opts: any): any
 				win.reads[id] = (win.reads[id] or 0) + 1
@@ -672,9 +696,20 @@ local function newWorld(instantiate: Loader, context: string): World
 			panes = function(_self: any): any
 				local rows: { any } = {}
 				for id, p in win.panes do
-					table.insert(rows, { pane = id, cwd = p.cwd, tab = p.tab })
+					table.insert(rows, { pane = id, cwd = p.cwd, tab = p.tab, kind = p.kind, url = p.url, title = p.title, parked = p.parked })
 				end
 				return rows
+			end,
+			selection = function(_self: any, pane: any, opts: any): any
+				table.insert(win.selectionAsks, opts)
+				local sel: any = win.selection
+				if pane ~= nil and sel ~= nil and sel.pane ~= pane then
+					return nil -- as the SDK: a pane asked for by id gives that block's own selection only
+				end
+				return sel
+			end,
+			read = function(_self: any, _pane: any, _opts: any): any
+				return win.fileRead
 			end,
 			event = function(_self: any, id: number, ev: { [string]: any })
 				table.insert(win.events, { pane = id, ev = ev })
@@ -732,6 +767,17 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return p ~= nil and to ~= nil
 			end,
+			float = function(_self: any, pane: number, over: number?, corner: string?, opts: any): (boolean, string?)
+				table.insert(win.floats, { pane = pane, over = over, corner = corner, focus = if opts then opts.focus else nil })
+				if win.floatFails then
+					return false, win.floatFails
+				end
+				return true, nil
+			end,
+			close = function(_self: any, pane: number)
+				table.insert(win.closedPanes, pane)
+				win.panes[pane] = nil
+			end,
 		},
 		hosts = {
 			list = function(_self: any): any
@@ -750,6 +796,10 @@ local function newWorld(instantiate: Loader, context: string): World
 		},
 		open = function(_self: any, target: string, how: string?)
 			table.insert(win.browser, { url = target, how = how, beside = win.focused })
+			if win.opensBrowser then
+				nextId += 1
+				win.panes[nextId] = { block = nil, cwd = "", tab = 1, kind = "browser", url = target }
+			end
 		end,
 		pick = function(_self: any, opts: any): any
 			table.insert(win.picks, opts)
@@ -836,6 +886,31 @@ local function newWorld(instantiate: Loader, context: string): World
 						end
 						table.insert(win.carlyMessages, { agent = agent, event = event, message = message })
 						return #win.carlyMessages
+					end,
+				}
+			end,
+		},
+		browser = {
+			call = function(_self: any, op: any): any
+				table.insert(win.browserCalls, op)
+				return {
+					next = function(_self2: any, fn: (any, any, any) -> ())
+						schedule(0, function()
+							fn(win.browserAnswer, nil, windowCx)
+						end)
+					end,
+				}
+			end,
+		},
+		docs = {
+			read = function(_self: any, path: string): any
+				table.insert(win.docReads, path)
+				return {
+					next = function(_self2: any, fn: (any, any, any) -> ())
+						schedule(0, function()
+							local text = win.docs[path]
+							fn(text, if text == nil then "no such file" else nil, windowCx)
+						end)
 					end,
 				}
 			end,
@@ -1163,6 +1238,11 @@ local function newWorld(instantiate: Loader, context: string): World
 		lens = {
 			define = function(id: string, def: any)
 				lenses[id] = def
+			end,
+		},
+		files = {
+			button = function(def: any)
+				win.filesButtons[def.id] = def
 			end,
 		},
 		chrome = {
