@@ -269,8 +269,8 @@ function formats.repoMap(): ({ [string]: any }?, string?)
 end
 
 -- The branch name format saved for `repo`; nil when none is (the Worktrees format applies) or they cannot be read.
-function formats.repoOf(repo: string): string?
-	local map = formats.repoMap()
+function formats.repoOf(repo: string, snap: { [string]: any }?): string?
+	local map = if snap then snap.repos else formats.repoMap()
 	local fmt = if map then map[string.lower(repo)] else nil
 	return if type(fmt) == "string" and fmt ~= "" then fmt else nil
 end
@@ -282,8 +282,8 @@ function M.readJiraRepos(): ({ [string]: any }?, string?)
 end
 
 -- The repositories Jira project `project` is worked in: the valid "owner/name" strings saved for it, in saved order.
-function M.jiraReposOf(project: string): { string }
-	local map = M.readJiraRepos()
+function M.jiraReposOf(project: string, saved: { [string]: any }?): { string }
+	local map = saved or M.readJiraRepos()
 	local out: { string } = {}
 	for _, r in M.stringList(if map then map[project] else nil) do
 		local owner, name = string.match(r, "^([^/]+)/([^/]+)$")
@@ -299,6 +299,17 @@ function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
 	local map, err = M.readJiraRepos()
 	if not map then
 		return err
+	end
+	for _, list in map do
+		local good = isTable(list)
+		if good then
+			for k, r in list do
+				good = good and type(k) == "number" and type(r) == "string"
+			end
+		end
+		if not good then
+			return "Saved Jira project repositories are malformed; not overwriting them."
+		end
 	end
 	local ferr = fn(map)
 	if ferr then
@@ -322,9 +333,19 @@ function formats.saved(which: string): string
 	return if ok and type(v) == "string" then v else ""
 end
 
-function formats.of(which: string): string
-	local f = formats.saved(which)
+function formats.of(which: string, snap: { [string]: any }?): string
+	local f = if snap then snap[which] else formats.saved(which)
 	return if f ~= "" then f else formats.DEFAULTS[which]
+end
+
+-- One read of every format map and of the Jira project map, for a loop that would otherwise reread kv per item
+-- (formats.of, repoOf, M.jiraReposOf take it as `snap`; the Jira map is snap.jira).
+function formats.snapshot(): { [string]: any }
+	local snap: { [string]: any } = { repos = formats.repoMap(), jira = M.readJiraRepos() }
+	for which in formats.KEYS do
+		snap[which] = formats.saved(which)
+	end
+	return snap
 end
 
 -- Deletes `repo` from the checkouts, branch formats, setup commands and every Jira project's repositories. A map is
@@ -480,14 +501,14 @@ function formats.save(which: string, fmt: string): string?
 end
 
 -- The branch format an issue's new branch in `code` gets: the repository's own, else the Worktrees one.
-function formats.issueBranch(code: string): string
-	return formats.repoOf(code) or formats.of("branch")
+function formats.issueBranch(code: string, snap: { [string]: any }?): string
+	return formats.repoOf(code, snap) or formats.of("branch", snap)
 end
 
 -- The folder name pull request `n` of `repo` ("owner/name") titled `title` gets, or nil and why.
-function formats.prDir(repo: string, n: number, title: string): (string?, string?)
+function formats.prDir(repo: string, n: number, title: string, snap: { [string]: any }?): (string?, string?)
 	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
-	return tracker.render(formats.of("prdir"), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
+	return tracker.render(formats.of("prdir", snap), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
 end
 
 return M

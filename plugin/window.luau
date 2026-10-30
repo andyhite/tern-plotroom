@@ -14,6 +14,8 @@ local SCHEME = "plotroom://"
 local OPEN_NODE = "layer.queue.buttons.open"
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
+local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
+local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
 -- The lists a check row can sit in (required, the others); ".run<i>" follows.
 local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
@@ -32,7 +34,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "30" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "31" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -42,7 +44,7 @@ local function strOf(v: any): string?
 end
 
 -- A worktree the host prepared, as its answer says.
-type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string? }
+type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, title: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
@@ -75,7 +77,7 @@ local RECENT_KEY = "agent-recent"
 local function readRecent(): { string }?
 	local out: { string } = {}
 	local ok, v = pcall(tern.kv.get, RECENT_KEY)
-	if not ok then
+	if not ok or (v ~= nil and type(v) ~= "table") then
 		return nil
 	elseif type(v) == "table" then
 		for _, label in v do
@@ -236,6 +238,9 @@ local function sameVersion(cx: WindowCx, pane: number): boolean
 	if nodeProp(readNode(cx, pane, "main.rpc"), "text") == PROTOCOL then
 		return true
 	end
+	if cx.session:pane(pane) == nil then
+		return false -- the block is gone: not another version
+	end
 	cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
 	return false
 end
@@ -294,6 +299,10 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local n = flows.waitingCount()
 	if n > 0 then
 		table.insert(out, { text = if n == 1 then "1 agent needs input" else n .. " agents need input", icon = "merge", command = "plugin.plotroom.agents-waiting" })
+	end
+	local need = flows.attentionCount()
+	if need > 0 then
+		table.insert(out, { text = need .. " need attention" })
 	end
 	return if #out > 0 then out else nil
 end)
@@ -402,6 +411,41 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 	return nil
 end
 
+-- Worktree path -> the title its tab shows (`#123 title`) and the name nameTab gave the tab, so a tab the user renamed
+-- keeps theirs. ponytail: in memory, newest TAB_LABELS kept; a plugin reload forgets them and the tab shows its plain name.
+local TAB_LABELS = 50
+local tabLabels: { [string]: { label: string, name: string } } = {}
+local tabLabelOrder: { string } = {}
+
+local function labelTab(r: Ready, t: Target)
+	if not r.title then
+		return
+	end
+	local ref = if string.match(t.ref, "^%d+$") then "#" .. t.ref else t.ref
+	local title = string.sub((string.gsub(r.title, "%c", " ")), 1, 60)
+	if tabLabels[r.path] == nil then
+		table.insert(tabLabelOrder, r.path)
+		if #tabLabelOrder > TAB_LABELS then
+			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
+		end
+	end
+	tabLabels[r.path] = { label = ref .. " " .. title, name = t.tab }
+	tern.chrome.refresh()
+end
+
+tern.chrome.tab_title(function(tab: TabInfo): string?
+	local cwd = tab.cwd
+	if not cwd or cwd == "" then
+		return nil
+	end
+	for path, e in tabLabels do
+		if worktree.within(cwd, path) and (tab.name == nil or tab.name == e.name) then
+			return e.label
+		end
+	end
+	return nil
+end)
+
 -- Names the tab holding `pane` after the target.
 local function nameTab(cx: WindowCx, pane: number, t: Target)
 	local tab = cx.session:tab_of(pane)
@@ -423,6 +467,7 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
 	nameTab(cx, newPane, t)
+	labelTab(r, t)
 	if r.setup then
 		cx:run(newPane, r.setup .. "\r")
 	end
@@ -434,11 +479,12 @@ end
 -- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
 -- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo)
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
 	local model, split = job.model, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
 	if model and not worktree.validModel(model) then
-		return cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
+		cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
+		return false
 	end
 	local path = r.path
 	local tab: number? = nil
@@ -457,10 +503,12 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	local session = found or sourceSession(cx, pane)
 	if not session then
-		return cx:toast("success", if join then "Worktree ready" else "Checkout ready", path .. " (the source pane closed, so no agent was started)")
+		cx:toast("success", if join then "Worktree ready" else "Checkout ready", path .. " (the source pane closed, so no agent was started)")
+		return false
 	end
 	cx.sessions:switch(session)
 	local setup = if join then r.setup else nil
+	labelTab(r, t)
 	if setup then
 		local shell = cx.layout:new_tab({ cwd = path })
 		if shell then
@@ -478,12 +526,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
 	end)
 	if not ok or type(agent) ~= "number" then
-		return cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
+		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
+		return false
 	end
 	local chain: any = nil
 	if job.id then
-		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch }
+		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane }
 	end
+	info.cwd = path
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	-- Carly hears of the end of the agent's turn once, in a fixed message: the action's name and the item key, never item
 	-- text or agent output. A failed schedule is a toast; the agent runs regardless.
@@ -503,21 +553,26 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	if split then
 		if cx.layout:move(agent, pane, "right") then
-			return cx:toast("success", "Agent started beside the queue for " .. t.label, named)
+			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
+			return true
 		end
 		nameTab(cx, agent, t)
-		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not open beside the queue.")
+		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not open beside the queue.")
+		return true
 	end
 	if tab then
 		local moved, why = cx.layout:move_to_tab(agent, tab)
 		if moved then
-			return cx:toast("success", "Agent started in the tab of " .. t.label, named)
+			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+			return true
 		end
 		nameTab(cx, agent, t)
-		return cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
+		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
+		return true
 	end
 	nameTab(cx, agent, t)
 	cx:toast("success", "Agent started for " .. t.label, named)
+	return true
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.
@@ -543,6 +598,7 @@ local function readyOf(a: any): Ready?
 		dirty = if type(a.dirty) == "boolean" then a.dirty else nil,
 		summary = a.summary,
 		setup = if type(a.setup) == "string" then a.setup else nil,
+		title = if type(a.title) == "string" then a.title elseif type(a.vars) == "table" and type(a.vars.title) == "string" then a.vars.title else nil,
 	}
 end
 
@@ -716,8 +772,8 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title) })
 			else
 				local vars: any = a.vars
-				finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code) })
-				if prompt.status then
+				local started = finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code) })
+				if started and prompt.status then
 					moveStatus(cx2, pane, t, prompt.status)
 				end
 			end
@@ -734,53 +790,81 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	end
 end
 
--- A run link's saved prompt `id`: the block's host says what it is now, and only one it still offers runs.
-local function runSaved(cx: WindowCx, pane: number, t: Target, id: string)
+-- Runs `go` unless an agent works on the target: then it offers Go to agent (its state) or starting anyway, and a
+-- dismissed picker does nothing. `what` names what would start ("Start <what> anyway").
+local function ifFree(cx: WindowCx, pane: number, t: Target, what: string, go: (WindowCx) -> ())
+	local key = string.lower(t.repo) .. "#" .. t.ref
+	local link, state = flows.liveAgent(cx, pane, key)
+	if not link or not state then
+		return go(cx)
+	end
+	local items: { PickItem } = {
+		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = (if link.chain and link.chain.name ~= "" then link.chain.name .. " · pane " else "Pane ") .. link.agent, go = true },
+		{ label = "Start " .. what .. " anyway", detail = "Another agent for " .. t.label },
+	}
+	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+		if not item or not cx2 then
+			return
+		elseif item.go == true then
+			return flows.goAgent(cx2, pane, key)
+		end
+		go(cx2)
+	end)
+end
+
+-- Starts saved prompt `id` on the target: the block's host says what it is now (one text, so the picker's size budget
+-- never drops it), and only one it still offers runs. `checked`: the caller already asked about a live agent.
+local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, checked: boolean?)
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				return prepareTarget(cx2, pane, t, { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, carly = it.carly == true }, it.worktree ~= false)
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, carly = it.carly == true }
+				local function go(cx3: WindowCx)
+					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
+				end
+				if checked then
+					return go(cx2)
+				end
+				return ifFree(cx2, pane, t, job.name or "the action", go)
 			end
 		end
 		cx2:toast("error", "That action is no longer offered here", if type(a.problem) == "string" then a.problem else "Refresh and try again.")
 	end)
 end
 
--- Asks for a prompt's text and runs it on the target in an agent in its worktree.
-local function typePrompt(cx: WindowCx, pane: number, t: Target)
-	cx:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx2)
-		if cx2 and text and string.find(text, "%S") then
-			prepareTarget(cx2, pane, t, { text = text, name = "Typed prompt" }, true)
-		end
-	end)
+-- Asks for a prompt's text and runs it on the target in an agent in its worktree. `checked`: the caller already asked
+-- about a live agent.
+local function typePrompt(cx: WindowCx, pane: number, t: Target, checked: boolean?)
+	local function askText(cx2: WindowCx)
+		cx2:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx3)
+			if cx3 and text and string.find(text, "%S") then
+				prepareTarget(cx3, pane, t, { text = text, name = "Typed prompt" }, true)
+			end
+		end)
+	end
+	if checked then
+		return askText(cx)
+	end
+	ifFree(cx, pane, t, "a typed prompt", askText)
 end
 
 -- Asks which saved prompt (Settings › Prompts, those the block's view offers) to run on the target, then
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
 local function pickMenu(cx: WindowCx, pane: number, t: Target)
-	local function run(cx2: WindowCx, job: Job, wt: boolean)
-		prepareTarget(cx2, pane, t, job, wt)
-	end
-	ask(cx, pane, "menu", {}, MENU_MS, function(a: any, cx2: WindowCx)
+	-- `palette`: rows without their text, so the picker's size budget never drops an action; the pick fetches its own.
+	ask(cx, pane, "menu", { palette = true }, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
 			cx2:toast("error", "Saved actions are not listed", a.problem)
 		end
 		local all: { PickItem } = {}
 		for _, it in if type(a.items) == "table" then a.items else {} do
-			if type(it) == "table" and type(it.label) == "string" and type(it.send) == "string" then
+			if type(it) == "table" and type(it.label) == "string" and type(it.id) == "string" then
 				table.insert(all, {
 					label = it.label,
 					detail = if type(it.detail) == "string" then it.detail else nil,
 					group = if type(it.group) == "string" then it.group else nil,
-					send = it.send,
-					model = if type(it.model) == "string" then it.model else nil,
-					status = if type(it.status) == "string" then it.status else nil,
-					id = if type(it.id) == "string" then it.id else nil,
-					next = if type(it.next) == "string" then it.next else nil,
-					carly = it.carly == true,
-					worktree = it.worktree ~= false,
-					split = it.split == true,
+					id = it.id,
 				})
 			end
 		end
@@ -805,7 +889,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 				return
 			end
 			if item.typed then
-				return typePrompt(cx3, pane, t)
+				return typePrompt(cx3, pane, t, true)
 			end
 			local recent = readRecent()
 			if recent then
@@ -817,7 +901,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 				recent[RECENT_CAP + 1] = nil
 				pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
 			end
-			run(cx3, { text = item.send, model = item.model, split = item.split == true, status = item.status, id = item.id, name = item.label, next = item.next, carly = item.carly == true }, item.worktree ~= false)
+			runSaved(cx3, pane, t, item.id :: string, true)
 		end)
 	end)
 end
@@ -977,9 +1061,23 @@ local function checkListed(cx: WindowCx, pane: number, index: number, url: strin
 	return false
 end
 
--- Whether a linked pull request row of the pane's live issue sidebar carries exactly `url`.
+-- Whether a linked pull request row (issue sidebar's `linked`, or its worktree-branch `headpr`) of the pane's live
+-- surface carries exactly `url`.
 local function linkedListed(cx: WindowCx, pane: number, url: string): boolean
-	local list = readNode(cx, pane, LINKED_NODE)
+	for _, id in { LINKED_NODE, HEADPR_NODE } do
+		local list = readNode(cx, pane, id)
+		for _, row in if type(list) == "table" and type(list.c) == "table" then list.c else {} do
+			if nodeProp(row, "href") == url then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- Whether the pull request preview's noted issue row carries exactly `url`.
+local function noteListed(cx: WindowCx, pane: number, url: string): boolean
+	local list = readNode(cx, pane, NOTED_NODE)
 	for _, row in if type(list) == "table" and type(list.c) == "table" then list.c else {} do
 		if nodeProp(row, "href") == url then
 			return true
@@ -1103,7 +1201,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
 		-- pull request page, which the block's host validates again.
 		local page = unpct(shown)
-		if #page > 2048 or not string.match(page, "^https://[%w%.%-]+/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+		if #page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
 			cx:toast("error", "Plotroom: malformed link")
 		else
 			flows.showUrl(cx, pane, page)
@@ -1166,7 +1264,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 			cx:toast("error", "Plotroom: malformed link")
 		elseif not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= full then
+		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= full and not noteListed(cx, pane, url) then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 		else
 			if mode == "preview" then
@@ -1491,12 +1589,10 @@ end)
 -- Any other result stops the chain, and a toast says why. The link keeps nothing to start afterwards, so another turn of
 -- the same agent starts nothing.
 local function advanceChain(cx: WindowCx, agent: number, result: string)
-	local chain, pane = flows.takeChain(cx, agent)
+	local chain, pane = flows.takeChain(cx, agent, result)
 	local next = if chain then chain.next else nil
 	if not chain or not next then
 		return
-	elseif not pane then
-		return cx:toast("info", "Next action waits for Plotroom", "Open Plotroom on the agent's host; the next time the agent finishes, the action starts.")
 	end
 	local t: Target
 	if chain.kind == "pr" then
@@ -1509,6 +1605,8 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 	if result ~= "done" then
 		local why = if result == "failed" then "The agent reported a failure." elseif result == "exited" then "The agent's program exited." else "The agent's pane was closed."
 		return cx:toast("info", "Next action not started after " .. label .. " for " .. t.label, why)
+	elseif not pane then
+		return cx:toast("info", "Next action waits for Plotroom", "Open Plotroom on the agent's host; the next time the agent finishes, the action starts.")
 	elseif chain.depth + 1 >= MAX_CHAIN then
 		return cx:toast("info", "Next action not started after " .. label .. " for " .. t.label, "A chain of actions stops after " .. MAX_CHAIN .. ".")
 	end

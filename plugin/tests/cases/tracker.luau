@@ -1484,15 +1484,25 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(full.result.complete, true, "exactly 100 is complete")
 	eq(full.result.issues[1].ref, "ABC-1", "acli's order is kept")
 	eq(full.result.issues[100].ref, "ABC-100", "to the last item")
-	-- more than a page paginates, up to 1000
-	for i = 101, 1200 do
+	-- a count within LIMIT paginates (acli ignores --limit then, so only a list that fits is fetched this way)
+	for i = 101, 900 do
+		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
+	end
+	local mid = runJira(w, jira, query, nil)
+	local midArgv = acli.requests[#acli.requests].argv
+	eq(acliOption(midArgv, "--limit"), "1000", "up to 1000")
+	yes(table.find(midArgv, "--paginate"), "paginated")
+	eq(#mid.result.issues, 900, "all of them")
+	eq(mid.result.complete, true, "and complete")
+	-- more than LIMIT is one page, never a download of everything
+	for i = 901, 1200 do
 		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
 	end
 	local big = runJira(w, jira, query, nil)
 	local bigArgv = acli.requests[#acli.requests].argv
-	eq(acliOption(bigArgv, "--limit"), "1000", "up to 1000")
-	yes(table.find(bigArgv, "--paginate"), "paginated")
-	eq(#big.result.issues, 1000, "capped at 1000")
+	eq(acliOption(bigArgv, "--limit"), "100", "one page")
+	eq(table.find(bigArgv, "--paginate"), nil, "not paginated")
+	eq(#big.result.issues, 100, "a page")
 	eq(big.result.total, 1200, "total from the count")
 	eq(big.result.complete, false, "more than 1000 is partial")
 	-- a failed count keeps the single page: a full page is not known to be complete
@@ -1855,6 +1865,146 @@ case("jira.projects: lists the visible projects by key and leaves out what is no
 	end
 	list()
 	eq(why.kind, "failed", "output that is no project list")
+end)
+
+case("github.search: an org whose SSO is not authorized gives a partial list with its note, and a SAML refusal with nothing usable is an auth problem", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local reply: Reply = {
+		status = 1,
+		stderr = "gh: Resource protected by organization SAML enforcement. You must grant your OAuth token access to this organization.\n",
+		stdout = jsonEncode({
+			data = { rateLimit = { cost = 1 }, search = { issueCount = 3, pageInfo = { hasNextPage = false }, nodes = array({
+				{ number = 7, title = "Visible", url = "https://github.com/o/r/pull/7", state = "OPEN", updatedAt = "2026-01-01T00:00:00Z", createdAt = "2026-01-01T00:00:00Z", author = { login = "ann" }, headRefName = "b", labels = { nodes = array({ { name = "bug" } }) } },
+				NULL,
+			}) } },
+			errors = array({ { type = "FORBIDDEN", message = "Resource protected by organization SAML enforcement. https://github.com/enterprises/x/sso?authorization_request=abc" } }),
+		}),
+	}
+	gh.override = function(req: GhReq): Reply?
+		return if req.kind == "search" then reply else nil
+	end
+	local out = runSearch(w, github, nil)
+	eq(out.problem, nil, "no problem: the page is used")
+	eq(#out.result.prs, 1, "the visible PR is kept, the hidden node skipped")
+	eq(out.result.prs[1].author, "ann", "as the filter would shape it")
+	eq(out.result.prs[1].labels[1], "bug", "labels too")
+	eq(out.result.complete, false, "partial")
+	has(out.result.note, "SAML", "the note names the restriction")
+	has(out.result.note, "https://github.com/enterprises/x/sso?authorization_request=abc", "and keeps gh's authorize URL")
+	-- no data (or an error that is not FORBIDDEN): the refusal is terminal
+	reply = { status = 1, stderr = "gh: Resource protected by organization SAML enforcement.\n", stdout = "" }
+	local refused = runSearch(w, github, nil)
+	eq(refused.result, nil, "no result")
+	eq(refused.problem.kind, "auth", "a terminal auth problem")
+	reply = { status = 1, stderr = "gh: The 'x' organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited.\n", stdout = jsonEncode({ errors = array({ { type = "OTHER", message = "boom" } }) }) }
+	eq(runSearch(w, github, nil).problem.kind, "auth", "OAuth App access restrictions likewise")
+end)
+
+case("github.accounts: a failed read with no active account is not kept; forget() drops a kept list", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.override = function(req: GhReq): Reply?
+		if req.kind == "accounts" then
+			return { status = 1, stderr = "X Failed to log in to github.com account octocat (keyring)\n", stdout = jsonEncode({ hosts = { ["github.com"] = array({ { state = "error", active = true, host = "github.com", login = "octocat" } }) } }) }
+		end
+		return nil
+	end
+	local function ask(): (any, any)
+		local list, problem = nil :: any, nil :: any
+		github.accounts(function(l, p)
+			list, problem = l, p
+		end)
+		w.flush()
+		return list, problem
+	end
+	local list, problem = ask()
+	eq(list, nil, "no list")
+	yes(problem, "gh's failure is the problem")
+	gh.override = nil
+	list = ask()
+	eq(list[1].login, "octocat", "the next call asked gh again")
+	local asked = #requestsOf(gh, "accounts")
+	ask()
+	eq(#requestsOf(gh, "accounts"), asked, "a good list is kept")
+	github.forget()
+	ask()
+	eq(#requestsOf(gh, "accounts"), asked + 1, "forget() makes the next call ask again")
+end)
+
+case("github.repos: pages of 100 are read until the list ends or the byte budget is reached", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.tokens.octocat = "tok-octo"
+	gh.tokens.other = "tok-other"
+	local many: { string } = {}
+	for i = 1, 250 do
+		table.insert(many, "o/r" .. i)
+	end
+	gh.repos.octocat = many
+	gh.repos.other = many
+	local function list(login: string, budget: number): { string }
+		local got: { string } = {}
+		github.repos(login, budget, function(names)
+			got = names or {}
+		end)
+		w.flush()
+		return got
+	end
+	eq(#list("octocat", 48000), 250, "all of a short list")
+	eq(#requestsOf(gh, "repos"), 3, "in three pages, the short one the last")
+	eq(requestsOf(gh, "repos")[2].call.argv[5], "user/repos?per_page=100&sort=pushed&page=2", "paged by hand, never --paginate")
+	local before = #requestsOf(gh, "repos")
+	local cut = list("other", 200)
+	yes(#cut > 0 and #cut < 100, "a small budget cuts the first page")
+	eq(#requestsOf(gh, "repos") - before, 1, "and no further page is asked")
+end)
+
+case("github.clone and pullByHead: the repository goes to gh as github.com/owner/name, and a malformed name never reaches gh", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.heads["o/r@feat"] = array({ { number = 4, title = "T", state = "OPEN", isDraft = false, url = "https://github.com/o/r/pull/4", isCrossRepository = false } })
+	local problem: any = nil
+	github.clone("o/r", "/p", nil, function(p)
+		problem = p
+	end)
+	w.flush()
+	eq(requestsOf(gh, "clone")[1].call.argv[4], "github.com/o/r", "clone")
+	local head: any = nil
+	github.pullByHead("o/r", "feat", nil, function(pr)
+		head = pr
+	end)
+	w.flush()
+	eq(head and head.number, 4, "the pull request is found")
+	eq(requestsOf(gh, "head")[1].call.argv[5], "github.com/o/r", "pullByHead")
+	local before = #gh.requests
+	github.clone("o/r/x", "/p", nil, function(p)
+		problem = p
+	end)
+	local err: any = nil
+	github.pullByHead("--evil", "feat", nil, function(_, p)
+		err = p
+	end)
+	w.flush()
+	eq(problem.kind, "invalid", "clone of a bad name")
+	eq(err.kind, "invalid", "pullByHead of a bad name")
+	eq(#gh.requests, before, "neither ran gh")
+end)
+
+case("github.notifications: a REST rate limit does not pause the GraphQL searches", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.tokens.octocat = "tok-octo"
+	gh.override = function(req: GhReq): Reply?
+		return if req.kind == "notifications" then { status = 1, stderr = "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n" } else nil
+	end
+	local problem: any = nil
+	github.notifications("octocat", function(_, p)
+		problem = p
+	end)
+	w.flush()
+	eq(problem.kind, "rate-limit", "the Inbox itself reports it")
+	eq(github.wait(w.seconds(), "octocat"), 0, "but searches are not held back")
 end)
 
 return {}

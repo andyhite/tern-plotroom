@@ -273,6 +273,7 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
 	eq(w.window.agents[1].command, "omp --model @slow", "as omp with the prompt's model, a role alias here")
 	savePrompts(w, { promptOf("p1", "Review", "Review quickly: {url}") })
+	w.window.choose = "Start Review anyway" -- the first agent still works on the item
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
 	eq(w.window.agents[2].prompt, "Review quickly: https://github.com/o/r/pull/5", "a prompt edited since the card was drawn runs as it is saved now")
@@ -280,6 +281,7 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	local bad = promptOf("p1", "Review", "Review {url}")
 	bad.model = "opus; rm -rf ~"
 	savePrompts(w, { bad })
+	w.window.choose = "Start Review anyway"
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
 	eq(#w.window.agents, 2, "a model that is no model name starts nothing, as it would go on a command line")
@@ -351,6 +353,65 @@ windowCase("window: a card button of a prompt the picker's size budget would cut
 	eq(#w.window.agents, 1, "the eighth button runs its prompt")
 	eq(w.window.agents[1].prompt, string.rep("x", 7900) .. " https://github.com/o/r/pull/5", "with its whole text")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
+end)
+
+windowCase("window: the Agent picker lists every action however long their texts, and a pick fetches its own whole text", function(w: World)
+	local s = agentScene(w)
+	local text = string.rep("x", 7900) .. " {url}"
+	local list: { { [string]: any } } = {}
+	for i = 1, 8 do
+		table.insert(list, promptOf("p" .. i, "Big " .. i, text))
+	end
+	savePrompts(w, list)
+	w.window.choose = "Big 8"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#promptPicks(w)[1].items, 9, "the typed prompt and all eight actions are offered, though their texts would not fit one answer")
+	local sent = requestsSent(w)
+	eq(sent[1].palette, true, "the list is asked without the texts")
+	eq(sent[2].only, "p8", "the pick asks for its own by id")
+	eq(#w.window.agents, 1, "the agent starts")
+	eq(w.window.agents[1].prompt, string.rep("x", 7900) .. " https://github.com/o/r/pull/5", "with its whole text")
+	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
+end)
+
+windowCase("window: a saved action's run link or a typed prompt on an item a live agent works on offers Go to agent or Start anyway, and Cancel starts nothing", function(w: World)
+	local _, b = agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(#w.window.agents, 1, "the first run starts at once: no agent works on the item yet")
+	eq(#w.window.picks, 0, "and asks nothing")
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	local labels: { string } = {}
+	for _, item in w.window.picks[1].items do
+		table.insert(labels, item.label)
+	end
+	same(labels, { "Go to agent (working)", "Start Review anyway" }, "the second is offered the live agent first")
+	eq(#w.window.agents, 1, "a dismissed picker starts nothing")
+	w.window.choose = "Go to agent (working)"
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(#w.window.agents, 1, "Go to agent starts nothing")
+	eq(w.window.focused, (w.kv.get("agent-links") :: any)[1].agent, "it focuses the agent")
+	w.window.choose = "Start Review anyway"
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(#w.window.agents, 2, "Start anyway starts another")
+end)
+
+windowCase("window: an agent-recent that is not a list is not written over by a pick", function(w: World)
+	agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	w.kv.put("agent-recent", "garbage")
+	w.window.choose = "Review"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.agents, 1, "the agent still starts")
+	eq(w.kv.get("agent-recent"), "garbage", "the malformed value was left as it was")
 end)
 
 windowCase("window: a run link the card does not show is refused before anything is asked", function(w: World)
@@ -476,6 +537,20 @@ windowCase("window: a new worktree runs its repository's setup commands in its t
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()
 	eq(#w.window.runs, 1, "a reused worktree is not set up again")
+end)
+
+windowCase("window: a fork PR's new worktree runs no setup commands and says so", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.load("window")
+	local s = scene(w, worktree, "o", "r", 5)
+	local meta = s.gh.meta["o/r#5"]
+	meta.headRepo, meta.headOwner = "fork/r", "fork"
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	linkQueue(w, s)
+	w.click(prLink("worktree", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 0, "the fork's code is not set up unasked")
+	has(w.toasts[#w.toasts].sub, "setup skipped: fork PR", "the toast says why")
 end)
 
 windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)

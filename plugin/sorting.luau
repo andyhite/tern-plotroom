@@ -10,6 +10,7 @@ export type Choice = { value: string, label: string }
 local ALL: { [string]: Choice } = {
 	updated = { value = "updated", label = "Recently updated" },
 	oldest = { value = "oldest", label = "Oldest waiting" },
+	size = { value = "size", label = "Largest changes first" },
 	review = { value = "review", label = "Review required first" },
 	priority = { value = "priority", label = "Priority" },
 }
@@ -17,7 +18,7 @@ local ALL: { [string]: Choice } = {
 -- Which sorts mean something for a kind ("prs" | "issues") and integration ("github" | "jira"): Jira keeps no update
 -- time in its list rows, and only pull requests carry a review decision.
 local OFFERED: { [string]: { string } } = {
-	["prs\0github"] = { "updated", "oldest", "review" },
+	["prs\0github"] = { "updated", "oldest", "review", "size" },
 	["issues\0github"] = { "updated", "oldest" },
 	["issues\0jira"] = { "priority" },
 }
@@ -48,7 +49,9 @@ local function rank(item: any, sort: string): number
 	if sort == "updated" then
 		return -(item.updated or 0)
 	elseif sort == "oldest" then
-		return item.updated or 0
+		return item.created or item.updated or 0
+	elseif sort == "size" then
+		return -((item.additions or 0) + (item.deletions or 0))
 	elseif sort == "review" then
 		return if item.review == "required" then 0 else 1
 	end

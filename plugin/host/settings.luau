@@ -170,7 +170,7 @@ local function pageContent(state: State): ({ any }, { Node })
 						label = "Type",
 						-- A move writes both kinds' saved views.
 						disabled = locked or state.locked[other],
-						control = { k = "choice", style = "segmented", value = v.kind, options = tern.json.array(kindOptions) },
+						control = { k = "choice", style = "menu", value = v.kind, options = tern.json.array(kindOptions) },
 					})
 				end
 				local info = INTEGRATIONS[v.integration]
@@ -581,19 +581,23 @@ end
 
 -- Edits prompt `qid` ("<kind id>:<id in that kind's store>") under editPrompts: `fn(store, prompt, kind, saved id)` returns an
 -- error message or nil. A prompt gone elsewhere is "That action was deleted elsewhere.", or with `quiet` no change.
-local function editPrompt(qid: string, fn: (Prompts, Prompt, Kind, string) -> string?, quiet: boolean?): string?
+local function editPrompt(state: State, qid: string, fn: (Prompts, Prompt, Kind, string) -> string?, quiet: boolean?): string?
 	local gone = if quiet then nil else "That action was deleted elsewhere."
 	local pk, pid = kindAndId(qid)
 	if not pk then
 		return gone
 	end
-	return editPrompts(pk, function(store: Prompts): string?
+	local err = editPrompts(pk, function(store: Prompts): string?
 		local p = promptById(store, pid)
 		if not p then
 			return gone
 		end
 		return fn(store, p, pk, pid)
 	end)
+	if not err then
+		propagate(state)
+	end
+	return err
 end
 
 -- Opens a text row for editing, or a prompt's text (its "ptext:" row) in the multi-line editor card.
@@ -639,6 +643,7 @@ local function clearCheckout(state: State, repo: string): string?
 	local err = saveCheckout(repo, "")
 	if not err then
 		state.cx:toast("success", "Checkout cleared", repo)
+		propagate(state)
 	end
 	return err
 end
@@ -800,6 +805,7 @@ local function addPrompt(state: State, row: string)
 	end)
 	s.errors[row] = err
 	if not err then
+		propagate(state)
 		id = kind.id .. ":" .. id
 		s.open = id
 		beginEdit(state, "pname:" .. id, "")
@@ -854,6 +860,9 @@ local function deletePrompt(state: State, s: Settings, id: string)
 			end)
 		end
 	end
+	if not err then
+		propagate(state)
+	end
 	s.errors["popen:" .. id] = err -- the summary row shows why: the Delete row draws no label
 	if not err then
 		s.focus = "padd:" .. kind.id
@@ -861,10 +870,11 @@ local function deletePrompt(state: State, s: Settings, id: string)
 end
 
 -- Removes repository `repo` everywhere it is saved.
-local function deleteRepo(s: Settings, repo: string)
+local function deleteRepo(state: State, s: Settings, repo: string)
 	local err = removeRepo(repo)
 	s.errors["ropen:" .. repo] = err -- the summary row shows why: the Remove row draws no label
 	if not err then
+		propagate(state)
 		s.focus = "radd"
 	end
 end
@@ -900,7 +910,7 @@ function M.setValue(state: State, row: string, value: any)
 			return
 		end
 		local to: string? = if choice == "none" then nil else choice
-		s.errors[row] = editPrompt(id, function(store, p, pk, pid)
+		s.errors[row] = editPrompt(state, id, function(store, p, pk, pid)
 			local tk, tid = nextOf(pk, to or "")
 			local tstore = if to == nil then nil elseif tk == pk then store else loadPrompts(tk)
 			if to and not (tstore and promptById(tstore, tid)) then
@@ -918,7 +928,7 @@ function M.setValue(state: State, row: string, value: any)
 		if not (on or choice == no) then
 			return
 		end
-		s.errors[row] = editPrompt(id, function(_, p)
+		s.errors[row] = editPrompt(state, id, function(_, p)
 			if kind == "pwhere" then
 				p.worktree = on
 			elseif kind == "psplit" then
@@ -998,6 +1008,9 @@ function M.setValue(state: State, row: string, value: any)
 			propagate(state)
 			if old.sort and not moved.sort then
 				state.cx:toast("info", "Sort order reset", sorting.label(old.sort) .. " is not offered for " .. to.many .. "; the view uses its default order.")
+			end
+			if #old.prompts > 0 then
+				state.cx:toast("info", #old.prompts .. (if #old.prompts == 1 then " offered action cleared" else " offered actions cleared"), old.name .. " is a " .. to.one .. " view now; pick its actions again.")
 			end
 			return
 		end
@@ -1093,7 +1106,7 @@ function M.confirmDelete(state: State)
 	elseif kind == "pdelete" then
 		deletePrompt(state, s, id)
 	elseif kind == "rremove" then
-		deleteRepo(s, id)
+		deleteRepo(state, s, id)
 	elseif kind == "jremove" then
 		deleteJira(s, id)
 	end
@@ -1299,7 +1312,7 @@ function M.commitEdit(state: State)
 		if #text > portable.STATUS_CAP or string.find(text, "%c") then
 			err = "A status name on one line, at most " .. portable.STATUS_CAP .. " characters."
 		else
-			err = editPrompt(id, function(_, p)
+			err = editPrompt(state, id, function(_, p)
 				p.status = if text ~= "" then text else nil
 				return nil
 			end)
@@ -1310,7 +1323,7 @@ function M.commitEdit(state: State)
 		if text ~= "" and not worktree.validModel(text) then
 			err = "A model such as opus or provider/model-id, or a role such as @slow."
 		else
-			err = editPrompt(id, function(_, p)
+			err = editPrompt(state, id, function(_, p)
 				p.model = if text ~= "" then text else nil
 				return nil
 			end)
@@ -1322,7 +1335,7 @@ function M.commitEdit(state: State)
 			err = "The queue already uses " .. text .. "."
 		end
 		if not err then
-			err = editPrompt(id, function(store, p)
+			err = editPrompt(state, id, function(store, p)
 				for _, other in store.items do
 					if other ~= p and text ~= "" and other.key == text then
 						return "Already the shortcut of " .. other.name .. "."
@@ -1369,7 +1382,7 @@ function M.commitEdit(state: State)
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
 		else
-			err = editPrompt(id, function(_, p)
+			err = editPrompt(state, id, function(_, p)
 				if kind == "pname" then
 					p.name = text
 				else
@@ -1404,15 +1417,26 @@ function M.commitEdit(state: State)
 			return nil
 		end)
 		settle(s, row, err)
+		if not err then
+			propagate(state)
+		end
 		if not err and at and text == "" then
 			s.focus = "setup:" .. repo .. ":new"
 		end
 	elseif kind == "branch" and id then
 		-- Empty goes back to the default format; anything else must be a format that can name a branch.
-		settle(s, row, if text == "" then formats.saveRepo(id, nil) else (tracker.formatProblem(text) or formats.saveRepo(id, text)))
+		local err = if text == "" then formats.saveRepo(id, nil) else (tracker.formatProblem(text) or formats.saveRepo(id, text))
+		settle(s, row, err)
+		if not err then
+			propagate(state)
+		end
 	elseif kind == "fmt" and id and formats.KEYS[id] then
 		-- Empty goes back to the default; anything else must be a format that can name a branch (or folder).
-		settle(s, row, if text == "" then formats.save(id, "") else (tracker.formatProblem(text, id ~= "branch") or formats.save(id, text)))
+		local err = if text == "" then formats.save(id, "") else (tracker.formatProblem(text, id ~= "branch") or formats.save(id, text))
+		settle(s, row, err)
+		if not err then
+			propagate(state)
+		end
 	elseif kind == "checkout" and id then
 		local repo = id
 		if text == "" then
@@ -1484,10 +1508,16 @@ function M.resetRow(state: State, row: string)
 		err = clearCheckout(state, id)
 	elseif kind == "branch" and id then
 		err = formats.saveRepo(id, nil)
+		if not err then
+			propagate(state)
+		end
 	elseif kind == "fmt" and id and formats.KEYS[id] then
 		err = formats.save(id, "")
+		if not err then
+			propagate(state)
+		end
 	elseif (kind == "pmodel" or kind == "pstatus") and id then
-		err = editPrompt(id, function(_, p)
+		err = editPrompt(state, id, function(_, p)
 			if kind == "pmodel" then
 				p.model = nil
 			else

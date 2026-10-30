@@ -59,7 +59,14 @@ local function runsPart(item: any): string
 	return #out .. ":" .. table.concat(out, ",")
 end
 
+-- Items are never mutated after normalize, so a signature is hashed once per item table.
+local memo: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
+
 function M.signature(kind: string, item: any): string
+	local hit = memo[item]
+	if hit then
+		return hit
+	end
 	local f: { string }
 	if kind == "prs" then
 		f = {
@@ -78,7 +85,9 @@ function M.signature(kind: string, item: any): string
 		}
 	end
 	local s = table.concat(f, "\31")
-	return string.format("%08x%08x", fnv(s, 2166136261), fnv(s, 0x9747b28c))
+	local sig = string.format("%08x%08x", fnv(s, 2166136261), fnv(s, 0x9747b28c))
+	memo[item] = sig
+	return sig
 end
 
 local function validate(v: any): string?

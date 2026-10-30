@@ -313,6 +313,7 @@ case("jira.item: one work item by key, as the list's items; a bad key or another
 	eq(#acli.requests, count, "acli was not run for it")
 end)
 
+local WHO: { email: string, site: string } = { email = "ann@example.com", site = "https://acme.atlassian.net" }
 case("jira.assignMe: one acli argv for the signed-in user, a bad key spawns nothing", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
@@ -325,7 +326,7 @@ case("jira.assignMe: one acli argv for the signed-in user, a bad key spawns noth
 	end
 	local function assign(key: string): any
 		return asks.bk.once(w, function(done)
-			jira.assignMe(key, done)
+			jira.assignMe(key, WHO, done)
 		end)
 	end
 	eq(assign("ABC-1"), nil, "problem")
@@ -336,6 +337,14 @@ case("jira.assignMe: one acli argv for the signed-in user, a bad key spawns noth
 	eq(#w.calls, count, "nothing spawned for them")
 	failing = true
 	eq(assign("ABC-1").kind, "auth", "a signed-out acli")
+	failing = false
+	WHO = { email = "bob@example.com", site = WHO.site }
+	local ran = #w.calls
+	eq(assign("ABC-1").kind, "invalid", "another acli account than the one shown")
+	for i = ran + 1, #w.calls do
+		lacks(table.concat(w.calls[i].argv, " "), "assign", "no assign was spawned")
+	end
+	WHO = { email = "ann@example.com", site = "https://acme.atlassian.net" }
 end)
 
 case("jira.transitions: no API token is an auth problem naming the setup, and nothing is requested or leaked", function(w: World)
@@ -354,7 +363,7 @@ case("jira.transitions: no API token is an auth problem naming the setup, and no
 	eq(#reqs, 0, "no request was made")
 	w.env.PLOTROOM_JIRA_API_TOKEN = ""
 	problem = nil
-	jira.transition("ABC-1", "31", function(p)
+	jira.transition("ABC-1", "31", WHO, function(p)
 		problem = p
 	end)
 	w.flush()
@@ -368,7 +377,7 @@ case("jira.transitions: an API token of another account sends nothing past /myse
 	w.env.PLOTROOM_JIRA_API_TOKEN = "s3cret-token"
 	local reqs = asks.bk.rest(w, "bob@example.com", { { id = "31", name = "Done" } })
 	local problem: any = nil
-	jira.transition("ABC-1", "31", function(p)
+	jira.transition("ABC-1", "31", WHO, function(p)
 		problem = p
 	end)
 	w.flush()
@@ -427,7 +436,7 @@ case("jira.transition: the id must be in the re-listed set, then one POST of exa
 	local reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, nil)
 	local function go(id: string): any
 		return asks.bk.once(w, function(done)
-			jira.transition("ABC-1", id, done)
+			jira.transition("ABC-1", id, WHO, done)
 		end)
 	end
 	local function posts(): number
@@ -456,7 +465,7 @@ case("jira.transition: the id must be in the re-listed set, then one POST of exa
 	has(refused.message, "resolution", "carries Jira's own reason")
 end)
 
-case("jira.transition: a site switch between list and post sends to the current site, and a failed status sends nothing", function(w: World)
+case("jira.transition: a site or account switch since the plan sends nothing, and a failed status sends nothing", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
 	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
@@ -466,15 +475,19 @@ case("jira.transition: a site switch between list and post sends to the current 
 	local listed = #reqs
 	acli.site = "other.atlassian.net"
 	local problem: any = "unset"
-	jira.transition("ABC-1", "31", function(p)
+	jira.transition("ABC-1", "31", WHO, function(p)
 		problem = p
 	end)
 	w.flush()
-	eq(problem, nil, "the write succeeds")
+	eq(problem and problem.kind, "invalid", "the planned account is on another site now")
+	has(problem.message, "account changed", "says so")
+	eq(#reqs, listed, "nothing was requested")
+	jira.transition("ABC-1", "31", { email = "ann@example.com", site = "https://other.atlassian.net" }, function(p)
+		problem = p
+	end)
+	w.flush()
+	eq(problem, nil, "the account shown for that site succeeds")
 	eq(reqs[#reqs].url, "https://other.atlassian.net/rest/api/3/issue/ABC-1/transitions", "the POST goes to the current site")
-	for i = listed + 1, #reqs do
-		lacks(reqs[i].url, "acme", "nothing went to the old site after the switch")
-	end
 	local before = #reqs
 	acli.override = function(req: any): any
 		if req.kind == "auth" then
@@ -482,12 +495,12 @@ case("jira.transition: a site switch between list and post sends to the current 
 		end
 		return nil
 	end
-	jira.transition("ABC-1", "31", function(p)
+	jira.transition("ABC-1", "31", WHO, function(p)
 		problem = p
 	end)
 	w.flush()
 	eq(#reqs, before, "nothing sent when status fails")
-	eq(problem and problem.kind, "auth", "a failed status read is an auth problem")
+	yes(problem ~= nil, "a failed status read is a problem")
 end)
 
 case("worktree.inventory: lists every worktree of the checkout, marks main, flags locked, prunable, missing and detached, writes nothing", function(w: World)

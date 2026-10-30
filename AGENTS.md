@@ -65,7 +65,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - Stale-callback guards are mandatory: check `alive(state)` and `state.gen` in host callbacks; the window uses `defer` to fetch a fresh `cx`.
 - Security: every command is an argv array; never build shell strings.
 - UI: native Tern kinds only (`picker`, `prefs`, `list`/`item`, `overlay`, `kv`, `badge`, `md`, `meter`, `spinner`, `icon`…); there is no native button, so buttons are the picker's action bar or `item` rows with `hint` keycaps and `actions={click=...}`. Keys must be stable because the window locates nodes by dotted key. Prompt text uses an `editor` node under `role = "omp.prefs.editor"`.
-- CSS (`plotroom.css`): only where no kind or prop covers it; never restyle what a kind draws. Every selector starts with `[data-surface='plugin.plotroom.prs']`; use Tern tokens; `ch` is allowed (Tern 0.9.8); no logical properties, `rem`, or `:has()`.
+- CSS (`plotroom.css`): only where no kind or prop covers it; never restyle what a kind draws. Every selector starts with `[data-surface='plugin.plotroom.prs']`; use Tern tokens; lengths are `px`/`em`/`vw`/`vh`/`%` only (Tern's CSS reference rejects `ch` and `rem`); no logical properties or `:has()`. `scripts/check.py test` lints this.
 - Deliberate shortcuts carry a `ponytail:` comment naming the ceiling and upgrade path.
 - Annotate with SDK types from `tern.d.luau` (`BlockCx`, `WindowCx`, `Node`, `BlockView`, `ProcessResult`, `TimerHandle`, ...).
 

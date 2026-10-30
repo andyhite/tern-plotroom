@@ -38,13 +38,17 @@ function M.define()
 			if not url then
 				return nil
 			end
+			local items = {
+				ui.node("item", { key = "copy", label = "Copy", icon = "copy", href = url, actions = { click = "copy" } }),
+				ui.node("item", { key = "browser", label = "Open in browser", icon = "globe", href = url, actions = { click = "open" } }),
+			}
+			-- Only github.com pull requests parse, so only they can be shown in Plotroom.
+			if string.match(url, "^https://github%.com/") then
+				table.insert(items, 1, ui.node("item", { key = "show", label = "Show in Plotroom", icon = "merge", href = "plotroom://lens/show/" .. core.pct(url), actions = { click = "open" } }))
+			end
 			return ui.node("col", { key = "pr" }, {
 				ui.node("text", { key = "url", spans = { ui.span(url) } }),
-				ui.node("list", { key = "buttons" }, {
-					ui.node("item", { key = "show", label = "Show in Plotroom", icon = "merge", href = "plotroom://lens/show/" .. core.pct(url), actions = { click = "open" } }),
-					ui.node("item", { key = "copy", label = "Copy", icon = "copy", href = url, actions = { click = "copy" } }),
-					ui.node("item", { key = "browser", label = "Open in browser", icon = "globe", href = url, actions = { click = "open" } }),
-				}),
+				ui.node("list", { key = "buttons" }, items),
 			})
 		end,
 	}

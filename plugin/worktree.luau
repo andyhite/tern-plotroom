@@ -46,6 +46,7 @@ export type Result = {
 	title: string,
 	author: string,
 	dirty: boolean?,
+	fork: boolean, -- the pull request comes from a fork: its checkout runs no hooks, and no setup
 	ahead: number?,
 }
 
@@ -61,6 +62,7 @@ export type IssueResult = {
 	dirty: boolean?,
 	ahead: number?,
 	ref: string?,
+	fork: boolean?, -- the checked-out pull request comes from a fork
 	number: number?,
 }
 
@@ -416,7 +418,7 @@ function M.claimCheckout(path: string, repo: string, account: string?, done: Cb<
 			if not info then
 				return done(nil, if cloned then "Cloned " .. repo .. ", but " .. (why or "it could not be read") else why, cx)
 			end
-			done({ root = info.root, cloned = cloned }, nil, cx)
+			done({ root = string.match(info.commonDir, "^(/.+)/%.git$") or info.root, cloned = cloned }, nil, cx)
 		end)
 	end
 	local function clone()
@@ -1168,7 +1170,7 @@ end
 
 -- Adds the worktree at `target`: on a new branch at `sha`, or (sha nil) on the branch that already exists. A lost
 -- race is accepted only when the other window made the very same worktree.
-local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch: string, sha: string?, step: (string, boolean, WindowCx?) -> (), cx: WindowCx?)
+local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch: string, sha: string?, step: (string, boolean, WindowCx?) -> (), cx: WindowCx?, fork: boolean?)
 	local parent = dirname(target)
 	local why: any
 	local ok = xpcall(tern.fs.mkdir, function(e: any)
@@ -1184,7 +1186,15 @@ local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch:
 	for _, a in rest do
 		table.insert(argv, a)
 	end
-	process.run(argv, { timeout_ms = NET_MS, env = ENV }, function(res, perr, cx5)
+	-- A fork's code is not trusted: its checkout hooks (post-checkout) must not run.
+	local env = ENV
+	if fork then
+		env = table.clone(ENV)
+		env.GIT_CONFIG_COUNT = "1"
+		env.GIT_CONFIG_KEY_0 = "core.hooksPath"
+		env.GIT_CONFIG_VALUE_0 = "/dev/null"
+	end
+	process.run(argv, { timeout_ms = NET_MS, env = env }, function(res, perr, cx5)
 		local addErr = if not res
 			then (perr or "omp could not be started")
 			elseif res.timed_out then "omp worktree add timed out"
@@ -1276,7 +1286,7 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 					local at = trim(tip)
 					return addWorktree(s, spot.root, spot.target, branch, nil, function(path, created)
 						inspect(m, path, created, if created then at else nil)
-					end, cx1)
+					end, cx1, m.fork ~= nil)
 				elseif status ~= 1 then
 					return s.finish(nil, "Could not inspect branch " .. branch .. ".", cx1 or cx)
 				end
@@ -1285,7 +1295,7 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 						return track(m, path)
 					end
 					inspect(m, path, false, nil)
-				end, cx1)
+				end, cx1, m.fork ~= nil)
 			end)
 		end)
 	end
@@ -1422,6 +1432,7 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 						author = m.author,
 						dirty = o.dirty,
 						ahead = o.ahead,
+						fork = m.fork ~= nil,
 					}, nil, cx2)
 				end)
 			end)
@@ -1582,8 +1593,8 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 					elseif string.lower(meta.base) ~= string.lower(repo) then
 						return finish(nil, "Pull request #" .. n .. " merges into " .. meta.base .. ", not " .. repo .. ".", cx1)
 					end
-					checkoutPr(s, spot, repo, n, meta, account, cx1, function(o, _, cx2)
-						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ahead = o.ahead, ref = o.ref, number = n }, nil, cx2)
+					checkoutPr(s, spot, repo, n, meta, account, cx1, function(o, m, cx2)
+						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ahead = o.ahead, ref = o.ref, number = n, fork = m.fork ~= nil }, nil, cx2)
 					end)
 				end)
 			end)

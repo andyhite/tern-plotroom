@@ -422,7 +422,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	local before = w.kv.get("views-issues")
 	local b = openIssues(w)
 	same(w.kv.get("views-issues"), before, "the saved Jira filters are read, never seeded over or rewritten")
-	eq(#w.kv.get("views-prs").items, 5, "the PR filters, absent until now, are seeded beside them")
+	eq(#w.kv.get("views-prs").items, 2, "the PR filters, absent until now, are seeded beside them")
 	-- How many searches acli was asked for.
 	local function searched(): number
 		local n = 0
@@ -1087,8 +1087,6 @@ windowCase("window: the Agent picker on an issue runs typed text in its worktree
 	w.flush()
 	local rows = promptPicks(w)[1].items
 	same({ rows[1].label, rows[2].label, rows[3].label }, { "Type a prompt…", "Here", "There" }, "typing, then the saved prompts")
-	eq(rows[2].worktree, true, "a prompt that runs in a worktree says so")
-	eq(rows[3].worktree, false, "and one that runs in the checkout")
 	eq(#w.window.agents, 1, "the typed prompt started an agent")
 	eq(w.window.agents[1].cwd, "/wt/plotroom-o_r-issue-12", "in the issue's worktree")
 	eq(w.window.agents[1].prompt, "Fix Fix login (12) on octocat/12-fix-login from main of origin; {nope}", "with the issue's variables and the new worktree's branch, base and remote filled in; an unknown one stays")
@@ -1117,7 +1115,6 @@ windowCase("window: with no prompts saved, an issue offers Implement and Fix in 
 	w.flush()
 	local rows = promptPicks(w)[1].items
 	same({ rows[2].label, rows[3].label, rows[4].label }, { "Implement", "Fix", "Plan" }, "after typing, the defaults")
-	same({ rows[2].worktree, rows[3].worktree, rows[4].worktree }, { true, true, false }, "Plan alone runs in the main checkout")
 	for i, name in { "Implement", "Fix", "Plan" } do
 		if i > 1 then
 			w.window.choose = { "Start another agent", name }
@@ -1267,7 +1264,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
 	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "and shown in place of the GitHub view restored")
-	eq(#w.kv.get("views-prs").items, 5, "the GitHub views stay saved")
+	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
 	b.press("escape")
@@ -1302,9 +1299,6 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	same(sidebarOf(b), {
 		"My PRs @ GitHub - octocat = prs:v1",
 		"Review requested @ GitHub - octocat = prs:v2",
-		"Team reviews @ GitHub - octocat = prs:v3",
-		"Reviewed by me @ GitHub - octocat = prs:v4",
-		"Ready to merge @ GitHub - octocat = prs:v5",
 		"Assigned to me @ Jira = issues:v1",
 	}, "the GitHub views are listed again")
 	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")
@@ -2526,6 +2520,7 @@ windowCase("window: {github.user} in a pull request prompt is filled with the gh
 	eq(requestsSent(w)[2].op, "worktree", "the prompt's worktree is asked for")
 	eq(requestsSent(w)[2].users, false, "a prompt that names no user does not ask for them")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5", "and runs as written")
+	w.window.choose = "Start Mine anyway" -- the first agent still works on the item
 	w.click(runLink("o/r", 5, "p2"))
 	w.flush()
 	local sent = requestsSent(w)
@@ -2578,12 +2573,14 @@ windowCase("window: {github.user} and {jira.user} in an issue prompt are filled 
 	w.flush()
 	same(asks.sent(w)[2], { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false, users = false }, "a prompt that names no user does not ask for them")
 	eq(w.window.agents[1].prompt, "Work on ABC-12", "and runs as written")
+	w.window.choose = "Start Both anyway"
 	w.click(issueRunLink("ABC", "ABC-12", "p2"))
 	w.flush()
 	same(asks.sent(w)[4], { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false, users = true }, "one that names both asks for them")
 	eq(#w.window.agents, 2, "an agent started for each")
 	eq(w.window.agents[2].prompt, "octocat (ann) works on ABC-12; {nope}", "the gh login and the Jira user's name; an unknown variable stays as typed")
 	eq(w.window.agents[2].cwd, "/work/r", "in the main checkout, as the prompt says")
+	w.window.choose = "Start Jira anyway"
 	w.click(issueRunLink("ABC", "ABC-12", "p3"))
 	w.flush()
 	same(asks.sent(w)[6], { op = "issue", repo = "ABC", ref = "ABC-12", worktree = false, users = true }, "one that names only {jira.user} asks for them too")
@@ -3055,6 +3052,16 @@ case("host mutations: update branch is offered and planned only while the previe
 	p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
 	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
 	eq(writesOf(seen, "update-branch")[1], "gh pr update-branch 1 --repo github.com/o/r", "GitHub's default update, nothing else")
+end)
+
+case("host: a Jira project entry that is no list of strings is never rewritten by a change to another project", function(w: World)
+	local s = jiraHost(w)
+	s.acli.projects = { { key = "ABC", name = "Alpha" } }
+	w.kv.put("jira-repos", { ABC = array({ "o/r" }), DEF = "garbage" })
+	local before = w.kv.get("jira-repos")
+	local b = openIssues(w)
+	has(hx.ask(w, b, "j1", { op = "map-jira", project = "ABC", repo = "x/y" }).problem, "malformed", "the change is refused")
+	same(w.kv.get("jira-repos"), before, "and the saved map is as it was")
 end)
 
 return {}

@@ -240,8 +240,9 @@ local function blockDef(): BlockDef<State>
 		local paths: { string } = {}
 		local wants: { [string]: { [string]: worktree.Want } } = {} -- checkout -> item key -> how its worktree is known
 		local saved = readCheckouts() -- one read, not one per repository
+		local snapFormats = storage.formats.snapshot() -- ... and one of the name formats and the Jira map
 		for _, item in snap.items do
-			local codes: { string } = if issues and item.tracker == "jira" then jiraReposOf(item.repo) else { item.repo }
+			local codes: { string } = if issues and item.tracker == "jira" then jiraReposOf(item.repo, snapFormats.jira) else { item.repo }
 			for _, code in codes do
 				local path = saved[string.lower(code)]
 				if type(path) == "string" and path ~= "" then
@@ -249,7 +250,7 @@ local function blockDef(): BlockDef<State>
 						wants[path] = {}
 						table.insert(paths, path)
 					end
-					wants[path][item.key] = engine.worktreeWant(state, snap.kind, item, { code })
+					wants[path][item.key] = engine.worktreeWant(state, snap.kind, item, { code }, snapFormats)
 				end
 			end
 		end
@@ -521,8 +522,8 @@ local function blockDef(): BlockDef<State>
 				rev = 0,
 				triage = nil,
 				triageProblem = nil,
-				showSnoozed = false,
-				attention = false,
+				showSnoozed = mine and saved.snoozed == true,
+				attention = mine and saved.attention == true,
 				agents = {},
 				agentInfo = {},
 				agentsOn = false,
@@ -584,14 +585,7 @@ local function blockDef(): BlockDef<State>
 			if not v then
 				return "Plotroom"
 			end
-			local need = 0
-			if snap then
-				for _, item in snap.items do
-					if engine.needs(state, snap.kind, item) then
-						need += 1
-					end
-				end
-			end
+			local need = if snap then (snap.need or 0) else 0
 			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. (if need > 0 then " · " .. need .. " new" else "")
 		end,
 
@@ -617,7 +611,9 @@ local function blockDef(): BlockDef<State>
 				if name == "enter" or name == "escape" then
 					state.removing = nil
 				elseif plain and k == "d" then
-					removeNow(state)
+					if not state.removeRefusal then
+						removeNow(state)
+					end
 				else
 					return false
 				end
@@ -969,7 +965,7 @@ local function blockDef(): BlockDef<State>
 				end
 				askRemove(state)
 			elseif act == "confirm-remove" then
-				if state.removing then
+				if state.removing and not state.removeRefusal then
 					removeNow(state)
 				end
 			elseif act == "cancel-remove" then
@@ -979,6 +975,8 @@ local function blockDef(): BlockDef<State>
 				queueAction(state, act)
 			elseif act == "unpin" then
 				requests.unpin(state)
+			elseif act == "unsnooze" then
+				engine.mark(state, "unsnooze")
 			elseif act == "queue" then
 				-- The command palette's pick: only an action it offers now runs.
 				for _, a in requests.paletteActions(state) do
@@ -1141,6 +1139,8 @@ local function blockDef(): BlockDef<State>
 				activeKind = if kind == KINDS.issues then "issues" else nil,
 				activeLogin = state.activeLogin,
 				pause = pause,
+				attention = if state.attention then true else nil,
+				snoozed = if state.showSnoozed then true else nil,
 				pins = requests.pinUrls(state),
 			}
 		end,

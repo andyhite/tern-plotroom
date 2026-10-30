@@ -40,7 +40,7 @@ export type Pr = {
 	labels: { string },
 }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
-export type SearchResult = { prs: { Pr }, total: number, complete: boolean }
+export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note: string? }
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
@@ -363,8 +363,11 @@ type Page = { total: number, next: string?, cost: number, raw: number, items: { 
 
 -- One page of the search JSON: total, next cursor, points cost, raw item count, items as `normalize` makes them (it
 -- rejects an item that is not of the kind searched).
-function M.parsePage(stdout: string, normalize: (any) -> (any?, string?)): (Page?, string?)
-	local ok, data = pcall(tern.json.decode, stdout)
+function M.parsePage(stdout: string, normalize: (any) -> (any?, string?), decoded: any?): (Page?, string?)
+	local ok, data = true, decoded
+	if data == nil then
+		ok, data = pcall(tern.json.decode, stdout)
+	end
 	if not ok or type(data) ~= "table" or type(data.items) ~= "table" or type(data.total) ~= "number" then
 		return nil, "gh printed something other than a search result"
 	end
@@ -473,6 +476,9 @@ function M.classify(result: ProcessResult, limit: string?): Problem
 	if string.find(err, "HTTP 429", 1, true) or string.find(low, "rate limit", 1, true) then
 		return { kind = "rate-limit", message = "GitHub rate limit reached: " .. firstLines(err, 2) }
 	end
+	if string.find(err, "SAML enforcement", 1, true) or string.find(err, "OAuth App access restrictions", 1, true) then
+		return { kind = "auth", message = "An organization's SSO or OAuth restriction blocks this GitHub account: authorize the token for it (gh auth refresh, or github.com › Settings › Applications). " .. firstLines(err, 3) }
+	end
 	if result.status == 4 or string.find(err, "gh auth login", 1, true) or string.find(err, "HTTP 401", 1, true) then
 		return { kind = "auth", message = "GitHub rejected the sign-in: " .. firstLines(err, 3) }
 	end
@@ -563,12 +569,35 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 	end)
 end
 
+local function bad(message: string): Problem
+	return { kind = "invalid", message = message }
+end
+
+-- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
+local function repoArg(repo: any): string?
+	local o, r = string.match(if type(repo) == "string" then repo else "", "^([%w%-_%.]+)/([%w%-_%.]+)$")
+	if not o or not r or o == "." or o == ".." or r == "." or r == ".." then
+		return nil
+	end
+	return "github.com/" .. o .. "/" .. r
+end
+
+local function later(done: () -> ())
+	tern.timer(0, done)
+end
+
 local CLONE_MS = 10 * 60 * 1000
 
 -- Clones `repo` into the absolute `path` with `gh repo clone`, as the repository's saved gh account: gh's own protocol
 -- and credentials, so private repositories work. git makes the folder and refuses a non-empty one.
 function M.clone(repo: string, path: string, account: string?, done: (Problem?, WindowCx?) -> ())
-	M.gh({ "repo", "clone", repo, path }, function(_, problem, cx)
+	local target = repoArg(repo)
+	if not target then
+		return later(function()
+			done(bad("Unexpected repository name."), nil)
+		end)
+	end
+	M.gh({ "repo", "clone", target, path }, function(_, problem, cx)
 		done(problem, cx)
 	end, account, CLONE_MS)
 end
@@ -717,14 +746,82 @@ end
 
 -- Records the quota a `gh api --include` answer reports and returns its body. A rate
 -- limit that comes without usable headers (a secondary limit) backs the account off.
-local function observe(out: string?, raw: string?, problem: Problem?, account: string?): string
+local function observe(out: string?, raw: string?, problem: Problem?, account: string?, rest: boolean?): string
 	local now = os.time()
 	local q, body = M.parseResponse(out or raw or "", now)
 	M.record(q, now, account)
-	if not out and problem and problem.kind == "rate-limit" and M.wait(now, account) == 0 then
+	-- A REST limit says nothing of GraphQL's quota (`rest`): it must not pause the searches.
+	if not rest and not out and problem and problem.kind == "rate-limit" and M.wait(now, account) == 0 then
 		M.record({ retryUntil = now + RATE_S }, now, account)
 	end
 	return body
+end
+
+local function names(v: any, key: string): { any }
+	local out: { any } = {}
+	local nodes = field(v, "nodes")
+	if type(nodes) == "table" then
+		for _, n in nodes do
+			table.insert(out, field(n, key))
+		end
+	end
+	return out
+end
+
+-- A search node of a pull request as SEARCH_JQ shapes it (see PR_ITEM_JQ).
+local function flatPr(n: any): any
+	local commits = field(n, "commits", "nodes")
+	local roll = field(if type(commits) == "table" then commits[1] else nil, "commit", "statusCheckRollup")
+	return {
+		number = n.number, title = n.title, url = n.url, isDraft = n.isDraft, state = n.state, updatedAt = n.updatedAt, createdAt = n.createdAt,
+		author = field(n, "author", "login"), head = n.headRefName, headSha = n.headRefOid,
+		fork = if n.isCrossRepository == true then (field(n, "headRepositoryOwner", "login") or field(n, "author", "login")) else nil,
+		base = n.baseRefName, additions = n.additions, deletions = n.deletions, changedFiles = n.changedFiles,
+		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, checks = field(roll, "state"),
+		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
+	}
+end
+
+-- A search node of an issue as ISSUE_JQ shapes it.
+local function flatIssue(n: any): any
+	return {
+		number = n.number, title = n.title, url = n.url, state = n.state, reason = n.stateReason, updatedAt = n.updatedAt, createdAt = n.createdAt,
+		author = field(n, "author", "login"), comments = field(n, "comments", "totalCount"),
+		labels = names(n.labels, "name"), assignees = names(n.assignees, "login"),
+	}
+end
+
+-- A search answer with data and only FORBIDDEN errors, as the --jq filter would have shaped it (nodes the errors null out
+-- are skipped), and the note that says why it is partial (with the authorization link GitHub names, when it does).
+-- nil unless that is exactly what `text` is.
+local function partial(text: string, flat: ((any) -> any)?): (any, string?)
+	local ok, data = pcall(tern.json.decode, text)
+	local errors, search = field(data, "errors"), field(data, "data", "search")
+	if not flat or not ok or type(errors) ~= "table" or #errors == 0 or type(search) ~= "table" or type(search.nodes) ~= "table" or type(search.issueCount) ~= "number" then
+		return nil, nil
+	end
+	local link: string? = nil
+	for _, e in errors do
+		if field(e, "type") ~= "FORBIDDEN" then
+			return nil, nil
+		end
+		local message = field(e, "message")
+		link = link or (if type(message) == "string" then string.match(message, "https://[^%s\"]+") else nil)
+	end
+	local items: { any } = {}
+	for _, node in search.nodes do
+		if type(node) == "table" and node ~= tern.json.null and node.number ~= nil then
+			table.insert(items, flat(node))
+		end
+	end
+	local info = field(search, "pageInfo")
+	local cost = field(data, "data", "rateLimit", "cost")
+	return {
+		total = search.issueCount,
+		next = if field(info, "hasNextPage") == true then field(info, "endCursor") else nil,
+		cost = if type(cost) == "number" then cost else 1,
+		items = items,
+	}, "Partial results: an organization's SAML SSO is not authorized for this gh login, so its items are hidden." .. (if link then " Authorize: " .. link else " Run gh auth refresh, or authorize the token on github.com.")
 end
 
 -- All pages of the search, sequentially; `done(items, total, complete, problem, spent)` at the end.
@@ -741,8 +838,9 @@ local function searchAll(
 	gql: string,
 	jq: string,
 	normalize: (any) -> (any?, string?),
+	flat: ((any) -> any)?,
 	shouldContinue: () -> boolean,
-	done: ({ any }?, number, boolean, Problem?, number) -> ()
+	done: ({ any }?, number, boolean, Problem?, number, string?) -> ()
 )
 	query = string.match(query, "^%s*(.-)%s*$") or ""
 	if query == "" then
@@ -754,11 +852,12 @@ local function searchAll(
 	query = query .. qualifier
 	local superseded: Problem = { kind = "superseded", message = "" }
 	local all: { any } = {}
+	local note: string? = nil
 	local total = 0
 	local loaded = 0
 	local spent = 0
 	local function finish(cut: boolean)
-		done(all, total, not cut and loaded >= total and total <= CAP, nil, spent)
+		done(all, total, not cut and note == nil and loaded >= total and total <= CAP, nil, spent, note)
 	end
 	local wait = M.wait(os.time(), account)
 	if wait > 0 then
@@ -784,10 +883,15 @@ local function searchAll(
 			if not shouldContinue() then
 				return done(nil, 0, false, superseded, spent)
 			end
+			local data: any = nil
 			if not out then
-				return done(nil, 0, false, problem, spent)
+				-- Orgs whose SSO is not authorized answer 200 with the rest of the page and FORBIDDEN errors; gh exits 1.
+				data, note = partial(body, flat)
+				if not data then
+					return done(nil, 0, false, problem, spent)
+				end
 			end
-			local pg, why = M.parsePage(body, normalize)
+			local pg, why = M.parsePage(body, normalize, data)
 			if not pg then
 				return done(nil, 0, false, { kind = "failed", message = why or "malformed response" }, spent)
 			end
@@ -814,11 +918,11 @@ end
 
 -- searchAll over pull requests; one swap-ready SearchResult at the end.
 local function searchPrs(account: string?, query: string, qualifier: string, gql: string, jq: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
-	searchAll(account, query, qualifier, gql, jq, M.normalize, shouldContinue, function(items, total, complete, problem, spent)
+	searchAll(account, query, qualifier, gql, jq, M.normalize, flatPr, shouldContinue, function(items, total, complete, problem, spent, note)
 		if not items then
 			return done(nil, problem, spent)
 		end
-		done({ prs = tracker.reconcile(items :: { Pr }), total = total, complete = complete }, nil, spent)
+		done({ prs = tracker.reconcile(items :: { Pr }), total = total, complete = complete, note = note }, nil, spent)
 	end)
 end
 
@@ -839,11 +943,11 @@ function M.issues(
 	shouldContinue: () -> boolean,
 	done: (tracker.IssueResult?, Problem?, number) -> ()
 )
-	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, M.normalizeIssue, shouldContinue, function(items, total, complete, problem, spent)
+	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, M.normalizeIssue, flatIssue, shouldContinue, function(items, total, complete, problem, spent, note)
 		if not items then
 			return done(nil, problem, spent)
 		end
-		done({ issues = tracker.reconcile(items :: { tracker.Issue }), total = total, complete = complete }, nil, spent)
+		done({ issues = tracker.reconcile(items :: { tracker.Issue }), total = total, complete = complete, note = note }, nil, spent)
 	end)
 end
 
@@ -1139,7 +1243,13 @@ function M.pullByHead(repo: string, branch: string, account: string?, done: (Hea
 		return
 	end
 	-- `--head=` keeps a branch that starts with a dash from being read as a flag.
-	M.gh({ "pr", "list", "--repo", repo, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url,isCrossRepository" }, function(out, problem)
+	local target = repoArg(repo)
+	if not target then
+		return later(function()
+			done(nil, bad("Unexpected repository name."))
+		end)
+	end
+	M.gh({ "pr", "list", "--repo", target, "--head=" .. branch, "--state", "all", "--limit", "10", "--json", "number,title,state,isDraft,url,isCrossRepository" }, function(out, problem)
 		if not out then
 			return done(nil, problem)
 		end
@@ -1202,6 +1312,11 @@ local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (a
 	end)
 end
 
+-- Forgets every kept list (accounts, repositories): the next call asks gh again. An explicit Retry does this.
+function M.forget()
+	kept = {}
+end
+
 export type Account = { login: string, active: boolean }
 
 -- The gh logins signed in to github.com, the active one first; done(accounts, problem). Needs gh 2.66 or newer
@@ -1227,6 +1342,10 @@ function M.accounts(done: ({ Account }?, Problem?) -> ())
 				end
 				return string.lower(x.login) < string.lower(y.login)
 			end)
+			-- A failed read with no usable active account is not an answer: it is not kept, so the next call asks gh again.
+			if problem and not (list[1] and list[1].active) then
+				return finish(nil, problem)
+			end
 			finish(list, nil)
 		end)
 	end, done)
@@ -1250,23 +1369,39 @@ function M.login(account: string?, done: (string?, Problem?) -> ())
 	end)
 end
 
--- "owner/name" of every repository gh login `account` can access (owned, collaborator, org member), most recently
--- pushed first; done(names, problem).
-function M.repos(account: string, done: ({ string }?, Problem?) -> ())
+-- "owner/name" of the repositories gh login `account` can access (owned, collaborator, org member), most recently
+-- pushed first; done(names, problem). Pages of 100 are read one at a time until `budget` bytes of names (a name counts
+-- its length + 3) are listed or the list ends, so a huge account does not outlast the 30 s a page is given. A page that
+-- fails after the first leaves the names read so far.
+function M.repos(account: string, budget: number, done: ({ string }?, Problem?) -> ())
 	cached("repos:" .. account, function(finish)
-		M.gh({ "api", "--hostname", "github.com", "--paginate", "user/repos?per_page=100&sort=pushed", "--jq", ".[].full_name" }, function(out, problem)
-			if not out then
-				return finish(nil, problem)
-			end
-			local names: { string } = {}
-			for line in string.gmatch(out, "[^\n]+") do
-				local owner, name = string.match(line, "^([%w%-_%.]+)/([%w%-_%.]+)$")
-				if owner and name and name ~= "." and name ~= ".." then
-					table.insert(names, line)
+		local names: { string } = {}
+		local size = 0
+		local function page(n: number)
+			M.gh({ "api", "--hostname", "github.com", "user/repos?per_page=100&sort=pushed&page=" .. n, "--jq", ".[].full_name" }, function(out, problem)
+				if not out then
+					return finish(if #names > 0 then names else nil, problem)
 				end
-			end
-			finish(names, nil)
-		end, account)
+				local lines = 0
+				for line in string.gmatch(out, "[^\n]+") do
+					lines += 1
+					local owner, name = string.match(line, "^([%w%-_%.]+)/([%w%-_%.]+)$")
+					if owner and name and name ~= "." and name ~= ".." then
+						size += #line + 3
+						if size > budget then
+							return finish(names, nil)
+						end
+						table.insert(names, line)
+					end
+				end
+				-- ponytail: 50 pages (5000 repositories) at most; a shorter page is the last.
+				if lines < 100 or n >= 50 then
+					return finish(names, nil)
+				end
+				page(n + 1)
+			end, account)
+		end
+		page(1)
 	end, done)
 end
 
@@ -1275,19 +1410,6 @@ end
 -- Every write is argv-only (`--flag=value`, so a value that starts with `-` stays a value), runs as the view's saved
 -- gh account through M.gh, and checks its inputs first: a bad input never reaches gh. The host confirms with the user
 -- before calling any of these.
-
-local function bad(message: string): Problem
-	return { kind = "invalid", message = message }
-end
-
--- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
-local function repoArg(repo: any): string?
-	local o, r = string.match(if type(repo) == "string" then repo else "", "^([%w%-_%.]+)/([%w%-_%.]+)$")
-	if not o or not r or o == "." or o == ".." or r == "." or r == ".." then
-		return nil
-	end
-	return "github.com/" .. o .. "/" .. r
-end
 
 local function whole32(v: any): boolean
 	return type(v) == "number" and v >= 1 and v <= 2147483647 and v == math.floor(v)
@@ -1300,7 +1422,7 @@ end
 
 -- A label name. gh reads --add-label values as CSV, so csv() quotes the name when it is sent.
 local function label(v: any): string?
-	if type(v) == "string" and #v >= 1 and #v <= 50 and not string.find(v, "[%c]") and string.sub(v, 1, 1) ~= "-" and string.match(v, "%S") then
+	if type(v) == "string" and (utf8.len(v) or 51) <= 50 and #v >= 1 and not string.find(v, "[%c]") and string.sub(v, 1, 1) ~= "-" and string.match(v, "%S") then
 		return v
 	end
 	return nil
@@ -1341,10 +1463,6 @@ export type IssueEdit = {
 	addLabels: { string }?,
 	removeLabels: { string }?,
 }
-
-local function later(done: () -> ())
-	tern.timer(0, done)
-end
 
 -- `gh issue edit` with validated assignees (logins, or `@me` for the account's own login) and labels; done(problem).
 -- At least one change is required. Labels GitHub does not know are created by gh's own refusal: it fails, nothing is
@@ -1681,6 +1799,18 @@ local function branch(v: any, forkOk: boolean): string?
 	return v
 end
 
+-- Why `title` and `body` cannot open a pull request (a title of one line, 1 to 256 characters; a body of at most 60000
+-- bytes; neither with a control byte other than the body's tab and newlines, nor invalid UTF-8); nil when they can.
+function M.prText(title: any, body: any): string?
+	if type(title) ~= "string" or not string.match(title, "%S") or (utf8.len(title) or 257) > 256 or string.find(title, "[%c]") then
+		return "The title needs 1 to 256 characters on one line."
+	end
+	if type(body) ~= "string" or #body > 60000 or utf8.len(body) == nil or string.find(body, "[\0-\8\11\12\14-\31]") then
+		return "The body must be text of at most 60000 bytes."
+	end
+	return nil
+end
+
 -- Opens a DRAFT pull request of `repo` from `head` into `base` with the given title and body (never `--fill`, never a
 -- prompt); done(url, problem). Only `draft = true` is accepted. `--head` is explicit, so gh never pushes or forks.
 function M.createPr(d: NewPr, account: string?, done: (string?, Problem?) -> ())
@@ -1694,10 +1824,8 @@ function M.createPr(d: NewPr, account: string?, done: (string?, Problem?) -> ())
 		problem = bad("Unexpected base branch.")
 	elseif not branch(d.head, true) then
 		problem = bad("Unexpected head branch.")
-	elseif type(d.title) ~= "string" or not string.match(d.title, "%S") or (utf8.len(d.title) or 257) > 256 or string.find(d.title, "[%c]") then
-		problem = bad("The title must be one line of 1 to 256 characters.")
-	elseif type(d.body) ~= "string" or #d.body > 60000 or string.find(d.body, "[\0-\8\11\12\14-\31]") then
-		problem = bad("The body must be text of at most 60000 bytes.")
+	elseif M.prText(d.title, d.body) then
+		problem = bad(M.prText(d.title, d.body) :: string)
 	end
 	if problem then
 		local p = problem
@@ -1747,7 +1875,7 @@ function M.issueItem(repo: string, number: number, account: string?, done: (trac
 			done(nil, bad("Unexpected issue address."))
 		end)
 	end
-	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, M.normalizeIssue, live, function(items, _, _, problem)
+	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, M.normalizeIssue, nil, live, function(items, _, _, problem)
 		local issue = if items then (items :: { tracker.Issue })[1] else nil
 		if not issue then
 			return done(nil, problem or { kind = "not-found", message = "This GitHub account sees no issue " .. repo .. "#" .. number .. "." })
@@ -1839,7 +1967,7 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 	end
 	table.insert(args, "notifications?participating=true&per_page=" .. NOTICE_CAP)
 	M.gh(args, function(out, problem, _, raw)
-		local body = observe(out, raw, problem, account)
+		local body = observe(out, raw, problem, account, true)
 		local status, headers = response(out or raw or "")
 		local at = os.time()
 		local poll = whole(headers["x-poll-interval"] or "") or NOTICE_POLL_S

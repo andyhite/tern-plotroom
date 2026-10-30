@@ -377,6 +377,7 @@ export type Win = {
 	handlers: { [string]: any }, -- tern.on registrations by event name
 	runs: { { pane: number, text: string } }, -- every cx:run (text typed into a pane)
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
+	tabTitle: ((any) -> string?)?, -- the tern.chrome.tab_title formatter
 	refreshes: number, -- tern.chrome.refresh calls
 	reads: { [number]: number }, -- pane -> cx.session:surface reads
 	gitOpened: { string }, -- every path cx.git:open was asked for
@@ -662,8 +663,11 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "" }
 			end,
-			surface = function(_self: any, id: number, _opts: any): any
-				win.reads[id] = (win.reads[id] or 0) + 1
+			surface = function(_self: any, id: number, opts: any): any
+				-- The attention poll (every Plotroom pane, on its own timer) is counted apart from the protocol check's reads.
+				if not (type(opts) == "table" and opts.root == "main.need") then
+					win.reads[id] = (win.reads[id] or 0) + 1
+				end
 				local s = win.surfaces[id]
 				local b = linked[id]
 				if b == nil then
@@ -1249,6 +1253,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			status = function(fn: any)
 				win.status = fn
 			end,
+			tab_title = function(fn: any)
+				win.tabTitle = fn
+			end,
 			refresh = function()
 				win.refreshes += 1
 			end,
@@ -1294,6 +1301,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end
 			renders += 1
 			last = def.view(state, cx)
+			if def.title then
+				def.title(state)
+			end
 			if encodeViews then
 				jsonEncode(last) -- Tern serializes the view: it must be plain data
 			end
@@ -1697,6 +1707,7 @@ local function newGh(w: World): Gh
 					path = a
 				elseif string.match(a, "^user/repos") then
 					path = "user/repos"
+					fields.page = string.match(a, "[?&]page=(%d+)") or "1"
 				end
 				i += 1
 			end
@@ -1797,14 +1808,19 @@ local function newGh(w: World): Gh
 			local repo, branch = "", ""
 			for j = 4, #argv do
 				if argv[j - 1] == "--repo" then
-					repo = argv[j]
+					repo = (string.gsub(argv[j], "^github%.com/", ""))
 				end
 				branch = string.match(argv[j], "^%-%-head=(.*)$") or branch
 			end
 			return { stdout = jsonEncode(array(gh.heads[repo .. "@" .. branch] or {})) }
 		elseif kind == "repos" then
-			local list = gh.repos[key] or {}
-			return { stdout = if #list > 0 then table.concat(list, "\n") .. "\n" else "" }
+			-- 100 a page, as `user/repos?per_page=100&page=N` answers
+			local first = ((tonumber(fields.page) or 1) - 1) * 100
+			local out: { string } = {}
+			for j = first + 1, math.min(first + 100, #(gh.repos[key] or {})) do
+				table.insert(out, (gh.repos[key] :: { string })[j])
+			end
+			return { stdout = if #out > 0 then table.concat(out, "\n") .. "\n" else "" }
 		elseif kind == "notifications" or kind == "mark-read" then
 			if gh.inboxDenied[key] then
 				return { status = 1, stderr = "gh: Resource not accessible by personal access token (HTTP 403)\n" }
@@ -3230,7 +3246,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "30" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
+asks.protocol = "31" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

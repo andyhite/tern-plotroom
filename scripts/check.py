@@ -276,7 +276,27 @@ def luau_banner(luau: Path) -> str:
     return "luau %s (sha256 %s; pinned release %s)" % (luau, sha256_file(luau)[:16], LUAU_VERSION)
 
 
+def check_css() -> None:
+    """plotroom.css: scoped selectors, and none of the syntax Tern's engine rejects (docs.stencil.so/tern/styles/css.md)."""
+    scope = "[data-surface='plugin.plotroom.prs']"
+    text = re.sub(r"/\*.*?\*/", "", (PLUGIN / "plotroom.css").read_text(encoding="utf-8"), flags=re.S)
+    problems = []
+    for match in re.finditer(r"([^{};]+)\{", text):
+        prelude = match.group(1).strip()
+        if prelude.startswith("@") or re.fullmatch(r"(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*", prelude):
+            continue
+        for selector in prelude.split(","):
+            if not selector.strip().startswith(scope):
+                problems.append("selector outside the block's scope: %s" % selector.strip())
+    for bad in (r"\d(rem|ch)\b", r":has\(", r"\b(margin|padding|border|inset)-(inline|block)\b", r"\binset-(inline|block)\b"):
+        for found in re.finditer(bad, text):
+            problems.append("unsupported CSS %r" % found.group(0))
+    if problems:
+        raise GateError("plugin/plotroom.css: " + "; ".join(problems[:5]))
+
+
 def check_test() -> str:
+    check_css()
     unlisted = [p.stem for p in sorted((PLUGIN / "tests" / "cases").glob("*.luau")) if 'require("./cases/%s")' % p.stem not in (PLUGIN / "tests" / "regression.luau").read_text(encoding="utf-8")]
     if unlisted:
         raise GateError("plugin/tests/cases/ files not required by plugin/tests/regression.luau (they would run nothing): %s" % ", ".join(unlisted))

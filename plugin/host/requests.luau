@@ -216,8 +216,8 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					current = current,
 					dirty = r.dirty,
 					ahead = r.ahead,
-					summary = summary,
-					setup = if r.created then setupLine(repo) else nil,
+					summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
+					setup = if r.created and not r.fork then setupLine(repo) else nil,
 					remote = r.remote,
 					branch = r.prRef,
 					base = r.prBase,
@@ -425,8 +425,8 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 					current = true,
 					dirty = r.dirty,
 					ahead = r.ahead,
-					summary = summary,
-					setup = if r.created then setupLine(code) else nil,
+					summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
+					setup = if r.created and not r.fork then setupLine(code) else nil,
 					vars = vars,
 					code = code,
 				})
@@ -480,12 +480,9 @@ end
 -- to MENU_BUDGET. Without them, `problem` says why.
 local function profile(state: State, id: string, login: string)
 	state.listing += 1
-	github.repos(login, function(names, problem)
+	github.repos(login, MENU_BUDGET, function(names, problem)
 		state.listing -= 1
-		local more = capped(names or {}, function(name)
-			return #name + 3
-		end)
-		reply(state, id, { repos = tern.json.array(more), problem = if problem then problem.message else nil })
+		reply(state, id, { repos = tern.json.array(names or {}), problem = if problem then problem.message else nil })
 	end)
 end
 
@@ -556,6 +553,9 @@ local function mapJira(state: State, id: string, project: string, repo: string)
 		return nil
 	end)
 	err = err or saveCheckout(lower, "", true)
+	if not err then
+		engine.propagate(state)
+	end
 	reply(state, id, if err then { problem = err } else { ok = true })
 end
 
@@ -642,7 +642,9 @@ function M.commit(state: State, id: string, token: any)
 	local chosen = selected(state)
 	-- The Inbox plan holds while the Inbox list is shown; every other plan, while its item is the selected one.
 	local here = if plan.key == INBOX_KEY then state.inboxOn else chosen ~= nil and chosen.key == plan.key
-	if plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or os.time() - plan.at > 300 or not here then
+	if os.time() - plan.at > 300 then
+		return reply(state, id, { problem = "That confirmation expired after 5 minutes; nothing was sent." })
+	elseif plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or not here then
 		return reply(state, id, { problem = "The selection or the view changed since you were asked; nothing was sent." })
 	end
 	plan.run(function(body: any)
@@ -726,7 +728,7 @@ local function mergesNow(state: State, item: any): boolean
 end
 
 function M.labelOk(label: any): string?
-	if type(label) ~= "string" or label == "" or #label > 50 or string.find(label, "[%c,]") or string.sub(label, 1, 1) == "-" then
+	if type(label) ~= "string" or label == "" or (utf8.len(label) or 51) > 50 or string.find(label, "[%c,]") or string.sub(label, 1, 1) == "-" then
 		return nil
 	end
 	return label
@@ -801,13 +803,23 @@ function M.act(state: State, id: string, q: any)
 		if prs then
 			return no("Assigning works on issues; pull requests are not edited here.")
 		elseif item.tracker == "jira" then
-			return M.offer(state, id, item, {
-				head = "Assign " .. item.ref .. " to you?",
-				label = "Assign to me",
-				lines = { target .. ": " .. printable(item.title), "Jira account: the one acli is signed in with", "Current assignee: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
-			}, function(done)
-				jira.assignMe(item.ref, function(problem: github.Problem?)
-					M.landed(state, done, problem, "Assigned " .. item.ref .. " to you")
+			local gen = state.gen
+			return jira.identity(function(who: jira.Identity?, problem: github.Problem?)
+				if not alive(state) then
+					return
+				elseif not who then
+					return no(M.whyOf(problem))
+				elseif state.gen ~= gen then
+					return no("The view changed; ask again.")
+				end
+				M.offer(state, id, item, {
+					head = "Assign " .. item.ref .. " to you?",
+					label = "Assign to me",
+					lines = { target .. ": " .. printable(item.title), "Jira account: " .. printable(who.email) .. " at " .. printable(who.site), "Current assignee: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
+				}, function(done)
+					jira.assignMe(item.ref, who, function(problem2: github.Problem?)
+						M.landed(state, done, problem2, "Assigned " .. item.ref .. " to you")
+					end)
 				end)
 			end)
 		end
@@ -881,13 +893,23 @@ function M.act(state: State, id: string, q: any)
 				return no("Jira no longer offers that transition for " .. item.ref .. ".")
 			end
 			local to: string = chosen.id
-			M.offer(state, id, item, {
-				head = "Move " .. item.ref .. " to " .. chosen.name .. "?",
-				label = "Move to " .. chosen.name,
-				lines = { item.ref .. ": " .. printable(item.title), "Jira account: the one acli is signed in with", "From: " .. (if item.status then item.status.text else "its current status"), "Transition: " .. chosen.name .. " (id " .. to .. ")" },
-			}, function(done)
-				jira.transition(item.ref, to, function(problem2: github.Problem?)
-					M.landed(state, done, problem2, "Moved " .. item.ref .. " with “" .. chosen.name .. "”")
+			local gen = state.gen
+			jira.identity(function(who: jira.Identity?, problem3: github.Problem?)
+				if not alive(state) then
+					return
+				elseif not who then
+					return no(M.whyOf(problem3))
+				elseif state.gen ~= gen then
+					return no("The view changed; ask again.")
+				end
+				M.offer(state, id, item, {
+					head = "Move " .. item.ref .. " to " .. chosen.name .. "?",
+					label = "Move to " .. chosen.name,
+					lines = { item.ref .. ": " .. printable(item.title), "Jira account: " .. printable(who.email) .. " at " .. printable(who.site), "From: " .. (if item.status then item.status.text else "its current status"), "Transition: " .. chosen.name .. " (id " .. to .. ")" },
+				}, function(done)
+					jira.transition(item.ref, to, who, function(problem2: github.Problem?)
+						M.landed(state, done, problem2, "Moved " .. item.ref .. " with “" .. chosen.name .. "”")
+					end)
 				end)
 			end)
 		end)
@@ -1451,11 +1473,13 @@ function M.draft(state: State, id: string, q: any)
 		if not d or d.token ~= q.token or d.key ~= item.key or d.gen ~= state.gen then
 			return no("Preview the draft again: the selection or the view changed.")
 		end
-		if type(title) ~= "string" or trim(title) == "" or #title > 256 or string.find(title, "[%c]") then
-			return no("The title needs 1 to 256 characters on one line.")
-		end
-		if type(body) ~= "string" or #body > 8000 or string.find(body, "%z") then
+		if type(body) == "string" and #body > 8000 then
 			return no("The description is too long (8000 bytes at most).")
+		end
+		-- The same check createPr makes: a title or body it would refuse must not reach the push.
+		local why = github.prText(if type(title) == "string" then trim(title) else title, body)
+		if why then
+			return no(why)
 		end
 		local draft = d.draft
 		-- The account is settled now and used by every later step, whatever view is shown meanwhile.
@@ -1591,6 +1615,7 @@ function M.export(state: State, id: string, q: any)
 	if q.phase == "commit" then
 		local held = state.exported
 		state.exported = nil
+		-- A path or write that fails leaves the snapshot to be tried again (`retry`): the window asks for another file name.
 		if not held or held.token ~= q.token then
 			return reply(state, id, { problem = "That export preview expired; export again." })
 		end
@@ -1599,7 +1624,8 @@ function M.export(state: State, id: string, q: any)
 		if q.path ~= nil then
 			local path, bad = M.pathOf(q.path)
 			if not path then
-				return reply(state, id, { problem = bad })
+				state.exported = held
+				return reply(state, id, { problem = bad, retry = true })
 			end
 			local ok, err = pcall(function()
 				if tern.fs.exists(path) then
@@ -1608,7 +1634,8 @@ function M.export(state: State, id: string, q: any)
 				tern.fs.write(path, held.json)
 			end)
 			if not ok then
-				return reply(state, id, { problem = "Not written: " .. tostring(err) })
+				state.exported = held
+				return reply(state, id, { problem = "Not written: " .. tostring(err), retry = true })
 			end
 			body.ok, body.path = true, path
 		elseif not copyable then
@@ -1886,11 +1913,11 @@ function M.workflowRpc(state: State, id: string, q: any)
 		end)
 	elseif op == "worktree-path" and type(q.n) == "number" then
 		local row = engine.boardRows(state)[q.n]
-		reply(state, id, if row and not row.missing then { path = row.path } else { problem = "That worktree is no longer listed." })
+		reply(state, id, if row and not row.missing and tern.fs.exists(row.path) then { path = row.path } else { problem = "That worktree is no longer listed." })
 	elseif op == "git-path" then
 		-- The worktree Open in Git is about: the Worktrees list's selected row, else the selected item's card.
 		local row = if state.boardOn then engine.boardSelected(state) else nil
-		local path = if state.boardOn then (if row and not row.missing then row.path else nil) else engine.cardPath(state)
+		local path = if state.boardOn then (if row and not row.missing and tern.fs.exists(row.path) then row.path else nil) else engine.cardPath(state)
 		reply(state, id, if path then { path = path } else { problem = "That worktree is no longer there." })
 	end
 end

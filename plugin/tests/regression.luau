@@ -94,6 +94,24 @@ function M.bench(instantiate: Loader)
 	timed("seen-render", 20, function(_i: number)
 		b.render()
 	end)
+	-- The rows rebuild (rev bump) over 1000 seen items: each is classified without rehashing its signature.
+	timed("seen-rebuild", 20, function(_i: number)
+		b.state().rev += 1
+		b.render()
+	end)
+	-- The attention filter rebuilds the list on every cursor step.
+	b.typeText("n")
+	timed("attention-cursor-down", 20, function(_i: number)
+		b.press("down")
+	end)
+	b.typeText("n")
+	-- A scan builds what each of the 1000 items' worktree is known by: formats and Jira map are read once, not per item.
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	timed("scan", 5, function(_i: number)
+		b.state().scanned = nil
+		b.render()
+		w.flush()
+	end)
 	print(string.format("BENCH payload bytes=%d items=%d", #payload, #shown))
 end
 

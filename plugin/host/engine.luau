@@ -662,6 +662,7 @@ function M.claimCheckout(state: State, repo: string, path: string, busy: string,
 		end
 		if not err then
 			state.scanned = nil -- the new checkout may already hold worktrees: the next render scans it
+			M.propagate(state)
 		end
 		done(claimed, err)
 	end)
@@ -980,7 +981,7 @@ function M.refresh(state: State)
 			if issues then
 				tracker.byStatus(result.issues)
 			end
-			local snap: Snap = { kind = kind, items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, fetched = os.time() }
+			local snap: Snap = { kind = kind, items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, note = result.note, fetched = os.time() }
 			state.snaps[key] = snap
 			state.snap = snap
 			state.round += 1 -- every loaded checks list is older than this result now
@@ -1028,7 +1029,7 @@ function M.changed(state: State)
 	state.restoredId = nil
 	local moved = not v or (M.snapKey(v, state.activeLogin) ~= state.applied and not first)
 	-- "not-found" belongs to its view: another view clears it and searches; "auth" and "missing" hold every view.
-	if p and (p.kind == "invalid" or not TERMINAL[p.kind] or (moved and p.kind == "not-found")) then
+	if p and (not TERMINAL[p.kind] or (moved and (p.kind == "invalid" or p.kind == "not-found"))) then
 		state.problem = nil
 	end
 	showSnapshot(state)
@@ -1041,6 +1042,7 @@ end
 function M.retry(state: State)
 	process.reset()
 	jira.reset()
+	github.forget()
 	M.probeClis(true)
 	local p = state.problem
 	if p and TERMINAL[p.kind] then
@@ -1083,6 +1085,7 @@ end
 function M.propagate(origin: State)
 	for _, s in running do
 		if s ~= origin and M.alive(s) then
+			s.scanned = nil
 			M.reloadViews(s)
 			s.cx:render()
 		end
@@ -1343,9 +1346,7 @@ end
 
 function M.openBoard(state: State)
 	state.boardOn, state.agentsOn, state.inboxOn, state.focus = true, false, false, "list"
-	if not state.board.loaded then
-		M.boardLoad(state)
-	end
+	M.boardLoad(state) -- every open rereads git: this block's own changes (removals, new worktrees) show at once
 	M.boardEnsure(state)
 end
 
@@ -1845,7 +1846,7 @@ end
 
 -- The branch a new worktree of `issue` in `code` gets (formats.issueBranch over its variables and `users`; a user not
 -- in `users` stays as its variable), and its worktree's folder name. nil and why when a format cannot name one.
-function M.issueNames(issue: tracker.Issue, code: string, users: { [string]: string }): (string?, string?, string?)
+function M.issueNames(issue: tracker.Issue, code: string, users: { [string]: string }, snap: { [string]: any }?): (string?, string?, string?)
 	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
 	local slug = tracker.slug(issue.title)
 	local vars: { [string]: string } = {
@@ -1857,11 +1858,11 @@ function M.issueNames(issue: tracker.Issue, code: string, users: { [string]: str
 		["github.user"] = users["github.user"] or "{github.user}",
 		["jira.user"] = users["jira.user"] or "{jira.user}",
 	}
-	local branch, why = tracker.render(formats.issueBranch(code), vars)
+	local branch, why = tracker.render(formats.issueBranch(code, snap), vars)
 	if not branch then
 		return nil, nil, why
 	end
-	local dir, dirWhy = tracker.render(formats.of("issuedir"), { key = issue.ref, slug = slug, owner = string.lower(owner or ""), repo = string.lower(name or "") }, true)
+	local dir, dirWhy = tracker.render(formats.of("issuedir", snap), { key = issue.ref, slug = slug, owner = string.lower(owner or ""), repo = string.lower(name or "") }, true)
 	if not dir then
 		return nil, nil, dirWhy
 	end
@@ -1871,13 +1872,13 @@ end
 -- How worktree.scan knows `item`'s worktree (a github.Pr, or a tracker.Issue worked in one of `codes`): a pull
 -- request's by its head branch, an issue's by the branch the format names now; either by the folder name the format
 -- names now.
-function M.worktreeWant(state: State, kind: string, item: any, codes: { string }): worktree.Want
+function M.worktreeWant(state: State, kind: string, item: any, codes: { string }, snap: { [string]: any }?): worktree.Want
 	local want: worktree.Want = { branches = {}, dirs = {} }
 	if kind ~= "issues" then
 		local owner, name = string.match(item.repo, "^([^/]+)/([^/]+)$")
 		table.insert(want.branches, worktree.prBranch(item.head, item.fork))
 		want.ref = worktree.prRef(owner or "", name or "", item.number)
-		local dir = formats.prDir(item.repo, item.number, item.title)
+		local dir = formats.prDir(item.repo, item.number, item.title, snap)
 		if dir then
 			table.insert(want.dirs, dir)
 		end
@@ -1885,7 +1886,7 @@ function M.worktreeWant(state: State, kind: string, item: any, codes: { string }
 	end
 	local users = me.of(state, item)
 	for _, code in codes do
-		local branch, dir = M.issueNames(item, code, users)
+		local branch, dir = M.issueNames(item, code, users, snap)
 		if branch and dir then
 			table.insert(want.branches, branch)
 			table.insert(want.dirs, dir)

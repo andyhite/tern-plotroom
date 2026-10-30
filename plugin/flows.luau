@@ -29,11 +29,11 @@ type HostId = { id: number, name: string, address: string }
 -- agent finishes, for the same item (`kind`, `repo`, `ref`), or `prs:<id>` for a pull request action on the pull request
 -- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
 -- counts the actions chained before it.
-type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string? }
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string? }
+type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number? }
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string? }
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string? }
 type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
@@ -135,14 +135,15 @@ local function linkOf(row: any): Link?
 			or type(r.depth) ~= "number"
 			or (r.code ~= nil and type(r.code) ~= "string")
 			or (r.branch ~= nil and type(r.branch) ~= "string")
+			or (r.pane ~= nil and type(r.pane) ~= "number")
 		then
 			return nil
 		end
-		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth, code = r.code, branch = r.branch }
+		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth, code = r.code, branch = r.branch, pane = r.pane }
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -160,6 +161,7 @@ local function linkOf(row: any): Link?
 		title = clip(texts.title, TITLE_CAP),
 		result = clip(texts.result, RESULT_CAP),
 		ended = clip(texts.ended, RESULT_CAP),
+		cwd = texts.cwd, -- where its agent started: a pane id reused after a restart is told apart by it; an old link has none
 	}
 end
 
@@ -189,32 +191,47 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
 
--- pane -> state of every agent block now listed, and pane -> its last message and delivery error (each cut to
--- LAST_CAP bytes); nil states when the list cannot be read.
-local function agentStates(cx: WindowCx): ({ [number]: string }?, Notes)
+-- pane -> state of every agent block now listed, pane -> its last message and delivery error (each cut to
+-- LAST_CAP bytes) and pane -> its working directory; nil states when the list cannot be read.
+local function agentStates(cx: WindowCx): ({ [number]: string }?, Notes, { [number]: string })
 	local ok, list = pcall(function()
 		return cx.agents:list()
 	end)
 	local notes: Notes = {}
+	local cwds: { [number]: string } = {}
 	if not ok or type(list) ~= "table" then
-		return nil, notes
+		return nil, notes, cwds
 	end
 	local out: { [number]: string } = {}
 	for _, a in list do
 		if type(a) == "table" and type(a.pane) == "number" then
 			out[a.pane] = if type(a.state) == "string" and STATES[a.state] then a.state else "idle"
+			if type(a.cwd) == "string" then
+				cwds[a.pane] = a.cwd
+			end
 			notes[a.pane] = {
 				last = if type(a.last_message) == "string" then clip(a.last_message, LAST_CAP) else nil,
 				err = if type(a.delivery_error) == "string" then clip(a.delivery_error, LAST_CAP) else nil,
 			}
 		end
 	end
-	return out, notes
+	return out, notes, cwds
+end
+
+-- The state of link `l`'s agent: nil when its pane is not listed, or lists another working directory than the link's
+-- (a pane id reused after a restart). A link without a directory, or a listing without one, matches by pane alone.
+local function stateOf(l: Link, states: { [number]: string }, cwds: { [number]: string }): string?
+	local s = states[l.agent]
+	local at = cwds[l.agent]
+	if s and l.cwd and at and at ~= l.cwd then
+		return nil
+	end
+	return s
 end
 
 local function plotroomPanes(cx: WindowCx): { number }
@@ -232,13 +249,13 @@ end
 -- counts); an agent pane no longer listed is exited. An exited agent carries no text: its row is not shown, and the
 -- report stays small. ponytail: the texts stop at INFO_BYTES of JSON-encoded size (escapes count: the host's cap is on the
 -- encoded report), so a report of many live agents stays under its 40000-byte cap with state only for the rest; raise the host's cap with the count of agents if that is ever too few.
-local function statusMap(links: { Link }, host: HostId, states: { [number]: string }, notes: Notes): { [string]: StatusRow }
+local function statusMap(links: { Link }, host: HostId, states: { [number]: string }, cwds: { [number]: string }, notes: Notes): { [string]: StatusRow }
 	local map: { [string]: StatusRow } = {}
 	local count = 0
 	local bytes = 0
 	for _, l in links do
 		if map[l.key] == nil and hostSame(l.host, host) and count < LINKS_CAP then
-			local state = states[l.agent] or "exited"
+			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
 			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended }
@@ -277,13 +294,47 @@ function M.waitingCount(): number
 	return #waiting
 end
 
+local attention = 0 -- items needing attention, summed over the Plotroom blocks (their hidden `main.need`)
+local attentionTimer: TimerHandle? = nil
+
+-- How many items need attention now (what the status line shows).
+function M.attentionCount(): number
+	return attention
+end
+
+-- Reads each Plotroom block's count; redraws the status line only when the sum changed.
+function M.attentionSync(cx: WindowCx)
+	local sum = 0
+	for _, pane in plotroomPanes(cx) do
+		local n = tonumber(e().nodeProp(e().readNode(cx, pane, "main.need"), "text"))
+		if n and n > 0 then
+			sum += math.floor(n)
+		end
+	end
+	if sum ~= attention then
+		attention = sum
+		tern.chrome.refresh()
+	end
+end
+
+local function attentionTick(cx: WindowCx?)
+	attentionTimer = nil
+	if not cx then
+		return -- the window went away: the next window_start or pane_created starts it again
+	end
+	M.attentionSync(cx)
+	if #plotroomPanes(cx) > 0 then
+		attentionTimer = tern.timer(SYNC_MS, attentionTick)
+	end
+end
+
 -- Recomputes the waiting agents among `links` (only the ones the Agents list covers: see agentSync) from `states`;
 -- toasts each agent that just entered waiting_input, and redraws the status line when the shown set changed. `states`
 -- nil (no Plotroom pane) only clears the shown count: the toasted set stays until a real read shows an agent left.
-local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: string }?)
+local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: string }?, cwds: { [number]: string })
 	local now: { [number]: Link } = {}
 	for _, l in links do
-		if states and states[l.agent] == "waiting_input" and now[l.agent] == nil then
+		if states and stateOf(l, states, cwds) == "waiting_input" and now[l.agent] == nil then
 			now[l.agent] = l
 		end
 	end
@@ -337,10 +388,10 @@ function M.agentSync(cx: WindowCx)
 	local panes = plotroomPanes(cx)
 	local links = readLinks()
 	if #panes == 0 then
-		trackWaiting(cx, {}, nil)
+		trackWaiting(cx, {}, nil, {})
 		return
 	end
-	local states, notes = agentStates(cx)
+	local states, notes, cwds = agentStates(cx)
 	if not states then
 		return
 	end
@@ -355,11 +406,11 @@ function M.agentSync(cx: WindowCx)
 			end
 		end
 	end
-	trackWaiting(cx, covered, states)
+	trackWaiting(cx, covered, states, cwds)
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
 		if host then
-			local map = statusMap(links, host, states, notes)
+			local map = statusMap(links, host, states, cwds, notes)
 			local sig = signature(map)
 			local ack = e().nodeProp(e().readNode(cx, pane, "main.agents"), "text")
 			if ack ~= sig and not (ack == nil and sig == "") then
@@ -379,12 +430,12 @@ local function active(cx: WindowCx): boolean
 	if #links == 0 or #plotroomPanes(cx) == 0 then
 		return false
 	end
-	local states = agentStates(cx)
+	local states, _, cwds = agentStates(cx)
 	if not states then
 		return true -- unreadable list: keep watching
 	end
 	for _, l in links do
-		local s = states[l.agent]
+		local s = stateOf(l, states, cwds)
 		if s ~= nil and s ~= "exited" then
 			return true
 		end
@@ -405,6 +456,9 @@ end
 
 -- Starts the status timer when it is not running and there is something to tell.
 function M.ensureSync(cx: WindowCx)
+	if attentionTimer == nil and #plotroomPanes(cx) > 0 then
+		attentionTick(cx)
+	end
 	if timer == nil and active(cx) then
 		timer = tern.timer(SYNC_MS, tick)
 	end
@@ -422,7 +476,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil } }
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			table.insert(out, l)
@@ -436,9 +490,11 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 end
 
 -- The chain of the finished agent pane `agent`, once: its link says what to start next, and the next action is cleared
--- so a later finish of the same agent (another turn) starts nothing. Returns that chain and the Plotroom block on the
--- agent's host to start it from; nil for an agent with no next action, an unreadable store or no such block.
-function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
+-- so a later finish of the same agent (another turn) starts nothing. `result`: how the turn ended; any but "done" clears
+-- it whether or not a block is open. Returns that chain and the Plotroom block on the agent's host to start it from (the
+-- block that started the chain while it is still one on that host, else the lowest); nil for an agent with no next
+-- action or an unreadable store; no block for a "done" turn leaves the action for the agent's next finish.
+function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, number?)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
 	if not host or not healthy then
@@ -451,15 +507,19 @@ function M.takeChain(cx: WindowCx, agent: number): (Chain?, number?)
 				return nil, nil
 			end
 			local block: number? = nil
+			local from = l.chain.pane
 			for _, p in plotroomPanes(cx) do
 				local ph = hostOf(cx, p)
 				if ph and hostSame(ph, host) then
-					block = p
-					break
+					if p == from then
+						block = p
+						break
+					end
+					block = block or p
 				end
 			end
 			-- No Plotroom block on that host: the next action stays for the agent's next finish.
-			if not block then
+			if not block and result == "done" then
 				return table.clone(l.chain), nil
 			end
 			local taken: Chain = table.clone(l.chain)
@@ -494,12 +554,12 @@ end
 -- ended) result. A finished agent that is gone stays listed with state "exited". Read-only.
 function M.agentList(cx: WindowCx): { { item: string, action: string, state: string, result: string? } }
 	local out = {}
-	local states = agentStates(cx)
+	local states, _, cwds = agentStates(cx)
 	if not states then
 		return out
 	end
 	for _, l in (readLinks()) do
-		local state = states[l.agent] or (if l.result then "exited" else nil)
+		local state = stateOf(l, states, cwds) or (if l.result then "exited" else nil)
 		if state then
 			table.insert(out, { item = l.key, action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "", state = state, result = l.result })
 		end
@@ -511,13 +571,13 @@ end
 -- agent is gone.
 function M.liveAgent(cx: WindowCx, pane: number, key: string): (Link?, string?)
 	local host = hostOf(cx, pane)
-	local states = agentStates(cx)
+	local states, _, cwds = agentStates(cx)
 	if not host or not states then
 		return nil, nil
 	end
 	for _, l in (readLinks()) do
 		if l.key == key and hostSame(l.host, host) then
-			local state = states[l.agent] or "exited"
+			local state = stateOf(l, states, cwds) or "exited"
 			return if state == "exited" then nil else l, state
 		end
 	end
@@ -836,14 +896,14 @@ end
 -- The agent picker, then the review, for the selection `sel`.
 local function offerSelection(cx: WindowCx, sel: Picked)
 	local links, healthy = readLinks()
-	local states = agentStates(cx)
+	local states, _, cwds = agentStates(cx)
 	if not healthy or not states then
 		return cx:toast("error", "The linked agents could not be read", "Try again in a moment.")
 	end
 	local items: { PickItem } = {}
 	local seen: { [number]: boolean } = {}
 	for _, l in links do
-		local state = states[l.agent]
+		local state = stateOf(l, states, cwds)
 		if state and state ~= "exited" and not seen[l.agent] then
 			local host = hostOf(cx, l.agent)
 			-- A pane id is reused after a restart: only an agent on the recorded host belongs to the link.
@@ -1414,6 +1474,7 @@ local function exportFlow(cx: WindowCx, pane: number)
 						table.insert(rows, { label = n, group = "Notes" })
 					end
 				end
+				local askFile: (WindowCx) -> ()
 				local function commit(cx6: WindowCx, path: string?)
 					local ca: { [string]: any } = { phase = "commit", token = token }
 					if path then
@@ -1422,7 +1483,11 @@ local function exportFlow(cx: WindowCx, pane: number)
 					e().ask(cx6, pane, "export", ca, ACT_MS, function(r2: any, cx7: WindowCx)
 						local why3 = problemOf(r2)
 						if why3 then
-							return cx7:toast("error", "Not exported", why3)
+							cx7:toast("error", "Not exported", why3)
+							if r2.retry == true then
+								askFile(cx7) -- the host kept the snapshot: another file name tries it again
+							end
+							return
 						elseif r2.ok ~= true then
 							return cx7:toast("error", "Not exported", "The block's host did not confirm it")
 						end
@@ -1437,18 +1502,21 @@ local function exportFlow(cx: WindowCx, pane: number)
 						cx7:toast("success", "Exported " .. actual, table.concat(parts, " · "))
 					end)
 				end
+				askFile = function(cxp: WindowCx)
+					cxp:prompt({ placeholder = "File path to write the export to", icon = "merge", action = "export" }):next(function(text, _, cx7)
+						local path = if text then trim(text) else ""
+						if cx7 and path ~= "" then
+							commit(cx7, path)
+						end
+					end)
+				end
 				cx5:pick({ items = rows, placeholder = "Export " .. actual, icon = "merge", action = "export" }):next(function(item, _, cx6)
 					if not item or not cx6 then
 						return
 					elseif item.mode == "copy" then
 						commit(cx6, nil)
 					elseif item.mode == "file" then
-						cx6:prompt({ placeholder = "File path to write the export to", icon = "merge", action = "export" }):next(function(text, _, cx7)
-							local path = if text then trim(text) else ""
-							if cx7 and path ~= "" then
-								commit(cx7, path)
-							end
-						end)
+						askFile(cx6)
 					end
 				end)
 			end)

@@ -29,7 +29,7 @@ export type Issue = {
 export type Linked = { ref: string, title: string, url: string, state: string, relation: string?, status: { text: string, tone: string }? } -- state "open"|"draft"|"merged"|"closed"|"done"; relation (Jira) "blocks", "is blocked by", "subtask", ...; status (Jira) its workflow status as a badge
 export type Field = { label: string, value: string? } -- nil value: shown as None
 export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }
-export type IssueResult = { issues: { Issue }, total: number, complete: boolean }
+export type IssueResult = { issues: { Issue }, total: number, complete: boolean, note: string? }
 
 -- Name formats: an issue's new branch (Settings › Worktrees, or per repository in Settings › Repositories), and the folder name of a PR's or an issue's worktree (Settings › Worktrees).
 -- `{github.user}` is the gh login the repository is worked with, `{jira.user}` the Jira sign-in's email before the `@`.

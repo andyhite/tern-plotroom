@@ -628,6 +628,15 @@ windowCase("worktree.open: a fork PR is on <fork owner>/<branch>, never fetched 
 		"git -C /work/r config branch.fork/feature.remote https://github.com/fork/r.git",
 		"git -C /work/r config branch.fork/feature.merge refs/heads/feature",
 	}, "one fetch, from origin: the fork's branch is not fetched, and the upstream is the fork's URL")
+	local omp: any = nil
+	for _, c in w.calls do
+		if c.argv[1] == "omp" then
+			omp = c
+		end
+	end
+	eq(omp.env.GIT_CONFIG_COUNT, "1", "a fork's checkout is told one config override")
+	eq(omp.env.GIT_CONFIG_KEY_0 .. "=" .. omp.env.GIT_CONFIG_VALUE_0, "core.hooksPath=/dev/null", "that turns its git hooks off")
+	eq(r.fork, true, "the result says it is a fork's")
 	same(s.git.config, {
 		["branch.fork/feature.remote"] = "https://github.com/fork/r.git",
 		["branch.fork/feature.merge"] = "refs/heads/feature",
@@ -1376,7 +1385,7 @@ windowCase("worktree: a project is a Jira key or a GitHub repository, and a chec
 	w.fs.dirs["/work/new"] = nil
 	w.fs.dirs["/work/new/.git"] = nil
 	w.respond(function(call: Call): Reply?
-		if table.concat(call.argv, " ") == "gh repo clone o/r /work/new" then
+		if table.concat(call.argv, " ") == "gh repo clone github.com/o/r /work/new" then
 			w.fs.dirs["/work/new"] = true
 			w.fs.dirs["/work/new/.git"] = true
 			return { stdout = "" }
@@ -1387,10 +1396,10 @@ windowCase("worktree: a project is a Jira key or a GitHub repository, and a chec
 	eq(made.problem, nil, "a missing folder is cloned into: problem")
 	eq(made.result.root, "/work/new", "and is the checkout")
 	eq(made.result.cloned, true, "cloned")
-	eq(countCalls(w, "gh repo clone o/r /work/new"), 1, "gh cloned once")
+	eq(countCalls(w, "gh repo clone github.com/o/r /work/new"), 1, "gh cloned once")
 	w.fs.dirs["/work/plain"] = true
 	w.respond(function(call: Call): Reply?
-		if table.concat(call.argv, " ") == "gh repo clone o/r /work/plain" then
+		if table.concat(call.argv, " ") == "gh repo clone github.com/o/r /work/plain" then
 			return { status = 1, stderr = "fatal: destination path '/work/plain' already exists and is not an empty directory.\n" }
 		end
 		return nil
@@ -1398,6 +1407,20 @@ windowCase("worktree: a project is a Jira key or a GitHub repository, and a chec
 	local plain = claim("/work/plain")
 	eq(plain.result, nil, "a folder that is no checkout and cannot be cloned into")
 	has(plain.problem, "not an empty directory", "gh's reason is the problem")
+end)
+
+windowCase("worktree: claimCheckout from a linked worktree saves the main checkout, not the linked one", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local r = issueRepo(w, "ABC-7")
+	asks.bk.tree(w, r.git, "/wt/feature", "feature")
+	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+	worktree.claimCheckout("/wt/feature", "o/r", nil, function(result, problem, cx)
+		out.calls += 1
+		out.result, out.problem, out.cx = result, problem, cx
+	end)
+	w.flush()
+	eq(out.problem, nil, "problem")
+	eq(out.result.root, "/work/r", "the main checkout")
 end)
 
 windowCase("worktree: claimCheckout answers a folder the runtime cannot look at with a problem, and never clones", function(w: World)
@@ -1415,7 +1438,7 @@ windowCase("worktree: claimCheckout answers a folder the runtime cannot look at 
 	eq(out.calls, 1, "answered once")
 	eq(out.result, nil, "no checkout")
 	has(out.problem, "fs gone", "the reason")
-	eq(countCalls(w, "gh repo clone o/r /work/new"), 0, "nothing was cloned")
+	eq(countCalls(w, "gh repo clone github.com/o/r /work/new"), 0, "nothing was cloned")
 end)
 
 case("worktree: describeIssue says how the issue's worktree stands", function(w: World)

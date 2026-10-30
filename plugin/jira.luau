@@ -309,9 +309,11 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 			if not shouldContinue() then
 				return finish(nil, superseded)
 			end
-			local limit = if count and count > PAGE then M.LIMIT else PAGE
+			-- acli ignores --limit with --paginate (it downloads everything), so paginate only a list that fits LIMIT.
+			local paginate = count ~= nil and count > PAGE and count <= M.LIMIT
+			local limit = if paginate then M.LIMIT else PAGE
 			local argv = { "jira", "workitem", "search", "--jql", jql, "--limit", tostring(limit), "--json", "--fields", SEARCH_FIELDS }
-			if limit > PAGE then
+			if paginate then
 				table.insert(argv, "--paginate")
 			end
 			search(argv, limit, count)
@@ -754,15 +756,32 @@ function M.item(key: string, done: (tracker.Issue?, Problem?) -> (), shouldConti
 	end)
 end
 
--- Assigns `key` to the signed-in user (`--assignee @me`); done(problem).
-function M.assignMe(key: string, done: (Problem?) -> ())
+-- `done(nil)` when acli's sign-in is still `who` (M.identity, read again now); else the problem, and nothing is sent.
+local function bound(who: Identity, done: (Problem?) -> ())
+	M.identity(function(now, problem)
+		if not now then
+			return done(problem)
+		elseif now.site ~= who.site or now.email ~= who.email then
+			return done({ kind = "invalid", message = "The acli account changed since you were asked (" .. who.email .. " at " .. who.site .. ", now " .. now.email .. " at " .. now.site .. "); nothing was sent." })
+		end
+		done(nil)
+	end)
+end
+
+-- Assigns `key` to the signed-in user (`--assignee @me`) as `who`, which must still be that account; done(problem).
+function M.assignMe(key: string, who: Identity, done: (Problem?) -> ())
 	if type(key) ~= "string" or not string.match(key, KEY) then
 		return later(function()
 			done({ kind = "invalid", message = "Unexpected issue key." })
 		end)
 	end
-	acli({ "jira", "workitem", "assign", "--key", key, "--assignee", "@me", "--yes" }, function(_, problem)
-		done(noted(problem))
+	bound(who, function(problem0)
+		if problem0 then
+			return done(problem0)
+		end
+		acli({ "jira", "workitem", "assign", "--key", key, "--assignee", "@me", "--yes" }, function(_, problem)
+			done(noted(problem))
+		end)
 	end)
 end
 
@@ -950,7 +969,7 @@ end
 
 -- Applies transition `id` (one M.transitions returned) to `key`; the list is read again first and the id must still be
 -- in it. A transition that needs fields (a screen) is refused by Jira and that text is the problem. done(problem).
-function M.transition(key: string, id: string, done: (Problem?) -> ())
+function M.transition(key: string, id: string, who: Identity, done: (Problem?) -> ())
 	local function fail(p: Problem)
 		later(function()
 			done(p)
@@ -962,18 +981,23 @@ function M.transition(key: string, id: string, done: (Problem?) -> ())
 	if type(id) ~= "string" or not string.match(id, "^%d+$") or #id > 10 then
 		return fail({ kind = "invalid", message = "Unexpected transition id." })
 	end
-	listed(key, function(found, problem)
-		if not found then
-			return done(problem)
+	bound(who, function(problem0)
+		if problem0 then
+			return done(problem0)
 		end
-		for _, t in found do
-			if t.id == id then
-				return rest("POST", "/rest/api/3/issue/" .. key .. "/transitions", { transition = { id = id } }, function(_, p)
-					done(p)
-				end)
+		listed(key, function(found, problem)
+			if not found then
+				return done(problem)
 			end
-		end
-		done({ kind = "invalid", message = "Transition " .. id .. " is no longer available for " .. key .. "." })
+			for _, t in found do
+				if t.id == id then
+					return rest("POST", "/rest/api/3/issue/" .. key .. "/transitions", { transition = { id = id } }, function(_, p)
+						done(p)
+					end)
+				end
+			end
+			done({ kind = "invalid", message = "Transition " .. id .. " is no longer available for " .. key .. "." })
+		end)
 	end)
 end
 return M

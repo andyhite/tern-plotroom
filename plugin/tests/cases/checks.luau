@@ -793,10 +793,12 @@ case("host: a Jira worktree whose mapped checkout is not git's main path has no 
 	lacks(body, "Reading", "")
 	lacks(body, "folder is deleted", "a refusal does not say the folder goes")
 	lacks(body, "Press d", "nor offer d")
-	local mark = #s.git.log
+	local mark, toasts = #s.git.log, #w.toasts
+	eq(findKey(confirmOf(b), "delete"), nil, "a refused removal offers no Remove row")
+	yes(findKey(confirmOf(b), "keep") ~= nil, "only Keep")
 	b.typeText("d")
 	w.flush()
-	eq(w.toasts[#w.toasts].text, "Worktree not removed", "d refuses")
+	eq(#w.toasts, toasts, "d does nothing while the refusal stands")
 	eq(countLog(s.git, "worktree remove", mark), 0, "and runs no git worktree remove")
 	yes(cardOf(b) ~= nil, "the card stays")
 end)
@@ -813,11 +815,11 @@ case("host: a worktree detached after its card was made is refused by git's clai
 	pressCard(b, "remove")
 	w.flush()
 	local mark = #s.git.log
+	has(findKey(confirmOf(b), "body", "text").p.spans[1].t, "no longer lists", "the confirm says git lost the worktree")
+	eq(findKey(confirmOf(b), "delete"), nil, "and offers no Remove row")
 	b.typeText("d")
 	w.flush()
-	eq(w.toasts[#w.toasts].text, "Worktree not removed", "d is refused")
-	has(w.toasts[#w.toasts].sub, "no branch", "because the worktree is on no branch now")
-	eq(countLog(s.git, "worktree remove", mark), 0, "and no worktree is removed")
+	eq(countLog(s.git, "worktree remove", mark), 0, "d removes nothing")
 end)
 
 case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
@@ -2587,6 +2589,47 @@ case("host: a collapsed view is one summary row; Edit expands its form, another'
 	lacks(hint, "work", "a login is not in the summary")
 	eq(sectionIn(other, "vopen:prs:v1").title, "GitHub - work", "the login is in the group's title")
 	eq(hint, "Pull requests · is:open", "the summary is the kind and the query: no grouping, no prompt count")
+end)
+
+case("host: the Type row is a menu that Enter opens, not a flip, and moving a view says how many offered actions it cleared", function(w: World)
+	hostScene(w, 3)
+	newAcli(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "Mine", integration = "github", query = "is:open", logins = array({}), group = "none", prompts = array({ "p1", "p2" }) },
+		{ id = "v2", name = "Other", integration = "github", query = "is:open", logins = array({}), group = "none", prompts = array({}) },
+	}) })
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	expand(b, "vopen:prs:v1")
+	eq(rowIn(b, "vkind:prs:v1").control.style, "menu", "the Type row is a menu")
+	b.event({ ev = "select", id = "layer.settings", item = "vkind:prs:v1" })
+	b.press("enter")
+	eq(#w.kv.get("views-prs").items, 2, "Enter moves nothing: it opens the options")
+	b.event({ ev = "change", id = "layer.settings", item = "vkind:prs:v1", value = "issues" })
+	eq(w.toasts[#w.toasts].text, "2 offered actions cleared", "choosing the other kind says what was cleared")
+	local toasted = #w.toasts
+	b.event({ ev = "change", id = "layer.settings", item = "vkind:issues:v1", value = "prs" })
+	eq(#w.toasts, toasted, "a view moved with none offered adds no toast")
+end)
+
+case("host: a scan reads the name formats once for every shown item", function(w: World)
+	local s = hostScene(w, 3)
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	local b = openQueue(w)
+	w.flush()
+	local reads = 0
+	setmetatable(w.kv.store :: any, { __index = function(_: any, key: any): any
+		if key == "pr-dir-format" then
+			reads += 1
+		end
+		return nil
+	end })
+	b.state().scanned = nil
+	b.render()
+	w.flush()
+	eq(reads, 1, "three items, one read of the folder format")
+	eq(countLog(s.git, "worktree list") >= 1, true, "the scan ran")
 end)
 
 return {}

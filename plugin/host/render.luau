@@ -247,6 +247,8 @@ function M.rpcNodes(state: State): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
+		-- How many listed items need attention (the picker's "N need attention"): the window sums it over blocks for its status line.
+		ui.node("text", { key = "need", text = tostring(if state.snap and state.snap.need then state.snap.need else 0), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
 	}
@@ -597,10 +599,16 @@ end
 
 -- The preview's own controls, native action rows: Unpin while the item is pinned (nil otherwise).
 local function previewControls(state: State, item: any): Node?
+	local rows: { Node } = {}
 	if engine.pinFor(state.pins, item.key) then
-		return ui.node("list", { key = "controls" }, {
-			ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }),
-		})
+		table.insert(rows, ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
+	end
+	local st = if state.snap then engine.status(state, state.snap.kind, item) else nil
+	if st and st.snoozed then
+		table.insert(rows, ui.node("item", { key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
+	end
+	if #rows > 0 then
+		return ui.node("list", { key = "controls" }, rows)
 	end
 	return nil
 end
@@ -1393,7 +1401,7 @@ function M.queuePicker(state: State): Node
 		note(ui.span((headOf(state, problem.kind) or "Plotroom") .. ", showing the last results", "warning"))
 	end
 	if snap and not snap.complete then
-		note(ui.span("Partial results: narrow this view", "warning"))
+		note(ui.span(snap.note or "Partial results: narrow this view", "warning"))
 	end
 	for _, id in { "prs", "issues" } do
 		local locked = state.locked[id]
@@ -1433,7 +1441,7 @@ function M.queuePicker(state: State): Node
 			end
 		end
 	end
-	local hidden = if snap and view then engine.hiddenCount(state, snap) else 0
+	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
 	local hiddenBy = if state.attention then "Needs attention only" else "snoozing"
 	local hiddenKey = if state.attention then "attention" else "snoozed"
 	local hiddenHow = if map[hiddenKey] ~= "" then "press " .. map[hiddenKey] else "pick " .. (if state.attention then "Needs attention only" else "Show or hide snoozed") .. " in the command palette"
@@ -1458,7 +1466,7 @@ function M.queuePicker(state: State): Node
 		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
 			ui.span(
-				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by " .. hiddenBy .. "; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." else "No " .. state.kind.many .. " match " .. view.name .. ".")
+				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by " .. hiddenBy .. "; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
 					else (if none then "Neither gh nor acli is installed on this host. " else "No saved views yet. ")
 						.. (if map.settings ~= "" then "Press " .. map.settings .. " to "
 							elseif map.more ~= "" then "Press " .. map.more .. " and pick Settings to "
@@ -1509,7 +1517,7 @@ function M.queuePicker(state: State): Node
 end
 
 -- The Keep/Remove modal both worktree removals ask with: `tabbed` adds the warning that a tab works in the folder.
-local function removeOverlay(head: string, body: string, facts: { { [string]: any } }, tabbed: any, keepAct: string, dropAct: string): Node
+local function removeOverlay(head: string, body: string, facts: { { [string]: any } }, tabbed: any, keepAct: string, dropAct: string?): Node
 	local kids: { Node } = {
 		ui.node("text", { key = "body", spans = { ui.span(body, "muted") } }),
 		ui.node("kv", { key = "facts", items = facts }),
@@ -1517,10 +1525,13 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 	if tabbed then
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
 	end
-	table.insert(kids, ui.node("list", { key = "buttons" }, {
+	local buttons: { Node } = {
 		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
-		ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }),
-	}))
+	}
+	if dropAct then
+		table.insert(buttons, ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }))
+	end
+	table.insert(kids, ui.node("list", { key = "buttons" }, buttons))
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
 end
 
@@ -1580,7 +1591,7 @@ function M.queueView(state: State): BlockView
 		})
 		local body = if state.removeRefusal then state.removeRefusal .. " Enter or Esc closes this."
 			else "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
-		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", "confirm-remove"))
+		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", if state.removeRefusal then nil else "confirm-remove"))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
 	elseif state.help then

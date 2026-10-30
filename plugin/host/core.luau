@@ -84,6 +84,7 @@ export type Snap = {
 	items: { any },
 	total: number,
 	complete: boolean,
+	note: string?, -- why it is partial, when GitHub said so (an SSO restriction)
 	fetched: number,
 	rows: { any }?,
 	rowsRev: number?,
@@ -457,14 +458,10 @@ local KINDS: { [string]: Kind } = {
 		promptsKey = "prompts-prs",
 		integrations = { "github" },
 		-- archived:false: an archived repository's open items can never be acted on. Review requested is direct requests
-		-- only (review-requested also matches every team a login is on); Reviewed by me holds the PRs a review took
-		-- out of the requests, until GitHub asks again.
+		-- only (review-requested also matches every team a login is on).
 		seeds = {
 			{ name = "My PRs", integration = "github", query = "is:open author:@me archived:false", group = "repo" },
 			{ name = "Review requested", integration = "github", query = "is:open user-review-requested:@me draft:false archived:false", group = "none", sort = "oldest" },
-			{ name = "Team reviews", integration = "github", query = "is:open team-review-requested-user:@me draft:false archived:false", group = "repo" },
-			{ name = "Reviewed by me", integration = "github", query = "is:open reviewed-by:@me -author:@me -review-requested:@me archived:false", group = "repo" },
-			{ name = "Ready to merge", integration = "github", query = "is:open author:@me review:approved status:success archived:false", group = "repo" },
 		},
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },
@@ -515,12 +512,8 @@ local KINDS: { [string]: Kind } = {
 			{ name = "Assigned to me", integration = "github", query = "is:open assignee:@me archived:false", group = "repo" },
 			{ name = "Created by me", integration = "github", query = "is:open author:@me -assignee:@me archived:false", group = "repo" },
 			{ name = "My sprint", integration = "jira", query = "assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done AND hierarchyLevel < 1", group = "status", sprint = true },
-			{ name = "Up next", integration = "jira", query = 'assignee = currentUser() AND sprint in openSprints() AND statusCategory = "To Do" AND hierarchyLevel < 1', group = "none", sprint = true },
-			{ name = "In progress", integration = "jira", query = 'assignee = currentUser() AND sprint in openSprints() AND statusCategory = "In Progress" AND hierarchyLevel < 1', group = "status", sprint = true },
 			{ name = "Up for grabs", integration = "jira", query = 'assignee is EMPTY AND sprint in openSprints() AND statusCategory = "To Do" AND hierarchyLevel < 1', group = "none", sprint = true },
-			{ name = "Assigned to me", integration = "jira", query = "assignee = currentUser() AND statusCategory != Done AND hierarchyLevel < 1", group = "status" },
 			{ name = "My epics", integration = "jira", query = "assignee = currentUser() AND hierarchyLevel = 1 AND statusCategory != Done", group = "status" },
-			{ name = "Created by me", integration = "jira", query = "reporter = currentUser() AND (assignee is EMPTY OR assignee != currentUser()) AND statusCategory != Done AND hierarchyLevel < 1", group = "assignee" },
 		},
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
@@ -604,6 +597,9 @@ GROUPS = {
 			{ value = "review", label = "Review", of = function(pr: any): string return if pr.review then M.REVIEW_BADGE[pr.review].text else "No review" end },
 			{ value = "checks", label = "Checks", of = function(pr: any): string return if pr.checks then M.CHECK[pr.checks].text else "No checks" end },
 			{ value = "base", label = "Base branch", of = function(pr: any): string return pr.base end },
+			{ value = "fork", label = "Fork", of = function(pr: any): string return pr.fork or "Same repository" end },
+			-- ponytail: first label only; an item under every label needs one picker id per (group, item), which the cursor does not keep. Upgrade with that.
+			{ value = "label", label = "Label", of = function(pr: any): string return pr.labels[1] or "No label" end },
 		},
 	},
 	issues = {
@@ -612,6 +608,7 @@ GROUPS = {
 			{ value = "author", label = "Author", of = function(issue: any): string return issue.author end },
 			{ value = "state", label = "State", keep = true, of = function(issue: any): string return M.issueBadge(issue).text end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
+			{ value = "label", label = "Label", of = function(issue: any): string return issue.labels[1] or "No label" end },
 		},
 		jira = {
 			{ value = "project", label = "Project", of = function(issue: any): string return issue.repo end },
@@ -619,12 +616,13 @@ GROUPS = {
 			{ value = "type", label = "Type", of = function(issue: any): string return issue.type or "No type" end },
 			{ value = "priority", label = "Priority", of = function(issue: any): string return issue.priority or "No priority" end },
 			{ value = "assignee", label = "Assignee", of = function(issue: any): string return issue.assignees[1] or "Unassigned" end },
+			{ value = "label", label = "Label", of = function(issue: any): string return issue.labels[1] or "No label" end },
 			{ value = "reporter", label = "Reporter", of = function(issue: any): string return issue.author end },
 		},
 	},
 }
 
-M.RPC_PROTOCOL = "30"
+M.RPC_PROTOCOL = "31"
 
 -- Open in Git: the link of the worktree the card (or the Worktrees list's selected row) offers; its hidden node `git`
 -- under `buttons` carries it, and the window asks the host for the path (rpc `git-path`).

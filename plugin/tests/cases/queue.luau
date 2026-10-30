@@ -832,20 +832,13 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	same(hx.viewRows(w, "views-prs"), {
 		"v1 My PRs · github · repo",
 		"v2 Review requested · github · none · oldest",
-		"v3 Team reviews · github · repo",
-		"v4 Reviewed by me · github · repo",
-		"v5 Ready to merge · github · repo",
-	}, "the default pull request views were saved: the review queue oldest first, the others by repository")
+	}, "the default pull request views were saved: the review queue oldest first, My PRs by repository")
 	same(hx.viewRows(w, "views-issues"), {
 		"v1 Assigned to me · github · repo",
 		"v2 Created by me · github · repo",
 		"v3 My sprint · jira · status",
-		"v4 Up next · jira · none",
-		"v5 In progress · jira · status",
-		"v6 Up for grabs · jira · none",
-		"v7 Assigned to me · jira · status",
-		"v8 My epics · jira · status",
-		"v9 Created by me · jira · assignee",
+		"v4 Up for grabs · jira · none",
+		"v5 My epics · jira · status",
 	}, "and the default issue views beside them, in a store of their own: the sprint ones too, as the site has sprints")
 	for _, v in w.kv.get("views-issues").items do
 		if v.integration == "jira" then
@@ -860,11 +853,11 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	eq(rowIn(b, "vrestore:jira:"), nil, "nor has Jira")
 	b.event({ ev = "select", id = "layer.settings", item = "vadd:github:octocat" })
 	b.press("enter")
-	eq(#w.kv.get("views-prs").items, 6, "the signed-in account's Add saved a new view")
-	same(w.kv.get("views-prs").items[6].logins, { "octocat" }, "for that account")
-	eq(prefsOf(b).editing.row, "name:prs:v6", "and starts naming it")
+	eq(#w.kv.get("views-prs").items, 3, "the signed-in account's Add saved a new view")
+	same(w.kv.get("views-prs").items[3].logins, { "octocat" }, "for that account")
+	eq(prefsOf(b).editing.row, "name:prs:v3", "and starts naming it")
 	b.press("escape")
-	eq(w.kv.get("views-prs").items[6].name, "New view", "cancelling the naming keeps the placeholder name")
+	eq(w.kv.get("views-prs").items[3].name, "New view", "cancelling the naming keeps the placeholder name")
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "the new view became the active one and was searched")
 	has(b.title(), "New view", "the title shows it")
@@ -876,28 +869,28 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	has(ask.head, "Review requested", "naming the view")
 	eq(w.opened[#w.opened], "plotroom://confirm", "through the window's link")
 	eq(findKey(b.view().layer, "confirm"), nil, "Settings draws no overlay of its own")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v3" })
-	eq(#w.kv.get("views-prs").items, 6, "a confirmation of another row deletes nothing")
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v1" })
+	eq(#w.kv.get("views-prs").items, 3, "a confirmation of another row deletes nothing")
 	b.typeText("d")
 	b.press("enter")
-	eq(#w.kv.get("views-prs").items, 6, "d and Enter do not confirm it")
+	eq(#w.kv.get("views-prs").items, 3, "d and Enter do not confirm it")
 	b.event({ ev = "action", id = "layer.settings", act = "cancel-delete", value = ask.row })
 	eq(pendingOf(b), nil, "cancelling clears the question")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
-	eq(#w.kv.get("views-prs").items, 6, "and a late confirmation deletes nothing")
+	eq(#w.kv.get("views-prs").items, 3, "and a late confirmation deletes nothing")
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
 	b.press("enter")
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
 	eq(pendingOf(b), nil, "confirming closes the question")
 	local items = w.kv.get("views-prs").items
-	eq(#items, 5, "and deletes the view")
+	eq(#items, 2, "and deletes the view")
 	eq(items[2].id, "v3", "the other views stay")
-	expand(b, "vopen:prs:v6")
-	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v6" })
+	expand(b, "vopen:prs:v3")
+	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v3" })
 	b.press("enter")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v6" })
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v3" })
 	w.flush()
-	eq(#w.kv.get("views-prs").items, 4, "the active view can be deleted too")
+	eq(#w.kv.get("views-prs").items, 1, "the active view can be deleted too")
 	eq(pickerOf(b).scope, "issues:v1", "the filter now at its place in the list is shown: the pull request filters are followed by the issue filters")
 end)
 
@@ -910,9 +903,7 @@ case("host: a first run saves its issue views once the Jira site said whether it
 	local noSprint = {
 		"v1 Assigned to me · github · repo",
 		"v2 Created by me · github · repo",
-		"v7 Assigned to me · jira · status",
-		"v8 My epics · jira · status",
-		"v9 Created by me · jira · assignee",
+		"v5 My epics · jira · status",
 	}
 	acli.override = function(req: AcliReq): Reply?
 		return if req.kind == "sprints" then { delay = 1000, status = 1, stderr = "✗ Error: failed to parse JQL query: field 'sprint' does not exist or you do not have permission to view it.\n" } else nil
@@ -921,7 +912,7 @@ case("host: a first run saves its issue views once the Jira site said whether it
 	eq(w.kv.get("views-issues"), nil, "the issue views are not saved while the site has not answered")
 	w.advance(1000)
 	same(hx.viewRows(w, "views-issues"), noSprint, "then saved without the sprint views, the others keeping their ids")
-	eq(w.kv.get("views-issues").nextId, 10, "and a new view never takes a left-out one's id")
+	eq(w.kv.get("views-issues").nextId, 6, "and a new view never takes a left-out one's id")
 	goToSettings(b, "views")
 	eq(rowIn(b, "vrestore:jira:"), nil, "nothing to restore while the site has no sprints")
 	b.press("escape")
@@ -931,7 +922,7 @@ case("host: a first run saves its issue views once the Jira site said whether it
 	eq(rowIn(b, "vrestore:jira:").control.act, "restore-views", "the site has sprints now: Jira's group offers the sprint views")
 	b.event({ ev = "action", id = "layer.settings", act = "restore-views", value = "vrestore:jira:" })
 	local restored = table.clone(noSprint)
-	for _, row in { "v10 My sprint · jira · status", "v11 Up next · jira · none", "v12 In progress · jira · status", "v13 Up for grabs · jira · none" } do
+	for _, row in { "v6 My sprint · jira · status", "v7 Up for grabs · jira · none" } do
 		table.insert(restored, row)
 	end
 	same(hx.viewRows(w, "views-issues"), restored, "Restore defaults saved them after the others, under new ids")
@@ -949,26 +940,22 @@ case("host: an account's Restore defaults saves back the default views its group
 	}) })
 	local b = openQueue(w)
 	goToSettings(b, "views")
-	w.kv.failSet["views-prs"] = "disk full"
+	w.kv.failSet["views-issues"] = "disk full"
 	b.event({ ev = "action", id = "layer.settings", act = "restore-views", value = "vrestore:github:octocat" })
 	has(rowIn(b, "vrestore:github:octocat").warning, "disk full", "a failed save is told on its row")
-	eq(#w.kv.get("views-prs").items, 2, "and saved nothing")
-	w.kv.failSet["views-prs"] = nil
+	eq(#w.kv.get("views-issues").items, 2, "and saved nothing")
+	w.kv.failSet["views-issues"] = nil
 	b.event({ ev = "action", id = "layer.settings", act = "restore-views", value = "vrestore:github:octocat" })
 	same(hx.viewRows(w, "views-prs"), {
 		"v1 My PRs · github · none",
 		"v2 Review requested · github · none",
-		"v3 Team reviews · github · repo",
-		"v4 Reviewed by me · github · repo",
-		"v5 Ready to merge · github · repo",
-	}, "the views named like a default stay as saved; the missing pull request views follow them")
-	same(w.kv.get("views-prs").items[3].logins, { "octocat" }, "running as the group's account")
-	eq(w.kv.get("views-prs").items[5].query, "is:open author:@me review:approved status:success archived:false", "Restore defaults offers Ready to merge")
+	}, "the views named like a default stay as saved: every pull request default is there")
 	same(hx.viewRows(w, "views-issues"), {
 		"v1 Assigned to me · github · none",
 		"v2 Assigned to me · jira · none",
 		"v3 Created by me · github · repo",
 	}, "and the missing GitHub issue view in the issue store; Jira's views are its own group's")
+	same(w.kv.get("views-issues").items[3].logins, { "octocat" }, "running as the group's account")
 	eq(w.kv.get("views-issues").items[1].query, "is:open assignee:@me label:mine", "an edited default is never replaced")
 	eq(rowIn(b, "vrestore:github:octocat"), nil, "nothing is left to restore")
 	yes(rowIn(b, "vrestore:jira:") ~= nil, "while Jira still has defaults to restore")
@@ -2104,7 +2091,7 @@ case("host: a folder that does not exist is cloned into with gh, saved once git 
 	b.typeText("/code/r")
 	b.press("enter")
 	has(rowIn(b, "checkout:o/r").disabled, "cloning into it", "while gh clones the row says so and cannot be edited")
-	same(requestsOf(s.gh, "clone")[1].call.argv, { "gh", "repo", "clone", "o/r", "/code/r" }, "gh clones the repository into the folder")
+	same(requestsOf(s.gh, "clone")[1].call.argv, { "gh", "repo", "clone", "github.com/o/r", "/code/r" }, "gh clones the repository into the folder, as github.com/owner/name so GH_HOST cannot redirect it")
 	eq(w.kv.get("checkouts")["o/r"], "", "nothing is saved before the clone ends")
 	w.advance(2000)
 	eq(w.kv.get("checkouts")["o/r"], "/code/r", "the clone is saved as the checkout")
@@ -2624,6 +2611,55 @@ case("host: view group-by emits headers", function(w: World)
 	same(pickerOf(plain).order, { "no_2fb_231", "no_2fa_232", "no_2fb_233" }, "without a group-by the order is the PRs alone, with no header")
 end)
 
+case("host: group by Fork and by Label put each PR under its fork owner or first label, with a fallback group", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 10, { fork = "alice", labels = array({ "bug" }) }),
+		searchItem(2, "o/r", EPOCH - 20),
+		searchItem(3, "o/r", EPOCH - 30, { fork = "alice", labels = array({ "a", "bug" }) }),
+	}
+	local function groupBy(group: string)
+		w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+			{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = group, prompts = array({}) },
+		}) })
+	end
+	groupBy("fork")
+	local b = openQueue(w)
+	local byFork: { any } = { { group = "alice", label = "alice", count = 2 }, "no_2fr_231", "no_2fr_233", { group = "Same repository", label = "Same repository", count = 1 }, "no_2fr_232" }
+	same(pickerOf(b).order, byFork, "forks by owner, the rest under Same repository")
+	groupBy("label")
+	local byLabel: { any } = { { group = "a", label = "a", count = 1 }, "no_2fr_233", { group = "bug", label = "bug", count = 1 }, "no_2fr_231", { group = "No label", label = "No label", count = 1 }, "no_2fr_232" }
+	same(pickerOf(openQueue(w, 2)).order, byLabel, "by first label, No label last")
+	goToSettings(b, "views")
+	expand(b, "vopen:prs:v1")
+	same(asks.hx.options(b, "vgroup:prs:v1"), { "none", "repo", "author", "state", "review", "checks", "base", "fork", "label" }, "Settings offers both")
+end)
+
+case("host: a search that matches nothing says so, with the text, instead of calling the view empty", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	b.typeText("/")
+	b.typeText("zzz")
+	eq(pickerOf(b).empty[1].t, "No loaded pull requests match “zzz”.", "the search text is named")
+	b.press("escape")
+	b.press("escape")
+	yes(#listed(b) == 3, "clearing it lists everything again")
+end)
+
+case("host: a snoozed item's preview offers Unsnooze, which ends the snooze", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	b.typeText("z")
+	b.typeText("Z")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	local row = findKey(pickerNode(b), "unsnooze")
+	yes(row ~= nil, "the snoozed item's preview has the row")
+	has(row.p.label, "Snoozed until", "it says until when")
+	b.event({ ev = "action", act = "unsnooze" })
+	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, nil, "the saved snooze is gone")
+	eq(findKey(pickerNode(b), "unsnooze"), nil, "and the row with it")
+end)
+
 case("host: Settings keeps the refresh pace while a refresh runs", function(w: World)
 	local s = hostScene(w, 3)
 	local slow = false
@@ -2854,6 +2890,68 @@ case("settings: Save on the prompt editor saves the typed text after Done closed
 	eq(draftOf(b), nil, "and closes the editor")
 	local op: any = w.frames[#w.frames].ops[1]
 	eq(op[2], NULL, "giving the caret back")
+end)
+
+case("host: an invalid pause held across a restart still holds when its restored view is first listed", function(w: World)
+	local _, acli = crossScene(w)
+	local b = openRestored(w, "issues", { kind = "invalid", message = "the query is invalid", by = "jira" })
+	eq(pickerOf(b).state, "error", "the restored block holds the pause")
+	eq(searchesOf(acli), 0, "and searches nothing until Refresh")
+end)
+
+case("host: Needs attention only and Show snoozed are saved with the block and restored with it", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	eq(b.saved().attention, nil, "off is not saved")
+	b.event({ ev = "action", act = "triage", value = "toggle-attention" })
+	b.event({ ev = "action", act = "triage", value = "toggle-snoozed" })
+	eq(b.saved().attention, true, "attention is saved")
+	eq(b.saved().snoozed, true, "and so is snoozed")
+	local again = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	eq(again.state().attention, true, "a restored block filters to what needs attention")
+	eq(again.state().showSnoozed, true, "and lists snoozed items")
+	local fresh = w.open(3, { "/work/r" }, { version = 1, launchCwd = "/work/r", attention = true, snoozed = true })
+	w.flush()
+	eq(fresh.state().attention, false, "a save of another version restores fresh")
+end)
+
+case("host: a prompt, format, setup command or checkout saved in one block reaches the others", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	local a = w.open(1, { "/work/r" })
+	local c = w.open(2, { "/work/r" })
+	w.flush()
+	local function reaches(what: string, change: () -> ())
+		local drawn = c.renders()
+		change()
+		yes(c.renders() > drawn, what .. " draws the other block")
+	end
+	goToSettings(a, "prompts")
+	reaches("adding a prompt", function()
+		a.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
+	end)
+	reaches("naming it", function()
+		hx.save(a, (prefsOf(a).editing :: any).row, "Review")
+	end)
+	a.press("escape")
+	a.press("escape")
+	goToSettings(a, "worktrees")
+	reaches("a worktree name format", function()
+		hx.save(a, "fmt:prdir", "pr-{key}")
+	end)
+	a.press("escape")
+	goToSettings(a, "repos")
+	expand(a, "ropen:o/r")
+	reaches("a setup command", function()
+		hx.save(a, "setup:o/r:new", "make")
+	end)
+	reaches("a branch format", function()
+		hx.save(a, "branch:o/r", "feat/{key}")
+	end)
+	reaches("clearing a checkout", function()
+		a.event({ ev = "change", id = "layer.settings", item = "checkout:o/r" })
+	end)
 end)
 
 return {}
