@@ -223,20 +223,16 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 		return cached
 	end
 	local rows: { any } = {}
-	local need = 0
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
 		local isOpen = open[item.key] == true
 		local stage, why = engine.stage(state, snap.kind, item)
 		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go, stage) else pickerItem(item, state.notes[item.key], isOpen, go, stage)
 		decorate(state, snap.kind, item, row, stage, why)
-		if engine.needs(state, snap.kind, item) then
-			need += 1
-		end
 		table.insert(rows, row)
 	end
 	tern.json.array(rows)
-	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen, snap.need = rows, state.noteSeq, minute, openKey, need
+	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
 	return rows
 end
 
@@ -262,8 +258,8 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
-		-- How many listed items need attention (the picker's "N need attention"): the window sums it over blocks for its status line.
-		ui.node("text", { key = "need", text = tostring(if state.snap and state.snap.need then state.snap.need else 0), hidden = true }),
+		-- How many need you (Now's rows not snoozed): the pane title says it, and the window's status line takes it.
+		ui.node("text", { key = "need", text = tostring(engine.nowCount(state)), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
 		palette,
@@ -978,9 +974,9 @@ function M.helpOverlay(state: State): Node
 	})
 end
 
--- The sidebar's scopes in its order, and the id of the one shown: the pins, then the views grouped by integration (and
--- login), then the Worktrees list. Each is { id, label, icon, count, group }; the sidebar and the command palette's Views
--- group both list these rows, and engine.goScope shows one.
+-- The sidebar's scopes in its order, and the id of the one shown: Now, the pins, then the views grouped by integration
+-- (and login), then the Worktrees and Agents lists. Each is { id, label, icon, count, group }; the sidebar and the command
+-- palette's Views group both list these rows, and engine.goScope shows one.
 function M.scopeRows(state: State): ({ any }, string?)
 	-- Views of several integrations are grouped in the sidebar by integration, the pull request and issue views of one
 	-- together; so are views that run as several logins (a view of several is one entry in each login's group).
@@ -1027,19 +1023,20 @@ function M.scopeRows(state: State): ({ any }, string?)
 		count = if not dropdown then #engine.agentRows(state) else nil,
 		group = if grouped then "Agents" else nil,
 	})
-	table.insert(scopes, {
-		id = "inbox",
-		label = "Inbox",
+	-- Now comes first: it is the list that opens, and the one place that answers what needs you.
+	table.insert(scopes, 1, {
+		id = "now",
+		label = "Now",
 		icon = "inbox",
-		count = if not dropdown and state.inbox.loaded then #engine.inboxRows(state) else nil,
-		group = if grouped then "Inbox" else nil,
+		count = if not dropdown and (state.now.loaded or next(state.agents) ~= nil) then engine.nowCount(state) else nil,
+		group = if grouped then "Now" else nil,
 	})
 	if state.boardOn then
 		activeScope = "worktrees"
 	elseif state.agentsOn then
 		activeScope = "agents"
-	elseif state.inboxOn then
-		activeScope = "inbox"
+	elseif state.nowOn then
+		activeScope = "now"
 	end
 	return scopes, activeScope
 end
@@ -1280,82 +1277,127 @@ local function reasonOf(reason: string): { text: string, tone: string }
 	return { text = string.upper(string.sub(words, 1, 1)) .. string.sub(words, 2), tone = "muted" }
 end
 
--- The Inbox list's preview of the selected notification: its title, why it is listed, and what it is about.
-local function inboxPreview(state: State): { Node }
-	local row = engine.inboxSelected(state)
+-- Why Now lists `row` (engine.nowRows): its badge, and the sentence its preview says it with.
+local function nowWhy(row: any): ({ text: string, tone: string, title: string }, string)
+	if row.rank == 1 then
+		return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+	elseif row.rank == 2 then
+		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
+	elseif row.rank == 3 then
+		return { text = "Review requested", tone = "accent", title = "Your review is requested" }, "Your review is requested"
+	elseif row.rank == 4 then
+		return { text = "Ready to merge", tone = "success", title = "Your pull request is ready to merge" }, "Your pull request is ready to merge"
+	elseif row.rank == 5 then
+		local reason = reasonOf(row.notice.reason)
+		return { text = reason.text, tone = "accent", title = "GitHub notified you: " .. reason.text }, "An unread notification you take part in: " .. reason.text
+	end
+	local fresh = if row.why == "New" then "not seen yet" else "changed since you saw it"
+	return { text = "Assigned: " .. string.lower(row.why or ""), tone = if row.why == "New" then "accent" else "warning", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh
+end
+
+-- Now's preview of the selected row: its title, why it is listed, its stage, and what Enter does.
+local function nowPreview(state: State): { Node }
+	local row = engine.nowSelected(state)
 	if not row then
 		return {}
 	end
-	local why = reasonOf(row.reason)
-	local about = if row.kind == "pr" then "Pull request #" .. tostring(row.number) elseif row.kind == "issue" then "Issue #" .. tostring(row.number) else "Not a pull request or issue"
+	local badge, sentence = nowWhy(row)
+	local item, n, agent = row.item, row.notice, row.agent
+	local stage: { text: string, tone: string? }? = nil
+	if item and row.kind then
+		local id, why = engine.stage(state, row.kind, item)
+		stage = stageBadge(id, why, state.notes[item.key])
+	end
+	local enter = if row.rank == 1 and engine.agentHref(row.key) then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
 	return {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(printable(row.title), "strong") } }),
-			ui.node("badge", { key = "reason", text = why.text, tone = why.tone }),
+			ui.node("badge", { key = "why", text = badge.text, tone = badge.tone, title = badge.title }),
 		}),
 		ui.node("kv", {
 			key = "facts",
 			items = withValue({
-				{ k = "Repository", v = { ui.span(printable(row.repo), "mono") } },
-				{ k = "About", v = { ui.span(about) } },
-				{ k = "Updated", v = if row.updated > 0 then { ui.span(os.date("%Y-%m-%d %H:%M", row.updated)) } else nil },
+				{ k = "Why", v = { ui.span(sentence) } },
+				{ k = "Stage", v = if stage then { ui.span(stage.text, stage.tone) } else nil },
+				{ k = "Item", v = if row.key then { ui.span(printable(row.key), "mono") } elseif n then { ui.span(printable(n.repo), "mono") } else nil },
+				{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
+				{ k = "Last message", v = if agent and agent.last then { ui.span(printable(agent.last)) } else nil },
+				{ k = "Updated", v = if n and n.updated > 0 then { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } else nil },
+				{ k = "Snoozed", v = if row.snoozed then { ui.span("Until 08:00", "muted") } else nil },
 			}),
 		}),
-		ui.node("text", { key = "enter", spans = { ui.span(if row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it.", "muted") } }),
+		ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }),
 	}
 end
 
--- Turns the queue's picker props into the Inbox list's: a group per repository, each notification's title, reason and item.
-local function inboxProps(state: State, props: { [string]: any })
-	local inbox = state.inbox
-	local rows = engine.inboxRows(state)
-	local current = engine.inboxSelected(state)
+-- Turns the queue's picker props into Now's: its rows top first, each as its view shows it with why it is listed first.
+local function nowProps(state: State, props: { [string]: any })
+	local now = state.now
+	local rows = engine.nowRows(state)
+	local current = engine.nowSelected(state)
 	local map = keys.load()
+	local open = openItems(state)
+	local go = map["goto"]
 	local items: { any } = {}
 	local order: { any } = {}
-	local groups: { [string]: { any } } = {}
-	local names: { string } = {}
 	for _, row in rows do
-		local label = printable(row.title)
-		local why = reasonOf(row.reason)
-		local detail: { any } = { ui.span(why.text) }
-		if row.number then
-			table.insert(detail, " · ")
-			table.insert(detail, ui.span("#" .. row.number, "num"))
+		local badge = nowWhy(row)
+		local item: { [string]: any }
+		if row.item and row.kind then
+			local stage = engine.stage(state, row.kind, row.item)
+			local note = state.notes[row.key]
+			item = if row.kind == "issues" then issueRow(row.item, note, open[row.key] == true, go, stage) else pickerItem(row.item, note, open[row.key] == true, go, stage)
+		else
+			local detail: { any } = {}
+			if row.notice then
+				table.insert(detail, ui.span(printable(row.notice.repo), "mono"))
+				if row.notice.number then
+					table.insert(detail, " · ")
+					table.insert(detail, ui.span("#" .. row.notice.number, "num"))
+				end
+			else
+				table.insert(detail, ui.span(printable(row.key), "mono"))
+			end
+			if row.agent and row.agent.action then
+				table.insert(detail, " · " .. printable(row.agent.action))
+			end
+			item = { label = printable(row.title), title = printable(row.title), detail = detail }
 		end
-		local id = engine.inboxId(row)
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { { text = why.text, tone = why.tone, title = "GitHub notified you: " .. why.text } } })
-		if not groups[row.repo] then
-			groups[row.repo] = {}
-			table.insert(names, row.repo)
+		local badges: { any } = { badge }
+		if row.snoozed then
+			table.insert(badges, { text = "Snoozed", tone = "muted", title = "Snoozed until 08:00" })
 		end
-		table.insert(groups[row.repo], id)
-	end
-	for _, name in names do
-		table.insert(order, { group = name, label = printable(name), count = #groups[name] })
-		for _, id in groups[name] do
-			table.insert(order, id)
+		for _, b in item.badges or {} do
+			table.insert(badges, b)
 		end
+		item.id, item.badges = row.id, badges
+		table.insert(items, item)
+		table.insert(order, row.id)
 	end
 	local sub: { any } = {}
-	if inbox.busy then
-		local busy: any = ui.span("Reading notifications…", "muted")
+	if now.busy then
+		local busy: any = ui.span("Reading…", "muted")
 		busy.fx = "shimmer"
 		table.insert(sub, busy)
-	elseif inbox.loaded and not inbox.problem then
-		table.insert(sub, ui.span(#rows .. " unread notification" .. (if #rows == 1 then "" else "s") .. (if inbox.login then " for @" .. inbox.login else ""), "muted"))
-		if #rows > 0 then
-			table.insert(sub, ui.span(" · Commands › Mark read… marks them read", "muted"))
-		end
 	end
-	props.icon, props.title, props.noun = "inbox", { ui.span("Inbox", "strong") }, "notifications"
+	local count = engine.nowCount(state)
+	if count > 0 then
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. count .. " need you", "accent"))
+	end
+	for _, line in now.problems do
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. printable(line), "warning"))
+	end
+	if state.showSnoozed then
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. "Snoozed shown", "muted"))
+	end
+	props.icon, props.title, props.noun = "inbox", { ui.span("Now", "strong") }, "items"
 	props.subtitle = if #sub > 0 then sub else nil
-	props.placeholder = "Notifications are not searched"
-	props.state = if inbox.problem then "error" elseif not inbox.loaded then "loading" else "ready"
-	props.message = if inbox.problem then spans(ui.span("Inbox", "strong"), "  ", printable(inbox.problem.message)) else nil
-	props.empty = { ui.span("Nothing unread needs you: no review requests, mentions or other threads you take part in.", "muted") }
+	props.placeholder = "Now is not searched"
+	props.state = if not now.loaded and #rows == 0 then "loading" else "ready"
+	props.message = nil
+	props.empty = { ui.span("Nothing needs you right now.", "muted") }
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
-	props.selected = if current then engine.inboxId(current) else nil
+	props.selected = if current then current.id else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
 	props.actions = keyed({
 		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
@@ -1383,7 +1425,7 @@ end
 -- dismissed (kv `get-started`), and whenever Commands › Get started opened it. Each line has one action; a done line
 -- has none. Lines still being asked hide it, unless Get started opened it.
 local function checklist(state: State): Node?
-	if state.boardOn or state.agentsOn or state.inboxOn then
+	if state.boardOn or state.agentsOn or state.nowOn then
 		return nil
 	end
 	local saved = engine.getStarted()
@@ -1498,21 +1540,15 @@ function M.queuePicker(state: State): Node
 	elseif snap then
 		note(ui.span("updated " .. os.date("%H:%M", snap.fetched), "muted"))
 	end
-	-- Sort order and the attention filter share the bottom row with the actions (plotroom.css).
+	-- The sort order shares the bottom row with the actions (plotroom.css).
 	local strip: { string } = {}
-	if state.attention then
-		table.insert(strip, "Needs attention only")
-	end
 	if view and not engine.isPin(view.id) then
-		-- Always shown, attention filter or not: which order the list is in. A view with no saved sort keeps GitHub's
-		-- search order, or Jira's status order.
+		-- Always shown: which order the list is in. A view with no saved sort keeps GitHub's search order, or Jira's
+		-- status order.
 		table.insert(strip, 1, "Sort: " .. (if view.sort then sorting.label(view.sort) elseif view.integration == "github" then "GitHub's order" else "Default (status order)"))
 	end
 	if state.showSnoozed then
 		note(ui.span("Snoozed shown", "muted"))
-	end
-	if snap and snap.need and snap.need > 0 then
-		note(ui.span(snap.need .. " need attention", "accent"))
 	end
 	if state.triageProblem then
 		note(ui.span(state.triageProblem, "error"))
@@ -1567,9 +1603,7 @@ function M.queuePicker(state: State): Node
 		end
 	end
 	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
-	local hiddenBy = if state.attention then "Needs attention only" else "snoozing"
-	local hiddenKey = if state.attention then "attention" else "snoozed"
-	local hiddenHow = if map[hiddenKey] ~= "" then "press " .. map[hiddenKey] else "pick " .. (if state.attention then "Needs attention only" else "Show or hide snoozed") .. " in Commands"
+	local hiddenHow = if map.snoozed ~= "" then "press " .. map.snoozed else "pick Show or hide snoozed in Commands"
 
 	-- Neither integration is on: the setup pages in Settings are all there is.
 	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
@@ -1578,7 +1612,7 @@ function M.queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and not state.inboxOn and #strip > 0 then ".footer-status" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and not state.nowOn and #strip > 0 then ".footer-status" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1591,7 +1625,7 @@ function M.queuePicker(state: State): Node
 		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
 			ui.span(
-				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by " .. hiddenBy .. "; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
+				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by snoozing; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
 					else (if none then "Neither gh nor acli is installed on this host. " else "No views yet. ")
 						.. (if map.settings ~= "" then "Press " .. map.settings .. " to "
 							elseif map.more ~= "" then "Press " .. map.more .. " and pick Settings to "
@@ -1626,10 +1660,10 @@ function M.queuePicker(state: State): Node
 		cancelDetails(state)
 		preview = agentsPreview(state)
 		agentsProps(state, props)
-	elseif state.inboxOn then
+	elseif state.nowOn then
 		cancelDetails(state)
-		preview = inboxPreview(state)
-		inboxProps(state, props)
+		preview = nowPreview(state)
+		nowProps(state, props)
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
 		if #strip > 0 then

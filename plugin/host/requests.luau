@@ -36,7 +36,7 @@ local discardEdit = settings.discardEdit
 local M = {}
 
 M.seq = 0 -- confirmation tokens issued by this runtime
-local INBOX_KEY = "\0inbox" -- the key of the Inbox's plan: no item key holds a NUL
+local NOW_KEY = "\0now" -- the key of Now's Mark read… plan: no item key holds a NUL
 
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
@@ -154,7 +154,7 @@ end
 local function menuRows(state: State, only: string?, withText: boolean): ({ any }, string?)
 	local list, problem = offered(state)
 	local active = activeView(state)
-	local vars = itemVars(if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state))
+	local vars = itemVars(if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state))
 	local mine: { any } = {}
 	for _, o in list do
 		local p = o.prompt
@@ -638,7 +638,7 @@ function M.show(state: State, url: any, force: boolean?): boolean
 		return false
 	end
 	discardEdit(state)
-	state.settings, state.help, state.query, state.focus, state.boardOn, state.agentsOn, state.inboxOn = nil, false, nil, "list", false, false, false
+	state.settings, state.help, state.query, state.focus, state.boardOn, state.agentsOn, state.nowOn = nil, false, nil, "list", false, false, false
 	if needsPin then
 		if not have then
 			table.insert(state.pins, pin)
@@ -695,8 +695,8 @@ function M.commit(state: State, id: string, token: any)
 		return reply(state, id, { problem = "That confirmation is no longer valid; nothing was sent. Ask again." })
 	end
 	local chosen = selected(state)
-	-- The Inbox plan holds while the Inbox list is shown; every other plan, while its item is the selected one.
-	local here = if plan.key == INBOX_KEY then state.inboxOn else chosen ~= nil and chosen.key == plan.key
+	-- Now's plan holds while Now is shown; every other plan, while its item is the selected one.
+	local here = if plan.key == NOW_KEY then state.nowOn else chosen ~= nil and chosen.key == plan.key
 	if os.time() - plan.at > 300 then
 		return reply(state, id, { problem = "That confirmation expired after 5 minutes; nothing was sent." })
 	elseif plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or not here then
@@ -754,25 +754,28 @@ local function mergesNow(state: State, item: any): boolean
 	return merge == "ready" or merge == "unstable"
 end
 
--- The plan of the Inbox list's Mark read…: the listed threads, the gh login they were read as (both settled now: the commit
--- marks exactly these as exactly that login, whatever the list or gh's active account become) and one confirm. Read, never
--- done: GitHub keeps the threads.
-function M.inboxPlan(state: State, id: string)
-	local inbox = state.inbox
-	local login = inbox.login
-	if not state.inboxOn or #inbox.rows == 0 or not login then
-		return reply(state, id, { problem = "The Inbox lists no notifications to mark read." })
-	end
+-- The plan of Now's Mark read…: the notification threads Now lists, the gh login they were read as (both settled now:
+-- the commit marks exactly these as exactly that login, whatever the list or gh's active account become) and one
+-- confirm. Read, never done: GitHub keeps the threads.
+function M.markReadPlan(state: State, id: string)
+	local now = state.now
+	local login = now.login
 	local ids: { string } = {}
 	local perRepo: { [string]: number } = {}
 	local repos: { string } = {}
-	for _, row in inbox.rows do
-		table.insert(ids, row.id)
-		if not perRepo[row.repo] then
-			perRepo[row.repo] = 0
-			table.insert(repos, row.repo)
+	for _, row in engine.nowRows(state) do
+		local n = row.notice
+		if n then
+			table.insert(ids, n.id)
+			if not perRepo[n.repo] then
+				perRepo[n.repo] = 0
+				table.insert(repos, n.repo)
+			end
+			perRepo[n.repo] += 1
 		end
-		perRepo[row.repo] += 1
+	end
+	if not state.nowOn or #ids == 0 or not login then
+		return reply(state, id, { problem = "Now lists no notifications to mark read." })
 	end
 	local n = #ids
 	local things = n .. " notification" .. (if n == 1 then "" else "s")
@@ -784,12 +787,12 @@ function M.inboxPlan(state: State, id: string)
 		end
 		table.insert(lines, repo .. ": " .. perRepo[repo])
 	end
-	M.offer(state, id, { key = INBOX_KEY }, { head = "Mark " .. things .. " read?", label = "Mark " .. n .. " read", lines = lines }, function(done)
+	M.offer(state, id, { key = NOW_KEY }, { head = "Mark " .. things .. " read?", label = "Mark " .. n .. " read", lines = lines }, function(done)
 		github.markRead(ids, login, function(problem: github.Problem?, marked: number)
 			if alive(state) then
-				state.inbox.gen += 1 -- reads begun before this mark are stale; one fresh read replaces them
-				state.inbox.busy = false
-				engine.inboxRead(state) -- the list reads again: what was marked is gone from it
+				state.now.gen += 1 -- reads begun before this mark are stale; one fresh read replaces them
+				state.now.busy = false
+				engine.nowRead(state) -- Now reads again: what was marked is gone from it
 			end
 			if problem then
 				return done({ problem = (if marked > 0 then "Marked " .. marked .. " of " .. n .. " read, then stopped: " else "") .. M.whyOf(problem) })
@@ -812,8 +815,8 @@ function M.act(state: State, id: string, q: any)
 		end
 		return account
 	end
-	if q.name == "inbox-read" then
-		return M.inboxPlan(state, id)
+	if q.name == "mark-read" then
+		return M.markReadPlan(state, id)
 	elseif not item or not snap then
 		return no("Select an item first.")
 	end
@@ -1148,10 +1151,15 @@ end
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
 	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "get-started" }, { id = "usage-report" } }
-	if state.inboxOn and #state.inbox.rows > 0 then
-		table.insert(out, { id = "inbox-read", group = "Inbox" })
+	if state.nowOn then
+		for _, row in engine.nowRows(state) do
+			if row.notice then
+				table.insert(out, { id = "mark-read", group = "Now" })
+				break
+			end
+		end
 	end
-	local item, snap = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state), state.snap
+	local item, snap = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state), state.snap
 	if not item or not snap then
 		return out
 	end
@@ -1669,7 +1677,7 @@ end
 -- a scope, the sidebar group it sits under as `detail`): the selected item's, then the view's, every sidebar scope
 -- (`scope:<id>`, shown by engine.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
 -- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
--- Settings and the shortcut list.
+-- Settings and the shortcut list; Now Show or hide snoozed, Refresh, the scopes, Settings and the shortcut list.
 function M.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
 	local map = keys.load()
 	local labels: { [string]: string } = { unpin = "Unpin" }
@@ -1685,7 +1693,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			table.insert(out, { id = "scope:" .. scope.id, label = scope.label, key = "", group = "Views", detail = scope.group })
 		end
 	end
-	local item = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state)
+	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
 	labels.agentint, labels.agentstop, labels.agentmsg = "Interrupt agent", "Stop agent…", "Message agent…"
 	local function addAgentCommands(group: string)
 		for _, id in { "agentint", "agentstop", "agentmsg" } do
@@ -1756,8 +1764,16 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		add("help", "Configuration")
 		return out
 	end
+	if state.nowOn then
+		add("snoozed", "Filter & Sort")
+		add("refresh", "Filter & Sort")
+		views()
+		add("settings", "Configuration")
+		add("help", "Configuration")
+		return out
+	end
 	local view = activeView(state)
-	for _, id in { "snoozed", "attention", "sort", "search", "refresh" } do
+	for _, id in { "snoozed", "sort", "search", "refresh" } do
 		if id ~= "sort" or (view and not engine.isPin(view.id) and #sorting.choices(view.kind, view.integration) > 0) then
 			add(id, "Filter & Sort")
 		end

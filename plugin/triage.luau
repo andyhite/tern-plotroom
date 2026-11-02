@@ -1,7 +1,6 @@
 --!strict
 -- Triage memory for the queue: per item, the signature last marked seen and an optional snooze, in kv "triage".
 -- Seen changes only through markSeen: the host calls it for the Mark seen action and when an item's preview is shown, never for an item that is merely listed or fetched.
--- An idle, exited or working agent never counts as handling an item; only waiting_input asks for attention.
 
 local M = {}
 
@@ -225,10 +224,6 @@ end
 function M.tomorrow(now: number): number
 	local d = os.date("*t", now) :: any
 	return os.time({ year = d.year, month = d.month, day = d.day + 1, hour = 8, min = 0, sec = 0 })
-end
-
-function M.attention(st: Status, agent: string?): boolean
-	return agent == "waiting_input" or (st.fresh ~= "seen" and not st.snoozed)
 end
 
 return M

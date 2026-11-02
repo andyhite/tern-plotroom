@@ -93,7 +93,6 @@ export type Snap = {
 	rowsRev: number?,
 	rowsMin: number?,
 	rowsOpen: string?, -- the key that goes to a tab, then the ids of the items open in a tab, comma-joined
-	need: number?, -- how many of its items need attention (set with `rows`)
 }
 -- What the local search lets through: computed once per snapshot and search text.
 export type Visible = { snap: Snap, needle: string, group: string, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }
@@ -164,9 +163,26 @@ export type Settings = {
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title.
 export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
 
--- The Inbox list's model: the notifications gh's active login was last read to have (`login`: whose), why they could not be
--- read (`problem`), whether a read is running and whether one has answered.
-export type Inbox = { login: string?, rows: { github.Notice }, problem: github.Problem?, busy: boolean, loaded: boolean, gen: number } -- gen: bumped by Mark read, so a read that began before it is ignored
+-- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
+-- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`), and the unread notifications gh's
+-- active login takes part in (`notices`, read as `login`). A source that could not be read keeps its last answer and
+-- says why in `problems`. `seq` moves with every answer (the rows cache on it); `gen` is bumped by Mark read, so a read
+-- that began before it is ignored; `cost` is the GitHub points the last read spent (it joins the refresh pace).
+export type Now = {
+	mine: { github.Pr },
+	review: { github.Pr },
+	assigned: { any },
+	notices: { github.Notice },
+	login: string?,
+	problems: { string },
+	busy: boolean,
+	loaded: boolean,
+	gen: number,
+	seq: number,
+	cost: number,
+	rows: { any }?,
+	rowsKey: string?,
+}
 
 export type State = {
 	cx: BlockCx,
@@ -215,19 +231,18 @@ export type State = {
 	settingsPage: string?, -- the Settings page last shown: Settings opens on it again
 	replies: { { id: string, text: string } }, -- answers to window requests, oldest first
 	listing: number, -- repository picker lists still waiting on GitHub: the heading shows a loader meanwhile
-	rev: number, -- moves whenever triage, sort or the attention filter changes: the visible list and the picker rows carry it
+	rev: number, -- moves whenever triage, sort or the agents change: the visible list and the picker rows carry it
 	triage: any, -- the personal seen / snooze store (triage.Store) as last read; nil until read or while its kv is unreadable (`triageProblem`)
 	triageProblem: string?,
 	showSnoozed: boolean, -- snoozed items are listed (marked) instead of hidden
-	attention: boolean, -- only items that need attention are listed: unseen or changed ones, and those whose agent waits for input
+	nowOn: boolean, -- Now is shown instead of a view
+	nowAt: string?, -- the picker id of the Now row previewed
+	now: Now,
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)
 	agents: { [string]: string }, -- item key -> its agent's state as the window last reported it (working | waiting_input | idle | exited)
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view
 	agentAt: string?, -- the item key of the Agents row previewed
-	inboxOn: boolean, -- the Inbox list is shown instead of a view
-	inboxAt: string?, -- the thread id of the Inbox row previewed
-	inbox: Inbox,
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
@@ -492,7 +507,6 @@ local KINDS: { [string]: Kind } = {
 			{ keys = {}, actions = { "seen" }, text = "Mark the selected pull request seen (opening its preview does it too): New and Changed show until then" },
 			{ keys = {}, actions = { "snooze" }, text = "Snooze the selected pull request until tomorrow morning" },
 			{ keys = {}, actions = { "snoozed" }, text = "Show or hide snoozed pull requests" },
-			{ keys = {}, actions = { "attention" }, text = "List only pull requests that need attention: unseen or changed, or whose agent waits for input" },
 			{ keys = {}, actions = { "sort" }, text = "Switch this view to its next sort order (saved with the view)" },
 			{ keys = {}, actions = { "more" }, text = "Commands: every action above, your actions or a typed prompt, rerun failed checks, guided draft pull request, export and import, open by URL" },
 			{ keys = {}, actions = { "search" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
@@ -544,7 +558,6 @@ local KINDS: { [string]: Kind } = {
 			{ keys = {}, actions = { "seen" }, text = "Mark the selected issue seen (opening its preview does it too): New and Changed show until then" },
 			{ keys = {}, actions = { "snooze" }, text = "Snooze the selected issue until tomorrow morning" },
 			{ keys = {}, actions = { "snoozed" }, text = "Show or hide snoozed issues" },
-			{ keys = {}, actions = { "attention" }, text = "List only issues that need attention: unseen or changed, or whose agent waits for input" },
 			{ keys = {}, actions = { "sort" }, text = "Switch this view to its next sort order (saved with the view)" },
 			{ keys = {}, actions = { "more" }, text = "Commands: every action above, your actions or a typed prompt, assign to me, labels, guided draft PR, export and import, open by URL" },
 			{ keys = {}, actions = { "search" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },

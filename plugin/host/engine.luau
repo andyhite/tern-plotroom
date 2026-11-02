@@ -314,7 +314,7 @@ end
 
 -- The seen / snooze store (kv "triage"), read once and kept until a change (`M.triageChanged`) or `again`; nil while its kv
 -- is unreadable or malformed (`triageProblem` says why), and nothing writes it then. Seen is marked by `M.mark` (the
--- Mark seen action) and by `M.autoSeen` (an item whose preview is open, unless the attention filter chose it itself).
+-- Mark seen action) and by `M.autoSeen` (an item whose preview is open).
 function M.store(state: State, again: boolean?): any
 	if again then
 		state.triage, state.triageProblem = nil, nil
@@ -330,17 +330,6 @@ end
 function M.status(state: State, kind: string, item: any): any
 	local store = M.store(state)
 	return if store then triage.status(store, kind, item, os.time()) else nil
-end
-
--- Whether `item` needs attention: unseen or changed (and not snoozed), or its agent waits for input. An idle or exited
--- agent is neither: it says nothing about the item being dealt with.
-function M.needs(state: State, kind: string, item: any): boolean
-	local agent = state.agents[item.key]
-	local st = M.status(state, kind, item)
-	if st then
-		return triage.attention(st, agent)
-	end
-	return agent == "waiting_input"
 end
 
 -- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents), its worktree
@@ -377,16 +366,12 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 	return if note and note.ok then "worktree" else "none"
 end
 
--- Whether the list shows `item`: with the attention filter only what needs it; else everything except snoozed items
--- (unless shown), though an agent that waits for input always surfaces its item.
+-- Whether the list shows `item`: everything except snoozed items (unless shown), though an agent that waits for input
+-- always surfaces its item.
 function M.keep(state: State, kind: string, item: any): boolean
 	local shown = M.activeView(state)
 	if shown and M.isPin(shown.id) then
 		return true -- the one item shown on its own is never filtered out
-	end
-	if state.attention then
-		-- The item being read stays listed, though reading it marked it seen: it goes when the selection moves or closes.
-		return item.key == state.cursor or M.needs(state, kind, item)
 	end
 	if state.showSnoozed or state.agents[item.key] == "waiting_input" then
 		return true
@@ -396,7 +381,6 @@ function M.keep(state: State, kind: string, item: any): boolean
 end
 
 -- How many of `snap`'s items a sidebar scope counts: those its list shows, so snoozed ones are left out (unless shown).
--- ponytail: ignores the attention filter, which depends on the open selection; count it too if asked.
 function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	if pinned or state.showSnoozed then
 		return #snap.items
@@ -412,7 +396,7 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	return n
 end
 
--- How many of `snap`'s items the attention filter or snoozing keeps off the list.
+-- How many of `snap`'s items snoozing keeps off the list.
 function M.hiddenCount(state: State, snap: Snap): number
 	local n = 0
 	for _, item in snap.items do
@@ -525,22 +509,16 @@ function M.filtered(state: State): Visible?
 	return out
 end
 
--- Moves the selection to `key` (nil: none). With the attention filter the list holds the selected item, so it is rebuilt.
+-- Moves the selection to `key` (nil: none).
 function M.select(state: State, key: string?)
-	if state.cursor ~= key then
-		state.cursor = key
-		if state.attention then
-			state.vis = nil
-		end
-	end
+	state.cursor = key
 	local v = if key then M.filtered(state) else nil
 	state.cursorAt = if v then M.indexOf(v.items, key) else state.cursorAt
 end
 
 -- Keeps the selection on a listed item, so a nonempty list always has its preview open: the first item when nothing is
 -- selected, the row that took the place of one that vanished (a refresh, a search, a snooze). An empty list selects
--- nothing. Under the attention filter the selected row stays listed though reading it marks it seen (M.keep), so a pick
--- is read once and the next row is not picked until the selection moves.
+-- nothing.
 function M.ensureCursor(state: State)
 	if not state.snap then
 		return
@@ -567,6 +545,7 @@ function M.triageChanged(state: State)
 			if s.snap then
 				M.ensureCursor(s)
 			end
+			M.nowEnsure(s)
 			if s ~= state then
 				s.cx:render()
 			end
@@ -615,7 +594,7 @@ end
 -- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
 function M.autoSeen(state: State)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap or state.boardOn or state.agentsOn or state.inboxOn then
+	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn then
 		return
 	end
 	local st = M.status(state, snap.kind, item)
@@ -640,18 +619,16 @@ function M.autoSeen(state: State)
 	M.triageChanged(state)
 end
 
--- Turns the snoozed items' listing ("snoozed") or the needs-attention filter ("attention") on or off.
+-- Shows or hides the snoozed items ("snoozed").
 function M.toggle(state: State, what: string)
-	if what == "snoozed" then
-		state.showSnoozed = not state.showSnoozed
-	elseif what == "attention" then
-		state.attention = not state.attention
-	else
+	if what ~= "snoozed" then
 		return
 	end
+	state.showSnoozed = not state.showSnoozed
 	state.rev += 1
 	state.vis = nil
 	M.ensureCursor(state)
+	M.nowEnsure(state)
 end
 
 -- The gh login the active scope runs as (nil: the active gh account), for github.wait and quota and every gh call.
@@ -1100,8 +1077,8 @@ function M.refresh(state: State)
 		state.timer = nil
 	end
 	identify(state)
-	if state.inboxOn then
-		M.inboxRead(state) -- the Inbox list refreshes with the queue (github.notifications sends nothing within GitHub's poll interval)
+	if state.nowOn then
+		M.nowRead(state) -- Now is read with the queue's refresh while it is shown
 	end
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
@@ -1113,6 +1090,9 @@ function M.refresh(state: State)
 	local v = M.activeView(state)
 	if not v then
 		state.problem = nil
+		if state.nowOn then
+			schedule(state, POLL_MS) -- no view paces the refresh: Now is read again at the plain minute
+		end
 		return
 	end
 	-- The server's cooldown holds for every trigger, manual refresh included.
@@ -1167,7 +1147,7 @@ function M.refresh(state: State)
 		if spent > 0 then
 			-- A finished snapshot shows the real points cost; a failed one keeps the larger known cost.
 			state.cost = if result then spent else math.max(spent, state.cost)
-			state.interval = github.interval(github.quota(M.login(state)), os.time(), state.cost, openPanes(), POLL_MS)
+			state.interval = github.interval(github.quota(M.login(state)), os.time(), state.cost + state.now.cost, openPanes(), POLL_MS)
 		elseif result and integration == "jira" then
 			state.interval = POLL_MS -- Jira has no quota to pace: the plain minute
 		else
@@ -1227,7 +1207,7 @@ function M.retry(state: State)
 end
 
 function M.switchView(state: State, id: string?, activeLogin: string?)
-	state.activeId, state.activeLogin, state.boardOn, state.agentsOn, state.inboxOn = id, activeLogin, false, false, false
+	state.activeId, state.activeLogin, state.boardOn, state.agentsOn, state.nowOn = id, activeLogin, false, false, false
 	state.cursor, state.cursorAt = nil, nil -- another view opens on its first item (ensureCursor)
 	identify(state)
 	M.changed(state) -- a click always refreshes; refresh itself dedupes, honors the cooldown and skips terminal problems
@@ -1237,16 +1217,19 @@ end
 -- it: the kind, integration, query and login of the active view are what the block remembers it applied (its snapshot
 -- key). Until every CLI answered, an active view that is not listed yet stays the active one.
 function M.reloadViews(state: State)
-	local boardOn, agentsOn, inboxOn = state.boardOn, state.agentsOn, state.inboxOn -- switchView leaves the Worktrees, Agents and Inbox scopes
+	local boardOn, agentsOn, nowOn = state.boardOn, state.agentsOn, state.nowOn -- switchView leaves Now and the Worktrees and Agents scopes
 	loadAll(state)
 	local v = M.activeView(state)
 	if not v then
 		if cli.ready() then
 			M.switchView(state, if state.views[1] then state.views[1].id else nil)
-			state.boardOn, state.agentsOn, state.inboxOn = boardOn, agentsOn, inboxOn
+			state.boardOn, state.agentsOn, state.nowOn = boardOn, agentsOn, nowOn
 		end
 	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
 		M.changed(state)
+	end
+	if state.nowOn and not state.now.loaded then
+		M.refresh(state) -- Now's first read waits for the CLIs' answers, as the views' does
 	end
 end
 
@@ -1514,13 +1497,13 @@ function M.boardLoad(state: State)
 end
 
 function M.openBoard(state: State)
-	state.boardOn, state.agentsOn, state.inboxOn, state.focus = true, false, false, "list"
+	state.boardOn, state.agentsOn, state.nowOn, state.focus = true, false, false, "list"
 	M.boardLoad(state) -- every open rereads git: this block's own changes (removals, new worktrees) show at once
 	M.boardEnsure(state)
 end
 
--- Shows sidebar scope `scopeId` (render.scopeRows' id: "worktrees", a pin or a view as one login runs it), as a click on
--- it does. false when the live sidebar has no such scope, so a stale id never jumps anywhere.
+-- Shows sidebar scope `scopeId` (render.scopeRows' id: "now", "worktrees", "agents", a pin or a view as one login runs
+-- it), as a click on it does. false when the live sidebar has no such scope, so a stale id never jumps anywhere.
 function M.goScope(state: State, scopeId: any): boolean
 	if scopeId == "worktrees" then
 		M.openBoard(state)
@@ -1528,14 +1511,14 @@ function M.goScope(state: State, scopeId: any): boolean
 	elseif scopeId == "agents" then
 		M.openAgents(state)
 		return true
-	elseif scopeId == "inbox" then
-		M.openInbox(state)
+	elseif scopeId == "now" then
+		M.openNow(state)
 		return true
 	end
 	for _, scope in M.orderedViews(state) do
 		if scope.id == scopeId then
 			if ghActive.isActive(state, scope) then
-				state.boardOn, state.agentsOn, state.inboxOn = false, false, false -- the view already shown: its selection stays
+				state.boardOn, state.agentsOn, state.nowOn = false, false, false -- the view already shown: its selection stays
 				M.refresh(state) -- a click refreshes it
 			else
 				M.switchView(state, scope.view.id, scope.login)
@@ -1631,38 +1614,38 @@ function M.moveCursor(state: State, delta: number)
 	M.select(state, v.items[math.clamp(i + delta, 1, #v.items)].key)
 end
 
+-- Moves through the sidebar: Now first, then the views, then the Worktrees and Agents lists.
 function M.moveView(state: State, delta: number)
 	local items = M.orderedViews(state)
-	local other = state.boardOn or state.agentsOn or state.inboxOn -- a scope that is no view is shown
-	local at = if state.inboxOn then #items + 3 elseif state.agentsOn then #items + 2 elseif state.boardOn then #items + 1 else 0
+	local other = state.boardOn or state.agentsOn or state.nowOn -- a scope that is no view is shown
+	local at = if state.nowOn then 1 elseif state.agentsOn then #items + 3 elseif state.boardOn then #items + 2 else 0
 	if not other then
 		for i, scope in items do
 			if ghActive.isActive(state, scope) then
-				at = i
+				at = i + 1
 			end
 		end
 	end
-	-- The Worktrees list, the Agents list and then the Inbox list are the last entries of the sidebar.
 	local to = math.clamp(at + delta, 1, #items + 3)
-	if to == #items + 3 then
-		if not state.inboxOn then
-			M.openInbox(state)
+	if to == 1 then
+		if not state.nowOn then
+			M.openNow(state)
 		end
 		return
-	elseif to == #items + 2 then
+	elseif to == #items + 3 then
 		if not state.agentsOn then
 			M.openAgents(state)
 		end
 		return
-	elseif to == #items + 1 then
+	elseif to == #items + 2 then
 		if not state.boardOn then
 			M.openBoard(state)
 		end
 		return
 	end
-	local target = items[to]
+	local target = items[to - 1]
 	if target and other and ghActive.isActive(state, target) then
-		state.boardOn, state.agentsOn, state.inboxOn = false, false, false
+		state.boardOn, state.agentsOn, state.nowOn = false, false, false
 	elseif target and (other or not ghActive.isActive(state, target)) then
 		M.switchView(state, target.view.id, target.login)
 	end
@@ -2290,6 +2273,7 @@ function M.agentStatus(state: State, raw: any)
 			M.ensureCursor(state)
 		end
 		M.agentEnsure(state)
+		M.nowEnsure(state)
 		state.cx:render()
 	end
 end
@@ -2338,7 +2322,7 @@ end
 
 -- Shows the Agents scope instead of a view or the Worktrees list.
 function M.openAgents(state: State)
-	state.agentsOn, state.boardOn, state.inboxOn, state.focus = true, false, false, "list"
+	state.agentsOn, state.boardOn, state.nowOn, state.focus = true, false, false, "list"
 	M.agentEnsure(state)
 end
 
@@ -2367,90 +2351,289 @@ function M.agentGo(state: State, act: string?)
 	end
 end
 
--- The Inbox list's rows: the unread notifications gh's active login takes part in, by repository, then newest first.
-function M.inboxRows(state: State): { github.Notice }
-	return state.inbox.rows
-end
+-- Now: everything that needs you, ranked. Its sources are fixed searches per signed-in gh login (the open pull requests
+-- it wrote and is asked to review, the open issues assigned to it), Jira's open work assigned to you while acli is on,
+-- and the unread notifications gh's active login takes part in; the agents come live from the window.
+local NOW_MINE = "is:open author:@me archived:false"
+local NOW_REVIEW = "is:open user-review-requested:@me draft:false archived:false"
+local NOW_ASSIGNED = "is:open assignee:@me archived:false"
+local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
+local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
 
--- Reads the Inbox's notifications as gh's active login, which the rows then belong to (`inbox.login`). Without gh, or when
--- that login cannot read notifications, the list holds the problem and no rows: nothing falls back to another login.
-function M.inboxRead(state: State)
-	local inbox = state.inbox
-	if inbox.busy or not M.alive(state) or not cli.ready() then
+-- Reads Now's sources once, while none is being read. A source that cannot be read keeps its last answer and says why
+-- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login.
+-- ponytail: a source failing for one login keeps that whole source's last answer; merge per login if several logins
+-- fail apart often.
+function M.nowRead(state: State)
+	local now = state.now
+	if now.busy or not M.alive(state) or not cli.ready() then
 		return
 	end
-	if not cli.on("github") then
-		inbox.rows, inbox.login, inbox.loaded = {}, nil, true
-		inbox.problem = { kind = "missing", message = "The GitHub CLI (gh) does not start on this host. Install it, then run: gh auth login" }
-		return
+	now.busy = true
+	ghActive.note(state, true) -- learns the signed-in logins for the next read
+	local gen = now.gen
+	local fresh: { [string]: { any } } = { mine = {}, review = {}, assigned = {}, notices = {} }
+	local login: string? = nil
+	local kept: { [string]: boolean } = {}
+	local problems: { string } = {}
+	local spent = 0
+	local pending = 1
+	local function live(): boolean
+		return M.alive(state) and gen == now.gen
 	end
-	inbox.busy = true
-	local gen = inbox.gen
-	github.login(nil, function(login: string?, problem: github.Problem?)
-		local function landed(rows: { github.Notice }?, why: github.Problem?)
-			if not M.alive(state) or gen ~= inbox.gen then
-				return -- a Mark read since this read began: its answer is older than the marks
+	local function fail(which: string, who: string?, why: string)
+		kept[which] = true
+		local line = NOW_LABEL[which] .. (if who then " (@" .. who .. ")" else "") .. ": " .. why
+		if not table.find(problems, line) then
+			table.insert(problems, line)
+		end
+	end
+	local function settle()
+		pending -= 1
+		if pending > 0 or not live() then
+			return -- a Mark read since this read began: its answer is older than the marks
+		end
+		local into = now :: any
+		for _, which in { "mine", "review", "assigned", "notices" } do
+			if not kept[which] then
+				into[which] = fresh[which]
 			end
-			inbox.busy, inbox.loaded, inbox.login = false, true, login
-			local sorted: { github.Notice } = {}
-			local listed: { github.Notice } = rows or {}
-			for _, row in listed do
-				table.insert(sorted, row)
-			end
-			table.sort(sorted, function(a: github.Notice, b: github.Notice): boolean
-				if a.repo ~= b.repo then
-					return string.lower(a.repo) < string.lower(b.repo)
+		end
+		if not kept.notices then
+			now.login = login
+		end
+		now.busy, now.loaded, now.problems, now.cost, now.seq = false, true, problems, spent, now.seq + 1
+		M.nowEnsure(state)
+		state.cx:render()
+	end
+	local function search(which: string, account: string?, query: string, integration: string?)
+		pending += 1
+		local function landed(result: any, problem: github.Problem?, cost: number)
+			spent += cost or 0
+			if result then
+				for _, it in (if integration then result.issues else result.prs) do
+					table.insert(fresh[which], it)
 				end
-				return if a.updated ~= b.updated then a.updated > b.updated else a.id < b.id
+			else
+				fail(which, if integration == "jira" then nil else account or ghActive.login, if problem then problem.message else "It could not be read.")
+			end
+			settle()
+		end
+		if integration then
+			TRACKERS[integration].search(account, query, live, landed)
+		else
+			github.search(account, query, live, landed)
+		end
+	end
+	if cli.on("github") then
+		local logins: { string } = if #ghActive.accounts > 0 then ghActive.accounts else { "" }
+		for _, who in logins do
+			local account = if who == "" or who == ghActive.login then nil else who
+			local wait = github.wait(os.time(), account)
+			if wait > 0 then
+				for _, which in { "mine", "review", "assigned" } do
+					fail(which, account, "GitHub's rate limit is reached; read again after " .. os.date("%H:%M", os.time() + wait) .. ".")
+				end
+			else
+				search("mine", account, NOW_MINE, nil)
+				search("review", account, NOW_REVIEW, nil)
+				search("assigned", account, NOW_ASSIGNED, "github")
+			end
+		end
+		pending += 1
+		github.login(nil, function(who: string?, problem: github.Problem?)
+			if not who then
+				fail("notices", nil, if problem then problem.message else "gh's active login is unknown.")
+				return settle()
+			end
+			github.notifications(who, function(rows: { github.Notice }?, why: github.Problem?)
+				if rows then
+					fresh.notices, login = rows, who
+				else
+					fail("notices", who, if why then why.message else "They could not be read.")
+				end
+				settle()
 			end)
-			inbox.rows, inbox.problem = sorted, if rows then nil else why
-			M.inboxEnsure(state)
-			state.cx:render()
-		end
-		if not login then
-			return landed(nil, problem)
-		end
-		github.notifications(login, landed)
-	end)
+		end)
+	end
+	if cli.on("jira") then
+		search("assigned", nil, NOW_JIRA, "jira")
+	end
+	settle()
 end
 
--- The picker id of an Inbox row: the thread's, so it has no `/` or `#`.
-function M.inboxId(row: github.Notice): string
-	return "n" .. row.id
+-- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, title, url?, snoozed }. Ranks:
+-- 1 an agent needs input, 2 your pull request is Blocked (`why` says by what), 3 your review is requested (oldest
+-- first), 4 your pull request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you
+-- is New or Changed (`why`). An item is listed once, at its highest rank; a snoozed one only while snoozed items are
+-- shown (an agent that needs input is always listed, as in the views).
+function M.nowRows(state: State): { any }
+	local now = state.now
+	local clock = os.time()
+	local cacheKey = now.seq .. "|" .. state.rev .. "|" .. tostring(state.showSnoozed) .. "|" .. (clock // 60)
+	if now.rows and now.rowsKey == cacheKey then
+		return now.rows
+	end
+	local store = M.store(state)
+	local rows: { any } = {}
+	local taken: { [string]: boolean } = {}
+	local known: { [string]: { item: any, kind: string } } = {}
+	for _, pr in now.mine do
+		known[pr.key] = { item = pr, kind = "prs" }
+	end
+	for _, pr in now.review do
+		known[pr.key] = { item = pr, kind = "prs" }
+	end
+	for _, issue in now.assigned do
+		known[issue.key] = { item = issue, kind = "issues" }
+	end
+	local function add(rank: number, kind: string?, item: any, why: string?)
+		if taken[item.key] then
+			return
+		end
+		taken[item.key] = true
+		local snoozed = store ~= nil and triage.snoozed(store, item, clock)
+		if snoozed and not state.showSnoozed then
+			return
+		end
+		table.insert(rows, { id = M.pickerId("n", item.key), key = item.key, rank = rank, why = why, kind = kind, item = item, title = item.title, url = item.url, snoozed = snoozed })
+	end
+	local waiting: { string } = {}
+	for key, st in state.agents do
+		if st == "waiting_input" then
+			table.insert(waiting, key)
+		end
+	end
+	table.sort(waiting)
+	for _, key in waiting do
+		local info: AgentInfo = state.agentInfo[key] or {}
+		local found = known[key]
+		taken[key] = true
+		table.insert(rows, {
+			id = M.pickerId("n", key),
+			key = key,
+			rank = 1,
+			kind = if found then found.kind else nil,
+			item = if found then found.item else nil,
+			agent = info,
+			title = if found then found.item.title elseif info.title then info.title else key,
+			url = if found then found.item.url else nil,
+			snoozed = false,
+		})
+	end
+	local function newest(a: any, b: any): boolean
+		return if a.updated ~= b.updated then a.updated > b.updated else a.key < b.key
+	end
+	local blocked: { any } = {}
+	local ready: { any } = {}
+	local why: { [string]: string } = {}
+	for _, pr in now.mine do
+		local stage, because = M.stage(state, "prs", pr)
+		if stage == "blocked" then
+			table.insert(blocked, pr)
+			why[pr.key] = because or "Blocked"
+		elseif stage == "ready" then
+			table.insert(ready, pr)
+		end
+	end
+	table.sort(blocked, newest)
+	table.sort(ready, newest)
+	local review: { github.Pr } = {}
+	for _, pr in now.review do
+		table.insert(review, pr)
+	end
+	table.sort(review, function(a: github.Pr, b: github.Pr): boolean
+		return if a.created ~= b.created then a.created < b.created else a.key < b.key
+	end)
+	for _, pr in blocked do
+		add(2, "prs", pr, why[pr.key])
+	end
+	for _, pr in review do
+		add(3, "prs", pr, nil)
+	end
+	for _, pr in ready do
+		add(4, "prs", pr, nil)
+	end
+	local notices: { github.Notice } = {}
+	for _, n in now.notices do
+		table.insert(notices, n)
+	end
+	table.sort(notices, function(a: github.Notice, b: github.Notice): boolean
+		return if a.updated ~= b.updated then a.updated > b.updated else a.id < b.id
+	end)
+	for _, n in notices do
+		local key = if n.number then string.lower(n.repo) .. "#" .. n.number else nil
+		if not key then
+			table.insert(rows, { id = "t" .. n.id, rank = 5, notice = n, title = n.title, snoozed = false })
+		elseif not taken[key] then
+			local found = known[key]
+			taken[key] = true
+			local item = if found then found.item else { key = key }
+			local snoozed = store ~= nil and triage.snoozed(store, item, clock)
+			if not snoozed or state.showSnoozed then
+				table.insert(rows, { id = M.pickerId("n", key), key = key, rank = 5, notice = n, kind = if found then found.kind else nil, item = if found then found.item else nil, title = n.title, url = n.url, snoozed = snoozed })
+			end
+		end
+	end
+	local assigned: { any } = {}
+	for _, issue in now.assigned do
+		local st = if store then triage.status(store, "issues", issue, clock) else nil
+		if st and st.fresh ~= "seen" then
+			why[issue.key] = if st.fresh == "new" then "New" else "Changed"
+			table.insert(assigned, issue)
+		end
+	end
+	table.sort(assigned, newest)
+	for _, issue in assigned do
+		add(6, "issues", issue, why[issue.key])
+	end
+	now.rows, now.rowsKey = rows, cacheKey
+	return rows
+end
+
+-- How many need you: Now's rows that are not snoozed. What the pane title and the window's status line show.
+function M.nowCount(state: State): number
+	local n = 0
+	for _, row in M.nowRows(state) do
+		if not row.snoozed then
+			n += 1
+		end
+	end
+	return n
 end
 
 -- The row previewed and its place in the list (nil, 0 when there is none).
-function M.inboxSelected(state: State): (github.Notice?, number)
-	for i, row in state.inbox.rows do
-		if row.id == state.inboxAt then
+function M.nowSelected(state: State): (any, number)
+	for i, row in M.nowRows(state) do
+		if row.id == state.nowAt then
 			return row, i
 		end
 	end
 	return nil, 0
 end
 
--- Keeps the preview on a listed notification while the scope is shown: the first when none is previewed or it went away.
-function M.inboxEnsure(state: State)
-	if state.inboxOn and select(2, M.inboxSelected(state)) == 0 then
-		local first = state.inbox.rows[1]
-		state.inboxAt = if first then first.id else nil
+-- Keeps the preview on a listed row while Now is shown: the first when none is previewed or it went away.
+function M.nowEnsure(state: State)
+	if state.nowOn and select(2, M.nowSelected(state)) == 0 then
+		local first = M.nowRows(state)[1]
+		state.nowAt = if first then first.id else nil
 	end
 end
 
--- Moves the previewed notification `delta` rows, clamped to the list.
-function M.inboxMove(state: State, delta: number)
-	local rows = state.inbox.rows
+-- Moves the previewed row `delta` rows, clamped to the list.
+function M.nowMove(state: State, delta: number)
+	local rows = M.nowRows(state)
 	if #rows > 0 then
-		local _, at = M.inboxSelected(state)
-		state.inboxAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].id
+		local _, at = M.nowSelected(state)
+		state.nowAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].id
 	end
 end
 
--- Shows the Inbox list instead of a view, and reads it.
-function M.openInbox(state: State)
-	state.inboxOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"
-	M.inboxEnsure(state)
-	M.inboxRead(state)
+-- Shows Now instead of a view, and reads it.
+function M.openNow(state: State)
+	state.nowOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"
+	M.nowEnsure(state)
+	M.nowRead(state)
 end
 
 -- A palette command of the window about triage (`triage` event).
@@ -2459,8 +2642,6 @@ function M.triageEvent(state: State, value: any)
 		M.mark(state, value)
 	elseif value == "toggle-snoozed" then
 		M.toggle(state, "snoozed")
-	elseif value == "toggle-attention" then
-		M.toggle(state, "attention")
 	end
 end
 

@@ -22,7 +22,6 @@ M.ACTIONS = {
 	{ id = "seen", label = "Mark seen", default = "", preset = "m" },
 	{ id = "snooze", label = "Snooze until tomorrow", default = "", preset = "z" },
 	{ id = "snoozed", label = "Show or hide snoozed", default = "", preset = "Z" },
-	{ id = "attention", label = "Needs attention only", default = "", preset = "n" },
 	{ id = "sort", label = "Next sort order", default = "", preset = "o" },
 	{ id = "wt-cleanup", label = "Find finished worktrees", default = "", preset = "u" },
 	{ id = "wt-remove", label = "Remove worktree (Worktrees)", default = "", preset = "d" },

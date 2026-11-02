@@ -69,7 +69,7 @@ local function runQueueAction(state: State, act: string): boolean
 		return requests.copy(state, act)
 	elseif act == "seen" or act == "snooze" then
 		engine.mark(state, act)
-	elseif act == "snoozed" or act == "attention" then
+	elseif act == "snoozed" then
 		engine.toggle(state, act)
 	elseif act == "sort" then
 		settings.cycleSort(state)
@@ -94,12 +94,14 @@ local function queueAction(state: State, act: string): boolean
 	return ran
 end
 
--- Shows the previewed Inbox notification's pull request or issue in the block, as a linked pull request's row does; a
--- thread that is about neither (CI, a release) says so.
-local function openNotice(state: State)
-	local row = engine.inboxSelected(state)
+-- Answers Enter on the previewed Now row: an agent that needs input is gone to; an item is shown in the block, as a
+-- linked pull request's row is; a notification that is about neither (CI, a release) says so.
+local function openNowRow(state: State)
+	local row = engine.nowSelected(state)
 	if not row then
 		return
+	elseif row.rank == 1 and engine.agentHref(row.key) then
+		state.cx:open(engine.agentHref(row.key) :: string)
 	elseif not row.url then
 		state.cx:toast("info", "Nothing to show", "That notification is not about a pull request or an issue.")
 	else
@@ -533,14 +535,14 @@ local function blockDef(): BlockDef<State>
 				triage = nil,
 				triageProblem = nil,
 				showSnoozed = mine and saved.snoozed == true,
-				attention = mine and saved.attention == true,
+				-- A new block opens on Now, unless it was launched to show one item; a restored one on the scope it saved.
+				nowOn = if mine then saved.now == true else pins[1] == nil,
+				nowAt = nil,
+				now = { mine = {}, review = {}, assigned = {}, notices = {}, login = nil, problems = {}, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
 				agents = {},
 				agentInfo = {},
 				agentsOn = false,
 				agentAt = nil,
-				inboxOn = false,
-				inboxAt = nil,
-				inbox = { login = nil, rows = {}, problem = nil, busy = false, loaded = false, gen = 0 },
 				plan = nil,
 				draft = nil,
 				board = board.new(),
@@ -590,11 +592,14 @@ local function blockDef(): BlockDef<State>
 		title = function(state: State): string?
 			local snap = state.snap
 			local v = activeView(state)
-			if not v then
-				return "Plotroom"
+			local need = engine.nowCount(state)
+			local tail = if need > 0 then " · " .. need .. " need you" else ""
+			if state.nowOn then
+				return "Plotroom · Now" .. tail
+			elseif not v then
+				return "Plotroom" .. tail
 			end
-			local need = if snap then (snap.need or 0) else 0
-			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. (if need > 0 then " · " .. need .. " new" else "")
+			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. tail
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView
@@ -801,13 +806,17 @@ local function blockDef(): BlockDef<State>
 					return false
 				end)
 			end
-			if state.inboxOn then
-				-- The Inbox list: Enter shows the notification's pull request or issue.
+			if state.nowOn then
+				-- Now: Enter goes to the agent or shows the item.
 				return listKeys(function(d)
-					engine.inboxMove(state, d)
+					engine.nowMove(state, d)
 				end, function()
-					openNotice(state)
-				end, function()
+					openNowRow(state)
+				end, function(a)
+					if a == "snoozed" then
+						engine.toggle(state, a)
+						return true
+					end
 					return false
 				end)
 			end
@@ -816,7 +825,7 @@ local function blockDef(): BlockDef<State>
 			-- The queue action the key is (Settings › General). While searching it is text, and with ctrl, alt or meta it is no shortcut.
 			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
-			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "attention" or act == "sort" or act == "more" then
+			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "sort" or act == "more" then
 				local owned: { { prompt: Prompt, here: boolean } } = {}
 				local here = false
 				if selected(state) then
@@ -1079,13 +1088,13 @@ local function blockDef(): BlockDef<State>
 					leaveEdit(s)
 				end
 				if ev.ev == "select" or ev.ev == "activate" then
-					if state.inboxOn then
-						-- The Inbox list's rows are not the queue's items either.
-						for _, r in engine.inboxRows(state) do
-							if item and engine.inboxId(r) == item then
-								state.inboxAt, state.focus = r.id, "list"
+					if state.nowOn then
+						-- Now's rows are not the queue's items either.
+						for _, r in engine.nowRows(state) do
+							if item and r.id == item then
+								state.nowAt, state.focus = r.id, "list"
 								if ev.ev == "activate" then
-									openNotice(state)
+									openNowRow(state)
 								end
 							end
 						end
@@ -1169,7 +1178,7 @@ local function blockDef(): BlockDef<State>
 				activeKind = if kind == KINDS.issues then "issues" else nil,
 				activeLogin = state.activeLogin,
 				pause = pause,
-				attention = if state.attention then true else nil,
+				now = if state.nowOn then true else nil,
 				snoozed = if state.showSnoozed then true else nil,
 				pins = requests.pinUrls(state),
 			}

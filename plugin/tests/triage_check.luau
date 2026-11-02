@@ -60,17 +60,6 @@ function M.run()
 	assert(os.time({ year = d1.year, month = d1.month, day = d1.day - 1, hour = 12 }) == os.time({ year = d0.year, month = d0.month, day = d0.day, hour = 12 }))
 	assert(triage.tomorrow(now) == t, "deterministic")
 
-	-- attention matrix
-	local newSt: triage.Status = { fresh = "new", snoozed = false }
-	local seenSt: triage.Status = { fresh = "seen", snoozed = false }
-	local snoozedSt: triage.Status = { fresh = "changed", snoozed = true, snoozeUntil = 5 }
-	assert(triage.attention(newSt, nil))
-	assert(triage.attention(newSt, "idle") and triage.attention(newSt, "working") and triage.attention(newSt, "exited"))
-	assert(not triage.attention(seenSt, "idle") and not triage.attention(seenSt, nil))
-	assert(not triage.attention(snoozedSt, "idle"))
-	assert(triage.attention(snoozedSt, "waiting_input"))
-	assert(triage.attention(seenSt, "waiting_input"))
-
 	-- sanitizeKey
 	assert(triage.sanitizeKey("o/r#5") == "o/r#5")
 	assert(triage.sanitizeKey("a\nb") == nil and triage.sanitizeKey("") == nil and triage.sanitizeKey(5) == nil)

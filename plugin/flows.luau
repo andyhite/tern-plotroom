@@ -318,38 +318,56 @@ function M.waitingCount(): number
 	return #waiting
 end
 
-local attention = 0 -- items needing attention, summed over the Plotroom blocks (their hidden `main.need`)
-local attentionTimer: TimerHandle? = nil
+local need = 0 -- the largest Now count of the Plotroom blocks (their hidden `main.need`)
+local needPane: number? = nil -- the block that count is of
+local needTimer: TimerHandle? = nil
 
--- How many items need attention now (what the status line shows).
-function M.attentionCount(): number
-	return attention
+-- How many need you now (what the status line shows): the largest Now count of the open blocks, and at least the agents
+-- that wait for input. ponytail: the largest, not the sum, as blocks of one host list the same Now; sum per host if
+-- blocks of several hosts with different work are common.
+function M.needCount(): number
+	return math.max(need, #waiting)
 end
 
--- Reads each Plotroom block's count; redraws the status line only when the sum changed.
-function M.attentionSync(cx: WindowCx)
-	local sum = 0
+-- Reads each Plotroom block's count; redraws the status line only when the largest changed.
+function M.needSync(cx: WindowCx)
+	local most, at = 0, nil
 	for _, pane in plotroomPanes(cx) do
 		local n = tonumber(e().nodeProp(e().readNode(cx, pane, "main.need"), "text"))
-		if n and n > 0 then
-			sum += math.floor(n)
+		if n and math.floor(n) > most then
+			most, at = math.floor(n), pane
 		end
 	end
-	if sum ~= attention then
-		attention = sum
+	needPane = at
+	if most ~= need then
+		need = most
 		tern.chrome.refresh()
 	end
 end
 
-local function attentionTick(cx: WindowCx?)
-	attentionTimer = nil
+local function needTick(cx: WindowCx?)
+	needTimer = nil
 	if not cx then
 		return -- the window went away: the next window_start or pane_created starts it again
 	end
-	M.attentionSync(cx)
+	M.needSync(cx)
 	if #plotroomPanes(cx) > 0 then
-		attentionTimer = tern.timer(SYNC_MS, attentionTick)
+		needTimer = tern.timer(SYNC_MS, needTick)
 	end
+end
+
+-- Focuses the Plotroom block whose count the status line shows (else the first one) and shows Now in it.
+function M.goNow(cx: WindowCx)
+	local pane = needPane or plotroomPanes(cx)[1]
+	if not pane then
+		return cx:toast("info", "No Plotroom block is open")
+	end
+	local session = e().sourceSession(cx, pane)
+	if session then
+		cx.sessions:switch(session)
+	end
+	cx.layout:focus(pane)
+	cx.session:event(pane, { ev = "action", act = "open-now" })
 end
 
 -- Recomputes the waiting agents among `links` (only the ones the Agents list covers: see agentSync) from `states`;
@@ -480,8 +498,8 @@ end
 
 -- Starts the status timer when it is not running and there is something to tell.
 function M.ensureSync(cx: WindowCx)
-	if attentionTimer == nil and #plotroomPanes(cx) > 0 then
-		attentionTick(cx)
+	if needTimer == nil and #plotroomPanes(cx) > 0 then
+		needTick(cx)
 	end
 	if timer == nil and active(cx) then
 		timer = tern.timer(SYNC_MS, tick)
@@ -1066,9 +1084,9 @@ local function rerunFailed(cx: WindowCx, pane: number)
 	runAction(cx, pane, "rerun-failed", "Nothing to re-run", "No failed runs to re-run", "Which failed run to re-run?")
 end
 
--- The Inbox list's notifications marked read: the host names the listed threads and the account in the confirm.
-local function inboxRead(cx: WindowCx, pane: number)
-	planAct(cx, pane, "Not marked read", { name = "inbox-read" })
+-- Now's notifications marked read: the host names the listed threads and the account in the confirm.
+local function markRead(cx: WindowCx, pane: number)
+	planAct(cx, pane, "Not marked read", { name = "mark-read" })
 end
 
 local function issueClose(cx: WindowCx, pane: number)
@@ -1376,7 +1394,7 @@ M.COMMANDS = {
 		end,
 		anywhere = true,
 	},
-	{ id = "inbox-read", title = "Plotroom: Mark the Inbox's notifications read", label = "Mark read…", group = "Inbox", run = inboxRead },
+	{ id = "mark-read", title = "Plotroom: Mark Now's notifications read", label = "Mark read…", group = "Now", run = markRead },
 	{
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
@@ -1411,7 +1429,6 @@ M.COMMANDS = {
 	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
 	{ id = "snooze", title = "Plotroom: Snooze the selected item until tomorrow", label = "Snooze until tomorrow", group = "Triage", run = send("triage", "snooze"), keyed = true },
 	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
-	{ id = "attention", title = "Plotroom: Needs attention only", label = "Needs attention only", group = "Filter & Sort", run = send("triage", "toggle-attention"), keyed = true },
 	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
 	{ id = "worktrees-open", title = "Plotroom: Open Worktrees", label = "Worktrees", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }
