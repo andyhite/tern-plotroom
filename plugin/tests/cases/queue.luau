@@ -543,7 +543,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(p.groups["scope:prs:v2"], "Views", "every sidebar scope is a Views row")
 	eq(p.labels["scope:worktrees"], "Worktrees list", "the one before the last is the Worktrees list")
 	eq(p.groups.settings, "Configuration", "Settings and the shortcut list are Configuration")
-	same(p.commands, { "open-url", "export", "import", "open-preview", "pr-draft", "pr-approve", "pr-request-changes", "comment" }, "the commands: the ones that need no item, the floating preview, then what an open pull request takes (no merge without a known head, no branch update unless behind)")
+	same(p.commands, { "open-url", "export", "import", "usage-report", "open-preview", "pr-draft", "pr-approve", "pr-request-changes", "comment" }, "the commands: the ones that need no item, the floating preview, then what an open pull request takes (no merge without a known head, no branch update unless behind)")
 	eq(p.commandGroups["pr-draft"], "GitHub - PR", "a pull request's operation is under GitHub - PR")
 	eq(p.commandGroups.comment, "GitHub - PR", "and so is its comment")
 	eq(p.commandGroups["open-url"], nil, "one that needs no item has only its own group")
@@ -677,7 +677,7 @@ case("host: with nothing listed the palette offers no item action, and its comma
 	eq(table.find(p.ids, "open"), nil, "so no item action is offered")
 	eq(p.groups.snoozed, "Filter & Sort", "the view's and the sidebar's remain")
 	eq(p.groups["scope:prs:v1"], "Views", "every scope still")
-	same(p.commands, { "open-url", "export", "import" }, "and the commands that need no item")
+	same(p.commands, { "open-url", "export", "import", "usage-report" }, "and the commands that need no item")
 	local opened = #w.opened
 	b.event({ ev = "action", act = "queue", value = "worktree" })
 	eq(#w.opened, opened, "an item action does nothing with nothing selected")
@@ -2952,6 +2952,28 @@ case("host: a prompt, format, setup command or checkout saved in one block reach
 	reaches("clearing a checkout", function()
 		a.event({ ev = "change", id = "layer.settings", item = "checkout:o/r" })
 	end)
+end)
+
+case("host: a queue action that runs counts once in this host's usage, and the block publishes the counts; a malformed store is left untouched", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	b.typeText("r")
+	w.flush()
+	local counts: any = (w.kv.get("usage") :: any).counts
+	eq(counts["queue:refresh"].n, 1, "the key's action is counted")
+	b.event({ ev = "action", act = "queue", value = "refresh" })
+	w.flush()
+	eq((w.kv.get("usage") :: any).counts["queue:refresh"].n, 2, "a pick in the command palette counts too")
+	b.event({ ev = "action", act = "queue", value = "unpin" })
+	eq((w.kv.get("usage") :: any).counts["queue:unpin"], nil, "an action that did not run is not counted")
+	local published: any = jsonDecode(findKey(b.view().main, "usage").p.text)
+	eq(published.usage.counts["queue:refresh"].n, 2, "the hidden usage node carries the counts for the window")
+
+	w.kv.put("usage", { since = "yesterday" })
+	b.typeText("r")
+	w.flush()
+	same(w.kv.get("usage"), { since = "yesterday" }, "a malformed store is not overwritten")
+	eq(jsonDecode(findKey(b.view().main, "usage").p.text).problem, "is malformed", "and the node says why it is missing")
 end)
 
 return {}

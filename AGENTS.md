@@ -21,7 +21,7 @@ Host layers (`plugin/host/`; each module may require only those to its left, no 
 
 `lens` (the `gh pr create` shell lens, manifest lens `pr-create`; requires only `core`, outside the chain above, and `host.luau` calls `lens.define()`). Its show link `plotroom://lens/show/<pct URL>` is the one link the window accepts from a non-Plotroom pane.
 
-Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts` and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree`; `flows` takes what window owns through `flows.setup(Env)`.
+Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts`, `usage` (kv `usage` counts, kv `runs` run log and the usage report text, shared by host and window) and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree, usage`; `flows → input, keys, usage` and takes what window owns through `flows.setup(Env)`.
 
 A change to a shared store (views, prompts, checkouts, ...) fans out to the other live blocks through `propagate` (engine), which rereads storage and renders them.
 

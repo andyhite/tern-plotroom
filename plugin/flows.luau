@@ -5,6 +5,8 @@
 -- commands the command palette lists. window.luau injects what it owns (`setup`), so there is no require cycle.
 
 local input = require("./input")
+local keys = require("./keys")
+local usage = require("./usage")
 local trim = input.trim
 
 local M = {}
@@ -21,6 +23,8 @@ export type Env = {
 	-- the node has none; `typed` asks for a typed prompt; `mode` varies what the link does ("preview": opens the page in a
 	-- floating Browser over the block; "agentpick": the Message link sends a picked page element).
 	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?) -> (),
+	-- Every Tern palette command's title by id (window.luau fills it as it registers them), for the usage report.
+	titles: { [string]: string },
 }
 
 -- A Plotroom block's host: Tern's slot id and its address ("" for this machine), the name only for people.
@@ -30,10 +34,12 @@ type HostId = { id: number, name: string, address: string }
 -- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
 -- counts the actions chained before it.
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number? }
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string? }
+-- `started` (seconds since the epoch), `kind`, `model` and `runsIn` go into the run log (usage.luau) when its turn ends.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
--- (an issue's code repository) is only for its chain.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string? }
+-- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
+-- ("worktree" or "main checkout") are for the run log.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string? }
 type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
@@ -155,12 +161,15 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
 		end
 		texts[field] = v
+	end
+	if row.started ~= nil and type(row.started) ~= "number" then
+		return nil
 	end
 	return {
 		key = row.key,
@@ -174,6 +183,10 @@ local function linkOf(row: any): Link?
 		result = clip(texts.result, RESULT_CAP),
 		ended = clip(texts.ended, RESULT_CAP),
 		cwd = texts.cwd, -- where its agent started: a pane id reused after a restart is told apart by it; an old link has none
+		started = row.started,
+		kind = clip(texts.kind, ACTION_CAP),
+		model = clip(texts.model, ACTION_CAP),
+		runsIn = clip(texts.runsIn, ACTION_CAP),
 	}
 end
 
@@ -203,7 +216,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -488,7 +501,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil } }
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			table.insert(out, l)
@@ -546,7 +559,8 @@ function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, numb
 end
 
 -- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed) and when (HH:MM) on its link, for the
--- Agents list and Carly's `plotroom_agents`. Nothing for an agent with no link or a store that cannot be read.
+-- Agents list and Carly's `plotroom_agents`, and appends the run to the run log (kv `runs`). Nothing for an agent with
+-- no link or a store that cannot be read.
 function M.recordResult(cx: WindowCx, agent: number, result: string)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
@@ -557,6 +571,16 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 		if l.agent == agent and hostSame(l.host, host) then
 			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
 			writeLinks(links)
+			usage.appendRun({
+				key = l.key,
+				action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
+				kind = l.kind,
+				model = l.model,
+				runsIn = l.runsIn,
+				started = l.started,
+				ended = os.time(),
+				result = result,
+			})
 			return
 		end
 	end
@@ -1817,6 +1841,8 @@ end
 -- the window checks.
 export type Command = { id: string, title: string, label: string, group: string?, run: (WindowCx, number) -> (), anywhere: boolean?, keyed: boolean? }
 
+local usageReport: (WindowCx, number) -> () -- below: it names the commands of this list
+
 M.COMMANDS = {
 	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
 	{
@@ -1877,6 +1903,15 @@ M.COMMANDS = {
 	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
 	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", group = "Configuration", run = exportFlow },
 	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", group = "Configuration", run = importFlow },
+	{
+		id = "usage-report",
+		title = "Plotroom: Copy usage report",
+		label = "Copy usage report",
+		group = "Configuration",
+		run = function(cx: WindowCx, pane: number)
+			usageReport(cx, pane)
+		end,
+	},
 	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
 	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Triage", run = send("triage", "snooze"), keyed = true },
 	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
@@ -1884,5 +1919,54 @@ M.COMMANDS = {
 	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
 	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees list", label = "Worktrees list", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }
+
+-- ---------------------------------------------------------------- usage report
+
+-- What usage id `id` is called in the report: a queue action's label, a command's title, a saved action's name.
+local function usageName(id: string): string
+	local where, what = string.match(id, "^(%a+):(.+)$")
+	if where == "queue" then
+		for _, a in keys.ACTIONS do
+			if a.id == what then
+				return a.label
+			end
+		end
+	elseif where == "row" or where == "palette" then
+		for _, c in M.COMMANDS do
+			if c.id == what then
+				return if where == "row" then c.label else c.title
+			end
+		end
+		local title = e().titles[what :: string]
+		if title then
+			return title
+		end
+	end
+	return what or id
+end
+
+-- Copy usage report: this machine's counts and run log, and the block's host's queue action counts (its hidden
+-- `main.usage` node), as plain text on the clipboard. Nothing leaves the machine.
+function usageReport(cx: WindowCx, pane: number)
+	local hostPart: usage.Part<usage.Usage> = { problem = "could not be read" }
+	local text = e().nodeProp(e().readNode(cx, pane, "main.usage"), "text")
+	local ok, a = pcall(tern.json.decode, if type(text) == "string" then text else "")
+	if ok and type(a) == "table" and type(a.problem) == "string" then
+		hostPart = { problem = usage.line(a.problem, 80) or "could not be read" }
+	elseif ok and type(a) == "table" and type(a.usage) == "table" then
+		local u = usage.parseUsage(a.usage)
+		hostPart = if u then { value = u } else { problem = "is malformed" }
+	end
+	local here, hereWhy = usage.readUsage()
+	local runs, runsWhy = usage.readRuns()
+	local report = usage.report({ host = hostPart, here = { value = here, problem = hereWhy }, runs = { value = runs, problem = runsWhy }, name = usageName })
+	cx:copy(report)
+	local missing = (if hostPart.problem then 1 else 0) + (if hereWhy then 1 else 0) + (if runsWhy then 1 else 0)
+	if missing > 0 then
+		cx:toast("info", "Usage report copied, with parts missing", "The report says which.")
+	else
+		cx:toast("success", "Usage report copied to the clipboard")
+	end
+end
 
 return M

@@ -7,6 +7,26 @@
 
 local worktree = require("./worktree")
 local flows = require("./flows")
+local usage = require("./usage")
+
+-- Every palette command's title by id, for the usage report (flows.setup).
+local TITLES: { [string]: string } = {}
+
+-- tern.command, counting each run in this machine's usage as "palette:<id>".
+local function command(def: CommandDef)
+	TITLES[def.id] = def.title
+	local run = def.run
+	tern.command({
+		id = def.id,
+		title = def.title,
+		icon = def.icon,
+		available = def.available,
+		run = function(cx: WindowCx)
+			usage.bump("palette:" .. def.id)
+			run(cx)
+		end,
+	})
+end
 
 local PRS_BLOCK = "plotroom.prs"
 local ISSUE_ICON = "list-checks"
@@ -319,7 +339,7 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	return if #out > 0 then out else nil
 end)
 
-tern.command({
+command({
 	id = "agents-waiting",
 	title = "Plotroom: Go to the first agent that needs input",
 	icon = "merge",
@@ -509,6 +529,7 @@ end
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
 	local model, split = job.model, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
+	info.kind, info.model, info.runsIn = t.kind, model, if join then "worktree" else "main checkout"
 	if model and not worktree.validModel(model) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
 		return false
@@ -559,6 +580,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local chain: any = nil
 	if job.id then
 		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane }
+		usage.bump("action:" .. (job.name or job.id))
 	end
 	info.cwd = path
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
@@ -1210,6 +1232,7 @@ local function palette(cx: WindowCx, pane: number)
 		else
 			local c = flows.COMMANDS[item.at :: number]
 			if c then
+				usage.bump("row:" .. c.id)
 				c.run(cx3, pane)
 			end
 		end
@@ -1485,7 +1508,7 @@ tern.files.button({
 	end,
 })
 
-tern.command({
+command({
 	id = "open",
 	title = "Plotroom: Open",
 	icon = "merge",
@@ -1506,10 +1529,11 @@ flows.setup({
 	targetPane = targetPane,
 	launch = launchPane,
 	follow = follow,
+	titles = TITLES,
 })
 
 for _, c in flows.COMMANDS do
-	tern.command({
+	command({
 		id = c.id,
 		title = c.title,
 		icon = "merge",
@@ -1688,7 +1712,7 @@ tern.on("focus", function(_ev: any, cx: WindowCx)
 	checkProtocol(cx)
 end)
 
-tern.command({
+command({
 	id = "open-selected",
 	title = "Plotroom: Open the selected PR or issue in Browser",
 	icon = "merge",
@@ -1698,7 +1722,7 @@ tern.command({
 	end,
 })
 
-tern.command({
+command({
 	id = "worktree-selected",
 	title = "Plotroom: Open the selected PR or issue in a worktree",
 	icon = "merge",
@@ -1708,7 +1732,7 @@ tern.command({
 	end,
 })
 
-tern.command({
+command({
 	id = "goto-selected",
 	title = "Plotroom: Go to the selected PR or issue's tab",
 	icon = "merge",
@@ -1718,7 +1742,7 @@ tern.command({
 	end,
 })
 
-tern.command({
+command({
 	id = "agent-selected",
 	title = "Plotroom: Run an agent on the selected PR or issue",
 	icon = "merge",

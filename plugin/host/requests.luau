@@ -1266,7 +1266,7 @@ end
 -- An item's own operation carries the heading of its type (`group`: "GitHub - PR", "GitHub - Issue" or "Jira - Issue");
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
-	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" } }
+	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" }, { id = "usage-report" } }
 	if state.inboxOn and #state.inbox.rows > 0 then
 		table.insert(out, { id = "inbox-read", group = "Inbox" })
 	end

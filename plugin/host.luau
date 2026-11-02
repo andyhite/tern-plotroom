@@ -4,6 +4,7 @@
 local board = require("./board")
 local input = require("./input")
 local keys = require("./keys")
+local usage = require("./usage")
 local worktree = require("./worktree")
 local core = require("./host/core")
 local storage = require("./host/storage")
@@ -38,7 +39,7 @@ local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg
 
 -- Runs queue action `act` (keys.ACTIONS' ids but the moves, and `open`) as its key does: false when it is none, or
 -- needs a selected item, a tab or an agent the selection lacks.
-local function queueAction(state: State, act: string): boolean
+local function runQueueAction(state: State, act: string): boolean
 	local chosen = selected(state)
 	if act == "search" then
 		state.query = input.new("")
@@ -82,6 +83,15 @@ local function queueAction(state: State, act: string): boolean
 		return false
 	end
 	return true
+end
+
+-- runQueueAction, counting each one that ran in this host's usage (a scope by kind, not by which).
+local function queueAction(state: State, act: string): boolean
+	local ran = runQueueAction(state, act)
+	if ran then
+		usage.bump("queue:" .. (if string.sub(act, 1, 6) == "scope:" then "scope" else act))
+	end
+	return ran
 end
 
 -- Shows the previewed Inbox notification's pull request or issue in the block, as a linked pull request's row does; a

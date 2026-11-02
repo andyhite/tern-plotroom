@@ -314,6 +314,95 @@ windowCase("window flows: a start with Tell Carly off, or with Carly missing, or
 	eq(#w.window.carlyMessages, 0, "and the toggle does nothing")
 end)
 
+-- Starts the saved action Review (model opus, in its worktree) on o/r#5 through the agent picker; the new link.
+local function startReview(w: World): any
+	local url = "plotroom://github/agent/o/r/5"
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agent", url)
+	st.palette({ items = { { id = "p1", label = "Review" } } })
+	w.window.choose = "Review"
+	w.click(url)
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, model = "opus" } } })
+	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing" })
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+windowCase("window flows: an agent's turn end appends one run to the run log, newest first, keeping the newest 1000", function(w: World)
+	w.load("window")
+	local old: { any } = {}
+	for i = 1, 1000 do
+		table.insert(old, { key = "o/r#" .. i, action = "Old", result = "done", ended = EPOCH - i })
+	end
+	w.kv.put("runs", array(old))
+	local link = startReview(w)
+	eq((w.kv.get("usage") :: any).counts["action:Review"].n, 1, "the started action is counted by name")
+	w.advance(90 * 1000)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "failed" }, w.cx)
+	w.flush()
+	local runs: any = w.kv.get("runs")
+	eq(#runs, 1000, "the cap holds")
+	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed" }, "the run: item key, action, kind, model, where it ran, start, end and result")
+	eq(runs[2].key, "o/r#1", "the earlier runs follow")
+	eq(runs[1000].key, "o/r#999", "and the oldest one went")
+	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
+	lacks(jsonEncode(runs[1]), "pull/5", "nor the prompt's text")
+end)
+
+windowCase("window flows: a malformed run log or usage store is never overwritten, and the report says which part is missing", function(w: World)
+	w.load("window")
+	w.kv.put("runs", { { key = 5 } })
+	w.kv.put("usage", { since = "yesterday" })
+	local link = startReview(w)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	same(w.kv.get("runs"), { { key = 5 } }, "the malformed run log is left as it is")
+	same(w.kv.get("usage"), { since = "yesterday" }, "and so is the malformed usage store")
+	w.window.focused = 1
+	w.command("usage-report")
+	same(w.kv.get("usage"), { since = "yesterday" }, "running the report does not write it either")
+	local text = w.copied[#w.copied]
+	has(text, "Usage counts on the block's host could not be read", "the host published no counts")
+	has(text, "Usage counts on this machine is malformed", "this machine's store is named")
+	has(text, "The run log is malformed", "and so is the run log")
+	eq(w.toasts[#w.toasts].text, "Usage report copied, with parts missing", "the toast says parts are missing")
+end)
+
+windowCase("window flows: Copy usage report lists both machines' counts by name and the runs by action, with results and median run time", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local hostUsage = { since = EPOCH - 2 * 86400, counts = { ["queue:refresh"] = { n = 3, at = EPOCH - 60 }, ["row:export"] = { n = 9, at = EPOCH } } }
+	table.insert(w.window.surfaces[1].main.c, { id = "main.usage", p = { text = jsonEncode({ usage = hostUsage }), hidden = true } })
+	-- This machine's store: its own commands and actions; a queue count here is the host's to report.
+	w.kv.put("usage", { since = EPOCH - 3600, counts = { ["queue:refresh"] = { n = 50, at = EPOCH }, ["action:Review"] = { n = 4, at = EPOCH - 120 } } })
+	w.kv.put(
+		"runs",
+		array({
+			{ key = "o/r#1", action = "Review", result = "done", started = EPOCH - 1000, ended = EPOCH - 940 },
+			{ key = "o/r#2", action = "Review", result = "failed", started = EPOCH - 1000, ended = EPOCH - 880 },
+			{ key = "o/r#3", action = "Review", result = "done", started = EPOCH - 1000, ended = EPOCH - 400 },
+			{ key = "o/r#4", action = "Fix", result = "closed", ended = EPOCH },
+		})
+	)
+	st.palette({ items = {}, commands = { { id = "usage-report" } } })
+	w.window.choose = "Copy usage report"
+	w.click("plotroom://more")
+	w.flush()
+	local text = w.copied[#w.copied]
+	has(text, "Since " .. os.date("!%Y-%m-%d", EPOCH - 2 * 86400), "since the first recorded day of either machine")
+	has(text, "Queue action · Refresh · 3 · last " .. os.date("!%Y-%m-%d %H:%M", EPOCH - 60), "the host's queue action, by its label")
+	lacks(text, "· 50 ·", "this machine's copy of a queue count is not the host's")
+	lacks(text, "· 9 ·", "nor is the host's copy of a window count")
+	has(text, "Commands row · Copy usage report · 1", "the Commands row just picked counts on this machine")
+	has(text, "Action · Review · 4", "a saved action by name")
+	has(text, "Review · 3 runs · done 2, failed 1, exited 0, closed 0 · median 2m 0s", "runs grouped by action, with each result and the median")
+	has(text, "Fix · 1 run · done 0, failed 0, exited 0, closed 1 · median unknown", "a run with no recorded start has no time")
+	lacks(text, "Missing", "nothing is missing")
+	w.window.focused = 1
+	w.command("usage-report")
+	has(w.copied[#w.copied], "Palette command · Plotroom: Copy usage report · 1", "the Tern palette command counts by its title")
+end)
+
 windowCase("window flows: without Carly the plotroom_agents export is not registered", function(w: World)
 	w.sdk.carly = nil
 	w.load("window")

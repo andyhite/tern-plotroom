@@ -7,6 +7,7 @@ local keys = require("../keys")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
+local usage = require("../usage")
 local core = require("./core")
 local storage = require("./storage")
 local engine = require("./engine")
@@ -248,6 +249,8 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
 		palette,
+		-- This host's usage counts (usage.luau), for the window's Copy usage report.
+		ui.node("text", { key = "usage", text = usage.published(), hidden = true }),
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
