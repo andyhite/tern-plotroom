@@ -67,7 +67,8 @@ SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 # Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
 # answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
 # answers with the canned list in search.json (none: empty), a checks load with no checks, `auth status` with one
-# signed-in login (the repository picker's list, warmed after a search). Header is prepended.
+# signed-in login (the repository picker's list, warmed after a search), `auth token` for that login, and Now's notifications read
+# with notifications.json (none: no thread). Header is prepended.
 FAKE_GH = r'''
 import json, os, re, sys
 a = sys.argv[1:]
@@ -100,6 +101,14 @@ if a[:2] == ["api", "graphql"]:
         sys.exit(0)
 if a == ["auth", "status", "--hostname", "github.com", "--json", "hosts"]:
     sys.stdout.write(json.dumps({"hosts": {"github.com": [{"state": "success", "active": True, "host": "github.com", "login": "smoke"}]}}))
+    sys.exit(0)
+if a == ["auth", "token", "--hostname", "github.com", "--user", "smoke"]:
+    sys.stdout.write("smoke-token\n")
+    sys.exit(0)
+if a[:4] == ["api", "--hostname", "github.com", "--include"] and a[-1].startswith("notifications?participating=true"):
+    f = os.path.join(SMOKE, "notifications.json")
+    body = open(f).read() if os.path.exists(f) else "[]"
+    sys.stdout.write("HTTP/2.0 200 OK\r\nX-Poll-Interval: 60\r\nLast-Modified: Mon, 19 Oct 2026 09:00:00 GMT\r\n\r\n" + body)
     sys.exit(0)
 if m:
     f = os.path.join(SMOKE, "pr", "%s__%s__%s.json" % m.groups())
@@ -470,6 +479,18 @@ class Smoke:
         if not self.selection():
             self.ctl_ok("key", "Down")
         self.wait_until("a row is selected", lambda: len(self.selection()) >= 1)
+
+    def on_now(self) -> bool:
+        """The focused Plotroom block shows Now: the queue's own heading line starts so, or Now's empty text shows (the sidebar's plain "Now" entry, a tab
+        title that lags behind and Tern's own agent button, which also says "Nothing needs you", do not count)."""
+        return any(t.startswith("Now · ") or t.startswith("Nothing needs you right now") for t in self.texts())
+
+    def leave_now(self) -> None:
+        """A new block opens on Now; a scenario about a view goes to the sidebar's next entry, the first view, as a user does (Tab, Down, Tab)."""
+        self.wait_until("the new block opens on Now", self.on_now)
+        for key in ("Tab", "Down", "Tab"):
+            self.ctl_ok("key", key)
+        self.wait_until("the first view is shown", lambda: not self.on_now())
 
     def selection(self) -> List[object]:
         """The primary label of every row visibly selected. Tern 0.9.1 can leave a stale `sel` class (and aria-selected) on the row just left when the new
@@ -1180,6 +1201,10 @@ def sc_get_started(s: Smoke) -> None:
     s.wait_until("the checkout's line is done", lambda: not any("as the checkout" in t for t in s.texts()))
     s.ctl_ok("click", "[data-id$='get-started.keys.no']")
     s.wait_until("every line done: the checklist goes", lambda: not any(t == "Get started" for t in s.texts()))
+    s.eq("the block opened on Now", True, s.on_now())
+    s.select_row()
+    s.ctl_ok("key", "Enter")  # Now's row shows its pull request in the view that lists it
+    s.wait_until("Enter on a Now row shows the item in the view that lists it", lambda: not s.on_now() and any(t.startswith("My PRs · ") for t in s.texts()))
     s.select_row()
     s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
     s.wait_text("the worktree toast", "Worktree ready for s/tart#1")
@@ -1209,6 +1234,7 @@ def sc_remote_host(s: Smoke) -> None:
     s.ctl_ok("remote", "loopback", "u@devbox")
     s.cd(root)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
     s.wait_text("the remote block lists the PR", "Remote PR 1")
     s.wait_text("the row of the worktree made before the block, with its place read from git", str(wt))
     s.select_row()
@@ -1384,8 +1410,8 @@ def sc_draft_push(s: Smoke) -> None:
 
 def sc_workflow(s: Smoke) -> None:
     """The workflow commands on a real Plotroom block, run through the palette ids a user runs: mark seen drops one "New" badge and nothing else; snooze hides
-    the item until the snoozed listing is turned on (it then wears a "Snoozed" badge); the attention filter names itself; the next sort order says which it
-    is; the Worktrees list lists a worktree git has, an unnoted one marked as such. The list is what the fake gh answers; no remote is written."""
+    the item until the snoozed listing is turned on (it then wears a "Snoozed" badge); the next sort order says which it is; the Worktrees list lists a
+    worktree git has, an unnoted one marked as such. The list is what the fake gh answers; no remote is written."""
     root, wt = s.checkout("flow"), s.tmp / "wts" / "flow-board"
     stamp = "2026-01-01T00:00:00Z"
     prs = [
@@ -1397,6 +1423,7 @@ def sc_workflow(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     s.cd(root)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
     s.wait_text("the first pull request", "Flow PR 1")
     s.wait_text("the second pull request", "Flow PR 2")
     s.wait_until("unseen pull requests wear New", lambda: s.count("New") >= 1)
@@ -1427,14 +1454,14 @@ def sc_workflow(s: Smoke) -> None:
     s.eq("the palette left the selection alone", chosen, s.selection())
     s.eq("and its preview", True, s.previewing())
     # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only pair this run sets);
-    # the `plugins run` calls below (snooze, toggle-snoozed, attention, sort) prove an unlisted command still runs by its action name.
+    # the `plugins run` calls below (snooze, toggle-snoozed, sort) prove an unlisted command still runs by its action name.
     s.ctl_ok("palette", "Plotroom:")
     s.wait_until("Tern's palette lists Plotroom: Open", lambda: "Plotroom: Open" in s.palette_rows())
     time.sleep(0.5)
     listed = sorted(t for t in s.palette_rows() if t.startswith("Plotroom: "))
     s.shot("tern-palette")
-    s.eq("Tern's palette lists only Open, Open item by URL and Message an agent while none waits",
-         ["Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Worktree smoke"], listed)
+    s.eq("Tern's palette lists only Open, Open item by URL, Message an agent and, while something needs you, Now",
+         ["Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Show what needs you (Now)", "Plotroom: Worktree smoke"], listed)
     s.ctl_ok("key", "Escape")
     s.wait_until("Tern's palette is closed", lambda: not s.palette_rows())
     s.eq("Tern's palette left the selection alone", chosen, s.selection())
@@ -1465,12 +1492,6 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the snoozed pull request is listed again, marked", lambda: s.count("Snoozed") >= 1 and any("Flow PR 1" in t for t in s.texts()))
     s.ctl_ok("plugins", "run", "plugin.plotroom.toggle-snoozed")
     s.wait_until("hidden again", lambda: not any("Flow PR 1" in t for t in s.texts()))
-    held = s.selection()
-    s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
-    s.wait_text("the attention filter is named", "Needs attention only")
-    s.ctl_ok("plugins", "run", "plugin.plotroom.attention")
-    time.sleep(1.0)
-    s.eq("a filter toggled and undone keeps the selection steady", held, s.selection())
     s.ctl_ok("plugins", "run", "plugin.plotroom.sort")
     s.wait_text("the sort toast", "Sorted: ")
     s.wait_until("the sort is stated in the view's own line, not only a toast", lambda: any(t.startswith("Sort: ") for t in s.texts()))
@@ -1616,6 +1637,7 @@ def sc_agent(s: Smoke) -> None:
     queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
     s.cd(root)
     s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
     s.wait_text("the pull request", "Agent PR 1")
     s.select_row()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")

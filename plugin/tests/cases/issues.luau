@@ -1388,7 +1388,7 @@ case("host: with neither gh nor acli installed, nothing is listed or asked, and 
 	hx.uninstalled(w, "gh")
 	hx.uninstalled(w, "acli")
 	local b = openQueue(w)
-	eq(#pickerOf(b).scopes, 3, "only the Worktrees, Agents and Inbox lists are listed: no view is")
+	eq(#pickerOf(b).scopes, 3, "only Now and the Worktrees and Agents lists are listed: no view is")
 	eq(pickerOf(b).state, "ready", "nothing is loading")
 	has(b.text(), "Neither gh nor acli is installed on this host. Press s to set one up.", "the queue says what to do")
 	for _, call in w.calls do
@@ -1441,7 +1441,7 @@ case("host: until the CLIs answer no view is listed or searched, and the restore
 		return nil
 	end)
 	local b = openIssues(w) -- acli has answered, gh not yet
-	eq(#pickerOf(b).scopes, 3, "only the Worktrees, Agents and Inbox lists are listed while gh has not answered: no view is")
+	eq(#pickerOf(b).scopes, 3, "only Now and the Worktrees and Agents lists are listed while gh has not answered: no view is")
 	eq(pickerOf(b).state, "loading", "the queue is loading")
 	eq(#requestsOf(s.gh, "issue-search"), 0, "nothing is searched")
 	eq(b.saved().activeViewId, "v1", "the block still saves the view it was restored on")

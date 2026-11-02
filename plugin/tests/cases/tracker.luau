@@ -2003,7 +2003,7 @@ case("github.notifications: a REST rate limit does not pause the GraphQL searche
 		problem = p
 	end)
 	w.flush()
-	eq(problem.kind, "rate-limit", "the Inbox itself reports it")
+	eq(problem.kind, "rate-limit", "the notifications read itself reports it")
 	eq(github.wait(w.seconds(), "octocat"), 0, "but searches are not held back")
 end)
 

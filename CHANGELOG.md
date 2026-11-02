@@ -11,9 +11,11 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Checkout detection: a repository with no checkout is offered the folder Plotroom opened in, or the folder of an open Tern pane on the same host, when it is inside a checkout with a remote on that github.com repository (verified as Settings › Repositories verifies; the disk is never scanned). Worktree, an action and Type a prompt… offer it as **Use <folder>** before asking for a folder.
 - Stage on every item: each row's first badge and the preview's first fact say Merged, Closed, Needs you, Agent working, Blocked, Ready to merge, PR open, Worktree or Not started, derived from GitHub, Jira, git and the item's agent on every render. It replaces the Merged and plain Closed badges, the Working and Needs input badges and an item's Worktree badge when they would say the same. The pull request search also reads GitHub's merge state.
 - Suggested next move: the selected item's stage picks one move (Worktree, Review, Go to agent, Address feedback, Re-run failed checks, Merge…, Ready for review…, Draft PR…, Remove worktree…), shown as the first Commands row under **Next** and as a button below the preview's title. It runs exactly as its own command does. The new queue action **Next move** has no default key; the one-key set binds it to `x`.
+- **Now**: the first entry in the sidebar and what a new block opens on. It ranks everything that needs you, each row saying why: agents that need input, your Blocked pull requests, reviews requested of you (oldest first), your pull requests Ready to merge, unread notifications you take part in, then New or Changed issues assigned to you on GitHub and in Jira. It reads fixed searches per signed-in `gh` login, Jira's open work assigned to you and your notifications, with the queue's refresh. Snoozed items follow Show or hide snoozed. One count, `N need you`, shows in the pane title and the status bar; clicking it shows Now (also **Plotroom: Show what needs you (Now)** in Tern's palette).
 
 ### Removed
 
+- The Inbox list (its notifications and Mark read… are in Now), the Needs attention only filter with its `n` one-key shortcut, the pane title's `N new` and the status bar's `N need attention` and `N agents need input` segments (one `N need you` count replaces them; the toast for an agent that starts waiting stays).
 - Commands: Add label… and Remove label…, Re-run all jobs… and Cancel running workflow…, Send a Browser page element to an agent…, and the Jira transition… picker with its REST client. `PLOTROOM_JIRA_API_TOKEN` is no longer read; an action's Move to status (acli) still moves Jira issues.
 - The action field Tell Carly when it finishes and the `plotroom_agents` Carly export. Saved actions that carry it still load; the field is dropped the next time that kind's actions are saved.
 - Export and import of views and actions.
@@ -21,6 +23,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Protocol 35: Mark read… is planned as `mark-read` (was `inbox-read`), so a window asks only hosts that run this release.
 - Protocol 34: a repository's missing-checkout answer may name the folder found for it. A window still asks protocol 33 hosts, which ask for a folder as before.
 - Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
 - Settings has four pages: Views, Actions, Repositories and General (the GitHub and Jira setup pages still show while their CLI is missing). Repositories holds the name formats (formerly Worktrees), each repository and the Jira projects; General holds Keyboard shortcuts and Refresh now with the GitHub quota. Every setting keeps its value. Restore defaults is now **Add missing defaults**: it never overwrote edited defaults.

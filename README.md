@@ -22,8 +22,8 @@ It is not a team tool, a hosted service or a full GitHub or Jira client: GitHub,
 
 | Step | Your question | Plotroom answers with |
 | --- | --- | --- |
-| **Intake** | What work exists? | Views of GitHub searches and Jira JQL, Pins for any item by URL, the Inbox of GitHub notifications |
-| **Triage** | What needs me now? | New and Changed badges, Snooze, Needs attention only, checks and reviews in the preview |
+| **Intake** | What work exists? | Views of GitHub searches and Jira JQL, Pins for any item by URL, GitHub notifications in Now |
+| **Triage** | What needs me now? | Now, ranked with why; stages, New and Changed badges, Snooze, checks and reviews in the preview |
 | **Dispatch** | Who does it, and where? | One-key Worktree, actions that start an omp agent in it |
 | **Supervise** | Which agent needs me, and which finished? | Agent states on every item, the Agents list, Message, Interrupt and Stop agent |
 | **Land** | Is it ready? Ship it. | Merge, Approve, Request changes, Update branch, Draft PR, each confirmed first |

@@ -1431,7 +1431,7 @@ end
 -- dismissed (kv `get-started`), and whenever Commands › Get started opened it. Each line has one action; a done line
 -- has none. Lines still being asked hide it, unless Get started opened it.
 local function checklist(state: State): Node?
-	if state.boardOn or state.agentsOn or state.nowOn then
+	if state.boardOn or state.agentsOn then -- Now shows it too: a new block opens there, and no line needs a selection
 		return nil
 	end
 	local saved = engine.getStarted()
