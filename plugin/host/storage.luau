@@ -397,11 +397,10 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.model ~= nil and type(p.model) ~= "string")
 			or (p.status ~= nil and type(p.status) ~= "string")
 			or (p.next ~= nil and type(p.next) ~= "string")
-			or (p.carly ~= nil and type(p.carly) ~= "boolean")
 		then
 			return nil, PROMPTS_BAD
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, carly = p.carly })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -418,7 +417,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, carly = p.carly })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil

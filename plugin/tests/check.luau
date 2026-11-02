@@ -383,7 +383,6 @@ function M.run()
 	assert(sorting.cycle("prs", "github", nil) == "updated" and sorting.cycle("prs", "github", "review") == "size" and sorting.cycle("prs", "github", "size") == nil and sorting.cycle("issues", "jira", "priority") == nil, "the cycle ends on the default order")
 	assert(sorting.label("bogus") == sorting.label(nil), "an unknown sort reads as the default order")
 	require("./triage_check").run()
-	require("./portable_check").run()
 	require("./board_check").run()
 end
 

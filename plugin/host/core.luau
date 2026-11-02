@@ -17,6 +17,8 @@ M.DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before i
 M.DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
 M.DETAIL_RETRY_MAX_S = 300
 M.NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
+M.NAME_CAP = 120 -- characters of an action's or view's name
+M.STATUS_CAP = 100 -- bytes of an action's target status name
 M.COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows: the window shows 40 (flows.luau MAX_ROWS), 3 are the target, account and count
 M.ISSUE_ICON = "list-checks" -- the icon of issue views, as in window.luau; a name outside Tern's icon set (`circle-dot` is one) draws blank
 -- How an issue view lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
@@ -55,8 +57,8 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
 -- alias such as @slow. `next` (nil: none) is the id of another prompt of the kind that starts for the same item, in the same
--- tab and worktree, when this prompt's agent finishes. `carly` (nil means false) has Carly told when its agent finishes.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, carly: boolean? }
+-- tab and worktree, when this prompt's agent finishes.
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keyboard shortcuts; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -228,8 +230,6 @@ export type State = {
 	inbox: Inbox,
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
-	imported: any, -- the parsed import waiting for its choices, nil: none
-	exported: any, -- the export snapshot waiting for its commit (token, json, count, notes), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
 	boardOn: boolean, -- the Worktrees scope is shown instead of a view
 	boardTimer: TimerHandle?, -- the next automatic read of the board's worktree changes, while the board is shown
@@ -533,7 +533,7 @@ local KINDS: { [string]: Kind } = {
 			{ keys = {}, actions = { "snoozed" }, text = "Show or hide snoozed issues" },
 			{ keys = {}, actions = { "attention" }, text = "List only issues that need attention: unseen or changed, or whose agent waits for input" },
 			{ keys = {}, actions = { "sort" }, text = "Switch this view to its next sort order (saved with the view)" },
-			{ keys = {}, actions = { "more" }, text = "Command palette: every action above, saved actions or a typed prompt, assign to me, labels, Jira transition, guided draft PR, export and import, open by URL" },
+			{ keys = {}, actions = { "more" }, text = "Command palette: every action above, saved actions or a typed prompt, assign to me, labels, guided draft PR, export and import, open by URL" },
 			{ keys = {}, actions = { "search" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
 			{ keys = { "Tab" }, text = "Switch between the view list and the issues" },
 			{ keys = {}, actions = { "refresh" }, text = "Refresh now" },

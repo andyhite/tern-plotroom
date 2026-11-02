@@ -1,5 +1,5 @@
 --!strict
--- Requests from window.luau (rpc) and the workflow requests: menu, worktree prepare, pickers, mutation plans, draft PR, export/import, palette actions.
+-- Requests from window.luau (rpc) and the workflow requests: menu, worktree prepare, pickers, mutation plans, draft PR, palette actions.
 -- window.luau runs on the machine showing the window, which for a pane on a remote host is not the machine holding
 -- the checkout. So whatever reads the checkout or runs git, gh or omp runs here, where the block runs: the window sends
 -- {act = "rpc", value = JSON {id, op, ...}}; the answer is the hidden node `main.r<id>` (JSON text), announced by
@@ -10,7 +10,6 @@ local github = require("../github")
 local jira = require("../jira")
 local input = require("../input")
 local keys = require("../keys")
-local portable = require("../portable")
 local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
@@ -24,15 +23,13 @@ local settings = require("./settings")
 
 local ui = tern.ui
 
-type Prompt = core.Prompt
-type Prompts = core.Prompts
 type State = core.State
 
-local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, stateKind, cli = core.COMMENT_ROWS, core.INTEGRATIONS, core.KINDS, core.clip, core.printable, core.stateKind, core.cli
-local checkoutOf, editJiraRepos, editPrompts, isTable, jiraReposOf, loadAll, loadPrompts, loadViews, promptById = storage.checkoutOf, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById
-local readCheckouts, readMap, saveCheckout, setupOf, stringList, writeViews, formats = storage.readCheckouts, storage.readMap, storage.saveCheckout, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
+local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, cli = core.COMMENT_ROWS, core.INTEGRATIONS, core.KINDS, core.clip, core.printable, core.cli
+local checkoutOf, editJiraRepos, isTable, jiraReposOf, loadPrompts, promptById = storage.checkoutOf, storage.editJiraRepos, storage.isTable, storage.jiraReposOf, storage.loadPrompts, storage.promptById
+local readCheckouts, readMap, saveCheckout, setupOf, stringList, formats = storage.readCheckouts, storage.readMap, storage.saveCheckout, storage.setupOf, storage.stringList, storage.formats
 local activeView, alive, changed, detailKey, filtered, indexOf, issueVars, login, noteWorktree = engine.activeView, engine.alive, engine.changed, engine.detailKey, engine.filtered, engine.indexOf, engine.issueVars, engine.login, engine.noteWorktree
-local offered, openItems, parseRepo, propagate, reloadViews, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.propagate, engine.reloadViews, engine.selected, engine.snapKey, engine.switchView, input.trim, engine.me, engine.ghActive
+local offered, openItems, parseRepo, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.selected, engine.snapKey, engine.switchView, input.trim, engine.me, engine.ghActive
 local discardEdit = settings.discardEdit
 
 local M = {}
@@ -133,7 +130,6 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
 			next = p.next, -- the action that starts when its agent finishes
-			carly = if p.carly then true else nil, -- Carly is told when its agent finishes
 			key = p.key,
 		})
 	end
@@ -689,34 +685,6 @@ function M.strings(list: { string }): any
 	return tern.json.array(out)
 end
 
--- The selected item as the window's palette commands see it.
-function M.ctx(state: State, id: string)
-	local item, snap = selected(state), state.snap
-	local info: any = nil
-	if item and snap then
-		local prs = snap.kind == "prs"
-		local note = state.notes[item.key]
-		info = {
-			kind = if prs then "pr" else "issue",
-			tracker = if prs then "github" else item.tracker,
-			repo = item.repo,
-			ref = if prs then tostring(item.number) else item.ref,
-			key = item.key,
-			title = item.title,
-			url = item.url,
-			state = if prs then stateKind(item) else item.state,
-			labels = M.strings(item.labels),
-			assignees = M.strings(if prs then {} else item.assignees),
-			status = if not prs and item.status then item.status.text else nil,
-			number = if prs then item.number else nil,
-		}
-		local v = activeView(state)
-		reply(state, id, { item = info, pinned = engine.pinFor(state.pins, item.key) ~= nil, view = if v then { name = v.name, kind = v.kind, integration = v.integration } else nil, worktree = if note and note.ok then note.path else nil })
-		return
-	end
-	reply(state, id, { item = tern.json.null })
-end
-
 -- The whole normalized text as confirmation rows, a row per 100 characters (newlines as ⏎); nil when it would not fit the
 -- window's rows, so no tail goes unpreviewed.
 function M.previewRows(body: string): { string }?
@@ -742,13 +710,6 @@ local function mergesNow(state: State, item: any): boolean
 	local d = state.details[detailKey(state, item)]
 	local merge = if d and d.about then d.about.merge else nil
 	return merge == "ready" or merge == "unstable"
-end
-
-function M.labelOk(label: any): string?
-	if type(label) ~= "string" or label == "" or (utf8.len(label) or 51) > 50 or string.find(label, "[%c,]") or string.sub(label, 1, 1) == "-" then
-		return nil
-	end
-	return label
 end
 
 -- The plan of the Inbox list's Mark read…: the listed threads, the gh login they were read as (both settled now: the commit
@@ -796,7 +757,7 @@ function M.inboxPlan(state: State, id: string)
 	end)
 end
 
--- The mutations of the selected item: asks for a confirmation (`offer`), or lists a Jira issue's transitions.
+-- The mutations of the selected item: asks for a confirmation (`offer`).
 function M.act(state: State, id: string, q: any)
 	local item, snap = selected(state), state.snap
 	local function no(why: string)
@@ -849,88 +810,10 @@ function M.act(state: State, id: string, q: any)
 			label = "Assign to me",
 			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, "Current assignees: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
 		}, function(done)
-			github.editIssue({ repo = item.repo, number = tonumber(item.ref) :: number, addAssignees = { "@me" }, removeAssignees = {}, addLabels = {}, removeLabels = {} }, account, function(problem: github.Problem?)
+			github.editIssue({ repo = item.repo, number = tonumber(item.ref) :: number, addAssignees = { "@me" }, removeAssignees = {} }, account, function(problem: github.Problem?)
 				M.landed(state, done, problem, "Assigned " .. target .. " to you")
 			end)
 		end)
-	elseif name == "label-add" or name == "label-remove" then
-		if prs or item.tracker ~= "github" then
-			return no("Labels are edited on GitHub issues.")
-		end
-		local label = M.labelOk(q.label)
-		if not label then
-			return no("That is not a usable label (1 to 50 characters, no comma, not starting with a dash).")
-		end
-		local add = name == "label-add"
-		if add == (table.find(item.labels, label) ~= nil) then
-			return no(if add then "It already has that label." else "It does not have that label.")
-		end
-		local account = needAccount()
-		if not account then
-			return
-		end
-		return M.offer(state, id, item, {
-			head = (if add then "Add" else "Remove") .. " label “" .. label .. "” on " .. target .. "?",
-			label = if add then "Add label" else "Remove label",
-			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, (if add then "Add label: " else "Remove label: ") .. label },
-		}, function(done)
-			local e = { repo = item.repo, number = tonumber(item.ref) :: number, addAssignees = {}, removeAssignees = {}, addLabels = if add then { label } else {}, removeLabels = if add then {} else { label } }
-			github.editIssue(e, account, function(problem: github.Problem?)
-				M.landed(state, done, problem, (if add then "Added label " else "Removed label ") .. label .. " on " .. target)
-			end)
-		end)
-	elseif name == "transition" then
-		if prs or item.tracker ~= "jira" then
-			return no("Transitions are for Jira issues.")
-		end
-		local key = state.gen
-		jira.transitions(item.ref, function(list, problem)
-			if not alive(state) then
-				return
-			elseif state.gen ~= key then
-				return no("The view changed; ask again.")
-			end
-			if not list then
-				return no(M.whyOf(problem))
-			end
-			local options: { any } = {}
-			for _, t in list do
-				table.insert(options, { id = t.id, name = t.name, to = t.to })
-			end
-			if q.to == nil then
-				return reply(state, id, { options = tern.json.array(options), current = if item.status then item.status.text else nil })
-			end
-			local chosen: any = nil
-			for _, t in list do
-				if t.id == q.to then
-					chosen = t
-				end
-			end
-			if not chosen then
-				return no("Jira no longer offers that transition for " .. item.ref .. ".")
-			end
-			local to: string = chosen.id
-			local gen = state.gen
-			jira.identity(function(who: jira.Identity?, problem3: github.Problem?)
-				if not alive(state) then
-					return
-				elseif not who then
-					return no(M.whyOf(problem3))
-				elseif state.gen ~= gen then
-					return no("The view changed; ask again.")
-				end
-				M.offer(state, id, item, {
-					head = "Move " .. item.ref .. " to " .. chosen.name .. "?",
-					label = "Move to " .. chosen.name,
-					lines = { item.ref .. ": " .. printable(item.title), "Jira account: " .. printable(who.email) .. " at " .. printable(who.site), "From: " .. (if item.status then item.status.text else "its current status"), "Transition: " .. chosen.name .. " (id " .. to .. ")" },
-				}, function(done)
-					jira.transition(item.ref, to, who, function(problem2: github.Problem?)
-						M.landed(state, done, problem2, "Moved " .. item.ref .. " with “" .. chosen.name .. "”")
-					end)
-				end)
-			end)
-		end)
-		return
 	elseif name == "rerun-failed" then
 		if not prs then
 			return no("Failed checks are rerun on pull requests.")
@@ -957,39 +840,6 @@ function M.act(state: State, id: string, q: any)
 			github.rerunFailed(item.repo, run, account, function(problem: github.Problem?)
 				M.landed(state, done, problem, "Rerunning the failed jobs of run " .. run .. " of " .. target)
 			end)
-		end)
-	elseif name == "cancel-run" or name == "rerun-all" then
-		if not prs then
-			return no("Workflow runs belong to pull requests' checks.")
-		end
-		local cancel = name == "cancel-run"
-		local open = M.pendingRuns(state, item)
-		local run, names = M.runPick(state, id, q, item, function(r: github.Run): boolean
-			if cancel then
-				return r.status == "pending"
-			end
-			return r.runId ~= nil and not open[r.runId]
-		end, if cancel then "No check of this pull request has a queued or running GitHub Actions run. Its checks may still be loading." else "No finished GitHub Actions run of this pull request can be rerun: every run has a check still queued or running, or its checks may still be loading.")
-		if not run or not names then
-			return
-		end
-		local account = needAccount()
-		if not account then
-			return
-		end
-		return M.offer(state, id, item, {
-			head = (if cancel then "Cancel workflow run " else "Rerun every job of workflow run ") .. run .. " of " .. target .. "?",
-			label = if cancel then "Cancel run" else "Rerun all jobs",
-			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, (if cancel then "Cancel run " else "Rerun all jobs of run ") .. run .. " (" .. clip(table.concat(names, ", "), 100) .. ")" },
-		}, function(done)
-			local function landed(problem: github.Problem?)
-				M.landed(state, done, problem, (if cancel then "Cancelling run " else "Rerunning all jobs of run ") .. run .. " of " .. target)
-			end
-			if cancel then
-				github.cancelRun(item.repo, run, account, landed)
-			else
-				github.rerunAll(item.repo, run, account, landed)
-			end
 		end)
 	elseif name == "issue-close" or name == "issue-reopen" then
 		if prs or item.tracker ~= "github" then
@@ -1209,17 +1059,6 @@ function M.runsOf(state: State, item: any): { github.Run }
 	return if d then d.runs else item.runs
 end
 
--- The ids of the item's workflow runs that still have a queued or running check.
-function M.pendingRuns(state: State, item: any): { [string]: boolean }
-	local open: { [string]: boolean } = {}
-	for _, r in M.runsOf(state, item) do
-		if r.runId and r.status == "pending" then
-			open[r.runId] = true
-		end
-	end
-	return open
-end
-
 -- The workflow run a mutation acts on among the item's checks `keep` lets through: its id and its checks' names, or nil
 -- after answering (a problem when there is none, the list of runs to pick from when there are several).
 function M.runPick(state: State, id: string, q: any, item: any, keep: (github.Run) -> boolean, none: string): (string?, { string }?)
@@ -1266,7 +1105,7 @@ end
 -- An item's own operation carries the heading of its type (`group`: "GitHub - PR", "GitHub - Issue" or "Jira - Issue");
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
-	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "export" }, { id = "import" }, { id = "usage-report" } }
+	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "usage-report" } }
 	if state.inboxOn and #state.inbox.rows > 0 then
 		table.insert(out, { id = "inbox-read", group = "Inbox" })
 	end
@@ -1278,29 +1117,15 @@ function M.commands(state: State): { { id: string, group: string? } }
 	local function add(cmd: string)
 		table.insert(out, { id = cmd, group = group })
 	end
-	add("open-preview")
-	if state.agents[item.key] ~= nil and state.agents[item.key] ~= "exited" then
-		table.insert(out, { id = "agent-pick-page" }) -- no type group: the command's own (Saved actions) stands, as Message's does
-	end
 	if snap.kind == "prs" then
-		local failed, pending = false, false
-		local open = M.pendingRuns(state, item) -- a run with any unfinished job is not finished
-		local finished = false
+		local failed = false
 		for _, r in M.runsOf(state, item) do
 			if r.runId then
-				pending = pending or r.status == "pending"
-				finished = finished or (r.status ~= "pending" and not open[r.runId])
 				failed = failed or r.status == "failure"
 			end
 		end
 		if failed then
 			add("rerun-failed")
-		end
-		if finished then
-			add("rerun-all")
-		end
-		if pending then
-			add("cancel-run")
 		end
 		if item.state == "open" then
 			add(if item.draft then "pr-ready" else "pr-draft")
@@ -1318,13 +1143,7 @@ function M.commands(state: State): { { id: string, group: string? } }
 		return out
 	end
 	add("assign-me")
-	if item.tracker == "jira" then
-		add("jira-transition")
-	else
-		add("label-add")
-		if #item.labels > 0 then
-			add("label-remove")
-		end
+	if item.tracker ~= "jira" then
 		add(if item.state == "open" then "issue-close" else "issue-reopen")
 	end
 	add("comment")
@@ -1557,272 +1376,6 @@ function M.draft(state: State, id: string, q: any)
 	end
 end
 
--- Saved views and prompts in the shapes portable.luau takes.
-function M.exportable(state: State, viewIds: any, promptIds: any): ({ any }?, { any }?, { any }?, string?)
-	local views: { any } = {}
-	local prompts: { any } = {}
-	local pool: { any } = {}
-	for _, kind in { KINDS.prs, KINDS.issues } do
-		local store, why = loadPrompts(kind)
-		if not store then
-			return nil, nil, nil, why
-		end
-		for _, p in store.items do
-			local entry = { id = p.id, kind = kind.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, carly = p.carly }
-			table.insert(pool, entry)
-			if isTable(promptIds) and table.find(promptIds, kind.id .. ":" .. p.id) then
-				table.insert(prompts, entry)
-			end
-		end
-	end
-	if isTable(viewIds) then
-		for _, v in state.views do
-			if table.find(viewIds, v.id) then
-				table.insert(views, { id = v.id, kind = v.kind, name = v.name, integration = v.integration, query = v.query, group = v.group, sort = v.sort, logins = v.logins, prompts = v.prompts })
-			end
-		end
-	end
-	return views, prompts, pool, nil
-end
-
--- The saved stores of both kinds as portable.plan reads them; nil and why when one cannot be read.
-function M.existing(): ({ [string]: any }?, string?)
-	local out: { [string]: any } = {}
-	for _, kind in { KINDS.prs, KINDS.issues } do
-		local views, writable, err = loadViews(kind)
-		if not writable then
-			return nil, err
-		end
-		local prompts, perr = loadPrompts(kind)
-		if not prompts then
-			return nil, perr
-		end
-		out[kind.id] = { views = views, prompts = prompts }
-	end
-	return out, nil
-end
-
--- The queue's reserved keys (every action's current key) for portable.plan: an imported action never takes one.
-function M.reserve(): { [string]: boolean }
-	local reserved: { [string]: boolean } = {}
-	for _, key in keys.load() do
-		if key ~= "" then
-			reserved[key] = true
-		end
-	end
-	return reserved
-end
-
--- `q.path` as a file on this host (a path the user typed), nil and why when it is not a usable one.
-function M.pathOf(raw: any): (string?, string?)
-	local path = if type(raw) == "string" then worktree.expandPath(trim(raw), tern.getenv("HOME")) else nil
-	if not path or #path > 4096 then
-		return nil, "That is not a usable path."
-	end
-	return path, nil
-end
-
--- Export in two steps, so what is confirmed is exactly what leaves: `preview` builds the JSON from the saved views and
--- actions and keeps that snapshot (token, JSON, counts, notes); `commit` (once, with the token and, for a file, its path)
--- copies or writes that very snapshot, whatever was saved meanwhile. A snapshot too big for the window's read is
--- file-only: its reply carries no JSON. The size limit is the importer's (portable.LIMIT), which build enforces.
-M.EXPORT_COPY = 50000 -- bytes of an answer's JSON a window can still read back (the reply is escaped)
-
-function M.export(state: State, id: string, q: any)
-	if q.phase == "commit" then
-		local held = state.exported
-		state.exported = nil
-		-- A path or write that fails leaves the snapshot to be tried again (`retry`): the window asks for another file name.
-		if not held or held.token ~= q.token then
-			return reply(state, id, { problem = "That export preview expired; export again." })
-		end
-		local body: { [string]: any } = { count = held.count, notes = M.strings(held.notes) }
-		local copyable = #tern.json.encode({ json = held.json }) <= M.EXPORT_COPY
-		if q.path ~= nil then
-			local path, bad = M.pathOf(q.path)
-			if not path then
-				state.exported = held
-				return reply(state, id, { problem = bad, retry = true })
-			end
-			local ok, err = pcall(function()
-				if tern.fs.exists(path) then
-					error("That file exists already; choose a new file name.", 0)
-				end
-				tern.fs.write(path, held.json)
-			end)
-			if not ok then
-				state.exported = held
-				return reply(state, id, { problem = "Not written: " .. tostring(err), retry = true })
-			end
-			body.ok, body.path = true, path
-		elseif not copyable then
-			return reply(state, id, { problem = "That export is too large to copy (" .. #held.json .. " bytes); export it to a file instead." })
-		end
-		if copyable and q.path == nil then
-			body.json, body.ok = held.json, true
-		end
-		return reply(state, id, body)
-	end
-	local views, prompts, pool, why = M.exportable(state, q.views, q.prompts)
-	if not views or not prompts or not pool then
-		return reply(state, id, { problem = why or "Saved actions could not be read." })
-	end
-	local json, notes = portable.build(views, prompts, false, pool)
-	if not json then
-		return reply(state, id, { problem = notes[1] or "Nothing to export.", notes = M.strings(notes) })
-	end
-	-- What the document really holds (an action a selected view needs is added, a secret-like one left out).
-	local count = { views = #views, prompts = #prompts }
-	local ok, doc = pcall(tern.json.decode, json)
-	if ok and isTable(doc) then
-		count = { views = if isTable(doc.views) then #doc.views else count.views, prompts = if isTable(doc.prompts) then #doc.prompts else count.prompts }
-	end
-	M.seq += 1
-	local token = string.format("x%d_%d", os.time(), M.seq)
-	state.exported = { token = token, json = json, count = count, notes = notes }
-	reply(state, id, { token = token, count = count, notes = M.strings(notes), size = #json, copyable = #tern.json.encode({ json = json }) <= M.EXPORT_COPY })
-end
-
-function M.exportList(state: State, id: string)
-	local views: { any } = {}
-	for _, v in state.views do
-		if #views < 200 then
-			table.insert(views, { id = v.id, name = v.name, kind = v.kind, integration = v.integration })
-		end
-	end
-	local prompts: { any } = {}
-	for _, kind in { KINDS.prs, KINDS.issues } do
-		local store = loadPrompts(kind)
-		local saved: { Prompt } = if store then store.items else {}
-		for _, p in saved do
-			if #prompts < 200 then
-				table.insert(prompts, { id = kind.id .. ":" .. p.id, name = p.name, kind = kind.id })
-			end
-		end
-	end
-	reply(state, id, { views = tern.json.array(views), prompts = tern.json.array(prompts) })
-end
-
-function M.importPreview(state: State, id: string, q: any)
-	local text = q.text
-	if q.path ~= nil then
-		local path, bad = M.pathOf(q.path)
-		if not path then
-			return reply(state, id, { problem = bad })
-		end
-		local ok, read = pcall(tern.fs.read, path, portable.LIMIT + 1)
-		if not ok or type(read) ~= "string" then
-			return reply(state, id, { problem = "That file could not be read: " .. tostring(read) })
-		end
-		text = read
-	end
-	if type(text) ~= "string" then
-		return reply(state, id, { problem = "Paste the exported JSON or give a file path." })
-	end
-	local doc, why = portable.parse(text)
-	if not doc then
-		return reply(state, id, { problem = why or "That is not a Plotroom export." })
-	end
-	local existing, ewhy = M.existing()
-	if not existing then
-		return reply(state, id, { problem = ewhy or "Saved views or actions cannot be changed now." })
-	end
-	local plan = portable.plan(doc, existing, M.reserve())
-	if #plan.entries > 150 then
-		-- The preview lists every entry or none: nothing is written that was not shown.
-		return reply(state, id, { problem = "This import has " .. #plan.entries .. " entries; Plotroom previews up to 150 at once. Export fewer views and actions at a time." })
-	end
-	M.seq += 1
-	local token = string.format("i%d_%d", os.time(), M.seq)
-	state.imported = { token = token, doc = doc, plan = plan }
-	local entries: { any } = {}
-	for i, e in plan.entries do
-		if i <= 150 then
-			table.insert(entries, { id = e.id, type = e.type, kind = e.kind, name = clip(e.name, 80), conflict = e.conflict, remap = M.strings(e.remap), slots = M.strings(e.slots) })
-		end
-	end
-	reply(state, id, { token = token, entries = tern.json.array(entries), slots = M.strings(plan.slots), accounts = M.strings(ghActive.accounts), problems = M.strings(plan.problems) })
-end
-
-function M.importApply(state: State, id: string, q: any)
-	local held = state.imported
-	state.imported = nil
-	if not held or held.token ~= q.token then
-		return reply(state, id, { problem = "That import preview expired; start the import again." })
-	end
-	-- Choices come in by entry number; mapping by slot: "" skips the views that need it, "@active" is gh's active account.
-	local choices: { [number]: string } = {}
-	if isTable(q.choices) then
-		for k, v in q.choices do
-			local n = tonumber(k)
-			if n and (v == "skip" or v == "replace" or v == "duplicate") then
-				choices[n] = v
-			end
-		end
-	end
-	local mapping: { [string]: string } = {}
-	if isTable(q.mapping) then
-		for slot, who in q.mapping do
-			if type(slot) == "string" and type(who) == "string" then
-				if who == "@active" then
-					mapping[slot] = ""
-				elseif who ~= "" and string.match(who, "^[%w%-_]+$") and #who <= 64 then
-					mapping[slot] = who
-				end
-			end
-		end
-	end
-	-- Reread right now: read, merge and write run in one go, so nothing saved meanwhile is lost.
-	local existing, why = M.existing()
-	if not existing then
-		return reply(state, id, { problem = why or "Saved views or actions cannot be changed now." })
-	end
-	local reserved = M.reserve()
-	local result, notes = portable.apply(held.doc, held.plan, choices, mapping, existing, {
-		sortValid = sorting.valid,
-		integrationOn = cli.on,
-		reserved = reserved,
-		modelValid = worktree.validModel,
-	})
-	if not result then
-		return reply(state, id, { problem = notes[1] or "Nothing could be imported.", notes = M.strings(notes) })
-	end
-	if next(result) == nil then
-		-- Every entry was skipped (or refused): that is no import, and the window must not say it was.
-		return reply(state, id, { ok = true, nothing = true, message = "Nothing was imported.", notes = M.strings(notes) })
-	end
-	local added = { views = 0, prompts = 0 }
-	for kindId, out in result do
-		local before = existing[kindId]
-		if before then
-			added.views += math.max(0, #out.views.items - #before.views.items)
-			added.prompts += math.max(0, #out.prompts.items - #before.prompts.items)
-		end
-	end
-	for kindId, out in result do
-		local kind = KINDS[kindId]
-		if kind then
-			local err = editPrompts(kind, function(store: Prompts): string?
-				store.items, store.nextId = out.prompts.items, out.prompts.nextId
-				return nil
-			end)
-			err = err or writeViews(kind, out.views)
-			if err then
-				loadAll(state)
-				return reply(state, id, { problem = "Not fully imported: " .. err })
-			end
-		end
-	end
-	reloadViews(state)
-	propagate(state)
-	reply(state, id, {
-		ok = true,
-		message = "Imported " .. added.views .. " view" .. (if added.views == 1 then "" else "s") .. " and " .. added.prompts .. " action" .. (if added.prompts == 1 then "" else "s") .. " (others replaced or left as they were).",
-		counts = added,
-		notes = M.strings(notes),
-	})
-end
-
 -- Opens the item at `url` in this block: fetched first (gh or acli), so a missing or foreign item is reported, then shown
 -- as the pin. Nothing is opened in a browser. `done(problem, message)` tells the outcome: a window request replies with it,
 -- a paste toasts it.
@@ -1908,22 +1461,12 @@ end
 -- Window requests of flows.luau's workflows (rpc's last branch).
 function M.workflowRpc(state: State, id: string, q: any)
 	local op = q.op
-	if op == "ctx" then
-		M.ctx(state, id)
-	elseif op == "act" and type(q.name) == "string" then
+	if op == "act" and type(q.name) == "string" then
 		M.act(state, id, q)
 	elseif op == "commit" and type(q.token) == "string" then
 		M.commit(state, id, q.token)
 	elseif op == "draft" and type(q.phase) == "string" then
 		M.draft(state, id, q)
-	elseif op == "export-list" then
-		M.exportList(state, id)
-	elseif op == "export" then
-		M.export(state, id, q)
-	elseif op == "import" and q.phase == "preview" then
-		M.importPreview(state, id, q)
-	elseif op == "import" and q.phase == "apply" and type(q.token) == "string" then
-		M.importApply(state, id, q)
 	elseif op == "open-url" and type(q.url) == "string" and #q.url <= 2048 then
 		M.openUrl(state, q.url, function(problem: string?, message: string?)
 			reply(state, id, if problem then { problem = problem } else { ok = true, message = message })
@@ -1983,7 +1526,7 @@ function M.rpc(state: State, raw: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, carly = if p.carly then true else nil, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end
@@ -2068,7 +1611,7 @@ function M.rpc(state: State, raw: any)
 			return
 		end
 		prepareIssue(state, id, repo, ref, q.worktree, target, { pr = pr, fresh = q.fresh == true, base = base }, q.users == true)
-	elseif q.op == "move-status" and type(q.ref) == "string" and #q.ref <= 64 and type(q.status) == "string" and q.status ~= "" and #q.status <= portable.STATUS_CAP then
+	elseif q.op == "move-status" and type(q.ref) == "string" and #q.ref <= 64 and type(q.status) == "string" and q.status ~= "" and #q.status <= core.STATUS_CAP then
 		moveStatus(state, id, q.ref, q.status)
 	elseif q.op == "where" and (q.kind == "pr" or q.kind == "issue") and type(q.key) == "string" and #q.key <= 200 then
 		-- The worktree folder of an item as its note has it (git's list or the last attempt), for the window's Go to tab:

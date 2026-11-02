@@ -367,9 +367,6 @@ export type Win = {
 	agentStates: { [number]: string }, -- agent pane -> state cx.agents:list reports (a started agent is "working"; a closed pane is not listed)
 	agentCalls: { { op: string, pane: number, text: string? } }, -- every cx.agents interrupt / stop / ask
 	askFails: boolean, -- cx.agents:ask raises (the agent cannot take a message now)
-	carlyExports: { [string]: any }, -- tern.carly.export registrations by name: { spec, fn }; the fake tern.carly exists unless a case clears `sdk.carly` before loading the window
-	carlyMessages: { { agent: number, event: string, message: string } }, -- every Agent:tocarly
-	carlyFails: string?, -- when set, Agent:tocarly raises it
 	agentNotes: { [number]: { last_message: string?, delivery_error: string? } }, -- agent pane -> what cx.agents:list also reports
 	prompts: { any }, -- every cx:prompt request
 	typedQueue: { string }, -- answers cx:prompt gives first, in order, before `typed`
@@ -385,15 +382,10 @@ export type Win = {
 	selection: any?, -- what cx.session:selection answers with (a BlockSelection; nil: nothing selected)
 	selectionAsks: { any }, -- the options of every cx.session:selection call
 	fileRead: any?, -- what cx.session:read answers with (a file block's BlockRead)
-	browserCalls: { any }, -- every cx.browser:call op
-	browserAnswer: any?, -- what cx.browser:call resolves with (a BrowserResult)
 	filesButtons: { [string]: any }, -- tern.files.button registrations by id
 	docs: { [string]: string }, -- path -> the text cx.docs:read answers with (a missing path fails)
 	docReads: { string }, -- every path cx.docs:read was asked for
 	opensBrowser: boolean, -- cx:open adds a Browser pane (the next id) to tab 1, as Tern does for a page opened beside
-	floatFails: string?, -- cx.layout:float answers false with this reason
-	floats: { { pane: number, over: number?, corner: string?, focus: boolean? } }, -- every cx.layout:float
-	closedPanes: { number }, -- every cx.layout:close
 }
 
 export type Kv = {
@@ -600,8 +592,6 @@ local function newWorld(instantiate: Loader, context: string): World
 		agentStates = {},
 		agentCalls = {},
 		askFails = false,
-		carlyExports = {},
-		carlyMessages = {},
 		agentNotes = {},
 		prompts = {},
 		typedQueue = {},
@@ -613,15 +603,10 @@ local function newWorld(instantiate: Loader, context: string): World
 		selection = nil,
 		selectionAsks = {},
 		fileRead = nil,
-		browserCalls = {},
-		browserAnswer = nil,
 		filesButtons = {},
 		docs = {},
 		docReads = {},
 		opensBrowser = false,
-		floatFails = nil,
-		floats = {},
-		closedPanes = {},
 	}
 	local nextId = 10
 
@@ -771,17 +756,6 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return p ~= nil and to ~= nil
 			end,
-			float = function(_self: any, pane: number, over: number?, corner: string?, opts: any): (boolean, string?)
-				table.insert(win.floats, { pane = pane, over = over, corner = corner, focus = if opts then opts.focus else nil })
-				if win.floatFails then
-					return false, win.floatFails
-				end
-				return true, nil
-			end,
-			close = function(_self: any, pane: number)
-				table.insert(win.closedPanes, pane)
-				win.panes[pane] = nil
-			end,
 		},
 		hosts = {
 			list = function(_self: any): any
@@ -884,25 +858,6 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return {
 					pane = agent,
-					tocarly = function(_a: any, event: string, message: string): number
-						if win.carlyFails then
-							error(win.carlyFails, 0)
-						end
-						table.insert(win.carlyMessages, { agent = agent, event = event, message = message })
-						return #win.carlyMessages
-					end,
-				}
-			end,
-		},
-		browser = {
-			call = function(_self: any, op: any): any
-				table.insert(win.browserCalls, op)
-				return {
-					next = function(_self2: any, fn: (any, any, any) -> ())
-						schedule(0, function()
-							fn(win.browserAnswer, nil, windowCx)
-						end)
-					end,
 				}
 			end,
 		},
@@ -1266,11 +1221,6 @@ local function newWorld(instantiate: Loader, context: string): World
 		on = function(name: string, fn: any)
 			win.handlers[name] = fn -- lifecycle events fire only when a case calls win.handlers[name]
 		end,
-		carly = {
-			export = function(name: string, spec: any, fn: any)
-				win.carlyExports[name] = { spec = spec, fn = fn }
-			end,
-		},
 		route = {
 			link = function(fn: any)
 				routes.link = fn
@@ -3244,7 +3194,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "32" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "33" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
@@ -3344,39 +3294,6 @@ end
 -- "kind:repo:number" of a parsed item link; "nil" when refused.
 function asks.bk.brief(p: any): string
 	return if p then p.kind .. ":" .. p.repo .. ":" .. p.number else "nil"
-end
-
--- tern.fetch and tern.base64 for the Jira REST routes: `route(req)` answers { status, body } by "METHOD /path".
-function asks.bk.fetch(w: World, route: (any) -> { status: number, body: string }?): { any }
-	local reqs: { any } = {}
-	w.sdk.base64 = {
-		encode = function(s: string): string
-			return "b64:" .. s
-		end,
-	}
-	w.sdk.fetch = function(url: string, opts: any, cb: (any) -> ())
-		local req = { url = url, method = opts.method, headers = opts.headers, body = opts.body, line = opts.method .. " " .. string.gsub(url, "^https://[^/]+", "") }
-		table.insert(reqs, req)
-		local reply = route(req) or { status = 500, body = "" }
-		w.sdk.timer(0, function()
-			cb({ status = reply.status, body = reply.body })
-		end)
-	end
-	return reqs
-end
-
--- Jira REST fixtures: /myself names `who`, the transitions of ABC-1 are `list`; the POST answers `post`.
-function asks.bk.rest(w: World, who: string, list: { any }, post: { status: number, body: string }?): { any }
-	return asks.bk.fetch(w, function(req: any): { status: number, body: string }?
-		if req.line == "GET /rest/api/3/myself" then
-			return { status = 200, body = jsonEncode({ emailAddress = who }) }
-		elseif req.line == "GET /rest/api/3/issue/ABC-1/transitions" then
-			return { status = 200, body = jsonEncode({ transitions = array(list) }) }
-		elseif req.line == "POST /rest/api/3/issue/ABC-1/transitions" then
-			return post or { status = 204, body = "" }
-		end
-		return nil
-	end)
 end
 
 -- Adds a linked worktree at `path` on `branch` (nil: detached) at `head` (sha("b")); its folder exists unless `gone`.
@@ -3610,39 +3527,6 @@ function asks.hx.boardScene(w: World): (HostScene, Git)
 	y.notes["branch.yb.plotroompr"] = "7"
 	y.notes["branch.yb.plotroomrepo"] = "x/y"
 	return s, y
-end
-
--- The JSON of an export of views and actions, previewed then committed.
-function asks.hx.exported(w: World, b: Block, views: { string }, prompts: { string }): string
-	local pv = asks.hx.ask(w, b, { op = "export", views = views, prompts = prompts })
-	return asks.hx.ask(w, b, { op = "export", phase = "commit", token = pv.token }).json
-end
-
--- Two saved prs views (My PRs runs as octocat, who has a token) and actions (a keyed one and one that holds a secret),
--- and the checkout and setup commands an export must leave out.
-function asks.hx.saved(w: World): HostScene
-	local s = hostScene(w, 3)
-	s.gh.tokens.octocat = "tok-octo"
-	savePrompts(w, { promptOf("p1", "Review", "Review {url}", "e"), promptOf("p2", "Leaky", "Log in with gh" .. "p_" .. string.rep("a", 30)) })
-	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
-		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", logins = array({ "octocat" }), group = "none", prompts = array({ "p1" }) },
-		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", logins = array({}), group = "none", prompts = array({}) },
-	}) })
-	w.kv.put("setup-commands", { ["o/r"] = array({ "npm install" }) })
-	return s
-end
-
--- A document of `views` views and `prompts` actions, as an export holds them.
-function asks.hx.doc(views: number, prompts: number): string
-	local vs: { any } = {}
-	for i = 1, views do
-		table.insert(vs, { kind = "prs", name = "View " .. i, integration = "github", query = "is:open", group = "none", accounts = array({}), prompts = array({}) })
-	end
-	local ps: { any } = {}
-	for i = 1, prompts do
-		table.insert(ps, { id = "prs:q" .. i, kind = "prs", name = "Action " .. i, text = "Do {url}" })
-	end
-	return jsonEncode({ format = "plotroom-export", version = 1, views = array(vs), prompts = array(ps) })
 end
 
 

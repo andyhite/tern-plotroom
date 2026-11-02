@@ -543,8 +543,6 @@ local function blockDef(): BlockDef<State>
 				inbox = { login = nil, rows = {}, problem = nil, busy = false, loaded = false, gen = 0 },
 				plan = nil,
 				draft = nil,
-				imported = nil,
-				exported = nil,
 				board = board.new(),
 				boardOn = false,
 				boardRemoving = nil,

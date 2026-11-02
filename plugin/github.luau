@@ -1399,20 +1399,8 @@ local function assignee(v: any): string?
 	return if v == "@me" then v else login(v)
 end
 
--- A label name. gh reads --add-label values as CSV, so csv() quotes the name when it is sent.
-local function label(v: any): string?
-	if type(v) == "string" and (utf8.len(v) or 51) <= 50 and #v >= 1 and not string.find(v, "[%c]") and string.sub(v, 1, 1) ~= "-" and string.match(v, "%S") then
-		return v
-	end
-	return nil
-end
-
-local function csv(v: string): string
-	return '"' .. (string.gsub(v, '"', '""')) .. '"'
-end
-
 -- Valid entries of `values` as `--flag=value` args; the problem when one is invalid, over `max`, or repeated.
-local function flagged(flag: string, values: any, check: (any) -> string?, what: string, args: { string }, seen: { [string]: string }, encode: ((string) -> string)?): Problem?
+local function flagged(flag: string, values: any, check: (any) -> string?, what: string, args: { string }, seen: { [string]: string }): Problem?
 	if type(values) ~= "table" then
 		return nil
 	end
@@ -1429,7 +1417,7 @@ local function flagged(flag: string, values: any, check: (any) -> string?, what:
 			return bad(ok .. " cannot be both added and removed.")
 		end
 		seen[k] = flag
-		table.insert(args, flag .. "=" .. (if encode then encode(ok) else ok))
+		table.insert(args, flag .. "=" .. ok)
 	end
 	return nil
 end
@@ -1439,13 +1427,10 @@ export type IssueEdit = {
 	number: number,
 	addAssignees: { string }?,
 	removeAssignees: { string }?,
-	addLabels: { string }?,
-	removeLabels: { string }?,
 }
 
--- `gh issue edit` with validated assignees (logins, or `@me` for the account's own login) and labels; done(problem).
--- At least one change is required. Labels GitHub does not know are created by gh's own refusal: it fails, nothing is
--- invented here. done never runs before this call returns.
+-- `gh issue edit` with validated assignees (logins, or `@me` for the account's own login); done(problem).
+-- At least one change is required. done never runs before this call returns.
 function M.editIssue(e: IssueEdit, account: string?, done: (Problem?) -> ())
 	local repo = repoArg(e.repo)
 	local args: { string } = { "issue", "edit", tostring(e.number), "--repo", repo or "" }
@@ -1456,12 +1441,9 @@ function M.editIssue(e: IssueEdit, account: string?, done: (Problem?) -> ())
 		problem = bad("Unexpected issue number.")
 	end
 	local seenAssignee: { [string]: string } = {}
-	local seenLabel: { [string]: string } = {}
 	problem = problem
 		or flagged("--add-assignee", e.addAssignees, assignee, "assignees", args, seenAssignee)
 		or flagged("--remove-assignee", e.removeAssignees, assignee, "assignees", args, seenAssignee)
-		or flagged("--add-label", e.addLabels, label, "labels", args, seenLabel, csv)
-		or flagged("--remove-label", e.removeLabels, label, "labels", args, seenLabel, csv)
 	if not problem and #args == 5 then
 		problem = bad("Nothing to change.")
 	end
@@ -1707,37 +1689,10 @@ function M.comment(repo: string, number: number, text: string, account: string?,
 	end, done)
 end
 
-local CANCELLABLE: { [string]: boolean } = { queued = true, in_progress = true, waiting = true, pending = true, requested = true }
-
--- Cancels a queued or running workflow run (never --force). `runId` is a digit string of up to 15 digits.
-function M.cancelRun(repo: string, runId: string, account: string?, done: (Problem?) -> ())
-	guarded("run", "databaseId,status,url", { "actions/runs" }, repo, runId, account, function(d)
-		local status = field(d, "status")
-		if type(status) ~= "string" or not CANCELLABLE[status] then
-			return "Workflow run " .. runId .. " is not queued or running (" .. tostring(status) .. ")."
-		end
-		return nil
-	end, function(_, id)
-		return { "run", "cancel", id, "--repo", repoArg(repo) or "" }
-	end, done)
-end
-
--- Re-runs the whole of a finished workflow run, whatever its conclusion (M.rerunFailed is the failed-jobs variant).
-function M.rerunAll(repo: string, runId: string, account: string?, done: (Problem?) -> ())
-	guarded("run", "databaseId,status,url", { "actions/runs" }, repo, runId, account, function(d)
-		if field(d, "status") ~= "completed" then
-			return "Workflow run " .. runId .. " has not finished."
-		end
-		return nil
-	end, function(_, id)
-		return { "run", "rerun", id, "--repo", repoArg(repo) or "" }
-	end, done)
-end
-
 local RERUNNABLE: { [string]: boolean } = { failure = true, timed_out = true, cancelled = true, startup_failure = true }
 
--- Re-runs the failed jobs of workflow run `runId` (a `Run.runId`: never a check suite or check run id), guarded as
--- rerunAll is: the run is read first and must belong to `repo`, be finished and have failed.
+-- Re-runs the failed jobs of workflow run `runId` (a `Run.runId`: never a check suite or check run id), guarded: the
+-- run is read first and must belong to `repo`, be finished and have failed.
 function M.rerunFailed(repo: string, runId: string, account: string?, done: (Problem?) -> ())
 	guarded("run", "databaseId,status,conclusion,url", { "actions/runs" }, repo, runId, account, function(d)
 		if field(d, "status") ~= "completed" then

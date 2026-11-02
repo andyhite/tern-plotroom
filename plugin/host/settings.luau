@@ -4,7 +4,6 @@ local github = require("../github")
 local input = require("../input")
 local jira = require("../jira")
 local keys = require("../keys")
-local portable = require("../portable")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -296,17 +295,6 @@ local function pageContent(state: State): ({ any }, { Node })
 						style = "segmented",
 						value = if p.split then "split" else "tab",
 						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
-					},
-				})
-				row({
-					id = "pcarly:" .. qid,
-					label = "Tell Carly when it finishes",
-					hint = "One fixed message naming the action and item, pointing Carly at plotroom_agents for the result; nothing from the item or the agent",
-					control = {
-						k = "choice",
-						style = "segmented",
-						value = if p.carly then "on" else "off",
-						options = tern.json.array({ { value = "off", label = "Off" }, { value = "on", label = "On" } }),
 					},
 				})
 				local nextOptions: { any } = { { value = "none", label = "None" } }
@@ -921,9 +909,9 @@ function M.setValue(state: State, row: string, value: any)
 			p.next = to
 			return nil
 		end)
-	elseif kind == "pwhere" or kind == "psplit" or kind == "pcarly" then
-		local yes = if kind == "pwhere" then "worktree" elseif kind == "psplit" then "split" else "on"
-		local no = if kind == "pwhere" then "checkout" elseif kind == "psplit" then "tab" else "off"
+	elseif kind == "pwhere" or kind == "psplit" then
+		local yes = if kind == "pwhere" then "worktree" else "split"
+		local no = if kind == "pwhere" then "checkout" else "tab"
 		local on = choice == yes
 		if not (on or choice == no) then
 			return
@@ -931,10 +919,8 @@ function M.setValue(state: State, row: string, value: any)
 		s.errors[row] = editPrompt(state, id, function(_, p)
 			if kind == "pwhere" then
 				p.worktree = on
-			elseif kind == "psplit" then
-				p.split = on
 			else
-				p.carly = if on then true else nil
+				p.split = on
 			end
 			return nil
 		end)
@@ -1309,8 +1295,8 @@ function M.commitEdit(state: State)
 		settle(s, row, err)
 	elseif kind == "pstatus" and id then
 		local err: string? = nil
-		if #text > portable.STATUS_CAP or string.find(text, "%c") then
-			err = "A status name on one line, at most " .. portable.STATUS_CAP .. " characters."
+		if #text > core.STATUS_CAP or string.find(text, "%c") then
+			err = "A status name on one line, at most " .. core.STATUS_CAP .. " characters."
 		else
 			err = editPrompt(state, id, function(_, p)
 				p.status = if text ~= "" then text else nil
@@ -1377,8 +1363,8 @@ function M.commitEdit(state: State)
 		local empty = false
 		if text == "" then
 			err = if kind == "pname" then "A name is required." else "A prompt is required."
-		elseif kind == "pname" and #text > portable.NAME_CAP then
-			err = "A name is at most " .. portable.NAME_CAP .. " characters."
+		elseif kind == "pname" and #text > core.NAME_CAP then
+			err = "A name is at most " .. core.NAME_CAP .. " characters."
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."
 		else

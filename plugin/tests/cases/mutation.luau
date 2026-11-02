@@ -94,14 +94,11 @@ case("github.editIssue: an invalid input is refused before gh runs, a valid edit
 		end)
 	end
 	local refused: { [string]: any } = {
-		["a label with a control character"] = { repo = "o/r", number = 5, addLabels = { "a\tb" } },
-		["a label that starts with a dash"] = { repo = "o/r", number = 5, addLabels = { "-x" } },
-		["a label added and removed"] = { repo = "o/r", number = 5, addLabels = { "bug" }, removeLabels = { "BUG" } },
 		["an assignee added and removed"] = { repo = "o/r", number = 5, addAssignees = { "bob" }, removeAssignees = { "Bob" } },
 		["a login with a space"] = { repo = "o/r", number = 5, addAssignees = { "bob smith" } },
 		["no change"] = { repo = "o/r", number = 5 },
-		["a repo that is not owner/name"] = { repo = "o", number = 5, addLabels = { "bug" } },
-		["a fractional number"] = { repo = "o/r", number = 5.5, addLabels = { "bug" } },
+		["a repo that is not owner/name"] = { repo = "o", number = 5, addAssignees = { "bob" } },
+		["a fractional number"] = { repo = "o/r", number = 5.5, addAssignees = { "bob" } },
 	}
 	for what, e in refused do
 		local p = edit(e, nil)
@@ -109,8 +106,8 @@ case("github.editIssue: an invalid input is refused before gh runs, a valid edit
 	end
 	eq(#w.calls, 0, "nothing was spawned for any of them")
 	eq(#seen, 0, "gh never ran")
-	eq(edit({ repo = "o/r", number = 5, addAssignees = { "@me", "bob" }, removeAssignees = { "ann" }, addLabels = { "good first issue", "a,b" }, removeLabels = { "wip" } }, nil), nil, "a valid edit succeeds")
-	same(seen, { "gh issue edit 5 --repo github.com/o/r --add-assignee=@me --add-assignee=bob --remove-assignee=ann --add-label=\"good first issue\" --add-label=\"a,b\" --remove-label=\"wip\"" }, "one argv, every label CSV-quoted: a comma stays inside one label")
+	eq(edit({ repo = "o/r", number = 5, addAssignees = { "@me", "bob" }, removeAssignees = { "ann" } }, nil), nil, "a valid edit succeeds")
+	same(seen, { "gh issue edit 5 --repo github.com/o/r --add-assignee=@me --add-assignee=bob --remove-assignee=ann" }, "one argv of --flag=value arguments")
 	eq(#gh.requests, 1, "one gh request")
 end)
 
@@ -120,7 +117,7 @@ case("github: a saved gh login that cannot sign in sends no mutation", function(
 		return { stdout = "https://github.com/o/r/pull/9\n" }
 	end)
 	local e = asks.bk.once(w, function(done)
-		github.editIssue({ repo = "o/r", number = 5, addLabels = { "bug" } }, "ghost", done)
+		github.editIssue({ repo = "o/r", number = 5, addAssignees = { "bob" } }, "ghost", done)
 	end)
 	eq(e.kind, "auth", "edit: the account is not signed in")
 	local r = asks.bk.once(w, function(done)
@@ -345,162 +342,6 @@ case("jira.assignMe: one acli argv for the signed-in user, a bad key spawns noth
 		lacks(table.concat(w.calls[i].argv, " "), "assign", "no assign was spawned")
 	end
 	WHO = { email = "ann@example.com", site = "https://acme.atlassian.net" }
-end)
-
-case("jira.transitions: no API token is an auth problem naming the setup, and nothing is requested or leaked", function(w: World)
-	local jira = w.load("jira") :: Jira
-	newAcli(w)
-	local reqs = asks.bk.rest(w, "ann@example.com", {})
-	local problem: any = nil
-	jira.transitions("ABC-1", function(_list, p)
-		problem = p
-	end)
-	w.flush()
-	eq(problem.kind, "auth", "auth")
-	has(problem.message, "PLOTROOM_JIRA_API_TOKEN", "names the variable")
-	has(problem.message, "restart Tern", "and the setup")
-	lacks(problem.message, "Authorization", "no header text")
-	eq(#reqs, 0, "no request was made")
-	w.env.PLOTROOM_JIRA_API_TOKEN = ""
-	problem = nil
-	jira.transition("ABC-1", "31", WHO, function(p)
-		problem = p
-	end)
-	w.flush()
-	eq(problem.kind, "auth", "an empty token is none")
-	eq(#reqs, 0, "still no request")
-end)
-
-case("jira.transitions: an API token of another account sends nothing past /myself and never appears in a message", function(w: World)
-	local jira = w.load("jira") :: Jira
-	newAcli(w)
-	w.env.PLOTROOM_JIRA_API_TOKEN = "s3cret-token"
-	local reqs = asks.bk.rest(w, "bob@example.com", { { id = "31", name = "Done" } })
-	local problem: any = nil
-	jira.transition("ABC-1", "31", WHO, function(p)
-		problem = p
-	end)
-	w.flush()
-	eq(problem.kind, "auth", "auth")
-	has(problem.message, "bob@example.com", "names the token's account")
-	for _, secret in { "s3cret-token", "Authorization", "Basic", "b64:" } do
-		lacks(problem.message, secret, "the message does not leak " .. secret)
-	end
-	eq(#reqs, 1, "only /myself was requested")
-	eq(reqs[1].line, "GET /rest/api/3/myself", "that request")
-	eq(#w.toasts, 0, "no toast is shown, so none carries the token")
-	for _, call in w.calls do
-		lacks(table.concat(call.argv, " "), "s3cret-token", "the token is in no argv")
-	end
-end)
-
-case("jira.transitions: the list drops non-numeric ids, and the request is the fixed REST route with Basic auth", function(w: World)
-	local jira = w.load("jira") :: Jira
-	newAcli(w)
-	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
-	local reqs = asks.bk.rest(w, "Ann@Example.com", {
-		{ id = "31", name = "Done", to = { name = "Done" } },
-		{ id = "x1", name = "Bad id" },
-		{ id = "41", name = "Start" },
-		{ id = 5, name = "Number id" },
-		{ id = "51" },
-	})
-	local got: any = nil
-	jira.transitions("ABC-1", function(list, p)
-		eq(p, nil, "problem")
-		got = list
-	end)
-	w.flush()
-	eq(#got, 2, "two usable transitions")
-	eq(got[1].id .. ":" .. got[1].name .. ":" .. tostring(got[1].to), "31:Done:Done", "first")
-	eq(got[2].id .. ":" .. got[2].name .. ":" .. tostring(got[2].to), "41:Start:nil", "second")
-	eq(#reqs, 2, "myself, then the list")
-	eq(reqs[1].url, "https://acme.atlassian.net/rest/api/3/myself", "myself")
-	eq(reqs[2].url, "https://acme.atlassian.net/rest/api/3/issue/ABC-1/transitions", "the list")
-	eq(reqs[1].headers.Authorization, "Basic b64:ann@example.com:tok", "Basic auth of the acli email and the token")
-	eq(reqs[2].body, nil, "a read has no body")
-	local bad: any = nil
-	jira.transitions("abc", function(_list, p)
-		bad = p
-	end)
-	w.flush()
-	eq(bad.kind, "invalid", "a bad key")
-	eq(#reqs, 2, "and no request for it")
-end)
-
-case("jira.transition: the id must be in the re-listed set, then one POST of exactly the transition id", function(w: World)
-	local jira = w.load("jira") :: Jira
-	newAcli(w)
-	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
-	local post: { status: number, body: string }? = nil
-	local reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, nil)
-	local function go(id: string): any
-		return asks.bk.once(w, function(done)
-			jira.transition("ABC-1", id, WHO, done)
-		end)
-	end
-	local function posts(): number
-		local n = 0
-		for _, r in reqs do
-			if r.method == "POST" then
-				n += 1
-			end
-		end
-		return n
-	end
-	eq(go("99").kind, "invalid", "an id Jira no longer offers")
-	has(go("99").message, "no longer available", "says so")
-	eq(go("3x").kind, "invalid", "a malformed id")
-	eq(posts(), 0, "no POST for either")
-	eq(go("31"), nil, "the offered id succeeds")
-	eq(posts(), 1, "one POST")
-	local sent = reqs[#reqs]
-	eq(sent.line, "POST /rest/api/3/issue/ABC-1/transitions", "route")
-	eq(sent.body, '{"transition":{"id":"31"}}', "body")
-	eq(sent.headers["Content-Type"], "application/json", "content type")
-	post = { status = 400, body = jsonEncode({ errorMessages = array({ "Field 'resolution' is required" }) }) }
-	reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, post)
-	local refused = go("31")
-	eq(refused.kind, "failed", "Jira refusing the transition")
-	has(refused.message, "resolution", "carries Jira's own reason")
-end)
-
-case("jira.transition: a site or account switch since the plan sends nothing, and a failed status sends nothing", function(w: World)
-	local jira = w.load("jira") :: Jira
-	local acli = newAcli(w)
-	w.env.PLOTROOM_JIRA_API_TOKEN = "tok"
-	local reqs = asks.bk.rest(w, "ann@example.com", { { id = "31", name = "Done" } }, nil)
-	jira.transitions("ABC-1", function() end)
-	w.flush()
-	local listed = #reqs
-	acli.site = "other.atlassian.net"
-	local problem: any = "unset"
-	jira.transition("ABC-1", "31", WHO, function(p)
-		problem = p
-	end)
-	w.flush()
-	eq(problem and problem.kind, "invalid", "the planned account is on another site now")
-	has(problem.message, "account changed", "says so")
-	eq(#reqs, listed, "nothing was requested")
-	jira.transition("ABC-1", "31", { email = "ann@example.com", site = "https://other.atlassian.net" }, function(p)
-		problem = p
-	end)
-	w.flush()
-	eq(problem, nil, "the account shown for that site succeeds")
-	eq(reqs[#reqs].url, "https://other.atlassian.net/rest/api/3/issue/ABC-1/transitions", "the POST goes to the current site")
-	local before = #reqs
-	acli.override = function(req: any): any
-		if req.kind == "auth" then
-			return { status = 1, stderr = "✗ Error: boom\n" }
-		end
-		return nil
-	end
-	jira.transition("ABC-1", "31", WHO, function(p)
-		problem = p
-	end)
-	w.flush()
-	eq(#reqs, before, "nothing sent when status fails")
-	yes(problem ~= nil, "a failed status read is a problem")
 end)
 
 case("worktree.inventory: lists every worktree of the checkout, marks main, flags locked, prunable, missing and detached, writes nothing", function(w: World)

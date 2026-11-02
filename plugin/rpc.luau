@@ -6,8 +6,8 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 32
-M.MIN = 32
+M.PROTOCOL = 33
+M.MIN = 33
 M.SINCE = {} :: { [string]: number } -- op → the protocol that added it; an op not listed is known to every host in range
 
 return M

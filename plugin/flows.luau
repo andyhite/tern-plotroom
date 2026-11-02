@@ -1,7 +1,7 @@
 --!strict
 -- The window's workflow flows: agent links (which agent pane works on which item, kept in kv `agent-links`, and the
--- timer that tells each Plotroom block how those agents are doing), the guided mutations (assign, labels, Jira
--- transition, re-run, draft PR, export, import: always plan, Cancel-first confirm, commit), Open item by URL and the
+-- timer that tells each Plotroom block how those agents are doing), the guided mutations (assign, labels,
+-- re-run, draft PR: always plan, Cancel-first confirm, commit), Open item by URL and the
 -- commands the command palette lists. window.luau injects what it owns (`setup`), so there is no require cycle.
 
 local input = require("./input")
@@ -20,9 +20,8 @@ export type Env = {
 	targetPane: (cx: WindowCx, path: string) -> (number?, number?, number?),
 	launch: (cx: WindowCx) -> number?,
 	-- Follows the hidden link node `nodeId` of `pane` (the same validation as a click on it); `missing` is said when
-	-- the node has none; `typed` asks for a typed prompt; `mode` varies what the link does ("preview": opens the page in a
-	-- floating Browser over the block; "agentpick": the Message link sends a picked page element).
-	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?) -> (),
+	-- the node has none; `typed` asks for a typed prompt.
+	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> (),
 	-- Every Tern palette command's title by id (window.luau fills it as it registers them), for the usage report.
 	titles: { [string]: string },
 }
@@ -61,7 +60,6 @@ local MAX_ROWS = 40
 local AGENTGO_NODE = "layer.queue.buttons.agentgo"
 local OPEN_NODE = "layer.queue.buttons.open"
 M.AGENTGO_NODE, M.OPEN_NODE = AGENTGO_NODE, OPEN_NODE
-local AGENTMSG_NODE = "layer.queue.buttons.agentmsg" -- hidden: the Message link, whose node also says an agent is recorded
 local WTOPEN_NODE = "layer.queue.buttons.wtopen"
 local GIT_NODE = "layer.queue.buttons.git"
 
@@ -560,7 +558,7 @@ function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, numb
 end
 
 -- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed) and when (HH:MM) on its link, for the
--- Agents list and Carly's `plotroom_agents`. The first turn end of a link appends its run to the run log (kv `runs`):
+-- Agents list. The first turn end of a link appends its run to the run log (kv `runs`):
 -- a run ends with its agent's first turn, so later turns of the same agent add no record. Nothing for an agent with
 -- no link or a store that cannot be read.
 function M.recordResult(cx: WindowCx, agent: number, result: string)
@@ -589,23 +587,6 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 			return
 		end
 	end
-end
-
--- The linked agents, newest first, for Carly's `plotroom_agents`: item key, action name, state and (once its turn
--- ended) result. A finished agent that is gone stays listed with state "exited". Read-only.
-function M.agentList(cx: WindowCx): { { item: string, action: string, state: string, result: string? } }
-	local out = {}
-	local states, _, cwds = agentStates(cx)
-	if not states then
-		return out
-	end
-	for _, l in (readLinks()) do
-		local state = stateOf(l, states, cwds) or (if l.result then "exited" else nil)
-		if state then
-			table.insert(out, { item = l.key, action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "", state = state, result = l.result })
-		end
-	end
-	return out
 end
 
 -- The newest link for `key` on `pane`'s host, and its state; nil link when none, with state "exited" for one whose
@@ -766,11 +747,6 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 				cx2:toast("info", "Nothing to send: the message was blank")
 			end
 		end)
-	elseif act == "agentpick" then
-		local link = M.liveAgent(cx, pane, key)
-		if link then
-			M.pickPage(cx, key, link.agent)
-		end
 	end
 end
 
@@ -1001,88 +977,6 @@ function M.messageSelection(cx: WindowCx)
 	end)
 end
 
--- The Browser blocks this window shows (the ones `cx.browser`'s pick can drive), as picker rows.
-local function browserRows(cx: WindowCx): { PickItem }
-	local rows: { PickItem } = {}
-	for _, p in cx.session:panes() do
-		if p.kind == "browser" and p.parked ~= true and p.tab ~= nil then -- one the user can see and click
-			local title = if type(p.title) == "string" and p.title ~= "" then p.title else "Browser"
-			table.insert(rows, { label = title, detail = p.url, icon = "globe", browser = p.pane })
-		end
-	end
-	table.sort(rows, function(a: PickItem, b: PickItem)
-		return (a.browser :: number) < (b.browser :: number)
-	end)
-	return rows
-end
-
--- The picked element as a draft: the page, then the element's role, name, selector and (clipped) text. Its value is left
--- out on purpose: a form field may hold a password.
-local function pickDraft(picked: any, url: any, title: any): string
-	local lines: { string } = {}
-	local page = clip(if type(title) == "string" then title else nil, 200)
-	table.insert(lines, "Page: " .. (page or "(untitled)") .. " <" .. (clip(if type(url) == "string" then url else nil, 500) or "") .. ">")
-	local what = clip(if type(picked.tag) == "string" then picked.tag else nil, 40) or "element"
-	if type(picked.role) == "string" and picked.role ~= "" then
-		what ..= " role=" .. (clip(picked.role, 40) or "")
-	end
-	if type(picked.name) == "string" and picked.name ~= "" then
-		what ..= ' name="' .. (clip(picked.name, 200) or "") .. '"'
-	end
-	table.insert(lines, "Element: " .. what)
-	if type(picked.selector) == "string" and picked.selector ~= "" then
-		table.insert(lines, "Selector: " .. (clip(picked.selector, 300) or ""))
-	end
-	if type(picked.text) == "string" and picked.text ~= "" then
-		local text = clip(picked.text, SEL_CHARS) or ""
-		table.insert(lines, "Text: " .. text .. (if #picked.text > SEL_CHARS then " … [clipped to " .. SEL_CHARS .. " bytes]" else ""))
-	end
-	return table.concat(lines, "\n")
-end
-
--- Plotroom: Send a Browser page element to the selected item's agent…: the user picks (if several) one of the window's
--- Browser blocks and clicks an element in it (`cx.browser` pick; Escape cancels); the element and its page are the draft
--- the user edits before it is sent to `agent`. Only a Browser block already open is used: none is opened here (the
--- Open commands do, on the link path, and whatever profile Tern gives that Browser block is the one the page is read in).
-function M.pickPage(cx: WindowCx, key: string, agent: number)
-	local rows = browserRows(cx)
-	if #rows == 0 then
-		return cx:toast("info", "Open a Browser block first", "Use Open in Browser on the item, then run this again.")
-	end
-	local function start(cx2: WindowCx, block: number)
-		local session = e().sourceSession(cx2, block)
-		if session then
-			cx2.sessions:switch(session)
-		end
-		cx2.layout:focus(block)
-		cx2:toast("info", "Click an element in the Browser", "Escape cancels.")
-		cx2.browser:call({ op = "pick", block = block }):next(function(result, err, cx3)
-			if not cx3 then
-				return
-			end
-			local bad = if err then tostring(err) elseif type(result) ~= "table" then "Browser gave no answer" elseif result.error then tostring(result.error.message) else nil
-			local ok: any = if type(result) == "table" then result.ok else nil
-			if bad or type(ok) ~= "table" then
-				return cx3:toast("error", "Could not pick a page element", bad or "Browser gave no answer")
-			elseif ok.cancelled == true then
-				return cx3:toast("info", "Nothing picked", "The pick was cancelled.")
-			elseif type(ok.picked) ~= "table" then
-				return cx3:toast("error", "Could not pick a page element", "Browser gave no element")
-			end
-			local context = contextLines(pickDraft(ok.picked, ok.url, ok.title), false)
-			review(cx3, agent, key, "Send this page element to the agent of " .. key .. "?", context, "")
-		end)
-	end
-	if #rows == 1 then
-		return start(cx, rows[1].browser :: number)
-	end
-	cx:pick({ items = rows, placeholder = "Pick an element in which Browser?", icon = "globe", action = "pick" }):next(function(item, _, cx2)
-		if cx2 and item and type(item.browser) == "number" then
-			start(cx2, item.browser)
-		end
-	end)
-end
-
 local function planOf(a: any): Plan?
 	local c = a.confirm
 	if type(a.token) ~= "string" or a.token == "" or type(c) ~= "table" or type(c.head) ~= "string" or type(c.label) ~= "string" then
@@ -1136,77 +1030,10 @@ local function planAct(cx: WindowCx, pane: number, title: string, args: { [strin
 	end)
 end
 
--- The selected item of the pane's active view, as the host says; nothing selected is said.
-local function withItem(cx: WindowCx, pane: number, done: (any, WindowCx) -> ())
-	e().ask(cx, pane, "ctx", {}, ACT_MS, function(a: any, cx2: WindowCx)
-		local why = problemOf(a)
-		local item = a.item
-		if why then
-			return cx2:toast("error", "Plotroom: the selected item is not known", why)
-		elseif type(item) ~= "table" or type(item.key) ~= "string" then
-			return cx2:toast("info", "Select a pull request or issue first")
-		end
-		done(item, cx2)
-	end)
-end
-
 -- ---------------------------------------------------------------- item actions
 
 local function assignMe(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not assigned", { name = "assign-me" })
-end
-
-local function labelAdd(cx: WindowCx, pane: number)
-	cx:prompt({ placeholder = "Label to add to the selected issue", icon = "merge", action = "add" }):next(function(text, _, cx2)
-		local label = if text then trim(text) else ""
-		if cx2 and label ~= "" then
-			planAct(cx2, pane, "Label not added", { name = "label-add", label = label })
-		end
-	end)
-end
-
-local function labelRemove(cx: WindowCx, pane: number)
-	withItem(cx, pane, function(item: any, cx2: WindowCx)
-		local items: { PickItem } = {}
-		for _, label in if type(item.labels) == "table" then item.labels else {} do
-			if type(label) == "string" and label ~= "" then
-				table.insert(items, { label = label, group = "Labels" })
-			end
-		end
-		if #items == 0 then
-			return cx2:toast("info", item.key .. " has no labels")
-		end
-		cx2:pick({ items = items, placeholder = "Remove a label from " .. item.key, icon = "merge", action = "remove" }):next(function(picked, _, cx3)
-			if cx3 and picked then
-				planAct(cx3, pane, "Label not removed", { name = "label-remove", label = picked.label })
-			end
-		end)
-	end)
-end
-
-local function jiraTransition(cx: WindowCx, pane: number)
-	e().ask(cx, pane, "act", { name = "transition" }, ACT_MS, function(a: any, cx2: WindowCx)
-		local why = problemOf(a)
-		if why then
-			return cx2:toast("error", "Transitions are not listed", why)
-		end
-		local items: { PickItem } = {}
-		local ids: { [string]: boolean } = {}
-		for _, o in if type(a.options) == "table" then a.options else {} do
-			if type(o) == "table" and type(o.id) == "string" and type(o.name) == "string" then
-				ids[o.id] = true
-				table.insert(items, { label = o.name, optionId = o.id, current = o.name == a.current or o.id == a.current })
-			end
-		end
-		if #items == 0 then
-			return cx2:toast("info", "No transitions are offered for this issue")
-		end
-		cx2:pick({ items = items, placeholder = "Move the selected issue to…", icon = "merge", action = "move" }):next(function(picked, _, cx3)
-			if cx3 and picked and ids[picked.optionId] then
-				planAct(cx3, pane, "Not moved", { name = "transition", to = picked.optionId })
-			end
-		end)
-	end)
 end
 
 -- A workflow-run action on the selected pull request's checks: the host answers the runs to pick from (several) or a plan.
@@ -1237,14 +1064,6 @@ end
 
 local function rerunFailed(cx: WindowCx, pane: number)
 	runAction(cx, pane, "rerun-failed", "Nothing to re-run", "No failed runs to re-run", "Which failed run to re-run?")
-end
-
-local function rerunAll(cx: WindowCx, pane: number)
-	runAction(cx, pane, "rerun-all", "Nothing to re-run", "No finished runs to re-run", "Which run to re-run in full?")
-end
-
-local function cancelRun(cx: WindowCx, pane: number)
-	runAction(cx, pane, "cancel-run", "Nothing to cancel", "No queued or running workflow runs", "Which running workflow run to cancel?")
 end
 
 -- The Inbox list's notifications marked read: the host names the listed threads and the account in the confirm.
@@ -1451,310 +1270,6 @@ local function draftPr(cx: WindowCx, pane: number)
 	end)
 end
 
--- ---------------------------------------------------------------- export / import
-
-local function exportFlow(cx: WindowCx, pane: number)
-	e().ask(cx, pane, "export-list", {}, ACT_MS, function(a: any, cx2: WindowCx)
-		local why = problemOf(a)
-		if why then
-			return cx2:toast("error", "Nothing to export", why)
-		end
-		local entries: { { kind: string, id: any, label: string, detail: string } } = {}
-		for _, v in if type(a.views) == "table" then a.views else {} do
-			if type(v) == "table" and v.id ~= nil and type(v.name) == "string" then
-				table.insert(entries, { kind = "view", id = v.id, label = v.name, detail = tostring(v.kind) .. " · " .. tostring(v.integration) })
-			end
-		end
-		for _, v in if type(a.prompts) == "table" then a.prompts else {} do
-			if type(v) == "table" and v.id ~= nil and type(v.name) == "string" then
-				table.insert(entries, { kind = "prompt", id = v.id, label = v.name, detail = tostring(v.kind) })
-			end
-		end
-		if #entries == 0 then
-			return cx2:toast("info", "No views or actions to export")
-		end
-		local chosen: { [number]: boolean } = {}
-		local function finish(cx3: WindowCx)
-			local views: { any } = {}
-			local prompts: { any } = {}
-			for i, entry in entries do
-				if chosen[i] then
-					table.insert(if entry.kind == "view" then views else prompts, entry.id)
-				end
-			end
-			if #views + #prompts == 0 then
-				return cx3:toast("info", "Nothing was picked to export")
-			end
-			local args: { [string]: any } = { views = tern.json.array(views), prompts = tern.json.array(prompts) }
-			e().ask(cx3, pane, "export", args, ACT_MS, function(r: any, cx5: WindowCx)
-				local why2 = problemOf(r)
-				if why2 then
-					return cx5:toast("error", "Not exported", why2)
-				elseif type(r.token) ~= "string" or r.token == "" then
-					return cx5:toast("error", "Not exported", "The block's host gave no export to confirm")
-				end
-				-- What leaves is the host's own snapshot: its actual counts and notes are confirmed, then that snapshot is committed.
-				local token: string = r.token
-				local nv = if type(r.count) == "table" then tonumber(r.count.views) or 0 else 0
-				local np = if type(r.count) == "table" then tonumber(r.count.prompts) or 0 else 0
-				local actual = string.format("%d view(s), %d action(s)", nv, np)
-				local copyable = r.copyable ~= false
-				local rows: { PickItem } = { { label = "Cancel", icon = "x" } }
-				if copyable then
-					table.insert(rows, { label = "Copy to the clipboard", detail = actual, mode = "copy" })
-				else
-					table.insert(rows, { label = "Too large to copy: file only", group = "Note" })
-				end
-				table.insert(rows, { label = "Write to a file…", detail = actual, mode = "file" })
-				for i, n in if type(r.notes) == "table" then r.notes else {} do
-					if type(n) == "string" and i <= MAX_ROWS then
-						table.insert(rows, { label = n, group = "Notes" })
-					end
-				end
-				local askFile: (WindowCx) -> ()
-				local function commit(cx6: WindowCx, path: string?)
-					local ca: { [string]: any } = { phase = "commit", token = token }
-					if path then
-						ca.path = path
-					end
-					e().ask(cx6, pane, "export", ca, ACT_MS, function(r2: any, cx7: WindowCx)
-						local why3 = problemOf(r2)
-						if why3 then
-							cx7:toast("error", "Not exported", why3)
-							if r2.retry == true then
-								askFile(cx7) -- the host kept the snapshot: another file name tries it again
-							end
-							return
-						elseif r2.ok ~= true then
-							return cx7:toast("error", "Not exported", "The block's host did not confirm it")
-						end
-						local parts: { string } = {}
-						if type(r2.json) == "string" then
-							cx7:copy(r2.json)
-							table.insert(parts, "Copied to the clipboard")
-						end
-						if type(r2.path) == "string" then
-							table.insert(parts, "saved to " .. r2.path)
-						end
-						cx7:toast("success", "Exported " .. actual, table.concat(parts, " · "))
-					end)
-				end
-				askFile = function(cxp: WindowCx)
-					cxp:prompt({ placeholder = "File path to write the export to", icon = "merge", action = "export" }):next(function(text, _, cx7)
-						local path = if text then trim(text) else ""
-						if cx7 and path ~= "" then
-							commit(cx7, path)
-						end
-					end)
-				end
-				cx5:pick({ items = rows, placeholder = "Export " .. actual, icon = "merge", action = "export" }):next(function(item, _, cx6)
-					if not item or not cx6 then
-						return
-					elseif item.mode == "copy" then
-						commit(cx6, nil)
-					elseif item.mode == "file" then
-						askFile(cx6)
-					end
-				end)
-			end)
-		end
-		local function round(cx3: WindowCx)
-			local picked = 0
-			for i in chosen do
-				if chosen[i] then
-					picked += 1
-				end
-			end
-			local items: { PickItem } = { { label = "Done", detail = picked .. " picked", done = true } }
-			for i, entry in entries do
-				table.insert(items, { label = entry.label, detail = entry.detail, group = if entry.kind == "view" then "Views" else "Actions", current = chosen[i] == true, at = i })
-			end
-			cx3:pick({ items = items, placeholder = "Pick what to export (no tokens, paths or checkouts are included)", icon = "merge", action = "toggle" }):next(function(item, _, cx4)
-				if not item or not cx4 then
-					return
-				elseif item.done == true then
-					return finish(cx4)
-				end
-				local at: number = item.at
-				chosen[at] = not chosen[at]
-				round(cx4)
-			end)
-		end
-		round(cx2)
-	end)
-end
-
-local CONFLICT_CHOICES = {
-	["same-name"] = { { "skip", "Skip", "Keep yours" }, { "replace", "Replace", "Overwrite yours" }, { "duplicate", "Duplicate", "Keep both" } },
-	identical = { { "skip", "Skip", "Already the same" }, { "duplicate", "Duplicate", "Keep both" } },
-}
-
-local function importPreview(cx: WindowCx, pane: number, r: any)
-	local entries: { any } = {}
-	local lines: { string } = {}
-	for _, en in if type(r.entries) == "table" then r.entries else {} do
-		if type(en) == "table" and type(en.id) == "number" and type(en.name) == "string" then
-			table.insert(entries, en)
-			table.insert(lines, en.name .. " (" .. tostring(en.type) .. ")" .. (if type(en.conflict) == "string" then " · " .. en.conflict else ""))
-		end
-	end
-	local problems: { string } = {}
-	for _, p in if type(r.problems) == "table" then r.problems else {} do
-		if type(p) == "string" then
-			table.insert(problems, p)
-		end
-	end
-	if #entries == 0 or type(r.token) ~= "string" then
-		return cx:toast("error", "Nothing to import", problems[1] or "The file holds no views or actions")
-	end
-	local token: string = r.token
-	local slots: { string } = {}
-	for _, s in if type(r.slots) == "table" then r.slots else {} do
-		if type(s) == "string" then
-			table.insert(slots, s)
-		end
-	end
-	local accounts: { string } = {}
-	for _, s in if type(r.accounts) == "table" then r.accounts else {} do
-		if type(s) == "string" then
-			table.insert(accounts, s)
-		end
-	end
-	local choices: { [string]: string } = {}
-	local mapping: { [string]: string } = {}
-	local notes: { string } = {}
-	local remaps: { string } = {}
-	for _, en in entries do
-		for _, rm in if type(en.remap) == "table" then en.remap else {} do
-			if type(rm) == "string" then
-				table.insert(remaps, en.name .. ": " .. rm)
-			end
-		end
-	end
-
-	local function apply(cx2: WindowCx)
-		local lines2: { string } = {}
-		for _, n in notes do
-			table.insert(lines2, n)
-		end
-		for _, p in remaps do
-			table.insert(lines2, p)
-		end
-		for _, p in problems do
-			table.insert(lines2, p)
-		end
-		confirmPick(cx2, "Import " .. #entries .. " item(s)", "Import", lines2, function(cx3: WindowCx)
-			e().ask(cx3, pane, "import", { phase = "apply", token = token, choices = choices, mapping = mapping }, COMMIT_MS, function(a: any, cx4: WindowCx)
-				local why = problemOf(a)
-				if why then
-					return cx4:toast("error", "Not imported", why)
-				end
-				local counts = if type(a.counts) == "table" then string.format(" (%d view(s), %d action(s))", tonumber(a.counts.views) or 0, tonumber(a.counts.prompts) or 0) else ""
-				local msg = if type(a.message) == "string" then a.message elseif a.ok == true then "Imported" else "Not imported"
-				local out: { string } = {}
-				for _, n in if type(a.notes) == "table" then a.notes else {} do
-					if type(n) == "string" then
-						table.insert(out, n)
-					end
-				end
-				local sub: string? = if #out > 0 then table.concat(out, " · ") else nil
-				if a.ok ~= true then
-					cx4:toast("error", "Not imported", sub or msg)
-				elseif a.nothing == true then
-					cx4:toast("info", "Nothing was imported", sub or msg)
-				else
-					cx4:toast("success", msg .. counts, sub)
-				end
-			end)
-		end)
-	end
-	local function slotAt(cx2: WindowCx, i: number)
-		local slot = slots[i]
-		if not slot then
-			return apply(cx2)
-		end
-		local items: { PickItem } = { { label = "Skip views using it", value = "" }, { label = "gh active account", value = "@active" } }
-		for _, login in accounts do
-			table.insert(items, { label = login, value = login, group = "Signed-in accounts" })
-		end
-		cx2:pick({ items = items, placeholder = "Which account takes the exported slot " .. slot .. "?", icon = "merge", action = "map" }):next(function(item, _, cx3)
-			if not item or not cx3 then
-				return
-			end
-			local v: string = item.value
-			mapping[slot] = v
-			table.insert(notes, slot .. " → " .. (if v == "" then "skipped" elseif v == "@active" then "gh active account" else v))
-			slotAt(cx3, i + 1)
-		end)
-	end
-	local function entryAt(cx2: WindowCx, i: number)
-		local en = entries[i]
-		if not en then
-			return slotAt(cx2, 1)
-		end
-		local options = if type(en.conflict) == "string" then CONFLICT_CHOICES[en.conflict] else nil
-		if not options then
-			return entryAt(cx2, i + 1)
-		end
-		local items: { PickItem } = {}
-		for _, o in options do
-			table.insert(items, { label = o[2], detail = o[3], choice = o[1] })
-		end
-		cx2:pick({ items = items, placeholder = en.name .. " is already here (" .. en.conflict .. ")", icon = "merge", action = "choose" }):next(function(item, _, cx3)
-			if not item or not cx3 then
-				return
-			end
-			choices[tostring(en.id)] = item.choice
-			table.insert(notes, en.name .. " → " .. string.lower(item.label))
-			entryAt(cx3, i + 1)
-		end)
-	end
-	-- The summary: Cancel first, then what the file holds; Continue goes through the conflicts.
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Continue", detail = #entries .. " item(s)", go = true } }
-	for i, line in lines do
-		if i > MAX_ROWS then
-			break
-		end
-		table.insert(items, { label = line, group = "In the file" })
-	end
-	for _, p in problems do
-		table.insert(items, { label = p, group = "Problems" })
-	end
-	for _, p in remaps do
-		table.insert(items, { label = p, group = "Changes on import" })
-	end
-	cx:pick({ items = items, placeholder = "Import: what the file holds", icon = "merge", action = "continue" }):next(function(item, _, cx2)
-		if cx2 and item and item.go == true then
-			entryAt(cx2, 1)
-		end
-	end)
-end
-
-local function importFlow(cx: WindowCx, pane: number)
-	cx:prompt({ placeholder = "Paste exported JSON, or the path of a file on the block's host", icon = "merge", action = "preview" }):next(function(text, _, cx2)
-		local typed = if text then trim(text) else ""
-		if not cx2 or typed == "" then
-			return
-		end
-		local args: { [string]: any } = { phase = "preview" }
-		if string.sub(typed, 1, 1) == "{" then
-			args.text = typed
-		else
-			args.path = typed
-		end
-		if #tern.json.encode(args) > 65000 then
-			return cx2:toast("error", "Not imported", "That is too long: paste a file path instead")
-		end
-		e().ask(cx2, pane, "import", args, ACT_MS, function(r: any, cx3: WindowCx)
-			local why = problemOf(r)
-			if why then
-				return cx3:toast("error", "Not imported", why)
-			end
-			importPreview(cx3, pane, r)
-		end)
-	end)
-end
-
 -- ---------------------------------------------------------------- open item by URL
 
 -- Sends open-url once the block in `pane` has published its protocol node: a launched block needs a moment.
@@ -1851,24 +1366,6 @@ local usageReport: (WindowCx, number) -> () -- below: it names the commands of t
 M.COMMANDS = {
 	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
 	{
-		id = "open-preview",
-		title = "Plotroom: Preview the selected PR or issue",
-		label = "Open floating preview",
-		keyed = false,
-		run = function(cx: WindowCx, pane: number)
-			e().follow(cx, pane, OPEN_NODE, "Select a pull request or issue first", nil, "preview")
-		end,
-	},
-	{
-		id = "agent-pick-page",
-		title = "Plotroom: Send a Browser page element to the selected item's agent…",
-		label = "Send page element to agent…",
-		group = "Saved actions",
-		run = function(cx: WindowCx, pane: number)
-			e().follow(cx, pane, AGENTMSG_NODE, "The selected item has no agent", nil, "agentpick")
-		end,
-	},
-	{
 		id = "agent-message-selection",
 		title = "Plotroom: Message an agent with the selection…",
 		label = "Message an agent with the selection…",
@@ -1891,8 +1388,6 @@ M.COMMANDS = {
 	},
 	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", run = assignMe },
 	{ id = "comment", title = "Plotroom: Comment on the selected item", label = "Comment…", run = comment },
-	{ id = "label-add", title = "Plotroom: Add a label to the selected issue", label = "Add label…", run = labelAdd },
-	{ id = "label-remove", title = "Plotroom: Remove a label from the selected issue", label = "Remove label…", run = labelRemove },
 	{ id = "issue-close", title = "Plotroom: Close the selected GitHub issue", label = "Close issue…", run = issueClose },
 	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
 	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
@@ -1901,13 +1396,8 @@ M.COMMANDS = {
 	{ id = "pr-approve", title = "Plotroom: Approve the selected PR", label = "Approve…", run = prApprove },
 	{ id = "pr-request-changes", title = "Plotroom: Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
 	{ id = "pr-update-branch", title = "Plotroom: Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
-	{ id = "jira-transition", title = "Plotroom: Move the selected Jira issue to another status", label = "Jira transition…", run = jiraTransition },
 	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
-	{ id = "rerun-all", title = "Plotroom: Re-run every job of one of the selected PR's finished runs", label = "Re-run all jobs…", run = rerunAll },
-	{ id = "cancel-run", title = "Plotroom: Cancel a running workflow run of the selected PR", label = "Cancel running workflow…", run = cancelRun },
 	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
-	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", group = "Configuration", run = exportFlow },
-	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", group = "Configuration", run = importFlow },
 	{
 		id = "usage-report",
 		title = "Plotroom: Copy usage report",

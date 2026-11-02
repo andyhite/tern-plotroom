@@ -8,6 +8,17 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 - Commands › Configuration › Copy usage report: plain text with how often each queue action, Commands row, palette command and action ran (on this machine and on the block's host) and how each agent run ended, with the median run time. Counts live in kv `usage`, the newest 1000 runs in kv `runs`; nothing leaves the machine.
 
+### Removed
+
+- Commands: Add label… and Remove label…, Re-run all jobs… and Cancel running workflow…, Send a Browser page element to an agent…, and the Jira transition… picker with its REST client. `PLOTROOM_JIRA_API_TOKEN` is no longer read; an action's Move to status (acli) still moves Jira issues.
+- The action field Tell Carly when it finishes and the `plotroom_agents` Carly export. Saved actions that carry it still load; the field is dropped the next time that kind's actions are saved.
+- Export and import of views and actions.
+- Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
+
+### Changed
+
+- Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
+
 ## [0.33.0] - 2026-11-02
 
 ### Added

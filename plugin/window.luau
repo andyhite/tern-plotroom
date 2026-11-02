@@ -83,7 +83,7 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
 -- chained before it and `tab` is the tab the previous one ran in, which the next one joins.
-type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, carly: boolean?, depth: number?, tab: number? }
+type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number? }
 local MAX_CHAIN = 8 -- actions in one chain; Settings refuses loops, this stops one that got into the store anyway
 
 local function prTarget(owner: string, name: string, n: number): Target
@@ -229,34 +229,6 @@ end
 local function openUrl(cx: WindowCx, pane: number, url: string)
 	cx.layout:focus(pane)
 	cx:open(url, "beside")
-end
-
--- Opens `url` as a floating Browser over `pane`: the page opens beside it as a plain link open would (the same path, so a
--- remote pane works: `cx.browser`'s open owner is a global block id and answers "no block" for a remote pane in Tern 0.9.8),
--- then the new Browser block floats top right over `pane` (the split it opened in collapses back, the tiled layout is as it
--- was) and `pane` keeps focus. If it cannot float, only that new Browser is closed and the error says so.
-local function previewUrl(cx: WindowCx, pane: number, url: string)
-	local seen: { [number]: boolean } = {}
-	for _, p in cx.session:panes() do
-		seen[p.pane] = true
-	end
-	openUrl(cx, pane, url)
-	local browser: number? = nil
-	for _, p in cx.session:panes() do
-		if not seen[p.pane] and p.kind == "browser" then
-			browser = p.pane
-		end
-	end
-	if not browser then
-		return cx:toast("error", "Could not open the floating preview", "Tern opened the page outside a Browser block.")
-	end
-	local ok, why = cx.layout:float(browser, pane, "tr", { focus = false })
-	if not ok then
-		cx.layout:close(browser)
-		cx.layout:focus(pane)
-		return cx:toast("error", "Could not open the floating preview", why or "Tern would not float the Browser.")
-	end
-	cx.layout:focus(pane)
 end
 
 -- Shows the pull request at `url` in `pane`, the Plotroom block the link came from (host/requests' `show`).
@@ -615,22 +587,6 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	info.cwd = path
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
-	-- Carly hears of the end of the agent's turn once, in a fixed message: the action's name and the item key, never item
-	-- text or agent output. A failed schedule is a toast; the agent runs regardless.
-	if job.carly and tern.carly then
-		local name = string.gsub(job.name or "", "%c", " ")
-		local cut = utf8.offset(name, 61)
-		if cut then
-			name = string.sub(name, 1, cut - 1)
-		end
-		local message = "Plotroom: the agent for " .. (if name ~= "" then "action \"" .. name .. "\"" else "an action") .. " on " .. string.lower(t.repo) .. "#" .. t.ref .. " has finished its turn. Read plotroom_agents for its state and result."
-		local sent, why = pcall(function()
-			return cx.agents:get(agent):tocarly("finished", message)
-		end)
-		if not sent then
-			cx:toast("error", "Carly was not told when " .. t.label .. "'s agent finishes", tostring(why))
-		end
-	end
 	if split then
 		if cx.layout:move(agent, pane, "right") then
 			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
@@ -898,7 +854,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, carly = it.carly == true }
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil }
 				local function go(cx3: WindowCx)
 					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
 				end
@@ -1168,12 +1124,7 @@ local function noteListed(cx: WindowCx, pane: number, url: string): boolean
 	return false
 end
 
-local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?) -> ()
-
--- What an agent command link does: its own act, except the Message link, which `mode` "agentpick" turns into the page-element send.
-local function agentAct(kind: string, mode: string?): string
-	return if kind == "agentmsg" and mode == "agentpick" then mode else kind
-end
+local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
 -- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue).
@@ -1274,7 +1225,7 @@ end
 -- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
 -- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
 -- (written into a description, or from another run of the host) matches no node and is refused as no longer listed.
-local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?, mode: string?): boolean
+local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?): boolean
 	local url = string.gsub(full, "%?k=%x+$", "")
 	local rid = string.match(url, "^plotroom://rpc/(%w+)$")
 	if rid then
@@ -1352,11 +1303,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 		elseif nodeProp(readNode(cx, pane, OPEN_NODE), "href") ~= full and not noteListed(cx, pane, url) then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 		else
-			if mode == "preview" then
-				previewUrl(cx, pane, page)
-			else
-				openUrl(cx, pane, page)
-			end
+			openUrl(cx, pane, page)
 		end
 		return true
 	end
@@ -1383,7 +1330,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 		if act == "goto" then
 			gotoTarget(cx, pane, t)
 		elseif AGENT_CMD[act] then
-			flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agentAct(act, mode))
+			flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, act)
 		elseif act == "agentgo" then
 			flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 		elseif act == "agent" then
@@ -1417,17 +1364,13 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 	local t = prTarget(owner, repo, n)
 	local page = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n
 	if kind == "open" then
-		if mode == "preview" then
-			previewUrl(cx, pane, page)
-		else
-			openUrl(cx, pane, page)
-		end
+		openUrl(cx, pane, page)
 	elseif kind == "show" then
 		showPr(cx, pane, page)
 	elseif kind == "goto" then
 		gotoTarget(cx, pane, t)
 	elseif AGENT_CMD[kind] then
-		flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agentAct(kind, mode))
+		flows.agentCommand(cx, pane, string.lower(t.repo) .. "#" .. t.ref, kind)
 	elseif kind == "agentgo" then
 		flows.goAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref)
 	elseif kind == "agent" then
@@ -1445,12 +1388,12 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 end
 
 -- Follows the hidden link node `nodeId` of `pane` (`typed`: as handle's).
-function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?, mode: string?)
+function follow(cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?)
 	local href = nodeProp(readNode(cx, pane, nodeId), "href")
 	if type(href) ~= "string" then
 		return cx:toast("info", missing or "Nothing is selected")
 	end
-	handle(cx, href, pane, typed, mode)
+	handle(cx, href, pane, typed)
 end
 
 local function selected(cx: WindowCx, nodeId: string, missing: string?)
@@ -1595,16 +1538,6 @@ tern.timer(0, function(cx: WindowCx?)
 	end
 end)
 
--- Where Carly exists, it can list the window's live linked agents. Read-only: it changes nothing.
-if tern.carly then
-	tern.carly.export("plotroom_agents", {
-		sig = "plotroom_agents(): { { item: string, action: string, state: string, result: string? } }",
-		doc = "Lists this window's Plotroom-linked agents: the item key (repo#number or issue key), the action name, the agent's state and, once its turn ended, its result (done, failed, exited or closed). Read-only.",
-	}, function(cx: WindowCx)
-		return flows.agentList(cx)
-	end)
-end
-
 -- Fires for every kind of block: the agents' timer may need starting whatever opened, but only a new Plotroom block
 -- is worth a surface read (a protocol check), so a shell, file or Browser block opening costs no more than that.
 tern.on("pane_created", function(ev: any, cx: WindowCx)
@@ -1698,7 +1631,6 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 			status = if type(a.status) == "string" then a.status else nil,
 			id = id,
 			name = if type(a.label) == "string" then a.label else nil,
-			carly = a.carly == true,
 			next = if type(a.next) == "string" then a.next else nil,
 			depth = chain.depth + 1,
 			tab = tab,
@@ -1797,13 +1729,6 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 		title = "Plotroom: Worktree smoke",
 		run = function(cx: WindowCx)
 			require("./tests/runtime").run(cx)
-		end,
-	})
-	tern.command({
-		id = "layout",
-		title = "Plotroom: Layout dump",
-		run = function(cx: WindowCx)
-			require("./tests/runtime").layout(cx)
 		end,
 	})
 end

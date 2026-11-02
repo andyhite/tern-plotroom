@@ -1343,10 +1343,9 @@ case("host: the palette names a GitHub issue's own operations GitHub - Issue, an
 	issueHost(w)
 	local b = openIssues(w)
 	local p = hx.palette(w, b)
-	for _, id in { "assign-me", "comment", "label-add", "issue-close" } do
+	for _, id in { "assign-me", "comment", "issue-close" } do
 		eq(p.commandGroups[id], "GitHub - Issue", id .. " is under GitHub - Issue")
 	end
-	eq(p.commandGroups["jira-transition"], nil, "a GitHub issue has no Jira transition")
 	eq(p.commandGroups["pr-draft"], nil, "nor a pull request's conversion")
 	eq(p.groups.seen, "Triage", "marking it seen is Triage")
 end)
@@ -1355,10 +1354,9 @@ case("host: the palette names a Jira issue's own operations Jira - Issue", funct
 	jiraHost(w)
 	local b = openIssues(w)
 	local p = hx.palette(w, b)
-	for _, id in { "assign-me", "comment", "jira-transition" } do
+	for _, id in { "assign-me", "comment" } do
 		eq(p.commandGroups[id], "Jira - Issue", id .. " is under Jira - Issue")
 	end
-	eq(p.commandGroups["label-add"], nil, "a Jira issue has no GitHub label")
 	eq(p.groups.snooze, "Triage", "snoozing it is Triage")
 end)
 
@@ -2246,7 +2244,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			end
 		end
 	end
-	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "pcarly:issues:p1", "pnext:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in, Opens in and Tell Carly after the model, and its next action")
+	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "pnext:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in and Opens in after the model, and its next action")
 	eq(sectionIn(b, "popen:issues:p1").title, "Issue actions", "keeping the kind's title")
 	local where = rowIn(b, "pwhere:issues:p1")
 	eq(where.label, "Runs in", "label")
@@ -2288,12 +2286,6 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	b.event({ ev = "change", id = "layer.settings", item = "psplit:prs:p1", value = "split" })
 	eq(w.kv.get("prompts-prs").items[1].split, true, "the Beside the queue segment saves split")
 	eq(rowIn(b, "psplit:prs:p1").control.value, "split", "the row shows it")
-	eq(rowIn(b, "pcarly:prs:p1").control.value, "off", "Tell Carly is off until chosen")
-	b.event({ ev = "change", id = "layer.settings", item = "pcarly:prs:p1", value = "on" })
-	eq(w.kv.get("prompts-prs").items[1].carly, true, "On saves carly")
-	eq(rowIn(b, "pcarly:prs:p1").control.value, "on", "the row shows it")
-	b.event({ ev = "change", id = "layer.settings", item = "pcarly:prs:p1", value = "off" })
-	eq(w.kv.get("prompts-prs").items[1].carly, nil, "Off removes it")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
 	eq(#w.kv.get("prompts-prs").items, 2, "Add prompt on the pull request side saves one with the PR prompts")
 	eq(#w.kv.get("prompts-issues").items, 4, "and none with the issue prompts")
@@ -2309,6 +2301,25 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(menu()[1].split, true, "the pull request filter's menu says the prompt opens beside the queue")
+end)
+
+case("host: an action saved with the removed carly field still loads, kv is left alone, and the next save of the store drops the field", function(w: World)
+	issueHost(w)
+	local old: any = promptOf("p1", "Review", "Review {url}")
+	old.carly = true
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ old }) })
+	local b = openIssues(w)
+	pickScope(b, "prs:v1")
+	w.flush()
+	request(b, "m2", { op = "menu" })
+	w.flush()
+	eq(answerOf(b, "m2").items[1].label, "Review", "the action is offered")
+	eq(w.kv.get("prompts-prs").items[1].carly, true, "kv is unchanged by loading and rendering")
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	b.event({ ev = "change", id = "layer.settings", item = "psplit:prs:p1", value = "split" })
+	eq(w.kv.get("prompts-prs").items[1].split, true, "an edit saves the store")
+	eq(w.kv.get("prompts-prs").items[1].carly, nil, "and the saved action has no carly field")
 end)
 
 case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)

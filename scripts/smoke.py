@@ -1480,10 +1480,8 @@ def sc_workflow(s: Smoke) -> None:
 
 
 def sc_prompts(s: Smoke) -> None:
-    """The prompt and picker flows, typed and picked as a user does: Open item by URL pins the pull request the (fake) gh answers for; Export saves the picked
-    view to a file; Import of that file asks before it writes: its Cancel row (first, so Enter) writes nothing, its Import row does. Every write is to the
-    block's own plugin store or a file under the temporary directory. Continues in the checkout and block `sc_workflow` left."""
-    exported = s.tmp / "exported.json"
+    """The prompt and picker flows, typed and picked as a user does: Open item by URL pins the pull request the (fake) gh answers for. Every write is to the
+    block's own plugin store. Continues in the checkout and block `sc_workflow` left."""
     listed = json.loads((s.smoke / "search.json").read_text(encoding="utf-8"))
     stamp = "2026-01-01T00:00:00Z"
     listed.append({"number": 5, "title": "Pinned PR 5", "url": "https://github.com/f/low/pull/5", "author": "octo", "state": "OPEN", "isDraft": False,
@@ -1528,84 +1526,6 @@ def sc_prompts(s: Smoke) -> None:
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
     s.wait_until("the remaining pin's item previews", lambda: any("Pinned PR 5" in t for t in s.texts()) and s.previewing())
-
-    def export_through(confirm: bool) -> None:
-        s.ctl_ok("plugins", "run", "plugin.plotroom.export")
-        s.wait_text("the export picker", "Pick what to export")
-        s.ctl_ok("picker", "down")  # past Done, onto the first view
-        s.ctl_ok("picker", "enter")  # toggles it
-        s.wait_text("one view picked", "1 picked")
-        s.ctl_ok("picker", "enter")  # Done
-        s.wait_text("what leaves is confirmed first, with the host's real counts", "Export 1 view(s), 0 action(s)")
-        s.shot("export-confirm" if confirm else "export-cancel")
-        s.eq("the confirmation wrote no file yet", False, exported.exists())
-        if not confirm:
-            s.ctl_ok("picker", "enter")  # Cancel, first
-            time.sleep(1.5)
-            s.eq("cancelling wrote no file", False, exported.exists())
-            s.eq("cancelling exported nothing", False, any(t.startswith("Exported ") for t in s.texts()))
-            return
-        s.ctl_ok("picker", "down")  # past Cancel
-        s.ctl_ok("picker", "down")  # past Copy: Write to a file…
-        s.ctl_ok("picker", "enter")
-        s.wait_text("the file prompt", "File path to write the export to")
-        s.ctl_ok("type", json.dumps(str(exported)))
-        s.ctl_ok("key", "Enter")
-        s.wait_text("the export toast", "Exported 1 view(s), 0 action(s)")
-
-    export_through(False)
-    export_through(True)
-    s.wait_until("the export file", exported.is_file)
-    time.sleep(0.5)
-    text = exported.read_text(encoding="utf-8")
-    try:
-        data = json.loads(text)
-    except ValueError as why:
-        s.fail("the export file", "JSON", why)
-    s.eq("the export is an object", True, isinstance(data, dict))
-    s.eq("exactly the one picked view", 1, len(data.get("views") or []))  # type: ignore[union-attr]
-    s.eq("and no action", 0, len(data.get("prompts") or []))  # type: ignore[union-attr]
-    view = data["views"][0]  # type: ignore[index]
-    s.eq("the view is complete", True, all(k in view for k in ("kind", "name", "integration", "query", "group")))
-    s.eq("it holds nothing local (no checkout path)", False, str(s.tmp) in text.replace(str(exported), ""))
-    s.shot("export")
-
-    def import_through(confirm: bool) -> None:
-        s.ctl_ok("plugins", "run", "plugin.plotroom.import")
-        s.wait_text("the import prompt", "Paste exported JSON")
-        s.ctl_ok("type", json.dumps(str(exported)))
-        s.ctl_ok("key", "Enter")
-        s.wait_text("what the file holds", "Import: what the file holds")
-        s.ctl_ok("picker", "down")  # past Cancel
-        s.ctl_ok("picker", "enter")  # Continue
-        # Conflicts (the view is already here) and account slots each ask once more; the second row of a conflict is "Duplicate".
-        deadline = time.monotonic() + SMOKE_TIMEOUT
-        asked = 0
-        while not any(re.match(r"Import \d+ item\(s\)$", t) for t in s.texts()):
-            if time.monotonic() > deadline or not s.alive():
-                s.fail("the import confirmation", "a picker headed 'Import N item(s)'", s.texts()[:40])
-            ts = s.texts()
-            if any("is already here" in t for t in ts) and asked < 5:
-                asked += 1
-                s.ctl_ok("picker", "down")
-                s.ctl_ok("picker", "enter")
-                time.sleep(0.5)
-            elif any("Which account takes" in t for t in ts) and asked < 5:
-                asked += 1
-                s.ctl_ok("picker", "enter")
-                time.sleep(0.5)
-            time.sleep(0.2)
-        s.shot("import-confirm" if confirm else "import-cancel")
-        if confirm:
-            s.ctl_ok("picker", "down")  # past Cancel
-        s.ctl_ok("picker", "enter")
-
-    import_through(False)
-    time.sleep(1.5)
-    s.eq("cancelling imports nothing", False, any("Imported " in t and " view" in t for t in s.texts()))
-    import_through(True)
-    s.wait_text("the import toast counts what was added (the duplicate)", "Imported 1 view and 0 actions")
-    s.shot("imported")
 
 
 def sc_agent(s: Smoke) -> None:
@@ -1708,62 +1628,8 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("close")  # the extra Plotroom
     s.ctl_ok("files", "hide")
 
-    # Open preview: a native floating Browser (a PiP over the Plotroom) shows the item's URL; the tiled tree is exactly as before and the Plotroom stays
-    # unparked, and closing the float leaves the same tree. Read from the plugin's selftest `layout` command (the window's own view of panes, each tab's
-    # tiled root and its floats); headless Tern tests this placement, not live page content.
-    back_to_queue()  # closing the extra Plotroom left focus on the first tab's shell, not the queue's
-    layout_file = s.smoke / "layout.json"
-
-    def layout() -> Dict[str, Any]:
-        if layout_file.exists():
-            layout_file.unlink()
-        s.ctl_ok("plugins", "run", "plugin.plotroom.layout")
-        s.wait_until("the layout report is written", layout_file.exists)
-        return json.loads(layout_file.read_text(encoding="utf-8"))
-
-    def tab_of(rep: Dict[str, Any], pane: int) -> Dict[str, Any]:
-        row = next((p for p in rep["panes"] if p["pane"] == pane), None)
-        if row is None:
-            s.fail("the layout report lists the focused pane", pane, [(p["pane"], p["kind"]) for p in rep["panes"]])
-        return next(t for t in rep["tabs"] if t["tab"] == row["tab"])
-
-    def focused() -> int:
-        """Use the plugin's own focus id; native CLI ids are a different namespace."""
-        return int(layout()["focused"])
-
-    owner = focused()
-    before = layout()
-    before_tab = tab_of(before, owner)
-    known = {p["pane"] for p in before["panes"]}
-    s.eq("no float before", [], before_tab["floats"])
-    s.ctl_ok("plugins", "run", "plugin.plotroom.open-preview")
-    state: Dict[str, Any] = {}
-
-    def floated() -> bool:
-        s.ctl_ok("wait", "300")  # lets the Browser's async open land
-        state["rep"] = layout()
-        return any(p["pane"] not in known and p["kind"] == "browser" for p in state["rep"]["panes"])
-
-    s.wait_until("a Browser pane opens (headless Tern opened none?)", floated)
-    during = state["rep"]
-    new = [p for p in during["panes"] if p["pane"] not in known]
-    s.eq("exactly one new pane, a floating Browser on the item's URL", [("browser", True, "https://github.com/a/gent/pull/1")], [(p["kind"], p["floating"], p["url"]) for p in new])
-    browser = new[0]["pane"]
-    during_tab = tab_of(during, owner)
-    s.eq("the Plotroom stays unparked", False, next(p for p in during["panes"] if p["pane"] == owner)["parked"])
-    s.eq("the tiled tree is exactly as before", before_tab["root"], during_tab["root"])
-    s.eq("the float sits over the Plotroom", [{"pane": browser, "over": owner, "corner": "tr"}], during_tab["floats"])
-    s.shot("open-floating")
-    s.ctl_ok("pip", "focus")  # native open keeps the owner focused; focusing the float is what a double-click does
-    s.wait_until("the float takes focus", lambda: focused() == browser)
-    s.ctl_ok("close")
-    s.wait_until("closing the float returns focus to the Plotroom", lambda: focused() == owner)
-    after = layout()
-    after_tab = tab_of(after, owner)
-    s.eq("the float is gone", False, any(p["pane"] == browser for p in after["panes"]))
-    s.eq("no float remains", [], after_tab["floats"])
-    s.eq("the tiled tree is exactly as before", before_tab["root"], after_tab["root"])
-    s.wait_text("the Plotroom is still showing the queue", "Agent PR 1")
+    # Back on the queue: closing the extra Plotroom left focus on the first tab's shell, not the queue's.
+    back_to_queue()
 
     # Agent lifecycle, natural transitions: the fake agent has been live since its launch and the offer above listed it as working; closing its pane
     # must end it for Plotroom (no live agent: Go to agent has none and a new launch is offered, not the duplicate offer).
@@ -1844,7 +1710,7 @@ SCENARIOS = [
     ("worktree inventory", sc_inventory),
     ("draft preview and push", sc_draft_push),
     ("triage, sort and worktrees board", sc_workflow),
-    ("URL, export and import prompts", sc_prompts),
+    ("URL prompts", sc_prompts),
     ("agent launch, jump and duplicate offer", sc_agent),
 ]
 
