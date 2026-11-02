@@ -1289,7 +1289,7 @@ case("host triage: n lists only rows that need attention: unseen, changed or who
 	eq(pickerOf(b).selected, "no_2fr_232", "the selection is the row moved to")
 	asks.hx.agents(b, { ["o/r#1"] = "waiting_input" })
 	same(listed(b), all, "an agent waiting for input brings its row back, though it was seen")
-	eq(asks.hx.agent(b, "no_2fr_231"), "Needs input", "wearing its badge")
+	eq(asks.hx.agent(b, "no_2fr_231"), "Needs you", "wearing its stage")
 	asks.hx.agents(b, { ["o/r#1"] = "idle", ["o/r#2"] = "exited", ["o/r#3"] = "working" })
 	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "an idle agent does not keep a seen row on the list")
 	eq(asks.hx.agent(b, "no_2fr_231"), "Idle", "though its badge is shown")
@@ -1490,16 +1490,16 @@ case("host agents: agent-status shows a badge per row, drops values and keys it 
 	hostScene(w, 3)
 	local b = openQueue(w)
 	asks.hx.agents(b, { ["o/r#1"] = "working", ["o/r#2"] = "waiting_input", ["o/r#3"] = "idle" })
-	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "Working", "Needs input", "Idle" }, "one badge per state")
+	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "Agent working", "Needs you", "Idle" }, "one badge per state")
 	asks.hx.agents(b, { ["o/r#3"] = "exited" })
 	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "-", "-", "Exited" }, "a new report replaces the whole map")
 	asks.hx.agents(b, { ["o/r#1"] = "sleeping", ["o/r#2"] = "working", ["bad\nkey"] = "working" })
-	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "-", "Working", "-" }, "an unknown state is dropped")
+	same({ asks.hx.agent(b, "no_2fr_231"), asks.hx.agent(b, "no_2fr_232"), asks.hx.agent(b, "no_2fr_233") }, { "-", "Agent working", "-" }, "an unknown state is dropped")
 	eq(b.state().agents["bad\nkey"], nil, "and so is a key with a control character")
 	b.event({ ev = "action", act = "agent-status", value = jsonEncode({ ["o/r#2"] = "idle", pad = string.rep("x", 40000) }) })
 	b.event({ ev = "action", act = "agent-status", value = "not json" })
 	b.event({ ev = "action", act = "agent-status", value = 5 })
-	eq(asks.hx.agent(b, "no_2fr_232"), "Working", "an oversize, malformed or mistyped report changes nothing")
+	eq(asks.hx.agent(b, "no_2fr_232"), "Agent working", "an oversize, malformed or mistyped report changes nothing")
 	local many: { [string]: string } = {}
 	for i = 1, 230 do
 		many["x/y#" .. i] = "working"

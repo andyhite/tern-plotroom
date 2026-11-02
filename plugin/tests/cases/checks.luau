@@ -1659,16 +1659,16 @@ case("host: an issue row names its number, repository, author and age, wears its
 	eq(findKey(head, "integration").p.text, "GitHub", "the head row names GitHub")
 	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
-	eq(badges(1), "bug/- ui/-", "the rows carry the labels and no integration badge")
-	eq(badges(2), "Completed/accent", "a completed issue")
-	eq(badges(3), "Not planned/muted", "one closed as not planned")
-	eq(badges(4), "Duplicate/muted", "a duplicate")
-	eq(badges(5), "Closed/error", "and a closed one with no reason")
+	eq(badges(1), "Not started/muted bug/- ui/-", "the rows lead with the stage, carry the labels and no integration badge")
+	eq(badges(2), "Closed/muted Completed/accent", "a completed issue")
+	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
+	eq(badges(4), "Closed/muted Duplicate/muted", "a duplicate")
+	eq(badges(5), "Closed/muted", "and a closed one with no reason: the stage says it once")
 	leaveIssueWt(w, s, 14)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-14/src" })
 	refreshNow(w, b)
-	eq(badges(3), "In tab/accent Worktree/- Not planned/muted", "a tab working in the issue's worktree marks its row, before its worktree and state")
-	eq(badges(1), "bug/- ui/-", "and no other row")
+	eq(badges(3), "Closed/muted In tab/accent Worktree/- Not planned/muted", "a tab working in the issue's worktree marks its row, before its worktree and state; Closed outranks Worktree")
+	eq(badges(1), "Not started/muted bug/- ui/-", "and no other row")
 end)
 
 case("host: the issue preview shows its body, assignees, milestone, linked pull requests and the branch it would create", function(w: World)
@@ -1789,6 +1789,59 @@ case("host: the issue preview does not repeat a pull request the linked list alr
 	eq(#requestsOf(t.gh, "head"), 1, "the lookup ran")
 	yes(findKey(pickerNode(c), "pr1", "item") ~= nil, "the linked list shows the pull request")
 	eq(findKey(pickerNode(c), "headpr-head"), nil, "and the head lookup does not repeat it")
+end)
+
+case("host stage: a pull request is Blocked by requested changes, conflicts or failing required checks, Ready to merge only when approved, passing and mergeable, else PR open", function(w: World)
+	local s = hostScene(w, 0)
+	local ok = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }
+	local function with(extra: { [string]: any }): { [string]: any }
+		local out = table.clone(ok)
+		for k, v in extra do
+			out[k] = v
+		end
+		return out
+	end
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, ok),
+		searchItem(2, "o/r", EPOCH - 120, with({ merge = "UNKNOWN", mergeable = "UNKNOWN" })),
+		searchItem(3, "o/r", EPOCH - 180, { review = "APPROVED", checks = "SUCCESS" }),
+		searchItem(4, "o/r", EPOCH - 240, with({ review = "CHANGES_REQUESTED", merge = "BLOCKED" })),
+		searchItem(5, "o/r", EPOCH - 300, with({ mergeable = "CONFLICTING", merge = "DIRTY" })),
+		searchItem(6, "o/r", EPOCH - 360, with({ checks = "FAILURE", merge = "BLOCKED" })),
+		searchItem(7, "o/r", EPOCH - 420, with({ checks = "FAILURE", merge = "UNSTABLE" })),
+		searchItem(8, "o/r", EPOCH - 480, with({ checks = "PENDING" })),
+		searchItem(9, "o/r", EPOCH - 540, with({ review = "REVIEW_REQUIRED", merge = "BLOCKED" })),
+		searchItem(10, "o/r", EPOCH - 600, with({ checks = NULL })),
+		searchItem(11, "o/r", EPOCH - 660, with({ isDraft = true, merge = "DRAFT" })),
+		searchItem(12, "o/r", EPOCH - 720, { review = "APPROVED", checks = "ERROR" }),
+	}
+	local b = openQueue(w)
+	local function stage(n: number): string
+		return h.asks.hx.stage(b, "no_2fr_23" .. n)
+	end
+	eq(stage(1), "Ready to merge", "approved, checks passing, mergeable")
+	eq(stage(2), "PR open", "a merge state GitHub has not computed is unknown: never Ready to merge")
+	eq(stage(3), "PR open", "nor is one the search did not give")
+	eq(stage(4), "Blocked", "changes requested")
+	eq(stage(5), "Blocked", "conflicts")
+	eq(stage(6), "Blocked", "a failing check GitHub's merge state blocks on")
+	eq(stage(7), "PR open", "only optional checks fail (unstable): not blocked, and not ready")
+	eq(stage(8), "PR open", "checks still running")
+	eq(stage(9), "PR open", "a review still required")
+	eq(stage(10), "Ready to merge", "no checks at all on a clean, approved PR")
+	eq(stage(11), "PR open", "a draft")
+	eq(stage(12), "Blocked", "an errored check blocks while GitHub's merge state does not say it is optional")
+	local blocked: any = nil
+	for _, row in pickerOf(b).items do
+		if row.id == "no_2fr_235" then
+			blocked = row.badges[1]
+		end
+	end
+	eq(blocked.title, "Conflicts with its base", "a Blocked badge says why")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
+	eq(factOf(b, "Stage"), "Blocked", "the preview's first fact is the stage")
+	local about: any = findKey(pickerNode(b), "about")
+	eq(about.c[1].p.key, "stage", "first, above the branch")
 end)
 
 -- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted

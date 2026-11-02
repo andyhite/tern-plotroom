@@ -35,6 +35,7 @@ export type Pr = {
 	comments: number,
 	review: string?,
 	checks: string?,
+	merge: string?, -- as About.merge; nil when the search did not say
 	runs: { Run },
 	runTotal: number,
 	labels: { string },
@@ -62,8 +63,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision mergeable mergeStateStatus labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -341,6 +342,7 @@ function M.normalize(item: any): (Pr?, string?)
 		comments = count(item.comments),
 		review = if type(item.review) == "string" then REVIEW[item.review] else nil,
 		checks = if type(item.checks) == "string" then CHECKS[item.checks] else nil,
+		merge = if item.mergeable == "CONFLICTING" then "conflicts" elseif type(item.merge) == "string" then MERGE[item.merge] else nil,
 		runs = runs,
 		runTotal = #runs + math.max(0, count(item.runTotal) - (if type(item.runs) == "table" then #item.runs else 0)),
 		labels = labels,
@@ -759,7 +761,7 @@ local function flatPr(n: any): any
 		author = field(n, "author", "login"), head = n.headRefName, headSha = n.headRefOid,
 		fork = if n.isCrossRepository == true then (field(n, "headRepositoryOwner", "login") or field(n, "author", "login")) else nil,
 		base = n.baseRefName, additions = n.additions, deletions = n.deletions, changedFiles = n.changedFiles,
-		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, checks = field(roll, "state"),
+		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
 		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
 	}
 end

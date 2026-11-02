@@ -3095,9 +3095,9 @@ local function detailText(row: any): string
 end
 M.detailText = detailText
 
--- The text of the selected issue's property `key` ("Author", "Assignees", ...); nil when it shows none.
+-- The text of the selected item's property `key` ("Author", "Assignees", "Stage", ...); nil when it shows none.
 local function factOf(b: Block, key: string): string?
-	local facts: any = findKey(findKey(pickerNode(b), "about"), "facts", "kv")
+	local facts: any = findKey(findKey(pickerNode(b), "about"), if key == "Stage" then "stage" else "facts", "kv")
 	for _, item in facts.p.items do
 		if item.k == key then
 			local out: { string } = {}
@@ -3390,9 +3390,20 @@ function asks.hx.mark(b: Block, id: string): string
 	return asks.hx.badge(b, id, { "New", "Changed", "Snoozed" })
 end
 
--- The agent badge of row `id`, "-" for none.
+-- The agent badge of row `id`, "-" for none: the stage says a working or waiting agent (unless the item is merged or
+-- closed: then its own badge does).
 function asks.hx.agent(b: Block, id: string): string
-	return asks.hx.badge(b, id, { "Working", "Needs input", "Idle", "Exited" })
+	return asks.hx.badge(b, id, { "Agent working", "Needs you", "Working", "Needs input", "Idle", "Exited" })
+end
+
+-- The stage of row `id`: its first badge, "-" without one.
+function asks.hx.stage(b: Block, id: string): string
+	for _, row in pickerOf(b).items do
+		if row.id == id and row.badges then
+			return row.badges[1].text
+		end
+	end
+	return "-"
 end
 
 -- The triage mark of every listed row, in the order listed.

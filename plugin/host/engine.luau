@@ -343,6 +343,40 @@ function M.needs(state: State, kind: string, item: any): boolean
 	return agent == "waiting_input"
 end
 
+-- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents), its worktree
+-- (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. `why` says what blocks a PR.
+-- A fact GitHub did not give (merge state unknown) never makes Ready to merge.
+function M.stage(state: State, kind: string, item: any): (string, string?)
+	if item.state == "merged" or item.state == "closed" then
+		return item.state
+	end
+	local agent = state.agents[item.key]
+	if agent == "waiting_input" then
+		return "needs"
+	elseif agent == "working" then
+		return "working"
+	end
+	if kind == "prs" then
+		local pr: github.Pr = item
+		-- ponytail: the search cannot ask which checks are required; GitHub's merge state saying only optional checks
+		-- fail (unstable) or none (ready) clears a failing rollup. Read the detail runs' `required` if that misleads.
+		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready"
+		if pr.review == "changes" or pr.merge == "conflicts" or failing then
+			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" else "Checks failing"
+		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
+			return "ready"
+		end
+		return "pr"
+	end
+	local detail = state.details[M.detailKey(state, item)]
+	local head = if detail then detail.headPr else nil
+	if head and (head.state == "open" or head.state == "draft") then
+		return "pr"
+	end
+	local note = state.notes[item.key]
+	return if note and note.ok then "worktree" else "none"
+end
+
 -- Whether the list shows `item`: with the attention filter only what needs it; else everything except snoozed items
 -- (unless shown), though an agent that waits for input always surfaces its item.
 function M.keep(state: State, kind: string, item: any): boolean
@@ -1771,6 +1805,9 @@ loadDetails = function(state: State, key: string)
 			return
 		end
 		if details then
+			if details.headPr then
+				state.noteSeq += 1 -- the picker's cached rows carry the stage, which the worktree branch's PR moves
+			end
 			state.details[key] = details
 			state.detailFail[key] = nil
 		else
@@ -1801,9 +1838,7 @@ loadDetails = function(state: State, key: string)
 						local o, r, n = github.parsePrUrl(l.url)
 						linked = linked or (n == head.number and o ~= nil and r ~= nil and string.lower(o .. "/" .. r) == string.lower(code))
 					end
-					if not linked then
-						loaded.headPr = head
-					end
+					loaded.headPr, loaded.headLinked = head, linked
 				end
 				land(nil, loaded, "")
 			end)

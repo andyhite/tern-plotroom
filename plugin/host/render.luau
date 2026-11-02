@@ -21,7 +21,7 @@ type Prompt = core.Prompt
 type Snap = core.Snap
 type State = core.State
 
-local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_ICON, RUN_TONE, SETTINGS_KEYS, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_ICON, core.RUN_TONE, core.SETTINGS_KEYS, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
+local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_ICON, RUN_TONE, SETTINGS_KEYS, STAGE, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_ICON, core.RUN_TONE, core.SETTINGS_KEYS, core.STAGE, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
 local kindAndId, loadPrompts, promptById, readCheckouts = storage.kindAndId, storage.loadPrompts, storage.promptById, storage.readCheckouts
 local TERMINAL, activeView, cancelDetails, codeRepoOf, detailKey, filtered, headOf, helpOf, pickerId, offered, openItems, orderedViews, selected, snapKey, viewOf, waitOf, wantDetails, ghActive, me = engine.TERMINAL, engine.activeView, engine.cancelDetails, engine.codeRepoOf, engine.detailKey, engine.filtered, engine.headOf, engine.helpOf, engine.pickerId, engine.offered, engine.openItems, engine.orderedViews, engine.selected, engine.snapKey, engine.viewOf, engine.waitOf, engine.wantDetails, engine.ghActive, engine.me
 
@@ -73,19 +73,29 @@ local function noteTone(note: Note): string?
 	return if note.dirty == false then "success" else nil
 end
 
+-- What a worktree's badge says on hover: its attempt's summary and where it is.
+local function noteTitle(note: Note): string
+	return (note.summary or "Worktree ready") .. (if note.path then " · " .. note.path else "")
+end
+
+-- The badge of stage `id` (engine.stage); a Worktree stage takes its worktree's tone and summary, a Blocked one says why.
+local function stageBadge(id: string, why: string?, note: Note?): { text: string, tone: string?, title: string? }
+	if id == "worktree" and note then
+		return { text = STAGE.worktree.text, tone = noteTone(note), title = noteTitle(note) }
+	end
+	local b = STAGE[id]
+	return if why then { text = b.text, tone = b.tone, title = why } else b
+end
+
 -- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip, `go` is the key that
--- goes to the tab ("": none).
-local function tabBadges(one: string, note: Note?, open: boolean, go: string): { any }
+-- goes to the tab ("": none). The Worktree badge is left to the stage badge when that says Worktree.
+local function tabBadges(one: string, note: Note?, open: boolean, go: string, stage: string): { any }
 	local badges: { any } = {}
 	if open then
 		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree" .. (if go ~= "" then " (" .. go .. " goes there)" else "") })
 	end
-	if note and note.ok then
-		table.insert(badges, {
-			text = "Worktree",
-			tone = noteTone(note),
-			title = (note.summary or "Worktree ready") .. (if note.path then " · " .. note.path else ""),
-		})
+	if note and note.ok and stage ~= "worktree" then
+		table.insert(badges, { text = "Worktree", tone = noteTone(note), title = noteTitle(note) })
 	end
 	return badges
 end
@@ -105,12 +115,12 @@ local function finishRow(key: string, title: string, author: string, detail: { a
 	}
 end
 
-local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string): { [string]: any }
+-- A pull request's picker row; its stage says Merged or Closed, so only Draft is left of its state.
+local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
 	local check = if pr.checks then CHECK[pr.checks] else nil
-	local kind = stateKind(pr)
-	local badges = tabBadges("pull request", note, open, go)
-	if kind ~= "open" then
-		table.insert(badges, STATE_BADGE[kind])
+	local badges = tabBadges("pull request", note, open, go, stage)
+	if stateKind(pr) == "draft" then
+		table.insert(badges, STATE_BADGE.draft)
 	end
 	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
 	-- they don't read as the state and label badges.
@@ -135,11 +145,12 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 end
 
 -- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its workflow
--- status or, once closed, its state, and its labels as badges. The preview lists the assignees; the rows do not.
-local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string): { [string]: any }
-	local badges = tabBadges("issue", note, open, go)
-	if issue.status or issue.state == "closed" then
-		table.insert(badges, issueBadge(issue))
+-- status or why it closed (the stage already says Closed), and its labels as badges. The preview lists the assignees; the rows do not.
+local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
+	local badges = tabBadges("issue", note, open, go, stage)
+	local sb = issueBadge(issue)
+	if issue.status or (issue.state == "closed" and sb ~= STATE_BADGE.closed) then
+		table.insert(badges, sb)
 	end
 	local at = if issue.tracker == "github" then "@" else ""
 	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
@@ -166,11 +177,12 @@ local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } =
 	exited = { text = "Exited", tone = "muted", title = "Its agent has exited" },
 }
 
--- Puts the triage mark (New, Changed, Snoozed) and the agent's state in front of `row`'s badges.
-local function decorate(state: State, kind: string, item: any, row: { [string]: any })
-	local extra: { any } = {}
+-- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
+-- Snoozed) in front of `row`'s badges.
+local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
+	local extra: { any } = { stageBadge(stage, why, state.notes[item.key]) }
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
-	if agent then
+	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
 	end
 	local st = engine.status(state, kind, item)
@@ -181,13 +193,18 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	elseif st and st.fresh == "changed" then
 		table.insert(extra, { text = "Changed", tone = "warning", title = "Changed since you marked it seen" })
 	end
-	if #extra > 0 then
-		local badges: { any } = if row.badges then row.badges else {}
-		for i, b in extra do
-			table.insert(badges, i, b)
-		end
-		row.badges = badges
+	local badges: { any } = if row.badges then row.badges else {}
+	for i, b in extra do
+		table.insert(badges, i, b)
 	end
+	row.badges = badges
+end
+
+-- A preview's first fact, above its branch: the item's stage, toned as its row badge.
+local function stageFact(state: State, kind: string, item: any): Node
+	local id, why = engine.stage(state, kind, item)
+	local b = stageBadge(id, why, state.notes[item.key])
+	return ui.node("kv", { key = "stage", items = { { k = "Stage", v = { ui.span(b.text, b.tone) } } } })
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
@@ -210,8 +227,9 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
 		local isOpen = open[item.key] == true
-		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go) else pickerItem(item, state.notes[item.key], isOpen, go)
-		decorate(state, snap.kind, item, row)
+		local stage, why = engine.stage(state, snap.kind, item)
+		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go, stage) else pickerItem(item, state.notes[item.key], isOpen, go, stage)
+		decorate(state, snap.kind, item, row, stage, why)
 		if engine.needs(state, snap.kind, item) then
 			need += 1
 		end
@@ -691,6 +709,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 	end
 	local properties: { Node } = {
 		ui.node("col", { key = "about", gap = "sm" }, {
+			stageFact(state, "prs", pr),
 			refRow("branch", "Branch", pr.head),
 			refRow("base", "Base", pr.base),
 			ui.node("kv", { key = "facts", items = withValue(facts) }),
@@ -856,7 +875,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	end
 	-- The Branch row shows the branch a new worktree would make (a linked PR's is taken instead); without one (a saved
 	-- format is unusable) there is none. A user not known yet (me.of) shows as its variable.
-	local about: { Node } = {}
+	local about: { Node } = { stageFact(state, "issues", issue) }
 	local code = codeRepoOf(issue)
 	local branch = if code then (engine.issueNames(issue, code, me.of(state, issue))) else nil
 	if branch then
@@ -906,7 +925,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
 	addPart(out, "linked", linkedNodes(issue.tracker, detail, fail, loading))
-	addPart(out, "headpr", headPrNodes(code, if loaded then loaded.headPr else nil))
+	addPart(out, "headpr", headPrNodes(code, if loaded and not loaded.headLinked then loaded.headPr else nil))
 	return out
 end
 

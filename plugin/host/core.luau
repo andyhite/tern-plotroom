@@ -110,9 +110,9 @@ end
 -- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
 -- `about` is the PR's merge state, reviewers and description, nil when gh did not print them. `issue` is an issue's
 -- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty). `headPr` is the PR whose head is
--- the branch of the issue's worktree, `noted` the issue Plotroom noted for the PR's head branch's worktree; each nil
--- when there is none (or the lookup failed: it is best effort).
-export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, noted: tracker.Issue? }
+-- the branch of the issue's worktree (`headLinked`: it is among the issue's linked PRs too), `noted` the issue Plotroom
+-- noted for the PR's head branch's worktree; each nil when there is none (or the lookup failed: it is best effort).
+export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
@@ -428,6 +428,18 @@ M.REVIEW_BADGE = {
 	changes = { text = "Changes requested", tone = "error" },
 	required = { text = "Review required", tone = "warning" },
 } :: { [string]: { text: string, tone: string } }
+-- An item's stage (PRODUCT.md › Glossary › Stage) as a badge; engine.stage derives which.
+M.STAGE = {
+	merged = { text = "Merged", tone = "accent" },
+	closed = { text = "Closed", tone = "muted" },
+	needs = { text = "Needs you", tone = "warning", title = "Its agent is waiting for your input" },
+	working = { text = "Agent working", tone = "accent", title = "An agent is working on it" },
+	blocked = { text = "Blocked", tone = "error" },
+	ready = { text = "Ready to merge", tone = "success" },
+	pr = { text = "PR open", tone = "muted" },
+	worktree = { text = "Worktree", tone = "muted" },
+	none = { text = "Not started", tone = "muted" },
+} :: { [string]: { text: string, tone: string, title: string? } }
 M.RUN_TONE = { success = "success", failure = "error", pending = "warning", neutral = "muted" } :: { [string]: string }
 M.RUN_ICON = { success = "check", failure = "x", pending = "clock", neutral = "minus" } :: { [string]: string }
 M.MERGE_STATE = {

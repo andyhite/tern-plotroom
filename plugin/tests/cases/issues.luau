@@ -475,8 +475,8 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "the same for an unassigned issue")
 	eq(row(1).facts, nil, "the rows carry no facts column: no assignee, no comment count")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
-	eq(badges(1), "In Progress/warning ui/-", "the workflow status toned by its category, then the labels; no integration badge")
-	eq(badges(2), "Done/success", "a done issue says Done")
+	eq(badges(1), "Not started/muted In Progress/warning ui/-", "the stage, the workflow status toned by its category, then the labels; no integration badge")
+	eq(badges(2), "Closed/muted Done/success", "a done issue is Closed and says Done")
 	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open", "the preview head's Open icon is named Open")
 	b.typeText("?")
 	local rows = helpRows(b.view().layer)
@@ -790,6 +790,7 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 		return out
 	end
 	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
+	eq(findKey(pickerNode(b), "about").c[1].p.key, "stage", "the stage is the first fact, above them")
 	eq(factOf(b, "Reporter"), "Ann Lee", "the reporter is a name, not a login")
 	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
 	eq(factOf(b, "Type"), "Bug", "the type")

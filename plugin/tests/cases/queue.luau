@@ -2976,4 +2976,98 @@ case("host: a queue action that runs counts once in this host's usage, and the b
 	eq(jsonDecode(findKey(b.view().main, "usage").p.text).problem, "is malformed", "and the node says why it is missing")
 end)
 
+-- Every badge text of row `id`, in order.
+local function badgeTexts(b: Block, id: string): { string }
+	local out: { string } = {}
+	for _, row in pickerOf(b).items do
+		if row.id == id then
+			for _, badge in row.badges or {} do
+				table.insert(out, badge.text)
+			end
+		end
+	end
+	return out
+end
+
+case("host stage: a pull request's stage leads its row, Merged or Closed before its agent, its agent before Blocked or Ready to merge, and no badge says it twice", function(w: World)
+	local s = hostScene(w, 0)
+	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED" }),
+		searchItem(2, "o/r", EPOCH - 120, ready),
+		searchItem(3, "o/r", EPOCH - 180, { state = "MERGED" }),
+		searchItem(4, "o/r", EPOCH - 240, { state = "CLOSED" }),
+		searchItem(5, "o/r", EPOCH - 300, { review = "CHANGES_REQUESTED" }),
+		searchItem(6, "o/r", EPOCH - 360, ready),
+		searchItem(7, "o/r", EPOCH - 420, { isDraft = true }),
+	}
+	local b = openQueue(w)
+	local function stages(): { string }
+		local out: { string } = {}
+		for n = 1, 7 do
+			table.insert(out, asks.hx.stage(b, "no_2fr_23" .. n))
+		end
+		return out
+	end
+	same(stages(), { "Blocked", "Ready to merge", "Merged", "Closed", "Blocked", "Ready to merge", "PR open" }, "from the search alone")
+	asks.hx.agents(b, { ["o/r#1"] = "waiting_input", ["o/r#2"] = "working", ["o/r#3"] = "working", ["o/r#4"] = "waiting_input", ["o/r#6"] = "idle" })
+	same(stages(), { "Needs you", "Agent working", "Merged", "Closed", "Blocked", "Ready to merge", "PR open" }, "an agent outranks Blocked and Ready to merge, never Merged or Closed")
+	same(badgeTexts(b, "no_2fr_231"), { "Needs you" }, "the stage replaces the agent's Needs input badge (the row being read is seen: no New)")
+	same(badgeTexts(b, "no_2fr_232"), { "Agent working", "New" }, "and its Working badge, keeping New")
+	same(badgeTexts(b, "no_2fr_233"), { "Merged", "Working", "New" }, "a merged PR says Merged once and keeps its agent's badge")
+	same(badgeTexts(b, "no_2fr_236"), { "Ready to merge", "Idle", "New" }, "an idle agent says nothing of the stage")
+	same(badgeTexts(b, "no_2fr_237"), { "PR open", "New", "Draft" }, "a draft is PR open and still says Draft")
+	asks.hx.agents(b, {})
+	eq(asks.hx.stage(b, "no_2fr_231"), "Blocked", "an agent that is gone leaves the stage to GitHub on the next render")
+end)
+
+case("host stage: an issue is Not started, then Worktree, then PR open once its worktree branch has an open PR; its agent outranks those, Closed outranks all", function(w: World)
+	local s = h.issueHost(w)
+	local b = h.openIssues(w)
+	w.advance(300)
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Not started", "an open issue with no worktree, agent or PR")
+	eq(h.factOf(b, "Stage"), "Not started", "and its preview says so first")
+	h.leaveIssueWt(w, s, 12)
+	refreshNow(w, b)
+	w.advance(300)
+	local function texts(): { string }
+		return badgeTexts(b, "no_2fr_2312")
+	end
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Worktree", "a Plotroom worktree with no PR")
+	eq(asks.hx.stage(b, "no_2fr_2313"), "Closed", "a closed issue with no agent")
+	local worktrees = 0
+	for _, t in texts() do
+		worktrees += if t == "Worktree" then 1 else 0
+	end
+	eq(worktrees, 1, "the stage takes the Worktree badge's place")
+	eq(h.factOf(b, "Stage"), "Worktree", "the preview's first fact")
+	s.gh.heads["o/r@12-fix-login"] = { { number = 45, title = "Fix the login redirect", state = "OPEN", isDraft = true, url = "https://github.com/o/r/pull/45" } }
+	refreshNow(w, b)
+	w.advance(300)
+	eq(asks.hx.stage(b, "no_2fr_2312"), "PR open", "its worktree branch's open PR, once the details read it")
+	eq(h.factOf(b, "Stage"), "PR open", "and the preview says the same")
+	yes(table.find(texts(), "Worktree") ~= nil, "the worktree still shows, as its own badge")
+	asks.hx.agents(b, { ["o/r#12"] = "working", ["o/r#13"] = "waiting_input" })
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Agent working", "its agent outranks PR open")
+	eq(asks.hx.stage(b, "no_2fr_2313"), "Closed", "Closed outranks an agent waiting for input")
+	asks.hx.agents(b, { ["o/r#12"] = "waiting_input" })
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Needs you", "and Needs you outranks Agent working")
+	eq(asks.hx.stage(b, "no_2fr_2314"), "Closed", "a closed issue is Closed")
+end)
+
+case("host stage: a closed or merged PR on an issue's worktree branch leaves it at Worktree", function(w: World)
+	local s = h.issueHost(w)
+	h.leaveIssueWt(w, s, 12)
+	s.gh.heads["o/r@12-fix-login"] = {
+		{ number = 40, title = "Old try", state = "CLOSED", isDraft = false, url = "https://github.com/o/r/pull/40" },
+		{ number = 41, title = "Landed", state = "MERGED", isDraft = false, url = "https://github.com/o/r/pull/41" },
+	}
+	local b = h.openIssues(w)
+	w.advance(300)
+	eq(#requestsOf(s.gh, "head"), 1, "the branch's PRs were read")
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Worktree", "a closed PR on the worktree branch leaves it at Worktree")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
+	eq(asks.hx.stage(b, "no_2fr_2312"), "Worktree", "moving on keeps what was read")
+end)
+
 return {}
