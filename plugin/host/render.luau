@@ -177,6 +177,14 @@ local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } =
 	exited = { text = "Exited", tone = "muted", title = "Its agent has exited" },
 }
 
+-- An agent's last end-of-run report as a badge: the agent's claim, never a sign the work is done.
+local REPORT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
+	ok = { text = "Report: ok", tone = "muted", title = "Its agent reported nothing blocks it; a claim, not a check" },
+	stuck = { text = "Report: stuck", tone = "error", title = "Its agent reported it cannot go on" },
+	["needs-human"] = { text = "Report: needs human", tone = "warning", title = "Its agent reported it waits for you" },
+	none = { text = "No report", tone = "muted", title = "Its agent's last turn ended without a valid end-of-run report" },
+}
+
 -- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
 -- Snoozed) in front of `row`'s badges.
 local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
@@ -236,9 +244,9 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended;" per entry in key order: the hidden
--- `main.agents` node says it, so a window that sent its map to an earlier run of this block (a reload) sees the block no
--- longer holds it and sends again. flows.luau's `signature` spells it the same.
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker;"
+-- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
+-- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
 	local names: { string } = {}
 	for k in state.agents do
@@ -248,7 +256,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1172,20 +1180,28 @@ local function agentsPreview(state: State): { Node }
 		return {}
 	end
 	local badge = AGENT_BADGE[row.state]
+	local report = REPORT_BADGE[row.attention or ""]
 	local href = engine.agentHref(row.key)
 	local facts: { { [string]: any } } = withValue({
 		{ k = "Item", v = { ui.span(printable(row.key), "mono") } },
 		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
+		{ k = "Report", v = if report then { ui.span(report.text) } else nil },
+		{ k = "Reason", v = if report and row.reason then { ui.span(printable(row.reason)) } else nil },
+		{ k = "Blocker", v = if report and row.blocker then { ui.span(printable(row.blocker), "error") } else nil },
 		{ k = "Last message", v = if row.last then { ui.span(printable(row.last)) } else nil },
 		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
+	local titlerow: { Node } = {
+		ui.node("text", { key = "title", spans = { ui.span(printable(row.title or row.key), "strong") } }),
+		ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }),
+	}
+	if report then
+		table.insert(titlerow, ui.node("badge", { key = "report", text = report.text, tone = report.tone, title = report.title }))
+	end
 	local kids: { Node } = {
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "title", spans = { ui.span(printable(row.title or row.key), "strong") } }),
-			ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }),
-		}),
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, titlerow),
 		ui.node("kv", { key = "facts", items = facts }),
 	}
 	if href then
@@ -1222,16 +1238,25 @@ local function agentsProps(state: State, props: { [string]: any })
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
 		end
+		local report = REPORT_BADGE[row.attention or ""]
 		if row.err then
 			table.insert(detail, " · ")
 			table.insert(detail, ui.span(printable(row.err), "error"))
+		end
+		if report and row.blocker then
+			table.insert(detail, " · ")
+			table.insert(detail, ui.span(printable(row.blocker), "error"))
+		end
+		if report and row.reason then
+			table.insert(detail, " · ")
+			table.insert(detail, ui.span(printable(row.reason)))
 		end
 		if row.last then
 			table.insert(detail, " · ")
 			table.insert(detail, ui.span(printable(row.last), "muted"))
 		end
 		local id = pickerId("g", row.key)
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state] } })
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state], report } })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
 			table.insert(names, row.repo)

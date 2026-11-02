@@ -15,6 +15,8 @@ export type Jira = typeof(require("../jira"))
 
 -- 2026-10-12T12:00:00Z: where every world's clock starts.
 local EPOCH = 1791806400
+-- What the window appends to every agent's prompt: the fake agents:start cuts it off and records `report`.
+local REPORT_TAIL = "\n\n" .. require("../prompts").REPORT
 M.EPOCH = EPOCH
 
 -- ---------------------------------------------------------------- assertions
@@ -368,6 +370,7 @@ export type Win = {
 	agentCalls: { { op: string, pane: number, text: string? } }, -- every cx.agents interrupt / stop / ask
 	askFails: boolean, -- cx.agents:ask raises (the agent cannot take a message now)
 	agentNotes: { [number]: { last_message: string?, delivery_error: string? } }, -- agent pane -> what cx.agents:list also reports
+	transcripts: { [number]: { any } }, -- agent pane -> its chat, oldest first, as cx.agents:transcript gives it
 	prompts: { any }, -- every cx:prompt request
 	typedQueue: { string }, -- answers cx:prompt gives first, in order, before `typed`
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
@@ -603,6 +606,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		agentCalls = {},
 		askFails = false,
 		agentNotes = {},
+		transcripts = {},
 		prompts = {},
 		typedQueue = {},
 		hostOf = {},
@@ -834,7 +838,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			table.insert(copied, text)
 		end,
 		agents = {
+			-- The fixed end-of-run contract is cut off the prompt a case reads, and `report` says it was there, last.
 			start = function(_self: any, opts: any): number
+				local p: any = opts.prompt
+				opts.report = type(p) == "string" and #p > #REPORT_TAIL and string.sub(p, -#REPORT_TAIL) == REPORT_TAIL
+				if opts.report then
+					opts.prompt = string.sub(p, 1, #p - #REPORT_TAIL)
+				end
 				table.insert(win.agents, opts)
 				local pane = addPane({ cwd = opts.cwd }, nil)
 				win.agentStates[pane] = "working"
@@ -849,6 +859,15 @@ local function newWorld(instantiate: Loader, context: string): World
 					end
 				end
 				return rows
+			end,
+			transcript = function(_self: any, pane: number, opts: any): any
+				local all = win.transcripts[pane] or {}
+				local n = if opts and type(opts.last) == "number" then opts.last else 50
+				local out: { any } = {}
+				for i = math.max(1, #all - n + 1), #all do
+					table.insert(out, all[i])
+				end
+				return out
 			end,
 			interrupt = function(_self: any, pane: number)
 				table.insert(win.agentCalls, { op = "interrupt", pane = pane })

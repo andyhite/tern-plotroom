@@ -9,6 +9,7 @@ local worktree = require("./worktree")
 local flows = require("./flows")
 local rpc = require("./rpc")
 local usage = require("./usage")
+local prompts = require("./prompts")
 
 -- Every palette command's title by id, for the usage report (flows.setup).
 local TITLES: { [string]: string } = {}
@@ -531,7 +532,8 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 	cx:toast(level, "Worktree ready for " .. t.label, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
--- Starts an agent at `r.path` with `prompt`, as `omp --model <model>` when the prompt names one. `split`: as a block
+-- Starts an agent at `r.path` with `prompt` and the fixed end-of-run report contract (prompts.REPORT) after it, as
+-- `omp --model <model>` when the prompt names one. `split`: as a block
 -- beside the queue (pane `pane`), in its tab. Else `join` (a worktree): in the target's open tab when there is one,
 -- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
@@ -581,7 +583,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	local ok, agent = pcall(function()
 		-- Omitted, the command is the agent setting's (omp); a model needs its own command line.
-		return cx.agents:start({ prompt = prompt, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
+		return cx.agents:start({ prompt = prompt .. "\n\n" .. prompts.REPORT, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
 	end)
 	if not ok or type(agent) ~= "number" then
 		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))

@@ -1605,6 +1605,10 @@ function M.settingsView(state: State, palette: Node): BlockView
 			ui.node("section", { key = "vars", head = { ui.span("Variables", "muted") }, collapsible = true, collapsed = true }, {
 				ui.node("kv", { key = "list", items = (pk or state.kind).vars }),
 			}),
+			-- Read only: Plotroom appends it to every action's prompt and parses what it asks for (PRODUCT.md › Principles 7).
+			ui.node("section", { key = "report", head = { ui.span("End-of-run report · added by Plotroom, not editable", "muted") }, collapsible = true }, {
+				ui.node("md", { key = "text", text = "````text\n" .. require("../prompts").REPORT .. "\n````" }),
+			}),
 		}
 		if err then
 			table.insert(kids, ui.node("text", { key = "error", spans = { ui.span(err, "error") } }))

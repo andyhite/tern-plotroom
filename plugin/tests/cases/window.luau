@@ -274,6 +274,7 @@ windowCase("window: saved prompts the host cannot read are reported, and a promp
 	has(w.toasts[1].sub, "malformed", "and why")
 	eq(#promptPicks(w)[1].items, 1, "the picker still opens")
 	eq(w.window.agents[1].prompt, "Look at https://github.com/o/r/pull/5", "to type a prompt")
+	eq(w.window.agents[1].report, true, "followed by the fixed end-of-run report contract, last")
 	eq(w.kv.get("prompts-prs"), "garbage", "and the saved prompts are untouched")
 end)
 

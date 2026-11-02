@@ -12,7 +12,7 @@ local FRESH = [==[- Fresh worktree: Plotroom MAY still be running the repo's set
 ]==]
 local GH = [==[- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
 ]==]
-local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
+local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop: end your turn with the plotroom-report block. Only my explicit answer approves; an automatic "Continue" or silence never does.
 ]==]
 
 local REVIEW = [==[Review PR #{number} of {owner}/{repo}: report the actionable defects it introduces, with evidence. Post nothing until I authorize it.
@@ -476,6 +476,25 @@ M.issues = {
 	{ id = "p2", name = "Fix", text = FIX },
 	{ id = "p3", name = "Plan", text = PLAN, worktree = false },
 } :: { Seed }
+
+-- The fixed end-of-run report Plotroom appends to every action's prompt, typed prompts included (PRODUCT.md › Principles
+-- 7). Users cannot edit it: usage.reportOf parses what it asks for, so the two change together.
+M.REPORT = [==[<plotroom-report>
+End every turn with one fenced code block whose info string is `plotroom-report`, holding one JSON object, as the last thing in your message:
+
+```plotroom-report
+{"attention": "ok", "reason": "One line on why", "commit": null, "pr": null, "evidence": [], "blocker": null}
+```
+
+- `attention`: `ok` (nothing blocks you), `stuck` (you cannot go on; `blocker` says why) or `needs-human` (you wait for my answer or review).
+- `reason`: one line on why.
+- `commit`: the full SHA of the last commit you made, else null.
+- `pr`: the URL of the pull request you opened or updated, else null.
+- `evidence`: the commands you ran and what you checked, one string each; [] when none.
+- `blocker`: what blocks you, else null.
+
+Plotroom reads only this block. It is your claim, not proof: it marks nothing done.
+</plotroom-report>]==]
 
 -- The defaults no saved action in `saved` is named like, in order: what Settings › Actions › Add missing defaults saves
 -- back. An edited default keeps its name, so it is never replaced.

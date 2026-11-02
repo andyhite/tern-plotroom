@@ -160,8 +160,9 @@ export type Settings = {
 	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") awaiting confirmation; view and prompt ids are qualified by their kind
 }
 
--- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title.
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
+-- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title;
+-- and its last end-of-run report (`attention` "none": no valid one).
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`), and the unread notifications gh's

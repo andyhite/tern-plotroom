@@ -34,12 +34,14 @@ type HostId = { id: number, name: string, address: string }
 -- counts the actions chained before it.
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number? }
 -- `started` (seconds since the epoch), `kind`, `model` and `runsIn` go into the run log (usage.luau) when its turn ends.
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string? }
+-- `attention`, `reason` and `blocker`: its agent's last end-of-run report (`attention` "none": no valid one), for the
+-- Agents list.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
 -- ("worktree" or "main checkout") are for the run log.
 export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string? }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
@@ -160,7 +162,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -186,6 +188,9 @@ local function linkOf(row: any): Link?
 		kind = clip(texts.kind, ACTION_CAP),
 		model = clip(texts.model, ACTION_CAP),
 		runsIn = clip(texts.runsIn, ACTION_CAP),
+		attention = clip(texts.attention, ACTION_CAP),
+		reason = clip(texts.reason, LAST_CAP),
+		blocker = clip(texts.blocker, LAST_CAP),
 	}
 end
 
@@ -215,7 +220,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -282,7 +287,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
-			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended }
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker }
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
 				row = full
@@ -295,7 +300,8 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended;" per key in order: host/render's `agentSig` spells it the same.
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker;" per key in order: host/render's
+-- `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
@@ -305,7 +311,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -575,10 +581,22 @@ function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, numb
 	return nil, nil
 end
 
--- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed) and when (HH:MM) on its link, for the
--- Agents list. The first turn end of a link appends its run to the run log (kv `runs`):
--- a run ends with its agent's first turn, so later turns of the same agent add no record. Nothing for an agent with
--- no link or a store that cannot be read.
+-- The text of the agent pane `agent`'s last message when it is the agent's (omp's chat transcript); nil when it cannot
+-- be read.
+local function lastReply(cx: WindowCx, agent: number): string?
+	local ok, msgs = pcall(function()
+		return cx.agents:transcript(agent, { last = 1 })
+	end)
+	local m: any = if ok and type(msgs) == "table" then msgs[#msgs] else nil
+	return if type(m) == "table" and m.role == "assistant" and type(m.text) == "string" then m.text else nil
+end
+
+-- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed), when (HH:MM) and the end-of-run report
+-- in its last message (usage.reportOf) on its link, for the Agents list. The first turn end of a link appends its run,
+-- with that report, to the run log (kv `runs`): a run ends with its agent's first turn, so later turns of the same
+-- agent add no record. A turn with no valid report records "none" on the first turn and keeps the shown report on a
+-- later one (a prompt typed into the agent carries no contract). Nothing for an agent with no link or a store that
+-- cannot be read.
 function M.recordResult(cx: WindowCx, agent: number, result: string)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
@@ -588,7 +606,13 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, host) then
 			local first = l.result == nil
+			local report = usage.reportOf(lastReply(cx, agent))
 			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
+			if report then
+				l.attention, l.reason, l.blocker = report.attention, clip(report.reason, LAST_CAP), clip(report.blocker, LAST_CAP)
+			elseif first then
+				l.attention, l.reason, l.blocker = "none", nil, nil
+			end
 			if not writeLinks(links) or not first then
 				return
 			end
@@ -601,6 +625,12 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 				started = l.started,
 				ended = os.time(),
 				result = result,
+				attention = if report then report.attention else "none",
+				reason = if report then report.reason else nil,
+				commit = if report then report.commit else nil,
+				pr = if report then report.pr else nil,
+				evidence = if report then report.evidence else nil,
+				blocker = if report then report.blocker else nil,
 			})
 			return
 		end

@@ -3,7 +3,8 @@
 -- and the day counting began) and kv `runs` (one record per agent run, newest first, at most RUNS_CAP). Ids are
 -- "<where>:<what>": "queue:<action id>" (the host's queue actions), "row:<command id>" (Commands rows the window runs),
 -- "palette:<command id>" (Tern palette commands) and "action:<name>" (saved actions started). Neither store holds item
--- titles, prompt text or agent output, and a store that cannot be read or is malformed is never written over.
+-- titles or prompt text, and of an agent's output a run keeps only its end-of-run report (reportOf), cut to the caps
+-- below. A store that cannot be read or is malformed is never written over.
 
 local M = {}
 
@@ -13,11 +14,18 @@ M.RUNS_CAP = 1000
 local IDS_CAP = 500 -- ids kept; the least recently used goes first
 local ID_CAP = 200
 local TEXT_CAP = 200
+local COMMIT_CAP, PR_CAP, EVIDENCE_N = 64, 500, 20 -- a SHA-256 commit id; a pull request URL; evidence strings kept
+local REPORT_BYTES = 64 * 1024 -- a longer report block is not read
+M.ATTENTION = { ok = true, stuck = true, ["needs-human"] = true }
 
 export type Count = { n: number, at: number }
 export type Usage = { since: number, counts: { [string]: Count } }
 -- `runsIn`: "worktree" or "main checkout"; `started`/`ended`: seconds since the epoch (an old link has no start).
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string }
+-- `attention`..`blocker`: the agent's end-of-run report (`attention` "none": it gave no valid one; nil: a run logged
+-- before reports were read).
+export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string? }
+-- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome.
+export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string? }
 
 -- `s` as one line of at most `cap` bytes, cut at a character boundary; nil when it is no string or empty.
 function M.line(s: any, cap: number): string?
@@ -101,10 +109,78 @@ function M.bump(id: string)
 	pcall(tern.kv.set, M.USAGE_KEY, { since = u.since, counts = u.counts })
 end
 
-local function runOf(r: any): Run?
+-- `v` as a list of strings, or nil when it is no list or holds anything else.
+local function strings(v: any): { string }?
+	if type(v) ~= "table" then
+		return nil
+	end
+	local out: { string } = {}
+	local n = 0
+	for i, s in v do
+		if type(i) ~= "number" or type(s) ~= "string" then
+			return nil
+		end
+		out[i] = s
+		n += 1
+	end
+	return if #out == n then out else nil
+end
+
+-- The report in the last `plotroom-report` block of `text` (an agent's last message), fields cut to the run log's caps;
+-- nil when there is none or it is malformed: not one JSON object, an unknown `attention`, no `reason`, a `commit` that
+-- is no full SHA, a `pr` that is no URL, `evidence` that is no list of strings, or a `blocker` that is no string.
+function M.reportOf(text: any): Report?
+	if type(text) ~= "string" then
+		return nil
+	end
+	local body: string? = nil
+	for b in string.gmatch(text .. "\n", "```plotroom%-report[ \t]*\r?\n(.-)\r?\n[ \t]*```[ \t]*\r?\n") do
+		body = b
+	end
+	if not body or #body > REPORT_BYTES then
+		return nil
+	end
+	local ok, r = pcall(tern.json.decode, body)
+	if not ok or type(r) ~= "table" then
+		return nil
+	end
+	local evidence = strings(r.evidence)
+	local commit, pr = r.commit, r.pr
 	if
-		type(r) ~= "table"
-		or not textOk(r.key, ID_CAP)
+		type(r.attention) ~= "string"
+		or not M.ATTENTION[r.attention]
+		or not M.line(r.reason, TEXT_CAP)
+		or not evidence
+		or (commit ~= nil and (type(commit) ~= "string" or not string.match(commit, "^%x+$") or (#commit ~= 40 and #commit ~= 64)))
+		or (pr ~= nil and (type(pr) ~= "string" or not string.match(pr, "^https?://%S+$")))
+		or (r.blocker ~= nil and type(r.blocker) ~= "string")
+	then
+		return nil
+	end
+	local kept: { string } = {}
+	for _, s in evidence do
+		local l = M.line(s, TEXT_CAP)
+		if l and #kept < EVIDENCE_N then
+			table.insert(kept, l)
+		end
+	end
+	return {
+		attention = r.attention,
+		reason = M.line(r.reason, TEXT_CAP) :: string,
+		commit = if commit then string.lower(commit) else nil,
+		pr = M.line(pr, PR_CAP),
+		evidence = kept,
+		blocker = M.line(r.blocker, TEXT_CAP),
+	}
+end
+
+local function runOf(r: any): Run?
+	if type(r) ~= "table" then
+		return nil
+	end
+	local evidence = if r.evidence ~= nil then strings(r.evidence) else nil
+	if
+		not textOk(r.key, ID_CAP)
 		or not textOk(r.action, TEXT_CAP)
 		or not textOk(r.result, TEXT_CAP)
 		or not whole(r.ended)
@@ -112,10 +188,23 @@ local function runOf(r: any): Run?
 		or (r.model ~= nil and not textOk(r.model, TEXT_CAP))
 		or (r.runsIn ~= nil and not textOk(r.runsIn, TEXT_CAP))
 		or (r.started ~= nil and not whole(r.started))
+		or (r.attention ~= nil and not (M.ATTENTION[r.attention] or r.attention == "none"))
+		or (r.reason ~= nil and not textOk(r.reason, TEXT_CAP))
+		or (r.commit ~= nil and not textOk(r.commit, COMMIT_CAP))
+		or (r.pr ~= nil and not textOk(r.pr, PR_CAP))
+		or (r.evidence ~= nil and (not evidence or #evidence > EVIDENCE_N))
+		or (r.blocker ~= nil and not textOk(r.blocker, TEXT_CAP))
 	then
 		return nil
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result }
+	if evidence then
+		for _, s in evidence do
+			if not textOk(s, TEXT_CAP) then
+				return nil
+			end
+		end
+	end
+	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker }
 end
 
 -- The run log, newest first, or nil and why when it cannot be read or is malformed.
@@ -151,6 +240,12 @@ function M.appendRun(run: Run)
 		started = run.started,
 		ended = run.ended,
 		result = M.line(run.result, TEXT_CAP),
+		attention = run.attention,
+		reason = M.line(run.reason, TEXT_CAP),
+		commit = run.commit,
+		pr = M.line(run.pr, PR_CAP),
+		evidence = run.evidence,
+		blocker = M.line(run.blocker, TEXT_CAP),
 	})
 	if not runs or not clean then
 		return

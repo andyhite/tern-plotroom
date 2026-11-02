@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -287,7 +287,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.flush()
 	local runs: any = w.kv.get("runs")
 	eq(#runs, 1000, "the cap holds")
-	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed" }, "the run: item key, action, kind, model, where it ran, start, end and result")
+	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none" }, "the run: item key, action, kind, model, where it ran, start, end, result and no report")
 	eq(runs[2].key, "o/r#1", "the earlier runs follow")
 	eq(runs[1000].key, "o/r#999", "and the oldest one went")
 	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
@@ -299,6 +299,126 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	eq(runs[1].result, "failed", "a later turn of the same agent adds no run")
 	eq(runs[2].key, "o/r#1", "nor pushes one out")
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "while its link still shows the latest turn")
+end)
+
+-- `agent`'s chat ends with `text` as its last message, as cx.agents:transcript gives it.
+local function lastSays(w: World, agent: number, text: string)
+	w.window.transcripts[agent] = { { role = "user", text = "go", tools = {} }, { role = "assistant", text = text, tools = {} } }
+end
+
+local function reportBlock(json: string): string
+	return "All set: the tests pass.\n\n```plotroom-report\n" .. json .. "\n```"
+end
+
+windowCase("window flows: a valid end-of-run report goes on the run record and the Agents list, nothing else the agent said is kept, and it never marks work done", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	eq(w.window.agents[1].report, true, "the action's prompt ends with the fixed contract")
+	local commit = string.rep("A1", 20)
+	lastSays(w, link.agent, "A draft:\n```plotroom-report\n{\"attention\": \"ok\", \"reason\": \"draft\", \"evidence\": []}\n```\nThen more work.\n\n" .. reportBlock(`\{"attention": "stuck", "reason": "The migration fails", "commit": "{commit}", "pr": "https://github.com/o/r/pull/9", "evidence": ["luau tests: 3 failed"], "blocker": "No test database"}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	eq(run.result, "done", "the turn's result is Tern's, whatever the report claims")
+	same({ run.attention, run.reason, run.commit, run.pr, run.blocker }, { "stuck", "The migration fails", string.lower(commit), "https://github.com/o/r/pull/9", "No test database" }, "the last block's report is on the run record")
+	same(run.evidence, { "luau tests: 3 failed" }, "with its evidence")
+	lacks(jsonEncode(w.kv.get("runs")), "All set", "no other agent output is stored in the run log")
+	lacks(jsonEncode(w.kv.get("agent-links")), "All set", "nor on the link")
+	local links: any = w.kv.get("agent-links")
+	same({ links[1].attention, links[1].reason, links[1].blocker }, { "stuck", "The migration fails", "No test database" }, "the link keeps what the Agents list shows")
+	w.advance(4100)
+	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
+	same({ row.attention, row.reason, row.blocker }, { "stuck", "The migration fails", "No test database" }, "and the block is told it")
+	eq(row.result, "done", "beside the turn's result")
+end)
+
+windowCase("window flows: a turn with no report records No report, and a later turn's valid report replaces it without a second run", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	lastSays(w, link.agent, "Finished. Nothing to report.")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	eq(run.attention, "none", "the run records No report")
+	eq(run.reason, nil, "with no reason")
+	eq((w.kv.get("agent-links") :: any)[1].attention, "none", "and so does the link")
+	lastSays(w, link.agent, reportBlock(`\{"attention": "needs-human", "reason": "Which base?", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.attention, l.reason }, { "needs-human", "Which base?" }, "a later valid report is shown")
+	eq(l.blocker, nil, "with no blocker")
+	eq(#(w.kv.get("runs") :: any), 1, "and adds no run")
+	lastSays(w, link.agent, "A reply to a typed message, with no report")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("agent-links") :: any)[1].attention, "needs-human", "a later turn with no report keeps the one shown")
+end)
+
+windowCase("window flows: a malformed report records No report", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	lastSays(w, link.agent, reportBlock(`\{"attention": "done", "reason": "Shipped", "evidence": []}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("runs") :: any)[1].attention, "none", "an attention outside ok, stuck and needs-human is no report")
+	lacks(jsonEncode(w.kv.get("runs")), "Shipped", "and none of it is kept")
+end)
+
+case("usage: reportOf takes only a well-formed plotroom-report block", function(w: World)
+	local usage: any = w.load("usage")
+	local sha = string.rep("f", 40)
+	local function of(json: string): any
+		return usage.reportOf(reportBlock(json))
+	end
+	local ok = of(`\{"attention": "ok", "reason": "Done", "commit": "{sha}", "pr": null, "evidence": ["ran it"], "blocker": null}`)
+	same({ ok.attention, ok.reason, ok.commit }, { "ok", "Done", sha }, "a valid report")
+	eq(ok.pr, nil, "a null pr is absent")
+	eq(ok.blocker, nil, "and so is a null blocker")
+	same(ok.evidence, { "ran it" }, "evidence is kept")
+	eq(of(`\{"attention": "ok", "reason": "Done", "commit": "{string.rep("f", 64)}", "evidence": []}`).commit, string.rep("f", 64), "a SHA-256 commit is a full SHA too")
+	eq(usage.reportOf("No block here"), nil, "no block")
+	eq(usage.reportOf(nil), nil, "no message")
+	eq(usage.reportOf("```json\n{\"attention\": \"ok\", \"reason\": \"Done\", \"evidence\": []}\n```"), nil, "a block of another kind")
+	eq(of(`\{"attention": "ok", "reason": "Done", "evidence": ["{string.rep("x", 70000)}"]}`), nil, "a block over 64 KB is not read")
+	local bad: { [string]: string } = {
+		["not JSON"] = "{attention: ok}",
+		["not an object"] = "[1, 2]",
+		["no attention"] = `\{"reason": "Done", "evidence": []}`,
+		["an unknown attention"] = `\{"attention": "done", "reason": "Done", "evidence": []}`,
+		["no reason"] = `\{"attention": "ok", "evidence": []}`,
+		["a blank reason"] = `\{"attention": "ok", "reason": "  ", "evidence": []}`,
+		["a short commit"] = `\{"attention": "ok", "reason": "Done", "commit": "abc1234", "evidence": []}`,
+		["a commit that is no hex"] = `\{"attention": "ok", "reason": "Done", "commit": "{string.rep("g", 40)}", "evidence": []}`,
+		["a pr that is no URL"] = `\{"attention": "ok", "reason": "Done", "pr": "#9", "evidence": []}`,
+		["no evidence"] = `\{"attention": "ok", "reason": "Done"}`,
+		["evidence that is no list of strings"] = `\{"attention": "ok", "reason": "Done", "evidence": [1]}`,
+		["a blocker that is no string"] = `\{"attention": "stuck", "reason": "Blocked", "evidence": [], "blocker": 5}`,
+	}
+	for why, json in bad do
+		eq(of(json), nil, why)
+	end
+end)
+
+windowCase("window flows: an oversized report is cut to the store caps", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	local evidence: { string } = {}
+	for i = 1, 30 do
+		table.insert(evidence, `"{i}{string.rep("e", 500)}"`)
+	end
+	lastSays(w, link.agent, reportBlock(`\{"attention": "stuck", "reason": "{string.rep("r", 1000)}", "pr": "https://github.com/o/r/pull/{string.rep("9", 900)}", "evidence": [{table.concat(evidence, ",")}], "blocker": "{string.rep("b", 1000)}"}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	eq(run.attention, "stuck", "an oversized report is still read")
+	eq(#run.reason, 200, "its reason cut to 200 bytes")
+	eq(#run.blocker, 200, "and its blocker")
+	eq(#run.pr, 500, "its pull request URL to 500")
+	eq(#run.evidence, 20, "20 evidence strings kept")
+	eq(#run.evidence[1], 200, "each cut to 200 bytes")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ #l.reason, #l.blocker }, { 200, 200 }, "the link's texts are cut as well")
 end)
 
 windowCase("window flows: a malformed run log or usage store is never overwritten, and the report says which part is missing", function(w: World)
@@ -2204,6 +2324,34 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the Agents scope")
 end)
 
+case("host agents: an Agents row and its preview show the end-of-run report's attention, reason and blocker, or No report", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	asks.hx.agents(b, {
+		["o/r#1"] = { state = "idle", action = "Review", title = "Fix one", result = "done", attention = "stuck", reason = "The migration fails", blocker = "No test database" },
+		["o/r#2"] = { state = "idle", action = "Watch", title = "Fix two", result = "done", attention = "none" },
+		["o/r#3"] = { state = "working", action = "Fix", title = "Fix three" },
+	})
+	pickScope(b, "agents")
+	w.flush()
+	local rows: { string } = {}
+	for _, item in pickerOf(b).items do
+		table.insert(rows, detailText(item) .. " | " .. (if item.badges[2] then item.badges[2].text else "-"))
+	end
+	same(rows, {
+		"Review: done · No test database · The migration fails | Report: stuck",
+		"Watch: done | No report",
+		"Fix | -",
+	}, "the report's badge, blocker and reason on the row; No report when there was none; nothing before a turn ended")
+	local text = b.text()
+	has(text, "Report: stuck", "the preview names the attention")
+	has(text, "The migration fails", "the reason")
+	has(text, "No test database", "and the blocker")
+	b.press("down")
+	has(b.text(), "No report", "an agent with no report says so")
+	lacks(b.text(), "Blocker", "with no blocker row")
+end)
+
 case("host agents: Interrupt, Stop and Message agent are palette rows and hidden links only while the selected item or Agents row has a live agent, and open the window's link", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
@@ -2855,16 +3003,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working|||||||;o/r#2=idle|||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working||||||||||;o/r#2=idle||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input|||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
-	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it||||;", "the recorded texts are part of it")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)

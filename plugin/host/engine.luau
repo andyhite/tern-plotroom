@@ -2293,9 +2293,9 @@ tern.on("command_finished", function(ev: any, _cx: any)
 	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended? }): replaces what the rows show. An optional text that is not a clean string within its cap is dropped,
--- never trusted.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10 }
+-- result?, ended?, attention?, reason?, blocker? }): replaces what the rows show. An optional text that is not a clean
+-- string within its cap is dropped, never trusted.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200 }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -2355,7 +2355,7 @@ function M.agentRows(state: State): { any }
 	for key, st in state.agents do
 		if st ~= "exited" then
 			local info: AgentInfo = state.agentInfo[key] or {}
-			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended })
+			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended, attention = info.attention, reason = info.reason, blocker = info.blocker })
 		end
 	end
 	table.sort(rows, function(a: any, b: any): boolean
