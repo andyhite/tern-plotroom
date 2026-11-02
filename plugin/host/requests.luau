@@ -1670,7 +1670,8 @@ end
 -- then the view's, every sidebar scope
 -- (`scope:<id>`, shown by engine.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
 -- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
--- Settings and the shortcut list; Now Show or hide snoozed, Refresh, the scopes, Settings and the shortcut list.
+-- Settings and the shortcut list; Now Reply… and Go to agent (while its row's agent needs input), Show or hide snoozed,
+-- Refresh, the scopes, Settings and the shortcut list.
 function M.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
 	local map = keys.load()
 	local labels: { [string]: string } = { unpin = "Unpin" }
@@ -1764,6 +1765,12 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		return out
 	end
 	if state.nowOn then
+		local row = engine.nowSelected(state)
+		if row and row.rank == 1 and row.key and engine.agentHref(row.key) then
+			labels.agentreply = "Reply…"
+			add("agentreply", "Now")
+			add("agentgo", "Now")
+		end
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
 		views()

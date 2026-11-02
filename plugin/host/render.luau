@@ -1314,7 +1314,13 @@ local function nowPreview(state: State): { Node }
 		local id, why = engine.stage(state, row.kind, item)
 		stage = stageBadge(id, why, state.notes[item.key])
 	end
-	local enter = if row.rank == 1 and engine.agentHref(row.key) then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
+	local reply = if row.rank == 1 and row.key then engine.agentHref(row.key, "agentreply") else nil
+	local enter = if reply then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
+	-- The links Go to agent and Reply… open (the window honours only links its block shows).
+	local links: { Node } = {}
+	if reply then
+		links = { ui.node("text", { key = "agentgo", href = engine.agentHref(row.key) }), ui.node("text", { key = "agentreply", href = reply }) }
+	end
 	return {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(printable(row.title), "strong") } }),
@@ -1333,6 +1339,7 @@ local function nowPreview(state: State): { Node }
 			}),
 		}),
 		ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }),
+		ui.node("col", { key = "buttons", hidden = true }, links),
 	}
 end
 
@@ -1368,6 +1375,11 @@ local function nowProps(state: State, props: { [string]: any })
 				table.insert(detail, " · " .. printable(row.agent.action))
 			end
 			item = { label = printable(row.title), title = printable(row.title), detail = detail }
+		end
+		-- What an agent that needs input last said, as the Agents list shows it.
+		if row.rank == 1 and row.agent and row.agent.last then
+			table.insert(item.detail, " · ")
+			table.insert(item.detail, ui.span(printable(row.agent.last), "muted"))
 		end
 		local badges: { any } = { badge }
 		if row.snoozed then
@@ -1410,6 +1422,11 @@ local function nowProps(state: State, props: { [string]: any })
 		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
 		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true },
 	})
+	-- Unkeyed buttons, so `keyed` would drop them: an agent that needs input is answered or gone to from its row.
+	if current and current.rank == 1 and engine.agentHref(current.key) then
+		table.insert(props.actions, { id = "agentreply", label = "Reply…", ["end"] = true })
+		table.insert(props.actions, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true })
+	end
 end
 
 -- The one-key shortcuts as the checklist decided them ("use" | "no"), "set" when none is left to bind, else nil.

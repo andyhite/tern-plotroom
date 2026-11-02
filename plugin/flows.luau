@@ -728,11 +728,17 @@ local function confirmPick(cx: WindowCx, head: string, label: string, lines: { s
 	end)
 end
 
--- Interrupt, Stop or Message (`act`: agentint | agentstop | agentmsg) the live agent recorded for `key`. Stop asks first;
--- each step looks the agent up again, so one that exited meanwhile only toasts.
+-- Interrupt, Stop, Message or Reply (`act`: agentint | agentstop | agentmsg | agentreply) the live agent recorded for
+-- `key`. Stop asks first; each step looks the agent up again, so one that exited meanwhile only toasts. Reply is Now's
+-- Message agent… for an agent that needs input: one that stopped waiting gets the same toast and nothing is sent.
 function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
+	local waiting = act == "agentreply"
+	local function reachable(cx2: WindowCx): Link?
+		local link, state = M.liveAgent(cx2, pane, key)
+		return if link and (not waiting or state == "waiting_input") then link else nil
+	end
 	local function run(cx2: WindowCx, what: string, fn: (number) -> ...any)
-		local link = M.liveAgent(cx2, pane, key)
+		local link = reachable(cx2)
 		if not link then
 			return cx2:toast("info", "No agent is running for " .. key)
 		end
@@ -741,7 +747,7 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 			cx2:toast("error", "Could not " .. what .. " the agent for " .. key, tostring(err))
 		end
 	end
-	if not M.liveAgent(cx, pane, key) then
+	if not reachable(cx) then
 		return cx:toast("info", "No agent is running for " .. key)
 	end
 	if act == "agentint" then
@@ -754,8 +760,8 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 				cx2.agents:stop(agent)
 			end)
 		end)
-	elseif act == "agentmsg" then
-		cx:prompt({ placeholder = "Message for the agent of " .. key, icon = "merge", action = "send" }):next(function(text, _, cx2)
+	elseif act == "agentmsg" or waiting then
+		cx:prompt({ placeholder = (if waiting then "Reply to the agent of " else "Message for the agent of ") .. key, icon = "merge", action = "send" }):next(function(text, _, cx2)
 			local line = if text then trim(text) else ""
 			if cx2 and line ~= "" then
 				run(cx2, "message", function(agent)

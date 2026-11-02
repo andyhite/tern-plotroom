@@ -554,6 +554,38 @@ windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's
 	eq(w.toasts[#w.toasts].level, "error", "a link its node does not carry is refused")
 end)
 
+windowCase("window flows: Now's Reply… sends one line to an agent that needs input, and one that stopped waiting before the reply is sent gets Message agent's toast with nothing sent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agentreply", h.prLink("agentreply", "o/r", 5))
+	seedAgent(w, 51, "waiting_input", 1, "o/r#5")
+	local calls = w.window.agentCalls
+	w.window.typed = "  yes, rebase it  "
+	w.click(h.prLink("agentreply", "o/r", 5))
+	w.flush()
+	same(calls, { { op = "ask", pane = 51, text = "yes, rebase it" } }, "the reply is sent as Message agent… sends it, trimmed")
+	has(w.window.prompts[#w.window.prompts].placeholder, "Reply to the agent of o/r#5", "it asked for one line")
+	-- The agent stops waiting while the reply is typed (the prompt answers on a later turn).
+	local asked = #w.window.prompts
+	w.window.typed = "too late"
+	w.click(h.prLink("agentreply", "o/r", 5))
+	w.window.agentStates[51] = "working"
+	w.flush()
+	eq(#w.window.prompts, asked + 1, "the line was asked for while it waited")
+	eq(#calls, 1, "nothing is sent once it stopped waiting")
+	eq(w.toasts[#w.toasts].text, "No agent is running for o/r#5", "and the toast is Message agent's")
+	w.click(h.prLink("agentreply", "o/r", 5))
+	w.flush()
+	eq(#w.window.prompts, asked + 1, "an agent that no longer waits is not asked for a reply at all")
+	eq(w.toasts[#w.toasts].text, "No agent is running for o/r#5", "it toasts the same")
+	w.window.agentStates[51] = "waiting_input"
+	w.window.typed = "   "
+	w.click(h.prLink("agentreply", "o/r", 5))
+	w.flush()
+	eq(#calls, 1, "a blank reply sends nothing")
+	eq(w.toasts[#w.toasts].text, "Nothing to send: the message was blank", "and says so")
+end)
+
 windowCase("window flows: an agent link switches to the exact recorded pane, even with other agents in the same folder", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -2205,6 +2237,46 @@ case("host agents: Interrupt, Stop and Message agent are palette rows and hidden
 	eq(w.opened[#w.opened], prLink("agentint", "o/r", 1), "and the pick opens it")
 	asks.hx.agents(b, {})
 	yes(not has3(hx.palette(w, b)), "no agent listed: no rows")
+end)
+
+case("host agents: Now's row and preview show what an agent that needs input last said, with Reply… and Go to agent, and the row leaves once the agent stops waiting", function(w: World)
+	local s = hostScene(w, 3)
+	h.newAcli(w)
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.queries["author:@me archived:false"], s.gh.queries["user-review-requested:@me"], s.gh.queries["assignee:@me archived:false"] = {}, {}, {}
+	s.gh.inbox.octocat = {}
+	w.setOpensNow(true)
+	local b = w.open(1, { "/work/r" })
+	w.flush()
+	asks.hx.agents(b, { ["o/r#5"] = { state = "waiting_input", action = "Review", title = "Fix five", last = "Rebase onto main first?" } })
+	local row = pickerOf(b).items[1]
+	eq(row.badges[1].text, "Agent needs input", "the agent is Now's row")
+	local detail: { string } = {}
+	collectTexts(row.detail, detail)
+	has(table.concat(detail), "Rebase onto main first?", "which shows its last message")
+	has(b.text(), "Rebase onto main first?", "and so does the preview")
+	local labels: { [string]: string } = {}
+	for _, a in pickerOf(b).actions do
+		labels[a.id] = a.label
+	end
+	eq(labels.agentreply, "Reply…", "the preview offers Reply…")
+	eq(labels.agentgo, "Go to agent", "and Go to agent")
+	eq(findKey(pickerNode(b), "agentreply").p.href, prLink("agentreply", "o/r", 5), "Reply's hidden link the window checks")
+	eq(findKey(pickerNode(b), "agentgo").p.href, prLink("agentgo", "o/r", 5), "and Go to agent's")
+	b.event({ ev = "action", id = "layer.queue", act = "agentreply" })
+	eq(w.opened[#w.opened], prLink("agentreply", "o/r", 5), "Reply… opens the window's reply link")
+	b.event({ ev = "action", id = "layer.queue", act = "agentgo" })
+	eq(w.opened[#w.opened], prLink("agentgo", "o/r", 5), "Go to agent opens the agent's link")
+	local p = hx.palette(w, b)
+	eq(p.labels.agentreply, "Reply…", "Commands offers Reply…")
+	eq(p.groups.agentgo, "Now", "and Go to agent, under Now")
+	asks.hx.agents(b, { ["o/r#5"] = { state = "working", action = "Review", title = "Fix five" } })
+	eq(#pickerOf(b).items, 0, "once the agent stops waiting its row leaves Now")
+	eq(findKey(pickerNode(b), "agentreply"), nil, "with its Reply link")
+	yes(table.find(hx.palette(w, b).ids, "agentreply") == nil, "and Commands' Reply…")
+	local opened = #w.opened
+	b.event({ ev = "action", id = "layer.queue", act = "agentreply" })
+	eq(#w.opened, opened, "a Reply… click with no such row opens nothing")
 end)
 
 case("host agents: the palette on the Agents list offers Go to agent, the views, Settings and help, and no queue row", function(w: World)

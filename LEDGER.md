@@ -73,7 +73,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Worktree tabs named after their item | Tab bar | Keep | — | Approved | |
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
-| Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop |
+| Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
 
 ## Land
 

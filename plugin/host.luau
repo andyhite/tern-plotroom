@@ -90,6 +90,8 @@ local function runQueueAction(state: State, act: string): boolean
 		end
 	elseif AGENT_ACTS[act] and state.agentsOn then
 		engine.agentGo(state, act)
+	elseif state.nowOn and (act == "agentgo" or act == "agentreply") then
+		return engine.nowAgent(state, act)
 	elseif act == "settings" then
 		openSettings(state)
 	elseif act == "more" then
@@ -150,8 +152,8 @@ local function openNowRow(state: State)
 	local row = engine.nowSelected(state)
 	if not row then
 		return
-	elseif row.rank == 1 and engine.agentHref(row.key) then
-		state.cx:open(engine.agentHref(row.key) :: string)
+	elseif row.rank == 1 and engine.nowAgent(state, "agentgo") then
+		return
 	elseif not row.url then
 		state.cx:toast("info", "Nothing to show", "That notification is not about a pull request or an issue.")
 	else
@@ -831,6 +833,8 @@ local function blockDef(): BlockDef<State>
 					if a == "snoozed" then
 						engine.toggle(state, a)
 						return true
+					elseif a == "agentgo" then
+						return engine.nowAgent(state, a)
 					end
 					return false
 				end)

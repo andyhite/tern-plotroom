@@ -2422,6 +2422,17 @@ function M.agentGo(state: State, act: string?)
 	end
 end
 
+-- Runs agent command `act` (agentgo | agentreply) on the previewed Now row while its agent needs input: the window
+-- follows the link Now's preview carries. false when the row is no such agent.
+function M.nowAgent(state: State, act: string): boolean
+	local row = M.nowSelected(state)
+	local href = if row and row.rank == 1 and row.key then M.agentHref(row.key, act) else nil
+	if href then
+		state.cx:open(href)
+	end
+	return href ~= nil
+end
+
 -- Now: everything that needs you, ranked. Its sources are fixed searches per signed-in gh login (the open pull requests
 -- it wrote and is asked to review, the open issues assigned to it), Jira's open work assigned to you while acli is on,
 -- and the unread notifications gh's active login takes part in; the agents come live from the window.
