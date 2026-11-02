@@ -24,10 +24,19 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from check import PLUGIN, SDK, SDK_SHA256, GateError, run, say, sha256_file
+
+
+@dataclass
+class Repo:
+    scratch: Path
+    bare: Path
+    count: int = 0
+
 
 WARNINGS: List[str] = []  # non-failing findings; check.py shows each as a WARN row
 
@@ -127,7 +136,8 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     given = os.environ.get("TERN")
     tern = str(Path(given).expanduser()) if given else shutil.which("tern")
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
-        raise GateError("smoke needs Tern: %s. Install one, or set TERN=/path/to/tern." % ("TERN=%s is not an executable file" % given if given else "no `tern` on PATH"))
+        why = "TERN=%s is not an executable file" % given if given else "no `tern` on PATH"
+        raise GateError("smoke needs Tern: %s. Install one, or set TERN=/path/to/tern." % why)
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
@@ -161,7 +171,7 @@ class Smoke:
         self.toast = False
         self.proc: "Optional[subprocess.Popen]" = None
         self.logf = None
-        self.repos: Dict[str, Dict[str, object]] = {}
+        self.repos: Dict[str, Repo] = {}
         self.shas: Dict[Tuple[str, int], str] = {}
         for d in ("bin", "gitssh", "work", "scratch", "home", "logs", "blobs", "config"):
             (tmp / d).mkdir()
@@ -259,7 +269,7 @@ class Smoke:
         checkout = self.work / dirname
         self.out(self.tmp, "clone", "-q", str(bare), str(checkout))
         self.out(checkout, "remote", "set-url", "origin", "git@github.com:%s/%s.git" % (owner, name))
-        self.repos[key] = {"scratch": scratch, "bare": bare, "count": 0}
+        self.repos[key] = Repo(scratch, bare)
         for n in prs:
             self.shas[(key, n)] = self.push_pr(key, n, "main", branch=n not in deleted)
             self.canned(key, n, self.shas[(key, n)])
@@ -268,29 +278,29 @@ class Smoke:
         """A new commit on top of `base` (a scratch ref), pushed (forced) to the bare remote's refs/pull/n/head and, as the PR's head branch, to
         refs/heads/feature-n (`branch` False: the head lives in a fork, not here)."""
         r = self.repos[key]
-        scratch, bare = r["scratch"], r["bare"]
-        r["count"] = int(r["count"]) + 1  # type: ignore[arg-type]
-        self.out(scratch, "checkout", "-q", "-B", "pr-%d" % n, base)  # type: ignore[arg-type]
-        (scratch / ("pr-%d-%d.txt" % (n, r["count"]))).write_text("pull request %d, commit %d\n" % (n, r["count"]), encoding="utf-8")  # type: ignore[operator,index]
-        self.out(scratch, "add", "-A")  # type: ignore[arg-type]
-        self.out(scratch, "commit", "-q", "-m", "pr %d #%d" % (n, r["count"]))  # type: ignore[arg-type]
-        sha = self.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
+        scratch, bare = r.scratch, r.bare
+        r.count += 1
+        self.out(scratch, "checkout", "-q", "-B", "pr-%d" % n, base)
+        (scratch / ("pr-%d-%d.txt" % (n, r.count))).write_text("pull request %d, commit %d\n" % (n, r.count), encoding="utf-8")
+        self.out(scratch, "add", "-A")
+        self.out(scratch, "commit", "-q", "-m", "pr %d #%d" % (n, r.count))
+        sha = self.out(scratch, "rev-parse", "HEAD")
         heads = ["%s:refs/heads/feature-%d" % (sha, n)] if branch else []
-        self.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/pull/%d/head" % (sha, n), *heads)  # type: ignore[arg-type]
-        self.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
+        self.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/pull/%d/head" % (sha, n), *heads)
+        self.out(scratch, "checkout", "-q", "main")
         return sha
 
     def advance(self, key: str) -> str:
         """A new commit on the bare remote's main, so a checkout's remote-tracking main is behind it until something fetches."""
         r = self.repos[key]
-        scratch, bare = r["scratch"], r["bare"]
-        r["count"] = int(r["count"]) + 1  # type: ignore[arg-type]
-        self.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
-        (scratch / ("main-%d.txt" % r["count"])).write_text("main moved, commit %d\n" % r["count"], encoding="utf-8")  # type: ignore[operator,index]
-        self.out(scratch, "add", "-A")  # type: ignore[arg-type]
-        self.out(scratch, "commit", "-q", "-m", "main #%d" % r["count"])  # type: ignore[arg-type]
-        self.out(scratch, "push", "-q", str(bare), "main")  # type: ignore[arg-type]
-        return self.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
+        scratch, bare = r.scratch, r.bare
+        r.count += 1
+        self.out(scratch, "checkout", "-q", "main")
+        (scratch / ("main-%d.txt" % r.count)).write_text("main moved, commit %d\n" % r.count, encoding="utf-8")
+        self.out(scratch, "add", "-A")
+        self.out(scratch, "commit", "-q", "-m", "main #%d" % r.count)
+        self.out(scratch, "push", "-q", str(bare), "main")
+        return self.out(scratch, "rev-parse", "HEAD")
 
     def canned(self, key: str, n: int, sha: str, fork: str = "", gone: bool = False) -> None:
         """What the fake gh prints for PR n of `key` (the --jq answer): head `sha` on branch feature-n of the repository itself, of `fork`'s copy of it,
@@ -305,14 +315,14 @@ class Smoke:
         """PR n of `key` from forkowner's copy of it: the remote holds only refs/pull/n/head for it (its branch lives in the fork); gh names the fork or,
         once it was deleted (`gone`), only its owner. The repository has a branch of its own called feature-n, at main: not the fork's."""
         self.shas[(key, n)] = self.push_pr(key, n, "main", branch=False)
-        self.out(self.repos[key]["scratch"], "push", "-q", str(self.bare(key)), "main:refs/heads/feature-%d" % n)  # type: ignore[arg-type]
+        self.out(self.repos[key].scratch, "push", "-q", str(self.bare(key)), "main:refs/heads/feature-%d" % n)
         self.canned(key, n, self.shas[(key, n)], fork="forkowner", gone=gone)
 
     def checkout(self, dirname: str) -> Path:
         return self.work / dirname
 
     def bare(self, key: str) -> Path:
-        return self.repos[key]["bare"]  # type: ignore[return-value]
+        return self.repos[key].bare
 
     def ref(self, cwd: Path, name: str) -> Optional[str]:
         """The commit `name` names in `cwd`'s repository, or None when there is no such ref."""
@@ -1297,14 +1307,14 @@ def sc_draft_push(s: Smoke) -> None:
     s.eq("a fresh preview pushes the new commit", True, push(previewed()).get("ok"))
     s.eq("the remote's topic is the second commit", second, remote_topic())
     # The remote's branch diverged (someone else's work): a plain push is rejected, never forced.
-    scratch = s.repos[key]["scratch"]
-    s.out(scratch, "checkout", "-q", "-B", "other", "main")  # type: ignore[arg-type]
-    (scratch / "theirs.txt").write_text("theirs\n", encoding="utf-8")  # type: ignore[operator]
-    s.out(scratch, "add", "-A")  # type: ignore[arg-type]
-    s.out(scratch, "commit", "-q", "-m", "theirs")  # type: ignore[arg-type]
-    theirs = s.out(scratch, "rev-parse", "HEAD")  # type: ignore[arg-type]
-    s.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/heads/topic" % theirs)  # type: ignore[arg-type]
-    s.out(scratch, "checkout", "-q", "main")  # type: ignore[arg-type]
+    scratch = s.repos[key].scratch
+    s.out(scratch, "checkout", "-q", "-B", "other", "main")
+    (scratch / "theirs.txt").write_text("theirs\n", encoding="utf-8")
+    s.out(scratch, "add", "-A")
+    s.out(scratch, "commit", "-q", "-m", "theirs")
+    theirs = s.out(scratch, "rev-parse", "HEAD")
+    s.out(scratch, "push", "-q", "--force", str(bare), "%s:refs/heads/topic" % theirs)
+    s.out(scratch, "checkout", "-q", "main")
     third = commit("three.txt")
     rejected = push(previewed())
     s.eq("diverged push refused (head %s)" % third, False, rejected.get("ok"))

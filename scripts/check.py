@@ -130,14 +130,18 @@ def sha256_file(path: Path) -> str:
 
 def install_tools() -> str:
     system = platform.system()
-    if system == "Linux" and platform.machine() not in ("x86_64", "AMD64"):
-        raise GateError("no pinned Linux build for %s: set LUAU and LUAU_LSP to your own binaries" % platform.machine())
-    lines = []
-    for name, spec in TOOLS.items():
-        asset = spec["assets"].get(system)
+
+    def asset_for(name: str):
+        if system == "Linux" and platform.machine() not in ("x86_64", "AMD64"):
+            raise GateError("no pinned Linux build for %s: set LUAU and LUAU_LSP to your own binaries" % platform.machine())
+        asset = TOOLS[name]["assets"].get(system)
         if asset is None:
             raise GateError("no pinned %s build for %s: set LUAU / LUAU_LSP yourself" % (name, system))
-        zip_name, want = asset
+        return asset
+
+    lines = []
+    for name, spec in TOOLS.items():
+        zip_name, want = asset_for(name)
         dest = cached_tool(name)
         if dest.is_file():
             lines.append("%s %s: already at %s" % (name, spec["version"], dest))
@@ -388,10 +392,6 @@ def load_smoke():
     return smoke
 
 
-def check_smoke() -> str:
-    return load_smoke().check_smoke()
-
-
 # --------------------------------------------------------------------------- main
 
 
@@ -447,7 +447,7 @@ def main(argv: List[str]) -> int:
         plan.append(("bench", check_bench))
     results: List[Tuple[str, str, str]] = []
     if args.command in ("all", "smoke") and not args.ci:
-        plan.append(("smoke", check_smoke))
+        plan.append(("smoke", load_smoke().check_smoke))
 
     for name, check in plan:
         say("== %s ==" % name)
