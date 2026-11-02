@@ -14,7 +14,7 @@ local bindKey, buttonLink, cardOf, cardText, case, checkRun = h.bindKey, h.butto
 local chipsOf, commandsOf, confirmOf, countLog, detailText, eq = h.chipsOf, h.commandsOf, h.confirmOf, h.countLog, h.detailText, h.eq
 local expand, factOf, findKey, forgetCheckouts, freshAsk, goToSettings = h.expand, h.factOf, h.findKey, h.forgetCheckouts, h.freshAsk, h.goToSettings
 local has, helpRows, hostScene, hx, issueHost, issueItem = h.has, h.helpRows, h.hostScene, h.hx, h.issueHost, h.issueItem
-local issueLink, issuePrompt, issueRunLink, jiraHost, jsonEncode, lacks = h.issueLink, h.issuePrompt, h.issueRunLink, h.jiraHost, h.jsonEncode, h.lacks
+local issueLink, issuePrompt, issueRunLink, jiraHost, jsonDecode, jsonEncode, lacks = h.issueLink, h.issuePrompt, h.issueRunLink, h.jiraHost, h.jsonDecode, h.jsonEncode, h.lacks
 local leaveIssueWt, leaveWt, listed, logFrom, loginsSavedBy, manyItems = h.leaveIssueWt, h.leaveWt, h.listed, h.logFrom, h.loginsSavedBy, h.manyItems
 local newAcli, newGit, nodes, openIssues, openQueue, pickScope = h.newAcli, h.newGit, h.nodes, h.openIssues, h.openQueue, h.pickScope
 local pickerNode, pickerOf, porcelain, prLink, prefsOf, pressCard = h.pickerNode, h.pickerOf, h.porcelain, h.prLink, h.prefsOf, h.pressCard
@@ -1281,13 +1281,12 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
-case("host: the command palette's menu answer carries no prompt text, the picker's still does", function(w: World)
+case("host: the published command palette carries no prompt text, the picker's menu answer still does", function(w: World)
 	hostScene(w, 2)
 	local b = openQueue(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
-	request(b, "m1", { op = "menu", palette = true })
-	w.flush()
-	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", worktree = true } }, "names and details only")
+	b.render()
+	same(jsonDecode(findKey(b.view().main, "palette").p.text).items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", worktree = true } }, "names and details only")
 	request(b, "m2", { op = "menu" })
 	w.flush()
 	eq(answerOf(b, "m2").items[1].send, "Review {url}\nthen report", "the picker's menu keeps the text")

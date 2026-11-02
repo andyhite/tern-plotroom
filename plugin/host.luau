@@ -595,7 +595,8 @@ local function blockDef(): BlockDef<State>
 			engine.autoSeen(state)
 			scanWorktrees(state)
 			inspectSelected(state)
-			return if state.settings then settingsView(state) else queueView(state)
+			local palette = requests.paletteNode(state)
+			return if state.settings then settingsView(state, palette) else queueView(state, palette)
 		end,
 
 		key = function(state: State, key: Key, cx: BlockCx): boolean?

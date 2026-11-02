@@ -34,7 +34,7 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "31" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
+local PROTOCOL = "32" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -378,6 +378,21 @@ function answered(cx: WindowCx, id: string)
 		return cx:toast("error", "Plotroom: the block's answer could not be read")
 	end
 	p.done(answer, cx)
+end
+
+-- The command palette's and agent picker's rows the block in `pane` publishes on every render (host/requests'
+-- paletteNode): read off its surface, so neither waits on the block's host. Nil, with a toast, when unreadable.
+local function paletteOf(cx: WindowCx, pane: number): any?
+	if not sameVersion(cx, pane) then
+		return nil
+	end
+	local text = nodeProp(readNode(cx, pane, "main.palette"), "text")
+	local ok, a = pcall(tern.json.decode, if type(text) == "string" then text else "")
+	if not ok or type(a) ~= "table" then
+		cx:toast("error", "Plotroom: the block's commands could not be read", "Try again in a moment.")
+		return nil
+	end
+	return a
 end
 
 -- Focuses the tab working in the target's worktree, wherever the block's host noted it.
@@ -852,57 +867,59 @@ end
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
 local function pickMenu(cx: WindowCx, pane: number, t: Target)
-	-- `palette`: rows without their text, so the picker's size budget never drops an action; the pick fetches its own.
-	ask(cx, pane, "menu", { palette = true }, MENU_MS, function(a: any, cx2: WindowCx)
-		if type(a.problem) == "string" then
-			cx2:toast("error", "Saved actions are not listed", a.problem)
+	-- Rows without their text, so the picker's size budget never drops an action; the pick fetches its own.
+	local a = paletteOf(cx, pane)
+	if not a then
+		return
+	end
+	if type(a.problem) == "string" then
+		cx:toast("error", "Saved actions are not listed", a.problem)
+	end
+	local all: { PickItem } = {}
+	for _, it in if type(a.items) == "table" then a.items else {} do
+		if type(it) == "table" and type(it.label) == "string" and type(it.id) == "string" then
+			table.insert(all, {
+				label = it.label,
+				detail = if type(it.detail) == "string" then it.detail else nil,
+				group = if type(it.group) == "string" then it.group else nil,
+				id = it.id,
+			})
 		end
-		local all: { PickItem } = {}
-		for _, it in if type(a.items) == "table" then a.items else {} do
-			if type(it) == "table" and type(it.label) == "string" and type(it.id) == "string" then
-				table.insert(all, {
-					label = it.label,
-					detail = if type(it.detail) == "string" then it.detail else nil,
-					group = if type(it.group) == "string" then it.group else nil,
-					id = it.id,
-				})
-			end
-		end
-		local items: { PickItem } = {}
-		local recentLabels: { string } = readRecent() or {}
-		for _, label in recentLabels do
-			for _, c in all do
-				if c.label == label then
-					local again = table.clone(c)
-					again.group = "Recent"
-					table.insert(items, again)
-					break
-				end
-			end
-		end
-		table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save actions in Settings › Actions" else "Send your own text", typed = true })
+	end
+	local items: { PickItem } = {}
+	local recentLabels: { string } = readRecent() or {}
+	for _, label in recentLabels do
 		for _, c in all do
-			table.insert(items, c)
+			if c.label == label then
+				local again = table.clone(c)
+				again.group = "Recent"
+				table.insert(items, again)
+				break
+			end
 		end
-		cx2:pick({ items = items, placeholder = "Run on " .. t.label, icon = "merge", action = "run" }):next(function(item, _, cx3)
-			if not item or not cx3 then
-				return
+	end
+	table.insert(items, { label = "Type a prompt…", detail = if #all == 0 then "Save actions in Settings › Actions" else "Send your own text", typed = true })
+	for _, c in all do
+		table.insert(items, c)
+	end
+	cx:pick({ items = items, placeholder = "Run on " .. t.label, icon = "merge", action = "run" }):next(function(item, _, cx3)
+		if not item or not cx3 then
+			return
+		end
+		if item.typed then
+			return typePrompt(cx3, pane, t, true)
+		end
+		local recent = readRecent()
+		if recent then
+			local at = table.find(recent, item.label)
+			if at then
+				table.remove(recent, at)
 			end
-			if item.typed then
-				return typePrompt(cx3, pane, t, true)
-			end
-			local recent = readRecent()
-			if recent then
-				local at = table.find(recent, item.label)
-				if at then
-					table.remove(recent, at)
-				end
-				table.insert(recent, 1, item.label)
-				recent[RECENT_CAP + 1] = nil
-				pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
-			end
-			runSaved(cx3, pane, t, item.id :: string, true)
-		end)
+			table.insert(recent, 1, item.label)
+			recent[RECENT_CAP + 1] = nil
+			pcall(tern.kv.set, RECENT_KEY, tern.json.array(recent)) -- best effort: a failed write only loses the order
+		end
+		runSaved(cx3, pane, t, item.id :: string, true)
 	end)
 end
 
@@ -1098,90 +1115,92 @@ end
 local GROUPS = { "Saved actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
--- listed: the host names the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`
+-- listed: the block publishes the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`
 -- action) and the flows.COMMANDS ids (`commands`, each with the group the host gives it) it will accept. With an item
 -- selected, a typed prompt and the saved actions its view offers form the Saved actions group (each run through its
 -- hidden link, as its key runs it); the agent picker is no row of its own.
 local function palette(cx: WindowCx, pane: number)
 	local hasItem = type(nodeProp(readNode(cx, pane, AGENT_NODE), "href")) == "string"
-	ask(cx, pane, "menu", { palette = true }, MENU_MS, function(a: any, cx2: WindowCx)
-		if hasItem and type(a.problem) == "string" then
-			cx2:toast("error", "Saved actions are not listed", a.problem)
+	local a = paletteOf(cx, pane)
+	if not a then
+		return
+	end
+	if hasItem and type(a.problem) == "string" then
+		cx:toast("error", "Saved actions are not listed", a.problem)
+	end
+	local function keyed(key: any, rest: any): string?
+		local k = if type(key) == "string" and key ~= "" then "key " .. key else nil
+		local r = if type(rest) == "string" and rest ~= "" then rest else nil
+		return if k and r then k .. " · " .. r else k or r
+	end
+	local by: { [string]: { PickItem } } = {}
+	local names: { string } = {}
+	local function add(group: string, item: PickItem)
+		if not by[group] then
+			by[group] = {}
+			table.insert(names, group)
 		end
-		local function keyed(key: any, rest: any): string?
-			local k = if type(key) == "string" and key ~= "" then "key " .. key else nil
-			local r = if type(rest) == "string" and rest ~= "" then rest else nil
-			return if k and r then k .. " · " .. r else k or r
-		end
-		local by: { [string]: { PickItem } } = {}
-		local names: { string } = {}
-		local function add(group: string, item: PickItem)
-			if not by[group] then
-				by[group] = {}
-				table.insert(names, group)
-			end
-			item.group = group
-			table.insert(by[group], item)
-		end
-		if hasItem then
-			add("Saved actions", { label = "Type a prompt…", detail = "Run your own text in an agent", typed = true })
-			for _, it in if type(a.items) == "table" then a.items else {} do
-				if type(it) == "table" and type(it.id) == "string" and type(it.label) == "string" then
-					add("Saved actions", { label = it.label, detail = keyed(it.key, it.detail), run = it.id })
-				end
-			end
-		end
-		for _, q in if type(a.queue) == "table" then a.queue else {} do
-			if type(q) == "table" and type(q.id) == "string" and type(q.label) == "string" then
-				add(if type(q.group) == "string" then q.group else "Filter & Sort", { label = q.label, detail = keyed(q.key, q.detail), queue = q.id })
+		item.group = group
+		table.insert(by[group], item)
+	end
+	if hasItem then
+		add("Saved actions", { label = "Type a prompt…", detail = "Run your own text in an agent", typed = true })
+		for _, it in if type(a.items) == "table" then a.items else {} do
+			if type(it) == "table" and type(it.id) == "string" and type(it.label) == "string" then
+				add("Saved actions", { label = it.label, detail = keyed(it.key, it.detail), run = it.id })
 			end
 		end
-		local offered: { [string]: string | boolean } = {}
-		for _, c in if type(a.commands) == "table" then a.commands else {} do
-			if type(c) == "table" and type(c.id) == "string" then
-				offered[c.id] = if type(c.group) == "string" then c.group else true
+	end
+	for _, q in if type(a.queue) == "table" then a.queue else {} do
+		if type(q) == "table" and type(q.id) == "string" and type(q.label) == "string" then
+			add(if type(q.group) == "string" then q.group else "Filter & Sort", { label = q.label, detail = keyed(q.key, q.detail), queue = q.id })
+		end
+	end
+	local offered: { [string]: string | boolean } = {}
+	for _, c in if type(a.commands) == "table" then a.commands else {} do
+		if type(c) == "table" and type(c.id) == "string" then
+			offered[c.id] = if type(c.group) == "string" then c.group else true
+		end
+	end
+	for i, c in flows.COMMANDS do
+		local g = offered[c.id]
+		if not c.keyed and g then
+			add(if type(g) == "string" then g else c.group or "Configuration", { label = c.label, at = i })
+		end
+	end
+	local items: { PickItem } = {}
+	local placed: { [string]: boolean } = {}
+	for _, g in GROUPS do
+		placed[g] = true
+		local group = by[g]
+		if group then
+			for _, it in group do
+				table.insert(items, it)
 			end
 		end
-		for i, c in flows.COMMANDS do
-			local g = offered[c.id]
-			if not c.keyed and g then
-				add(if type(g) == "string" then g else c.group or "Configuration", { label = c.label, at = i })
+	end
+	for _, g in names do
+		if not placed[g] then
+			for _, it in by[g] do
+				table.insert(items, it)
 			end
 		end
-		local items: { PickItem } = {}
-		local placed: { [string]: boolean } = {}
-		for _, g in GROUPS do
-			placed[g] = true
-			local group = by[g]
-			if group then
-				for _, it in group do
-					table.insert(items, it)
-				end
+	end
+	cx:pick({ items = items, placeholder = "Run a command", icon = "merge", action = "run" }):next(function(item, _, cx3)
+		if not item or not cx3 or not isPlotroom(cx3, pane) then
+			return
+		elseif item.typed then
+			follow(cx3, pane, AGENT_NODE, "Select a pull request or issue first", true)
+		elseif type(item.run) == "string" then
+			follow(cx3, pane, PROMPT_NODE .. item.run, "That action is no longer offered here")
+		elseif type(item.queue) == "string" then
+			cx3.session:event(pane, { ev = "action", act = "queue", value = item.queue })
+		else
+			local c = flows.COMMANDS[item.at :: number]
+			if c then
+				c.run(cx3, pane)
 			end
 		end
-		for _, g in names do
-			if not placed[g] then
-				for _, it in by[g] do
-					table.insert(items, it)
-				end
-			end
-		end
-		cx2:pick({ items = items, placeholder = "Run a command", icon = "merge", action = "run" }):next(function(item, _, cx3)
-			if not item or not cx3 or not isPlotroom(cx3, pane) then
-				return
-			elseif item.typed then
-				follow(cx3, pane, AGENT_NODE, "Select a pull request or issue first", true)
-			elseif type(item.run) == "string" then
-				follow(cx3, pane, PROMPT_NODE .. item.run, "That action is no longer offered here")
-			elseif type(item.queue) == "string" then
-				cx3.session:event(pane, { ev = "action", act = "queue", value = item.queue })
-			else
-				local c = flows.COMMANDS[item.at :: number]
-				if c then
-					c.run(cx3, pane)
-				end
-			end
-		end)
 	end)
 end
 

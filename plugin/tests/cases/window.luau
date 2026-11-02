@@ -103,7 +103,7 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
 		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2" }) },
 	}) })
-	local s = agentScene(w)
+	local s, b = agentScene(w)
 	savePrompts(w, {
 		promptOf("p1", "Review", "Review {url}\nthen summarise"),
 		promptOf("p2", "Triage", "Triage {url}, then triage {url} again"),
@@ -111,6 +111,7 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 		promptOf("p4", "Blank", ""),
 		promptOf("p5", "Orphan", "Look into {url}"),
 	})
+	b.render()
 	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -207,8 +208,9 @@ windowCase("window: with no prompts saved, a pull request offers the default pro
 end)
 
 windowCase("window: Recent lists only prompts that are still saved, and with none saved the picker says where to write them", function(w: World)
-	agentScene(w)
+	local _, b = agentScene(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
+	b.render()
 	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -217,6 +219,7 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 	w.flush()
 	same(w.kv.get("agent-recent"), { "Triage", "Review" }, "two picks are remembered")
 	savePrompts(w, { promptOf("p2", "Triage", "Triage {url}") })
+	b.render()
 	w.window.choose = "Start another agent"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -230,6 +233,7 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 	same(labels, { "Triage", "Type a prompt…", "Triage" }, "a prompt deleted since is no longer a recent row")
 	same(groups, { "Recent", "", "All actions" }, "the recent one leads, then typing, then the saved prompts")
 	savePrompts(w, {})
+	b.render()
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	local none = promptPicks(w)[4].items
@@ -239,8 +243,9 @@ windowCase("window: Recent lists only prompts that are still saved, and with non
 end)
 
 windowCase("window: saved prompts the host cannot read are reported, and a prompt can still be typed", function(w: World)
-	agentScene(w)
+	local _, b = agentScene(w)
 	w.kv.put("prompts-prs", "garbage")
+	b.render()
 	w.window.choose, w.window.typed = "Type a prompt…", "Look at {url}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
@@ -356,20 +361,21 @@ windowCase("window: a card button of a prompt the picker's size budget would cut
 end)
 
 windowCase("window: the Agent picker lists every action however long their texts, and a pick fetches its own whole text", function(w: World)
-	local s = agentScene(w)
+	local s, b = agentScene(w)
 	local text = string.rep("x", 7900) .. " {url}"
 	local list: { { [string]: any } } = {}
 	for i = 1, 8 do
 		table.insert(list, promptOf("p" .. i, "Big " .. i, text))
 	end
 	savePrompts(w, list)
+	b.render()
 	w.window.choose = "Big 8"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(#promptPicks(w)[1].items, 9, "the typed prompt and all eight actions are offered, though their texts would not fit one answer")
 	local sent = requestsSent(w)
-	eq(sent[1].palette, true, "the list is asked without the texts")
-	eq(sent[2].only, "p8", "the pick asks for its own by id")
+	eq(#sent, 2, "the list is read off the block's surface; the host is asked only for the pick, then its worktree")
+	eq(sent[1].only, "p8", "the pick asks for its own by id")
 	eq(#w.window.agents, 1, "the agent starts")
 	eq(w.window.agents[1].prompt, string.rep("x", 7900) .. " https://github.com/o/r/pull/5", "with its whole text")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
@@ -582,7 +588,7 @@ windowCase("window: an answer that arrives without a window context starts nothi
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(#w.calls, ran, "the picker, answered without a context, ran nothing")
-	eq(#requestsSent(w), 1, "and asked the host for nothing beyond the prompts")
+	eq(#requestsSent(w), 0, "and asked the host for nothing")
 	eq(#w.toasts, 0, "or said anything")
 end)
 
@@ -767,13 +773,18 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } }
+	local nodes: { any } = {
+		{ id = "main.rpc", p = { text = asks.protocol, hidden = true } },
+		{ id = "main.palette", p = { text = jsonEncode({ items = { { id = "p1", label = "Review" } } }), hidden = true } },
+	}
 	surface.main = { id = "main", c = nodes }
+	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
+	w.flush()
 	w.click(prLink("worktree", "o/r", 5))
 	local sent = requestsSent(w)
 	eq(#sent, 2, "two requests are out")
-	eq(sent[1].op, "menu", "the list")
+	eq(sent[1].op, "menu", "the prompt")
 	eq(sent[2].op, "worktree", "and the worktree")
 	local function gaveUp(): number
 		local n = 0
@@ -786,21 +797,21 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	end
 	w.click("plotroom://rpc/" .. sent[1].id)
 	w.advance(20 * 1000)
-	eq(gaveUp(), 0, "a link announcing an answer that is not on screen leaves the list waited for")
+	eq(gaveUp(), 0, "a link announcing an answer that is not on screen leaves the prompt waited for")
 	w.advance(20 * 1000)
-	eq(gaveUp(), 1, "the list is given up after a while")
+	eq(gaveUp(), 1, "the prompt is given up after a while")
 	eq(w.toasts[#w.toasts].level, "error", "with an error")
 	w.advance(60 * 1000)
 	eq(gaveUp(), 1, "a worktree takes longer: it is still waited for")
 	w.advance(5 * 60 * 1000)
 	eq(gaveUp(), 2, "and given up too in the end")
-	local picks, tabs, said = #w.window.picks, #w.window.launches, #w.toasts
-	table.insert(nodes, { id = "main.r" .. sent[1].id, p = { text = jsonEncode({ items = { { label = "/late", send = "/late" } } }), hidden = true } })
+	local agents, tabs, said = #w.window.agents, #w.window.launches, #w.toasts
+	table.insert(nodes, { id = "main.r" .. sent[1].id, p = { text = jsonEncode({ items = { { id = "p1", label = "Review", send = "/late" } } }), hidden = true } })
 	table.insert(nodes, { id = "main.r" .. sent[2].id, p = { text = jsonEncode({ path = "/wt/late", summary = "Created", created = true, current = true }), hidden = true } })
 	w.click("plotroom://rpc/" .. sent[1].id)
 	w.click("plotroom://rpc/" .. sent[2].id)
 	w.flush()
-	eq(#w.window.picks, picks, "a late list opens no picker")
+	eq(#w.window.agents, agents, "a late prompt starts no agent")
 	eq(#w.window.launches, tabs, "a late worktree opens no tab")
 	eq(#w.toasts, said, "and says nothing")
 end)
@@ -809,15 +820,19 @@ windowCase("window: an answer already on screen is found by polling even when it
 	w.load("window")
 	listPr(w, "o/r", 5)
 	local surface: any = w.window.surfaces[1]
-	local nodes: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } }
+	local nodes: { any } = {
+		{ id = "main.rpc", p = { text = asks.protocol, hidden = true } },
+		{ id = "main.palette", p = { text = jsonEncode({ items = { { id = "p1", label = "Review" } } }), hidden = true } },
+	}
 	surface.main = { id = "main", c = nodes }
+	w.window.choose = "Review"
 	w.click(prLink("agent", "o/r", 5))
+	w.flush()
 	local sent = requestsSent(w)
-	eq(#sent, 1, "the list is requested")
-	local picks = #w.window.picks
-	table.insert(nodes, { id = "main.r" .. sent[1].id, p = { text = jsonEncode({ items = { { label = "/go", send = "/go" } } }), hidden = true } })
+	eq(#sent, 1, "the prompt is requested")
+	table.insert(nodes, { id = "main.r" .. sent[1].id, p = { text = jsonEncode({ items = { { id = "p1", label = "Review", send = "/go" } } }), hidden = true } })
 	w.advance(1000)
-	eq(#w.window.picks, picks + 1, "the list opens without any rpc link")
+	eq(#requestsSent(w), 2, "the answer is acted on without any rpc link: its worktree is asked for")
 	w.advance(60 * 1000)
 	for _, t in w.toasts do
 		lacks(t.text, "did not answer", "and the request is not given up")

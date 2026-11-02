@@ -22,6 +22,8 @@ local engine = require("./engine")
 local render = require("./render")
 local settings = require("./settings")
 
+local ui = tern.ui
+
 type Prompt = core.Prompt
 type Prompts = core.Prompts
 type State = core.State
@@ -109,9 +111,9 @@ local function loadedIssue(state: State, key: string): tracker.Issue?
 end
 
 -- The agent picker's rows: `offered`, each with its id so a prompt's run link can name it. With `only`, just that
--- prompt, so a shortcut never misses its prompt to the picker's size budget. With `palette`, the command palette's
--- queue actions too (M.paletteActions), and no prompt text: the palette shows names and runs actions through their links.
-local function menu(state: State, id: string, only: string?, palette: boolean)
+-- prompt, so a shortcut never misses its prompt to the picker's size budget. Without `withText`, no prompt text: the
+-- palette and the picker show names and run actions through their links.
+local function menuRows(state: State, only: string?, withText: boolean): ({ any }, string?)
 	local list, problem = offered(state)
 	local active = activeView(state)
 	local mine: { any } = {}
@@ -125,7 +127,7 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			label = clip(printable(p.name), 120),
 			detail = clip(printable((if p.model then p.model .. " · " else "") .. (string.match(p.text, "^%s*([^\n]*)") or "")), 160),
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All actions",
-			send = if palette then nil else p.text,
+			send = if withText then p.text else nil,
 			model = p.model,
 			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
@@ -135,10 +137,22 @@ local function menu(state: State, id: string, only: string?, palette: boolean)
 			key = p.key,
 		})
 	end
-	local items = capped(mine, function(row)
+	return capped(mine, function(row)
 		return #tern.json.encode(row)
-	end)
-	reply(state, id, { items = tern.json.array(items), problem = problem, queue = if palette then tern.json.array(M.paletteActions(state)) else nil, commands = if palette then tern.json.array(M.commands(state)) else nil })
+	end), problem
+end
+
+local function menu(state: State, id: string, only: string?)
+	local items, problem = menuRows(state, only, true)
+	reply(state, id, { items = tern.json.array(items), problem = problem })
+end
+
+-- The hidden `main.palette` node, on every render: the command palette's and the agent picker's rows (saved actions
+-- without their text, queue actions, window commands), so the window opens either without a round trip to this host.
+function M.paletteNode(state: State): Node
+	local items, problem = menuRows(state, nil, false)
+	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(M.paletteActions(state)), commands = tern.json.array(M.commands(state)) })
+	return ui.node("text", { key = "palette", text = text, hidden = true })
 end
 
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
@@ -1989,7 +2003,7 @@ function M.rpc(state: State, raw: any)
 			reply(state, id, answer)
 		end)
 	elseif q.op == "menu" then
-		menu(state, id, if type(q.only) == "string" then q.only else nil, q.palette == true)
+		menu(state, id, if type(q.only) == "string" then q.only else nil)
 	elseif q.op == "repos" then
 		repos(state, id)
 	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-_]+$") then

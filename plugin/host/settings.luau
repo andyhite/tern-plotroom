@@ -1581,7 +1581,7 @@ function M.addJira(state: State, raw: any)
 	M.openSettings(state, "jira", "jrepos:" .. key, false)
 end
 
-function M.settingsView(state: State): BlockView
+function M.settingsView(state: State, palette: Node): BlockView
 	local s = state.settings :: Settings
 	local sections, extra = pageContent(state)
 	local props: { [string]: any } = {
@@ -1648,7 +1648,7 @@ function M.settingsView(state: State): BlockView
 	if state.help then
 		table.insert(layer, helpOverlay(state))
 	end
-	return { main = ui.col(rpcNodes(state)), layer = ui.col(layer) }
+	return { main = ui.col(rpcNodes(state, palette)), layer = ui.col(layer) }
 end
 
 return M

@@ -243,7 +243,8 @@ local function agentSig(state: State): string
 	return table.concat(out)
 end
 
-function M.rpcNodes(state: State): { Node }
+-- `palette`: requests' paletteNode (render cannot require requests).
+function M.rpcNodes(state: State, palette: Node): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
@@ -251,6 +252,7 @@ function M.rpcNodes(state: State): { Node }
 		ui.node("text", { key = "need", text = tostring(if state.snap and state.snap.need then state.snap.need else 0), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
+		palette,
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
@@ -1579,7 +1581,7 @@ local function finishedConfirm(state: State): Node
 	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
-function M.queueView(state: State): BlockView
+function M.queueView(state: State, palette: Node): BlockView
 	local layer: { Node } = { M.queuePicker(state) }
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
@@ -1597,7 +1599,7 @@ function M.queueView(state: State): BlockView
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end
-	return { main = ui.col(M.rpcNodes(state)), layer = ui.col(layer) }
+	return { main = ui.col(M.rpcNodes(state, palette)), layer = ui.col(layer) }
 end
 
 return M

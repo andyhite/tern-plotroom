@@ -2948,15 +2948,12 @@ local function helpRows(node: any): { { keys: string, text: string } }
 end
 M.helpRows = helpRows
 
--- What the command palette's `menu` answer of block `b` says now: the queue actions' ids in order with their groups, keys,
--- labels and details by id, and the ids of the window commands that apply, with the group the host gave each (nil: its own).
-hx.paletteAsks = 0
+-- What block `b`'s published command palette (its hidden `main.palette` node) says now: the queue actions' ids in order
+-- with their groups, keys, labels and details by id, and the ids of the window commands that apply, with the group the
+-- host gave each (nil: its own).
 function hx.palette(w: World, b: Block): any
-	hx.paletteAsks += 1
-	local id = "pal" .. hx.paletteAsks
-	request(b, id, { op = "menu", palette = true })
 	w.flush()
-	local a: any = answerOf(b, id)
+	local a: any = jsonDecode(findKey(b.view().main, "palette").p.text)
 	local out: any = { ids = {}, groups = {}, keys = {}, labels = {}, details = {}, commands = {}, commandGroups = {} }
 	for _, q in a.queue do
 		table.insert(out.ids, q.id)
@@ -3246,7 +3243,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "31" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
+asks.protocol = "32" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
