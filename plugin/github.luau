@@ -169,25 +169,13 @@ local function took(s: number): string
 	return s .. "s"
 end
 
--- Value at a key path of decoded JSON; nil when a step is missing or not a table.
-local function field(v: any, ...: string): any
-	for _, key in { ... } do
-		if type(v) ~= "table" then
-			return nil
-		end
-		v = v[key]
-	end
-	return v
-end
-M.field = field
+local field, nonEmpty = tracker.field, tracker.nonEmpty
 
-local function nonEmpty(v: any): string?
-	return if type(v) == "string" and v ~= "" then v else nil
-end
-
-local function stamp(v: any): number?
+function M.stamp(v: any): number?
 	return if type(v) == "string" then M.epoch(v) else nil
 end
+
+local stamp = M.stamp
 
 -- One listed check: its run, when its attempt started, the workflow or app name that labels it, its first position.
 type Attempt = { run: Run, at: number, label: string?, order: number }
@@ -445,18 +433,12 @@ end
 -- Local search over loaded PRs: whether `pr` matches, and the matched UTF-16
 -- range in its title (nil when the match is elsewhere or the needle is blank).
 function M.match(pr: Pr, needle: string): (boolean, { number }?)
-	local q = string.lower(string.match(needle, "^%s*(.-)%s*$") or "")
-	if q == "" then
-		return true, nil
-	end
-	local at = string.find(string.lower(pr.title), q, 1, true)
-	if at then
-		return true, { input.u16(pr.title, at - 1), input.u16(pr.title, at - 1 + #q) }
-	end
-	return string.find(string.lower("#" .. pr.number .. " " .. pr.author .. " " .. pr.head), q, 1, true) ~= nil, nil
+	return tracker.search(pr.title, needle, function()
+		return "#" .. pr.number .. " " .. pr.author .. " " .. pr.head
+	end)
 end
 
-local function firstLines(text: string, n: number): string
+function M.firstLines(text: string, n: number): string
 	local out: { string } = {}
 	for line in string.gmatch(text, "[^\n]+") do
 		table.insert(out, line)
@@ -466,6 +448,8 @@ local function firstLines(text: string, n: number): string
 	end
 	return table.concat(out, "\n")
 end
+
+local firstLines = M.firstLines
 
 function M.classify(result: ProcessResult, limit: string?): Problem
 	if result.timed_out then
@@ -582,9 +566,7 @@ local function repoArg(repo: any): string?
 	return "github.com/" .. o .. "/" .. r
 end
 
-local function later(done: () -> ())
-	tern.timer(0, done)
-end
+local later = process.later
 
 local CLONE_MS = 10 * 60 * 1000
 
@@ -844,7 +826,7 @@ local function searchAll(
 )
 	query = string.match(query, "^%s*(.-)%s*$") or ""
 	if query == "" then
-		tern.timer(0, function()
+		process.later(function()
 			done(nil, 0, false, { kind = "failed", message = "The view's query is empty." }, 0)
 		end)
 		return
@@ -861,7 +843,7 @@ local function searchAll(
 	end
 	local wait = M.wait(os.time(), account)
 	if wait > 0 then
-		tern.timer(0, function()
+		process.later(function()
 			done(nil, 0, false, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." }, 0)
 		end)
 		return
@@ -973,10 +955,7 @@ local function cleanBody(raw: any): string
 	local body = if type(raw) == "string" then raw else ""
 	-- Cursor's bot appends a generated summary between these markers; it repeats the diff, not the author.
 	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
-	local cut = utf8.offset(body, BODY_CHARS + 1)
-	if cut and cut <= #body then
-		body = string.sub(body, 1, cut - 1) .. "\n\n…"
-	end
+	body = tracker.clip(body, BODY_CHARS, "\n\n…")
 	return body
 end
 
@@ -1021,7 +1000,7 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 		done(runs, total, problem, about)
 	end
 	local function fail(problem: Problem)
-		tern.timer(0, function()
+		process.later(function()
 			finish(nil, 0, problem)
 		end)
 	end
@@ -1090,7 +1069,7 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 		done(detail, problem)
 	end
 	local function fail(problem: Problem)
-		tern.timer(0, function()
+		process.later(function()
 			finish(nil, problem)
 		end)
 	end
@@ -1237,7 +1216,7 @@ export type HeadPr = { number: number, title: string, state: string, url: string
 function M.pullByHead(repo: string, branch: string, account: string?, done: (HeadPr?, Problem?) -> ())
 	local wait = M.wait(os.time(), account)
 	if wait > 0 then
-		tern.timer(0, function()
+		later(function()
 			done(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
 		end)
 		return
@@ -1286,7 +1265,7 @@ local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (a
 	local hit = kept[key]
 	if hit then
 		local value, answer = hit.value, done -- `done` is replaced below when the value is old: the timer must keep the caller's
-		tern.timer(0, function()
+		later(function()
 			answer(value, nil)
 		end)
 		if os.time() - hit.at < LIST_TTL_S or reading[key] then
@@ -1355,7 +1334,7 @@ end
 function M.login(account: string?, done: (string?, Problem?) -> ())
 	if account and account ~= "" then
 		local who: string = account
-		tern.timer(0, function()
+		later(function()
 			done(who, nil)
 		end)
 		return

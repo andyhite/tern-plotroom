@@ -18,10 +18,12 @@ local recovered: string? = nil
 local failed: string? = nil
 local recovering: { Waiter }? = nil
 
--- Callbacks that need a fresh window cx get one from a zero-delay timer.
-local function defer(fn: (WindowCx?) -> ())
+-- Runs `fn` from a zero-delay timer: callers that need a fresh window cx get one, and async callbacks never run inline.
+function M.later(fn: (WindowCx?) -> ())
 	tern.timer(0, fn)
 end
+
+local defer = M.later
 
 -- The PATH between the probe's markers, minus printenv's one trailing newline;
 -- startup banners outside the markers are ignored.

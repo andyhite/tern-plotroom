@@ -93,10 +93,6 @@ local ENV = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0" }
 
 type Cb<T> = (T?, string?, WindowCx?) -> ()
 
-local function firstLine(s: string): string
-	return string.match(s, "[^\n]+") or ""
-end
-
 local function lines(s: string): { string }
 	local out = {}
 	for l in string.gmatch(s, "[^\n]+") do
@@ -129,7 +125,7 @@ local function git(
 			return done(nil, "git " .. (args[1] or "") .. " timed out", cx, -1)
 		end
 		if result.status ~= 0 then
-			local why = firstLine(result.stderr)
+			local why = github.firstLines(result.stderr, 1)
 			return done(nil, "git " .. table.concat(args, " ", 1, math.min(#args, 2)) .. " failed: " .. why, cx, result.status)
 		end
 		done(result.stdout, nil, cx, 0)
@@ -215,19 +211,13 @@ function M.parseRemote(url: string): (string?, string?, boolean, string?)
 	return string.lower(host), o .. "/" .. r, ssh, port
 end
 
--- "owner/repo" of a remote URL whose host is literally github.com; nil otherwise.
-function M.normalizeRemote(url: string): string?
-	local host, id = M.parseRemote(url)
-	return if host == "github.com" then id else nil
-end
-
 -- The `hostname` ssh would connect to, from `ssh -G` output.
 function M.sshHostname(out: string): string?
 	local h = string.match(out, "^hostname (%S+)") or string.match(out, "\nhostname (%S+)")
 	return if h then string.lower(h) else nil
 end
 
--- Like normalizeRemote, but an SSH host alias counts when `ssh -G` (reads the
+-- Like parseRemote's github.com host, but an SSH host alias counts when `ssh -G` (reads the
 -- user's ssh config, opens no connection) resolves it to github.com. The
 -- remote itself is never rewritten, so git keeps using the alias for transport.
 function M.identify(url: string, cx: WindowCx?, done: (string?, WindowCx?) -> ())
@@ -593,7 +583,7 @@ function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
 	local home = tern.getenv("HOME")
 	local env = clean((M.expandPath(tern.getenv("OMP_WORKTREE_DIR") or "", home)))
 	if env then
-		tern.timer(0, function(cx)
+		process.later(function(cx)
 			done(env, nil, cx)
 		end)
 		return
@@ -1058,7 +1048,7 @@ function M.pushBranch(draft: Draft, done: (string?) -> ())
 				elseif res.status == 0 then
 					return done(nil)
 				end
-				local why = string.match(res.stderr, "[^\n]*! %[[^\n]*") or string.match(res.stderr, "fatal: ([^\n]+)") or string.match(res.stderr, "[Ee]rror: ([^\n]+)") or firstLine(res.stderr)
+				local why = string.match(res.stderr, "[^\n]*! %[[^\n]*") or string.match(res.stderr, "fatal: ([^\n]+)") or string.match(res.stderr, "[Ee]rror: ([^\n]+)") or github.firstLines(res.stderr, 1)
 				done("The push was refused: " .. trim(why))
 			end)
 		end)
@@ -1198,7 +1188,7 @@ local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch:
 		local addErr = if not res
 			then (perr or "omp could not be started")
 			elseif res.timed_out then "omp worktree add timed out"
-			elseif res.status ~= 0 then "omp worktree add failed: " .. firstLine(if res.stderr ~= "" then res.stderr else res.stdout)
+			elseif res.status ~= 0 then "omp worktree add failed: " .. github.firstLines(if res.stderr ~= "" then res.stderr else res.stdout, 1)
 			else nil
 		s.attempt(cx5, function()
 			if not addErr then
@@ -1222,7 +1212,7 @@ end
 -- the worktree named `dir` goes. Ends the request with M.NO_REPO when `checkout` is not one of `repo`.
 local function locate<T>(s: Steps<T>, checkout: string, repo: string, dir: string, step: (Spot, WindowCx?) -> ())
 	if not M.validLeaf(dir) then
-		tern.timer(0, function(cx)
+		process.later(function(cx)
 			s.finish(nil, "Worktree folder name " .. dir .. " is not usable; change its format in Settings › Worktrees.", cx)
 		end)
 		return
@@ -1389,7 +1379,7 @@ end
 function M.open(checkout: string, repo: string, number: number, naming: (github.PrMeta) -> (string?, string?), account: string?, done: Cb<Result>)
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
 	if not owner or not name or not M.validSegment(owner) or not M.validSegment(name) then
-		tern.timer(0, function(cx)
+		process.later(function(cx)
 			done(nil, "Invalid repository " .. repo, cx)
 		end)
 		return
@@ -1489,7 +1479,7 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 	end
 	if bad then
 		local why: string = bad
-		tern.timer(0, function(cx)
+		process.later(function(cx)
 			done(nil, why, cx)
 		end)
 		return

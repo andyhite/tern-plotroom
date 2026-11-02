@@ -89,15 +89,27 @@ local function tabBadges(one: string, note: Note?, open: boolean, go: string): {
 	return badges
 end
 
+-- The picker row `key` shows: its labels join `badges` (none: no badges prop).
+local function finishRow(key: string, title: string, author: string, detail: { any }, badges: { any }, labels: { string }): { [string]: any }
+	for _, l in labels do
+		table.insert(badges, { text = l })
+	end
+	return {
+		id = pickerId("n", key),
+		label = title,
+		title = title,
+		detail = detail,
+		mark = { text = author },
+		badges = if #badges > 0 then badges else nil,
+	}
+end
+
 local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string): { [string]: any }
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local kind = stateKind(pr)
 	local badges = tabBadges("pull request", note, open, go)
 	if kind ~= "open" then
 		table.insert(badges, STATE_BADGE[kind])
-	end
-	for _, l in pr.labels do
-		table.insert(badges, { text = l })
 	end
 	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
 	-- they don't read as the state and label badges.
@@ -118,14 +130,7 @@ local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string)
 		table.insert(detail, " · ")
 		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
 	end
-	return {
-		id = pickerId("n", pr.key),
-		label = pr.title,
-		title = pr.title,
-		detail = detail,
-		mark = { text = pr.author },
-		badges = if #badges > 0 then badges else nil,
-	}
+	return finishRow(pr.key, pr.title, pr.author, detail, badges, pr.labels)
 end
 
 -- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its workflow
@@ -134,9 +139,6 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 	local badges = tabBadges("issue", note, open, go)
 	if issue.status or issue.state == "closed" then
 		table.insert(badges, issueBadge(issue))
-	end
-	for _, l in issue.labels do
-		table.insert(badges, { text = l })
 	end
 	local at = if issue.tracker == "github" then "@" else ""
 	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
@@ -152,14 +154,7 @@ local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: st
 	if issue.type then
 		table.insert(detail, " · " .. issue.type)
 	end
-	return {
-		id = pickerId("n", issue.key),
-		label = issue.title,
-		title = issue.title,
-		detail = detail,
-		mark = { text = issue.author },
-		badges = if #badges > 0 then badges else nil,
-	}
+	return finishRow(issue.key, issue.title, issue.author, detail, badges, issue.labels)
 end
 
 -- An agent's state as a row badge: the window reports it (`agent-status`); an idle or exited agent is no sign the work is done.

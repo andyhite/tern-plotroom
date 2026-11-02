@@ -8,6 +8,13 @@ local M = {}
 
 export type Seed = { id: string, name: string, text: string, worktree: boolean? }
 
+local FRESH = [==[- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
+]==]
+local GH = [==[- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
+]==]
+local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
+]==]
+
 local REVIEW = [==[Review PR #{number} of {owner}/{repo}: report the actionable defects it introduces, with evidence. Post nothing until I authorize it.
 
 <pr>
@@ -26,10 +33,7 @@ You: @{github.user}
 
 <environment>
 - cwd: Plotroom's worktree of this PR; its branch tracks the PR's head branch, a fork's included. A reused worktree MAY be behind, ahead, or dirty.
-- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. FRESH .. GH .. ASK .. [==[</environment>
 
 <workflow>
 1. Sync
@@ -113,9 +117,7 @@ You: @{github.user}
 
 <environment>
 - cwd: my main checkout of {owner}/{repo}, as I left it (any branch, maybe uncommitted work). The PR isn't checked out: read it through git objects, never the working tree.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. GH .. ASK .. [==[</environment>
 
 <workflow>
 1. Sync
@@ -187,11 +189,8 @@ You: @{github.user}
 
 <environment>
 - cwd: Plotroom's worktree of this PR; its branch tracks the PR's head branch, a fork's included. A reused worktree MAY be behind, ahead, or dirty.
-- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Push only to the PR's head, fast-forward: `git push <upstream> HEAD:{branch}`, `<upstream>` = `git config branch.$(git branch --show-current).remote` (the head repo, a fork's included).
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. FRESH .. GH .. [==[- Push only to the PR's head, fast-forward: `git push <upstream> HEAD:{branch}`, `<upstream>` = `git config branch.$(git branch --show-current).remote` (the head repo, a fork's included).
+]==] .. ASK .. [==[</environment>
 
 <workflow>
 1. Sync
@@ -246,9 +245,7 @@ You: @{github.user}
 
 <environment>
 - cwd: Plotroom's worktree of this PR; its branch tracks the PR's head branch, a fork's included. A reused worktree MAY be behind, ahead, or dirty.
-- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Push only to the PR's head: `git push <upstream> HEAD:{branch}`, `<upstream>` = `git config branch.$(git branch --show-current).remote` (the head repo, a fork's included).
+]==] .. FRESH .. GH .. [==[- Push only to the PR's head: `git push <upstream> HEAD:{branch}`, `<upstream>` = `git config branch.$(git branch --show-current).remote` (the head repo, a fork's included).
 - Escalate = report it and keep watching. NEVER block on a question; I answer when I read your reports.
 </environment>
 
@@ -311,11 +308,8 @@ You: GitHub @{github.user}
 <environment>
 - cwd: Plotroom's worktree of {key} on `{branch}`: a new branch from `{base}`, or, `{base}` empty, a branch it reused (a linked PR's, maybe).
 - Base: `{base}`; empty → the branch's open PR's base, else the repo's default branch, flagged as a guess in your report.
-- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Ticket on GitHub: `gh issue view {key} -R {owner}/{repo} --comments`. On Jira: `acli jira workitem view {key} --json --fields '*all'`; you are `acli jira auth status`.
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. FRESH .. GH .. [==[- Ticket on GitHub: `gh issue view {key} -R {owner}/{repo} --comments`. On Jira: `acli jira workitem view {key} --json --fields '*all'`; you are `acli jira auth status`.
+]==] .. ASK .. [==[</environment>
 
 <workflow>
 1. Preflight
@@ -375,11 +369,8 @@ You: GitHub @{github.user}
 <environment>
 - cwd: Plotroom's worktree of {key} on `{branch}`: a new branch from `{base}`, or, `{base}` empty, a branch it reused (a linked PR's, maybe).
 - Base: `{base}`; empty → the branch's open PR's base, else the repo's default branch, flagged as a guess in your report.
-- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
-- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
-- Ticket on GitHub: `gh issue view {key} -R {owner}/{repo} --comments`. On Jira: `acli jira workitem view {key} --json --fields '*all'`; you are `acli jira auth status`.
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. FRESH .. GH .. [==[- Ticket on GitHub: `gh issue view {key} -R {owner}/{repo} --comments`. On Jira: `acli jira workitem view {key} --json --fields '*all'`; you are `acli jira auth status`.
+]==] .. ASK .. [==[</environment>
 
 <workflow>
 1. Preflight
@@ -443,8 +434,7 @@ You: GitHub @{github.user}
 - cwd: my main checkout of {owner}/{repo}, as I left it (any branch, maybe uncommitted work). Plan against the default branch: `git fetch` its remote (`git remote -v`); HEAD elsewhere → read it with `git show <remote>/<default branch>:<path>` and `git grep <pattern> <remote>/<default branch>`.
 - GitHub ticket: act only as @{github.user}. Prefix every `gh` command with `GH_TOKEN=$(gh auth token --user {github.user})`; NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop. Read it: `gh issue view {key} -R {owner}/{repo} --comments`.
 - Jira ticket: `acli jira workitem view {key} --json --fields '*all'`; the project is the key's prefix; you are `acli jira auth status`.
-- Ask through your ask tool (omp: `ask`), then stop. Only my explicit answer approves; an automatic "Continue" or silence never does.
-</environment>
+]==] .. ASK .. [==[</environment>
 
 <workflow>
 1. Preflight: closed or done → stop. Not an epic or a story too big for one PR → ask whether to plan it anyway.

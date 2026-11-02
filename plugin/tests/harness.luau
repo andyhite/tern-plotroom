@@ -1506,6 +1506,7 @@ M.array = array
 local function iso(t: number): string
 	return os.date("!%Y-%m-%dT%H:%M:%SZ", t) :: string
 end
+M.iso = iso
 
 -- One PR as `gh api graphql --jq` prints it: the shape github.parsePage reads.
 local function searchItem(n: number, repo: string, updated: number, extra: { [string]: any }?): { [string]: any }

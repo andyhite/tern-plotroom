@@ -54,6 +54,7 @@ local MAX_BODY = 8000
 local MAX_ROWS = 40
 local AGENTGO_NODE = "layer.queue.buttons.agentgo"
 local OPEN_NODE = "layer.queue.buttons.open"
+M.AGENTGO_NODE, M.OPEN_NODE = AGENTGO_NODE, OPEN_NODE
 local AGENTMSG_NODE = "layer.queue.buttons.agentmsg" -- hidden: the Message link, whose node also says an agent is recorded
 local WTOPEN_NODE = "layer.queue.buttons.wtopen"
 local GIT_NODE = "layer.queue.buttons.git"
@@ -68,8 +69,12 @@ local function e(): Env
 	return env :: Env
 end
 
+function M.strOf(v: any): string?
+	return if type(v) == "string" then v else nil
+end
+
 local function problemOf(a: any): string?
-	return if type(a.problem) == "string" then a.problem else nil
+	return M.strOf(a.problem)
 end
 
 -- ---------------------------------------------------------------- agent links
@@ -80,12 +85,19 @@ function M.stateLabel(state: string): string
 	return STATES[state] or state
 end
 
--- The host of the block `pane`: nil when no host lists it.
-local function hostOf(cx: WindowCx, pane: number): HostId?
+-- The window's host list, nil when it cannot be read.
+local function hostsOf(cx: WindowCx): { any }?
 	local ok, hosts = pcall(function()
 		return cx.hosts:list()
 	end)
-	if not ok or type(hosts) ~= "table" then
+	return if ok and type(hosts) == "table" then hosts else nil
+end
+M.hostsOf = hostsOf
+
+-- The host of the block `pane`: nil when no host lists it.
+local function hostOf(cx: WindowCx, pane: number): HostId?
+	local hosts = hostsOf(cx)
+	if not hosts then
 		return nil
 	end
 	for _, h in hosts do
@@ -642,11 +654,9 @@ function M.openGit(cx: WindowCx, pane: number, url: string)
 	if e().nodeProp(e().readNode(cx, pane, GIT_NODE), "href") ~= url then
 		return cx:toast("error", "Plotroom: that worktree is no longer listed", "Refresh and try again.")
 	end
-	local ok, hosts = pcall(function()
-		return cx.hosts:list()
-	end)
+	local hosts = hostsOf(cx)
 	local local_ = false
-	if ok and type(hosts) == "table" then
+	if hosts then
 		for _, h in hosts do
 			if type(h.panes) == "table" and table.find(h.panes, pane) then
 				local_ = h.kind == "local"
@@ -880,10 +890,8 @@ end
 
 -- Whether `pane` runs on this machine (the one `docs:read` reads files of).
 local function isLocalPane(cx: WindowCx, pane: number): boolean
-	local ok, hosts = pcall(function()
-		return cx.hosts:list()
-	end)
-	if ok and type(hosts) == "table" then
+	local hosts = hostsOf(cx)
+	if hosts then
 		for _, h in hosts do
 			if type(h.panes) == "table" and table.find(h.panes, pane) then
 				return h.kind == "local"
@@ -1802,10 +1810,6 @@ local function send(act: string, value: string?): (WindowCx, number) -> ()
 	end
 end
 
-local function triage(value: string): (WindowCx, number) -> ()
-	return send("triage", value)
-end
-
 -- Palette commands the window registers (id, title) and its command palette lists (label, under `group`) when the host
 -- says they apply to the selection now (`menu`'s `commands`) unless `keyed`: the palette lists those as the queue action
 -- they are (or, as Worktrees list, as the Views scope). An item's own operation has no `group`: the host names it by the
@@ -1873,10 +1877,10 @@ M.COMMANDS = {
 	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
 	{ id = "export", title = "Plotroom: Export views and actions", label = "Export views and actions…", group = "Configuration", run = exportFlow },
 	{ id = "import", title = "Plotroom: Import views and actions", label = "Import views and actions…", group = "Configuration", run = importFlow },
-	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = triage("seen"), keyed = true },
-	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Triage", run = triage("snooze"), keyed = true },
-	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = triage("toggle-snoozed"), keyed = true },
-	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "Filter & Sort", run = triage("toggle-attention"), keyed = true },
+	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
+	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Triage", run = send("triage", "snooze"), keyed = true },
+	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
+	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "Filter & Sort", run = send("triage", "toggle-attention"), keyed = true },
 	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
 	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees list", label = "Worktrees list", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }

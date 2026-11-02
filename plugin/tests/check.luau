@@ -245,14 +245,18 @@ function M.run()
 	assert(pm.text == "x\ny", "paste keeps line breaks in multi")
 
 	-- remotes and worktree records
-	assert(worktree.normalizeRemote("https://github.com/cli/cli.git") == "cli/cli", "https remote")
-	assert(worktree.normalizeRemote("https://user:tok@github.com/cli/cli") == "cli/cli", "https remote with credentials")
-	assert(worktree.normalizeRemote("git@github.com:cli/cli.git") == "cli/cli", "scp remote")
-	assert(worktree.normalizeRemote("ssh://git@github.com/cli/cli.git") == "cli/cli", "ssh remote")
-	assert(worktree.normalizeRemote("https://github.com/cli/../x") == nil, "dot segments are rejected")
-	assert(worktree.normalizeRemote("https://gitlab.com/cli/cli") == nil, "other hosts are rejected")
-	assert(worktree.normalizeRemote("https://evilgithub.com/cli/cli") == nil, "lookalike hosts are rejected")
-	assert(worktree.normalizeRemote("git@github.com-personal:cli/cli.git") == nil, "an alias is not github.com until ssh config says so")
+	local function gh(url: string): string?
+		local host, id = worktree.parseRemote(url)
+		return if host == "github.com" then id else nil
+	end
+	assert(gh("https://github.com/cli/cli.git") == "cli/cli", "https remote")
+	assert(gh("https://user:tok@github.com/cli/cli") == "cli/cli", "https remote with credentials")
+	assert(gh("git@github.com:cli/cli.git") == "cli/cli", "scp remote")
+	assert(gh("ssh://git@github.com/cli/cli.git") == "cli/cli", "ssh remote")
+	assert(gh("https://github.com/cli/../x") == nil, "dot segments are rejected")
+	assert(gh("https://gitlab.com/cli/cli") == nil, "other hosts are rejected")
+	assert(gh("https://evilgithub.com/cli/cli") == nil, "lookalike hosts are rejected")
+	assert(gh("git@github.com-personal:cli/cli.git") == nil, "an alias is not github.com until ssh config says so")
 	local ah, aid, assh = worktree.parseRemote("git@github.com-personal:cli/cli.git")
 	assert(ah == "github.com-personal" and aid == "cli/cli" and assh, "scp alias parses to its transport host")
 	local h2, id2, ssh2 = worktree.parseRemote("ssh://git@work-gh:22/cli/cli")

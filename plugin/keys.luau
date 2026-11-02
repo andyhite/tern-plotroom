@@ -5,7 +5,7 @@
 
 local M = {}
 
-export type Action = { id: string, label: string, default: string }
+export type Action = { id: string, label: string, default: string, preset: string? }
 export type Map = { [string]: string } -- action id -> its key, "" when removed
 
 local KV = "keys"
@@ -13,24 +13,24 @@ local BAD = "Saved keys are malformed; not overwriting them."
 
 -- In the order the Keys page lists them and `action` tries them.
 M.ACTIONS = {
-	{ id = "down", label = "Move down", default = "" },
-	{ id = "up", label = "Move up", default = "" },
-	{ id = "worktree", label = "Worktree", default = "" },
-	{ id = "goto", label = "Go to tab", default = "" },
-	{ id = "agent", label = "Agent picker", default = "" },
-	{ id = "agentgo", label = "Go to agent", default = "" },
-	{ id = "seen", label = "Mark seen", default = "" },
-	{ id = "snooze", label = "Snooze until tomorrow", default = "" },
-	{ id = "snoozed", label = "Show or hide snoozed", default = "" },
-	{ id = "attention", label = "Needs attention only", default = "" },
-	{ id = "sort", label = "Next sort order", default = "" },
-	{ id = "wt-cleanup", label = "Find finished worktrees", default = "" },
-	{ id = "wt-remove", label = "Remove worktree (Worktrees list)", default = "" },
+	{ id = "down", label = "Move down", default = "", preset = "j" },
+	{ id = "up", label = "Move up", default = "", preset = "k" },
+	{ id = "worktree", label = "Worktree", default = "", preset = "w" },
+	{ id = "goto", label = "Go to tab", default = "", preset = "g" },
+	{ id = "agent", label = "Agent picker", default = "", preset = "a" },
+	{ id = "agentgo", label = "Go to agent", default = "", preset = "G" },
+	{ id = "seen", label = "Mark seen", default = "", preset = "m" },
+	{ id = "snooze", label = "Snooze until tomorrow", default = "", preset = "z" },
+	{ id = "snoozed", label = "Show or hide snoozed", default = "", preset = "Z" },
+	{ id = "attention", label = "Needs attention only", default = "", preset = "n" },
+	{ id = "sort", label = "Next sort order", default = "", preset = "o" },
+	{ id = "wt-cleanup", label = "Find finished worktrees", default = "", preset = "u" },
+	{ id = "wt-remove", label = "Remove worktree (Worktrees list)", default = "", preset = "d" },
 	{ id = "more", label = "Command palette", default = "." },
-	{ id = "search", label = "Search", default = "" },
-	{ id = "refresh", label = "Refresh", default = "" },
-	{ id = "settings", label = "Settings", default = "" },
-	{ id = "help", label = "Shortcut list", default = "" },
+	{ id = "search", label = "Search", default = "", preset = "/" },
+	{ id = "refresh", label = "Refresh", default = "", preset = "r" },
+	{ id = "settings", label = "Settings", default = "", preset = "s" },
+	{ id = "help", label = "Shortcut list", default = "", preset = "?" },
 } :: { Action }
 
 local function actionOf(id: string): Action?
@@ -84,11 +84,25 @@ local function saved(ok: boolean, v: any): ({ [string]: string? }?, string?)
 	return out, nil
 end
 
+-- saved() on what kv holds now.
+local function read(): ({ [string]: string? }?, string?)
+	return saved(pcall(tern.kv.get, KV))
+end
+
+-- Writes `mine` to kv; an error message or nil. tern.kv.set raises on failure and returns nothing.
+local function write(mine: { [string]: string? }): string?
+	local ok, err = pcall(function(): string?
+		tern.kv.set(KV, mine)
+		return nil
+	end)
+	return if ok then nil else "Could not save: " .. tostring(err)
+end
+
 -- The key of every action as it works now, and why the saved ones are not in use: with a problem, every action has
 -- its default. ponytail: read from kv on every use (a few small reads per key or render), so another block's change
 -- needs no notice; cache it in the block's State if that ever shows up in a profile.
 function M.load(): (Map, string?)
-	local mine, why = saved(pcall(tern.kv.get, KV))
+	local mine, why = read()
 	-- Every key the user saved is theirs first: an action nobody customized keeps its default only when no saved key
 	-- already holds it, so a newer built-in shortcut never takes over an older custom binding.
 	local taken: { [string]: boolean } = {}
@@ -110,17 +124,12 @@ end
 -- saved and fails closed: unreadable or malformed keys are never overwritten.
 function M.save(id: string, key: string?): string?
 	local a = actionOf(id)
-	local mine, why = saved(pcall(tern.kv.get, KV))
+	local mine, why = read()
 	if not a or not mine then
 		return why or "That is no shortcut of the queue."
 	end
 	mine[id] = if key == nil or (key == a.default and key ~= "") then nil else key
-	-- tern.kv.set raises on failure and returns nothing.
-	local ok, err = pcall(function(): string?
-		tern.kv.set(KV, mine)
-		return nil
-	end)
-	return if ok then nil else "Could not save: " .. tostring(err)
+	return write(mine)
 end
 
 -- Why `text` cannot be action `id`'s key given the keys in `map` (load's), or nil; "" removes it.
@@ -134,17 +143,10 @@ function M.problem(map: Map, id: string, text: string): string?
 	return if a then "Already the shortcut of " .. a.label .. "." else nil
 end
 
--- The classic one-key set, action id -> key; `preset` binds them in `ACTIONS` order.
-local ONE_KEY = {
-	down = "j", up = "k", worktree = "w", goto = "g", agent = "a", agentgo = "G", seen = "m", snooze = "z",
-	snoozed = "Z", attention = "n", sort = "o", search = "/", refresh = "r", settings = "s", help = "?",
-	["wt-cleanup"] = "u", ["wt-remove"] = "d",
-} :: { [string]: string }
-
 -- Binds the one-key set to the actions with no key and no saved choice. A preset key another action or `used` (the
 -- keys of saved prompt actions) already holds is skipped. Returns the labels of the skipped actions, or nil and why.
 function M.preset(used: { [string]: boolean }): ({ string }?, string?)
-	local mine, why = saved(pcall(tern.kv.get, KV))
+	local mine, why = read()
 	if not mine then
 		return nil, why
 	end
@@ -159,7 +161,7 @@ function M.preset(used: { [string]: boolean }): ({ string }?, string?)
 	local skipped: { string } = {}
 	local changed = false
 	for _, a in M.ACTIONS do
-		local key = ONE_KEY[a.id]
+		local key = a.preset
 		if key and map[a.id] == "" and mine[a.id] == nil then
 			if taken[key] then
 				table.insert(skipped, a.label .. " (" .. key .. ")")
@@ -171,12 +173,9 @@ function M.preset(used: { [string]: boolean }): ({ string }?, string?)
 		end
 	end
 	if changed then
-		local ok, err = pcall(function(): string?
-			tern.kv.set(KV, mine)
-			return nil
-		end)
-		if not ok then
-			return nil, "Could not save: " .. tostring(err)
+		local err = write(mine)
+		if err then
+			return nil, err
 		end
 	end
 	return skipped, nil

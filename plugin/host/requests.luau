@@ -30,7 +30,7 @@ type State = core.State
 
 local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, stateKind, cli = core.COMMENT_ROWS, core.INTEGRATIONS, core.KINDS, core.clip, core.printable, core.stateKind, core.cli
 local checkoutOf, editJiraRepos, editPrompts, isTable, jiraReposOf, loadAll, loadPrompts, loadViews, promptById = storage.checkoutOf, storage.editJiraRepos, storage.editPrompts, storage.isTable, storage.jiraReposOf, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById
-local readCheckouts, readJiraRepos, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.readCheckouts, storage.readJiraRepos, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
+local readCheckouts, readMap, saveCheckout, setupOf, stringList, writeViews, formats = storage.readCheckouts, storage.readMap, storage.saveCheckout, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local activeView, alive, changed, detailKey, filtered, indexOf, issueVars, login, noteWorktree = engine.activeView, engine.alive, engine.changed, engine.detailKey, engine.filtered, engine.indexOf, engine.issueVars, engine.login, engine.noteWorktree
 local offered, openItems, parseRepo, propagate, reloadViews, selected, snapKey, switchView, trim, me, ghActive = engine.offered, engine.openItems, engine.parseRepo, engine.propagate, engine.reloadViews, engine.selected, engine.snapKey, engine.switchView, input.trim, engine.me, engine.ghActive
 local discardEdit = settings.discardEdit
@@ -84,7 +84,7 @@ end
 -- `repo`'s saved setup commands (Settings › Repositories) as one shell line that stops at the first failure, blank ones
 -- left out; nil if none.
 local function setupLine(repo: string): string?
-	local map = setupMap()
+	local map = readMap("setup-commands", "setup commands")
 	local cmds: { string } = {}
 	local saved: { string } = if map then setupOf(map, repo) else {}
 	for _, c in saved do
@@ -155,6 +155,32 @@ function M.paletteNode(state: State): Node
 	return ui.node("text", { key = "palette", text = text, hidden = true })
 end
 
+-- Marks `key` busy and runs `open`, which starts a worktree and answers `id` itself; if it raises, the mark is cleared
+-- and the request answers the problem.
+local function startWorktree(state: State, id: string, key: string, open: () -> ())
+	preparing[key] = true
+	local started, err = pcall(function()
+		process.reset()
+		open()
+	end)
+	if not started then
+		preparing[key] = nil
+		reply(state, id, { problem = tostring(err) })
+	end
+end
+
+-- Reads the users `go` needs (`jira`: the Jira one too) and calls it; a block gone meanwhile only clears `key`'s busy
+-- mark (set when `wt`).
+local function readUsers(state: State, key: string, wt: boolean, jira: boolean, go: ({ [string]: string }) -> ())
+	me.read(state, jira, function(found)
+		if alive(state) then
+			go(found)
+		elseif wt then
+			preparing[key] = nil
+		end
+	end)
+end
+
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
@@ -195,8 +221,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 		preparing[key] = true
 	end
 	local function open(found: { [string]: string })
-		local started, err = pcall(function()
-			process.reset()
+		startWorktree(state, id, key, function()
 			worktree.open(checkout, repo, n, naming, login(state), function(r, problem)
 				preparing[key] = nil
 				if not alive(state) then
@@ -241,22 +266,12 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				})
 			end)
 		end)
-		if not started then
-			preparing[key] = nil
-			reply(state, id, { problem = tostring(err) })
-		end
 	end
 	local go: ({ [string]: string }) -> () = if wt then open else main
 	if not users then
 		return go({})
 	end
-	me.read(state, false, function(found)
-		if alive(state) then
-			go(found)
-		elseif wt then
-			preparing[key] = nil
-		end
-	end)
+	readUsers(state, key, wt, false, go)
 end
 
 -- How the window answered an issue worktree's questions: a linked PR to check out, or a new branch (`fresh`) from `base`.
@@ -393,9 +408,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 			end
 		end
 		local made: string = branch
-		preparing[key] = true
-		local started, err = pcall(function()
-			process.reset()
+		startWorktree(state, id, key, function()
 			local plan: worktree.IssuePlan = { dir = dir, branch = made, pr = choice.pr, fresh = choice.fresh, base = choice.base }
 			worktree.openIssue(checkout, code, ref, plan, login(state), function(r, problem)
 				if not alive(state) then
@@ -446,10 +459,6 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				})
 			end)
 		end)
-		if not started then
-			preparing[key] = nil
-			reply(state, id, { problem = tostring(err) })
-		end
 	end
 
 	if not need then
@@ -458,13 +467,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 	if wt then
 		preparing[key] = true -- the users are read first: a repeat meanwhile is busy too
 	end
-	me.read(state, issue.tracker == "jira", function(found)
-		if alive(state) then
-			go(found)
-		elseif wt then
-			preparing[key] = nil
-		end
-	end)
+	readUsers(state, key, wt, issue.tracker == "jira", go)
 end
 
 -- The repository picker's first page: every saved repository with its checkout, sorted by name, and the gh logins
@@ -504,7 +507,7 @@ end
 -- lists that are not saved, cut to MENU_BUDGET. Without the list, `problem` says why.
 local function jiraProjects(state: State, id: string)
 	local keys: { string } = {}
-	local map: { [string]: any } = (readJiraRepos()) or {}
+	local map: { [string]: any } = (readMap("jira-repos", "Jira project repositories")) or {}
 	for key in map do
 		if type(key) == "string" and tracker.jiraProject(key) then
 			table.insert(keys, key)

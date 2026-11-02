@@ -22,10 +22,10 @@ type Settings = core.Settings
 type State = core.State
 type View = core.View
 
-local INTEGRATIONS, KINDS, SETTINGS_ID, clip, groupsOf, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.groupsOf, core.printable, core.cli
+local INTEGRATIONS, KINDS, SETTINGS_ID, clip, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.printable, core.cli
 local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId, nextOf = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId, storage.nextOf
-local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readJiraRepos = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readJiraRepos
-local removeRepo, saveCheckout, setupMap, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupMap, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
+local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readMap = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readMap
+local removeRepo, saveCheckout, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
 local propagate, retry, snapKey, switchView, trackerOf, viewOf, waitOf, ghActive = engine.propagate, engine.retry, engine.snapKey, engine.switchView, engine.trackerOf, engine.viewOf, engine.waitOf, engine.ghActive
 local helpOverlay, paceLine, queuePicker, rpcNodes = render.helpOverlay, render.paceLine, render.queuePicker, render.rpcNodes
@@ -181,7 +181,7 @@ local function pageContent(state: State): ({ any }, { Node })
 					control = { k = "text", value = v.query, placeholder = info.newQuery, mono = true },
 				})
 				local groupOptions: { any } = { { value = "none", label = "None" } }
-				for _, by in groupsOf(v.kind, v.integration) do
+				for _, by in core.groupsOf(v.kind, v.integration) do
 					table.insert(groupOptions, { value = by.value, label = by.label })
 				end
 				row({
@@ -392,8 +392,8 @@ local function pageContent(state: State): ({ any }, { Node })
 			end
 		end
 		table.sort(names)
-		local repoFormats, formatsOff = formats.repoMap()
-		local setups, setupsOff = setupMap()
+		local repoFormats, formatsOff = readMap("branch-formats", "branch formats")
+		local setups, setupsOff = readMap("setup-commands", "setup commands")
 		section("repos")
 		for _, repo in names do
 			local path = checkouts[repo]
@@ -449,7 +449,7 @@ local function pageContent(state: State): ({ any }, { Node })
 		section("add:repo")
 		row({ id = "radd", label = "", control = { k = "action", act = "add-repo", label = "Add repository" } })
 	elseif s.page == "jira" then
-		local map, unreadable = readJiraRepos()
+		local map, unreadable = readMap("jira-repos", "Jira project repositories")
 		local keys: { string } = {}
 		local saved: { [string]: any } = map or {}
 		for key in saved do
@@ -653,7 +653,7 @@ local function groupKnown(kind: Kind, integration: string, value: string): boole
 	if value == "none" then
 		return true
 	end
-	for _, g in groupsOf(kind.id, integration) do
+	for _, g in core.groupsOf(kind.id, integration) do
 		if g.value == value then
 			return true
 		end

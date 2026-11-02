@@ -188,14 +188,38 @@ function M.stringList(v: any): { string }
 	return out
 end
 
+-- A saved map under kv `key` (`what` names it in the message), or nil and why when unreadable: a write then fails
+-- closed rather than overwrite it. Absent: an empty map.
+function M.readMap(key: string, what: string): ({ [string]: any }?, string?)
+	local ok, stored = pcall(tern.kv.get, key)
+	if not ok or (stored ~= nil and not isTable(stored)) then
+		return nil, "Saved " .. what .. " could not be read."
+	end
+	return if stored ~= nil then stored else {}, nil
+end
+
+-- Rereads the map under kv `key`, lets `fn` change it and saves it; an error message or nil. `fn` returns an error
+-- string to abort, or (nil, true) when it changed nothing. An unreadable map is never written over.
+function M.editMap(key: string, what: string, fn: ({ [string]: any }) -> (string?, boolean?)): string?
+	local map, err = M.readMap(key, what)
+	if not map then
+		return err
+	end
+	local ferr, unchanged = fn(map)
+	if ferr then
+		return ferr
+	end
+	if unchanged then
+		return nil
+	end
+	local werr = kvSet(key, map)
+	return if werr then "Could not save: " .. werr else nil
+end
+
 -- Saved repositories (kv "checkouts", keyed by lowercase "owner/name") to their local checkout; "" marks one listed
 -- in Settings without a checkout.
 function M.readCheckouts(): { [string]: any }
-	local ok, v = pcall(tern.kv.get, "checkouts")
-	if ok and isTable(v) then
-		return v
-	end
-	return {}
+	return (M.readMap("checkouts", "checkouts")) or {}
 end
 
 -- The saved local checkout of `repo`, nil when none: then the window's palette asks for one before anything makes a
@@ -208,85 +232,52 @@ end
 -- Saves `path` as `repo`'s checkout ("": none, but still listed); with `keep`, only a repository not saved yet. Fails
 -- closed when the saved map cannot be read.
 function M.saveCheckout(repo: string, path: string, keep: boolean?): string?
-	local ok, stored = pcall(tern.kv.get, "checkouts")
-	if not ok or (stored ~= nil and not isTable(stored)) then
-		return "Saved checkouts could not be read"
-	end
-	local repos: { [string]: any } = if stored ~= nil then stored else {}
-	local key = string.lower(repo)
-	if repos[key] == path or (keep and repos[key] ~= nil) then
-		return nil
-	end
-	repos[key] = path
-	local err = kvSet("checkouts", repos)
-	return if err then "Could not save: " .. err else nil
-end
-
--- A saved map under kv `key` (`what` names it in the message), or nil and why when unreadable: a write then fails
--- closed rather than overwrite it.
-local function readMap(key: string, what: string): ({ [string]: any }?, string?)
-	local ok, stored = pcall(tern.kv.get, key)
-	if not ok or (stored ~= nil and not isTable(stored)) then
-		return nil, "Saved " .. what .. " could not be read."
-	end
-	return if stored ~= nil then stored else {}, nil
-end
-
--- Saved worktree setup commands per repository (kv "setup-commands", keyed like "checkouts"), or nil and why when
--- unreadable.
-function M.setupMap(): ({ [string]: any }?, string?)
-	return readMap("setup-commands", "setup commands")
+	return M.editMap("checkouts", "checkouts", function(repos: { [string]: any }): (string?, boolean?)
+		local key = string.lower(repo)
+		if repos[key] == path or (keep and repos[key] ~= nil) then
+			return nil, true
+		end
+		repos[key] = path
+		return nil, false
+	end)
 end
 
 function M.setupOf(map: { [string]: any }, repo: string): { string }
 	return M.stringList(map[string.lower(repo)])
 end
 
--- Rereads `repo`'s setup commands, lets `fn` change them (an error string aborts) and saves them.
+-- Rereads `repo`'s setup commands (kv "setup-commands", keyed like "checkouts"), lets `fn` change them (an error
+-- string aborts) and saves them.
 function M.editSetup(repo: string, fn: ({ string }) -> string?): string?
-	local map, err = M.setupMap()
-	if not map then
-		return err
-	end
-	local list = M.setupOf(map, repo)
-	local ferr = fn(list)
-	if ferr then
-		return ferr
-	end
-	map[string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
-	local werr = kvSet("setup-commands", map)
-	return if werr then "Could not save: " .. werr else nil
+	return M.editMap("setup-commands", "setup commands", function(map: { [string]: any }): (string?, boolean?)
+		local list = M.setupOf(map, repo)
+		local ferr = fn(list)
+		if ferr then
+			return ferr
+		end
+		map[string.lower(repo)] = if #list > 0 then tern.json.array(list) else nil
+		return nil
+	end)
 end
 
 -- Branch and worktree folder name formats (folders: Settings › Worktrees; branch: there, or per repository in Settings › Repositories). One table keeps the format helpers together.
 local formats = {}
 M.formats = formats
 
--- Saved branch name formats per repository (kv "branch-formats", keyed like "checkouts"), or nil and why when
--- unreadable.
-function formats.repoMap(): ({ [string]: any }?, string?)
-	return readMap("branch-formats", "branch formats")
-end
-
--- The branch name format saved for `repo`; nil when none is (the Worktrees format applies) or they cannot be read.
+-- The branch name format saved for `repo` (kv "branch-formats", keyed like "checkouts"); nil when none is (the
+-- Worktrees format applies) or they cannot be read.
 function formats.repoOf(repo: string, snap: { [string]: any }?): string?
-	local map = if snap then snap.repos else formats.repoMap()
+	local map = if snap then snap.repos else M.readMap("branch-formats", "branch formats")
 	local fmt = if map then map[string.lower(repo)] else nil
 	return if type(fmt) == "string" and fmt ~= "" then fmt else nil
 end
 
--- Saved repositories per Jira project (kv "jira-repos": KEY to lowercase "owner/name" list), or nil and why when
--- unreadable.
-function M.readJiraRepos(): ({ [string]: any }?, string?)
-	return readMap("jira-repos", "Jira project repositories")
-end
-
 -- The repositories Jira project `project` is worked in: the valid "owner/name" strings saved for it, in saved order.
 function M.jiraReposOf(project: string, saved: { [string]: any }?): { string }
-	local map = saved or M.readJiraRepos()
+	local map = saved or M.readMap("jira-repos", "Jira project repositories")
 	local out: { string } = {}
 	for _, r in M.stringList(if map then map[project] else nil) do
-		local owner, name = string.match(r, "^([^/]+)/([^/]+)$")
+		local owner, name = core.splitRepo(r)
 		if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
 			table.insert(out, r)
 		end
@@ -294,33 +285,30 @@ function M.jiraReposOf(project: string, saved: { [string]: any }?): { string }
 	return out
 end
 
--- Rereads the Jira project map, lets `fn` change it (an error string aborts) and saves it; an error message or nil.
+-- Rereads the Jira project map (kv "jira-repos": KEY to lowercase "owner/name" list), lets `fn` change it (an error
+-- string aborts) and saves it; an error message or nil.
 function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
-	local map, err = M.readJiraRepos()
-	if not map then
-		return err
-	end
-	for _, list in map do
-		local good = isTable(list)
-		if good then
-			for k, r in list do
-				good = good and type(k) == "number" and type(r) == "string"
+	return M.editMap("jira-repos", "Jira project repositories", function(map: { [string]: any }): (string?, boolean?)
+		for _, list in map do
+			local good = isTable(list)
+			if good then
+				for k, r in list do
+					good = good and type(k) == "number" and type(r) == "string"
+				end
+			end
+			if not good then
+				return "Saved Jira project repositories are malformed; not overwriting them."
 			end
 		end
-		if not good then
-			return "Saved Jira project repositories are malformed; not overwriting them."
+		local ferr = fn(map)
+		if ferr then
+			return ferr
 		end
-	end
-	local ferr = fn(map)
-	if ferr then
-		return ferr
-	end
-	local out: { [string]: any } = {}
-	for key, list in map do
-		out[key] = tern.json.array(M.stringList(list))
-	end
-	local werr = kvSet("jira-repos", out)
-	return if werr then "Could not save: " .. werr else nil
+		for key, list in map do
+			map[key] = tern.json.array(M.stringList(list))
+		end
+		return nil
+	end)
 end
 
 -- Name formats for every repository (Settings › Worktrees): the branch of an issue's worktree, and the
@@ -341,7 +329,7 @@ end
 -- One read of every format map and of the Jira project map, for a loop that would otherwise reread kv per item
 -- (formats.of, repoOf, M.jiraReposOf take it as `snap`; the Jira map is snap.jira).
 function formats.snapshot(): { [string]: any }
-	local snap: { [string]: any } = { repos = formats.repoMap(), jira = M.readJiraRepos() }
+	local snap: { [string]: any } = { repos = M.readMap("branch-formats", "branch formats"), jira = M.readMap("jira-repos", "Jira project repositories") }
 	for which in formats.KEYS do
 		snap[which] = formats.saved(which)
 	end
@@ -354,8 +342,8 @@ function M.removeRepo(repo: string): string?
 	local key = string.lower(repo)
 	local failed: string? = nil
 	for _, name in { "checkouts", "branch-formats", "setup-commands" } do
-		local ok, stored = pcall(tern.kv.get, name)
-		if ok and isTable(stored) and stored[key] ~= nil then
+		local stored = M.readMap(name, name)
+		if stored and stored[key] ~= nil then
 			stored[key] = nil
 			local err = kvSet(name, stored)
 			failed = failed or (if err then "Could not save: " .. err else nil)
@@ -485,13 +473,10 @@ end
 -- Saves `fmt` as `repo`'s branch name format (nil: back to the default). Fails closed when the saved formats cannot
 -- be read.
 function formats.saveRepo(repo: string, fmt: string?): string?
-	local map, err = formats.repoMap()
-	if not map then
-		return err
-	end
-	map[string.lower(repo)] = fmt
-	local werr = kvSet("branch-formats", map)
-	return if werr then "Could not save: " .. werr else nil
+	return M.editMap("branch-formats", "branch formats", function(map: { [string]: any }): (string?, boolean?)
+		map[string.lower(repo)] = fmt
+		return nil
+	end)
 end
 
 -- Saves name format `which` (a formats.KEYS key; "" is the default).
@@ -507,7 +492,7 @@ end
 
 -- The folder name pull request `n` of `repo` ("owner/name") titled `title` gets, or nil and why.
 function formats.prDir(repo: string, n: number, title: string, snap: { [string]: any }?): (string?, string?)
-	local owner, name = string.match(string.lower(repo), "^([^/]+)/([^/]+)$")
+	local owner, name = core.splitRepo(string.lower(repo))
 	return tracker.render(formats.of("prdir", snap), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
 end
 

@@ -279,6 +279,11 @@ function M.spans(...: Span | string): { Span | string }
 	return { ... }
 end
 
+-- "owner/name" as (owner, name), nil twice when `s` is not exactly that.
+function M.splitRepo(s: string): (string?, string?)
+	return string.match(s, "^([^/]+)/([^/]+)$")
+end
+
 -- Percent-encodes everything but unreserved URL characters.
 function M.pct(s: string): string
 	return (string.gsub(s, "[^%w%-_%.~]", function(c)

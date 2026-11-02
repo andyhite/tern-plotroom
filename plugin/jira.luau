@@ -9,8 +9,8 @@ local tracker = require("./tracker")
 
 local M = {}
 
--- Problem kinds as github.luau's: auth | missing | rate-limit | invalid | not-found | failed | superseded.
-type Problem = { kind: string, message: string }
+-- Problem kinds as github.luau's.
+type Problem = github.Problem
 
 local TIMEOUT_MS = 60 * 1000
 -- ponytail: a view lists the newest 1000 by priority then update; more is partial, raise it if views need more
@@ -22,11 +22,7 @@ local BODY_CHARS = 20000
 local TONE: { [string]: string } = { new = "muted", indeterminate = "warning", done = "success" }
 local KEY = "^[A-Z][A-Z0-9_]*%-%d+$"
 
-local field = github.field
-
-local function nonEmpty(v: any): string?
-	return if type(v) == "string" and v ~= "" then v else nil
-end
+local field, nonEmpty = tracker.field, tracker.nonEmpty
 
 local function list(v: any): { any }
 	return if type(v) == "table" then v else {}
@@ -258,7 +254,7 @@ function M.issues(query: string, shouldContinue: () -> boolean, done: (tracker.I
 		done(result, problem, 0)
 	end
 	local function fail(problem: Problem)
-		tern.timer(0, function()
+		process.later(function()
 			finish(nil, problem)
 		end)
 	end
@@ -479,11 +475,7 @@ end
 -- The description's markdown, cut to BODY_CHARS characters.
 local function bodyOf(description: any): string
 	local text = if type(description) == "table" then M.adf(description) elseif type(description) == "string" then description else ""
-	local cut = utf8.offset(text, BODY_CHARS + 1)
-	if cut and cut <= #text then
-		text = string.sub(text, 1, cut - 1) .. "…"
-	end
-	return text
+	return tracker.clip(text, BODY_CHARS, "…")
 end
 
 -- Names of `{ name }` entries, joined; nil when there are none.
@@ -533,9 +525,7 @@ local function sprintOf(fields: any): string?
 	return nil
 end
 
-local function stamp(v: any): number?
-	return if type(v) == "string" then github.epoch(v) else nil
-end
+local stamp = github.stamp
 
 -- One work item's details: its description as markdown, the rows tracker.FIELDS.jira names, its linked issues and
 -- subtasks, comment count and dates. `base` is the browse URL base.
@@ -601,7 +591,7 @@ function M.issue(key: string, done: (tracker.IssueDetail?, Problem?) -> (), shou
 		done(detail, problem)
 	end
 	local function fail(problem: Problem)
-		tern.timer(0, function()
+		process.later(function()
 			finish(nil, problem)
 		end)
 	end
@@ -659,9 +649,7 @@ end
 -- The host confirms with the user before calling a write. acli runs as the account it is signed in to; every write
 -- is `acli jira workitem <verb> --key <KEY> ... --yes`, one work item, never JQL, a filter or --ignore-errors.
 
-local function later(done: () -> ())
-	tern.timer(0, done)
-end
+local later = process.later
 
 -- Host and key of a Jira browse link (`https://<host>/browse/ABC-1`, or any board link with `?selectedIssue=ABC-1`);
 -- nil for anything else. The host is returned so a caller can compare it with the signed-in site.

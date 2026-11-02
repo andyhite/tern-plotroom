@@ -210,7 +210,8 @@
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus,
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'].focus,
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'].focus,
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus,
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus {
 	background: none;
 	box-shadow: none;
 }
@@ -218,7 +219,8 @@
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='delete:'].focus .btn,
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pdelete:'].focus .btn,
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='rremove:'].focus .btn,
-[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus .btn {
+[data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='jremove:'].focus .btn,
+[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus .btn {
 	box-shadow:
 		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
 		0 0 0 3px rgb(from var(--accent) r g b/13%);
@@ -250,15 +252,4 @@
 /* Its label is empty but for a warning: no 180px basis pushing the button off the row's start. */
 [data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-lbl {
 	flex: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus {
-	background: none;
-	box-shadow: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-row.focus .btn {
-	box-shadow:
-		inset 0 0 0 1.5px rgb(from var(--accent) r g b/55%),
-		0 0 0 3px rgb(from var(--accent) r g b/13%);
 }

@@ -114,10 +114,14 @@ end)
 
 case("worktree: remote URLs with a trailing slash still identify the repository", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
-	for _, url in { "https://github.com/o/r", "https://github.com/o/r/", "https://github.com/o/r.git/", "git@github.com:o/r/", "ssh://git@github.com/o/r.git/" } do
-		eq(worktree.normalizeRemote(url), "o/r", url)
+	local function gh(url: string): string?
+		local host, id = worktree.parseRemote(url)
+		return if host == "github.com" then id else nil
 	end
-	eq(worktree.normalizeRemote("https://github.com/o/"), nil, "an owner alone is not a repository")
+	for _, url in { "https://github.com/o/r", "https://github.com/o/r/", "https://github.com/o/r.git/", "git@github.com:o/r/", "ssh://git@github.com/o/r.git/" } do
+		eq(gh(url), "o/r", url)
+	end
+	eq(gh("https://github.com/o/"), nil, "an owner alone is not a repository")
 end)
 
 local function resultOf(created: boolean, head: string, prHead: string, dirty: boolean?): { [string]: any }

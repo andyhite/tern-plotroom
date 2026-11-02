@@ -18,6 +18,7 @@ local openIssues, openQueue, pickScope, pickerNode, pickerOf, prLink = h.openIss
 local promptOf, ranSince, refreshNow, request, requestsOf, requestsSent = h.promptOf, h.ranSince, h.refreshNow, h.request, h.requestsOf, h.requestsSent
 local rowIn, runLink, same, savePrompts, searchItem, sha = h.rowIn, h.runLink, h.same, h.savePrompts, h.searchItem, h.sha
 local show, windowCase, yes = h.show, h.windowCase, h.yes
+local iso = h.iso
 
 type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops: () -> { string }, palette: (any) -> () }
 
@@ -1605,9 +1606,6 @@ end)
 
 case("host sort: Oldest waiting ranks by creation, and Largest changes first by additions plus deletions", function(w: World)
 	local s = hostScene(w, 3)
-	local function iso(t: number): string
-		return os.date("!%Y-%m-%dT%H:%M:%SZ", t) :: string
-	end
 	s.gh.items.octocat = {
 		searchItem(1, "o/r", EPOCH - 60, { createdAt = iso(EPOCH - 900), additions = 1, deletions = 1 }),
 		searchItem(2, "o/r", EPOCH - 300, { createdAt = iso(EPOCH - 100), additions = 40, deletions = 5 }),

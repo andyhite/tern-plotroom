@@ -98,19 +98,50 @@ function M.jiraProject(s: string): boolean
 	return #s <= 32 and string.match(s, "^[A-Z][A-Z0-9_]+$") ~= nil
 end
 
--- Local search over loaded issues: whether `issue` matches, and the matched UTF-16
--- range in its title (nil when the match is elsewhere or the needle is blank).
-function M.match(issue: Issue, needle: string): (boolean, { number }?)
-	local q = string.lower(string.match(needle, "^%s*(.-)%s*$") or "")
+-- Local search: whether a record titled `title` matches `needle` (case-insensitive substring), and the matched UTF-16
+-- range in the title (nil when the match is elsewhere or the needle is blank). `hay` is the other text searched,
+-- built only when the title misses.
+function M.search(title: string, needle: string, hay: () -> string): (boolean, { number }?)
+	local q = string.lower(input.trim(needle))
 	if q == "" then
 		return true, nil
 	end
-	local at = string.find(string.lower(issue.title), q, 1, true)
+	local at = string.find(string.lower(title), q, 1, true)
 	if at then
-		return true, { input.u16(issue.title, at - 1), input.u16(issue.title, at - 1 + #q) }
+		return true, { input.u16(title, at - 1), input.u16(title, at - 1 + #q) }
 	end
-	local hay = M.refLabel(issue.ref) .. " " .. issue.author .. " " .. table.concat(issue.labels, " ") .. " " .. table.concat(issue.assignees, " ")
-	return string.find(string.lower(hay), q, 1, true) ~= nil, nil
+	return string.find(string.lower(hay()), q, 1, true) ~= nil, nil
+end
+
+-- Local search over loaded issues: see `search`.
+function M.match(issue: Issue, needle: string): (boolean, { number }?)
+	return M.search(issue.title, needle, function()
+		return M.refLabel(issue.ref) .. " " .. issue.author .. " " .. table.concat(issue.labels, " ") .. " " .. table.concat(issue.assignees, " ")
+	end)
+end
+
+-- Value at a key path of decoded JSON; nil when a step is missing or not a table.
+function M.field(v: any, ...: string): any
+	for _, key in { ... } do
+		if type(v) ~= "table" then
+			return nil
+		end
+		v = v[key]
+	end
+	return v
+end
+
+function M.nonEmpty(v: any): string?
+	return if type(v) == "string" and v ~= "" then v else nil
+end
+
+-- `text` cut to `n` characters, `tail` appended when it was cut.
+function M.clip(text: string, n: number, tail: string): string
+	local cut = utf8.offset(text, n + 1)
+	if cut and cut <= #text then
+		return string.sub(text, 1, cut - 1) .. tail
+	end
+	return text
 end
 
 -- Jira's status categories, fixed across every site, in the default sort order: what is being worked on first.

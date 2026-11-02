@@ -28,7 +28,7 @@ type Visible = core.Visible
 
 local DETAIL_DEBOUNCE_MS, DETAIL_RETRY_MAX_S, DETAIL_RETRY_S = core.DETAIL_DEBOUNCE_MS, core.DETAIL_RETRY_MAX_S, core.DETAIL_RETRY_S
 local INTEGRATIONS, KINDS, NOTE_CAP, POLL_MS, TRACKERS = core.INTEGRATIONS, core.KINDS, core.NOTE_CAP, core.POLL_MS, core.TRACKERS
-local clip, groupsOf, hrefOf, printable, running, cli = core.clip, core.groupsOf, core.hrefOf, core.printable, core.running, core.cli
+local clip, hrefOf, printable, running, splitRepo, cli = core.clip, core.hrefOf, core.printable, core.running, core.splitRepo, core.cli
 local isTable, jiraReposOf, livePrompts, loadAll, loadPrompts, readCheckouts, formats =
 	storage.isTable, storage.jiraReposOf, storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.readCheckouts, storage.formats
 
@@ -36,23 +36,14 @@ local M = {}
 
 -- gh's active login on this host once known (`login`), the logins signed in (`accounts`) and the helpers that use them:
 -- the sidebar groups of views that run as one login.
-local ghActive: {
+local ghActive = {} :: {
 	login: string?,
 	accounts: { string },
 	note: (State, boolean?) -> (),
 	shown: (View) -> string,
 	isActive: (State, Scope) -> boolean,
-} = {
-	login = nil,
-	accounts = {},
-	note = function() end,
-	shown = function()
-		return ""
-	end,
-	isActive = function()
-		return false
-	end,
 }
+ghActive.accounts = {}
 M.ghActive = ghActive
 
 -- Cancels the checks load waiting out its debounce or retry delay, if any.
@@ -286,7 +277,7 @@ end
 
 -- `raw` as a GitHub "owner/name" (both parts valid worktree segments, trimmed); nil when it is not one.
 function M.parseRepo(raw: any): string?
-	local owner, name = string.match(if type(raw) == "string" then input.trim(raw) else "", "^([^/]+)/([^/]+)$")
+	local owner, name = splitRepo(if type(raw) == "string" then input.trim(raw) else "")
 	if owner and name and worktree.validSegment(owner) and worktree.validSegment(name) then
 		return owner .. "/" .. name
 	end
@@ -414,7 +405,7 @@ function M.filtered(state: State): Visible?
 	end
 	local spec: Group? = nil
 	if view then
-		for _, g in groupsOf(snap.kind, view.integration) do
+		for _, g in core.groupsOf(snap.kind, view.integration) do
 			if g.value == group then
 				spec = g
 			end
@@ -1684,7 +1675,7 @@ loadDetails = function(state: State, key: string)
 		local loaded: core.Detail = { runs = runs, total = total, round = round, about = about }
 		-- The issue Plotroom noted for the worktree on this head branch, as the last worktree scan knew it (a checkout
 		-- not scanned yet shows none; the next refresh's scan fills it). Two on one branch: the first noted wins.
-		local checkout = readCheckouts()[string.lower(pr.repo)]
+		local checkout = storage.checkoutOf(pr.repo)
 		local branch = worktree.prBranch(pr.head, pr.fork)
 		local noted: string? = nil
 		local first = math.huge
@@ -1769,7 +1760,7 @@ end
 -- The variables of an issue's prompts and branch name (KINDS.issues.vars lists them); `code` is the GitHub repository the
 -- issue is worked in. `branch`, `base` and `remote` are only known once a worktree exists.
 function M.issueVars(issue: tracker.Issue, code: string): { [string]: string }
-	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
+	local owner, name = splitRepo(code)
 	local vars: { [string]: string } = {
 		url = issue.url,
 		key = issue.ref,
@@ -1847,7 +1838,7 @@ end
 -- The branch a new worktree of `issue` in `code` gets (formats.issueBranch over its variables and `users`; a user not
 -- in `users` stays as its variable), and its worktree's folder name. nil and why when a format cannot name one.
 function M.issueNames(issue: tracker.Issue, code: string, users: { [string]: string }, snap: { [string]: any }?): (string?, string?, string?)
-	local owner, name = string.match(code, "^([^/]+)/([^/]+)$")
+	local owner, name = splitRepo(code)
 	local slug = tracker.slug(issue.title)
 	local vars: { [string]: string } = {
 		key = issue.ref,
@@ -1875,7 +1866,7 @@ end
 function M.worktreeWant(state: State, kind: string, item: any, codes: { string }, snap: { [string]: any }?): worktree.Want
 	local want: worktree.Want = { branches = {}, dirs = {} }
 	if kind ~= "issues" then
-		local owner, name = string.match(item.repo, "^([^/]+)/([^/]+)$")
+		local owner, name = splitRepo(item.repo)
 		table.insert(want.branches, worktree.prBranch(item.head, item.fork))
 		want.ref = worktree.prRef(owner or "", name or "", item.number)
 		local dir = formats.prDir(item.repo, item.number, item.title, snap)

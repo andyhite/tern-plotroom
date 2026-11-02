@@ -11,7 +11,7 @@ local flows = require("./flows")
 local PRS_BLOCK = "plotroom.prs"
 local ISSUE_ICON = "list-checks"
 local SCHEME = "plotroom://"
-local OPEN_NODE = "layer.queue.buttons.open"
+local OPEN_NODE = flows.OPEN_NODE
 local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
@@ -20,7 +20,7 @@ local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
 local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
-local AGENTGO_NODE = "layer.queue.buttons.agentgo" -- hidden: Go to the item's recorded agent
+local AGENTGO_NODE = flows.AGENTGO_NODE
 local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg: the hidden links of the agent commands
 local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true } -- Interrupt, Stop, Message
 local MORE_NODE = "main.more" -- hidden: the command palette
@@ -39,8 +39,20 @@ local PROTOCOL = "32" -- what host/core's RPC_PROTOCOL, shown by host/render's `
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
 
-local function strOf(v: any): string?
-	return if type(v) == "string" then v else nil
+local strOf = flows.strOf
+
+-- The valid link actions of an item (a PR link also takes open and show).
+local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, run = true }
+
+-- The hidden node whose href a link of action `act` must match (`id`: a saved prompt's id for `run`).
+local function nodeOf(act: string, id: string?): string
+	return if act == "open" then OPEN_NODE
+		elseif act == "goto" then GOTO_NODE
+		elseif act == "agent" then AGENT_NODE
+		elseif act == "agentgo" then AGENTGO_NODE
+		elseif AGENT_CMD[act] then BUTTONS_PREFIX .. act
+		elseif act == "run" then PROMPT_NODE .. (id or "")
+		else WORKTREE_NODE
 end
 
 -- A worktree the host prepared, as its answer says.
@@ -150,7 +162,7 @@ local function parseLink(url: string): (string?, string?, string?, number?, stri
 		kind = if id then "run" else nil
 	end
 	local num = tonumber(n)
-	if (kind ~= "open" and kind ~= "worktree" and kind ~= "goto" and kind ~= "agent" and kind ~= "agentgo" and not AGENT_CMD[kind or ""] and kind ~= "show" and kind ~= "run") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
+	if not (VALID_ACTS[kind or ""] or kind == "open" or kind == "show") or not owner or not repo or not worktree.validSegment(owner) or not worktree.validSegment(repo) then
 		return nil, nil, nil, nil, nil
 	end
 	if not num or num < 1 or num > 2147483647 then
@@ -1300,7 +1312,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 		if not act then
 			act, repo, ref = string.match(url, "^plotroom://issue/(%a+)/(.+)/([%w_%-]+)$")
 		end
-		if not act or (act ~= "worktree" and act ~= "goto" and act ~= "agent" and act ~= "agentgo" and not AGENT_CMD[act or ""] and act ~= "run") or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
+		if not act or not VALID_ACTS[act] or (act == "run" and not rid2) or not repo or not ref or not worktree.validProject(repo) or #ref > 64 then
 			cx:toast("error", "Plotroom: malformed link")
 			return true
 		end
@@ -1308,7 +1320,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 			return true
 		end
-		local node = if act == "goto" then GOTO_NODE elseif act == "agent" then AGENT_NODE elseif act == "agentgo" then AGENTGO_NODE elseif AGENT_CMD[act] then BUTTONS_PREFIX .. act elseif act == "run" then PROMPT_NODE .. (rid2 or "") else WORKTREE_NODE
+		local node = nodeOf(act, rid2)
 		if nodeProp(readNode(cx, pane, node), "href") ~= full then
 			cx:toast("error", "Plotroom: that issue is no longer listed", "Refresh and try again.")
 			return true
@@ -1342,14 +1354,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?,
 		cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		return true
 	end
-	local node = if kind == "open"
-		then OPEN_NODE
-		elseif kind == "goto" then GOTO_NODE
-		elseif kind == "agent" then AGENT_NODE
-		elseif kind == "agentgo" then AGENTGO_NODE
-		elseif AGENT_CMD[kind] then BUTTONS_PREFIX .. kind
-		elseif kind == "run" then PROMPT_NODE .. (id or "")
-		else WORKTREE_NODE
+	local node = nodeOf(kind, id)
 	local present = if kind == "show" then linkedListed(cx, pane, url) else nodeProp(readNode(cx, pane, node), "href") == full
 	if not present then
 		cx:toast("error", "Plotroom: that pull request is no longer listed", "Refresh and try again.")
@@ -1461,11 +1466,9 @@ tern.files.button({
 		end
 		if folder and files.host ~= "" then
 			local focused = cx.session:focused()
-			local ok, hosts = pcall(function()
-				return cx.hosts:list()
-			end)
+			local hosts = flows.hostsOf(cx)
 			local name: string? = nil
-			if focused and ok and type(hosts) == "table" then
+			if focused and hosts then
 				for _, h in hosts do
 					if type(h.panes) == "table" and table.find(h.panes, focused) then
 						if files.host == h.name or files.host == h.address or (h.kind == "local" and files.host == "local") then
