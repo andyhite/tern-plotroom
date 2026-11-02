@@ -7,6 +7,8 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Added
 
 - Commands › Configuration › Copy usage report: plain text with how often each queue action, Commands row, Tern's palette command and action ran (on this machine and on the block's host) and how each agent run ended, with the median run time. Counts live in kv `usage`, the newest 1000 runs in kv `runs`; nothing leaves the machine.
+- Get started: a first-run checklist above the preview until every line is done or it is dismissed (Commands › Get started shows it again): `gh` installed and signed in, `omp` installed, a checkout for each listed repository without one, and the one-key shortcuts (Use them / No thanks). Each line not done has one action: a setup guide, **Use <folder>** for a checkout found, or a folder to choose (a new or empty one gets a clone).
+- Checkout detection: a repository with no checkout is offered the folder Plotroom opened in, or the folder of an open Tern pane on the same host, when it is inside a checkout with a remote on that github.com repository (verified as Settings › Repositories verifies; the disk is never scanned). Worktree, an action and Type a prompt… offer it as **Use <folder>** before asking for a folder.
 
 ### Removed
 
@@ -17,6 +19,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Protocol 34: a repository's missing-checkout answer may name the folder found for it. A window still asks protocol 33 hosts, which ask for a folder as before.
 - Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
 - Settings has four pages: Views, Actions, Repositories and General (the GitHub and Jira setup pages still show while their CLI is missing). Repositories holds the name formats (formerly Worktrees), each repository and the Jira projects; General holds Keyboard shortcuts and Refresh now with the GitHub quota. Every setting keeps its value. Restore defaults is now **Add missing defaults**: it never overwrote edited defaults.
 - Tern's palette lists only Plotroom: Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input. Every other Plotroom command stays in Commands (`.`) with its key, and stays runnable by its action name `plugin.plotroom.<id>` (key binds, `tern ctl plugins run`).

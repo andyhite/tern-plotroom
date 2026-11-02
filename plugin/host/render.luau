@@ -1345,6 +1345,111 @@ local function inboxProps(state: State, props: { [string]: any })
 	})
 end
 
+-- The one-key shortcuts as the checklist decided them ("use" | "no"), "set" when none is left to bind, else nil.
+local function shortcutsChoice(saved: { [string]: any }?): string?
+	local chosen = if saved then saved.shortcuts else nil
+	if chosen == "use" or chosen == "no" then
+		return chosen
+	end
+	local map = keys.load()
+	for _, a in keys.ACTIONS do
+		if a.preset and map[a.id] == "" then
+			return nil
+		end
+	end
+	return "set"
+end
+
+-- The Get started checklist (PRODUCT.md › Principles 4), shown above the preview until every line is done or it is
+-- dismissed (kv `get-started`), and whenever Commands › Get started opened it. Each line has one action; a done line
+-- has none. Lines still being asked hide it, unless Get started opened it.
+local function checklist(state: State): Node?
+	if state.boardOn or state.agentsOn or state.inboxOn then
+		return nil
+	end
+	local saved = engine.getStarted()
+	if not state.getStarted and (not saved or saved.dismissed == true) then
+		return nil
+	end
+	engine.askSetup(state)
+	local setup = engine.setup
+	local lines: { Node } = {}
+	local todo, asking = 0, false
+	local function line(key: string, label: string, how: string, click: string?, value: string?, href: string?)
+		if how == "todo" then
+			todo += 1
+		elseif how == "wait" then
+			asking = true
+		end
+		table.insert(lines, ui.node("item", {
+			key = key,
+			label = label,
+			value = value,
+			icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil,
+			tone = if how == "done" then "success" elseif how == "wait" then "muted" else nil,
+			href = href,
+			actions = if click then { click = click } else nil,
+		}))
+	end
+	local gh = cli.installed.github
+	if gh == nil or (gh and setup.signedIn == nil) then
+		line("gh", "Checking gh…", "wait")
+	elseif not gh then
+		line("gh", "Install gh, GitHub's CLI", "todo", "setup-guide=gh", "Setup guide ↗")
+	elseif not setup.signedIn then
+		line("gh", "Sign in to gh: run gh auth login", "todo", "setup-guide=gh-login", "Setup guide ↗")
+	else
+		line("gh", "gh signed in" .. (if ghActive.login then " as @" .. ghActive.login else ""), "done")
+	end
+	if setup.omp == nil then
+		line("omp", "Checking omp…", "wait")
+	elseif setup.omp then
+		line("omp", "omp installed", "done")
+	else
+		line("omp", "Install omp, which runs the agents", "todo", "setup-guide=omp", "Setup guide ↗")
+	end
+	for _, repo in engine.missingCheckouts(state) do
+		local key = string.lower(repo)
+		local path = if state.found then state.found[key] else nil
+		if path == nil then
+			line("co:" .. key, "Looking for a checkout of " .. repo .. "…", "wait")
+		elseif type(path) == "string" then
+			line("co:" .. key, "Use " .. worktree.tilde(path, tern.getenv("HOME")) .. " as the checkout", "todo", "setup-use=" .. repo, repo)
+		else
+			line("co:" .. key, "Choose the checkout of " .. repo .. "…", "todo", "open", "A new or empty folder gets a clone", "plotroom://checkout/" .. repo)
+		end
+	end
+	local choice = shortcutsChoice(saved)
+	local shortcuts: Node
+	if choice then
+		shortcuts = ui.node("item", { key = "keys", label = if choice == "no" then "One-key shortcuts: no thanks" else "One-key shortcuts on", icon = "check", tone = "success" })
+	else
+		todo += 1
+		local letters: { string } = {}
+		for _, a in keys.ACTIONS do
+			if a.preset then
+				table.insert(letters, a.preset)
+			end
+		end
+		shortcuts = ui.node("row", { key = "keys", gap = "sm", wrap = true, align = "center" }, {
+			ui.node("text", { key = "what", spans = { ui.span("One-key shortcuts (" .. table.concat(letters, " ") .. ")") } }),
+			ui.node("item", { key = "use", role = "plotroom.button", basis = "content", label = "Use them", icon = "check", actions = { click = "setup-keys=use" } }),
+			ui.node("item", { key = "no", role = "plotroom.button", basis = "content", label = "No thanks", icon = "x", actions = { click = "setup-keys=no" } }),
+		})
+	end
+	if not state.getStarted and (asking or todo == 0) then
+		return nil
+	end
+	return ui.node("card", { key = "get-started" }, {
+		ui.node("text", { key = "head", spans = { ui.span("Get started", "strong"), ui.span("  " .. (if todo == 0 and not asking then "All set" else todo .. " to do"), "muted") } }),
+		ui.node("list", { key = "lines" }, lines),
+		shortcuts,
+		ui.node("list", { key = "end" }, {
+			ui.node("item", { key = "dismiss", label = if todo == 0 then "Close" else "Dismiss", icon = "x", tone = "muted", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
+		}),
+	})
+end
+
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
@@ -1521,8 +1626,13 @@ function M.queuePicker(state: State): Node
 		props.title = if #rest > 0 then rest else nil
 	end
 	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane.
-	props.preview = if props.selected then "side" else "none"
-	return ui.node("picker", props, if props.selected then preview else {})
+	local guide = checklist(state)
+	if guide then
+		table.insert(preview, 1, guide)
+	end
+	local shown = props.selected ~= nil or guide ~= nil
+	props.preview = if shown then "side" else "none"
+	return ui.node("picker", props, if shown then preview else {})
 end
 
 -- The Keep/Remove modal both worktree removals ask with: `tabbed` adds the warning that a tab works in the folder.

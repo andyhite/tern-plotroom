@@ -1365,6 +1365,7 @@ local usageReport: (WindowCx, number) -> () -- below: it names the commands of t
 
 M.COMMANDS = {
 	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
+	{ id = "get-started", title = "Plotroom: Get started", label = "Get started", group = "Configuration", run = send("get-started", nil) },
 	{
 		id = "agent-message-selection",
 		title = "Plotroom: Message an agent with the selection…",

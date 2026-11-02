@@ -543,7 +543,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(p.groups["scope:prs:v2"], "Views", "every sidebar scope is a Views row")
 	eq(p.labels["scope:worktrees"], "Worktrees", "the one before the last is Worktrees")
 	eq(p.groups.settings, "Configuration", "Settings and the shortcut list are Configuration")
-	same(p.commands, { "open-url", "usage-report", "pr-draft", "pr-approve", "pr-request-changes", "comment" }, "the commands: the ones that need no item, then what an open pull request takes (no merge without a known head, no branch update unless behind)")
+	same(p.commands, { "open-url", "get-started", "usage-report", "pr-draft", "pr-approve", "pr-request-changes", "comment" }, "the commands: the ones that need no item, then what an open pull request takes (no merge without a known head, no branch update unless behind)")
 	eq(p.commandGroups["pr-draft"], "GitHub - PR", "a pull request's operation is under GitHub - PR")
 	eq(p.commandGroups.comment, "GitHub - PR", "and so is its comment")
 	eq(p.commandGroups["open-url"], nil, "one that needs no item has only its own group")
@@ -677,7 +677,7 @@ case("host: with nothing listed the palette offers no item action, and its comma
 	eq(table.find(p.ids, "open"), nil, "so no item action is offered")
 	eq(p.groups.snoozed, "Filter & Sort", "the view's and the sidebar's remain")
 	eq(p.groups["scope:prs:v1"], "Views", "every scope still")
-	same(p.commands, { "open-url", "usage-report" }, "and the commands that need no item")
+	same(p.commands, { "open-url", "get-started", "usage-report" }, "and the commands that need no item")
 	local opened = #w.opened
 	b.event({ ev = "action", act = "queue", value = "worktree" })
 	eq(#w.opened, opened, "an item action does nothing with nothing selected")

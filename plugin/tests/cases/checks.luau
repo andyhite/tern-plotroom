@@ -2112,13 +2112,17 @@ case("host: an issue request reports an issue the block no longer lists, a missi
 	eq(#w.calls, ran, "and git was never asked anything")
 	request(b, "f2", { op = "issue", repo = "o/r", ref = "12", worktree = false })
 	eq(answerOf(b, "f2").path, "/work/r", "the main checkout needs no branch")
-	-- no saved checkout
+	-- no saved checkout: the window is asked for one, offered the folder the block opened in
 	forgetCheckouts(w)
 	request(b, "c1", { op = "issue", repo = "o/r", ref = "12", worktree = false })
+	w.flush()
 	eq(answerOf(b, "c1").needCheckout, "o/r", "no checkout, no main checkout: the window is asked for one")
+	eq(answerOf(b, "c1").found, "/work/r", "with the checkout the block opened in")
 	request(b, "c2", { op = "issue", repo = "o/r", ref = "12", worktree = true })
+	w.flush()
 	eq(answerOf(b, "c2").needCheckout, "o/r", "nor a worktree")
-	eq(#w.calls, ran, "and nothing ran")
+	eq(countLog(s.git, "worktree add"), 0, "and no worktree was made")
+	eq(w.kv.get("checkouts"), nil, "nor a checkout saved unasked")
 end)
 
 case("host: the branch format rejects unknown variables and saves per repository", function(w: World)

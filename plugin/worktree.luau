@@ -435,6 +435,29 @@ function M.claimCheckout(path: string, repo: string, account: string?, done: Cb<
 	end)
 end
 
+-- The checkout of `repo` holding the first of `paths` (tried in order) that resolveRepository accepts, as claimCheckout
+-- would save it: the main checkout's folder. Folders that do not exist are skipped; nothing is cloned or scanned.
+-- done(root?) once every path was tried.
+function M.findCheckout(paths: { string }, repo: string, done: (string?) -> ())
+	local function try(i: number)
+		local path = paths[i]
+		if not path then
+			return done(nil)
+		end
+		local ok, there = pcall(tern.fs.exists, path)
+		if not ok or not there then
+			return try(i + 1)
+		end
+		M.resolveRepository(path, repo, function(info)
+			if info then
+				return done(string.match(info.commonDir, "^(/.+)/%.git$") or info.root)
+			end
+			try(i + 1)
+		end)
+	end
+	try(1)
+end
+
 -- "owner/repo" of the checkout at `path` (the first github.com remote in origin/upstream/lexical order) and its main
 -- checkout: a linked worktree's main one, so a saved checkout outlives the worktree. Local git only, no network.
 function M.currentRepository(path: string, done: Cb<{ id: string, checkout: string }>)

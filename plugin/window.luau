@@ -692,6 +692,45 @@ local function settle(more: Settled?, add: Settled): Settled
 	return out
 end
 
+-- Asks for the checkout of `repo` and has the block's host verify and save it (a new or empty folder gets a clone), then
+-- runs `after`. `found`, the folder the host detected as one, is offered first as Use <path>; Another folder… asks.
+local function askCheckout(cx: WindowCx, pane: number, repo: string, found: string?, after: ((WindowCx) -> ())?)
+	local function claim(cx3: WindowCx, path: string)
+		ask(cx3, pane, "checkout", { repo = repo, path = path }, CLONE_WAIT_MS, function(b: any, cx4: WindowCx)
+			if b.ok == true then
+				cx4:toast("success", if b.cloned == true then "Cloned " .. repo else "Checkout saved", if type(b.root) == "string" then b.root else nil)
+				if after then
+					after(cx4)
+				end
+				return
+			end
+			cx4:toast("error", "Checkout not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
+		end)
+	end
+	local function prompt(cx2: WindowCx)
+		cx2:prompt({ placeholder = "Folder of your checkout of " .. repo .. " (a new or empty folder gets a clone)", icon = "merge", action = "save" }):next(function(text, _, cx3)
+			if cx3 and text and string.find(text, "%S") then
+				claim(cx3, text)
+			end
+		end)
+	end
+	if not found then
+		return prompt(cx)
+	end
+	local items: { PickItem } = {
+		{ label = "Use " .. found, detail = "A checkout of " .. repo .. " found open in Tern" },
+		{ label = "Another folder…", detail = "A new or empty folder gets a clone", typed = true },
+	}
+	cx:pick({ items = items, placeholder = "Checkout of " .. repo .. "?", icon = "merge", action = "save" }):next(function(item, _, cx3)
+		if not item or not cx3 then
+			return
+		elseif item.typed then
+			return prompt(cx3)
+		end
+		claim(cx3, found)
+	end)
+end
+
 -- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
 -- worktree (noted on the block) and open its tab. `wt` false: the repository's main checkout, no worktree.
 -- What the host still needs is asked in the palette, then this runs again with `more`: a checkout folder of the
@@ -706,20 +745,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 		if a.busy == true then
 			return cx2:toast("info", "A worktree for " .. t.label .. " is already being prepared")
 		elseif type(a.needCheckout) == "string" then
-			local repo: string = a.needCheckout
-			cx2:prompt({ placeholder = "Folder of your checkout of " .. repo .. " (a new or empty folder gets a clone)", icon = "merge", action = "save" }):next(function(text, _, cx3)
-				if not cx3 or not text or not string.find(text, "%S") then
-					return
-				end
-				ask(cx3, pane, "checkout", { repo = repo, path = text }, CLONE_WAIT_MS, function(b: any, cx4: WindowCx)
-					if b.ok == true then
-						cx4:toast("success", if b.cloned == true then "Cloned " .. repo else "Checkout saved", if type(b.root) == "string" then b.root else nil)
-						return again(cx4, {})
-					end
-					cx4:toast("error", "Checkout not saved", if type(b.problem) == "string" then b.problem else "The block's host could not save it")
-				end)
+			return askCheckout(cx2, pane, a.needCheckout, if type(a.found) == "string" then a.found else nil, function(cx4: WindowCx)
+				again(cx4, {})
 			end)
-			return
 		elseif a.needRepo == true then
 			local project: string = if type(a.project) == "string" then a.project else t.repo
 			local items: { PickItem } = {}
@@ -1267,6 +1295,18 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		else
 			flows.openGit(cx, pane, full)
+		end
+		return true
+	end
+	local cOwner, cName = string.match(url, "^plotroom://checkout/([^/]+)/([^/]+)$")
+	if string.sub(url, 1, 20) == "plotroom://checkout/" then
+		-- The Get started checklist's line for a repository whose checkout was not found: ask for a folder.
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif not cOwner or not cName or not worktree.validSegment(cOwner) or not worktree.validSegment(cName) then
+			cx:toast("error", "Plotroom: malformed link")
+		else
+			askCheckout(cx, pane, cOwner .. "/" .. cName, nil, nil)
 		end
 		return true
 	end

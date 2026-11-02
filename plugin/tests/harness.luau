@@ -509,12 +509,13 @@ local function newWorld(instantiate: Loader, context: string): World
 	local copied: { string } = {}
 	local frames: { { pane: number, ops: any } } = {}
 	local calls: { Call } = {}
-	-- gh and acli start unless a model of them says otherwise (newGh, newAcli answer first): a block asks each for its
-	-- --version before it lists any view, and once acli starts, whether the Jira site has sprints (it has).
+	-- gh, acli and omp start unless a model of them says otherwise (newGh, newAcli answer first): a block asks gh and acli
+	-- for their --version before it lists any view (the Get started checklist asks omp's), and once acli starts, whether
+	-- the Jira site has sprints (it has).
 	local responders: { Responder } = {
 		function(call: Call): Reply?
 			local argv = call.argv
-			if (argv[1] == "gh" or argv[1] == "acli") and argv[2] == "--version" and #argv == 2 then
+			if (argv[1] == "gh" or argv[1] == "acli" or argv[1] == "omp") and argv[2] == "--version" and #argv == 2 then
 				return { stdout = argv[1] .. " version 1.0.0\n" }
 			end
 			if argv[1] == "acli" and argv[4] == "search" and argv[#argv] == "--count" then
@@ -940,6 +941,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		["wt-cleanup"] = "u",
 		["wt-remove"] = "d",
 	})
+	-- The Get started checklist is dismissed, so previews show only the item; a case about it drops this
+	-- (`w.kv.store["get-started"] = nil :: any`).
+	kvStore["get-started"] = jsonEncode({ dismissed = true })
 
 	-- fs: absolute paths only; failures raise
 	local files: { [string]: string } = {}

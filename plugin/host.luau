@@ -986,6 +986,27 @@ local function blockDef(): BlockDef<State>
 				requests.unpin(state)
 			elseif act == "unsnooze" then
 				engine.mark(state, "unsnooze")
+			elseif act == "get-started" then
+				-- Commands › Get started: the checklist shows, done or dismissed, until its Dismiss.
+				state.getStarted, state.setupAt = true, nil
+			elseif act == "setup-dismiss" then
+				state.getStarted = false
+				local err = engine.saveGetStarted("dismissed", true)
+				if err then
+					state.cx:toast("error", "Not saved", err)
+				end
+				engine.propagate(state)
+			elseif act == "setup-guide" and type(ev.value) == "string" and engine.SETUP_GUIDES[ev.value] then
+				state.cx:open(engine.SETUP_GUIDES[ev.value])
+			elseif act == "setup-use" and type(ev.value) == "string" then
+				engine.useFound(state, ev.value)
+			elseif act == "setup-keys" and (ev.value == "use" or ev.value == "no") then
+				local err = if ev.value == "use" then settings.presetKeys(state) else nil
+				err = err or engine.saveGetStarted("shortcuts", ev.value)
+				if err then
+					state.cx:toast("error", "Not saved", err)
+				end
+				engine.propagate(state)
 			elseif act == "queue" then
 				-- The command palette's pick: only an action it offers now runs.
 				for _, a in requests.paletteActions(state) do

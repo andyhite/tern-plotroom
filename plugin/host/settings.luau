@@ -1093,6 +1093,37 @@ function M.confirmDelete(state: State)
 	end
 end
 
+-- Binds the one-key shortcuts (keys.preset) and says so; why not, or nil. Keys of saved prompt actions are as taken as
+-- another action's.
+function M.presetKeys(state: State): string?
+	local used: { [string]: boolean } = {}
+	local err: string? = select(2, keys.load())
+	for _, other in { KINDS.prs, KINDS.issues } do
+		if err then
+			break
+		end
+		local prompts, bad = loadPrompts(other)
+		if not prompts then
+			err = bad
+			break
+		end
+		for _, p in prompts.items do
+			if p.key then
+				used[p.key] = true
+			end
+		end
+	end
+	local skipped: { string }? = nil
+	if not err then
+		skipped, err = keys.preset(used)
+	end
+	if skipped then
+		propagate(state)
+		state.cx:toast("success", "One-key shortcuts set", if #skipped > 0 then "Skipped, key in use: " .. table.concat(skipped, ", ") else nil)
+	end
+	return err
+end
+
 function M.runAction(state: State, act: string, row: string)
 	local s = state.settings
 	if not s then
@@ -1103,33 +1134,7 @@ function M.runAction(state: State, act: string, row: string)
 	elseif act == "add-prompt" then
 		addPrompt(state, row)
 	elseif act == "preset-keys" then
-		-- Keys of saved prompt actions are as taken as another action's.
-		local used: { [string]: boolean } = {}
-		local err: string? = select(2, keys.load())
-		for _, other in { KINDS.prs, KINDS.issues } do
-			if err then
-				break
-			end
-			local prompts, bad = loadPrompts(other)
-			if not prompts then
-				err = bad
-				break
-			end
-			for _, p in prompts.items do
-				if p.key then
-					used[p.key] = true
-				end
-			end
-		end
-		local skipped: { string }? = nil
-		if not err then
-			skipped, err = keys.preset(used)
-		end
-		s.errors[row] = err
-		if skipped then
-			propagate(state)
-			state.cx:toast("success", "One-key shortcuts set", if #skipped > 0 then "Skipped, key in use: " .. table.concat(skipped, ", ") else nil)
-		end
+		s.errors[row] = M.presetKeys(state)
 	elseif act == "restore-views" then
 		-- Saves back the default views the row's group has none of the same kind and name of, as views of that group
 		-- (running as its login, as Add view's do); the others, edited defaults included, stay.

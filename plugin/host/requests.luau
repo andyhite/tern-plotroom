@@ -79,6 +79,14 @@ local function reply(state: State, id: string, body: { [string]: any })
 	state.cx:open("plotroom://rpc/" .. id)
 end
 
+-- Answers `id` that `repo` needs a checkout, with the folder detection found for it (`found`), if any, so the window
+-- offers Use <path> before asking for one.
+local function needCheckout(state: State, id: string, repo: string)
+	engine.detectCheckout(state, repo, function(path)
+		reply(state, id, { needCheckout = string.lower(repo), found = path })
+	end)
+end
+
 -- `repo`'s saved setup commands (Settings › Repositories) as one shell line that stops at the first failure, blank ones
 -- left out; nil if none.
 local function setupLine(repo: string): string?
@@ -222,7 +230,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 	end
 	local checkout = checkoutOf(repo)
 	if not checkout then
-		return reply(state, id, { needCheckout = string.lower(repo) })
+		return needCheckout(state, id, repo)
 	end
 	local function naming(meta: github.PrMeta): (string?, string?)
 		return formats.prDir(repo, n, meta.title)
@@ -258,7 +266,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					return
 				end
 				if problem == worktree.NO_REPO then
-					return reply(state, id, { needCheckout = string.lower(repo) })
+					return needCheckout(state, id, repo)
 				end
 				if not r then
 					local why = problem or "Worktree failed"
@@ -355,7 +363,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 	end
 	local checkout = checkoutOf(code)
 	if not checkout then
-		return reply(state, id, { needCheckout = string.lower(code) })
+		return needCheckout(state, id, code)
 	end
 	local vars = issueVars(issue, code)
 	local fmt = formats.issueBranch(code)
@@ -405,7 +413,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				return
 			end
 			if why == worktree.NO_REPO then
-				return reply(state, id, { needCheckout = string.lower(code) })
+				return needCheckout(state, id, code)
 			end
 			if not names then
 				return reply(state, id, { problem = why or "The remote's branches could not be listed." })
@@ -453,7 +461,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				end
 				preparing[key] = nil
 				if problem == worktree.NO_REPO then
-					return reply(state, id, { needCheckout = string.lower(code) })
+					return needCheckout(state, id, code)
 				end
 				if not r then
 					local failed = problem or "Worktree failed"
@@ -1139,7 +1147,7 @@ end
 -- An item's own operation carries the heading of its type (`group`: "GitHub - PR", "GitHub - Issue" or "Jira - Issue");
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
-	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "usage-report" } }
+	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "get-started" }, { id = "usage-report" } }
 	if state.inboxOn and #state.inbox.rows > 0 then
 		table.insert(out, { id = "inbox-read", group = "Inbox" })
 	end

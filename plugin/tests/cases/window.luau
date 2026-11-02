@@ -676,19 +676,21 @@ windowCase("window: a source pane that closed meanwhile gets a toast but no tab"
 	has(cardText(b), s.target, "and the block noted the worktree")
 end)
 
-windowCase("window: PR worktree without a checkout asks for one, then continues", function(w: World)
+windowCase("window: PR worktree without a checkout offers the checkout the block opened in, then continues", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
 	local s = scene(w, worktree, "o", "r", 5)
 	linkQueue(w, s)
 	w.kv.put("checkouts", {})
-	w.window.typed = "/work/r"
+	w.window.choose = "Use /work/r"
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()
+	same(asks.rows(w.window.picks[1]), { "Use /work/r — A checkout of o/r found open in Tern", "Another folder… — A new or empty folder gets a clone" }, "the folder found first, then any other")
+	eq(#w.window.prompts, 0, "no folder was typed")
 	local sent = requestsSent(w)
 	eq(#sent, 3, "the worktree request, the checkout it led to, then the worktree request again")
 	eq(sent[1].op, "worktree", "first the worktree")
-	eq(sent[2].op, "checkout", "then the folder the user gave")
+	eq(sent[2].op, "checkout", "then the folder found")
 	eq(sent[2].repo, "o/r", "for the repository")
 	eq(sent[2].path, "/work/r", "and that path")
 	eq(sent[3].op, "worktree", "and the worktree once more")
@@ -696,6 +698,7 @@ windowCase("window: PR worktree without a checkout asks for one, then continues"
 	eq(w.toasts[#w.toasts].level, "success", "the worktree is made")
 	has(w.toasts[#w.toasts].text, "o/r#5", "for the pull request")
 	eq(countLog(s.git, "worktree add"), 1, "once")
+	w.window.choose = nil
 	w.window.typed = nil
 	w.kv.put("checkouts", {})
 	w.click(prLink("worktree", "o/r", 5))

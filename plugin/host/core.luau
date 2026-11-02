@@ -238,6 +238,10 @@ export type State = {
 	boardFinished: { string }?, -- the board rows whose removal is being confirmed together (Remove finished worktrees)
 	boardBusy: boolean, -- an inventory, a changes read, a cleanup check or a removal is running
 	boardAt: number?, -- the previewed row's place in the list: a removed row hands the preview to the row that took its place
+	getStarted: boolean?, -- Commands › Get started showed the checklist, whatever kv `get-started` says, until it is dismissed
+	found: { [string]: string | false }?, -- lowercase repository without a checkout -> the folder detection found for it (false: none), as last asked
+	setupAt: number?, -- when the checklist's facts and detection were last asked (os.time)
+	setupAsking: boolean?, -- they are being asked
 }
 
 M.running = {} :: { [number]: State }

@@ -1151,6 +1151,46 @@ def sc_scan(s: Smoke) -> None:
     s.eq(".github ref", "refs/plotroom-pr/github/%2Egithub/pr-1", dot["github/.github#1"].get("ref"))
 
 
+def sc_get_started(s: Smoke) -> None:
+    """A first run, in this run's fresh config directory: Plotroom opened outside any checkout, with a shell tab open in the checkout of the listed
+    repository, shows Get started; its line for that repository offers that checkout (found from the shell's folder, verified by git), Use saves it,
+    No thanks settles the shortcuts, the checklist goes once every line is done, and the selected pull request's worktree is made. Settings is never
+    opened."""
+    root, wt, sha = s.checkout("start"), s.wt("s/tart", 1), s.shas[("s/tart", 1)]
+    plain = s.tmp / "plain"
+    plain.mkdir()
+    stamp = "2026-01-01T00:00:00Z"
+    pr = {"number": 1, "title": "Start PR 1", "url": "https://github.com/s/tart/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
+          "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+          "labels": [], "runs": [], "runTotal": 0}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(root)  # the checkout is open in a Tern tab
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(plain)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_text("the pull request", "Start PR 1")
+    s.wait_text("the checklist", "Get started")
+    s.wait_text("the checkout found in the other tab", "Use %s as the checkout" % root)
+    s.shot("get-started")
+    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart']")
+    s.wait_text("Use saves it", "Checkout saved")
+    s.wait_until("the checkout's line is done", lambda: not any("as the checkout" in t for t in s.texts()))
+    s.ctl_ok("click", "[data-id$='get-started.keys.no']")
+    s.wait_until("every line done: the checklist goes", lambda: not any(t == "Get started" for t in s.texts()))
+    s.select_row()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.worktree-selected")
+    s.wait_text("the worktree toast", "Worktree ready for s/tart#1")
+    s.eq("worktree HEAD", sha, s.out(wt, "rev-parse", "HEAD"))
+    s.eq("worktree branch (the PR's own)", "feature-1", s.out(wt, "branch", "--show-current"))
+    s.same_path("made from the checkout found", root / ".git", s.out(wt, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    s.eq("Settings was never opened", False, any(t == "Repositories" for t in s.texts()))
+    s.ctl_ok("tab", "new")  # later scenarios type into the focused shell
+    s.ctl_ok("ready")
+
+
 def sc_remote_host(s: Smoke) -> None:
     """A Plotroom block on another host (an attached loopback daemon) shows a worktree that was made before it existed
     on its card from git alone, then gets its worktree from its own host half, run where the block runs: the window half
@@ -1735,6 +1775,7 @@ SCENARIOS = [
     ("scan", sc_scan),
     ("issue on a linked PR", sc_issue_pr),
     ("remote branches", sc_remote_branches),
+    ("first run: Get started to a worktree", sc_get_started),
     ("remote host", sc_remote_host),
     ("worktree inventory", sc_inventory),
     ("draft preview and push", sc_draft_push),
@@ -1775,6 +1816,7 @@ def check_smoke() -> str:
         s.repo("d", "raft", "draft", ())
         s.repo("f", "low", "flow", (5,))
         s.repo("a", "gent", "agent", (1,))
+        s.repo("s", "tart", "start", (1,))
         s.start()
         s.selftest()
         for number, (name, scenario) in enumerate(SCENARIOS, 1):

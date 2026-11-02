@@ -2525,6 +2525,7 @@ windowCase("window: Worktree asked again once its checkout was given does not an
 	local s = scene(w, worktree, "o", "r", 5)
 	linkQueue(w, s)
 	w.kv.put("checkouts", {})
+	w.window.choose = "Another folder…" -- passes over the checkout the block opened in, to type one
 	w.window.typed = "/work/r"
 	w.click(prLink("worktree", "o/r", 5))
 	w.flush()

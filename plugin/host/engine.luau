@@ -660,6 +660,150 @@ function M.claimCheckout(state: State, repo: string, path: string, busy: string,
 	return nil
 end
 
+-- ---------------------------------------------------------------- Get started
+
+local GET_STARTED = "get-started" -- kv: { dismissed = true?, shortcuts = "use" | "no"? }
+local SETUP_S = 10 -- while the checklist may show, its facts and detection are asked again at most this often
+
+-- What the checklist knows of this host, as last asked; nil: not known yet.
+M.setup = { omp = nil :: boolean?, signedIn = nil :: boolean? }
+
+-- Where each checklist line that is not done points.
+M.SETUP_GUIDES = {
+	gh = "https://github.com/cli/cli#installation",
+	["gh-login"] = "https://cli.github.com/manual/gh_auth_login",
+	omp = "https://github.com/can1357/oh-my-pi",
+} :: { [string]: string }
+
+-- kv `get-started`; nil when it cannot be read (it is then never written over, and the checklist only shows when asked).
+function M.getStarted(): { [string]: any }?
+	return (storage.readMap(GET_STARTED, "the Get started checklist"))
+end
+
+-- Sets `field` of kv `get-started`; an error message or nil.
+function M.saveGetStarted(field: string, value: any): string?
+	return storage.editMap(GET_STARTED, "the Get started checklist", function(map: { [string]: any }): (string?, boolean?)
+		map[field] = value
+		return nil, nil
+	end)
+end
+
+-- The repositories of the listed items that have no checkout, each once, in list order.
+function M.missingCheckouts(state: State): { string }
+	local out: { string } = {}
+	local seen: { [string]: boolean } = {}
+	local saved = readCheckouts()
+	local items: { any } = if state.snap then state.snap.items else {}
+	for _, item in items do
+		local repo: string? = if type(item.number) == "number" then item.repo else M.codeRepoOf(item)
+		local key = if repo then string.lower(repo) else nil
+		if repo and key and not seen[key] then
+			seen[key] = true
+			local path = saved[key]
+			if type(path) ~= "string" or path == "" then
+				table.insert(out, repo)
+			end
+		end
+	end
+	return out
+end
+
+-- The folders known to belong to some repository, in the order detection tries them: the one the block opened in, then
+-- the working directory of every pane on this host. tern.pane.list lists only this host's panes, so a pane on another
+-- host never counts.
+function M.knownFolders(state: State): { string }
+	local out: { string } = {}
+	local seen: { [string]: boolean } = {}
+	local function add(p: string?)
+		if type(p) == "string" and p ~= "" and not seen[p] then
+			seen[p] = true
+			table.insert(out, p)
+		end
+	end
+	add(state.launchCwd)
+	for _, p in tern.pane.list() do
+		add(p.cwd)
+	end
+	return out
+end
+
+-- The checkout of `repo` found among the known folders, verified as Settings verifies one; done(path?) unless the block
+-- is gone. ponytail: git runs per folder per repository; cache per folder if many panes ever make it slow.
+function M.detectCheckout(state: State, repo: string, done: (string?) -> ())
+	worktree.findCheckout(M.knownFolders(state), repo, function(path)
+		if M.alive(state) then
+			done(path)
+		end
+	end)
+end
+
+-- Asks what the checklist shows: whether omp starts, whether gh is signed in, and a checkout folder for each listed
+-- repository without one. Again only after SETUP_S, or at once when a listed repository was never looked for or gh,
+-- found to start after the last round (its probe renders every block), was never asked about its sign-in.
+function M.askSetup(state: State)
+	local missing = M.missingCheckouts(state)
+	local fresh = state.setupAt ~= nil and os.time() - state.setupAt < SETUP_S and (cli.installed.github ~= true or M.setup.signedIn ~= nil)
+	for _, repo in missing do
+		fresh = fresh and state.found ~= nil and state.found[string.lower(repo)] ~= nil
+	end
+	if state.setupAsking or fresh then
+		return
+	end
+	state.setupAsking = true
+	local found: { [string]: string | false } = {}
+	local pending = 1
+	local function one()
+		pending -= 1
+		if pending == 0 then
+			state.setupAsking, state.setupAt, state.found = false, os.time(), found
+			state.cx:render()
+		end
+	end
+	pending += 1
+	process.run({ "omp", "--version" }, { timeout_ms = 10000 }, function(result)
+		M.setup.omp = result ~= nil
+		if M.alive(state) then
+			one()
+		end
+	end)
+	if cli.on("github") then
+		pending += 1
+		github.accounts(function(list)
+			M.setup.signedIn = list ~= nil and #list > 0
+			if M.alive(state) then
+				one()
+			end
+		end)
+	end
+	for _, repo in missing do
+		pending += 1
+		M.detectCheckout(state, repo, function(path)
+			found[string.lower(repo)] = path or false
+			one()
+		end)
+	end
+	one()
+end
+
+-- Saves the folder detection found for `repo` as its checkout, verified again first.
+function M.useFound(state: State, repo: string)
+	local path = if state.found then state.found[string.lower(repo)] else nil
+	if type(path) ~= "string" then
+		return
+	end
+	local busy = M.claimCheckout(state, repo, path, "The checkout of " .. repo .. " is already being set up", "The checkout of " .. repo .. " changed meanwhile", function(claimed, err)
+		if err or not claimed then
+			state.cx:toast("error", "Checkout not saved", err)
+		else
+			state.cx:toast("success", "Checkout saved", claimed.root)
+		end
+		state.cx:render()
+	end)
+	if busy then
+		state.cx:toast("info", busy)
+	end
+end
+
 -- The active view's integration: what a search, wait or heading of the block belongs to.
 function M.trackerOf(state: State): string
 	local v = M.activeView(state)
