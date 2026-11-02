@@ -503,7 +503,7 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	end
 	button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } })
 	if note.path and tern.fs.exists(note.path) then
-		button({ key = "git", label = "Open in Git", icon = "merge", aria = "Open Tern's git view on this worktree", actions = { click = "open-git" } })
+		button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } })
 	end
 	table.insert(body, ui.node("row", { key = "actions", gap = "sm", wrap = true }, buttons))
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
@@ -667,8 +667,8 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 				name = "globe",
 				href = hrefOf(state, pr, "open"),
 				actions = { click = "open" },
-				title = "Open in " .. INTEGRATIONS.github.label,
-				aria = "Open pull request #" .. pr.number .. " in " .. INTEGRATIONS.github.label,
+				title = "Open",
+				aria = "Open pull request #" .. pr.number,
 			}),
 			ui.node("col", { key = "fill", grow = 1 }),
 			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
@@ -883,8 +883,8 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 				name = "globe",
 				href = hrefOf(state, issue, "open"),
 				actions = { click = "open" },
-				title = "Open in " .. INTEGRATIONS[issue.tracker].label,
-				aria = "Open issue " .. ref .. " in " .. INTEGRATIONS[issue.tracker].label,
+				title = "Open",
+				aria = "Open issue " .. ref,
 			}),
 			ui.node("col", { key = "fill", grow = 1 }),
 			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
@@ -996,7 +996,7 @@ function M.scopeRows(state: State): ({ any }, string?)
 	end
 	table.insert(scopes, {
 		id = "worktrees",
-		label = "Worktrees list",
+		label = "Worktrees",
 		icon = "folder",
 		count = if not dropdown and state.board.loaded then #engine.boardRows(state) else nil,
 		group = if grouped then "Worktrees" else nil,
@@ -1126,7 +1126,7 @@ local function boardProps(state: State, props: { [string]: any })
 	props.icon, props.title, props.subtitle, props.noun = "folder", { ui.span("Worktrees", "strong") }, sub, "worktrees"
 	props.placeholder = "Worktrees are not searched"
 	props.state = if state.boardBusy and not state.board.loaded then "loading" else "ready"
-	props.empty = { ui.span(if next(readCheckouts()) == nil then "No saved checkouts yet: add a repository's checkout in Settings." else "No worktrees found.", "muted") }
+	props.empty = { ui.span(if next(readCheckouts()) == nil then "No checkouts yet: add a repository's checkout in Settings › Repositories." else "No worktrees found.", "muted") }
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if row then pickerId("w", row.id) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
@@ -1380,8 +1380,9 @@ function M.queuePicker(state: State): Node
 		table.insert(strip, "Needs attention only")
 	end
 	if view and not engine.isPin(view.id) then
-		-- Always shown, attention filter or not: which order the list is in. A view with no saved sort keeps the search's own.
-		table.insert(strip, 1, "Sort: " .. (if view.sort then sorting.label(view.sort) elseif view.kind == "issues" then "Default (status order)" else "Default (search order)"))
+		-- Always shown, attention filter or not: which order the list is in. A view with no saved sort keeps GitHub's
+		-- search order, or Jira's status order.
+		table.insert(strip, 1, "Sort: " .. (if view.sort then sorting.label(view.sort) elseif view.integration == "github" then "GitHub's order" else "Default (status order)"))
 	end
 	if state.showSnoozed then
 		note(ui.span("Snoozed shown", "muted"))
@@ -1444,7 +1445,7 @@ function M.queuePicker(state: State): Node
 	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
 	local hiddenBy = if state.attention then "Needs attention only" else "snoozing"
 	local hiddenKey = if state.attention then "attention" else "snoozed"
-	local hiddenHow = if map[hiddenKey] ~= "" then "press " .. map[hiddenKey] else "pick " .. (if state.attention then "Needs attention only" else "Show or hide snoozed") .. " in the command palette"
+	local hiddenHow = if map[hiddenKey] ~= "" then "press " .. map[hiddenKey] else "pick " .. (if state.attention then "Needs attention only" else "Show or hide snoozed") .. " in Commands"
 
 	-- Neither integration is on: the setup pages in Settings are all there is.
 	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
@@ -1461,13 +1462,13 @@ function M.queuePicker(state: State): Node
 		title = title,
 		subtitle = if #subtitle > 0 then subtitle else nil,
 		noun = state.kind.many,
-		placeholder = "Filter the loaded " .. state.kind.many,
+		placeholder = "Search the loaded " .. state.kind.many,
 		-- Nothing loads until the CLIs answered.
 		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
 			ui.span(
 				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by " .. hiddenBy .. "; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
-					else (if none then "Neither gh nor acli is installed on this host. " else "No saved views yet. ")
+					else (if none then "Neither gh nor acli is installed on this host. " else "No views yet. ")
 						.. (if map.settings ~= "" then "Press " .. map.settings .. " to "
 							elseif map.more ~= "" then "Press " .. map.more .. " and pick Settings to "
 							else "Open Settings to ")
@@ -1510,6 +1511,14 @@ function M.queuePicker(state: State): Node
 		if #strip > 0 then
 			props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
 		end
+	end
+	-- Narrow: the scope dropdown beside the title names the view or list, so the title keeps only its markers.
+	if dropdown and activeScope and type(props.title) == "table" then
+		local rest: { any } = {}
+		for i = 2, #props.title do
+			table.insert(rest, props.title[i])
+		end
+		props.title = if #rest > 0 then rest else nil
 	end
 	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane.
 	props.preview = if props.selected then "side" else "none"

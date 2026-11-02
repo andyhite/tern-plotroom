@@ -123,7 +123,7 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	same(labels, { "Type a prompt…", "Review", "Triage" }, "typing, then only the prompts the view lists; one it leaves out and one with no text are not offered")
 	eq(items[1].detail, "Send your own text", "typing says what it does")
 	eq(items[2].group, "For My PRs", "a prompt of a restricted view has that view's group")
-	eq(items[2].detail, "Review {url}", "and its first line as its detail")
+	eq(items[2].detail, "Review https://github.com/o/r/pull/5", "and its first line, filled for the selected PR, as its detail")
 	eq(items[3].group, "For My PRs", "so does the next")
 	eq(#w.window.picks, 1, "nothing but the picker is asked")
 	eq(#w.window.agents, 1, "one agent")
@@ -153,6 +153,26 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.flush()
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
 	eq(w.toasts[#w.toasts].sub, nil, "a typed prompt has no name, so the toast has no second line")
+end)
+
+windowCase("window: Commands rows show an action's detail filled for the selected item, or none, never a {placeholder}", function(w: World)
+	local _, b = agentScene(w)
+	savePrompts(w, {
+		promptOf("p1", "Review", "Review {url} by {author}\nthen summarise"),
+		promptOf("p2", "Push", "Push to {remote}"),
+		promptOf("p3", "Odd", "Look at {nope}"),
+	})
+	b.render()
+	w.click("plotroom://more")
+	w.flush()
+	local byLabel: { [string]: any } = {}
+	for _, item in w.window.picks[#w.window.picks].items do
+		yes(item.detail == nil or not string.find(item.detail, "{", 1, true), "no {placeholder} in the detail of " .. item.label)
+		byLabel[item.label] = item
+	end
+	eq(byLabel.Review.detail, "Review https://github.com/o/r/pull/5 by octo", "the first line, filled from the selected PR")
+	eq(byLabel.Push.detail, nil, "a variable only a worktree knows leaves no detail")
+	eq(byLabel.Odd.detail, nil, "nor does an unknown one")
 end)
 
 windowCase("window: an unreadable agent-recent is not written over by a pick", function(w: World)
@@ -250,7 +270,7 @@ windowCase("window: saved prompts the host cannot read are reported, and a promp
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(w.toasts[1].level, "error", "the user is told")
-	eq(w.toasts[1].text, "Saved actions are not listed", "what is missing")
+	eq(w.toasts[1].text, "Actions are not listed", "what is missing")
 	has(w.toasts[1].sub, "malformed", "and why")
 	eq(#promptPicks(w)[1].items, 1, "the picker still opens")
 	eq(w.window.agents[1].prompt, "Look at https://github.com/o/r/pull/5", "to type a prompt")
@@ -815,7 +835,7 @@ windowCase("window: a host one protocol older serves the ops it knows and refuse
 	eq(timeouts, 1, "only the asked op can time out; the refused one never does")
 	nodes[1].p.text = tostring(current - 2)
 	w.advance(2100)
-	eq((w.window.status :: any)({ pane = 1 })[1].text, "Plotroom on host1: protocol mismatch", "a host below the range shows the mismatch, naming the host")
+	eq((w.window.status :: any)({ pane = 1 })[1].text, "Plotroom on host1 is a different version from this window's", "a host below the range shows the mismatch, naming the host")
 	said = #w.toasts
 	w.click(prLink("agent", "o/r", 5))
 	eq(w.toasts[said + 1].text, "Plotroom on host1 is another version", "and is refused as another version")

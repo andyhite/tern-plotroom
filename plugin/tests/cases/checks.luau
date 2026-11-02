@@ -541,7 +541,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(findKey(path, "v").p.truncate, "middle", "cut in the middle when it is long")
 	eq(findKey(path, "v").p.title, target, "the tooltip has all of it")
 	eq(findKey(path, "copy", "icon").p.href, target, "and so does the copy icon")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "no tab works in it: open one, remove it, or open Tern's git view on it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open Git view" }, "no tab works in it: open one, remove it, or open Tern's Git view on it")
 	local open: any = findKey(cardOf(b), "open", "item")
 	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
 	eq(open.p.actions.click, "worktree", "and is the Worktree button")
@@ -553,7 +553,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "a click opens the Worktree link, as the key does")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
-	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree", "git:Open in Git" }, "while a tab works in it, the button goes there instead")
+	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree", "git:Open Git view" }, "while a tab works in it, the button goes there instead")
 	same(findKey(cardOf(b), "go", "item").p.hint, { "g" }, "wearing the Go to tab key")
 	pressCard(b, "go")
 	eq(w.opened[#w.opened], prLink("goto", "o/r", 1), "and its click opens the Go to tab link")
@@ -647,7 +647,7 @@ case("host: the card and the Worktrees list offer Open in Git while the folder e
 	local target = "/wt/plotroom-o_r-pr-1"
 	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
 	w.flush()
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "the card has the button")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open Git view" }, "the card has the button")
 	eq(buttonLink(b, "git"), h.tokened("plotroom://worktrees/git"), "and its link")
 	pressCard(b, "git")
 	eq(w.opened[#w.opened], h.tokened("plotroom://worktrees/git"), "a click opens that link")
@@ -937,7 +937,7 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(badgeOf(b, 2), nil, "the PR with no worktree wears none")
 	same(chipsOf(b), { "Up to date", "Changes unchecked" }, "the card: at the PR's head, its changes unread")
 	eq(cardOf(b).p.tone, nil, "no tone either")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "with the buttons that open a tab in it or remove it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open Git view" }, "with the buttons that open a tab in it or remove it")
 	has(cardText(b), "plotroom/o/r/pr-1", "its branch")
 	has(cardText(b), path, "and where it is")
 	eq(countLog(s.git, "worktree list"), 1, "git listed the checkout once")
@@ -1277,7 +1277,7 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	request(b, "m1", { op = "menu" })
 	w.flush()
-	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", send = "Review {url}\nthen report", worktree = true } }, "a well-formed request is answered with the saved prompts")
+	same(answerOf(b, "m1").items, { { id = "p1", label = "Review", detail = "Review https://github.com/o/r/pull/1", group = "All actions", send = "Review {url}\nthen report", worktree = true } }, "a well-formed request is answered with the saved prompts")
 	eq(w.opened[#w.opened], "plotroom://rpc/m1", "and announced")
 end)
 
@@ -1286,7 +1286,7 @@ case("host: the published command palette carries no prompt text, the picker's m
 	local b = openQueue(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	b.render()
-	same(jsonDecode(findKey(b.view().main, "palette").p.text).items, { { id = "p1", label = "Review", detail = "Review {url}", group = "All actions", worktree = true } }, "names and details only")
+	same(jsonDecode(findKey(b.view().main, "palette").p.text).items, { { id = "p1", label = "Review", detail = "Review https://github.com/o/r/pull/1", group = "All actions", worktree = true } }, "names and details only")
 	request(b, "m2", { op = "menu" })
 	w.flush()
 	eq(answerOf(b, "m2").items[1].send, "Review {url}\nthen report", "the picker's menu keeps the text")
@@ -1371,7 +1371,7 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	eq(b.title(), "Plotroom · Assigned to me (3) · 2 new", "the title names the filter, counts the issues and the new ones")
 	eq(pickerOf(b).noun, "issues", "the picker counts issues")
-	eq(pickerOf(b).placeholder, "Filter the loaded issues", "and filters them")
+	eq(pickerOf(b).placeholder, "Search the loaded issues", "and searches them")
 	eq(pickerOf(b).icon, "list-checks", "with an icon of its own")
 	local sidebar: { string } = {}
 	local loaded: any = nil
@@ -1415,7 +1415,7 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 		end
 	end
 	eq(byKeys.w, "Create or reuse the selected issue's worktree and open it in a new tab: on its linked pull request's branch (Plotroom asks which when several have one), else on a new branch from the base you pick (Plotroom asks for the repository, and its checkout, the first time)", "w makes the issue's worktree, on a linked pull request's branch or a new one")
-	eq(byKeys.a, "Pick a saved action, or type a prompt, and run it on the selected issue (typed prompts run in its worktree)", "a runs a prompt on the issue")
+	eq(byKeys.a, "Pick an action, or type a prompt, and run it on the selected issue (typed prompts run in its worktree)", "a runs a prompt on the issue")
 	b.press("escape")
 	-- the second filter searches its own query
 	b.press("tab")
@@ -1442,6 +1442,8 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	end
 	local wideIds, wide = snap()
 	eq(wide["issues:v1"].count, 3, "wide: the loaded filter has a count")
+	eq(pickerOf(b).title[1].t, "Assigned to me", "wide: the view's name is the title")
+	eq(pickerOf(b).strip.label, "Sort: GitHub's order", "a GitHub view with no saved sort is in GitHub's order")
 	b.cx.cols = 100
 	b.cx:render()
 	local narrowIds, narrow = snap()
@@ -1452,12 +1454,14 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	has(narrow["issues:v1"].label, "GitHub - octocat", "narrow: the label carries integration and profile")
 	has(narrow["issues:v1"].label, "Assigned to me", "narrow: and the filter name")
 	eq(narrow["issues:v3"].label:sub(1, 6), "Jira: ", "narrow: an integration without a profile gets no dash")
+	eq(pickerOf(b).title, nil, "narrow: the dropdown names the view, so the title beside it does not repeat it")
 	b.cx.cols = 140
 	b.cx:render()
 	local backIds, back = snap()
 	same(backIds, wideIds, "wide again: the same scopes")
 	eq(back["issues:v1"].count, 3, "wide again: the count returns")
 	eq(back["issues:v1"].label, wide["issues:v1"].label, "and the plain label")
+	eq(pickerOf(b).title[1].t, "Assigned to me", "and the title")
 end)
 
 case("host: the Keys page refuses a pull request prompt's shortcut while an issue filter is shown, and one set of keys serves both kinds of filter", function(w: World)
@@ -1921,7 +1925,7 @@ case("host: a prompt set to the main checkout answers with the checkout and spaw
 	w.flush()
 	local a = answerOf(b, "i1")
 	eq(a.path, "/work/r", "the answer is the saved checkout")
-	eq(a.summary, "Main checkout", "which says what it is")
+	eq(a.summary, "Checkout", "which says what it is")
 	eq(a.created, false, "nothing was created")
 	eq(a.current, true, "nothing is out of date")
 	eq(a.busy, nil, "it is never busy")
@@ -1969,7 +1973,7 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	has(cardText(b), target, "that says where it is")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "octocat/12-fix-login", "the card shows its branch")
 	same(chipsOf(b), { "Clean" }, "and one badge: an issue has no pull request head to be at")
-	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open in Git" }, "with the buttons to open its tab or remove it")
+	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open Git view" }, "with the buttons to open its tab or remove it")
 	eq(commandsOf(b, "update"), nil, "and none to update it: the issue has no head to follow")
 	request(b, "a3", freshAsk("o/r", "12"))
 	w.flush()
@@ -2211,14 +2215,14 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 		return answerOf(b, "m" .. asked).items
 	end
 	same(menu(), {
-		{ id = "p1", label = "Triage", detail = "Triage {url}", group = "All actions", send = "Triage {url}", worktree = true, key = "t" } :: any,
-		{ id = "p2", label = "Notes", detail = "Summarise {title}", group = "All actions", send = "Summarise {title}", worktree = false },
-		{ id = "p3", label = "Old", detail = "Old {url}", group = "All actions", send = "Old {url}", worktree = true },
+		{ id = "p1", label = "Triage", detail = "Triage https://github.com/o/r/issues/12", group = "All actions", send = "Triage {url}", worktree = true, key = "t" } :: any,
+		{ id = "p2", label = "Notes", detail = "Summarise Fix login", group = "All actions", send = "Summarise {title}", worktree = false },
+		{ id = "p3", label = "Old", detail = "Old https://github.com/o/r/issues/12", group = "All actions", send = "Old {url}", worktree = true },
 	}, "an issue filter offers the issue prompts, each saying where it runs and its key; one saved without the field runs in a worktree")
 	pickScope(b, "prs:v1")
 	w.flush()
 	same(menu(), {
-		{ id = "p1", label = "PR only", detail = "Review {url}", group = "All actions", send = "Review {url}", worktree = true },
+		{ id = "p1", label = "PR only", group = "All actions", send = "Review {url}", worktree = true },
 	}, "a pull request filter offers the pull request prompts, saying where each runs too: both stores have a p1")
 	pickScope(b, "issues:v1")
 	w.flush()
@@ -2251,7 +2255,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	eq(where.control.k, "choice", "a choice")
 	eq(where.control.style, "segmented", "of segments")
 	eq(where.control.value, "worktree", "on the worktree for a prompt that runs in one")
-	same(where.control.options, { { value = "worktree", label = "Worktree" }, { value = "checkout", label = "Main checkout" } }, "the two places")
+	same(where.control.options, { { value = "worktree", label = "Worktree" }, { value = "checkout", label = "Checkout" } }, "the two places: Worktree / Checkout")
 	expand(b, "popen:issues:p2")
 	eq(rowIn(b, "pwhere:issues:p2").control.value, "checkout", "the main checkout for one that runs there")
 	expand(b, "popen:issues:p3")
@@ -2341,7 +2345,7 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 	eq(buttonLink(b, "open"), h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"), "Open's link carries the issue's page, percent-encoded")
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, buttonLink(b, "open"), "the preview head's Open icon opens it")
-	eq(globe.p.title, "Open in GitHub", "named for the issue's tracker")
+	eq(globe.p.title, "Open", "named Open")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "Worktree's")
 	eq(buttonLink(b, "agent"), issueLink("agent", "o/r", "12"), "the Agent link for the a key and the palette command")
 	eq(buttonLink(b, "prompt-p1"), issueRunLink("o/r", "12", "p1"), "each prompt's unseen link runs it on the selected issue")
@@ -2373,7 +2377,7 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 	forgetCheckouts(w)
 	b.render()
 	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
-	lacks(b.text(), "No local checkout", "and the heading says nothing of it")
+	lacks(b.text(), "No checkout", "and the heading says nothing of it")
 	local opened = #w.opened
 	b.typeText("w")
 	eq(w.opened[#w.opened], issueLink("worktree", "o/r", "12"), "w opens the Worktree link")

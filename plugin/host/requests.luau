@@ -24,8 +24,9 @@ local settings = require("./settings")
 local ui = tern.ui
 
 type State = core.State
+type Prompt = core.Prompt
 
-local COMMENT_ROWS, INTEGRATIONS, KINDS, clip, printable, cli = core.COMMENT_ROWS, core.INTEGRATIONS, core.KINDS, core.clip, core.printable, core.cli
+local COMMENT_ROWS, KINDS, clip, printable, cli = core.COMMENT_ROWS, core.KINDS, core.clip, core.printable, core.cli
 local checkoutOf, editJiraRepos, isTable, jiraReposOf, loadPrompts, promptById = storage.checkoutOf, storage.editJiraRepos, storage.isTable, storage.jiraReposOf, storage.loadPrompts, storage.promptById
 local readCheckouts, readMap, saveCheckout, setupOf, stringList, formats = storage.readCheckouts, storage.readMap, storage.saveCheckout, storage.setupOf, storage.stringList, storage.formats
 local activeView, alive, changed, detailKey, filtered, indexOf, issueVars, login, noteWorktree = engine.activeView, engine.alive, engine.changed, engine.detailKey, engine.filtered, engine.indexOf, engine.issueVars, engine.login, engine.noteWorktree
@@ -107,12 +108,45 @@ local function loadedIssue(state: State, key: string): tracker.Issue?
 	return found
 end
 
+-- The prompt variables the item `item` (selected(state)) fills from what the queue already holds; nil without one.
+-- Variables only a worktree knows (branch of an issue, remote, the logins) stay unfilled.
+local function itemVars(item: any): { [string]: string }?
+	if not item then
+		return nil
+	elseif type(item.number) == "number" then
+		local owner, name = string.match(item.repo, "^([^/]+)/(.+)$")
+		return { url = item.url, owner = owner or "", repo = name or "", number = tostring(item.number), title = item.title, author = item.author, branch = item.head, base = item.base }
+	end
+	local code = engine.codeRepoOf(item)
+	local vars = issueVars(item, code or "")
+	if not code then
+		local open: any = vars
+		open.owner, open.repo = nil, nil
+	end
+	return vars
+end
+
+-- An action's detail: its model and its prompt's first line with `vars` filled; a line that still names a variable
+-- is left out, so no `{placeholder}` ever shows.
+local function actionDetail(p: Prompt, vars: { [string]: string }?): string?
+	local line = string.match(p.text, "^%s*([^\n]*)") or ""
+	line = string.gsub(line, tracker.VAR, function(k: string): string
+		return if vars and vars[k] then vars[k] else "{" .. k .. "}"
+	end)
+	if string.find(line, tracker.VAR) then
+		line = ""
+	end
+	local text = (if p.model then p.model .. (if line ~= "" then " · " else "") else "") .. line
+	return if text ~= "" then clip(printable(text), 160) else nil
+end
+
 -- The agent picker's rows: `offered`, each with its id so a prompt's run link can name it. With `only`, just that
 -- prompt, so a shortcut never misses its prompt to the picker's size budget. Without `withText`, no prompt text: the
 -- palette and the picker show names and run actions through their links.
 local function menuRows(state: State, only: string?, withText: boolean): ({ any }, string?)
 	local list, problem = offered(state)
 	local active = activeView(state)
+	local vars = itemVars(if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state))
 	local mine: { any } = {}
 	for _, o in list do
 		local p = o.prompt
@@ -122,7 +156,7 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 		table.insert(mine, {
 			id = p.id,
 			label = clip(printable(p.name), 120),
-			detail = clip(printable((if p.model then p.model .. " · " else "") .. (string.match(p.text, "^%s*([^\n]*)") or "")), 160),
+			detail = actionDetail(p, vars),
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All actions",
 			send = if withText then p.text else nil,
 			model = p.model,
@@ -202,7 +236,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 			end
 			reply(state, id, {
 				path = checkout,
-				summary = "Main checkout",
+				summary = "Checkout",
 				created = false,
 				current = true,
 				branch = meta.ref,
@@ -389,7 +423,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 			vars["jira.user"] = found["jira.user"] or ""
 		end
 		if not wt then
-			return reply(state, id, { path = checkout, summary = "Main checkout", created = false, current = true, vars = vars, code = code })
+			return reply(state, id, { path = checkout, summary = "Checkout", created = false, current = true, vars = vars, code = code })
 		end
 		local branch, dir, why = engine.issueNames(issue, code, found)
 		if not branch or not dir then
@@ -1651,9 +1685,8 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 	end
 	if item then
-		local tr: string = if state.kind.id == "issues" then item.tracker else "github"
-		labels.open = "Open in " .. INTEGRATIONS[tr].label
-		labels["open-git"] = "Open in Git"
+		labels.open = "Open"
+		labels["open-git"] = "Open Git view"
 		local group = if state.kind.id ~= "issues" then "GitHub - PR" elseif item.tracker == "jira" then "Jira - Issue" else "GitHub - Issue"
 		add("open", group)
 		add("worktree", group)
@@ -1679,10 +1712,10 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 		-- The agent picker is no row: the saved actions and Type a prompt are listed beside this.
 		if state.agents[item.key] then
-			add("agentgo", "Saved actions")
+			add("agentgo", "Actions")
 		end
 		if state.agents[item.key] and state.agents[item.key] ~= "exited" then
-			addAgentCommands("Saved actions")
+			addAgentCommands("Actions")
 		end
 	end
 	if state.agentsOn then
@@ -1697,7 +1730,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	end
 	if state.boardOn then
 		local row = engine.boardSelected(state)
-		labels["wt-open"], labels["wt-remove"], labels["wt-remove-finished"], labels["wt-git"] = "Open worktree tab", "Remove worktree…", "Remove finished worktrees…", "Open in Git"
+		labels["wt-open"], labels["wt-remove"], labels["wt-remove-finished"], labels["wt-git"] = "Open worktree tab", "Remove worktree…", "Remove finished worktrees…", "Open Git view"
 		if row then
 			if not row.missing then
 				add("wt-open", "Worktree")

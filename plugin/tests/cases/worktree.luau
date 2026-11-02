@@ -99,7 +99,7 @@ case("worktree: a branch checked out in the main checkout is never reused as an 
 	local main = { path = "/r", branch = "refs/heads/feature", bare = false, detached = false, locked = false, prunable = false }
 	local verdict, why = worktree.reconcile({ main } :: any, "feature", "/wt/plotroom-o_r-pr-5")
 	eq(verdict, "error", "the main checkout is not taken")
-	has(why, "main checkout at /r", "and the message says where the branch is")
+	has(why, "your checkout at /r", "and the message says where the branch is")
 end)
 
 case("worktree: validSegment accepts GitHub names and refuses path tricks", function(w: World)

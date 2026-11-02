@@ -196,7 +196,7 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	w.window.surfaces[1] = { main = { id = "main", c = { { id = "main.rpc", p = { text = "9", hidden = true } } } } }
 	w.window.focused = 1
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
-	same(texts(1), { "Plotroom on host1: protocol mismatch", "1 agent needs input" }, "the mismatch warning still shows beside it")
+	same(texts(1), { "Plotroom on host1 is a different version from this window's", "1 agent needs input" }, "the mismatch warning still shows beside it")
 	w.window.agentStates[agent] = "working"
 	w.advance(4000)
 	same(texts(7), {}, "the count clears as soon as none waits")
@@ -352,7 +352,7 @@ windowCase("window flows: Copy usage report lists both machines' counts by name 
 	lacks(text, "Missing", "nothing is missing")
 	w.window.focused = 1
 	w.command("usage-report")
-	has(w.copied[#w.copied], "Palette command · Plotroom: Copy usage report · 1", "the Tern palette command counts by its title")
+	has(w.copied[#w.copied], "Tern's palette command · Plotroom: Copy usage report · 1", "the Tern palette command counts by its title")
 end)
 
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
@@ -392,14 +392,14 @@ windowCase("window status: a mismatched host warns while its block is focused, a
 	w.load("window")
 	announce(w, 1, "2")
 	w.window.handlers.window_start(w.cx)
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "an announcement of another protocol warns at once, naming the host")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "an announcement of another protocol warns at once, naming the host")
 	eq(w.window.refreshes, 1, "the status line was redrawn")
 	announce(w, 1, asks.protocol)
 	w.advance(2100)
 	eq(protocolWarning(w, 1), nil, "a reloaded host that matches clears it while focused")
 	announce(w, 1, "3")
 	w.advance(2000)
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "and a later mismatch warns again")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "and a later mismatch warns again")
 	announce(w, 1, nil)
 	w.advance(2000)
 	eq(protocolWarning(w, 1), nil, "a host that has not announced yet is loading, not mismatched")
@@ -417,7 +417,7 @@ windowCase("window status: a window loaded while a Plotroom block is focused che
 	w.load("window")
 	eq(protocolWarning(w, 1), nil, "nothing is read while the plugin loads")
 	w.advance(1)
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "the load's own check warns")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "the load's own check warns")
 	eq(w.window.reads[1], 1, "with one read")
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
 	w.window.handlers.window_start(w.cx)
@@ -435,7 +435,7 @@ windowCase("window status: only the focused Plotroom pane is checked, and leavin
 	announce(w, 1, "2")
 	announce(w, 3, asks.protocol)
 	w.window.handlers.pane_created({ pane = 3 }, w.cx)
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "the focused pane's host is checked")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "the focused pane's host is checked")
 	eq(w.window.reads[3], nil, "an unfocused Plotroom pane is not read")
 	w.window.focused = 3
 	w.window.handlers.focus({ pane = 3, tab = 1 }, w.cx)
@@ -448,7 +448,7 @@ windowCase("window status: only the focused Plotroom pane is checked, and leavin
 	same({ w.window.reads[1], w.window.reads[3] }, reads, "an unrelated pane stops the polling")
 	w.window.focused = 1
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "focus back checks at once")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "focus back checks at once")
 	w.window.panes[1] = nil
 	w.window.focused = 2
 	w.window.handlers.pane_closed({ pane = 1 }, w.cx)
@@ -814,16 +814,16 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		same(last(), { ev = "action", act = row[2], value = row[3] }, row[1])
 	end
 	-- What the host says applies with no item selected, and with a GitHub issue selected.
-	local views = { id = "scope:worktrees", label = "Worktrees list", key = "", group = "Views", detail = "Worktrees" }
+	local views = { id = "scope:worktrees", label = "Worktrees", key = "", group = "Views", detail = "Worktrees" }
 	local nothing: { queue: { any }, commands: { { id: string, group: string? } } } = {
 		queue = { { id = "snoozed", label = "Show or hide snoozed", key = "", group = "Filter & Sort" }, views, { id = "settings", label = "Settings", key = "", group = "Configuration" } },
 		commands = { { id = "open-url" }, { id = "worktrees-open" } },
 	}
 	local issue: { queue: { any }, commands: { { id: string, group: string? } } } = {
 		queue = {
-			{ id = "open", label = "Open in GitHub", key = "", group = "GitHub - Issue" },
+			{ id = "open", label = "Open", key = "", group = "GitHub - Issue" },
 			{ id = "seen", label = "Mark seen", key = "m", group = "Triage" },
-			{ id = "agentgo", label = "Go to agent", key = "", group = "Saved actions" },
+			{ id = "agentgo", label = "Go to agent", key = "", group = "Actions" },
 			views,
 			{ id = "settings", label = "Settings", key = "", group = "Configuration" },
 		},
@@ -850,7 +850,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		return flowRows(pick), pick
 	end
 	local listed, pick = palette(nil, nothing)
-	same(listed, { "Show or hide snoozed", "Worktrees list", "Open item by URL…", "Settings" }, "with no item selected: what needs none, in the group order, the queue's actions before the commands of their group; Worktrees list is the Views scope, not a command of its own")
+	same(listed, { "Show or hide snoozed", "Worktrees", "Open item by URL…", "Settings" }, "with no item selected: what needs none, in the group order, the queue's actions before the commands of their group; Worktrees is the Views scope, not a command of its own")
 	eq(pick.items[1].group, "Filter & Sort", "the view's action under Filter & Sort")
 	eq(pick.items[2].group, "Views", "a scope under Views")
 	eq(pick.items[2].detail, "Worktrees", "naming the sidebar group it sits under")
@@ -858,17 +858,17 @@ windowCase("window flows: palette commands send plain events, and the command pa
 	st.link("layer.queue.buttons.agent", prLink("agent", "o/r", 5))
 	st.link("layer.queue.buttons.prompt-p1", runLink("o/r", 5, "p1"))
 	listed, pick = palette(nil, issue)
-	same(listed, { "Type a prompt…", "Review", "Go to agent", "Open in GitHub", "Assign to me", "Comment…", "Close issue…", "Draft PR…", "Mark seen", "Worktrees list", "Open item by URL…", "Settings" }, "with an item selected: Saved actions first (typed prompt, saved actions, Go to agent), then its type's operations (Draft PR among them), Triage, Views and Configuration, and nothing the host did not name")
+	same(listed, { "Type a prompt…", "Review", "Go to agent", "Open", "Assign to me", "Comment…", "Close issue…", "Draft PR…", "Mark seen", "Worktrees", "Open item by URL…", "Settings" }, "with an item selected: Actions first (typed prompt, actions, Go to agent), then its type's operations (Draft PR among them), Triage, Views and Configuration, and nothing the host did not name")
 	eq(table.find(listed, "Agent picker"), nil, "there is no agent picker row")
 	eq(table.find(listed, "Re-run failed checks"), nil, "nor a re-run without a failed run")
 	local byLabel: { [string]: any } = {}
 	for _, row in pick.items do
 		byLabel[row.label] = row
 	end
-	eq(byLabel["Open in GitHub"].group, "GitHub - Issue", "Open carries the item's type")
+	eq(byLabel["Open"].group, "GitHub - Issue", "Open carries the item's type")
 	eq(byLabel["Mark seen"].group, "Triage", "marking seen is Triage")
-	eq(byLabel["Type a prompt…"].group, "Saved actions", "the typed prompt is a Saved action")
-	eq(byLabel["Go to agent"].group, "Saved actions", "Go to agent is one too")
+	eq(byLabel["Type a prompt…"].group, "Actions", "the typed prompt is under Actions")
+	eq(byLabel["Go to agent"].group, "Actions", "Go to agent is too")
 	eq(byLabel["Assign to me"].group, "GitHub - Issue", "the host's group for an issue operation")
 	eq(byLabel["Draft PR…"].group, "GitHub - Issue", "draft creation belongs to the selected issue")
 	local every: { queue: { any }, commands: { { id: string, group: string? } } } = {
@@ -2220,7 +2220,7 @@ case("host agents: Interrupt, Stop and Message agent are palette rows and hidden
 	eq(p.labels.agentint, "Interrupt agent", "named so")
 	eq(p.labels.agentstop, "Stop agent…", "Stop asks first")
 	eq(p.labels.agentmsg, "Message agent…", "and Message asks for a line")
-	eq(p.groups.agentstop, "Saved actions", "in the Saved actions group")
+	eq(p.groups.agentstop, "Actions", "in the Actions group")
 	eq(findKey(pickerNode(b), "agentstop").p.href, prLink("agentstop", "o/r", 1), "the hidden link the window checks")
 	b.event({ ev = "action", act = "queue", value = "agentmsg" })
 	eq(w.opened[#w.opened], prLink("agentmsg", "o/r", 1), "the palette pick opens the selected item's link")
@@ -2284,7 +2284,7 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
 	eq(scopes[#scopes - 2].id, "worktrees", "the sidebar's third-last scope is the Worktrees scope")
-	eq(scopes[#scopes - 2].label, "Worktrees list", "named so")
+	eq(scopes[#scopes - 2].label, "Worktrees", "named so")
 	eq(scopes[#scopes - 2].count, nil, "with no count until it was read")
 	eq(pickerOf(b).scope, "prs:v1", "the view is the active scope")
 	pickScope(b, "worktrees")
@@ -2923,12 +2923,13 @@ end)
 windowCase("window flows: Go to agent names the action an agent ran, so the agents of one item can be told apart", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	local first = startChained(w, st)
+	startChained(w, st)
 	w.window.choose = "Go to agent (working)"
 	w.click("plotroom://github/agent/o/r/5")
 	w.flush()
 	local pick = w.window.picks[#w.window.picks]
-	eq(pick.items[1].detail, "Review · pane " .. first.agent, "the agent is listed under its action's name")
+	eq(pick.items[1].detail, "Review", "the agent is listed under its action's name, never its pane")
+	eq(pick.action, "go or start", "and Enter says it goes to the agent or starts another")
 end)
 
 -- Starts the issue action Implement (p1, next prs:p2) on o/r#12 through the real link flow and returns its link; `wt`
@@ -3201,7 +3202,7 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 		end
 	end
 	eq(redraws, 1, "the block was redrawn")
-	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "and the protocol check ran")
+	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "and the protocol check ran")
 end)
 
 windowCase("window flows: the status map carries an agent's last message cut to 200 bytes and its delivery error", function(w: World)

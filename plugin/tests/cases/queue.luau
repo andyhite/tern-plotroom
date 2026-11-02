@@ -456,16 +456,16 @@ case("host: the empty queue's hint names the Settings key, or just Settings when
 	w.kv.put("views-prs", { version = 1, nextId = 1, items = array({}) })
 	w.kv.put("views-issues", { version = 1, nextId = 1, items = array({}) })
 	local b = openQueue(w)
-	eq(pickerOf(b).empty[1].t, "No saved views yet. Press s to add one.", "the hint names the key")
+	eq(pickerOf(b).empty[1].t, "No views yet. Press s to add one.", "the hint names the key")
 	w.kv.put("keys", { settings = "S" })
 	b.render()
-	eq(pickerOf(b).empty[1].t, "No saved views yet. Press S to add one.", "as it is now")
+	eq(pickerOf(b).empty[1].t, "No views yet. Press S to add one.", "as it is now")
 	w.kv.put("keys", { settings = "" })
 	b.render()
-	eq(pickerOf(b).empty[1].t, "No saved views yet. Press . and pick Settings to add one.", "or the command palette's once it is removed")
+	eq(pickerOf(b).empty[1].t, "No views yet. Press . and pick Settings to add one.", "or the Commands key once Settings' is removed")
 	w.kv.put("keys", { settings = "", more = "" })
 	b.render()
-	eq(pickerOf(b).empty[1].t, "No saved views yet. Open Settings to add one.", "or just Settings with neither")
+	eq(pickerOf(b).empty[1].t, "No views yet. Open Settings to add one.", "or just Settings with neither")
 end)
 
 case("host: the In tab tooltip names the key that goes to the tab, or none once it is removed", function(w: World)
@@ -533,7 +533,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(p.ids[#p.ids - 4], "scope:worktrees", "the Worktrees list is the last scope but two")
 	eq(p.ids[#p.ids - 3], "scope:agents", "the Agents list the last but one")
 	eq(p.ids[#p.ids - 2], "scope:inbox", "the Inbox list the last")
-	eq(p.labels.open, "Open in GitHub", "Open names the integration")
+	eq(p.labels.open, "Open", "Open, whatever the integration")
 	eq(p.keys.worktree, "", "an action without a key says none")
 	eq(p.groups.open, "GitHub - PR", "the selected pull request's actions carry its type, not an Item heading")
 	eq(p.groups.seen, "Triage", "marking seen is Triage")
@@ -541,7 +541,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(p.groups.sort, "Filter & Sort", "the view's actions are the Filter & Sort group")
 	eq(p.groups.refresh, "Filter & Sort", "with Refresh")
 	eq(p.groups["scope:prs:v2"], "Views", "every sidebar scope is a Views row")
-	eq(p.labels["scope:worktrees"], "Worktrees list", "the one before the last is the Worktrees list")
+	eq(p.labels["scope:worktrees"], "Worktrees", "the one before the last is Worktrees")
 	eq(p.groups.settings, "Configuration", "Settings and the shortcut list are Configuration")
 	same(p.commands, { "open-url", "usage-report", "pr-draft", "pr-approve", "pr-request-changes", "comment" }, "the commands: the ones that need no item, then what an open pull request takes (no merge without a known head, no branch update unless behind)")
 	eq(p.commandGroups["pr-draft"], "GitHub - PR", "a pull request's operation is under GitHub - PR")
@@ -1476,15 +1476,15 @@ case("host: view prompts limit the menu", function(w: World)
 	local first = menu()
 	eq(first.problem, nil, "nothing is wrong")
 	same(first.items, {
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "For My PRs", send = "Look at {url}\nTwice", worktree = true },
+		{ id = "p2", label = "Anywhere", detail = "Look at https://github.com/o/r/pull/1", group = "For My PRs", send = "Look at {url}\nTwice", worktree = true },
 	}, "a view that lists a prompt offers only it, in the group For the view")
 	b.press("tab")
 	b.press("down")
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v2", "the second view is active")
 	same(menu().items, {
-		{ id = "p1", label = "Mine", detail = "Review {url}", group = "All actions", send = "Review {url}", worktree = true },
-		{ id = "p2", label = "Anywhere", detail = "Look at {url}", group = "All actions", send = "Look at {url}\nTwice", worktree = true },
+		{ id = "p1", label = "Mine", detail = "Review https://github.com/o/r/pull/1", group = "All actions", send = "Review {url}", worktree = true },
+		{ id = "p2", label = "Anywhere", detail = "Look at https://github.com/o/r/pull/1", group = "All actions", send = "Look at {url}\nTwice", worktree = true },
 	}, "a view that lists none offers every prompt with text, as All actions")
 end)
 
@@ -1507,7 +1507,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 		request(b, "o" .. asked, { op = "menu", only = id })
 		return answerOf(b, "o" .. asked).items
 	end
-	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review {url}", group = "For My PRs", send = "Review {url}", worktree = true } }, "just the prompt asked for, in the group it has under the view")
+	same(only("p1"), { { id = "p1", label = "Mine", detail = "Review https://github.com/o/r/pull/1", group = "For My PRs", send = "Review {url}", worktree = true } }, "just the prompt asked for, in the group it has under the view")
 	eq(#only("p2"), 0, "none that the view does not list")
 	eq(#only("p4"), 0, "none with no text")
 	eq(#only("p9"), 0, "none that is not saved")
@@ -1555,7 +1555,7 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, link("open"), "but an icon in the preview's head, opening the hidden Open link")
 	eq(globe.p.actions.click, "open", "on click")
-	eq(globe.p.title, "Open in GitHub", "named for the integration")
+	eq(globe.p.title, "Open", "named Open")
 	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
 	eq(action("retry")["end"], nil, "both of them")
 	eq(action("worktree")["end"], true, "the PR's buttons sit on the right, by Open")
@@ -1965,7 +1965,7 @@ case("host: a prompt's model is a model pattern or omp role: the row refuses any
 	request(b, "m1", { op = "menu" })
 	local item = answerOf(b, "m1").items[1]
 	eq(item.model, "openrouter/x-ai/grok-4", "the menu sends the model")
-	eq(item.detail, "openrouter/x-ai/grok-4 · Review {url}", "and names it before the first line")
+	eq(item.detail, "openrouter/x-ai/grok-4 · Review https://github.com/o/r/pull/1", "and names it before the first line")
 	b.event({ ev = "change", id = "layer.settings", item = "pmodel:prs:p1", value = nil })
 	eq(w.kv.get("prompts-prs").items[1].model, nil, "reset clears it")
 	eq(try(""), nil, "an empty model is accepted")
@@ -2355,7 +2355,7 @@ case("host: a list emptied by snoozing says how many rows are hidden and which k
 	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; press Z to show them.", "the hint counts them and names the key")
 	w.kv.put("keys", { snoozed = "" })
 	b.render()
-	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; pick Show or hide snoozed in the command palette to show them.", "or the palette row once the key is gone")
+	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; pick Show or hide snoozed in Commands to show them.", "or the Commands row once the key is gone")
 end)
 
 case("host: a view with no matches keeps its plain empty text", function(w: World)

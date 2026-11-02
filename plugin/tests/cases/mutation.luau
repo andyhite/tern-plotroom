@@ -401,7 +401,7 @@ case("worktree.removeEntry: refuses main, locked, prunable, missing, changed and
 		has(got[2], needle, what)
 		eq(snapshot(g), before, what .. ": git state is untouched")
 	end
-	refused("/work/r", "main", "main checkout", "the main checkout")
+	refused("/work/r", "main", "That is the checkout", "the checkout")
 	refused("/wt/lk", "lk", "locked, prunable or missing", "a locked worktree")
 	refused("/wt/prune", "pr", "locked, prunable or missing", "a prunable worktree")
 	refused("/wt/gone", "gn", "locked, prunable or missing", "a worktree whose folder is gone")

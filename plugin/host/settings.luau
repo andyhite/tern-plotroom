@@ -284,7 +284,7 @@ local function pageContent(state: State): ({ any }, { Node })
 						k = "choice",
 						style = "segmented",
 						value = if p.worktree ~= false then "worktree" else "checkout",
-						options = tern.json.array({ { value = "worktree", label = "Worktree" }, { value = "checkout", label = "Main checkout" } }),
+						options = tern.json.array({ { value = "worktree", label = "Worktree" }, { value = "checkout", label = "Checkout" } }),
 					},
 				})
 				row({
@@ -364,7 +364,7 @@ local function pageContent(state: State): ({ any }, { Node })
 			local fmt = if repoFormats then formats.repoOf(repo) else nil
 			local cmds: { string } = if setups then setupOf(setups, repo) else {}
 			if summary("ropen:", repo, repo, function()
-				local parts: { string } = { mapped or "No local checkout" }
+				local parts: { string } = { mapped or "No checkout" }
 				if fmt then
 					table.insert(parts, fmt)
 				end
@@ -378,7 +378,7 @@ local function pageContent(state: State): ({ any }, { Node })
 			row({ id = "rremove:" .. repo, label = "Remove repository", control = { k = "action", act = "delete", label = "Remove" } })
 			row({
 				id = "checkout:" .. repo,
-				label = "Local checkout",
+				label = "Checkout",
 				control = { k = "text", value = mapped or "", placeholder = "~/Code/" .. (string.match(repo, "/(.+)$") or repo), mono = true },
 				changed = mapped ~= nil,
 				defaultLabel = "Not set",

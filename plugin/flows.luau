@@ -674,7 +674,7 @@ function M.openGit(cx: WindowCx, pane: number, url: string)
 		end
 	end
 	if not local_ then
-		return cx:toast("error", "Open in Git works on this machine's worktrees only", "This block runs on another host.")
+		return cx:toast("error", "Open Git view works on this machine's worktrees only", "This block runs on another host.")
 	end
 	e().ask(cx, pane, "git-path", {}, ACT_MS, function(a: any, cx2: WindowCx)
 		local why = problemOf(a)
@@ -937,7 +937,7 @@ local function offerSelection(cx: WindowCx, sel: Picked)
 	local context = contextLines(sel.text, sel.clipped)
 	table.insert(context, 1, head)
 	local placeholder = "Send the selection (" .. (utf8.len(sel.text) or #sel.text) .. " characters" .. (if sel.clipped then ", clipped" else "") .. ") to which agent?"
-	cx:pick({ items = items, placeholder = placeholder, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+	cx:pick({ items = items, placeholder = placeholder, icon = "merge", action = "send" }):next(function(item, _, cx2)
 		if not cx2 or not item or type(item.agent) ~= "number" then
 			return
 		end
@@ -1174,7 +1174,7 @@ local function reviewDraft(cx: WindowCx, pane: number, p: any, title: string, bo
 			table.insert(items, { label = line, group = "Commits" })
 		end
 	end
-	cx:pick({ items = items, placeholder = "Draft PR: " .. title, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+	cx:pick({ items = items, placeholder = "Draft PR: " .. title, icon = "merge", action = "create or edit" }):next(function(item, _, cx2)
 		if not item or not cx2 then
 			return
 		elseif item.edit == "title" or item.edit == "body" then
@@ -1228,7 +1228,7 @@ local function draftPr(cx: WindowCx, pane: number)
 			return cx2:toast("error", "Draft PR not started", "The block's host offered no repository")
 		end
 		local branch = if type(info.branch) == "string" then info.branch else "this branch"
-		cx2:pick({ items = dests, placeholder = "Where should the draft PR from " .. branch .. " go?", icon = "merge", action = "choose" }):next(function(dest, _, cx3)
+		cx2:pick({ items = dests, placeholder = "Where should the draft PR from " .. branch .. " go?", icon = "merge", action = "open" }):next(function(dest, _, cx3)
 			if not dest or not cx3 then
 				return
 			end
@@ -1369,7 +1369,7 @@ M.COMMANDS = {
 		id = "agent-message-selection",
 		title = "Plotroom: Message an agent with the selection…",
 		label = "Message an agent with the selection…",
-		group = "Saved actions",
+		group = "Actions",
 		run = function(cx: WindowCx, _pane: number)
 			M.messageSelection(cx)
 		end,
@@ -1380,7 +1380,7 @@ M.COMMANDS = {
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
 		label = "Go to agent",
-		group = "Saved actions",
+		group = "Actions",
 		keyed = true,
 		run = function(cx: WindowCx, pane: number)
 			e().follow(cx, pane, AGENTGO_NODE, "The selected item has no agent")
@@ -1408,11 +1408,11 @@ M.COMMANDS = {
 		end,
 	},
 	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
-	{ id = "snooze", title = "Plotroom: Snooze the selected item", label = "Snooze", group = "Triage", run = send("triage", "snooze"), keyed = true },
+	{ id = "snooze", title = "Plotroom: Snooze the selected item until tomorrow", label = "Snooze until tomorrow", group = "Triage", run = send("triage", "snooze"), keyed = true },
 	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
-	{ id = "attention", title = "Plotroom: Show only items needing attention", label = "Needs attention filter", group = "Filter & Sort", run = send("triage", "toggle-attention"), keyed = true },
+	{ id = "attention", title = "Plotroom: Needs attention only", label = "Needs attention only", group = "Filter & Sort", run = send("triage", "toggle-attention"), keyed = true },
 	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
-	{ id = "worktrees-open", title = "Plotroom: Open the Worktrees list", label = "Worktrees list", group = "Views", run = send("open-worktrees", nil), keyed = true },
+	{ id = "worktrees-open", title = "Plotroom: Open Worktrees", label = "Worktrees", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }
 
 -- ---------------------------------------------------------------- usage report

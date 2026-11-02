@@ -477,7 +477,7 @@ function M.reconcile(recs: { Record }, branch: string, target: string): (string,
 	for i, r in recs do
 		if r.branch == "refs/heads/" .. branch then
 			if i == 1 then
-				return "error", "Branch " .. branch .. " is checked out in your main checkout at " .. r.path .. "; switch that checkout to another branch, then choose Worktree again."
+				return "error", "Branch " .. branch .. " is checked out in your checkout at " .. r.path .. "; switch that checkout to another branch, then choose Worktree again."
 			elseif r.locked or r.prunable or not tern.fs.exists(r.path) then
 				return "error", "The worktree of " .. branch .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune)."
 			end
@@ -836,7 +836,7 @@ local function claim(checkout: string, repo: string, path: string, branch: strin
 		for _, e in entries do
 			if e.path == path then
 				if e.main then
-					return done(nil, "That is the main checkout; Plotroom never removes it.")
+					return done(nil, "That is the checkout; Plotroom never removes it.")
 				elseif e.branch ~= branch then
 					return done(nil, "The worktree at " .. path .. " changed (it is on " .. (e.branch or "no branch") .. " now); reload the list.")
 				end

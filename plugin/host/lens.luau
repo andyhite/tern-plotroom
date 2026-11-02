@@ -40,7 +40,7 @@ function M.define()
 			end
 			local items = {
 				ui.node("item", { key = "copy", label = "Copy", icon = "copy", href = url, actions = { click = "copy" } }),
-				ui.node("item", { key = "browser", label = "Open in browser", icon = "globe", href = url, actions = { click = "open" } }),
+				ui.node("item", { key = "browser", label = "Open", icon = "globe", href = url, actions = { click = "open" } }),
 			}
 			-- Only github.com pull requests parse, so only they can be shown in Plotroom.
 			if string.match(url, "^https://github%.com/") then

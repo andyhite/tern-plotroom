@@ -364,7 +364,7 @@ function M.removeRepo(repo: string): string?
 	return failed or jerr
 end
 
-local PROMPTS_BAD = "Saved actions are malformed; not overwriting them."
+local PROMPTS_BAD = "Actions are malformed; not overwriting them."
 M.PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 
 -- Saved agent prompts (kv prompts-prs / prompts-issues; absent: the kind's default prompts, saved with the first edit),
@@ -372,7 +372,7 @@ M.PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer t
 function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	local ok, v = pcall(tern.kv.get, kind.promptsKey)
 	if not ok then
-		return nil, "Saved actions could not be read: " .. tostring(v)
+		return nil, "Actions could not be read: " .. tostring(v)
 	end
 	if v == nil then
 		local seeds: { Prompt } = {}

@@ -325,7 +325,7 @@ arm(0)
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
 	if mismatched and pane.pane == mismatched.pane then
-		table.insert(out, { text = "Plotroom on " .. mismatched.host .. ": protocol mismatch", icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warning", tone = "error" })
 	end
 	local paused = next(pausedHooks)
 	if paused ~= nil then
@@ -826,6 +826,12 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	end
 end
 
+-- The row that offers to go to the agent `link` already running on a target: its state, and the action it runs.
+local function goAgentRow(link: any, state: string): PickItem
+	local name = if link.chain and link.chain.name ~= "" then link.chain.name else link.action
+	return { label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = if type(name) == "string" and name ~= "" then name else "A typed prompt", go = true }
+end
+
 -- Runs `go` unless an agent works on the target: then it offers Go to agent (its state) or starting anyway, and a
 -- dismissed picker does nothing. `what` names what would start ("Start <what> anyway").
 local function ifFree(cx: WindowCx, pane: number, t: Target, what: string, go: (WindowCx) -> ())
@@ -835,10 +841,10 @@ local function ifFree(cx: WindowCx, pane: number, t: Target, what: string, go: (
 		return go(cx)
 	end
 	local items: { PickItem } = {
-		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = (if link.chain and link.chain.name ~= "" then link.chain.name .. " · pane " else "Pane ") .. link.agent, go = true },
+		goAgentRow(link, state),
 		{ label = "Start " .. what .. " anyway", detail = "Another agent for " .. t.label },
 	}
-	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "go or start" }):next(function(item, _, cx2)
 		if not item or not cx2 then
 			return
 		elseif item.go == true then
@@ -894,7 +900,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 		return
 	end
 	if type(a.problem) == "string" then
-		cx:toast("error", "Saved actions are not listed", a.problem)
+		cx:toast("error", "Actions are not listed", a.problem)
 	end
 	local all: { PickItem } = {}
 	for _, it in if type(a.items) == "table" then a.items else {} do
@@ -952,10 +958,10 @@ local function pickAgent(cx: WindowCx, pane: number, t: Target)
 		return pickMenu(cx, pane, t)
 	end
 	local items: { PickItem } = {
-		{ label = "Go to agent (" .. flows.stateLabel(state) .. ")", detail = (if link.chain and link.chain.name ~= "" then link.chain.name .. " · pane " else "Pane ") .. link.agent, go = true },
+		goAgentRow(link, state),
 		{ label = "Start another agent", detail = "Choose an action to run" },
 	}
-	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "choose" }):next(function(item, _, cx2)
+	cx:pick({ items = items, placeholder = "An agent already works on " .. t.label, icon = "merge", action = "go or start" }):next(function(item, _, cx2)
 		if not item or not cx2 then
 			return
 		elseif item.go == true then
@@ -1004,7 +1010,7 @@ local function pickRepo(cx: WindowCx, pane: number)
 		local items: { PickItem } = {}
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and type(it.repo) == "string" then
-				local path = if type(it.path) == "string" then it.path else "No local checkout yet"
+				local path = if type(it.path) == "string" then it.path else "No checkout yet"
 				table.insert(items, { label = it.repo, detail = path, group = "Saved", repo = it.repo })
 			end
 		end
@@ -1128,7 +1134,7 @@ local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typ
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
 -- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue).
-local GROUPS = { "Saved actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
+local GROUPS = { "Actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
 -- listed: the block publishes the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`
@@ -1142,7 +1148,7 @@ local function palette(cx: WindowCx, pane: number)
 		return
 	end
 	if hasItem and type(a.problem) == "string" then
-		cx:toast("error", "Saved actions are not listed", a.problem)
+		cx:toast("error", "Actions are not listed", a.problem)
 	end
 	local function keyed(key: any, rest: any): string?
 		local k = if type(key) == "string" and key ~= "" then "key " .. key else nil
@@ -1160,10 +1166,10 @@ local function palette(cx: WindowCx, pane: number)
 		table.insert(by[group], item)
 	end
 	if hasItem then
-		add("Saved actions", { label = "Type a prompt…", detail = "Run your own text in an agent", typed = true })
+		add("Actions", { label = "Type a prompt…", detail = "Run your own text in an agent", typed = true })
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and type(it.id) == "string" and type(it.label) == "string" then
-				add("Saved actions", { label = it.label, detail = keyed(it.key, it.detail), run = it.id })
+				add("Actions", { label = it.label, detail = keyed(it.key, it.detail), run = it.id })
 			end
 		end
 	end
@@ -1271,7 +1277,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://more" then
 			if nodeProp(readNode(cx, pane, MORE_NODE), "href") ~= url then
-				cx:toast("error", "Plotroom: the command palette is not offered here")
+				cx:toast("error", "Plotroom: Commands are not offered here")
 			else
 				palette(cx, pane)
 			end

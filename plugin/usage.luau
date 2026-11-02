@@ -177,7 +177,7 @@ local function duration(s: number): string
 end
 
 local RESULTS = { "done", "failed", "exited", "closed" }
-local WHERE = { queue = "Queue action", row = "Commands row", palette = "Palette command", action = "Action" }
+local WHERE = { queue = "Queue action", row = "Commands row", palette = "Tern's palette command", action = "Action" }
 local ORDER = { queue = 1, row = 2, palette = 3, action = 4 }
 
 export type Part<T> = { value: T?, problem: string? }

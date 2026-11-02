@@ -1239,7 +1239,7 @@ def sc_inventory(s: Smoke) -> None:
     s.eq("the folder a was never touched by listing", True, a.is_dir())
 
     (a / "scratch.txt").write_text("uncommitted\n", encoding="utf-8")
-    refused("the main checkout", "main checkout", path=str(root), branch="main")
+    refused("the checkout", "That is the checkout", path=str(root), branch="main")
     refused("a branch that changed", "changed", path=str(a), branch="somewhere-else")
     refused("a locked worktree", "locked", path=str(c), branch="locked-c")
     refused("a missing folder", "missing", path=str(d), branch="gone-d")
@@ -1376,7 +1376,7 @@ def sc_workflow(s: Smoke) -> None:
     for group in ("GitHub - PR", "Triage", "Filter & Sort", "Views"):
         s.wait_text("the palette group %s" % group, group)
     shown = s.texts()
-    s.eq("the palette lists Saved actions first, then the item's operations, then Filter & Sort", True, shown.index("Saved actions") < shown.index("GitHub - PR") < shown.index("Filter & Sort"))
+    s.eq("the palette lists Actions first, then the item's operations, then Filter & Sort", True, shown.index("Actions") < shown.index("GitHub - PR") < shown.index("Filter & Sort"))
     s.eq("no Agent picker entry in the primary palette", False, any(t == "Agent picker" for t in s.texts()))
     s.eq("no Close preview command", False, any(t == "Close preview" for t in s.texts()))
     s.eq("the unscoped provider-only groups are not the item's", False, any(t == "GitHub - Issue" for t in s.texts()))
@@ -1449,13 +1449,13 @@ def sc_workflow(s: Smoke) -> None:
     (s.smoke / "issues.json").write_text(json.dumps([{"number": 9, "title": "Flow issue 9", "url": "https://github.com/f/low/issues/9", "state": "OPEN", "reason": None,
                                                       "updatedAt": stamp, "createdAt": stamp, "author": "octo", "comments": 0, "labels": [], "assignees": []}]), encoding="utf-8")
     (wt / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
-    # Views holds every sidebar scope: jump to the Worktrees list through the palette's Views group (the sidebar's own dispatch).
+    # Views holds every sidebar scope: jump to Worktrees through the palette's Views group (the sidebar's own dispatch).
     s.ctl_ok("key", ".")
     s.wait_text("the palette", "Refresh")
-    s.wait_text("the Views group names the Worktrees list scope", "Worktrees list")
+    s.wait_text("the Views group names the Worktrees scope", "Worktrees")
     s.wait_text("and Open item by URL", "Open item by URL")
-    s.eq("the old board wording is gone", False, any("Worktrees board" in t for t in s.texts()))
-    s.ctl_ok("type", json.dumps("Worktrees list"))
+    s.eq("the old board wording is gone", False, any("Worktrees board" in t or "Worktrees list" in t for t in s.texts()))
+    s.ctl_ok("type", json.dumps("Worktrees"))
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
     s.wait_text("the Worktrees list lists the worktree git has, unnoted", "Unnoted")

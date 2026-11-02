@@ -662,7 +662,7 @@ function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, t
 		table.insert(out, { text = "Main", tone = "accent", title = "The repository's main worktree" })
 	end
 	if openTab then
-		table.insert(out, { text = "In tab", tone = "accent", title = "Open in a tab" })
+		table.insert(out, { text = "In tab", tone = "accent", title = "A tab works in this worktree" })
 	end
 	if row.dirty == true then
 		table.insert(out, { text = "Changes", tone = "warning", title = "Uncommitted changes" })

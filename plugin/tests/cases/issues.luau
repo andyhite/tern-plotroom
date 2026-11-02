@@ -477,7 +477,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
 	eq(badges(1), "In Progress/warning ui/-", "the workflow status toned by its category, then the labels; no integration badge")
 	eq(badges(2), "Done/success", "a done issue says Done")
-	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open in Jira", "the preview head's Open icon names the tracker")
+	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open", "the preview head's Open icon is named Open")
 	b.typeText("?")
 	local rows = helpRows(b.view().layer)
 	yes(#rows > 0, "the shortcut list has rows")
