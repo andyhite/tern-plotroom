@@ -189,6 +189,7 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	eq(#w.toasts, toasts + 1, "staying there toasts nothing more")
 	eq(w.window.refreshes, before + 1, "and redraws nothing")
 	eq(((w.window.status :: any)({ pane = 1 }))[1].command, "plugin.plotroom.agents-waiting", "the segment runs the jump command")
+	same(w.palette(), { "agent-message-selection", "agents-waiting", "open", "open-url" }, "Tern's palette offers the jump while one waits")
 	w.window.focused = 1
 	w.command("agents-waiting")
 	eq(w.window.focused, agent, "the jump focuses the waiting agent's pane")

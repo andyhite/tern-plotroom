@@ -404,6 +404,23 @@ class Smoke:
         walk(json.loads(self.ctl("tree")).get("tree"))
         return out
 
+    def palette_rows(self) -> List[str]:
+        """The option rows of Tern's open command palette (it is drawn outside the UI tree; the accessibility tree has it); empty when it is closed."""
+        out: List[str] = []
+
+        def walk(node: object, inside: bool) -> None:
+            if isinstance(node, dict):
+                inside = inside or (node.get("role") == "Dialog" and node.get("name") == "Command palette")
+                if inside and node.get("role") == "ListBoxOption" and isinstance(node.get("name"), str):
+                    out.append(node["name"])
+                walk(node.get("children") or [], inside)
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child, inside)
+
+        walk(json.loads(self.ctl("a11y")), False)
+        return out
+
     def preview_texts(self) -> List[str]:
         """Texts inside the drawn native preview slot (`pk-pv-slot`) that has a positive-size rect; empty when no such slot is drawn."""
         out: List[str] = []
@@ -1369,6 +1386,18 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
     s.eq("the palette left the selection alone", chosen, s.selection())
     s.eq("and its preview", True, s.previewing())
+    # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only pair this run sets);
+    # the `plugins run` calls below (snooze, toggle-snoozed, attention, sort) prove an unlisted command still runs by its action name.
+    s.ctl_ok("palette", "Plotroom:")
+    s.wait_until("Tern's palette lists Plotroom: Open", lambda: "Plotroom: Open" in s.palette_rows())
+    time.sleep(0.5)
+    listed = sorted(t for t in s.palette_rows() if t.startswith("Plotroom: "))
+    s.shot("tern-palette")
+    s.eq("Tern's palette lists only Open, Open item by URL and Message an agent while none waits",
+         ["Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Worktree smoke"], listed)
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Tern's palette is closed", lambda: not s.palette_rows())
+    s.eq("Tern's palette left the selection alone", chosen, s.selection())
     # Selecting a second unread row marks that one seen by itself: exactly one more New badge goes.
     s.ctl_ok("key", "Down")
     s.wait_until("the second row is selected", lambda: len(s.selection()) == 1 and s.selection() != chosen)

@@ -18,6 +18,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
+- Tern's palette lists only Plotroom: Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input. Every other Plotroom command stays in Commands (`.`) with its key, and stays runnable by its action name `plugin.plotroom.<id>` (key binds, `tern ctl plugins run`).
 
 ## [0.33.0] - 2026-11-02
 

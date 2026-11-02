@@ -1489,9 +1489,11 @@ command({
 	run = launch,
 })
 
-local function available(cx: WindowCx): boolean
-	local pane = cx.session:focused()
-	return pane ~= nil and isPlotroom(cx, pane)
+-- Tern's palette lists only the entry points and cross-pane commands (Open, Open item by URL, Message an agent with
+-- the selection…, Go to the first agent that needs input); every other command stays runnable by its action name
+-- (`plugin.plotroom.<id>`: key binds, `tern ctl plugins run`) and is offered inside the block by Commands (`.`).
+local function hidden(_cx: WindowCx): boolean
+	return false
 end
 
 flows.setup({
@@ -1511,7 +1513,7 @@ for _, c in flows.COMMANDS do
 		id = c.id,
 		title = c.title,
 		icon = "merge",
-		available = if c.anywhere then nil else available,
+		available = if c.anywhere then nil else hidden,
 		run = function(cx: WindowCx)
 			local pane = cx.session:focused()
 			if c.anywhere then
@@ -1679,7 +1681,7 @@ command({
 	id = "open-selected",
 	title = "Plotroom: Open the selected PR or issue in Browser",
 	icon = "merge",
-	available = available,
+	available = hidden,
 	run = function(cx: WindowCx)
 		selected(cx, OPEN_NODE)
 	end,
@@ -1689,7 +1691,7 @@ command({
 	id = "worktree-selected",
 	title = "Plotroom: Open the selected PR or issue in a worktree",
 	icon = "merge",
-	available = available,
+	available = hidden,
 	run = function(cx: WindowCx)
 		selected(cx, WORKTREE_NODE)
 	end,
@@ -1699,7 +1701,7 @@ command({
 	id = "goto-selected",
 	title = "Plotroom: Go to the selected PR or issue's tab",
 	icon = "merge",
-	available = available,
+	available = hidden,
 	run = function(cx: WindowCx)
 		selected(cx, GOTO_NODE, "The selected pull request has no open tab")
 	end,
@@ -1709,7 +1711,7 @@ command({
 	id = "agent-selected",
 	title = "Plotroom: Run an agent on the selected PR or issue",
 	icon = "merge",
-	available = available,
+	available = hidden,
 	run = function(cx: WindowCx)
 		selected(cx, AGENT_NODE)
 	end,

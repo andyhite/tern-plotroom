@@ -446,6 +446,7 @@ export type World = {
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
 	click: (string, number?) -> any,
 	command: (string) -> (),
+	palette: () -> { string },
 	finish: () -> (),
 }
 
@@ -1412,6 +1413,17 @@ local function newWorld(instantiate: Loader, context: string): World
 				error("the window registered no command " .. id, 2)
 			end
 			def.run(windowCx)
+		end,
+		-- The ids of the commands Tern's palette lists now (no `available`, or one that answers true), sorted.
+		palette = function(): { string }
+			local out: { string } = {}
+			for id, def in commands do
+				if def.available == nil or def.available(windowCx) then
+					table.insert(out, id)
+				end
+			end
+			table.sort(out)
+			return out
 		end,
 		finish = function()
 			if #unmatched > 0 then

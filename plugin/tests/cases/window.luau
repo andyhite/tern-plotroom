@@ -528,6 +528,13 @@ windowCase("window: the palette command Run an agent follows the card's unseen A
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5", "and the pick runs")
 end)
 
+windowCase("window: Tern's palette lists only Open, Open item by URL and Message an agent while nothing waits", function(w: World)
+	agentScene(w)
+	same(w.palette(), { "agent-message-selection", "open", "open-url" }, "with a Plotroom block focused, only the entry points and cross-pane commands")
+	w.window.focused = 99
+	same(w.palette(), { "agent-message-selection", "open", "open-url" }, "and the same from any other pane")
+end)
+
 windowCase("window: a new worktree runs its repository's setup commands in its tab; a reused one does not", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
