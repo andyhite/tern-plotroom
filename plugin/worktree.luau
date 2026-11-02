@@ -838,12 +838,12 @@ local function claim(checkout: string, repo: string, path: string, branch: strin
 				if e.main then
 					return done(nil, "That is the checkout; Plotroom never removes it.")
 				elseif e.branch ~= branch then
-					return done(nil, "The worktree at " .. path .. " changed (it is on " .. (e.branch or "no branch") .. " now); reload the list.")
+					return done(nil, "The worktree at " .. path .. " changed (it is on " .. (e.branch or "no branch") .. " now); Refresh Worktrees.")
 				end
 				return done(e, nil)
 			end
 		end
-		done(nil, path .. " is not a worktree of this repository any more; reload the list.")
+		done(nil, path .. " is not a worktree of this repository any more; Refresh Worktrees.")
 	end)
 end
 

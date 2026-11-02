@@ -405,10 +405,10 @@ case("worktree.removeEntry: refuses main, locked, prunable, missing, changed and
 	refused("/wt/lk", "lk", "locked, prunable or missing", "a locked worktree")
 	refused("/wt/prune", "pr", "locked, prunable or missing", "a prunable worktree")
 	refused("/wt/gone", "gn", "locked, prunable or missing", "a worktree whose folder is gone")
-	refused("/wt/pr5", "changed", "changed", "a worktree now on another branch than the window remembers")
+	refused("/wt/pr5", "changed", "now); Refresh Worktrees.", "a worktree now on another branch than the window remembers")
 	refused("/wt/det", "feature", "changed", "a detached worktree claimed to be on a branch")
 	refused("/wt/pr5", nil, "changed", "a branch claimed to be detached")
-	refused("/nowhere", "x", "not a worktree", "a path git does not list")
+	refused("/nowhere", "x", "not a worktree of this repository any more; Refresh Worktrees.", "a path git does not list")
 	eq(countLog(g, "worktree remove"), 0, "git was never asked to remove any of them")
 end)
 
