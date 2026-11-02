@@ -2735,7 +2735,7 @@ case("host open-url: the pin cap refuses only a new pin, tells Open by URL, and 
 	for n = 1, 20 do
 		eq(asks.hx.ask(w, b, { op = "open-url", url = url(n) }).ok, true, "pin " .. n)
 	end
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	local scopeBefore = pickerOf(b).scope
 	local full = asks.hx.ask(w, b, { op = "open-url", url = url(21) })
 	has(full.problem, "Pins are full", "a 21st pin is refused to the window, not answered with success")
@@ -2773,7 +2773,7 @@ case("host keys: a saved custom key equal to an action's default leaves that act
 	eq(b.press(".", nil, "."), true, ". is handled")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and still makes the worktree")
 	eq(#w.opened, opened + 1, "it opened no palette")
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	eq(rowIn(b, "key:more").control.value, "", "Settings shows the shortcut removed")
 	same(w.kv.get("keys"), { worktree = "." }, "nothing was written")
 end)

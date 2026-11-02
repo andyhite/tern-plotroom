@@ -35,7 +35,7 @@ local function seedViews(kind: Kind): Views
 end
 
 -- The default views of `integration` that `views` (one Settings › Views group) has none of the same kind and name of,
--- in order: what its Restore defaults saves back. An edited default keeps its name, so it is never replaced.
+-- in order: what its Add missing defaults saves back. An edited default keeps its name, so it is never replaced.
 function M.missingViews(integration: string, views: { View }): { { kind: Kind, seed: Seed } }
 	local out: { { kind: Kind, seed: Seed } } = {}
 	for _, kind in { KINDS.prs, KINDS.issues } do
@@ -260,12 +260,12 @@ function M.editSetup(repo: string, fn: ({ string }) -> string?): string?
 	end)
 end
 
--- Branch and worktree folder name formats (folders: Settings › Worktrees; branch: there, or per repository in Settings › Repositories). One table keeps the format helpers together.
+-- Branch and worktree folder name formats (Settings › Repositories: the defaults, and a branch format per repository). One table keeps the format helpers together.
 local formats = {}
 M.formats = formats
 
 -- The branch name format saved for `repo` (kv "branch-formats", keyed like "checkouts"); nil when none is (the
--- Worktrees format applies) or they cannot be read.
+-- default format applies) or they cannot be read.
 function formats.repoOf(repo: string, snap: { [string]: any }?): string?
 	local map = if snap then snap.repos else M.readMap("branch-formats", "branch formats")
 	local fmt = if map then map[string.lower(repo)] else nil
@@ -311,7 +311,7 @@ function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
 	end)
 end
 
--- Name formats for every repository (Settings › Worktrees): the branch of an issue's worktree, and the
+-- Name formats for every repository (Settings › Repositories): the branch of an issue's worktree, and the
 -- folder names of PR and issue worktrees. Kept under kv formats.KEYS; "" or unset is the default.
 formats.KEYS = { branch = "branch-format", prdir = "pr-dir-format", issuedir = "issue-dir-format" } :: { [string]: string }
 formats.DEFAULTS = { branch = tracker.BRANCH_DEFAULT, prdir = tracker.PR_DIR_DEFAULT, issuedir = tracker.ISSUE_DIR_DEFAULT } :: { [string]: string }

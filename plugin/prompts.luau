@@ -1,6 +1,6 @@
 --!strict
 -- The prompts each kind offers until its saved prompts are first changed: host/storage's loadPrompts shows these while kv
--- prompts-prs / prompts-issues is absent, and the first edit in Settings › Prompts saves them as they stand. Written
+-- prompts-prs / prompts-issues is absent, and the first edit in Settings › Actions saves them as they stand. Written
 -- for an omp agent that Plotroom starts in the item's worktree (`worktree` false: the repository's main checkout), with
 -- the variables KINDS[kind].vars lists filled in. Each stays under host/storage's PROMPT_CAP, so it can be edited.
 
@@ -477,7 +477,7 @@ M.issues = {
 	{ id = "p3", name = "Plan", text = PLAN, worktree = false },
 } :: { Seed }
 
--- The defaults no saved action in `saved` is named like, in order: what Settings › Actions › Restore defaults saves
+-- The defaults no saved action in `saved` is named like, in order: what Settings › Actions › Add missing defaults saves
 -- back. An edited default keeps its name, so it is never replaced.
 function M.missing(defaults: { Seed }, saved: { any }): { Seed }
 	local out: { Seed } = {}

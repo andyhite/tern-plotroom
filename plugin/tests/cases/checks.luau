@@ -1465,7 +1465,7 @@ case("host: the Keys page refuses a pull request prompt's shortcut while an issu
 	s.gh.items.octocat = manyItems("o/r", 3)
 	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ promptOf("p1", "Review", "Review {url}", "e") }) })
 	local b = openIssues(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	eq(bindKey(b, "agent", "e"), "Already the shortcut of the pull request action “Review”.", "a pull request prompt's key is refused on an issue filter too")
 	b.press("escape")
 	eq(bindKey(b, "worktree", "W"), nil, "a free key is accepted")
@@ -2132,22 +2132,22 @@ case("host: the branch format rejects unknown variables and saves per repository
 		end
 		return out
 	end
-	same(rows(), { "ropen:o/r", "ropen:x/y", "radd" }, "each repository is a summary row, then the Add button: the launch one was added")
+	same(rows(), { "fmt:branch", "fmt:prdir", "fmt:issuedir", "ropen:o/r", "ropen:x/y", "radd", "jadd" }, "the default name formats, then each repository as a summary row and the Add button, then Jira's Add project: the launch one was added")
 	eq(rowIn(b, "ropen:x/y").hint, "/work/y · keep/{key}", "a summary shows the checkout and the repository's own branch format")
 	eq(rowIn(b, "ropen:x/y").control.label, "Edit", "and opens with Edit")
 	eq(rowIn(b, "branch:o/r"), nil, "the fields stay folded")
 	expand(b, "ropen:o/r")
 	eq(prefsOf(b).focus, "checkout:o/r", "Edit opens the form on its checkout")
-	same(rows(), { "ropen:o/r", "rremove:o/r", "checkout:o/r", "branch:o/r", "setup:o/r:new", "ropen:x/y", "radd" }, "one form is open, its Remove right after its Done")
+	same(rows(), { "fmt:branch", "fmt:prdir", "fmt:issuedir", "ropen:o/r", "rremove:o/r", "checkout:o/r", "branch:o/r", "setup:o/r:new", "ropen:x/y", "radd", "jadd" }, "one form is open, its Remove right after its Done")
 	eq(rowIn(b, "ropen:o/r").control.label, "Done", "Edit turned Done")
 	local row = rowIn(b, "branch:o/r")
 	eq(row.label, "Issue branch name", "label")
 	eq(row.hint, nil, "no description")
 	eq(row.control.k, "text", "a text field")
-	eq(row.control.placeholder, "{github.user}/{key}-{slug}", "the Worktrees format is its placeholder")
+	eq(row.control.placeholder, "{github.user}/{key}-{slug}", "the default format is its placeholder")
 	eq(row.control.value, "", "nothing is saved for o/r")
 	eq(row.changed, false, "so the row is not marked changed")
-	has(row.defaultLabel, "Worktrees", "and a reset says where the default comes from")
+	has(row.defaultLabel, "Name formats", "and a reset says where the default comes from")
 	has(b.text(), "octocat/12-fix-login", "the preview shows the branch the Worktrees format makes")
 	local function save(text: string)
 		b.event({ ev = "select", id = "layer.settings", item = "branch:o/r" })
@@ -2234,7 +2234,7 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 			table.insert(listed, r.id)
 		end
 	end
-	same(listed, { "popen:prs:p1", "padd:prs", "prestore:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues", "prestore:issues" }, "each kind's prompts are summary rows with the kind's Add row, then Restore defaults (none of these is named like a default), last")
+	same(listed, { "popen:prs:p1", "padd:prs", "prestore:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues", "prestore:issues" }, "each kind's prompts are summary rows with the kind's Add row, then Add missing defaults (none of these is named like a default), last")
 	expand(b, "popen:issues:p1")
 	local ids: { string } = {}
 	for _, section in prefsOf(b).sections do

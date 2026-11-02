@@ -884,7 +884,7 @@ local function typePrompt(cx: WindowCx, pane: number, t: Target, checked: boolea
 	ifFree(cx, pane, t, "a typed prompt", askText)
 end
 
--- Asks which saved prompt (Settings › Prompts, those the block's view offers) to run on the target, then
+-- Asks which saved prompt (Settings › Actions, those the block's view offers) to run on the target, then
 -- runs it in an agent where the prompt says (its worktree or the main checkout). "Type a prompt…" sends typed text
 -- to the worktree.
 local function pickMenu(cx: WindowCx, pane: number, t: Target)

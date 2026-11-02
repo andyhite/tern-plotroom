@@ -253,24 +253,24 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
 end)
 
-case("host: Settings › Keys binds an action to a key: the key works, ? and the action bar show it, and Reset goes back to no key", function(w: World)
+case("host: Settings › General binds an action to a key: the key works, ? and the action bar show it, and Reset goes back to no key", function(w: World)
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	local page: any = nil
 	for _, p in prefsOf(b).pages do
-		if p.id == "keys" then
+		if p.id == "general" then
 			page = p
 		end
 	end
-	same(page, { id = "keys", label = "Keyboard shortcuts", group = "Queue", icon = "keyboard" }, "Keyboard shortcuts is a page of the Queue group")
+	same(page, { id = "general", label = "General", group = "General", icon = "gauge" }, "the keys are on the General page")
 	local ids: { string } = {}
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
 	same(ids, { "kpreset", "key:down", "key:up", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
-	eq(prefsOf(b).sections[1].title, "Queue", "under the queue's title")
+	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
 	eq(row.control.value, "", "with no key: only the command palette has one by default")
@@ -320,7 +320,7 @@ case("host: Settings › Keys binds an action to a key: the key works, ? and the
 	local inSettings = helpRows(b.view().layer)
 	eq(inSettings[#inSettings].keys, "h", "Settings' own list shows it")
 	b.press("escape")
-	eq(prefsOf(b).page, "keys", "Settings reopened on the Keys page it last showed")
+	eq(prefsOf(b).page, "general", "Settings reopened on the General page it last showed")
 	b.event({ ev = "change", id = "layer.settings", item = "key:worktree" })
 	same(w.kv.get("keys"), { down = "j", help = "h" }, "Reset drops that one change")
 	row = rowIn(b, "key:worktree")
@@ -342,7 +342,7 @@ case("host: Use one-key shortcuts binds the classic set to actions with no key, 
 	w.kv.store.keys = nil :: any
 	w.kv.put("keys", { worktree = "x", ["goto"] = "j" })
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	local function press()
 		b.event({ ev = "action", id = "layer.settings", act = "preset-keys", value = "kpreset" })
 	end
@@ -372,7 +372,7 @@ case("host: a key removed after Use one-key shortcuts stays removed when it is u
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	local function press()
 		b.event({ ev = "action", id = "layer.settings", act = "preset-keys", value = "kpreset" })
 	end
@@ -386,7 +386,7 @@ end)
 case("host: an empty Keys row removes a shortcut: no key does it, ? and the action bar leave it out, and the command palette's Reset brings its . back", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	for _, id in { "worktree", "agent", "search", "down", "up", "more" } do
 		eq(bindKey(b, id, ""), nil, "an empty row is accepted: " .. id)
 	end
@@ -403,7 +403,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	eq(row.changed, true, "and changed")
 	eq(row.defaultLabel, ".", "so Reset can bring its key back")
 	b.press("tab", "s")
-	eq(prefsOf(b).page, "prompts", "the Prompts page is before Keys")
+	eq(prefsOf(b).page, "repos", "the Repositories page is before General")
 	b.press("escape")
 	local opened = #w.opened
 	for _, k in { "w", "a", "." } do
@@ -429,7 +429,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	end
 	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "n", "o", "Tab", "r", "s", "?" }, "the list leaves out what has no key")
 	b.press("escape")
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
 	eq(bindKey(b, "settings", ""), nil, "and Settings'")
 	b.press("escape")
@@ -894,7 +894,7 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	eq(pickerOf(b).scope, "issues:v1", "the filter now at its place in the list is shown: the pull request filters are followed by the issue filters")
 end)
 
-case("host: a first run saves its issue views once the Jira site said whether it has sprints; without them there is no sprint view until a Refresh finds some and Restore defaults adds them", function(w: World)
+case("host: a first run saves its issue views once the Jira site said whether it has sprints; without them there is no sprint view until a Refresh finds some and Add missing defaults adds them", function(w: World)
 	hostScene(w, 3)
 	local acli = newAcli(w)
 	local store: any = w.kv.store
@@ -925,12 +925,12 @@ case("host: a first run saves its issue views once the Jira site said whether it
 	for _, row in { "v6 My sprint · jira · status", "v7 Up for grabs · jira · none" } do
 		table.insert(restored, row)
 	end
-	same(hx.viewRows(w, "views-issues"), restored, "Restore defaults saved them after the others, under new ids")
+	same(hx.viewRows(w, "views-issues"), restored, "Add missing defaults saved them after the others, under new ids")
 	eq(rowIn(b, "vrestore:jira:"), nil, "and is gone with nothing left to restore")
 	eq(prefsOf(b).focus, "vadd:jira:", "Add takes the focus")
 end)
 
-case("host: an account's Restore defaults saves back the default views its group has none named like, as that account's; a failed save is told and changes nothing", function(w: World)
+case("host: an account's Add missing defaults saves back the default views its group has none named like, as that account's; a failed save is told and changes nothing", function(w: World)
 	local s = hostScene(w, 3)
 	newAcli(w)
 	s.gh.tokens.octocat = "tok-octocat"
@@ -1023,25 +1023,25 @@ windowCase("window: the confirm link is refused from a pane of another version o
 	refused("did not come from a Plotroom block", "a pane that is not Plotroom", 2)
 end)
 
-case("host: Tab cycles the Settings pages in order, Views, Prompts, Keys, Worktrees, Repositories, Jira, Refresh, and Shift+Tab goes back; they are the same whichever kind of filter is shown", function(w: World)
+case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories, General, and Shift+Tab goes back; they are the same whichever kind of filter is shown", function(w: World)
 	hostScene(w, 3)
 	newAcli(w)
 	local b = openQueue(w)
 	b.typeText("s")
 	local pages: { string } = { prefsOf(b).page }
-	for _ = 1, 7 do
+	for _ = 1, 4 do
 		b.press("tab")
 		table.insert(pages, prefsOf(b).page)
 	end
-	same(pages, { "views", "prompts", "keys", "worktrees", "repos", "jira", "connection", "views" }, "Tab walks the pages and wraps around")
+	same(pages, { "views", "prompts", "repos", "general", "views" }, "Tab walks the pages and wraps around")
 	b.press("tab", "s")
-	eq(prefsOf(b).page, "connection", "Shift+Tab goes back, wrapping the other way")
+	eq(prefsOf(b).page, "general", "Shift+Tab goes back, wrapping the other way")
 	b.press("escape")
 	b.typeText("s")
-	eq(prefsOf(b).page, "connection", "Settings reopens on the page it last showed")
+	eq(prefsOf(b).page, "general", "Settings reopens on the page it last showed")
 	b.press("escape")
 	b.event({ ev = "action", id = "layer.queue", act = "settings" })
-	eq(prefsOf(b).page, "connection", "and so does its button")
+	eq(prefsOf(b).page, "general", "and so does its button")
 	local function ids(): { string }
 		local out: { string } = {}
 		for _, p in prefsOf(b).pages do
@@ -1049,14 +1049,14 @@ case("host: Tab cycles the Settings pages in order, Views, Prompts, Keys, Worktr
 		end
 		return out
 	end
-	local expected = { "views", "prompts", "keys", "worktrees", "repos", "jira", "connection" }
+	local expected = { "views", "prompts", "repos", "general" }
 	same(ids(), expected, "a pull request filter's pages")
 	local byId: { [string]: any } = {}
 	for _, p in prefsOf(b).pages do
 		byId[p.id] = p
 	end
-	same(byId.worktrees, { id = "worktrees", label = "Worktrees", group = "Code", icon = "tree" }, "Worktrees is a page of the Code group")
-	same(byId.connection, { id = "connection", label = "Refresh", group = "Connection", icon = "gauge" }, "and Refresh the Connection group's")
+	same(byId.repos, { id = "repos", label = "Repositories", group = "Code", icon = "folder" }, "Repositories is a page of the Code group")
+	same(byId.general, { id = "general", label = "General", group = "General", icon = "gauge" }, "and General the General group's")
 	b.press("escape")
 	pickScope(b, "issues:v1")
 	b.typeText("s")
@@ -1761,7 +1761,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 		table.insert(ids, row.id)
 	end
 	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "pnext:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, and its next action: no shortcut")
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Review", "the Keys page has a row for the saved action, named for it")
 	eq(sectionIn(b, "pkey:prs:p1").title, "Pull request actions", "under its kind's title")
@@ -1824,7 +1824,7 @@ case("host: a Keys row refuses a key another action or a saved prompt of either 
 	w.kv.put("prompts-issues", { version = 1, nextId = 2, items = array({ promptOf("p1", "Triage", "Triage {url}", "i") }) })
 	w.kv.put("keys", { ["goto"] = "g" })
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	eq(bindKey(b, "worktree", "g"), "Already the shortcut of Go to tab.", "another action's key is refused, naming the action")
 	eq(prefsOf(b).editing.row, "key:worktree", "and the capture stays open for another key")
 	eq(bindKey(b, "worktree", " "), "One key: a single letter, digit or symbol.", "a space is no key")
@@ -1866,7 +1866,7 @@ end)
 case("host: unreadable or malformed saved keys lock the Keys rows with the reason, the default keys keep working, and nothing is written over them", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	-- Tries every way to write the keys while they cannot be loaded: `why` is what the rows must say.
 	local function locked(what: string, why: string)
 		b.render()
@@ -1893,7 +1893,7 @@ case("host: unreadable or malformed saved keys lock the Keys rows with the reaso
 	eq(b.press(".", nil, "."), true, "the default one is")
 	w.kv.failGet["keys"] = nil
 	eq(b.press(",", nil, ","), true, "readable again, the saved key works")
-	goToSettings(b, "keys")
+	goToSettings(b, "general")
 	b.event({ ev = "select", id = "layer.settings", item = "key:goto" })
 	b.press("enter")
 	w.kv.put("keys", "garbage")
@@ -1921,7 +1921,7 @@ case("host: a key changed in one block reaches the other live blocks, and a clos
 	local gone = w.open(3, { "/work/r" })
 	w.flush()
 	gone.close()
-	goToSettings(a, "keys")
+	goToSettings(a, "general")
 	local drawn, closed = c.renders(), gone.renders()
 	eq(bindKey(a, "worktree", "W"), nil, "the key is saved")
 	yes(c.renders() > drawn, "the other block is drawn again")
@@ -2129,13 +2129,13 @@ case("host: a checkout clone that fails late stays inline on the Repositories pa
 	b.press("escape")
 	submit()
 	b.press("tab", "s")
-	eq(prefsOf(b).page, "worktrees", "the user moved on while gh was cloning")
+	eq(prefsOf(b).page, "prompts", "the user moved on while gh was cloning")
 	w.advance(5000)
 	eq(#w.toasts, 1, "the refusal is reported once")
 	eq(w.toasts[1].level, "error", "as an error")
 	eq(w.toasts[1].text, "Checkout not saved", "that says what happened")
 	has(w.toasts[1].sub, "not an empty directory", "with gh's reason")
-	eq(prefsOf(b).page, "worktrees", "the page the user is on is left alone")
+	eq(prefsOf(b).page, "prompts", "the page the user is on is left alone")
 	b.press("tab")
 	eq(prefsOf(b).page, "repos", "back on the Repositories page")
 	submit()
@@ -2672,7 +2672,7 @@ case("host: Settings keeps the refresh pace while a refresh runs", function(w: W
 	local b = openQueue(w)
 	slow = true
 	b.typeText("r")
-	goToSettings(b, "connection")
+	goToSettings(b, "general")
 	has(rowIn(b, "refresh").hint, "Auto-refresh every", "the pace shows while the refresh is still running")
 end)
 
@@ -2936,7 +2936,7 @@ case("host: a prompt, format, setup command or checkout saved in one block reach
 	end)
 	a.press("escape")
 	a.press("escape")
-	goToSettings(a, "worktrees")
+	goToSettings(a, "repos")
 	reaches("a worktree name format", function()
 		hx.save(a, "fmt:prdir", "pr-{key}")
 	end)

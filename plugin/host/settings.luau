@@ -226,7 +226,7 @@ local function pageContent(state: State): ({ any }, { Node })
 					for _, m in missing do
 						locked = locked or state.locked[m.kind.id]
 					end
-					row({ id = "vrestore:" .. add, label = "", disabled = locked, control = { k = "action", act = "restore-views", label = "Restore defaults" } })
+					row({ id = "vrestore:" .. add, label = "", disabled = locked, control = { k = "action", act = "restore-views", label = "Add missing defaults" } })
 				end
 			end
 		end
@@ -323,36 +323,12 @@ local function pageContent(state: State): ({ any }, { Node })
 			section((if #list > 0 then "add:" else "add-to:") .. kind.id, if #list > 0 then nil else title)
 			row({ id = "padd:" .. kind.id, label = "", disabled = unreadable, control = { k = "action", act = "add-prompt", label = "Add action" } })
 			if prompts and #require("../prompts").missing(kind.prompts, list) > 0 then
-				row({ id = "prestore:" .. kind.id, label = "", control = { k = "action", act = "restore-prompts", label = "Restore defaults" } })
+				row({ id = "prestore:" .. kind.id, label = "", control = { k = "action", act = "restore-prompts", label = "Add missing defaults" } })
 			end
 		end
-	elseif s.page == "keys" then
-		local map, unreadable = keys.load()
-		section("keys", "Queue")
-		row({ id = "kpreset", label = "Use one-key shortcuts", hint = "Binds j k w g a G m z Z n o / r s ? u d to the actions with no key; a shortcut you removed stays removed", disabled = unreadable, control = { k = "action", act = "preset-keys", label = "Use" } })
-		for _, a in keys.ACTIONS do
-			row({
-				id = "key:" .. a.id,
-				label = a.label,
-				disabled = unreadable,
-				control = { k = "text", value = map[a.id], placeholder = "None" },
-				changed = map[a.id] ~= a.default,
-				defaultLabel = if a.default ~= "" then a.default else "None",
-			})
-		end
-		-- Each saved action's own key, a card per kind while one of its integrations is on (as on the Actions page).
-		for _, kind in { KINDS.prs, KINDS.issues } do
-			local prompts = if usable(kind) then loadPrompts(kind) else nil
-			if not prompts or #prompts.items == 0 then
-				continue
-			end
-			section("pkeys:" .. kind.id, if kind.id == "prs" then "Pull request actions" else "Issue actions")
-			for _, p in prompts.items do
-				row({ id = "pkey:" .. kind.id .. ":" .. p.id, label = p.name, control = { k = "text", value = p.key or "", placeholder = "None" } })
-			end
-		end
-	elseif s.page == "worktrees" then
-		section("sec-names", "Names")
+	elseif s.page == "repos" then
+		-- The default name formats, then each repository's form, then the Jira projects while acli is on.
+		section("sec-names", "Name formats")
 		for _, f in {
 			{ id = "branch", label = "Issue branch name", vars = tracker.VARS },
 			{ id = "prdir", label = "Pull request folder name", vars = tracker.DIR_VARS },
@@ -371,7 +347,6 @@ local function pageContent(state: State): ({ any }, { Node })
 				defaultLabel = formats.DEFAULTS[f.id],
 			})
 		end
-	elseif s.page == "repos" then
 		local checkouts = readCheckouts()
 		local names: { string } = {}
 		for name in checkouts do
@@ -382,7 +357,7 @@ local function pageContent(state: State): ({ any }, { Node })
 		table.sort(names)
 		local repoFormats, formatsOff = readMap("branch-formats", "branch formats")
 		local setups, setupsOff = readMap("setup-commands", "setup commands")
-		section("repos")
+		section("repos", "Repositories")
 		for _, repo in names do
 			local path = checkouts[repo]
 			local mapped = if type(path) == "string" and path ~= "" then path else nil
@@ -414,7 +389,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				label = "Issue branch name",
 				control = { k = "text", value = fmt or "", placeholder = formats.of("branch"), mono = true },
 				changed = fmt ~= nil,
-				defaultLabel = "the Worktrees page's format",
+				defaultLabel = "the Name formats default",
 				disabled = formatsOff,
 			})
 			for i, c in cmds do
@@ -433,49 +408,44 @@ local function pageContent(state: State): ({ any }, { Node })
 			})
 			section("after:" .. repo)
 		end
-		-- Add repository and Add project open the window's pickers.
-		section("add:repo")
+		-- Add repository and Add project open the window's pickers. prefs draws no section without rows, so with none
+		-- listed the card's title goes on its Add button's.
+		section(if #names > 0 then "add:repo" else "add-to:repo", if #names > 0 then nil else "Repositories")
 		row({ id = "radd", label = "", control = { k = "action", act = "add-repo", label = "Add repository" } })
-	elseif s.page == "jira" then
-		local map, unreadable = readMap("jira-repos", "Jira project repositories")
-		local keys: { string } = {}
-		local saved: { [string]: any } = map or {}
-		for key in saved do
-			if type(key) == "string" then
-				table.insert(keys, key)
+		if cli.on("jira") then
+			local map, unreadable = readMap("jira-repos", "Jira project repositories")
+			local keys: { string } = {}
+			local saved: { [string]: any } = map or {}
+			for key in saved do
+				if type(key) == "string" then
+					table.insert(keys, key)
+				end
 			end
-		end
-		table.sort(keys)
-		local options: { any } = {}
-		local known: { string } = {}
-		for name in readCheckouts() do
-			if type(name) == "string" then
-				table.insert(known, name)
+			table.sort(keys)
+			local options: { any } = {}
+			for _, name in names do
+				table.insert(options, { value = name, label = name })
 			end
-		end
-		table.sort(known)
-		for _, name in known do
-			table.insert(options, { value = name, label = name })
-		end
-		section("projects")
-		for _, key in keys do
-			local repos = jiraReposOf(key)
-			if summary("jopen:", key, key, function()
-				return if #repos > 0 then table.concat(repos, ", ") else "No repositories"
-			end) then
-				continue
+			section("projects", "Jira projects")
+			for _, key in keys do
+				local repos = jiraReposOf(key)
+				if summary("jopen:", key, key, function()
+					return if #repos > 0 then table.concat(repos, ", ") else "No repositories"
+				end) then
+					continue
+				end
+				row({ id = "jremove:" .. key, label = "Remove project", disabled = unreadable, control = { k = "action", act = "delete", label = "Remove" } })
+				row({
+					id = "jrepos:" .. key,
+					label = "Repositories",
+					disabled = unreadable or (if #options == 0 then "Add a repository first." else nil),
+					control = { k = "multi", values = tern.json.array(repos), options = tern.json.array(options) },
+				})
+				section("after:" .. key)
 			end
-			row({ id = "jremove:" .. key, label = "Remove project", disabled = unreadable, control = { k = "action", act = "delete", label = "Remove" } })
-			row({
-				id = "jrepos:" .. key,
-				label = "Repositories",
-				disabled = unreadable or (if #options == 0 then "Add a repository first." else nil),
-				control = { k = "multi", values = tern.json.array(repos), options = tern.json.array(options) },
-			})
-			section("after:" .. key)
+			section(if #keys > 0 then "add:jira" else "add-to:jira", if #keys > 0 then nil else "Jira projects")
+			row({ id = "jadd", label = "", disabled = unreadable, control = { k = "action", act = "add-jira", label = "Add project" } })
 		end
-		section("add:jira")
-		row({ id = "jadd", label = "", disabled = unreadable, control = { k = "action", act = "add-jira", label = "Add project" } })
 	elseif s.page == "setup-github" or s.page == "setup-jira" then
 		-- An integration whose CLI does not start: only the way to its install guide.
 		local gh = s.page == "setup-github"
@@ -486,12 +456,37 @@ local function pageContent(state: State): ({ any }, { Node })
 			hint = if gh then "gh is not installed on this host" else "acli is not installed on this host",
 			control = { k = "action", act = "guide", label = "Setup guide ↗" },
 		})
-	else
+	else -- general: the keyboard shortcuts, then Refresh now with the pacing and GitHub's quota
+		local map, unreadable = keys.load()
+		section("keys", "Keyboard shortcuts")
+		row({ id = "kpreset", label = "Use one-key shortcuts", hint = "Binds j k w g a G m z Z n o / r s ? u d to the actions with no key; a shortcut you removed stays removed", disabled = unreadable, control = { k = "action", act = "preset-keys", label = "Use" } })
+		for _, a in keys.ACTIONS do
+			row({
+				id = "key:" .. a.id,
+				label = a.label,
+				disabled = unreadable,
+				control = { k = "text", value = map[a.id], placeholder = "None" },
+				changed = map[a.id] ~= a.default,
+				defaultLabel = if a.default ~= "" then a.default else "None",
+			})
+		end
+		-- Each saved action's own key, a card per kind while one of its integrations is on (as on the Actions page).
+		for _, kind in { KINDS.prs, KINDS.issues } do
+			local prompts = if usable(kind) then loadPrompts(kind) else nil
+			if not prompts or #prompts.items == 0 then
+				continue
+			end
+			section("pkeys:" .. kind.id, if kind.id == "prs" then "Pull request actions" else "Issue actions")
+			for _, p in prompts.items do
+				row({ id = "pkey:" .. kind.id .. ":" .. p.id, label = p.name, control = { k = "text", value = p.key or "", placeholder = "None" } })
+			end
+		end
 		local now = os.time()
 		local wait = waitOf(state)
 		table.insert(sections, {
 			-- prefs draws its one in-section slot (a child with role omp.prefs.preview.status) only after this id.
 			id = "status-line",
+			title = "Refresh",
 			rows = {
 				{
 					id = "refresh",
@@ -1564,7 +1559,7 @@ function M.addJira(state: State, raw: any)
 	if err then
 		return state.cx:toast("error", "Jira project not saved", err)
 	end
-	M.openSettings(state, "jira", "jrepos:" .. key, false)
+	M.openSettings(state, "repos", "jrepos:" .. key, false)
 end
 
 function M.settingsView(state: State, palette: Node): BlockView
