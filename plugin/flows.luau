@@ -560,7 +560,8 @@ function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, numb
 end
 
 -- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed) and when (HH:MM) on its link, for the
--- Agents list and Carly's `plotroom_agents`, and appends the run to the run log (kv `runs`). Nothing for an agent with
+-- Agents list and Carly's `plotroom_agents`. The first turn end of a link appends its run to the run log (kv `runs`):
+-- a run ends with its agent's first turn, so later turns of the same agent add no record. Nothing for an agent with
 -- no link or a store that cannot be read.
 function M.recordResult(cx: WindowCx, agent: number, result: string)
 	local host = hostOf(cx, agent)
@@ -570,8 +571,11 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 	end
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, host) then
+			local first = l.result == nil
 			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
-			writeLinks(links)
+			if not writeLinks(links) or not first then
+				return
+			end
 			usage.appendRun({
 				key = l.key,
 				action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",

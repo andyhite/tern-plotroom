@@ -328,7 +328,7 @@ local function startReview(w: World): any
 	return (w.kv.get("agent-links") :: any)[1]
 end
 
-windowCase("window flows: an agent's turn end appends one run to the run log, newest first, keeping the newest 1000", function(w: World)
+windowCase("window flows: an agent's first turn end appends one run to the run log, newest first, keeping the newest 1000; later turns add none", function(w: World)
 	w.load("window")
 	local old: { any } = {}
 	for i = 1, 1000 do
@@ -347,6 +347,13 @@ windowCase("window flows: an agent's turn end appends one run to the run log, ne
 	eq(runs[1000].key, "o/r#999", "and the oldest one went")
 	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
 	lacks(jsonEncode(runs[1]), "pull/5", "nor the prompt's text")
+	w.advance(600 * 1000)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	runs = w.kv.get("runs")
+	eq(runs[1].result, "failed", "a later turn of the same agent adds no run")
+	eq(runs[2].key, "o/r#1", "nor pushes one out")
+	eq((w.kv.get("agent-links") :: any)[1].result, "done", "while its link still shows the latest turn")
 end)
 
 windowCase("window flows: a malformed run log or usage store is never overwritten, and the report says which part is missing", function(w: World)
