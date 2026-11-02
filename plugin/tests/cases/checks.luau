@@ -1369,14 +1369,14 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "newest update first")
 	eq(pickerOf(b).selected, "no_2fr_2312", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (3) · 2 new", "the title names the filter, counts the issues and the new ones")
+	eq(b.title(), "Plotroom · Assigned to me (3)", "the title names the filter and counts the issues")
 	eq(pickerOf(b).noun, "issues", "the picker counts issues")
 	eq(pickerOf(b).placeholder, "Search the loaded issues", "and searches them")
 	eq(pickerOf(b).icon, "list-checks", "with an icon of its own")
 	local sidebar: { string } = {}
 	local loaded: any = nil
 	for _, scope in pickerOf(b).scopes do
-		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
+		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "now" then
 			table.insert(sidebar, scope.group .. ": " .. scope.label)
 		end
 		if scope.id == "issues:v1" then
@@ -1490,7 +1490,7 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	local b = openQueue(w)
 	local entries: { string } = {}
 	for _, scope in pickerOf(b).scopes do
-		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
+		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "now" then
 			table.insert(entries, scope.id .. " " .. scope.icon .. " " .. scope.label)
 		end
 	end
@@ -1515,7 +1515,7 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#requestsOf(s.gh, "search"), 1, "no pull request was searched for the issue filter")
 	eq(requestsOf(s.gh, "issue-search")[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the issue search is the filter's own")
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the list is its issues")
-	eq(b.title(), "Plotroom · Assigned to me (3) · 2 new", "the title names it")
+	eq(b.title(), "Plotroom · Assigned to me (3)", "the title names it")
 	eq(pickerOf(b).noun, "issues", "counted as issues")
 	eq(pickerOf(b).icon, "list-checks", "under the issue icon")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "with the issue's buttons")
@@ -1583,7 +1583,7 @@ case("host: a search that lands after the filter switched to the other kind is d
 	w.advance(5000)
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the pull request answer that came late does not replace it")
 	eq(pickerOf(b).noun, "issues", "the block still counts issues")
-	eq(b.title(), "Plotroom · Assigned to me (3) · 2 new", "under the issue filter's title")
+	eq(b.title(), "Plotroom · Assigned to me (3)", "under the issue filter's title")
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(#requestsOf(s.gh, "search"), 2, "the late answer was dropped, not kept: the pull request filter searches again")
@@ -1907,23 +1907,23 @@ case("host: a block told to show a pull request selects it where its pull reques
 	eq(pickerOf(b).selected, "no_2fr_232", "a PR the view lists is selected in it")
 	eq(findKey(b.view().layer, "settings", "prefs"), nil, "Settings closes to show it")
 	eq(#requestsOf(s.gh, "pull"), 0, "nothing is looked up")
-	eq(pickerOf(b).scopes[1].label, "My PRs", "and nothing is pinned")
+	eq(pickerOf(b).scopes[2].label, "My PRs", "and nothing is pinned: the view follows Now")
 	b.event({ ev = "action", act = "show-pr", value = url })
 	w.flush()
 	eq(requestsOf(s.gh, "pull")[1].fields.q, url, "one the view does not list is looked up by its URL")
 	same(listed(b), { "no_2fr_2345" }, "and listed alone")
 	eq(pickerOf(b).selected, "no_2fr_2345", "selected")
-	eq(pickerOf(b).scopes[1].label, "o/r#45", "under a scope named after it, first in the sidebar")
-	eq(pickerOf(b).scope, pickerOf(b).scopes[1].id, "which is the active one")
+	eq(pickerOf(b).scopes[2].label, "o/r#45", "under a scope named after it, first after Now in the sidebar")
+	eq(pickerOf(b).scope, pickerOf(b).scopes[2].id, "which is the active one")
 	eq(b.title(), "Plotroom · o/r#45 (1)", "the block's title names it")
 	b.event({ ev = "action", act = "show-pr", value = "https://example.com/o/r/pull/1" })
 	eq(#requestsOf(s.gh, "pull"), 1, "anything but a pull request URL is ignored")
-	eq(pickerOf(b).scopes[1].label, "o/r#45", "and keeps the pin")
+	eq(pickerOf(b).scopes[2].label, "o/r#45", "and keeps the pin")
 	eq(b.saved().activeViewId, "pin:o/r#45", "the pinned scope is saved by its id")
 	same(b.saved().pins, { url }, "and its URL is in the saved pins")
 	local restored = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
-	eq(pickerOf(restored).scopes[1].label, "o/r#45", "a restored block has its pin in the sidebar")
+	eq(pickerOf(restored).scopes[2].label, "o/r#45", "a restored block has its pin in the sidebar")
 	eq(pickerOf(restored).selected, "no_2fr_2345", "and the pinned item is selected")
 	local launched = w.open(3, { "/work/r", url })
 	w.flush()

@@ -163,7 +163,7 @@ windowCase("window flows: an agent started from a block is linked in kv and the 
 	eq(#statusEvents(w), 3, "and then it is quiet")
 end)
 
-windowCase("window status: agents needing input are counted on every pane, toast once, jump on click, and the mismatch warning stays", function(w: World)
+windowCase("window status: agents needing input are counted in the one need-you count on every pane, toast once, and the mismatch warning stays", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	startAgentOn(w, st)
@@ -180,7 +180,7 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	local before = w.window.refreshes
 	w.window.agentStates[agent] = "waiting_input"
 	w.advance(4000)
-	same(texts(7), { "1 agent needs input" }, "every pane shows the count")
+	same(texts(7), { "1 need you" }, "every pane shows the one count, which covers the agent")
 	eq(#w.toasts, toasts + 1, "the agent's entry toasts once")
 	eq(w.toasts[#w.toasts].text, "o/r#5 needs input", "naming its item")
 	eq(w.toasts[#w.toasts].sub, "Review", "and its action")
@@ -188,15 +188,15 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	w.advance(12000)
 	eq(#w.toasts, toasts + 1, "staying there toasts nothing more")
 	eq(w.window.refreshes, before + 1, "and redraws nothing")
-	eq(((w.window.status :: any)({ pane = 1 }))[1].command, "plugin.plotroom.agents-waiting", "the segment runs the jump command")
-	same(w.palette(), { "agent-message-selection", "agents-waiting", "open", "open-url" }, "Tern's palette offers the jump while one waits")
+	eq(((w.window.status :: any)({ pane = 1 }))[1].command, "plugin.plotroom.now", "the segment shows Now")
+	same(w.palette(), { "agent-message-selection", "agents-waiting", "now", "open", "open-url" }, "Tern's palette offers Now and the jump while one waits")
 	w.window.focused = 1
 	w.command("agents-waiting")
 	eq(w.window.focused, agent, "the jump focuses the waiting agent's pane")
 	w.window.surfaces[1] = { main = { id = "main", c = { { id = "main.rpc", p = { text = "9", hidden = true } } } } }
 	w.window.focused = 1
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
-	same(texts(1), { "Plotroom on host1 is a different version from this window's", "1 agent needs input" }, "the mismatch warning still shows beside it")
+	same(texts(1), { "Plotroom on host1 is a different version from this window's", "1 need you" }, "the mismatch warning still shows beside it")
 	w.window.agentStates[agent] = "working"
 	w.advance(4000)
 	same(texts(7), {}, "the count clears as soon as none waits")
@@ -805,7 +805,6 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		{ "mark-seen", "triage", "seen" },
 		{ "snooze", "triage", "snooze" },
 		{ "toggle-snoozed", "triage", "toggle-snoozed" },
-		{ "attention", "triage", "toggle-attention" },
 		{ "sort", "sort", "next" },
 		{ "worktrees-open", "open-worktrees" },
 	}
@@ -987,27 +986,27 @@ windowCase("window flows: comment, close, reopen, ready for review and convert t
 	w.window.typed = nil
 end)
 
-windowCase("window flows: Mark read… asks the host to plan the Inbox's threads and commits only a confirmed plan, Cancel first, with the account in the confirm", function(w: World)
+windowCase("window flows: Mark read… asks the host to plan Now's threads and commits only a confirmed plan, Cancel first, with the account in the confirm", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local function plan(): any
-		w.command("inbox-read")
+		w.command("mark-read")
 		w.flush()
-		return st.reply("act", { token = "t-inbox", confirm = { head = "Mark 3 notifications read?", label = "Mark 3 read", lines = { "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" } } })
+		return st.reply("act", { token = "t-read", confirm = { head = "Mark 3 notifications read?", label = "Mark 3 read", lines = { "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" } } })
 	end
 	w.window.choose = "Cancel"
-	eq(plan().name, "inbox-read", "asks for the inbox-read plan")
+	eq(plan().name, "mark-read", "asks for the mark-read plan")
 	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Mark 3 read", "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" }, "Cancel first, then the choice, then the account and what happens")
 	same(st.ops(), { "act" }, "Cancel commits nothing")
 	w.window.choose = "Mark 3 read"
 	plan()
 	local ops = st.ops()
 	eq(ops[#ops], "commit", "the confirming row commits")
-	eq(st.reply("commit", { ok = true, message = "Marked 3 notifications read as @octocat" }).token, "t-inbox", "with the token of that very plan")
+	eq(st.reply("commit", { ok = true, message = "Marked 3 notifications read as @octocat" }).token, "t-read", "with the token of that very plan")
 	eq(w.toasts[#w.toasts].text, "Marked 3 notifications read as @octocat", "the result is told")
-	w.command("inbox-read")
+	w.command("mark-read")
 	w.flush()
-	st.reply("act", { problem = "The Inbox lists no notifications to mark read." })
+	st.reply("act", { problem = "Now lists no notifications to mark read." })
 	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
 end)
 
@@ -1283,13 +1282,13 @@ case("host triage: z snoozes the selected row until 08:00 tomorrow and the row t
 	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "the snoozed row leaves the list")
 	eq(pickerOf(b).selected, "no_2fr_232", "and the row that took its place is selected")
 	has(w.toasts[#w.toasts].text, "Snoozed until", "the toast says so")
-	eq(pickerOf(b).scopes[1].count, 2, "the sidebar count leaves the snoozed row out")
+	eq(pickerOf(b).scopes[2].count, 2, "the sidebar count leaves the snoozed row out")
 	has(w.toasts[#w.toasts].text, "08:00", "tomorrow morning")
 	local entry: any = w.kv.get("triage").items["o/r#1"]
 	eq(entry.snoozeUntil, EPOCH + 20 * 3600, "saved until 08:00 the next day")
 	eq(type(entry.seen), "string", "it was marked seen when it was selected; snoozing itself marks nothing")
 	b.typeText("Z")
-	eq(pickerOf(b).scopes[1].count, 3, "and counts it again while snoozed rows are listed")
+	eq(pickerOf(b).scopes[2].count, 3, "and counts it again while snoozed rows are listed")
 	same(listed(b), all, "Z lists the snoozed rows too")
 	eq(asks.hx.mark(b, "no_2fr_231"), "Snoozed", "the snoozed one wears a Snoozed badge")
 	eq(asks.hx.mark(b, "no_2fr_232"), "-", "the row that took its place is read now")
@@ -1304,62 +1303,6 @@ case("host triage: z snoozes the selected row until 08:00 tomorrow and the row t
 	w.kv.put("triage", { version = 1, items = { ["o/r#2"] = { at = 1, snoozeUntil = EPOCH - 10 }, ["o/r#3"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
 	local c = openQueue(w, 2)
 	same(listed(c), { "no_2fr_231", "no_2fr_232" }, "a snooze that ran out hides its row no longer, one still running does")
-end)
-
-case("host triage: n lists only rows that need attention: unseen, changed or whose agent waits for input; an idle or exited agent clears nothing", function(w: World)
-	hostScene(w, 3)
-	local b = openQueue(w)
-	local all = { "no_2fr_231", "no_2fr_232", "no_2fr_233" }
-	b.typeText("n")
-	same(listed(b), all, "the row being read stays listed, though reading it marked it seen")
-	b.press("down")
-	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "moving on lets the seen row go")
-	eq(pickerOf(b).selected, "no_2fr_232", "the selection is the row moved to")
-	asks.hx.agents(b, { ["o/r#1"] = "waiting_input" })
-	same(listed(b), all, "an agent waiting for input brings its row back, though it was seen")
-	eq(asks.hx.agent(b, "no_2fr_231"), "Needs you", "wearing its stage")
-	asks.hx.agents(b, { ["o/r#1"] = "idle", ["o/r#2"] = "exited", ["o/r#3"] = "working" })
-	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "an idle agent does not keep a seen row on the list")
-	eq(asks.hx.agent(b, "no_2fr_231"), "Idle", "though its badge is shown")
-	eq(asks.hx.mark(b, "no_2fr_232"), "-", "the row being read is seen")
-	eq(asks.hx.mark(b, "no_2fr_233"), "New", "a working agent does not clear New")
-	b.typeText("n")
-	same(listed(b), all, "n again lists every row")
-end)
-
-case("host triage: with n the selected row stays listed until the selection moves", function(w: World)
-	hostScene(w, 3)
-	local b = openQueue(w)
-	local all = { "no_2fr_231", "no_2fr_232", "no_2fr_233" }
-	b.typeText("n")
-	same(listed(b), all, "the first row is read yet stays listed while it is the selection")
-	b.press("down")
-	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "moving on lets the seen row go")
-	eq(pickerOf(b).selected, "no_2fr_232", "the selection is the row moved to")
-	b.press("down")
-	same(listed(b), { "no_2fr_233" }, "and so on down the list")
-	eq(pickerOf(b).selected, "no_2fr_233", "the last one stays while it is read")
-	b.typeText("n")
-	same(listed(b), all, "n again lists every row")
-end)
-
-case("host triage: with n the row that takes the place of one that left after a refresh is selected and read, once, and the rows after it stay unread", function(w: World)
-	local s = hostScene(w, 3)
-	local b = openQueue(w)
-	b.typeText("n")
-	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the first row is read yet stays listed while it is the selection")
-	s.gh.items.octocat = { searchItem(2, "o/r", EPOCH - 120), searchItem(3, "o/r", EPOCH - 180) }
-	refreshNow(w, b)
-	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "a refresh that drops the selected item lists the unseen rows")
-	eq(pickerOf(b).selected, "no_2fr_232", "the row that took its place is selected")
-	eq(asks.hx.mark(b, "no_2fr_232"), "-", "it is read as its preview shows, and stays listed as the selection")
-	eq(asks.hx.mark(b, "no_2fr_233"), "New", "the row after it is not read")
-	refreshNow(w, b)
-	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "nothing more is read after another refresh")
-	eq(asks.hx.mark(b, "no_2fr_233"), "New", "the next row is still unread")
-	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_233" })
-	eq(asks.hx.mark(b, "no_2fr_233"), "-", "moving to it reads it")
-	same(listed(b), { "no_2fr_233" }, "and the read row before it goes while it stays as the selection")
 end)
 
 case("host triage: a malformed or unreadable kv triage is never overwritten: marking is refused with an error toast and no row is marked", function(w: World)
@@ -1987,7 +1930,7 @@ case("host draft: info, preview, plan and commit push the previewed commit unfor
 		end
 	end
 	yes(pushAt ~= nil and createAt ~= nil and pushAt < createAt, "the push came before the pull request was created")
-	eq(pickerOf(b).scopes[1].label, "o/r#21", "the new pull request is the pinned scope")
+	eq(pickerOf(b).scopes[2].label, "o/r#21", "the new pull request is the pinned scope")
 	eq(pickerOf(b).selected, "no_2fr_2321", "and selected")
 	eq(pickerOf(b).items[1].label, "Fix login flow", "showing the created pull request")
 	same(b.saved().pins, { created }, "the created pull request is the saved pin")
@@ -2134,7 +2077,7 @@ case("host draft: a draft previewed again while the commit pushes does not stop 
 	w.flush()
 	eq(answerOf(b, "late").ok, true, "the commit went through")
 	yes(again.token ~= pv.token, "the second preview is a draft of its own")
-	eq(pickerOf(b).scopes[1].label, "o/r#21", "and the new pull request is pinned")
+	eq(pickerOf(b).scopes[2].label, "o/r#21", "and the new pull request is pinned")
 end)
 
 case("host mutations: with no known GitHub account every GitHub plan refuses and spawns nothing", function(w: World)
@@ -2162,11 +2105,10 @@ case("host mutations: with no known GitHub account every GitHub plan refuses and
 	eq(#s.git.pushes, 0, "nothing was pushed")
 end)
 
-case("host: returning from the Worktrees list to the view already shown, by palette or sidebar, keeps its selection and the attention hold", function(w: World)
+case("host: returning from the Worktrees list to the view already shown, by palette or sidebar, keeps its selection", function(w: World)
 	asks.hx.boardScene(w)
 	local b = openQueue(w)
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
-	b.typeText("n")
 	b.event({ ev = "action", act = "queue", value = "scope:worktrees" })
 	w.flush()
 	eq(pickerOf(b).scope, "worktrees", "the list is shown")
@@ -2174,22 +2116,20 @@ case("host: returning from the Worktrees list to the view already shown, by pale
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v1", "back on the view")
 	eq(pickerOf(b).selected, "no_2fr_232", "by the palette: the same row is selected")
-	yes(table.find(listed(b), "no_2fr_232") ~= nil, "and listed though read")
 	pickScope(b, "worktrees")
 	w.flush()
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(pickerOf(b).selected, "no_2fr_232", "by the sidebar: the same row")
-	yes(table.find(listed(b), "no_2fr_232") ~= nil, "still listed")
 end)
 
 case("host agents: the Agents scope lists agents that are not exited by repository with item, action, branch and state, counts them in the sidebar, and Enter goes to the selected one, a Jira issue's too", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 1].id, "agents", "the sidebar's last but one scope is the Agents scope")
-	eq(scopes[#scopes - 1].label, "Agents", "named so")
-	eq(scopes[#scopes - 1].count, 0, "with no agent to count")
+	eq(scopes[#scopes].id, "agents", "the sidebar's last scope is the Agents scope")
+	eq(scopes[#scopes].label, "Agents", "named so")
+	eq(scopes[#scopes].count, 0, "with no agent to count")
 	asks.hx.agents(b, {
 		["o/r#1"] = { state = "working", action = "Review", branch = "fix-1", title = "Fix one" },
 		["o/r#2"] = "waiting_input", -- a link saved before the texts were recorded
@@ -2197,7 +2137,7 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 		["x/y#4"] = { state = "idle", action = "Watch", title = "Other" },
 	})
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 1].count, 3, "the exited agent is not counted")
+	eq(scopes[#scopes].count, 3, "the exited agent is not counted")
 	pickScope(b, "agents")
 	w.flush()
 	eq(pickerOf(b).scope, "agents", "opening it makes it the active scope")
@@ -2284,7 +2224,7 @@ case("host agents: the palette on the Agents list offers Go to agent, the views,
 	same(p.ids, expected, "Go to agent and the agent commands, then every scope, Settings and help")
 	eq(p.groups.agentgo, "Agents", "Go to agent is the Agents group")
 	eq(p.groups.agentstop, "Agents", "so are the agent commands")
-	for _, id in { "snooze", "snoozed", "attention", "sort", "search", "refresh", "seen" } do
+	for _, id in { "snooze", "snoozed", "sort", "search", "refresh", "seen" } do
 		eq(table.find(p.ids, id), nil, id .. " is not offered")
 	end
 	local opened = #w.opened
@@ -2311,9 +2251,9 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	local s = asks.hx.boardScene(w)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 2].id, "worktrees", "the sidebar's third-last scope is the Worktrees scope")
-	eq(scopes[#scopes - 2].label, "Worktrees", "named so")
-	eq(scopes[#scopes - 2].count, nil, "with no count until it was read")
+	eq(scopes[#scopes - 1].id, "worktrees", "the sidebar's last but one scope is the Worktrees scope")
+	eq(scopes[#scopes - 1].label, "Worktrees", "named so")
+	eq(scopes[#scopes - 1].count, nil, "with no count until it was read")
 	eq(pickerOf(b).scope, "prs:v1", "the view is the active scope")
 	pickScope(b, "worktrees")
 	w.flush()
@@ -2321,7 +2261,7 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	eq(pickerOf(b).noun, "worktrees", "the board lists worktrees")
 	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "every checkout's worktrees, grouped by repository, the other repository's too")
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 2].count, 5, "the scope counts them")
+	eq(scopes[#scopes - 1].count, 5, "the scope counts them")
 	has(asks.hx.badges(b, "o/r/main"), "Main", "the main worktree is marked")
 	has(asks.hx.badges(b, "x/y/main"), "Main", "in every repository")
 	has(asks.hx.badges(b, "o/r/lk"), "Locked", "a locked worktree is marked")
@@ -2681,8 +2621,8 @@ case("host open-url: a GitHub pull request, a GitHub issue and a Jira issue URL 
 	eq(r.ok, true, "a pull request URL is accepted")
 	eq(r.message, "Showing o/r#45 in Plotroom", "and said so")
 	eq(requestsOf(s.gh, "pull")[1].fields.q, prUrl, "gh looked it up by its URL")
-	eq(pickerOf(b).scopes[1].label, "o/r#45", "it is the first scope")
-	eq(pickerOf(b).scopes[1].group, "Pins", "under the Pins group")
+	eq(pickerOf(b).scopes[2].label, "o/r#45", "it is the first scope after Now")
+	eq(pickerOf(b).scopes[2].group, "Pins", "under the Pins group")
 	eq(pickerOf(b).scope, "pin:o/r#45", "and the active one, by its item's key")
 	eq(pickerOf(b).selected, "no_2fr_2345", "its pull request is selected")
 	yes(table.find(labels(), "Assigned to me") ~= nil, "the other views are still in the sidebar")
@@ -2690,7 +2630,7 @@ case("host open-url: a GitHub pull request, a GitHub issue and a Jira issue URL 
 	eq(b.saved().activeViewId, "pin:o/r#45", "and its scope is the saved active view")
 	r = asks.hx.ask(w, b, { op = "open-url", url = issueUrl })
 	eq(r.message, "Showing o/r#12 in Plotroom", "an issue URL is shown the same way")
-	same({ labels()[1], labels()[2] }, { "o/r#45", "o/r#12" }, "the new pin joins the earlier one")
+	same({ labels()[2], labels()[3] }, { "o/r#45", "o/r#12" }, "the new pin joins the earlier one, after Now")
 	eq(pickerOf(b).scope, "pin:o/r#12", "and is the active scope")
 	eq(pickerOf(b).noun, "issues", "the pin lists issues")
 	eq(pickerOf(b).selected, "no_2fr_2312", "with its issue selected")
@@ -2698,18 +2638,18 @@ case("host open-url: a GitHub pull request, a GitHub issue and a Jira issue URL 
 	same(b.saved().pins, { prUrl, issueUrl }, "an issue pin is saved by its URL after the first")
 	local again = asks.hx.ask(w, b, { op = "open-url", url = prUrl })
 	eq(again.ok, true, "the same URL again is accepted")
-	same({ labels()[1], labels()[2] }, { "o/r#45", "o/r#12" }, "without a second pin")
+	same({ labels()[2], labels()[3] }, { "o/r#45", "o/r#12" }, "without a second pin")
 	eq(#b.saved().pins, 2, "or a second saved URL")
 	eq(pickerOf(b).scope, "pin:o/r#45", "it shows the pin it already has")
 	local restored = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
-	same({ pickerOf(restored).scopes[1].label, pickerOf(restored).scopes[2].label }, { "o/r#45", "o/r#12" }, "a restored block shows both pins again")
+	same({ pickerOf(restored).scopes[2].label, pickerOf(restored).scopes[3].label }, { "o/r#45", "o/r#12" }, "a restored block shows both pins again")
 	eq(pickerOf(restored).scope, "pin:o/r#45", "on the active one")
 	eq(pickerOf(restored).selected, "no_2fr_2345", "with its pull request selected")
 	r = asks.hx.ask(w, b, { op = "open-url", url = "https://acme.atlassian.net/browse/ABC-12" })
 	eq(r.message, "Showing ABC-12 in Plotroom", "a Jira browse URL is shown too")
 	yes(acliCount(s.acli, "view") >= 1, "acli read the work item")
-	eq(pickerOf(b).scopes[3].label, "ABC-12", "as a pinned scope, though the Jira view lists the issue")
+	eq(pickerOf(b).scopes[4].label, "ABC-12", "as a pinned scope, though the Jira view lists the issue")
 	eq(pickerOf(b).scope, "pin:abc#ABC-12", "the active one")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "selected")
 	yes(table.find(labels(), "Assigned to me") ~= nil, "beside the Jira view")
@@ -2724,7 +2664,7 @@ case("host open-url: another site's URL, garbage, an item that is not found and 
 	eq(asks.hx.ask(w, b, { op = "open-url", url = "https://acme.atlassian.net/browse/ABC-12" }).ok, true, "a first pin, though the view lists it")
 	local views = acliCount(s.acli, "view")
 	local function same_pin()
-		eq(pickerOf(b).scopes[1].label, "ABC-12", "the pin is as it was")
+		eq(pickerOf(b).scopes[2].label, "ABC-12", "the pin is as it was")
 	end
 	for _, url in {
 		"garbage",
@@ -2784,11 +2724,11 @@ case("host open-url: a lookup that answers another item than the URL names shows
 	s.gh.pulls[wrong] = searchItem(99, "o/r", EPOCH - 60) -- gh answers a different pull request than the one asked for
 	local b = openIssues(w)
 	eq(asks.hx.ask(w, b, { op = "open-url", url = good }).ok, true, "a first pin")
-	eq(pickerOf(b).scopes[1].label, "o/r#45", "it is pinned")
+	eq(pickerOf(b).scopes[2].label, "o/r#45", "it is pinned")
 	same(listed(b), { "no_2fr_2345" }, "and lists only that pull request")
 	local r = asks.hx.ask(w, b, { op = "open-url", url = wrong })
 	yes(r.problem ~= nil and r.ok == nil, "the answer for another item is refused")
-	eq(pickerOf(b).scopes[1].label, "o/r#45", "the earlier pin is still the first scope")
+	eq(pickerOf(b).scopes[2].label, "o/r#45", "the earlier pin is still the first scope after Now")
 	same(listed(b), { "no_2fr_2345" }, "and still lists only its own pull request")
 end)
 
@@ -3660,10 +3600,13 @@ windowCase("window flows: the issue preview's Pull request row and the PR previe
 	same(w.window.browser, { { url = issue, how = "beside", beside = 1 } }, "the noted issue row opens the issue")
 end)
 
-windowCase("window status: the items needing attention are summed over Plotroom blocks, redrawn only on change, hidden at zero", function(w: World)
+windowCase("window status: one need-you count, the largest of the Plotroom blocks, redrawn only on change, hidden at zero, and a click shows Now in that block", function(w: World)
 	w.load("window")
 	flowHost(w)
+	w.window.panes[2] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	flowHost(w, 2)
 	local main: any = w.window.surfaces[1].main.c
+	local other: any = w.window.surfaces[2].main.c
 	local function texts(): { string }
 		local out: { string } = {}
 		for _, s in ((w.window.status :: any)({ pane = 7 }) or {}) do
@@ -3672,16 +3615,24 @@ windowCase("window status: the items needing attention are summed over Plotroom 
 		return out
 	end
 	table.insert(main, { id = "main.need", p = { text = "0", hidden = true } })
+	table.insert(other, { id = "main.need", p = { text = "0", hidden = true } })
 	w.window.handlers.window_start(w.cx)
 	same(texts(), {}, "nothing at zero")
 	local before = w.window.refreshes
-	main[#main].p.text = "3"
+	main[#main].p.text = "2"
+	other[#other].p.text = "3"
 	w.advance(4000)
-	same(texts(), { "3 need attention" }, "the count shows on every pane")
+	same(texts(), { "3 need you" }, "the largest count shows on every pane: blocks of one host list the same Now")
+	eq(((w.window.status :: any)({ pane = 7 }))[1].command, "plugin.plotroom.now", "a click runs the Now command")
 	eq(w.window.refreshes, before + 1, "redrawn once")
 	w.advance(8000)
 	eq(w.window.refreshes, before + 1, "and not again while it stays")
+	w.window.focused = 7
+	w.command("now")
+	eq(w.window.focused, 2, "the command focuses the block whose count shows")
+	same(w.window.events[#w.window.events], { pane = 2, ev = { ev = "action", act = "open-now" } }, "and tells it to show Now")
 	main[#main].p.text = "0"
+	other[#other].p.text = "0"
 	w.advance(4000)
 	same(texts(), {}, "hidden again at zero")
 end)

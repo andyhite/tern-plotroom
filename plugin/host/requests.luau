@@ -189,7 +189,7 @@ end
 -- without their text, queue actions, window commands), so the window opens either without a round trip to this host.
 function M.paletteNode(state: State): Node
 	local items, problem = menuRows(state, nil, false)
-	local item = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state)
+	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
 	local move = if item then engine.nextMove(state, state.kind.id, item) else nil
 	-- The window command the Next move runs (`next`), when it is one: the window runs it as its own row would.
 	local cmd = if move then string.match(move.id, "^cmd:(.+)$") else nil

@@ -441,6 +441,9 @@ export type World = {
 	lenses: { [string]: any }, -- manifest lens id -> its LensDef, as `tern.lens.define` got it
 	open: (number, { string }?, any?) -> Block, -- pane, launch args, saved state: the Plotroom block, `prs`
 	setEncodeViews: (boolean) -> (),
+	-- A block opened with no saved state opens on Now, as in Tern, only after setOpensNow(true): otherwise it opens as a
+	-- restored one that saved no scope (on its first view), so a case about a view never sees Now's searches.
+	setOpensNow: (boolean) -> (),
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
@@ -529,6 +532,7 @@ local function newWorld(instantiate: Loader, context: string): World
 	local blocks: { [string]: any } = {}
 	local lenses: { [string]: any } = {}
 	local encodeViews = true
+	local opensNow = false
 	local windowCx: any = nil
 	local commands: { [string]: any } = {}
 	local routes: { [string]: any } = {}
@@ -651,7 +655,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "" }
 			end,
 			surface = function(_self: any, id: number, opts: any): any
-				-- The attention poll (every Plotroom pane, on its own timer) is counted apart from the protocol check's reads.
+				-- The need-you poll (every Plotroom pane, on its own timer) is counted apart from the protocol check's reads.
 				if not (type(opts) == "table" and opts.root == "main.need") then
 					win.reads[id] = (win.reads[id] or 0) + 1
 				end
@@ -932,7 +936,6 @@ local function newWorld(instantiate: Loader, context: string): World
 		seen = "m",
 		snooze = "z",
 		snoozed = "Z",
-		attention = "n",
 		sort = "o",
 		search = "/",
 		refresh = "r",
@@ -1249,6 +1252,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		local renders = 0
 		local persisted: any = savedState
 		local cwd = if args then args[1] else nil
+		if savedState == nil and not opensNow and not (args and args[2]) then
+			savedState = { version = 2, launchCwd = cwd }
+		end
 		local cx: any
 		local function render()
 			if state == nil then
@@ -1399,6 +1405,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		setEncodeViews = function(on: boolean)
 			encodeViews = on
 		end,
+		setOpensNow = function(on: boolean)
+			opensNow = on
+		end,
 		window = win,
 		cx = windowCx,
 		link = function(block: Block)
@@ -1545,6 +1554,9 @@ export type Gh = {
 	tokens: { [string]: string }, -- login -> what `gh auth token --user` prints
 	items: { [string]: { { [string]: any } } }, -- login -> search results, newest first
 	issueItems: { [string]: { { [string]: any } } }, -- login -> issue search results, newest first
+	-- query text -> what a pull request or issue search whose q contains it finds, for any login, before `items`
+	-- and `issueItems` are asked (Now's fixed searches: "author:@me", "user-review-requested:@me", "assignee:@me")
+	queries: { [string]: { { [string]: any } } },
 	pulls: { [string]: { [string]: any } }, -- PR URL -> the item `resource(url:)` finds there; any other URL finds none
 	issueDetail: { [string]: { [string]: any } }, -- "owner/repo#N" -> the detail ISSUE_DETAIL_JQ prints
 	total: { [string]: number }, -- login -> issueCount when it differs from #items
@@ -1572,6 +1584,7 @@ local function newGh(w: World): Gh
 		tokens = {},
 		items = {},
 		issueItems = {},
+		queries = {},
 		issueDetail = {},
 		pulls = {},
 		total = {},
@@ -1736,6 +1749,11 @@ local function newGh(w: World): Gh
 		end
 		if kind == "search" then
 			local list = gh.items[key] or {}
+			for text, found in gh.queries do
+				if string.find(fields.q or "", text, 1, true) then
+					list = found
+				end
+			end
 			local slice, cursor = page(list, fields.after)
 			local body = jsonEncode({ total = gh.total[key] or #list, next = cursor, cost = 1, items = slice })
 			return { stdout = headers(lim) .. body }
@@ -1751,6 +1769,11 @@ local function newGh(w: World): Gh
 			return { stdout = headers(lim) .. body }
 		elseif kind == "issue-search" then
 			local list = gh.issueItems[key] or {}
+			for text, found in gh.queries do
+				if string.find(fields.q or "", text, 1, true) then
+					list = found
+				end
+			end
 			local slice, cursor = page(list, fields.after)
 			local body = jsonEncode({ total = #list, next = cursor, cost = 1, items = slice })
 			return { stdout = headers(lim) .. body }
@@ -3210,7 +3233,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "33" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "35" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

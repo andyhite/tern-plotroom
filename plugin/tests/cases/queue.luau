@@ -269,7 +269,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
@@ -427,7 +427,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	for _, r in helpRows(b.view().layer) do
 		table.insert(shown, r.keys)
 	end
-	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "n", "o", "Tab", "r", "s", "?" }, "the list leaves out what has no key")
+	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "o", "Tab", "r", "s", "?" }, "the list leaves out what has no key")
 	b.press("escape")
 	goToSettings(b, "general")
 	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
@@ -523,16 +523,16 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local b = openQueue(w)
 	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
 	local p = hx.palette(w, b)
-	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "attention", "sort", "search", "refresh" }
+	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expectedIds, "scope:" .. scope.id)
 	end
 	table.insert(expectedIds, "settings")
 	table.insert(expectedIds, "help")
 	same(p.ids, expectedIds, "the selected item's, then the view's, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
-	eq(p.ids[#p.ids - 4], "scope:worktrees", "the Worktrees list is the last scope but two")
-	eq(p.ids[#p.ids - 3], "scope:agents", "the Agents list the last but one")
-	eq(p.ids[#p.ids - 2], "scope:inbox", "the Inbox list the last")
+	eq(p.ids[12], "scope:now", "Now is the first scope")
+	eq(p.ids[#p.ids - 3], "scope:worktrees", "the Worktrees list is the last scope but one")
+	eq(p.ids[#p.ids - 2], "scope:agents", "the Agents list the last")
 	eq(p.labels.open, "Open", "Open, whatever the integration")
 	eq(p.keys.worktree, "", "an action without a key says none")
 	eq(p.groups.open, "GitHub - PR", "the selected pull request's actions carry its type, not an Item heading")
@@ -593,7 +593,7 @@ case("host: pasting into the queue opens and pins the first item URL in the text
 	eq(#w.toasts, toasts + 3, "with no toast")
 end)
 
-case("host: the palette copies the selected item's link, number and branch, and the title counts what is new", function(w: World)
+case("host: the palette copies the selected item's link, number and branch, and the title counts nothing new", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
 	local p = hx.palette(w, b)
@@ -605,7 +605,7 @@ case("host: the palette copies the selected item's link, number and branch, and 
 	b.event({ ev = "action", act = "queue", value = "copy-number" })
 	b.event({ ev = "action", act = "queue", value = "copy-branch" })
 	same(w.copied, { item.url, "#" .. item.number, item.head }, "each row copies its text")
-	eq(b.title(), "Plotroom · My PRs (3) · 2 new", "the selected one is marked seen as it is read: two are still new")
+	eq(b.title(), "Plotroom · My PRs (3)", "the title names the view and its count; new items are Now's to count")
 end)
 
 case("host: the palette's Views rows show the sidebar's scopes as a click does, and a scope the sidebar no longer lists is refused", function(w: World)
@@ -650,7 +650,8 @@ case("host: the palette's Views rows list the pins first like the sidebar and re
 		table.insert(expectedScopes, "scope:" .. scope.id)
 	end
 	same(scopes, expectedScopes, "the sidebar's scopes in its order")
-	eq(scopes[1], "scope:pin:o/r#45", "the pin first")
+	eq(scopes[1], "scope:now", "Now first")
+	eq(scopes[2], "scope:pin:o/r#45", "then the pin")
 	eq(p.labels["scope:pin:o/r#45"], "o/r#45", "named as the sidebar names it")
 	eq(p.details["scope:pin:o/r#45"], "Pins", "under its Pins group")
 	b.event({ ev = "action", act = "queue", value = "scope:prs:v1" })
@@ -1785,7 +1786,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	end
 	eq(try(" "), "One key: a single letter, digit or symbol.", "a space is no key")
 	eq(prefsOf(b).editing.row, "pkey:prs:p1", "the capture stays open")
-	for _, k in { "j", "k", "w", "g", "a", "G", "m", "z", "Z", "n", "o", ".", "/", "?", "r", "s" } do
+	for _, k in { "j", "k", "w", "g", "a", "G", "m", "z", "Z", "o", ".", "/", "?", "r", "s" } do
 		eq(try(k), "The queue already uses " .. k .. ".", "the queue's own " .. k .. " is refused")
 		eq(prefsOf(b).editing.row, "pkey:prs:p1", "with the capture still open for another key")
 	end
@@ -2899,21 +2900,24 @@ case("host: an invalid pause held across a restart still holds when its restored
 	eq(searchesOf(acli), 0, "and searches nothing until Refresh")
 end)
 
-case("host: Needs attention only and Show snoozed are saved with the block and restored with it", function(w: World)
+case("host: Now and Show snoozed are saved with the block and restored with it", function(w: World)
 	hostScene(w, 3)
+	newAcli(w) -- Now reads Jira's assigned work too
 	local b = openQueue(w)
-	eq(b.saved().attention, nil, "off is not saved")
-	b.event({ ev = "action", act = "triage", value = "toggle-attention" })
+	eq(b.saved().now, nil, "a view shown is not Now")
 	b.event({ ev = "action", act = "triage", value = "toggle-snoozed" })
-	eq(b.saved().attention, true, "attention is saved")
+	b.event({ ev = "action", act = "open-now" })
+	w.flush()
+	eq(b.saved().now, true, "Now shown is saved")
 	eq(b.saved().snoozed, true, "and so is snoozed")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
-	eq(again.state().attention, true, "a restored block filters to what needs attention")
+	eq(pickerOf(again).scope, "now", "a restored block shows Now again")
 	eq(again.state().showSnoozed, true, "and lists snoozed items")
-	local fresh = w.open(3, { "/work/r" }, { version = 1, launchCwd = "/work/r", attention = true, snoozed = true })
+	local fresh = w.open(3, { "/work/r" }, { version = 1, launchCwd = "/work/r", now = false, snoozed = true })
 	w.flush()
-	eq(fresh.state().attention, false, "a save of another version restores fresh")
+	eq(pickerOf(fresh).scope, "now", "a save of another version restores fresh: on Now")
+	eq(fresh.state().showSnoozed, false, "with snoozed items hidden")
 end)
 
 case("host: a prompt, format, setup command or checkout saved in one block reaches the others", function(w: World)

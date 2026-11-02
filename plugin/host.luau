@@ -117,7 +117,7 @@ local function runQueueAction(state: State, act: string): boolean
 	elseif act == "unpin" then
 		return requests.unpin(state)
 	elseif act == "next" then
-		local move = if chosen and not (state.boardOn or state.agentsOn or state.inboxOn) then engine.nextMove(state, state.kind.id, chosen) else nil
+		local move = if chosen and not (state.boardOn or state.agentsOn or state.nowOn) then engine.nextMove(state, state.kind.id, chosen) else nil
 		if not chosen or not move then
 			return false
 		elseif move.id == "remove" then
@@ -968,6 +968,8 @@ local function blockDef(): BlockDef<State>
 				settings.cycleSort(state)
 			elseif act == "open-worktrees" then
 				engine.openBoard(state)
+			elseif act == "open-now" then
+				engine.openNow(state)
 			elseif act and string.sub(act, 1, 3) == "wt-" then
 				engine.boardAct(state, act)
 			elseif act == "add-repo" and ev.id ~= SETTINGS_ID then

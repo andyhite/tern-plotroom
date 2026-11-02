@@ -331,13 +331,10 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	if paused ~= nil then
 		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warning", tone = "error" })
 	end
-	local n = flows.waitingCount()
-	if n > 0 then
-		table.insert(out, { text = if n == 1 then "1 agent needs input" else n .. " agents need input", icon = "merge", command = "plugin.plotroom.agents-waiting" })
-	end
-	local need = flows.attentionCount()
+	-- One count covers the agents that need input and the rest of Now: a click shows Now.
+	local need = flows.needCount()
 	if need > 0 then
-		table.insert(out, { text = need .. " need attention" })
+		table.insert(out, { text = need .. " need you", icon = "inbox", command = "plugin.plotroom.now" })
 	end
 	return if #out > 0 then out else nil
 end)
@@ -350,6 +347,16 @@ command({
 		return flows.waitingCount() > 0
 	end,
 	run = flows.goWaiting,
+})
+
+command({
+	id = "now",
+	title = "Plotroom: Show what needs you (Now)",
+	icon = "inbox",
+	available = function(_cx: WindowCx): boolean
+		return flows.needCount() > 0
+	end,
+	run = flows.goNow,
 })
 
 local answered: (WindowCx, string) -> ()
@@ -1162,7 +1169,7 @@ local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typ
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
 -- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue); Next is its suggested next move.
-local GROUPS = { "Next", "Actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
+local GROUPS = { "Next", "Actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Now", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
 -- listed: the block publishes the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`

@@ -59,6 +59,7 @@ function M.bench(instantiate: Loader)
 		}))
 	end
 	s.gh.items.octocat = items
+	h.newAcli(w) -- Now reads Jira's assigned work too
 	local b = openQueue(w)
 	local shown: any = pickerOf(b).items
 	if #shown ~= 1000 then
@@ -100,12 +101,20 @@ function M.bench(instantiate: Loader)
 		b.state().rev += 1
 		b.render()
 	end)
-	-- The attention filter rebuilds the list on every cursor step.
-	b.typeText("n")
-	timed("attention-cursor-down", 20, function(_i: number)
+	-- Now over 1000 of your pull requests that are also review requests: its rows are built once per answer, not per step.
+	b.event({ ev = "action", act = "open-now" })
+	w.flush()
+	if #pickerOf(b).items < 1000 then
+		error("the benchmark expected Now to list 1000 items, got " .. #pickerOf(b).items, 0)
+	end
+	timed("now-cursor-down", 20, function(_i: number)
 		b.press("down")
 	end)
-	b.typeText("n")
+	timed("now-render", 20, function(_i: number)
+		b.render()
+	end)
+	b.event({ ev = "action", act = "queue", value = "scope:prs:v1" })
+	w.flush()
 	-- A scan builds what each of the 1000 items' worktree is known by: formats and Jira map are read once, not per item.
 	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
 	timed("scan", 5, function(_i: number)

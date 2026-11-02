@@ -601,6 +601,8 @@ function M.ensureCursor(state: State)
 	M.select(state, if pick then pick.key else nil)
 end
 
+local nowEnsure: (State) -> () -- M.nowEnsure, defined with Now below
+
 -- The saved state changed (here or in another block): every block rereads it and shows the new list, its cursor on a
 -- row that is still listed.
 function M.triageChanged(state: State)
@@ -612,7 +614,7 @@ function M.triageChanged(state: State)
 			if s.snap then
 				M.ensureCursor(s)
 			end
-			M.nowEnsure(s)
+			nowEnsure(s)
 			if s ~= state then
 				s.cx:render()
 			end
@@ -695,7 +697,7 @@ function M.toggle(state: State, what: string)
 	state.rev += 1
 	state.vis = nil
 	M.ensureCursor(state)
-	M.nowEnsure(state)
+	nowEnsure(state)
 end
 
 -- The gh login the active scope runs as (nil: the active gh account), for github.wait and quota and every gh call.
@@ -2686,6 +2688,7 @@ function M.nowEnsure(state: State)
 		state.nowAt = if first then first.id else nil
 	end
 end
+nowEnsure = M.nowEnsure
 
 -- Moves the previewed row `delta` rows, clamped to the list.
 function M.nowMove(state: State, delta: number)

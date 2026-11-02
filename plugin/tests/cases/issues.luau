@@ -87,7 +87,7 @@ case("host: pull request and issue filters sit together in the group of the logi
 	local function sidebar(): { string }
 		local out: { string } = {}
 		for _, scope in pickerOf(b).scopes do
-			if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
+			if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "now" then
 				table.insert(out, scope.label .. " @ " .. scope.group)
 			end
 		end
@@ -128,7 +128,7 @@ end
 local function sidebarOf(b: Block): { string }
 	local out: { string } = {}
 	for _, scope in pickerOf(b).scopes do
-		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "inbox" then
+		if scope.id ~= "worktrees" and scope.id ~= "agents" and scope.id ~= "now" then
 			table.insert(out, scope.label .. " @ " .. (scope.group or "-") .. " = " .. scope.id)
 		end
 	end
@@ -444,7 +444,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "the title names the filter and counts the issues and the new one")
+	eq(b.title(), "Plotroom · Assigned to me (2)", "the title names the filter and counts the issues")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
 		if scope.id == "issues:v1" then
@@ -494,7 +494,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(saved.activeKind, "issues", "and its kind: a PR filter may have the same id")
 	local again = w.open(2, { "/work/r" }, saved)
 	w.flush()
-	eq(again.title(), "Plotroom · Assigned to me (2) · 1 new", "a restored block shows the same view")
+	eq(again.title(), "Plotroom · Assigned to me (2)", "a restored block shows the same view")
 end)
 
 case("host: issues always list In Progress, then To Do, then Done, in acli's priority order within each; a saved status order and Settings change nothing", function(w: World)
@@ -1164,7 +1164,7 @@ windowCase("window: a linked pull request in an issue's sidebar is shown by the 
 	w.flush()
 	same(listed(b), { "no_2fr_2345" }, "the same block lists the pull request alone")
 	eq(pickerOf(b).noun, "pull requests", "as pull requests")
-	eq(pickerOf(b).scope, pickerOf(b).scopes[1].id, "in a scope of its own, the first of the sidebar")
+	eq(pickerOf(b).scope, pickerOf(b).scopes[2].id, "in a scope of its own, the first of the sidebar after Now")
 	eq(buttonLink(b, "worktree"), prLink("worktree", "o/r", 45), "its buttons are the pull request's")
 	pickScope(b, "issues:v1")
 	w.flush()
@@ -1264,7 +1264,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
-	eq(b.title(), "Plotroom · Assigned to me (2) · 1 new", "and shown in place of the GitHub view restored")
+	eq(b.title(), "Plotroom · Assigned to me (2)", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
