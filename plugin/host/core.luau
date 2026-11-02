@@ -485,6 +485,7 @@ local KINDS: { [string]: Kind } = {
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },
 			{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
+			{ keys = {}, actions = { "next" }, text = "Run the selected pull request's suggested next move for its stage (Merge…, Ready for review…, Review, Address feedback, Re-run failed checks, Go to agent, Remove worktree…)" },
 			{ keys = {}, actions = { "worktree" }, text = "Check it out in a worktree and open that in a new tab (Plotroom asks for the repository's checkout the first time)" },
 			{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected pull request's worktree" },
 			{ keys = {}, actions = { "agent" }, text = "Pick an action, or type a prompt, and run it on the selected pull request in its worktree" },
@@ -537,6 +538,7 @@ local KINDS: { [string]: Kind } = {
 		keys = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
 			{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
+			{ keys = {}, actions = { "next" }, text = "Run the selected issue's suggested next move for its stage (Worktree, Draft PR…, Go to agent, Remove worktree…)" },
 			{ keys = {}, actions = { "worktree" }, text = "Create or reuse the selected issue's worktree and open it in a new tab: on its linked pull request's branch (Plotroom asks which when several have one), else on a new branch from the base you pick (Plotroom asks for the repository, and its checkout, the first time)" },
 			{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected issue's worktree" },
 			{ keys = {}, actions = { "agent" }, text = "Pick an action, or type a prompt, and run it on the selected issue (typed prompts run in its worktree)" },

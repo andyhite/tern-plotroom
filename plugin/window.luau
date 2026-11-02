@@ -1161,8 +1161,8 @@ end
 local follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> ()
 
 -- The order the palette's groups come in; a group the host names that is not here follows them. The host names the
--- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue).
-local GROUPS = { "Actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
+-- item's own operations by its type (Jira - Issue, GitHub - PR, GitHub - Issue); Next is its suggested next move.
+local GROUPS = { "Next", "Actions", "Agents", "Jira - Issue", "GitHub - PR", "GitHub - Issue", "Inbox", "Triage", "Filter & Sort", "Views", "Worktree", "Configuration" }
 
 -- plotroom://more: the command palette of the Plotroom block `pane`, in groups. Only what applies to the selection now is
 -- listed: the block publishes the queue actions (`queue`, each with its group, key and detail, sent back as its `queue`
@@ -1308,6 +1308,31 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		else
 			askCheckout(cx, pane, cOwner .. "/" .. cName, nil, nil)
 		end
+		return true
+	end
+	if url == "plotroom://next" then
+		-- The Next move that is a window command (the block opens this for it): run as its Commands row runs it, and
+		-- only while the block names it as `next` among the commands it offers.
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+			return true
+		end
+		local a = paletteOf(cx, pane)
+		if not a then
+			return true -- paletteOf toasted
+		end
+		local listed = false
+		for _, c in if type(a.commands) == "table" then a.commands else {} do
+			listed = listed or (type(c) == "table" and c.id == a.next)
+		end
+		for _, c in flows.COMMANDS do
+			if listed and c.id == a.next then
+				usage.bump("row:" .. c.id)
+				c.run(cx, pane)
+				return true
+			end
+		end
+		cx:toast("info", "Plotroom: that move is no longer offered here")
 		return true
 	end
 	local wtn = if string.sub(url, 1, #WTOPEN_PREFIX) == WTOPEN_PREFIX then string.match(url, "^plotroom://worktrees/open/(%d+)$") else nil

@@ -615,9 +615,15 @@ local function notedNodes(issue: tracker.Issue?): { Node }
 	}
 end
 
--- The preview's own controls, native action rows: Unpin while the item is pinned (nil otherwise).
+-- The preview's own controls, native action rows: the suggested next move for the item's stage (engine.nextMove, run as
+-- the Next move queue action), then Unpin while the item is pinned (nil when there is neither).
 local function previewControls(state: State, item: any): Node?
 	local rows: { Node } = {}
+	local move = engine.nextMove(state, state.kind.id, item)
+	if move then
+		local map = keys.load()
+		table.insert(rows, ui.node("item", { key = "next", label = move.label, value = "Next", icon = "arrow-right", tone = "accent", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
+	end
 	if engine.pinFor(state.pins, item.key) then
 		table.insert(rows, ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
 	end

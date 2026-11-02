@@ -2916,12 +2916,12 @@ end
 M.helpRows = helpRows
 
 -- What block `b`'s published command palette (its hidden `main.palette` node) says now: the queue actions' ids in order
--- with their groups, keys, labels and details by id, and the ids of the window commands that apply, with the group the
--- host gave each (nil: its own).
+-- with their groups, keys, labels and details by id, the ids of the window commands that apply, with the group the
+-- host gave each (nil: its own), and `next`, the window command the Next move runs (nil: none).
 function hx.palette(w: World, b: Block): any
 	w.flush()
 	local a: any = jsonDecode(findKey(b.view().main, "palette").p.text)
-	local out: any = { ids = {}, groups = {}, keys = {}, labels = {}, details = {}, commands = {}, commandGroups = {} }
+	local out: any = { ids = {}, groups = {}, keys = {}, labels = {}, details = {}, commands = {}, commandGroups = {}, next = a.next }
 	for _, q in a.queue do
 		table.insert(out.ids, q.id)
 		out.groups[q.id], out.keys[q.id], out.labels[q.id], out.details[q.id] = q.group, q.key, q.label, q.detail

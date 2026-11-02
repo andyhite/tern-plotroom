@@ -377,6 +377,73 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 	return if note and note.ok then "worktree" else "none"
 end
 
+-- The checks of `item` (a pull request) as the preview shows them: the loaded list, else what the search carried.
+function M.runsOf(state: State, item: any): { github.Run }
+	local d = state.details[M.detailKey(state, item)]
+	return if d then d.runs else item.runs
+end
+
+-- Whether `item` (a pull request) has a failed workflow run Re-run failed checks can start again.
+function M.rerunnable(state: State, item: any): boolean
+	for _, r in M.runsOf(state, item) do
+		if r.runId and r.status == "failure" then
+			return true
+		end
+	end
+	return false
+end
+
+-- The suggested next move for `item` (the selected one) in its stage, or nil when none applies: `id` is a queue action
+-- (`worktree`, `agentgo`), `remove` (the worktree card's Remove worktree…), `cmd:<flows.COMMANDS id>` or
+-- `run:<saved action id>`, each offered only where its own command is. A saved action is the one offered here under
+-- that name (Review, Address feedback). "Yours" is a PR whose author is the login the view runs as.
+function M.nextMove(state: State, kind: string, item: any): { id: string, label: string }?
+	local stage = M.stage(state, kind, item)
+	local note = state.notes[item.key]
+	local function action(name: string): { id: string, label: string }?
+		for _, o in (M.offered(state)) do
+			if string.lower(o.prompt.name) == string.lower(name) then
+				return { id = "run:" .. o.prompt.id, label = o.prompt.name }
+			end
+		end
+		return nil
+	end
+	if stage == "merged" or stage == "closed" then
+		return if note and note.ok then { id = "remove", label = "Remove worktree…" } else nil
+	elseif stage == "needs" or stage == "working" then
+		return { id = "agentgo", label = "Go to agent" }
+	elseif kind ~= "prs" then
+		if stage == "none" then
+			return { id = "worktree", label = "Worktree" }
+		end
+		return if stage == "worktree" and note and note.root and note.path then { id = "cmd:draft-pr", label = "Draft PR…" } else nil
+	end
+	local pr: github.Pr = item
+	local who = M.login(state) or ghActive.login
+	local me = if who then string.lower(who) else nil
+	local mine = me ~= nil and string.lower(pr.author) == me
+	if stage == "blocked" then
+		local fix = if mine and pr.review == "changes" then action("Address feedback") else nil
+		return fix or (if M.rerunnable(state, pr) then { id = "cmd:rerun-failed", label = "Re-run failed checks" } else nil)
+	elseif stage == "ready" then
+		return if pr.headSha then { id = "cmd:pr-merge", label = "Merge…" } else nil
+	elseif pr.state ~= "open" then
+		return nil
+	elseif pr.draft then
+		return if mine then { id = "cmd:pr-ready", label = "Ready for review…" } else nil
+	elseif mine or not me then
+		return nil
+	end
+	local d = state.details[M.detailKey(state, pr)]
+	local reviews: { github.Review } = if d and d.about then d.about.reviews else {}
+	for _, r in reviews do
+		if r.state == "requested" and string.lower(r.login) == me then
+			return action("Review")
+		end
+	end
+	return nil
+end
+
 -- Whether the list shows `item`: with the attention filter only what needs it; else everything except snoozed items
 -- (unless shown), though an agent that waits for input always surfaces its item.
 function M.keep(state: State, kind: string, item: any): boolean
