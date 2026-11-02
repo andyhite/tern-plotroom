@@ -6,6 +6,8 @@ Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, tha
 
 There is one block. `Plotroom: Open` is its one entry point; other palette commands act on the focused Plotroom block (except `Open item by URL`, which launches one). The `KINDS` table (`prs`, `issues`) in `plugin/host/core.luau` fixes per kind the label, icon, kv keys, allowed integrations, seed views and default prompts. Behavior is documented in README.md and in comments next to the code; read those before changing it.
 
+**Product direction lives in [PRODUCT.md](PRODUCT.md)** (user, loop, principles, out of scope, glossary, roadmap) and **[LEDGER.md](LEDGER.md)** (a verdict for every feature). Read both before adding or changing user-visible behavior. A feature that serves no step of PRODUCT.md's loop is not added. UI text uses only the glossary's words. A new feature starts as a LEDGER.md row. TODO.md items cite the section they implement.
+
 ## Architecture & Data Flow
 
 Two Luau runtimes talk through Tern:
@@ -71,6 +73,8 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 
 ## Important Files
 
+- `PRODUCT.md` — product direction: who it is for, the loop, principles, out of scope, glossary, roadmap, metrics, decisions.
+- `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
 - `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, one block `prs` (title Plotroom, icon `merge`), one `[[lenses]]` entry `pr-create` (`match = ["gh pr create*"]`).
 - `plugin/host.luau` — block entry point; `plugin/host/*.luau` — host logic by layer (see Architecture).
 - `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows. No consent step: agents start once the worktree is ready. `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.
