@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Plotroom are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `plugin/plugin.toml` is the release; the protocol a window and its hosts speak is separate (see README › Install › Remote hosts).
+All notable changes to Plotroom are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `plugin/plugin.toml` is the release; the protocol a window and its hosts speak is separate (see [docs/reference.md › Setup](docs/reference.md#setup), Remote hosts).
 
 ## [Unreleased]
 
@@ -23,6 +23,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
 - Settings has four pages: Views, Actions, Repositories and General (the GitHub and Jira setup pages still show while their CLI is missing). Repositories holds the name formats (formerly Worktrees), each repository and the Jira projects; General holds Keyboard shortcuts and Refresh now with the GitHub quota. Every setting keeps its value. Restore defaults is now **Add missing defaults**: it never overwrote edited defaults.
 - Tern's palette lists only Plotroom: Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input. Every other Plotroom command stays in Commands (`.`) with its key, and stays runnable by its action name `plugin.plotroom.<id>` (key binds, `tern ctl plugins run`).
+- README.md is a product page (who Plotroom is for, the loop, screenshots, install and first run); the full behavior spec moved, unchanged, to [docs/reference.md](docs/reference.md), ordered by the loop's steps.
 - UI text uses only PRODUCT.md's glossary: **Commands** (the `.` menu, its first group **Actions**), **Worktrees**, **Needs attention only**, **Snooze until tomorrow**, **Open** and **Open Git view**, and **Checkout** for the repository's main clone (an action's Runs in reads Worktree / Checkout; the shell lens offers Show in Plotroom, Copy, Open). Commands rows show an action's first line filled for the selected item, or no detail, never `{placeholders}`; the duplicate-agent offer names the action, not a pane; the protocol warning reads "Plotroom on <host> is a different version from this window's". Pickers say what Enter does; a GitHub view with no sort reads "Sort: GitHub's order"; the narrow layout's view dropdown no longer repeats the view's name as the title.
 
 ## [0.33.0] - 2026-11-02

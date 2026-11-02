@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, that renders one block (shown as Plotroom, id `plugin.plotroom.prs`, manifest block id `prs`) for a live queue of GitHub pull requests, GitHub issues and Jira issues: one sidebar of typed saved views, keyboard triage, Browser docking, and one-key worktrees. Data comes from the `gh` CLI (GraphQL), Atlassian's `acli` (Jira) and `git`; there is no server component. README.md is the user-facing spec; this file is for contributors.
+Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, that renders one block (shown as Plotroom, id `plugin.plotroom.prs`, manifest block id `prs`) for a live queue of GitHub pull requests, GitHub issues and Jira issues: one sidebar of typed saved views, keyboard triage, Browser docking, and one-key worktrees. Data comes from the `gh` CLI (GraphQL), Atlassian's `acli` (Jira) and `git`; there is no server component. README.md is the product page; `docs/reference.md` is the user-facing behavior spec; this file is for contributors.
 
-There is one block. `Plotroom: Open` is its one entry point; other palette commands act on the focused Plotroom block (except `Open item by URL`, which launches one). The `KINDS` table (`prs`, `issues`) in `plugin/host/core.luau` fixes per kind the label, icon, kv keys, allowed integrations, seed views and default prompts. Behavior is documented in README.md and in comments next to the code; read those before changing it.
+There is one block. `Plotroom: Open` is its one entry point; other palette commands act on the focused Plotroom block (except `Open item by URL`, which launches one). The `KINDS` table (`prs`, `issues`) in `plugin/host/core.luau` fixes per kind the label, icon, kv keys, allowed integrations, seed views and default prompts. Behavior is documented in `docs/reference.md` and in comments next to the code; read those before changing it. Every behavior change updates `docs/reference.md` in the same commit, under the loop step it serves; README.md changes only when the pitch, the loop table, install and first run, or a screenshot no longer match.
 
 **Product direction lives in [PRODUCT.md](PRODUCT.md)** (user, loop, principles, out of scope, glossary, roadmap) and **[LEDGER.md](LEDGER.md)** (a verdict for every feature). Read both before adding or changing user-visible behavior. A feature that serves no step of PRODUCT.md's loop is not added. UI text uses only the glossary's words. A new feature starts as a LEDGER.md row. Work is tracked as kata issues (project `tern-plotroom`) and run by build-loop (`.build-loop.json`); each issue cites the section it implements.
 
@@ -41,6 +41,7 @@ Invariants (keep when editing):
 - `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`.
 - `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
 - `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.8.d.luau` (pinned SDK type snapshot, sha256-checked).
+- `docs/` — `reference.md` (the user-facing behavior spec) and `images/` (README screenshots; not shipped).
 - `.github/workflows/check.yml` — CI.
 
 ## Development Commands
@@ -73,6 +74,8 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Important Files
 
 - `PRODUCT.md` — product direction: who it is for, the loop, principles, out of scope, glossary, roadmap, metrics, decisions.
+- `README.md` — the product page: pitch, who it is for, the loop as one table, screenshots, install and first run, links. Its screenshots are PNGs under `docs/images/` (never under `plugin/`, which ships), cropped from smoke's headless shots (`PLOTROOM_SMOKE_SHOTS=<dir> python3 scripts/check.py smoke`), each under 400 KB.
+- `docs/reference.md` — the user-facing behavior spec, by loop step (Setup, Commands and keys, Intake, Triage, Dispatch, Supervise, Land, Clean up, Trust, Finer points) in the glossary's words. Update it with every behavior change.
 - `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
 - `CHANGELOG.md` — Keep a Changelog: an Unreleased section and one `## [<version>]` heading per release of `plugin/plugin.toml`'s `version`.
 - `plugin/rpc.luau` — the rpc protocol: `PROTOCOL` (what a host announces in `main.rpc`), `MIN` (the oldest host a window asks) and `SINCE` (op → protocol that added it).

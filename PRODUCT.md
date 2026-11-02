@@ -2,7 +2,7 @@
 
 **Plotroom is where a developer running coding agents decides what to work on, hands it off, and lands it, without keeping the state in their head.**
 
-This file decides what Plotroom should be: who it is for, the loop every feature serves, the principles, what is out of scope, the vocabulary and the roadmap. [LEDGER.md](LEDGER.md) gives every feature a verdict. [README.md](README.md) tells users how Plotroom behaves; [AGENTS.md](AGENTS.md) tells contributors how to build it. Where they disagree about what Plotroom *should* do, this file wins; about what it *does* now, the code wins.
+This file decides what Plotroom should be: who it is for, the loop every feature serves, the principles, what is out of scope, the vocabulary and the roadmap. [LEDGER.md](LEDGER.md) gives every feature a verdict. [README.md](README.md) is the product page and [docs/reference.md](docs/reference.md) tells users how Plotroom behaves; [AGENTS.md](AGENTS.md) tells contributors how to build it. Where they disagree about what Plotroom *should* do, this file wins; about what it *does* now, the code wins.
 
 ## Who it is for
 
@@ -30,7 +30,7 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 3. **Nothing leaves unconfirmed.** Every write to GitHub or Jira is planned, shown, and committed only after a confirm that lists Cancel first; a saved account that cannot be used fails closed. (These are existing invariants in AGENTS.md.)
 4. **Works before it is configured.** With `gh` and `omp` installed and the repository's checkout open in a Tern tab, a new user reaches a running agent without opening Settings. Settings change defaults; they are not a setup step.
 5. **Tern-native, not a second app.** Use Tern's Browser, tabs, agent blocks, Git view and status bar. Never rebuild what Tern, omp or GitHub already do well: CI, merge queues, notification delivery, the code review UI.
-6. **One word per thing.** The glossary below is the only vocabulary in the UI and README.
+6. **One word per thing.** The glossary below is the only vocabulary in the UI, README and reference.
 7. **Editable guidance, fixed contract.** (Phase 3) Users edit an action's text. The end-of-run report Plotroom appends to it is fixed, because Plotroom parses it.
 
 ## Out of scope
@@ -44,7 +44,7 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 
 ## Glossary
 
-The UI and README use these words and no others for these things.
+The UI, README and reference use these words and no others for these things.
 
 | Term | Means | Instead of |
 | --- | --- | --- |
