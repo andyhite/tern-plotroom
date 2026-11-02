@@ -338,7 +338,7 @@ end
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
 -- tab while a tab works in it, Agent (the picker of the saved prompts offered under this view, or typed text), Go to
 -- agent and Seen. A missing repository or checkout is asked for in the window's palette when one is needed. An
--- action's `keys` are its keycap: its configured key (Settings › Keyboard shortcuts); the action bar shows only those
+-- action's `keys` are its keycap: its configured key (Settings › General); the action bar shows only those
 -- that have one.
 local AGENT_COMMANDS = { "agentint", "agentstop", "agentmsg" } -- Interrupt, Stop and Message the selected item's live agent
 type Action = { id: string, label: string, keys: { string }?, href: string }

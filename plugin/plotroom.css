@@ -232,7 +232,7 @@
 	margin-top: 10px;
 }
 
-/* Several Add-style buttons (Add action, Restore defaults) share a line. */
+/* Several Add-style buttons (Add action, Add missing defaults) share a line. */
 [data-surface='plugin.plotroom.prs'] .pf-sec[data-sec^='add'] .pf-rows {
 	display: flex;
 	flex-wrap: wrap;

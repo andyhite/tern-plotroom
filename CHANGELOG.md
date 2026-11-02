@@ -18,6 +18,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - Protocol 33: a window asks only hosts that run this release (removed rpc ops raise the minimum).
+- Settings has four pages: Views, Actions, Repositories and General (the GitHub and Jira setup pages still show while their CLI is missing). Repositories holds the name formats (formerly Worktrees), each repository and the Jira projects; General holds Keyboard shortcuts and Refresh now with the GitHub quota. Every setting keeps its value. Restore defaults is now **Add missing defaults**: it never overwrote edited defaults.
 - Tern's palette lists only Plotroom: Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input. Every other Plotroom command stays in Commands (`.`) with its key, and stays runnable by its action name `plugin.plotroom.<id>` (key binds, `tern ctl plugins run`).
 
 ## [0.33.0] - 2026-11-02

@@ -266,7 +266,7 @@ case("host: each Views group of an available account or Jira ends in an Add butt
 		end
 		return out
 	end
-	same(ids(), { "vopen:prs:v1", "vadd:github:user-a", "vrestore:github:user-a", "vopen:issues:v1", "vadd:github:user-b", "vrestore:github:user-b", "vopen:issues:v2", "vadd:jira:", "vrestore:jira:" }, "user-a's group with the view that follows it, its Add and Restore defaults, the view of both logins in a group of its own with neither, user-b's group with only its buttons, Jira's group with its view and buttons; no status order row")
+	same(ids(), { "vopen:prs:v1", "vadd:github:user-a", "vrestore:github:user-a", "vopen:issues:v1", "vadd:github:user-b", "vrestore:github:user-b", "vopen:issues:v2", "vadd:jira:", "vrestore:jira:" }, "user-a's group with the view that follows it, its Add and Add missing defaults, the view of both logins in a group of its own with neither, user-b's group with only its buttons, Jira's group with its view and buttons; no status order row")
 	eq(sectionIn(b, "vadd:github:user-a").id, "add:github:user-a", "the Add of a group with views closes it in a section of its own")
 	eq(sectionIn(b, "vadd:github:user-a").title, nil, "with no title")
 	eq(sectionIn(b, "vopen:issues:v1").id, "group:github - user-a, user-b", "the view of two logins sits in the group of both, named by its lowercased label")
@@ -610,7 +610,7 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	end
 	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}" }, "the variables of both trackers are listed, with the worktree's and the two users")
 	b.press("escape")
-	page("jira")
+	page("repos")
 	eq(rowIn(b, "jopen:ABC").hint, "o/r", "the project's summary names its repositories")
 	expand(b, "jopen:ABC")
 	eq(prefsOf(b).focus, "jrepos:ABC", "and Edit opens them")
@@ -960,7 +960,7 @@ windowCase("window: the Jira project picker lists the saved projects and acli's;
 	eq(items[2].detail, "Xyz Project", "with its name")
 	eq(items[3].label, "Other project…", "then a typed one")
 	same(w.kv.get("jira-repos").XYZ, array({}), "a typed key is saved upper-cased, with no repository yet")
-	eq(prefsOf(b).page, "jira", "and Settings opens on the Jira page")
+	eq(prefsOf(b).page, "repos", "and Settings opens on the Repositories page")
 	eq(prefsOf(b).focus, "jrepos:XYZ", "at its repositories")
 end)
 
@@ -1236,7 +1236,7 @@ case("host: a request is about what it names, not about the filter on screen: a 
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(hx.ask(w, b, "j1", { op = "jira-projects" }).items[1].key, "ABC", "Jira's projects are listed while a pull request filter is shown")
-	goToSettings(b, "jira")
+	goToSettings(b, "repos")
 	expand(b, "jopen:ABC")
 	eq(rowIn(b, "jrepos:ABC").control.values[1], "o/r", "Settings has the Jira page under a pull request filter too, with the project's repository")
 	b.press("escape")
@@ -1271,11 +1271,11 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	goToSettings(b, "prompts")
 	same(hx.rows(b), { "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "Prompts has the issue prompts alone, the defaults here: the pull request one stays saved, unlisted")
 	b.press("escape")
-	goToSettings(b, "worktrees")
-	same(hx.rows(b), { "fmt:branch", "fmt:issuedir" }, "no pull request folder name")
+	goToSettings(b, "repos")
+	same(hx.rows(b), { "fmt:branch", "fmt:issuedir", "ropen:o/r", "radd", "jopen:ABC", "jadd" }, "Repositories has no pull request folder name")
 	b.press("escape")
 	goToSettings(b, "setup-github")
-	same(hx.pages(b), { "views", "prompts", "keys", "worktrees", "repos", "jira", "connection", "setup-github" }, "GitHub's setup page is offered")
+	same(hx.pages(b), { "views", "prompts", "repos", "general", "setup-github" }, "GitHub's setup page is offered")
 	eq(prefsOf(b).focus, "guide:github", "its one row")
 	b.press("enter")
 	eq(w.opened[#w.opened], "https://github.com/cli/cli#installation", "opens gh's install guide")
@@ -1339,7 +1339,7 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
 end)
 
-case("host: Restore defaults saves back the default actions no saved one is named like, and a kind with none keeps its title on its buttons", function(w: World)
+case("host: Add missing defaults saves back the default actions no saved one is named like, and a kind with none keeps its title on its buttons", function(w: World)
 	hostScene(w, 3)
 	local defaults = (w.load("prompts") :: any).prs
 	savePrompts(w, { promptOf("p1", defaults[1].name, "My own review"), promptOf("p2", "Mine", "Look at {url}") })
@@ -1377,7 +1377,7 @@ case("host: Restore defaults saves back the default actions no saved one is name
 	table.insert(full, "padd:prs")
 	table.insert(full, "padd:issues")
 	table.insert(full, "prestore:issues")
-	same(hx.rows(b), full, "with every default saved, Restore defaults goes")
+	same(hx.rows(b), full, "with every default saved, Add missing defaults goes")
 	eq(prefsOf(b).focus, "padd:prs", "and Add takes the focus")
 	eq(#w.kv.get("prompts-issues").items, 0, "the other kind is untouched")
 end)
@@ -1396,9 +1396,39 @@ case("host: with neither gh nor acli installed, nothing is listed or asked, and 
 		end
 	end
 	goToSettings(b, "setup-jira")
-	same(hx.pages(b), { "views", "prompts", "keys", "worktrees", "repos", "connection", "setup-github", "setup-jira" }, "no Jira projects page, and a setup page each")
+	same(hx.pages(b), { "views", "prompts", "repos", "general", "setup-github", "setup-jira" }, "the four pages, and a setup page each")
 	b.press("enter")
 	eq(w.opened[#w.opened], "https://developer.atlassian.com/cloud/acli/guides/install-acli/", "Jira's opens acli's install guide")
+end)
+
+case("host: with both CLIs on, Settings has four pages: Views, Actions, Repositories and General", function(w: World)
+	issueHost(w)
+	w.kv.put("jira-repos", { ABC = { "o/r" } })
+	local b = openIssues(w)
+	goToSettings(b, "views")
+	local labels: { string } = {}
+	for _, p in prefsOf(b).pages do
+		table.insert(labels, p.id .. " " .. p.label)
+	end
+	same(labels, { "views Views", "prompts Actions", "repos Repositories", "general General" }, "no setup page while gh and acli start")
+	local function titles(): { string }
+		local out: { string } = {}
+		for _, sec in prefsOf(b).sections do
+			if sec.title then
+				table.insert(out, sec.title)
+			end
+		end
+		return out
+	end
+	b.press("escape")
+	goToSettings(b, "repos")
+	same(titles(), { "Name formats", "Repositories", "Jira projects" }, "Repositories: the default name formats first, then each repository, then the Jira projects")
+	yes(rowIn(b, "fmt:branch") ~= nil and rowIn(b, "ropen:o/r") ~= nil and rowIn(b, "jopen:ABC") ~= nil, "with their rows")
+	b.press("escape")
+	goToSettings(b, "general")
+	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Refresh" }, "General: the keyboard shortcuts, the actions' own keys, then Refresh")
+	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
+	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
 end)
 
 case("host: until the CLIs answer no view is listed or searched, and the restored view is the active one once they do", function(w: World)
@@ -1421,12 +1451,12 @@ case("host: until the CLIs answer no view is listed or searched, and the restore
 	eq(#listed(b), 3, "its issues are listed")
 end)
 
-case("host: Settings › Worktrees lists the three name formats with their defaults, and saves only a format that can name a branch or a folder", function(w: World)
+case("host: Settings › Repositories lists the three name formats with their defaults, and saves only a format that can name a branch or a folder", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = manyItems("o/r", 3)
 	local issues = openIssues(w, 1)
 	local prs = openQueue(w, 2)
-	goToSettings(prs, "worktrees")
+	goToSettings(prs, "repos")
 	local formats: { { string } } = {
 		{ "fmt:branch", "{github.user}/{key}-{slug}" },
 		{ "fmt:prdir", "plotroom-{owner}_{repo}-pr-{key}" },
@@ -1470,7 +1500,7 @@ case("host: Settings › Worktrees lists the three name formats with their defau
 	eq(w.kv.get("issue-dir-format"), "{owner}-{repo}-i{key}", "saved apart")
 	eq(w.kv.get("branch-format"), "feat/{github.user}-{key}", "the branch format is as it was")
 	-- an issue filter's pane reads the same formats
-	goToSettings(issues, "worktrees")
+	goToSettings(issues, "repos")
 	eq(rowIn(issues, "fmt:branch").control.value, "feat/{github.user}-{key}", "its page shows the branch format")
 	eq(rowIn(issues, "fmt:prdir").control.value, "pr-{key}-{slug}", "the pull request folder format")
 	eq(rowIn(issues, "fmt:issuedir").control.value, "{owner}-{repo}-i{key}", "and the issue folder format")
@@ -1511,7 +1541,7 @@ case("host: the repository's own branch format wins over the Worktrees one for a
 	goToSettings(b, "repos")
 	expand(b, "ropen:o/r")
 	eq(rowIn(b, "branch:o/r").control.placeholder, "{github.user}/{key}-{slug}", "the repository's row shows the Worktrees format, the default while none is saved")
-	b.event({ ev = "action", id = "layer.settings", act = "page", value = "worktrees" })
+	b.event({ ev = "action", id = "layer.settings", act = "page", value = "repos" })
 	eq(hx.save(b, "fmt:branch", "{key}-{slug}"), nil, "a Worktrees format is saved")
 	b.event({ ev = "action", id = "layer.settings", act = "page", value = "repos" })
 	local row = rowIn(b, "branch:o/r")
@@ -2235,9 +2265,9 @@ case("host: the saved folder formats name the folders of pull request and issue 
 	w.kv.put("issue-dir-format", tooLong)
 	local before = snapshot(s.git)
 	a = hx.ask(w, prs, "p3", { op = "worktree", repo = "o/r", number = 2 })
-	has(a.problem, "is not usable; change its format in Settings › Worktrees.", "a pull request's name is refused with the way to fix it")
+	has(a.problem, "is not usable; change its format in Settings › Repositories.", "a pull request's name is refused with the way to fix it")
 	a = hx.ask(w, issues, "i3", freshAsk("o/r", "16"))
-	has(a.problem, "is not usable; change its format in Settings › Worktrees.", "so is an issue's")
+	has(a.problem, "is not usable; change its format in Settings › Repositories.", "so is an issue's")
 	eq(snapshot(s.git), before, "no branch or worktree was made")
 end)
 

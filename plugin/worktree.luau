@@ -1213,7 +1213,7 @@ end
 local function locate<T>(s: Steps<T>, checkout: string, repo: string, dir: string, step: (Spot, WindowCx?) -> ())
 	if not M.validLeaf(dir) then
 		process.later(function(cx)
-			s.finish(nil, "Worktree folder name " .. dir .. " is not usable; change its format in Settings › Worktrees.", cx)
+			s.finish(nil, "Worktree folder name " .. dir .. " is not usable; change its format in Settings › Repositories.", cx)
 		end)
 		return
 	end

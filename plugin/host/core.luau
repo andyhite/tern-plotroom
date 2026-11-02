@@ -52,7 +52,7 @@ M.TRACKERS = TRACKERS
 -- its kind's prompt store (none: every prompt).
 export type View = { id: string, kind: string, name: string, integration: string, query: string, logins: { string }, group: string, prompts: { string }, sort: string? }
 export type Views = { version: number, nextId: number, items: { View } }
--- An agent prompt from Settings › Prompts; the views list which of them they offer. `key` runs it on the selected
+-- An agent prompt from Settings › Actions; the views list which of them they offer. `key` runs it on the selected
 -- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
@@ -60,7 +60,7 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- tab and worktree, when this prompt's agent finishes.
 export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
--- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › Keyboard shortcuts; a removed
+-- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › General; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
 export type KeyHelp = { keys: { string }, actions: { string }?, text: string }
 -- A default view; its id in the kv store is "v<its place in Kind.seeds>". `sprint`: offered only while the Jira site is
@@ -76,7 +76,7 @@ export type Kind = {
 	viewsKey: string, -- kv key of the saved views
 	promptsKey: string, -- kv key of the saved prompts
 	integrations: { string }, -- the trackers its views may use, the first a new view's: "github" | "jira" (keys TRACKERS and INTEGRATIONS)
-	seeds: { Seed }, -- the views of a first run and of Settings › Views › Restore defaults, in order
+	seeds: { Seed }, -- the views of a first run and of Settings › Views › Add missing defaults, in order
 	keys: { KeyHelp }, -- the `?` list of the queue
 	vars: { { k: { Span }, v: string } }, -- the prompt editor's legend of variables
 	prompts: { { id: string, name: string, text: string, worktree: boolean? } }, -- offered until its saved prompts are first changed
@@ -152,7 +152,7 @@ export type Note = {
 -- worktree holds what it should (a PR's head; an issue's branch always does). `ref`: a pull request's fetched ref.
 export type Report = { root: string, repo: string, path: string, branch: string, ref: string?, current: boolean, dirty: boolean?, ahead: number?, summary: string, update: { string } }
 export type Settings = {
-	page: string, -- "views" | "prompts" | "keys" | "worktrees" | "repos" | "jira" | "connection"
+	page: string, -- "views" | "prompts" | "repos" | "general" | "setup-github" | "setup-jira"
 	focus: string?, -- focused prefs row id
 	open: string?, -- the item whose form is expanded: a view or prompt ("<kind id>:<saved id>"), a repository or a Jira project key; every other one shows as a one-row summary
 	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text; a shortcut row ("key:", "pkey:") takes the next key
@@ -356,16 +356,13 @@ end
 
 M.QUEUE_ID = "layer.queue"
 M.SETTINGS_ID = "layer.settings"
--- The Settings pages, in order, the same whatever the active kind: one that `needs` an integration only while it is on,
--- the `setup` page of one (its install guide) only while its CLI is known not to start.
-local PAGE_DEFS: { { id: string, label: string, group: string, icon: string, needs: string?, setup: string? } } = {
+-- The Settings pages, in order, the same whatever the active kind: the `setup` page of an integration (its install
+-- guide) only while its CLI is known not to start.
+local PAGE_DEFS: { { id: string, label: string, group: string, icon: string, setup: string? } } = {
 	{ id = "views", label = "Views", group = "Queue", icon = "funnel" },
 	{ id = "prompts", label = "Actions", group = "Queue", icon = "prompt" },
-	{ id = "keys", label = "Keyboard shortcuts", group = "Queue", icon = "keyboard" },
-	{ id = "worktrees", label = "Worktrees", group = "Code", icon = "tree" },
 	{ id = "repos", label = "Repositories", group = "Code", icon = "folder" },
-	{ id = "jira", label = "Jira projects", group = "Code", icon = "kanban", needs = "jira" },
-	{ id = "connection", label = "Refresh", group = "Connection", icon = "gauge" },
+	{ id = "general", label = "General", group = "General", icon = "gauge" },
 	{ id = "setup-github", label = "GitHub", group = "Setup", icon = "merge", setup = "github" },
 	{ id = "setup-jira", label = "Jira", group = "Setup", icon = "kanban", setup = "jira" },
 }
@@ -374,7 +371,7 @@ local PAGE_DEFS: { { id: string, label: string, group: string, icon: string, nee
 function cli.pages(): { { id: string, label: string, group: string, icon: string } }
 	local out: { { id: string, label: string, group: string, icon: string } } = {}
 	for _, p in PAGE_DEFS do
-		if (not p.needs or cli.on(p.needs)) and (not p.setup or cli.installed[p.setup] == false) then
+		if not p.setup or cli.installed[p.setup] == false then
 			table.insert(out, { id = p.id, label = p.label, group = p.group, icon = p.icon })
 		end
 	end
