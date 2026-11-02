@@ -185,6 +185,24 @@ case("now: Now is read per signed-in login with the queue's refresh, not more of
 	has(textOf(pickerOf(b).subtitle), "rate limit", "and Now says why")
 end)
 
+case("now: a block on a view counts what needs you, and a review request that arrives is counted at the next refresh", function(w: World)
+	local s = hostScene(w, 3)
+	newAcli(w)
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.queries[MINE], s.gh.queries[ASSIGNED] = {}, {}
+	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90) }
+	s.gh.inbox.octocat = {}
+	local b = w.open(1, { "/work/r" })
+	w.flush()
+	eq(pickerOf(b).scope, "prs:v1", "the block shows a view, not Now")
+	eq(b.title(), "Plotroom · My PRs (3) · 1 need you", "the waiting review request is counted off Now")
+	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
+	w.advance(10 * 60 * 1000)
+	w.flush()
+	eq(pickerOf(b).scope, "prs:v1", "still on the view")
+	eq(b.title(), "Plotroom · My PRs (3) · 2 need you", "the queue's refresh read Now again and counts the new one")
+end)
+
 case("now: Enter on a pull request shows it in the block as a linked one is, an issue pinned, and a thread about neither says so", function(w: World)
 	local s, b = nowScene(w)
 	s.gh.pulls["https://github.com/o/r/issues/7"] = nil

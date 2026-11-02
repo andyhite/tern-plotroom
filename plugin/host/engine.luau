@@ -1146,9 +1146,7 @@ function M.refresh(state: State)
 		state.timer = nil
 	end
 	identify(state)
-	if state.nowOn then
-		M.nowRead(state) -- Now is read with the queue's refresh while it is shown
-	end
+	M.nowRead(state) -- Now is read with every refresh, shown or not: its count is the pane title's and status line's
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
 		return
@@ -1297,8 +1295,12 @@ function M.reloadViews(state: State)
 	elseif M.snapKey(v, state.activeLogin) ~= state.applied then
 		M.changed(state)
 	end
-	if state.nowOn and not state.now.loaded then
-		M.refresh(state) -- Now's first read waits for the CLIs' answers, as the views' does
+	if not state.now.loaded then
+		if state.nowOn then
+			M.refresh(state) -- Now's first read waits for the CLIs' answers, as the views' does
+		else
+			M.nowRead(state)
+		end
 	end
 end
 
@@ -2430,12 +2432,14 @@ local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
 
 -- Reads Now's sources once, while none is being read. A source that cannot be read keeps its last answer and says why
--- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login.
+-- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login. While a sign-in
+-- failure or a missing CLI holds the block, Now is not read either: only Refresh tries again, as for the views.
 -- ponytail: a source failing for one login keeps that whole source's last answer; merge per login if several logins
--- fail apart often.
+-- fail apart often. A held sign-in pauses all of Now, not just that integration's sources.
 function M.nowRead(state: State)
 	local now = state.now
-	if now.busy or not M.alive(state) or not cli.ready() then
+	local held = state.problem
+	if now.busy or not M.alive(state) or not cli.ready() or (held and (held.kind == "auth" or held.kind == "missing")) then
 		return
 	end
 	now.busy = true

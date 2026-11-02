@@ -21,6 +21,7 @@ local pickerNode, pickerOf, porcelain, prLink, prefsOf, pressCard = h.pickerNode
 local promptOf, refreshNow, request, requestsOf, rowIn, same = h.promptOf, h.refreshNow, h.request, h.requestsOf, h.rowIn, h.same
 local saveIssuePrompts, savePrompts, searchItem, sectionIn, sha, show = h.saveIssuePrompts, h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.show
 local showPr, snapshot, windowCase, yes = h.showPr, h.snapshot, h.windowCase, h.yes
+local viewSearchesOf = h.viewSearchesOf
 
 -- The worktree card's buttons as "key:label", in order; none for a failed attempt.
 local function buttonsOf(b: Block): { string }
@@ -102,10 +103,10 @@ case("host: the full checks load once the cursor rests, never while it moves or 
 	b.press("down")
 	w.advance(1000)
 	eq(#requestsOf(s.gh, "checks"), 2, "going back to a PR whose checks are current asks for nothing")
-	local before, searched = #requestsOf(s.gh, "checks"), #requestsOf(s.gh, "search")
+	local before, searched = #requestsOf(s.gh, "checks"), #viewSearchesOf(s.gh, "search")
 	w.advance(10 * 60 * 1000)
 	local later = requestsOf(s.gh, "checks")
-	yes(#later - before <= #requestsOf(s.gh, "search") - searched, "an idle pane reloads at most once per refresh")
+	yes(#later - before <= #viewSearchesOf(s.gh, "search") - searched, "an idle pane reloads at most once per refresh")
 	for i = before + 1, #later do
 		eq(later[i].fields.n, "2", "and only for the PR the cursor rests on")
 	end
@@ -322,9 +323,9 @@ case("host: a failed checks load offers Retry, backs off 15 s doubling to 5 minu
 	w.advance(300000)
 	has(b.text(), "job 2", "the load succeeds once the failure clears")
 	eq(findKey(pickerNode(b), "runs-retry"), nil, "and the Retry button goes")
-	local before, searched = #requestsOf(s.gh, "checks"), #requestsOf(s.gh, "search")
+	local before, searched = #requestsOf(s.gh, "checks"), #viewSearchesOf(s.gh, "search")
 	w.advance(30 * 60 * 1000)
-	yes(#requestsOf(s.gh, "checks") - before <= #requestsOf(s.gh, "search") - searched, "afterwards at most one reload per refresh")
+	yes(#requestsOf(s.gh, "checks") - before <= #viewSearchesOf(s.gh, "search") - searched, "afterwards at most one reload per refresh")
 end)
 
 case("host: a sign-in failure on the checks waits for Retry, and Retry loads them again", function(w: World)
@@ -1363,7 +1364,7 @@ end)
 case("host: an issue filter lists issues under its own search, noun, icon, group and shortcuts", function(w: World)
 	local s = issueHost(w)
 	local b = openIssues(w)
-	local searches = requestsOf(s.gh, "issue-search")
+	local searches = viewSearchesOf(s.gh, "issue-search")
 	eq(#searches, 1, "one request covers three issues")
 	eq(searches[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the active view's query across every repository, issues only")
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "newest update first")
@@ -1422,7 +1423,7 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 	b.press("down")
 	w.flush()
 	eq(pickerOf(b).scope, "issues:v2", "the second issue filter is active")
-	eq(requestsOf(s.gh, "issue-search")[2].fields.q, "is:open author:@me is:issue sort:updated-desc", "and searched")
+	eq(viewSearchesOf(s.gh, "issue-search")[2].fields.q, "is:open author:@me is:issue sort:updated-desc", "and searched")
 	has(b.title(), "Created by me", "the title follows")
 end)
 
@@ -1512,10 +1513,10 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#requestsOf(s.gh, "issue"), 0, "and no issue's details")
 	pickScope(b, "issues:v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 1, "no pull request was searched for the issue filter")
-	eq(requestsOf(s.gh, "issue-search")[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the issue search is the filter's own")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "no pull request was searched for the issue filter")
+	eq(viewSearchesOf(s.gh, "issue-search")[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the issue search is the filter's own")
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the list is its issues")
-	eq(b.title(), "Plotroom · Assigned to me (3)", "the title names it")
+	eq(b.title(), "Plotroom · Assigned to me (3) · 3 need you", "the title names it, with Now's count")
 	eq(pickerOf(b).noun, "issues", "counted as issues")
 	eq(pickerOf(b).icon, "list-checks", "under the issue icon")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "with the issue's buttons")
@@ -1526,12 +1527,12 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#requestsOf(s.gh, "checks"), 1, "and no pull request's checks")
 	pickScope(b, "prs:v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "back on the pull request filter, a list of issues is no list of its pull requests: it searches again")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "back on the pull request filter, a list of issues is no list of its pull requests: it searches again")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and lists them")
 	eq(buttonLink(b, "worktree"), prLink("worktree", "o/r", 1), "with the pull request's buttons")
 	b.typeText("w")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and its Worktree key")
-	eq(#requestsOf(s.gh, "issue-search"), 1, "the issues were searched once")
+	eq(#viewSearchesOf(s.gh, "issue-search"), 1, "the issues were searched once")
 end)
 
 case("host: a block saves the kind of its filter and restores it: both stores have a v1, and a pane saved before issue filters joined the block is on a pull request filter", function(w: World)
@@ -1583,10 +1584,10 @@ case("host: a search that lands after the filter switched to the other kind is d
 	w.advance(5000)
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the pull request answer that came late does not replace it")
 	eq(pickerOf(b).noun, "issues", "the block still counts issues")
-	eq(b.title(), "Plotroom · Assigned to me (3)", "under the issue filter's title")
+	eq(b.title(), "Plotroom · Assigned to me (3) · 3 need you", "under the issue filter's title")
 	pickScope(b, "prs:v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "the late answer was dropped, not kept: the pull request filter searches again")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "the late answer was dropped, not kept: the pull request filter searches again")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and lists its own pull requests")
 	late["issue-search"] = true
 	pickScope(b, "issues:v2")
@@ -1915,7 +1916,7 @@ case("host: a block told to show a pull request selects it where its pull reques
 	eq(pickerOf(b).selected, "no_2fr_2345", "selected")
 	eq(pickerOf(b).scopes[2].label, "o/r#45", "under a scope named after it, first after Now in the sidebar")
 	eq(pickerOf(b).scope, pickerOf(b).scopes[2].id, "which is the active one")
-	eq(b.title(), "Plotroom · o/r#45 (1)", "the block's title names it")
+	eq(b.title(), "Plotroom · o/r#45 (1) · 3 need you", "the block's title names it")
 	b.event({ ev = "action", act = "show-pr", value = "https://example.com/o/r/pull/1" })
 	eq(#requestsOf(s.gh, "pull"), 1, "anything but a pull request URL is ignored")
 	eq(pickerOf(b).scopes[2].label, "o/r#45", "and keeps the pin")

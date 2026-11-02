@@ -514,7 +514,8 @@ local function newWorld(instantiate: Loader, context: string): World
 	local calls: { Call } = {}
 	-- gh, acli and omp start unless a model of them says otherwise (newGh, newAcli answer first): a block asks gh and acli
 	-- for their --version before it lists any view (the Get started checklist asks omp's), and once acli starts, whether
-	-- the Jira site has sprints (it has).
+	-- the Jira site has sprints (it has). Without a Jira model acli is signed out, so Now's Jira read (every refresh)
+	-- fails quietly into Now's problems.
 	local responders: { Responder } = {
 		function(call: Call): Reply?
 			local argv = call.argv
@@ -523,6 +524,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end
 			if argv[1] == "acli" and argv[4] == "search" and argv[#argv] == "--count" then
 				return { stdout = "✓ Number of work items in the search: 0\n" }
+			end
+			if argv[1] == "acli" and argv[2] == "jira" and argv[3] == "auth" and argv[4] == "status" then
+				return { status = 1, stderr = "✗ Error: unauthorized: use 'acli jira auth login' to authenticate\n" }
 			end
 			return nil
 		end,
@@ -2813,6 +2817,26 @@ local function requestsOf(gh: Gh, kind: string): { GhReq }
 	return out
 end
 M.requestsOf = requestsOf
+
+-- Now's fixed GitHub searches, which every refresh sends (engine NOW_MINE, NOW_REVIEW, NOW_ASSIGNED).
+local NOW_QUERIES = { "is:open author:@me archived:false ", "is:open user-review-requested:@me draft:false archived:false ", "is:open assignee:@me archived:false " }
+
+-- requestsOf without Now's fixed searches: what the views searched. A seed view with Now's query counts as Now's.
+local function viewSearchesOf(gh: Gh, kind: string): { GhReq }
+	local out: { GhReq } = {}
+	for _, req in requestsOf(gh, kind) do
+		local q = req.fields.q or ""
+		local now = false
+		for _, fixed in NOW_QUERIES do
+			now = now or string.sub(q, 1, #fixed) == fixed
+		end
+		if not now then
+			table.insert(out, req)
+		end
+	end
+	return out
+end
+M.viewSearchesOf = viewSearchesOf
 
 local function listed(b: Block): { string }
 	local out: { string } = {}

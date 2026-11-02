@@ -26,6 +26,7 @@ local refreshNow, request, requestsOf, requestsSent, rowIn, runLink = h.refreshN
 local same, saveIssuePrompts, savePrompts, scene, searchItem, sectionIn = h.same, h.saveIssuePrompts, h.savePrompts, h.scene, h.searchItem, h.sectionIn
 local sha, show, showPr, snapshot, windowCase, yes = h.sha, h.show, h.showPr, h.snapshot, h.windowCase, h.yes
 local acliCount = h.acliCount
+local viewSearchesOf = h.viewSearchesOf
 
 case("host: a collapsed prompt is one summary row; Edit expands it, another's Edit or Done collapses, and Add opens the new prompt expanded", function(w: World)
 	hostScene(w, 3)
@@ -149,7 +150,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	local b = openQueue(w)
 	same(sidebarOf(b), { "Both @ GitHub - octocat = prs:v1@octocat", "Both @ GitHub - work = prs:v1@work" }, "the view is listed once in each login's group")
 	eq(pickerOf(b).scope, "prs:v1@octocat", "the first login's scope is the one shown")
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 1, "one search")
 	eq(searches[1].login, "octocat", "as that login")
 	has(searches[1].fields.q, "is:open author:@me", "with the view's query")
@@ -158,7 +159,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	eq(requestsOf(s.gh, "checks")[1].login, "octocat", "its checks load as it")
 	pickScope(b, "prs:v1@work")
 	w.flush()
-	searches = requestsOf(s.gh, "search")
+	searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 2, "the other scope searches on its own")
 	eq(searches[2].login, "work", "as its login")
 	same(listed(b), { "no_2fr_233" }, "and lists only what that login found, never a merge")
@@ -173,7 +174,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	b.press("up")
 	eq(pickerOf(b).scope, "prs:v1@octocat", "Up moves to the scope above")
 	w.flush()
-	eq(requestsOf(s.gh, "search")[3].login, "octocat", "and runs as its login again")
+	eq(viewSearchesOf(s.gh, "search")[3].login, "octocat", "and runs as its login again")
 	same(listed(b), { "no_2fr_231", "no_2fr_232" }, "with its own list")
 	b.press("down")
 	eq(pickerOf(b).scope, "prs:v1@work", "Down moves to the scope below")
@@ -201,7 +202,7 @@ case("host: a login failing in one scope leaves the view's other scope alone", f
 	eq(pickerOf(b).state, "ready", "the other scope is not an error card")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and lists its PRs again")
 	local who: { string } = {}
-	for _, req in requestsOf(s.gh, "search") do
+	for _, req in viewSearchesOf(s.gh, "search") do
 		table.insert(who, req.login or "")
 	end
 	same(who, { "octocat", "work", "octocat" }, "each scope searched as its own login, and the failure stopped nothing else")
@@ -337,16 +338,16 @@ case("host: a view's logins saved by another block: removing the shown scope's l
 	w.flush()
 	same(sidebarOf(b), { "Mine @ - = prs:v1" }, "the view is one scope again, and the block's sidebar needs no groups")
 	same(listed(b), { "no_2fr_231" }, "and shows the login that is left")
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(searches[#searches].login, "octocat", "searched as it")
 	-- adding a login keeps the scope shown; emptying the list is gh's active account
 	loginsSavedBy(w, c, { "octocat", "zed" }, "Mine again")
 	eq(pickerOf(b).scope, "prs:v1@octocat", "a login added keeps the scope that was shown")
-	eq(#requestsOf(s.gh, "search"), #searches, "and searches nothing more")
+	eq(#viewSearchesOf(s.gh, "search"), #searches, "and searches nothing more")
 	loginsSavedBy(w, c, {}, "Mine once more")
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v1", "with no login the view is one scope")
-	eq(requestsOf(s.gh, "search")[#requestsOf(s.gh, "search")].login, "octocat", "run as gh's active account")
+	eq(viewSearchesOf(s.gh, "search")[#viewSearchesOf(s.gh, "search")].login, "octocat", "run as gh's active account")
 end)
 
 case("host: the active login is saved with the block and restored; one the view no longer lists falls back to its first", function(w: World)
@@ -366,7 +367,7 @@ case("host: the active login is saved with the block and restored; one the view 
 	w.flush()
 	eq(pickerOf(again).scope, "prs:v1@work", "a restored block shows the same scope")
 	same(listed(again), { "no_2fr_237" }, "with that login's list")
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(searches[#searches].login, "work", "searched as it")
 	local stale = { version = 2, launchCwd = "/work/r", activeViewId = "v1", activeLogin = "gone" }
 	local third = w.open(3, { "/work/r" }, stale)
@@ -386,7 +387,7 @@ case("host: a view saved with one login loads as a list of one; a malformed list
 	}) })
 	local b = openQueue(w)
 	same(listed(b), { "no_2fr_237" }, "the old login still decides who searches")
-	eq(requestsOf(s.gh, "search")[1].login, "work", "as that login")
+	eq(viewSearchesOf(s.gh, "search")[1].login, "work", "as that login")
 	goToSettings(b, "views")
 	same(rowIn(b, "vopen:prs:v1").label, "Old · active", "the view")
 	expand(b, "vopen:prs:v1")
@@ -433,18 +434,12 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 		end
 		return n
 	end
-	eq(searched(), 1, "one search covers the project's issues")
-	for _, call in w.calls do
-		-- whether gh starts, and the sidebar's group labels learn gh's active login; nothing else may ask gh
-		if call.argv[2] ~= "--version" then
-			eq(call.argv[1] == "gh" and call.argv[2] ~= "auth", false, "a Jira filter never searches through gh: " .. table.concat(call.argv, " "))
-			eq(call.argv[1] == "gh" and call.argv[3] ~= "status", false, "nor reads a token: " .. table.concat(call.argv, " "))
-		end
-	end
+	eq(searched(), 2, "one search covers the project's issues, and Now reads the same query for its Jira source")
+	eq(#viewSearchesOf(s.gh, "search") + #viewSearchesOf(s.gh, "issue-search"), 0, "a Jira filter never searches through gh; only Now's fixed searches go there")
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (2)", "the title names the filter and counts the issues")
+	eq(b.title(), "Plotroom · Assigned to me (2) · 1 need you", "the title names the filter and counts the issues, then what needs you")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
 		if scope.id == "issues:v1" then
@@ -488,13 +483,13 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	local rerun = w.open(1, { "/work/r" })
 	w.flush()
 	same(listed(rerun), { "nabc_23ABC-12", "nabc_23ABC-13" }, "running init again for the live pane keeps its Jira list")
-	eq(searched(), 1, "and does not search twice")
+	eq(searched(), 2, "and does not search twice (the view's search and Now's, as before)")
 	local saved = b.saved()
 	eq(saved.activeViewId, "v1", "the block saves its active view")
 	eq(saved.activeKind, "issues", "and its kind: a PR filter may have the same id")
 	local again = w.open(2, { "/work/r" }, saved)
 	w.flush()
-	eq(again.title(), "Plotroom · Assigned to me (2)", "a restored block shows the same view")
+	eq(again.title(), "Plotroom · Assigned to me (2) · 1 need you", "a restored block shows the same view")
 end)
 
 case("host: issues always list In Progress, then To Do, then Done, in acli's priority order within each; a saved status order and Settings change nothing", function(w: World)
@@ -1264,7 +1259,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
-	eq(b.title(), "Plotroom · Assigned to me (2)", "and shown in place of the GitHub view restored")
+	eq(b.title(), "Plotroom · Assigned to me (2) · 1 need you", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
@@ -1303,7 +1298,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 		"Assigned to me @ Jira = issues:v1",
 	}, "the GitHub views are listed again")
 	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")
-	eq(#requestsOf(s.gh, "search"), 0, "and nothing searches GitHub until one is picked")
+	eq(#viewSearchesOf(s.gh, "search"), 0, "and nothing searches GitHub until one is picked")
 end)
 
 case("host: with no prompts saved, Settings lists each kind's default prompts, and the first change saves them with it", function(w: World)
@@ -1443,12 +1438,12 @@ case("host: until the CLIs answer no view is listed or searched, and the restore
 	local b = openIssues(w) -- acli has answered, gh not yet
 	eq(#pickerOf(b).scopes, 3, "only Now and the Worktrees and Agents lists are listed while gh has not answered: no view is")
 	eq(pickerOf(b).state, "loading", "the queue is loading")
-	eq(#requestsOf(s.gh, "issue-search"), 0, "nothing is searched")
+	eq(#viewSearchesOf(s.gh, "issue-search"), 0, "nothing is searched")
 	eq(b.saved().activeViewId, "v1", "the block still saves the view it was restored on")
 	eq(b.saved().activeKind, "issues", "with its kind")
 	w.advance(1000)
 	eq(pickerOf(b).scope, "issues:v1", "once gh answers, the restored view is the active one")
-	eq(#requestsOf(s.gh, "issue-search"), 1, "and is searched")
+	eq(#viewSearchesOf(s.gh, "issue-search"), 1, "and is searched")
 	eq(#listed(b), 3, "its issues are listed")
 end)
 

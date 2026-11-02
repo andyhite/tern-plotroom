@@ -19,6 +19,18 @@ local pickScope, pickerNode, pickerOf, prLink, prefsOf, promptOf = h.pickScope, 
 local refreshNow, request, requestsOf, rowIn, runLink, same = h.refreshNow, h.request, h.requestsOf, h.rowIn, h.runLink, h.same
 local savePrompts, searchItem, sectionIn, sha, windowCase, yes = h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.windowCase, h.yes
 local asks = h.asks
+local viewSearchesOf = h.viewSearchesOf
+
+-- acli's searches but Now's (its Jira source is the Assigned to me query, read with every refresh).
+local function searchesOf(acli: h.Acli): number
+	local n = 0
+	for _, req in acli.requests do
+		if req.kind == "search" and not table.find(req.argv, h.JIRA_ASSIGNED) then
+			n += 1
+		end
+	end
+	return n
+end
 
 -- The delete the block asks the window to confirm: its hidden `confirm` node, decoded ({row, head, label, detail}); nil when none is pending.
 local function pendingOf(b: Block): any
@@ -45,7 +57,7 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	local b = w.open(1, { "/work/r" })
 	eq(pickerOf(b).state, "loading", "the first card is the spinner")
 	w.flush()
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 1, "one request covers three PRs")
 	has(searches[1].fields.q, "is:pr", "the search asks for pull requests")
 	eq(searches[1].fields.q, "is:open author:@me is:pr sort:updated-desc", "the view's own query, with no repository qualifier")
@@ -64,12 +76,12 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 		eq(item.mark.seed, nil, "nor a redundant seed on the author mark")
 	end
 	w.advance(59999)
-	eq(#requestsOf(s.gh, "search"), 1, "no refresh before the minute is up")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "no refresh before the minute is up")
 	w.advance(1)
-	eq(#requestsOf(s.gh, "search"), 2, "a refresh a minute later")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "a refresh a minute later")
 	b.close()
 	w.advance(10 * 60 * 1000)
-	eq(#requestsOf(s.gh, "search"), 2, "a closed pane stops polling")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "a closed pane stops polling")
 end)
 
 case("host: any number of cwd and pane_exited events inside the 250 ms window render a block once", function(w: World)
@@ -99,7 +111,7 @@ case("host: running init again for a live pane keeps its list and does not searc
 	local again = w.open(1, { "/work/r" })
 	w.flush()
 	same(listed(again), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the loaded list is still there")
-	eq(#requestsOf(s.gh, "search"), 1, "and nothing was searched again")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "and nothing was searched again")
 end)
 
 case("host: launching in a directory that is gone maps no checkout and still shows the views", function(w: World)
@@ -243,7 +255,7 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 12), "w checks it out in a worktree")
 	b.typeText("r")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "r refreshes")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "r refreshes")
 	b.press("tab")
 	eq(pickerOf(b).focus, "scopes", "Tab moves to the filters")
 	b.press("down")
@@ -512,7 +524,7 @@ case("host: the bar's Settings and Refresh events do what their keys do", functi
 	end
 	act("retry")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "Refresh searches again")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "Refresh searches again")
 	act("settings")
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "Settings opens the settings page")
 end)
@@ -561,7 +573,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "an offered one runs as its key would")
 	b.event({ ev = "action", act = "queue", value = "refresh" })
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "Refresh searches again")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "Refresh searches again")
 	b.event({ ev = "action", act = "queue", value = "search" })
 	eq(pickerOf(b).query, "", "Search opens the search")
 end)
@@ -593,7 +605,7 @@ case("host: pasting into the queue opens and pins the first item URL in the text
 	eq(#w.toasts, toasts + 3, "with no toast")
 end)
 
-case("host: the palette copies the selected item's link, number and branch, and the title counts nothing new", function(w: World)
+case("host: the palette copies the selected item's link, number and branch, and the title counts what needs you", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
 	local p = hx.palette(w, b)
@@ -605,7 +617,7 @@ case("host: the palette copies the selected item's link, number and branch, and 
 	b.event({ ev = "action", act = "queue", value = "copy-number" })
 	b.event({ ev = "action", act = "queue", value = "copy-branch" })
 	same(w.copied, { item.url, "#" .. item.number, item.head }, "each row copies its text")
-	eq(b.title(), "Plotroom · My PRs (3)", "the title names the view and its count; new items are Now's to count")
+	eq(b.title(), "Plotroom · My PRs (3) · 3 need you", "the title names the view and its count, and Now's count read off Now")
 end)
 
 case("host: the palette's Views rows show the sidebar's scopes as a click does, and a scope the sidebar no longer lists is refused", function(w: World)
@@ -724,14 +736,14 @@ case("host: Escape cancels a settings edit, Enter saves it, and a rejected value
 	eq(prefsOf(b).editing.row, "query:prs:v1", "the edit stays open for a correction")
 	eq(prefsOf(b).editing.draft, "", "with the draft")
 	eq(w.kv.get("views-prs").items[1].query, "is:open author:@me", "nothing was saved")
-	eq(#requestsOf(s.gh, "search"), 1, "and nothing was searched")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "and nothing was searched")
 	b.typeText("is:open label:bug")
 	b.press("enter")
 	eq(rowIn(b, "query:prs:v1").warning, nil, "a saved value clears the warning")
 	eq(prefsOf(b).editing, nil, "and closes the edit")
 	eq(w.kv.get("views-prs").items[1].query, "is:open label:bug", "the correction is saved")
 	w.flush()
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 2, "the active view searches again")
 	has(searches[2].fields.q, "label:bug", "with its new query")
 end)
@@ -860,7 +872,7 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	b.press("escape")
 	eq(w.kv.get("views-prs").items[3].name, "New view", "cancelling the naming keeps the placeholder name")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "the new view became the active one and was searched")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "the new view became the active one and was searched (My PRs' query is Now's too)")
 	has(b.title(), "New view", "the title shows it")
 	expand(b, "vopen:prs:v2")
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
@@ -2288,19 +2300,19 @@ case("host: switching views searches the new query, shows the cached list at onc
 	scope("prs:v2")
 	w.flush()
 	same(listed(b), { "no_2fr_2321", "no_2fr_2322" }, "the second view shows its own results")
-	eq(#requestsOf(s.gh, "search"), 2, "it was searched")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "it was searched")
 	scope("prs:v1")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "going back shows the cached list at once")
 	w.flush()
 	scope("prs:v1")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 4, "going back and re-selecting the active view each search again")
+	eq(#viewSearchesOf(s.gh, "search"), 4, "going back and re-selecting the active view each search again")
 	slow = true
 	second = { searchItem(23, "o/r", EPOCH - 5) }
 	b.typeText("r")
 	scope("prs:v2")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 6, "the switch sent its own search while the slow one is still pending")
+	eq(#viewSearchesOf(s.gh, "search"), 6, "the switch sent its own search while the slow one is still pending")
 	same(listed(b), { "no_2fr_2323" }, "the switch showed the new answer without waiting for the slow search")
 	w.advance(5000)
 	same(listed(b), { "no_2fr_2323" }, "and the superseded answer never replaces it")
@@ -2317,16 +2329,16 @@ case("host: a rejected query pauses only itself: no automatic retry, and another
 	end
 	local b = openQueue(w)
 	eq(pickerOf(b).state, "error", "the rejected query shows its card")
-	local sent = #requestsOf(s.gh, "search")
+	local sent = #viewSearchesOf(s.gh, "search")
 	w.advance(30 * 60 * 1000)
-	eq(#requestsOf(s.gh, "search"), sent, "the timer does not retry a rejected query")
+	eq(#viewSearchesOf(s.gh, "search"), sent, "the timer does not retry a rejected query")
 	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "prs:v2" })
 	w.flush()
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "another view loads")
 	eq(pickerOf(b).state, "ready", "without the first view's card")
 	b.event({ ev = "action", id = "layer.queue", act = "scope", value = "prs:v1" })
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), sent + 2, "going back asks again instead of trusting the old rejection")
+	eq(#viewSearchesOf(s.gh, "search"), sent + 2, "going back asks again instead of trusting the old rejection")
 	eq(pickerOf(b).state, "error", "and it is rejected again")
 end)
 
@@ -2401,7 +2413,7 @@ case("host: switching across kinds shows each view's cached list and its sidebar
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "back to the pull requests: the cached list shows before any search lands")
 	eq(countOf(b, "issues:v1"), 2, "the Jira count stays")
 	w.flush()
-	eq(#requestsOf(s.gh, "search") >= 2, true, "and it refreshed meanwhile")
+	eq(#viewSearchesOf(s.gh, "search") >= 2, true, "and it refreshed meanwhile")
 end)
 
 case("host: a not-found belongs to its view: another view clears it and searches, while the view itself stays paused", function(w: World)
@@ -2426,13 +2438,7 @@ case("host: a not-found belongs to its view: another view clears it and searches
 		b.event({ ev = "action", id = "layer.queue", act = "scope", value = id })
 	end
 	local function searches(): number
-		local n = 0
-		for _, req in acli.requests do
-			if req.kind == "search" then
-				n += 1
-			end
-		end
-		return n
+		return searchesOf(acli)
 	end
 	scope("issues:v1")
 	w.flush()
@@ -2442,10 +2448,11 @@ case("host: a not-found belongs to its view: another view clears it and searches
 	w.flush()
 	eq(pickerOf(b).state, "error", "the view itself stays paused")
 	eq(searches(), before, "re-clicking it sends no search")
+	local all = #acli.requests
 	scope("issues:v2")
 	w.flush()
 	eq(pickerOf(b).state, "ready", "another Jira view does not show it")
-	eq(searches() > before, true, "and searches")
+	yes(#acli.requests > all, "and searches (v2's query is Now's Jira source too)")
 	scope("prs:v1")
 	w.flush()
 	eq(pickerOf(b).state, "ready", "nor does a pull request view")
@@ -2496,11 +2503,11 @@ case("host: a GitHub login change does not drop an acli sign-out held on every v
 	eq(pickerOf(b).state, "error", "Jira is signed out")
 	pickScope(b, "prs:v1@octocat")
 	w.flush()
-	local sent = #requestsOf(s.gh, "search")
+	local sent = #viewSearchesOf(s.gh, "search")
 	pickScope(b, "prs:v1@work")
 	w.flush()
 	eq(pickerOf(b).state, "error", "another login's view still shows the sign-out")
-	eq(#requestsOf(s.gh, "search"), sent, "and sends no search until Refresh")
+	eq(#viewSearchesOf(s.gh, "search"), sent, "and sends no search until Refresh")
 end)
 
 case("host: a GitHub sign-in failure of one login is cleared by another login's view, though a Jira view came between", function(w: World)
@@ -2548,16 +2555,6 @@ local function openRestored(w: World, kind: string?, pause: { kind: string, mess
 	return b
 end
 
-local function searchesOf(acli: h.Acli): number
-	local n = 0
-	for _, req in acli.requests do
-		if req.kind == "search" then
-			n += 1
-		end
-	end
-	return n
-end
-
 case("host: a not-found held across a restart still holds when its restored view is first listed", function(w: World)
 	local _, acli = crossScene(w)
 	local b = openRestored(w, "issues", { kind = "not-found", message = "the project nopexyz does not exist", by = "jira" })
@@ -2582,7 +2579,7 @@ case("host: a restored GitHub sign-in failure on a Jira view is adopted by the f
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(pickerOf(b).state, "error", "the GitHub view keeps it")
-	eq(#requestsOf(s.gh, "search"), 0, "and sends no search until Refresh")
+	eq(#viewSearchesOf(s.gh, "search"), 0, "and sends no search until Refresh")
 end)
 
 case("host: view group-by emits headers", function(w: World)
@@ -2687,17 +2684,17 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 		return nil
 	end
 	local b = openQueue(w)
-	eq(#requestsOf(s.gh, "search"), 1, "the first search was refused")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "the first search was refused")
 	eq(pickerOf(b).state, "error", "the card says so")
 	eq(type(actionOf(b, "retry").disabled), "string", "and Refresh is shown as paused")
 	b.typeText("r")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 1, "Refresh does not hammer a limited account")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "Refresh does not hammer a limited account")
 	limited = false
 	w.advance(299 * 1000)
-	eq(#requestsOf(s.gh, "search"), 1, "nothing is sent before the reset")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "nothing is sent before the reset")
 	w.advance(1000)
-	eq(#requestsOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
 	eq(actionOf(b, "retry").disabled, nil, "Refresh is available again")
 end)
@@ -2706,7 +2703,7 @@ case("host: clicking a view refreshes it, even a fresh cached one or the one alr
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
 	local function searches(): number
-		return #requestsOf(s.gh, "search")
+		return #viewSearchesOf(s.gh, "search")
 	end
 	eq(searches(), 1, "the first view loaded")
 	pickScope(b, "prs:v2")
@@ -2735,12 +2732,12 @@ case("host: a click on a view inside the rate-limit cooldown sends nothing", fun
 		return nil
 	end
 	local b = openQueue(w)
-	eq(#requestsOf(s.gh, "search"), 1, "the first search was refused")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "the first search was refused")
 	pickScope(b, "prs:v1")
 	w.flush()
 	pickScope(b, "prs:v2")
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 1, "clicks do not hammer a limited account")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "clicks do not hammer a limited account")
 end)
 
 case("host: a sign-in failure survives a restart and only an explicit Refresh tries again", function(w: World)
@@ -2755,7 +2752,7 @@ case("host: a sign-in failure survives a restart and only an explicit Refresh tr
 	local b = openQueue(w)
 	eq(pickerOf(b).state, "error", "no results without a sign-in")
 	w.advance(30 * 60 * 1000)
-	eq(#requestsOf(s.gh, "search"), 1, "a sign-in failure is not retried by the timer")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "a sign-in failure is not retried by the timer")
 	b.cx:save()
 	local function sentToGithub(): number
 		return #s.gh.requests - #requestsOf(s.gh, "accounts") -- learning the active login is no search
@@ -2783,10 +2780,10 @@ case("host: Refresh while a search is running says so and sends nothing more", f
 	eq(pickerOf(b).state, "loading", "the first search is still running")
 	b.typeText("r")
 	eq(w.toasts[1].level, "info", "Refresh says it is already refreshing")
-	eq(#requestsOf(s.gh, "search"), 1, "and does not start another")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "and does not start another")
 	w.advance(5000)
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the one search lands")
-	eq(#requestsOf(s.gh, "search"), 1, "once")
+	eq(#viewSearchesOf(s.gh, "search"), 1, "once")
 end)
 
 case("host: a view change in one block reaches the other live blocks, and a closed pane is skipped", function(w: World)
@@ -2794,7 +2791,7 @@ case("host: a view change in one block reaches the other live blocks, and a clos
 	local a = w.open(1, { "/work/r" })
 	local c = w.open(2, { "/work/r" })
 	w.flush()
-	eq(#requestsOf(s.gh, "search"), 2, "each block searches for itself")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "each block searches for itself")
 	goToSettings(a, "views")
 	expand(a, "vopen:prs:v1")
 	a.press("enter")
@@ -2802,12 +2799,12 @@ case("host: a view change in one block reaches the other live blocks, and a clos
 	a.typeText("Mine")
 	a.press("enter")
 	has(c.title(), "Mine", "the other block shows the new name")
-	eq(#requestsOf(s.gh, "search"), 2, "a rename needs no new search")
+	eq(#viewSearchesOf(s.gh, "search"), 2, "a rename needs no new search")
 	a.event({ ev = "select", id = "layer.settings", item = "query:prs:v1" })
 	a.press("enter")
 	a.typeText(" label:bug")
 	a.press("enter")
-	local searches = requestsOf(s.gh, "search")
+	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 4, "both blocks searched the new query")
 	has(searches[3].fields.q, "label:bug", "this block")
 	has(searches[4].fields.q, "label:bug", "and the other one")
@@ -2818,7 +2815,7 @@ case("host: a view change in one block reaches the other live blocks, and a clos
 	a.press("enter")
 	a.typeText(" -label:wip")
 	a.press("enter")
-	eq(#requestsOf(s.gh, "search"), 5, "a closed pane is not searched for")
+	eq(#viewSearchesOf(s.gh, "search"), 5, "a closed pane is not searched for")
 	eq(c.renders(), drawn, "and not drawn")
 end)
 
