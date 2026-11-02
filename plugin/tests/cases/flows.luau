@@ -916,6 +916,34 @@ windowCase("window flows: palette commands send plain events, and the command pa
 	eq(w.toasts[said + 1].level, "error", "a link the block does not carry is refused")
 end)
 
+windowCase("window flows: the Next row leads Commands, and plotroom://next runs the window command the block names as its next move only while it offers it", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local queue = {
+		{ id = "open", label = "Open", key = "", group = "GitHub - PR" },
+		{ id = "next", label = "Ready for review…", key = "x", group = "Next" },
+	}
+	st.palette({ items = {}, queue = queue, commands = { { id = "pr-ready", group = "GitHub - PR" } }, next = "pr-ready" })
+	st.link("layer.queue.buttons.agent", prLink("agent", "o/r", 7))
+	w.window.choose = nil
+	w.click("plotroom://more")
+	w.flush()
+	local pick = w.window.picks[#w.window.picks]
+	eq(pick.items[1].label, "Ready for review…", "the next move is the first row")
+	eq(pick.items[1].group, "Next", "under Next")
+	eq(pick.items[1].detail, "key x", "with its key")
+	w.click("plotroom://next")
+	w.flush()
+	eq(st.ops()[#st.ops()], "act", "the link runs the command's own flow")
+	eq(requestsSent(w)[#requestsSent(w)].name, "pr-ready", "the one named, which plans before anything is sent")
+	local ops = #st.ops()
+	st.palette({ items = {}, queue = queue, commands = { { id = "pr-ready", group = "GitHub - PR" } }, next = "pr-merge" })
+	w.click("plotroom://next")
+	w.flush()
+	eq(#st.ops(), ops, "a command the block does not offer is never run")
+	eq(w.toasts[#w.toasts].text, "Plotroom: that move is no longer offered here", "and says so")
+end)
+
 windowCase("window flows: comment, close, reopen, ready for review and convert to draft ask the host to plan and only a confirmed plan is committed, Cancel first", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

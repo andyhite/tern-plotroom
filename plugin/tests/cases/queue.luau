@@ -269,7 +269,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "kpreset", "key:down", "key:up", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:attention", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
@@ -357,7 +357,7 @@ case("host: Use one-key shortcuts binds the classic set to actions with no key, 
 	eq(saved.more, nil, "an action with a default is not saved")
 	local toast = w.toasts[#w.toasts]
 	eq(toast.text, "One-key shortcuts set", "the toast says it is done")
-	eq(toast.sub, "Skipped, key in use: Move down (j)", "and lists what was skipped")
+	eq(toast.sub, "Skipped, key in use: Move down (j), Next move (x)", "and lists what was skipped")
 	eq(rowIn(b, "key:up").control.value, "k", "the row shows the key")
 	local before = w.kv.store["keys"]
 	press()
@@ -3068,6 +3068,108 @@ case("host stage: a closed or merged PR on an issue's worktree branch leaves it 
 	eq(asks.hx.stage(b, "no_2fr_2312"), "Worktree", "a closed PR on the worktree branch leaves it at Worktree")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	eq(asks.hx.stage(b, "no_2fr_2312"), "Worktree", "moving on keeps what was read")
+end)
+
+-- The selected item's Next move as the block shows it: the preview's button, the first Commands row (label, group
+-- and key) and the window command it runs; nil each when there is none.
+local function nextOf(w: World, b: Block, id: string): any
+	b.event({ ev = "select", id = "layer.queue", item = id })
+	w.advance(300)
+	local button: any = findKey(pickerNode(b), "next", "item")
+	local p = hx.palette(w, b)
+	return {
+		button = if button then button.p.label else nil,
+		hint = if button then button.p.hint else nil,
+		row = if p.ids[1] == "next" then p.labels.next else nil,
+		group = p.groups.next,
+		key = p.keys.next,
+		command = p.next,
+	}
+end
+
+case("host next move: each pull request stage maps to its move, shown first in Commands and in the preview, and x runs it as its own command does", function(w: World)
+	local s = hostScene(w, 0)
+	local saved: any = w.kv.get("keys")
+	saved.next = "x"
+	w.kv.put("keys", saved)
+	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS", headSha = sha("a") }
+	local done = "2026-01-01T00:00:00Z"
+	local failed = { h.checkRun("build", "COMPLETED", "FAILURE", done, { id = "A", detailsUrl = "https://github.com/o/r/actions/runs/123/job/9" }) }
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" }),
+		searchItem(2, "o/r", EPOCH - 120, ready),
+		searchItem(3, "o/r", EPOCH - 180, { state = "MERGED" }),
+		searchItem(4, "o/r", EPOCH - 240, { author = "octocat", isDraft = true }),
+		searchItem(5, "o/r", EPOCH - 300),
+		searchItem(6, "o/r", EPOCH - 360, { checks = "FAILURE", merge = "BLOCKED", runs = array(failed), runTotal = 1 }),
+		searchItem(7, "o/r", EPOCH - 420),
+		searchItem(8, "o/r", EPOCH - 480, { review = "CHANGES_REQUESTED" }),
+		searchItem(9, "o/r", EPOCH - 540, { author = "octocat" }),
+	}
+	s.gh.checks["o/r#6"] = failed
+	s.gh.about["o/r#5"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array({ "OctoCat" }) }
+	s.gh.about["o/r#7"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array({ "ann" }) }
+	local b = openQueue(w)
+	local blocked = nextOf(w, b, "no_2fr_231")
+	same(blocked, { button = "Address feedback", hint = { "x" }, row = "Address feedback", group = "Next", key = "x" }, "your PR with changes requested: Address feedback, first in Commands under Next, keyed, and in the preview")
+	local opened = #w.opened
+	b.press("x", nil, "x")
+	eq(w.opened[opened + 1], runLink("o/r", 1, "p3"), "x runs the saved action through its own link, as its key does")
+	eq(nextOf(w, b, "no_2fr_232").command, "pr-merge", "Ready to merge: Merge…, the window's command")
+	eq(nextOf(w, b, "no_2fr_232").row, "Merge…", "named as its command")
+	opened = #w.opened
+	b.press("x", nil, "x")
+	eq(w.opened[opened + 1], "plotroom://next", "x asks the window to run it")
+	same(nextOf(w, b, "no_2fr_233"), {}, "a merged PR with no worktree: no move, no button, no row")
+	opened = #w.opened
+	eq(b.press("x", nil, "x"), false, "and x is not taken")
+	eq(#w.opened, opened, "nothing runs")
+	eq(nextOf(w, b, "no_2fr_234").row, "Ready for review…", "your draft: Ready for review…")
+	eq(nextOf(w, b, "no_2fr_234").command, "pr-ready", "the window's command")
+	eq(nextOf(w, b, "no_2fr_235").row, "Review", "someone else's PR asking for your review (any case of your login): the Review action")
+	eq(nextOf(w, b, "no_2fr_235").command, nil, "a saved action is no window command")
+	eq(nextOf(w, b, "no_2fr_236").row, "Re-run failed checks", "Blocked by a failed run: Re-run failed checks")
+	eq(nextOf(w, b, "no_2fr_236").command, "rerun-failed", "the window's command")
+	eq(nextOf(w, b, "no_2fr_237").row, nil, "someone else's PR asking someone else: no move")
+	eq(nextOf(w, b, "no_2fr_238").row, nil, "changes requested on someone else's PR: no move")
+	eq(nextOf(w, b, "no_2fr_239").row, nil, "your open PR waiting on others: no move")
+	asks.hx.agents(b, { ["o/r#2"] = "working", ["o/r#7"] = "waiting_input" })
+	eq(nextOf(w, b, "no_2fr_232").row, "Go to agent", "Agent working: Go to agent")
+	eq(nextOf(w, b, "no_2fr_237").row, "Go to agent", "Needs you: Go to agent")
+	opened = #w.opened
+	b.event({ ev = "action", id = "layer.queue", act = "next" })
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "agentgo" })
+	eq(#w.opened, opened + 2, "the preview's button runs it too")
+	eq(w.opened[opened + 1], w.opened[opened + 2], "exactly as Go to agent does")
+	asks.hx.agents(b, {})
+	leaveWt(w, s, 3)
+	refreshNow(w, b)
+	eq(nextOf(w, b, "no_2fr_233").row, "Remove worktree…", "Merged with a worktree: Remove worktree…")
+	b.press("x", nil, "x")
+	w.flush()
+	has(findKey(b.view().layer, "confirm", "overlay").p.head, "Remove worktree", "which asks first, as the card's Remove worktree does")
+end)
+
+case("host next move: an issue goes Worktree, then Draft PR…, a closed one with a worktree Remove worktree…, an unrelated closed one nothing", function(w: World)
+	local s = h.issueHost(w)
+	local b = h.openIssues(w)
+	w.advance(300)
+	same(nextOf(w, b, "no_2fr_2312"), { button = "Worktree", row = "Worktree", group = "Next", key = "" }, "Not started: Worktree (no default key)")
+	local opened = #w.opened
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "next" })
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "worktree" })
+	eq(#w.opened, opened + 2, "the Commands row runs it")
+	eq(w.opened[opened + 1], w.opened[opened + 2], "exactly as Worktree does")
+	same(nextOf(w, b, "no_2fr_2313"), {}, "a closed issue with no worktree: nothing")
+	h.leaveIssueWt(w, s, 12)
+	h.leaveIssueWt(w, s, 13)
+	refreshNow(w, b)
+	w.advance(300)
+	local wt = nextOf(w, b, "no_2fr_2312")
+	eq(wt.row, "Draft PR…", "Worktree with no PR: Draft PR…")
+	eq(wt.command, "draft-pr", "the window's command")
+	eq(nextOf(w, b, "no_2fr_2313").row, "Remove worktree…", "Closed with a worktree: Remove worktree…")
+	same(nextOf(w, b, "no_2fr_2314"), {}, "and a closed one without stays without")
 end)
 
 return {}

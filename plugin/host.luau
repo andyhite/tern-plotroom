@@ -37,8 +37,45 @@ local preparing, rpc = requests.preparing, requests.rpc
 
 local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg = true }
 
+-- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
+local function askRemove(state: State)
+	local chosen = selected(state)
+	local note = if chosen then state.notes[chosen.key] else nil
+	if not chosen or not note or not note.ok then
+		return
+	end
+	if preparing[chosen.key] then
+		return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
+	end
+	local key = chosen.key
+	state.removing, state.removeFate, state.removeRefusal = key, nil, nil
+	-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
+	local root, repo, path, branch = note.root, note.repo, note.path, note.branch
+	if not root or not repo or not path then
+		state.removeRefusal = "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused."
+		state.cx:render()
+		return
+	end
+	worktree.inventory(root, repo, function(entries, why)
+		if not alive(state) or state.removing ~= key then
+			return
+		end
+		local refusal: string? = if why then why:gsub("%s*%.?$", ".") else "Git no longer lists this worktree."
+		local listed: { worktree.Entry } = entries or {}
+		for _, e in listed do
+			if e.path == path and e.branch == branch then
+				state.removeFate = board.fate(e)
+				refusal = nil
+			end
+		end
+		state.removeRefusal = refusal
+		state.cx:render()
+	end)
+end
+
 -- Runs queue action `act` (keys.ACTIONS' ids but the moves, and `open`) as its key does: false when it is none, or
--- needs a selected item, a tab or an agent the selection lacks.
+-- needs a selected item, a tab or an agent the selection lacks. `next` runs the selected item's suggested next move
+-- (engine.nextMove) as that move's own command does.
 local function runQueueAction(state: State, act: string): boolean
 	local chosen = selected(state)
 	if act == "search" then
@@ -79,6 +116,19 @@ local function runQueueAction(state: State, act: string): boolean
 		return engine.goScope(state, string.sub(act, 7))
 	elseif act == "unpin" then
 		return requests.unpin(state)
+	elseif act == "next" then
+		local move = if chosen and not (state.boardOn or state.agentsOn or state.inboxOn) then engine.nextMove(state, state.kind.id, chosen) else nil
+		if not chosen or not move then
+			return false
+		elseif move.id == "remove" then
+			askRemove(state)
+		elseif string.sub(move.id, 1, 4) == "cmd:" then
+			state.cx:open("plotroom://next") -- the window runs the command `main.palette` names as `next`
+		elseif string.sub(move.id, 1, 4) == "run:" then
+			state.cx:open(runHrefOf(state, chosen, string.sub(move.id, 5)))
+		else
+			return runQueueAction(state, move.id)
+		end
 	else
 		return false
 	end
@@ -340,41 +390,6 @@ local function blockDef(): BlockDef<State>
 				state.noteSeq += 1
 				state.cx:render()
 			end)
-		end)
-	end
-	-- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
-	local function askRemove(state: State)
-		local chosen = selected(state)
-		local note = if chosen then state.notes[chosen.key] else nil
-		if not chosen or not note or not note.ok then
-			return
-		end
-		if preparing[chosen.key] then
-			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
-		end
-		local key = chosen.key
-		state.removing, state.removeFate, state.removeRefusal = key, nil, nil
-		-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
-		local root, repo, path, branch = note.root, note.repo, note.path, note.branch
-		if not root or not repo or not path then
-			state.removeRefusal = "Plotroom cannot tell which repository this worktree belongs to, so removal will be refused."
-			state.cx:render()
-			return
-		end
-		worktree.inventory(root, repo, function(entries, why)
-			if not alive(state) or state.removing ~= key then
-				return
-			end
-			local refusal: string? = if why then why:gsub("%s*%.?$", ".") else "Git no longer lists this worktree."
-			local listed: { worktree.Entry } = entries or {}
-			for _, e in listed do
-				if e.path == path and e.branch == branch then
-					state.removeFate = board.fate(e)
-					refusal = nil
-				end
-			end
-			state.removeRefusal = refusal
-			state.cx:render()
 		end)
 	end
 	-- Removes the worktree whose removal was confirmed, on this host where git runs (never in a window). A removal drops
@@ -825,7 +840,7 @@ local function blockDef(): BlockDef<State>
 			-- The queue action the key is (Settings › General). While searching it is text, and with ctrl, alt or meta it is no shortcut.
 			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
-			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "sort" or act == "more" then
+			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "sort" or act == "more" or act == "next" then
 				local owned: { { prompt: Prompt, here: boolean } } = {}
 				local here = false
 				if selected(state) then
@@ -975,13 +990,18 @@ local function blockDef(): BlockDef<State>
 						s.confirm = nil
 					end
 				end
-			elseif act == "remove-worktree" then
-				-- Its question is a modal over the queue, which Settings' sheet does not draw: Settings closes first.
+			elseif act == "remove-worktree" or act == "next" then
+				-- Its question is a modal over the queue, which Settings' sheet does not draw: Settings closes first. The
+				-- preview's next move button may be that question too.
 				if s then
 					discardEdit(state)
 					state.settings = nil
 				end
-				askRemove(state)
+				if act == "next" then
+					queueAction(state, act)
+				else
+					askRemove(state)
+				end
 			elseif act == "confirm-remove" then
 				if state.removing and not state.removeRefusal then
 					removeNow(state)

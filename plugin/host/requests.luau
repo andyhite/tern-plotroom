@@ -189,7 +189,11 @@ end
 -- without their text, queue actions, window commands), so the window opens either without a round trip to this host.
 function M.paletteNode(state: State): Node
 	local items, problem = menuRows(state, nil, false)
-	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(M.paletteActions(state)), commands = tern.json.array(M.commands(state)) })
+	local item = if state.boardOn or state.agentsOn or state.inboxOn then nil else selected(state)
+	local move = if item then engine.nextMove(state, state.kind.id, item) else nil
+	-- The window command the Next move runs (`next`), when it is one: the window runs it as its own row would.
+	local cmd = if move then string.match(move.id, "^cmd:(.+)$") else nil
+	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(M.paletteActions(state)), commands = tern.json.array(M.commands(state)), next = cmd })
 	return ui.node("text", { key = "palette", text = text, hidden = true })
 end
 
@@ -1098,18 +1102,12 @@ function M.act(state: State, id: string, q: any)
 	no("Plotroom does not know that command.")
 end
 
--- The checks of `item` (a pull request) as the preview shows them: the loaded list, else what the search carried.
-function M.runsOf(state: State, item: any): { github.Run }
-	local d = state.details[detailKey(state, item)]
-	return if d then d.runs else item.runs
-end
-
 -- The workflow run a mutation acts on among the item's checks `keep` lets through: its id and its checks' names, or nil
 -- after answering (a problem when there is none, the list of runs to pick from when there are several).
 function M.runPick(state: State, id: string, q: any, item: any, keep: (github.Run) -> boolean, none: string): (string?, { string }?)
 	local ids: { string } = {}
 	local names: { [string]: { string } } = {}
-	for _, r in M.runsOf(state, item) do
+	for _, r in engine.runsOf(state, item) do
 		local run = r.runId
 		if run and keep(r) then
 			if not names[run] then
@@ -1168,13 +1166,7 @@ function M.commands(state: State): { { id: string, group: string? } }
 		table.insert(out, { id = cmd, group = group })
 	end
 	if snap.kind == "prs" then
-		local failed = false
-		for _, r in M.runsOf(state, item) do
-			if r.runId then
-				failed = failed or r.status == "failure"
-			end
-		end
-		if failed then
+		if engine.rerunnable(state, item) then
 			add("rerun-failed")
 		end
 		if item.state == "open" then
@@ -1674,7 +1666,8 @@ function M.rpc(state: State, raw: any)
 end
 
 -- The queue actions the command palette offers now, in its order, each with its label, key ("": none) and group (and, for
--- a scope, the sidebar group it sits under as `detail`): the selected item's, then the view's, every sidebar scope
+-- a scope, the sidebar group it sits under as `detail`): the selected item's (its next move first, named as the move),
+-- then the view's, every sidebar scope
 -- (`scope:<id>`, shown by engine.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
 -- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
 -- Settings and the shortcut list; Now Show or hide snoozed, Refresh, the scopes, Settings and the shortcut list.
@@ -1703,6 +1696,12 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	if item then
 		labels.open = "Open"
 		labels["open-git"] = "Open Git view"
+		-- The suggested next move for the item's stage leads, under Next, named as the move (engine.nextMove).
+		local move = engine.nextMove(state, state.kind.id, item)
+		if move then
+			labels.next = move.label
+			add("next", "Next")
+		end
 		local group = if state.kind.id ~= "issues" then "GitHub - PR" elseif item.tracker == "jira" then "Jira - Issue" else "GitHub - Issue"
 		add("open", group)
 		add("worktree", group)
