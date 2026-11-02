@@ -195,7 +195,7 @@ windowCase("window status: agents needing input are counted on every pane, toast
 	w.window.surfaces[1] = { main = { id = "main", c = { { id = "main.rpc", p = { text = "9", hidden = true } } } } }
 	w.window.focused = 1
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
-	same(texts(1), { "Plotroom protocol mismatch", "1 agent needs input" }, "the mismatch warning still shows beside it")
+	same(texts(1), { "Plotroom on host1: protocol mismatch", "1 agent needs input" }, "the mismatch warning still shows beside it")
 	w.window.agentStates[agent] = "working"
 	w.advance(4000)
 	same(texts(7), {}, "the count clears as soon as none waits")
@@ -357,14 +357,14 @@ windowCase("window status: a mismatched host warns while its block is focused, a
 	w.load("window")
 	announce(w, 1, "2")
 	w.window.handlers.window_start(w.cx)
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "an announcement of another protocol warns at once")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "an announcement of another protocol warns at once, naming the host")
 	eq(w.window.refreshes, 1, "the status line was redrawn")
 	announce(w, 1, asks.protocol)
 	w.advance(2100)
 	eq(protocolWarning(w, 1), nil, "a reloaded host that matches clears it while focused")
 	announce(w, 1, "3")
 	w.advance(2000)
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "and a later mismatch warns again")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "and a later mismatch warns again")
 	announce(w, 1, nil)
 	w.advance(2000)
 	eq(protocolWarning(w, 1), nil, "a host that has not announced yet is loading, not mismatched")
@@ -382,7 +382,7 @@ windowCase("window status: a window loaded while a Plotroom block is focused che
 	w.load("window")
 	eq(protocolWarning(w, 1), nil, "nothing is read while the plugin loads")
 	w.advance(1)
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "the load's own check warns")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "the load's own check warns")
 	eq(w.window.reads[1], 1, "with one read")
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
 	w.window.handlers.window_start(w.cx)
@@ -400,7 +400,7 @@ windowCase("window status: only the focused Plotroom pane is checked, and leavin
 	announce(w, 1, "2")
 	announce(w, 3, asks.protocol)
 	w.window.handlers.pane_created({ pane = 3 }, w.cx)
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "the focused pane's host is checked")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "the focused pane's host is checked")
 	eq(w.window.reads[3], nil, "an unfocused Plotroom pane is not read")
 	w.window.focused = 3
 	w.window.handlers.focus({ pane = 3, tab = 1 }, w.cx)
@@ -413,7 +413,7 @@ windowCase("window status: only the focused Plotroom pane is checked, and leavin
 	same({ w.window.reads[1], w.window.reads[3] }, reads, "an unrelated pane stops the polling")
 	w.window.focused = 1
 	w.window.handlers.focus({ pane = 1, tab = 1 }, w.cx)
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "focus back checks at once")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "focus back checks at once")
 	w.window.panes[1] = nil
 	w.window.focused = 2
 	w.window.handlers.pane_closed({ pane = 1 }, w.cx)
@@ -3824,7 +3824,7 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 		end
 	end
 	eq(redraws, 1, "the block was redrawn")
-	eq(protocolWarning(w, 1), "Plotroom protocol mismatch", "and the protocol check ran")
+	eq(protocolWarning(w, 1), "Plotroom on host1: protocol mismatch", "and the protocol check ran")
 end)
 
 windowCase("window flows: the status map carries an agent's last message cut to 200 bytes and its delivery error", function(w: World)

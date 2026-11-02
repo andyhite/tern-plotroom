@@ -769,6 +769,52 @@ windowCase("window: a block whose host does not announce this protocol is never 
 	refused("another protocol's marker")
 end)
 
+windowCase("window: a host one protocol older serves the ops it knows and refuses a newer one at once; below the range it is a mismatch", function(w: World)
+	local rpc: any = w.load("rpc")
+	local current = rpc.PROTOCOL
+	rpc.MIN = current - 1 -- the range one older host takes; `worktree` stands for an op this protocol added
+	rpc.SINCE = { worktree = current }
+	w.load("window")
+	listPr(w, "o/r", 5)
+	local surface: any = w.window.surfaces[1]
+	local nodes: { any } = {
+		{ id = "main.rpc", p = { text = tostring(current - 1), hidden = true } },
+		{ id = "main.palette", p = { text = jsonEncode({ items = { { id = "p1", label = "Review" } } }), hidden = true } },
+	}
+	surface.main = { id = "main", c = nodes }
+	w.window.handlers.window_start(w.cx)
+	eq((w.window.status :: any)({ pane = 1 }), nil, "an older host in range shows no mismatch")
+	local said = #w.toasts
+	w.click(prLink("worktree", "o/r", 5))
+	eq(#w.toasts, said + 1, "the new op is answered at once")
+	eq(w.toasts[#w.toasts].level, "error", "with an error")
+	eq(w.toasts[#w.toasts].text, "Plotroom on host1 is an older version", "naming the host")
+	has(w.toasts[#w.toasts].sub, "Install the current Plotroom on host1", "and saying what to do")
+	eq(#requestsSent(w), 0, "nothing was sent for it")
+	w.window.choose = "Review"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	local sent = requestsSent(w)
+	eq(#sent, 1, "an op the older host knows is asked")
+	eq(sent[1].op, "menu", "the prompt")
+	said = #w.toasts
+	w.advance(20 * 60 * 1000)
+	local timeouts = 0
+	for i = said + 1, #w.toasts do
+		if string.find(w.toasts[i].text, "did not answer", 1, true) then
+			timeouts += 1
+		end
+	end
+	eq(timeouts, 1, "only the asked op can time out; the refused one never does")
+	nodes[1].p.text = tostring(current - 2)
+	w.advance(2100)
+	eq((w.window.status :: any)({ pane = 1 })[1].text, "Plotroom on host1: protocol mismatch", "a host below the range shows the mismatch, naming the host")
+	said = #w.toasts
+	w.click(prLink("agent", "o/r", 5))
+	eq(w.toasts[said + 1].text, "Plotroom on host1 is another version", "and is refused as another version")
+	eq(#requestsSent(w), 1, "nothing more was sent")
+end)
+
 windowCase("window: a request its block's host never answers gives up with a toast, and an answer that comes late is ignored", function(w: World)
 	w.load("window")
 	listPr(w, "o/r", 5)

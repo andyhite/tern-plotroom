@@ -5,6 +5,7 @@ local input = require("../input")
 local jira = require("../jira")
 local tracker = require("../tracker")
 local prompts = require("../prompts")
+local rpc = require("../rpc")
 
 local ui = tern.ui
 
@@ -627,7 +628,7 @@ GROUPS = {
 	},
 }
 
-M.RPC_PROTOCOL = "32"
+M.RPC_PROTOCOL = tostring(rpc.PROTOCOL)
 
 -- Open in Git: the link of the worktree the card (or the Worktrees list's selected row) offers; its hidden node `git`
 -- under `buttons` carries it, and the window asks the host for the path (rpc `git-path`).

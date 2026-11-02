@@ -4,7 +4,7 @@
     python3 scripts/check.py            test + types + bench + smoke (the full local gate)
     python3 scripts/check.py --ci       test + types + bench; smoke is reported NOT RUN (Tern is not on CI)
     python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only
-    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only (`test` also checks plugin.toml's version against RPC_PROTOCOL)
+    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only (`test` also checks plugin.toml's version has a CHANGELOG.md entry)
     python3 scripts/check.py bench      1000-PR queue render benchmark only
     python3 scripts/check.py smoke      isolated headless Tern + real git only
     python3 scripts/check.py tools      download the pinned Luau and luau-lsp (sha256-verified)
@@ -373,16 +373,15 @@ def check_bench() -> str:
 
 
 def check_version() -> str:
-    """plugin.toml's version minor tracks RPC_PROTOCOL, so `tern plugin list` tells two hosts' builds apart."""
-    core = (PLUGIN / "host" / "core.luau").read_text(encoding="utf-8")
-    proto = re.search(r'^M\.RPC_PROTOCOL = "(\d+)"', core, re.M)
+    """plugin.toml's version has its own `## [<version>]` heading in CHANGELOG.md, so every release says what changed."""
     version = re.search(r'^version = "([^"]*)"', (PLUGIN / "plugin.toml").read_text(encoding="utf-8"), re.M)
-    if not proto or not version:
-        raise GateError("cannot read RPC_PROTOCOL from plugin/host/core.luau or version from plugin/plugin.toml")
-    want = "0.%s.0" % proto.group(1)
-    if version.group(1) != want:
-        raise GateError("plugin/plugin.toml version is %s but RPC_PROTOCOL is %s: set version = \"%s\"" % (version.group(1), proto.group(1), want))
-    return "plugin %s = protocol %s" % (version.group(1), proto.group(1))
+    if not version:
+        raise GateError("cannot read version from plugin/plugin.toml")
+    changelog = ROOT / "CHANGELOG.md"
+    text = changelog.read_text(encoding="utf-8") if changelog.is_file() else ""
+    if not re.search(r"^## \[%s\]" % re.escape(version.group(1)), text, re.M):
+        raise GateError("CHANGELOG.md has no \"## [%s]\" heading for plugin/plugin.toml's version" % version.group(1))
+    return "plugin %s is in CHANGELOG.md" % version.group(1)
 
 
 def load_smoke():

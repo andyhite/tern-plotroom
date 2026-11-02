@@ -111,6 +111,7 @@ local function hostOf(cx: WindowCx, pane: number): HostId?
 	end
 	return nil
 end
+M.hostOf = hostOf
 
 local function hostSame(a: HostId, b: HostId): boolean
 	return a.id == b.id and a.address == b.address
