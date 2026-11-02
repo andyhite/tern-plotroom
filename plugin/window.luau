@@ -7,6 +7,7 @@
 
 local worktree = require("./worktree")
 local flows = require("./flows")
+local rpc = require("./rpc")
 local usage = require("./usage")
 
 -- Every palette command's title by id, for the usage report (flows.setup).
@@ -54,7 +55,6 @@ local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
-local PROTOCOL = "32" -- what host/core's RPC_PROTOCOL, shown by host/render's `main.rpc` node, must say
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
 local CLONE_WAIT_MS = 11 * 60 * 1000
 local RECENT_CAP = 5
@@ -265,22 +265,52 @@ local function showPr(cx: WindowCx, pane: number, url: string)
 	cx.layout:focus(pane)
 end
 
--- Whether the block in `pane` speaks this window's protocol; says so when it does not.
-local function sameVersion(cx: WindowCx, pane: number): boolean
-	if nodeProp(readNode(cx, pane, "main.rpc"), "text") == PROTOCOL then
+-- A `main.rpc` node's text as a protocol number; nil for none (a host still loading) or for garbage.
+local function parseProtocol(text: any): number?
+	return if type(text) == "string" and string.match(text, "^%d+$") then tonumber(text) else nil
+end
+
+-- The protocol the block in `pane` announces in its `main.rpc` node.
+local function protocolOf(cx: WindowCx, pane: number): number?
+	return parseProtocol(nodeProp(readNode(cx, pane, "main.rpc"), "text"))
+end
+
+-- Whether `p` lies in the range of host protocols this window asks: [rpc.MIN, rpc.PROTOCOL].
+local function inRange(p: number?): boolean
+	return p ~= nil and p >= rpc.MIN and p <= rpc.PROTOCOL
+end
+
+-- The name the user knows the block's host by: its host name, else its address, else a generic phrase.
+local function hostName(cx: WindowCx, pane: number): string
+	local h = flows.hostOf(cx, pane)
+	local name = if h and h.name ~= "" then h.name elseif h and h.address ~= "" then h.address else nil
+	return name or "this block's host"
+end
+
+-- Whether the block in `pane` speaks a protocol this window asks and, given `op`, one that knows that op; says so
+-- when it does not, at once.
+local function sameVersion(cx: WindowCx, pane: number, op: string?): boolean
+	local p = protocolOf(cx, pane)
+	if inRange(p) and (op == nil or (rpc.SINCE[op] or rpc.MIN) <= (p :: number)) then
 		return true
 	end
 	if cx.session:pane(pane) == nil then
 		return false -- the block is gone: not another version
 	end
-	cx:toast("error", "Plotroom on this block's host is another version", "Install this version there (tern plugin install), then open the block again.")
+	local host = hostName(cx, pane)
+	if inRange(p) then
+		cx:toast("error", "Plotroom on " .. host .. " is an older version", "Install the current Plotroom on " .. host .. " (tern plugin install) to use this.")
+	else
+		cx:toast("error", "Plotroom on " .. host .. " is another version", "Install this version there (tern plugin install), then open the block again.")
+	end
 	return false
 end
 
--- The focused Plotroom block's host announcing another protocol, as a status-line warning. Polled while that block is
--- focused (a remote reload changes the announcement either way); a missing marker is a host still loading, not a mismatch.
+-- The focused Plotroom block's host announcing a protocol out of range, as a status-line warning naming that host.
+-- Polled while that block is focused (a remote reload changes the announcement either way); a missing marker is a host
+-- still loading, not a mismatch.
 local WATCH_MS = 2000
-local mismatched: number? = nil -- the focused pane whose host announces another protocol
+local mismatched: { pane: number, host: string }? = nil -- the focused pane whose host announces another protocol
 local pausedHooks: { [string]: boolean } = {} -- this plugin's own hooks paused over their budget (the `budget` event)
 local watch: TimerHandle? = nil
 local checkProtocol: (WindowCx) -> ()
@@ -299,18 +329,19 @@ end
 
 function checkProtocol(cx: WindowCx)
 	local pane = cx.session:focused()
-	local flagged: number? = nil
+	local flagged: { pane: number, host: string }? = nil
 	if pane and isPlotroom(cx, pane) then
 		arm(WATCH_MS)
 		local text = nodeProp(readNode(cx, pane, "main.rpc"), "text")
-		if type(text) == "string" and text ~= PROTOCOL then
-			flagged = pane
+		if type(text) == "string" and not inRange(parseProtocol(text)) then
+			flagged = { pane = pane, host = hostName(cx, pane) }
 		end
 	elseif watch then
 		watch:cancel()
 		watch = nil
 	end
-	if flagged ~= mismatched then
+	local was = mismatched
+	if (flagged and flagged.pane) ~= (was and was.pane) or (flagged and flagged.host) ~= (was and was.host) then
 		mismatched = flagged
 		tern.chrome.refresh()
 	end
@@ -321,8 +352,8 @@ arm(0)
 
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
-	if pane.pane == mismatched then
-		table.insert(out, { text = "Plotroom protocol mismatch", icon = "warning", tone = "error" })
+	if mismatched and pane.pane == mismatched.pane then
+		table.insert(out, { text = "Plotroom on " .. mismatched.host .. ": protocol mismatch", icon = "warning", tone = "error" })
 	end
 	local paused = next(pausedHooks)
 	if paused ~= nil then
@@ -353,9 +384,9 @@ local answered: (WindowCx, string) -> ()
 
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
 -- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
--- so instead. False when nothing was sent.
+-- so instead. False when nothing was sent: an older host that does not know `op` is refused at once.
 local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> ()): boolean
-	if not sameVersion(cx, pane) then
+	if not sameVersion(cx, pane, op) then
 		return false
 	end
 	requests += 1

@@ -21,7 +21,7 @@ Host layers (`plugin/host/`; each module may require only those to its left, no 
 
 `lens` (the `gh pr create` shell lens, manifest lens `pr-create`; requires only `core`, outside the chain above, and `host.luau` calls `lens.define()`). Its show link `plotroom://lens/show/<pct URL>` is the one link the window accepts from a non-Plotroom pane.
 
-Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts`, `usage` (kv `usage` counts, kv `runs` run log and the usage report text, shared by host and window) and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree, usage`; `flows → input, keys, usage` and takes what window owns through `flows.setup(Env)`.
+Shared helpers (no cycles; require only what is listed, the rest require none): `tracker` → `input`; `github` → `process`, `input`, `tracker`; `jira` → `process`, `input`, `tracker`, `github`; `worktree` → `process`, `input`, `tracker`, `github`; `process`, `input`, `keys`, `prompts`, `rpc` (the protocol range both halves share), `usage` (kv `usage` counts, kv `runs` run log and the usage report text, shared by host and window) and the pure models `triage`, `sorting`, `portable`, `board` require nothing. `window → flows, worktree, rpc, usage`; `flows → input, keys, usage` and takes what window owns through `flows.setup(Env)`.
 
 A change to a shared store (views, prompts, checkouts, ...) fans out to the other live blocks through `propagate` (engine), which rereads storage and renders them.
 
@@ -34,7 +34,7 @@ Invariants (keep when editing):
 - The palette's Jira transition… picker uses `tern.fetch` with `PLOTROOM_JIRA_API_TOKEN` read per call from the host environment; the token is never in kv, argv or a message. An action's Move to status uses `acli jira workitem transition --status` and needs no token.
 - Every async mutation captures the concrete gh login at plan time and uses it at commit.
 - Guided mutations are plan-then-commit: the confirm lists Cancel first, and commit runs only after the confirm with that plan's token.
-- Bump `RPC_PROTOCOL` (host) and `PROTOCOL` (window) together when an rpc shape changes, and set `plugin/plugin.toml`'s `version` to `0.<RPC_PROTOCOL>.0` (`check.py` fails when they differ, so `tern plugin list` tells two hosts' builds apart).
+- An rpc change is additive: a new op or a new optional field raises `PROTOCOL` in `plugin/rpc.luau` by one and lists a new op in `SINCE` at that protocol, so the window refuses it at once to an older host in `[MIN, PROTOCOL]`. Removing or reshaping an op raises `MIN` to the new `PROTOCOL`. `plugin/plugin.toml`'s `version` is the release, not the protocol; `check.py` fails unless CHANGELOG.md has a `## [<version>]` heading for it. Every user-visible change adds a line under Unreleased; tagging and pushing a release stay manual steps for the author.
 - kv stores that cannot be read or are malformed are never written over (`views-*`, `prompts-*`, `keys`, `triage`, `agent-links`, ...).
 
 ## Key Directories
@@ -75,6 +75,8 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 
 - `PRODUCT.md` — product direction: who it is for, the loop, principles, out of scope, glossary, roadmap, metrics, decisions.
 - `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
+- `CHANGELOG.md` — Keep a Changelog: an Unreleased section and one `## [<version>]` heading per release of `plugin/plugin.toml`'s `version`.
+- `plugin/rpc.luau` — the rpc protocol: `PROTOCOL` (what a host announces in `main.rpc`), `MIN` (the oldest host a window asks) and `SINCE` (op → protocol that added it).
 - `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, one block `prs` (title Plotroom, icon `merge`), one `[[lenses]]` entry `pr-create` (`match = ["gh pr create*"]`).
 - `plugin/host.luau` — block entry point; `plugin/host/*.luau` — host logic by layer (see Architecture).
 - `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows. No consent step: agents start once the worktree is ready. `selftest`/`smoke` commands only when `PLOTROOM_SELFTEST=1`.

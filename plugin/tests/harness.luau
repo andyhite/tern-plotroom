@@ -793,7 +793,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				local rows: { any } = {}
 				for hostId, ids in groups do
-					table.insert(rows, { id = hostId, kind = if win.remoteHost or hostId ~= 1 then "remote" else "local", address = if hostId ~= 1 then "host" .. hostId else nil, panes = ids })
+					table.insert(rows, { id = hostId, name = "host" .. hostId, kind = if win.remoteHost or hostId ~= 1 then "remote" else "local", address = if hostId ~= 1 then "host" .. hostId else nil, panes = ids })
 				end
 				return rows
 			end,
@@ -3244,7 +3244,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "32" -- mirrors host/core's RPC_PROTOCOL (what the `main.rpc` node says): the one place the window cases name it
+asks.protocol = "32" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
