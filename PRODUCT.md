@@ -73,7 +73,7 @@ User-facing text never shows internal names: protocol numbers, pane or run ids, 
 - **Feature freeze:** until Phase 0 is done, bug fixes only.
 - After Phase 0, a feature starts as a LEDGER.md row naming its loop step and phase, before any code.
 - A new command or setting either replaces or merges an existing one, or names the metric it moves.
-- TODO.md items cite the PRODUCT.md or LEDGER.md section they implement.
+- kata issues cite the PRODUCT.md or LEDGER.md section they implement.
 
 ## Roadmap
 
@@ -86,7 +86,7 @@ User-facing text never shows internal names: protocol numbers, pane or run ids, 
 | **4: Beyond the author** | A second, third and fourth user | 3–5 design partners from the Tern and omp community, a listing in the awesome-tern catalog, repository description and topics, a demo recording (`tern shot` `record`). These are the author's tasks, not loop tasks. | 3 partners using it weekly |
 | **5: Autopilot** | Hand off a whole view, not one item | Opt-in view as the work source; Implement → Check → Fix (at most 3 rounds) → PR ready for review; slots, graceful stop, recovery from the run log; everything surfaces in Now. It never pushes to a base branch and never merges. | Gate to start: the checker agrees with you on at least 80% of 20 or more checked runs |
 
-Phases 0–3 are queued in TODO.md's Todo section. Each item's `After:` bullets hold it until its prerequisites are Done, because `/loop-todo` otherwise starts Todo items in file order, up to three at once. Phase 5 waits in the Backlog behind its gate.
+Phases 0–3 are queued as kata issues. Each is blocked by its prerequisites until they close, because the build loop otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
 
 ## Metrics
 

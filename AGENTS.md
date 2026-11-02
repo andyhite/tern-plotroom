@@ -6,7 +6,7 @@ Tern Plotroom is a [Tern](https://tern.sh) terminal plugin, written in Luau, tha
 
 There is one block. `Plotroom: Open` is its one entry point; other palette commands act on the focused Plotroom block (except `Open item by URL`, which launches one). The `KINDS` table (`prs`, `issues`) in `plugin/host/core.luau` fixes per kind the label, icon, kv keys, allowed integrations, seed views and default prompts. Behavior is documented in README.md and in comments next to the code; read those before changing it.
 
-**Product direction lives in [PRODUCT.md](PRODUCT.md)** (user, loop, principles, out of scope, glossary, roadmap) and **[LEDGER.md](LEDGER.md)** (a verdict for every feature). Read both before adding or changing user-visible behavior. A feature that serves no step of PRODUCT.md's loop is not added. UI text uses only the glossary's words. A new feature starts as a LEDGER.md row. TODO.md items cite the section they implement.
+**Product direction lives in [PRODUCT.md](PRODUCT.md)** (user, loop, principles, out of scope, glossary, roadmap) and **[LEDGER.md](LEDGER.md)** (a verdict for every feature). Read both before adding or changing user-visible behavior. A feature that serves no step of PRODUCT.md's loop is not added. UI text uses only the glossary's words. A new feature starts as a LEDGER.md row. Work is tracked as kata issues (project `tern-plotroom`) and run by build-loop (`.build-loop.json`); each issue cites the section it implements.
 
 ## Architecture & Data Flow
 

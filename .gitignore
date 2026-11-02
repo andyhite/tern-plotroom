@@ -1,3 +1,4 @@
 target/
 tern.d.luau
 __pycache__
+.kata.local.toml
