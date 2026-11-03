@@ -54,6 +54,7 @@ case("preview: every variant shows its parts in the one shared order", function(
 	-- a pull request with a worktree, a description, a closing issue, reviewers and checks
 	local s = hostScene(w, 1)
 	leaveWt(w, s, 1)
+	asks.bk.tree(w, s.git, "/wt/free", "free") -- a worktree made for no item
 	s.gh.about["o/r#1"] = {
 		merge = "BLOCKED",
 		body = "Why it changes.",
@@ -77,7 +78,10 @@ case("preview: every variant shows its parts in the one shared order", function(
 	w.flush()
 	local wt = partsOf(b)
 	yes(shared(wt), "a worktree, in the shared order: " .. table.concat(wt, ","))
-	eq(wt[#wt], "properties", "a worktree made for no item ends with its git facts")
+	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/free") })
+	local free = partsOf(b)
+	yes(shared(free), "a worktree made for no item, in the shared order: " .. table.concat(free, ","))
+	eq(free[#free], "properties", "a worktree made for no item ends with its git facts")
 end)
 
 case("preview: a GitHub issue keeps the shared order", function(w: World)

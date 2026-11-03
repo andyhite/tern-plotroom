@@ -89,8 +89,8 @@ case("worktree.inventory: a checkout saved for two repositories lists each one's
 	eq(by["/wt/issue"], "o/r noted", "o/r's issue")
 	eq(by["/wt/foreign"], "x/y noted", "x/y's issue is listed under x/y, noted")
 	eq(by["/wt/lk"], "o/r unnoted", "an unnoted worktree stays with the first repository")
-	eq(by["/work/r"], "o/r unnoted", "as does the main one")
-	eq(#b.rows, 8, "each worktree is listed once")
+	eq(by["/work/r"], nil, "the main checkout is never listed")
+	eq(#b.rows, 7, "each linked worktree is listed once")
 	eq(#b.problems, 0, "no problem")
 end)
 

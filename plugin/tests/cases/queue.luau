@@ -1002,6 +1002,98 @@ windowCase("window: a Settings delete is confirmed in the palette with Cancel fi
 	eq(pendingOf(b), nil, "and the question is closed")
 end)
 
+-- Seeds a value under every key Reset all settings clears, and work state it keeps; returns the kept values.
+local function seedSettings(w: World): { [string]: any }
+	savePrompts(w, { promptOf("p1", "Mine", "Review {url}") })
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({ { id = "v1", name = "Custom", integration = "github", query = "is:open", logins = array({}), group = "none", prompts = array({}) } }) })
+	w.kv.put("prompts-issues", { version = 1, nextId = 2, items = array({ promptOf("p1", "Mine too", "Do {url}") }) })
+	w.kv.put("keys", { worktree = "W" })
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	w.kv.put("branch-formats", { ["o/r"] = "x/{number}" })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "make" }) })
+	w.kv.put("jira-repos", { ABC = array({ "o/r" }) })
+	w.kv.put("branch-format", "b/{number}")
+	w.kv.put("pr-dir-format", "p{number}")
+	w.kv.put("issue-dir-format", "i{key}")
+	w.kv.put("status-order", array({ "done" }))
+	local kept: { [string]: any } = { triage = { version = 1, items = {} }, runs = array({ { action = "Review" } }), usage = { opened = 3 }, ["agent-links"] = { x = 1 }, ["agent-recent"] = array({ "Review" }) }
+	for key, value in kept do
+		w.kv.put(key, value)
+	end
+	return kept
+end
+
+local CLEARED = { "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands", "jira-repos", "branch-format", "pr-dir-format", "issue-dir-format", "status-order", "get-started" }
+
+windowCase("window: Reset all settings is confirmed in the palette with Cancel first; only Reset all settings clears the settings, and work state stays", function(w: World)
+	local _, b = agentScene(w)
+	local kept = seedSettings(w)
+	local before: { [string]: string } = table.clone(w.kv.store)
+	goToSettings(b, "general")
+	local row = rowIn(b, "reset:all")
+	same({ row.label, row.control.act, row.control.label }, { "Reset all settings", "reset-all", "Reset" }, "General's last card has the Reset row")
+	local secs = prefsOf(b).sections
+	same({ secs[#secs].id, secs[#secs].title }, { "reset", "Reset" }, "under Reset, the last card")
+	has(row.hint, "keeps triage", "its hint says what stays")
+	local function ask(): (any, any)
+		b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
+		local question = pendingOf(b)
+		w.click(w.opened[#w.opened])
+		w.flush()
+		return question, w.window.picks[#w.window.picks]
+	end
+	w.window.choose = "Cancel"
+	local question, pick = ask()
+	same({ question.head, question.label }, { "Reset all settings?", "Reset all settings" }, "the block asks to reset everything")
+	has(question.detail, "keeps triage, usage and agents", "saying what is kept")
+	same({ pick.items[1].label, pick.items[2].label }, { "Cancel", "Reset all settings" }, "Cancel comes first")
+	eq(pendingOf(b), nil, "Cancel drops the question")
+	same(w.kv.store, before, "and kv is as it was")
+	w.window.choose = nil
+	ask()
+	same(w.kv.store, before, "dismissing the picker changes nothing either")
+	w.window.choose = "Reset all settings"
+	ask()
+	for _, key in CLEARED do
+		eq(w.kv.get(key), nil, key .. " is cleared")
+	end
+	for key, value in kept do
+		eq(w.kv.store[key], before[key], key .. " is kept")
+		yes(value ~= nil, key .. " was seeded")
+	end
+	same(hx.viewRows(w, "views-prs"), { "v1 My PRs · github · repo", "v2 Review requested · github · none · oldest" }, "the views are the defaults again")
+	eq(w.toasts[#w.toasts].text, "Settings reset", "the user is told")
+end)
+
+case("host: Reset all settings brings back the default views, actions and checklist in every block; a key that cannot be cleared is named, and a malformed store is cleared", function(w: World)
+	hostScene(w, 3)
+	seedSettings(w)
+	w.kv.put("views-issues", "garbage")
+	local b = openQueue(w)
+	local other = w.open(2, { "/work/r" })
+	w.flush()
+	goToSettings(b, "general")
+	w.kv.failSet["keys"] = "read-only file system"
+	b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "reset:all" })
+	w.flush()
+	eq(rowIn(b, "reset:all").warning, "Could not clear: keys", "the key that could not be cleared is named on the row")
+	same((w.kv.get("keys") :: any), { worktree = "W" }, "and kept")
+	eq(w.kv.get("checkouts"), nil, "the others are cleared all the same")
+	eq(w.toasts[#w.toasts].level, "error", "the toast says some were not reset")
+	eq(type(w.kv.get("views-issues")), "table", "the malformed issue views were cleared and seeded again")
+	w.kv.failSet["keys"] = nil
+	goToSettings(b, "views")
+	has(rowIn(b, "vopen:prs:v1").label, "My PRs", "the Views page shows the default views, not the saved Custom")
+	goToSettings(b, "prompts")
+	local defaults = (w.load("prompts") :: any).prs
+	eq(rowIn(b, "popen:prs:p1").label, defaults[1].name, "the Actions page shows the default actions")
+	b.event({ ev = "action", id = "layer.settings", act = "close" })
+	yes(findKey(b.view().layer, "get-started", "card") ~= nil, "the checklist shows again")
+	yes(findKey(other.view().layer, "get-started", "card") ~= nil, "in the other open block too")
+	has(other.title(), "My PRs", "which shows the default views")
+end)
+
 windowCase("window: the confirm link is refused from a pane of another version or another block, and with nothing pending", function(w: World)
 	w.load("window")
 	listPr(w, "o/r", 5)

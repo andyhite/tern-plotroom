@@ -2571,7 +2571,7 @@ case("host agents: agent-status drops texts that are not clean strings within th
 	asks.hx.agents(b, { ["o/r#1"] = "working" })
 	same(b.state().agentInfo["o/r#1"], {}, "the old shape of a status row is a row with no texts")
 end)
-case("host worktrees board: the Worktrees scope lists every worktree of every saved checkout, not only the shown view's repository, with badges, an open link and a way back", function(w: World)
+case("host worktrees board: the Worktrees scope lists every linked worktree of every saved checkout, never the checkout itself, not only the shown view's repository, with badges, an open link and a way back", function(w: World)
 	local s = asks.hx.boardScene(w)
 	local b = openQueue(w)
 	local scopes = pickerOf(b).scopes
@@ -2583,11 +2583,29 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	w.flush()
 	eq(pickerOf(b).scope, "worktrees", "opening it makes it the active scope")
 	eq(pickerOf(b).noun, "worktrees", "the board lists worktrees")
-	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "every checkout's worktrees, grouped by repository, the other repository's too")
+	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "x/y/yb" }, "every checkout's linked worktrees, sorted by repository then branch, the other repository's too, never a main checkout")
+	local groups: { string } = {}
+	local headingOf: { [string]: string } = {}
+	local heading = ""
+	for _, entry in pickerOf(b).order do
+		if type(entry) == "table" then
+			heading = entry.group
+			table.insert(groups, heading)
+		else
+			headingOf[entry] = heading
+		end
+	end
+	local under: { [string]: string } = {}
+	for _, name in asks.hx.board(b) do
+		under[name] = headingOf[asks.hx.rowId(b, name)]
+	end
+	same(groups, { "o/r", "x/y" }, "one group per repository")
+	same(under, { ["o/r/feature"] = "o/r", ["o/r/lk"] = "o/r", ["x/y/yb"] = "x/y" }, "each row under its repository's group")
 	scopes = pickerOf(b).scopes
-	eq(scopes[#scopes - 1].count, 5, "the scope counts them")
-	has(asks.hx.badges(b, "o/r/main"), "Main", "the main worktree is marked")
-	has(asks.hx.badges(b, "x/y/main"), "Main", "in every repository")
+	eq(scopes[#scopes - 1].count, 3, "the scope counts them")
+	for _, name in asks.hx.board(b) do
+		lacks(asks.hx.badges(b, name), "Main", "no row is badged Main: " .. name)
+	end
 	has(asks.hx.badges(b, "o/r/lk"), "Locked", "a locked worktree is marked")
 	has(asks.hx.badges(b, "o/r/lk"), "Unnoted", "and one no item was noted for")
 	lacks(asks.hx.badges(b, "o/r/feature"), "Unnoted", "a pull request's is linked")
@@ -2606,7 +2624,7 @@ case("host worktrees board: the Worktrees scope lists every worktree of every sa
 	b.press("home")
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "Home jumps back to the first")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 1 }).path, "/wt/pr5", "the window asks the host for the folder by number")
-	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 3 }).path, "/work/r", "the main worktree's too")
+	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 3 }).path, "/wt/yb", "another repository's too")
 	eq(findKey(pickerNode(b), "git").p.href, h.tokened("plotroom://worktrees/git"), "the row has its Open in Git link")
 	eq(asks.hx.ask(w, b, { op = "git-path" }).path, "/wt/pr5", "which the host answers with the selected row's folder")
 	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "wt-git" })
@@ -2639,9 +2657,9 @@ case("host worktrees board: the changes of every worktree are read on their own 
 	local b = openQueue(w)
 	pickScope(b, "worktrees")
 	w.flush()
-	same(asks.hx.board(b), { "o/r/12-fix", "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "the rows")
+	same(asks.hx.board(b), { "o/r/12-fix", "o/r/feature", "o/r/lk", "x/y/yb" }, "the rows")
 	has(asks.hx.badges(b, "o/r/feature"), "Changes", "a worktree with uncommitted changes says so with no key pressed")
-	for _, name in { "o/r/12-fix", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" } do
+	for _, name in { "o/r/12-fix", "o/r/lk", "x/y/yb" } do
 		lacks(asks.hx.badges(b, name), "Changes", name .. ": has none")
 	end
 	s.git.dirty["/wt/pr5"] = nil
@@ -2663,7 +2681,7 @@ case("host worktrees board: the changes of every worktree are read on their own 
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed in o/r")
 	eq(countLog(y, "worktree remove"), 0, "nor in x/y")
 	eq(#s.git.worktrees, 4, "every worktree is still there")
-	same(asks.hx.board(b), { "o/r/12-fix", "o/r/feature", "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "and listed")
+	same(asks.hx.board(b), { "o/r/12-fix", "o/r/feature", "o/r/lk", "x/y/yb" }, "and listed")
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the list")
 	eq(b.state().boardTimer, nil, "stops its scan timer")
@@ -2783,7 +2801,7 @@ case("host worktrees board: u asks about at most twenty worktrees a press, rows 
 	local b = openQueue(w)
 	pickScope(b, "worktrees")
 	w.flush()
-	eq(#asks.hx.board(b), 26, "main and 25 worktrees")
+	eq(#asks.hx.board(b), 25, "the 25 linked worktrees")
 	local before = #requestsOf(s.gh, "pull")
 	b.typeText("u")
 	w.flush()
@@ -2800,10 +2818,10 @@ case("host worktrees board: u asks about at most twenty worktrees a press, rows 
 	b.typeText("u")
 	w.flush()
 	for _, row in b.state().board.rows do
-		yes(row.main or row.candidateChecked, "every row was checked after the second press: " .. row.path)
+		yes(row.candidateChecked, "every row was checked after the second press: " .. row.path)
 	end
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
-	eq(#asks.hx.board(b), 26, "every row is still listed")
+	eq(#asks.hx.board(b), 25, "every row is still listed")
 end)
 
 case("host worktrees board: a preview read that lands while a cleanup runs leaves the board busy until the cleanup ends", function(w: World)
@@ -2870,7 +2888,7 @@ case("host worktrees board: no action bar; Commands offers Find and Remove finis
 	eq(b.press("u", nil, "u"), true, "and u runs it")
 end)
 
-case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d again removes it without force, and dirty, main and locked rows are refused", function(w: World)
+case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d again removes it without force, and dirty and locked rows are refused", function(w: World)
 	local s = asks.hx.boardScene(w)
 	w.kv.put("keys", { ["wt-remove"] = "d" })
 	local b = openQueue(w)
@@ -2912,17 +2930,15 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 			lacks(line, " -f", "nor with -f")
 		end
 	end
-	same(asks.hx.board(b), { "o/r/lk", "o/r/main", "x/y/main", "x/y/yb" }, "the row left the board")
+	same(asks.hx.board(b), { "o/r/lk", "x/y/yb" }, "the row left the board")
 	yes(pickerOf(b).selected ~= nil, "the row that took its place is previewed")
-	for _, name in { "o/r/main", "o/r/lk" } do
-		b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, name) })
-		b.typeText("d")
-		eq(confirmOf(b), nil, name .. ": d asks nothing")
-		eq(w.toasts[#w.toasts].text, "Not removed here", name .. ": and says why")
-		eq(w.toasts[#w.toasts].sub, "The main, locked or missing worktrees are not removed here.", name .. ": in full")
-		eq(table.find(hx.palette(w, b).ids, "wt-remove"), nil, name .. ": the palette lists no Remove either")
-	end
-	eq(countLog(s.git, "worktree remove /work/r"), 0, "the main worktree was never offered to git")
+	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/lk") })
+	b.typeText("d")
+	eq(confirmOf(b), nil, "a locked row: d asks nothing")
+	eq(w.toasts[#w.toasts].text, "Not removed here", "and says why")
+	eq(w.toasts[#w.toasts].sub, "Locked or missing worktrees are not removed here.", "in full")
+	eq(table.find(hx.palette(w, b).ids, "wt-remove"), nil, "the palette lists no Remove either")
+	eq(countLog(s.git, "worktree remove /work/r"), 0, "the main checkout was never offered to git")
 	eq(countLog(s.git, "worktree remove /wt/lk"), 0, "nor the locked one")
 end)
 

@@ -1800,7 +1800,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 				add("wt-open", "Worktree")
 				add("wt-git", "Worktree")
 			end
-			if not row.main and not row.locked and not row.missing then -- the guard of boardAct and the Remove button
+			if not row.locked and not row.missing then -- the guard of boardAct and the Remove button
 				add("wt-remove", "Worktree")
 			end
 		end

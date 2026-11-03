@@ -1558,7 +1558,9 @@ def sc_workflow(s: Smoke) -> None:
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
     s.wait_text("the Worktrees list lists the worktree git has, unnoted", "Unnoted")
-    s.wait_text("and the main worktree", "Main")
+    s.wait_text("and the linked worktrees", "flow-linked")
+    s.eq("no Main badge: the checkout itself is not listed", False, any(t == "Main" for t in s.texts()))
+    s.eq("nor its folder", False, any(t == str(root) for t in s.texts()))
     s.wait_text("the dirty worktree says so by itself", "Changes")
     s.wait_until("the list opens with a row selected and previewed", lambda: len(s.selection()) == 1 and s.previewing())
     s.eq("no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
@@ -2037,7 +2039,7 @@ def sc_previews(s: Smoke) -> None:
     s.ctl_ok("type", json.dumps("Worktrees"))
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
-    s.wait_text("the Worktrees list", "Main")
+    s.wait_text("the Worktrees list", "flow-preview")
     for n in range(12):  # walk the rows to the worktree made for #31
         if n:
             s.ctl_ok("key", "Down")
