@@ -3361,4 +3361,48 @@ case("host next move: an issue goes Worktree, then Draft PR…, a closed one wit
 	same(nextOf(w, b, "no_2fr_2314"), {}, "and a closed one without stays without")
 end)
 
+-- What the default Review and Quick review promise at the approval step: findings to pick by severity, one ask with the
+-- three questions and their choices, no review body drafted before the picks, and a body only as GitHub needs it.
+local function reviewSeedAsks(w: World, name: string, groups: { string })
+	local storage: any = w.load("host/storage")
+	local seed: any
+	for _, p in (w.load("prompts") :: any).prs do
+		if p.name == name then
+			seed = p
+		end
+	end
+	local text: string = seed.text
+	yes(#text <= storage.PROMPT_CAP, name .. " stays editable: " .. #text .. " bytes")
+	lacks(text, "Proposed review body", name .. ": no body is drafted before anything is picked")
+	lacks(text, "Comments: 1, 3, Q1", name .. ": no free-text authorization format")
+	local at = 0
+	for _, g in groups do
+		local found = string.find(text, "`### " .. g .. "`", 1, true)
+		yes(found ~= nil and (found :: number) > at, name .. ": findings group " .. g .. " in severity order")
+		at = found :: number
+	end
+	has(text, "Numbers run 1…n across the groups", name .. ": numbers stay stable across the groups")
+	has(text, "A Question only when its answer would change a finding's severity, whether it blocks, or the recommendation", name .. ": the Question bar")
+	has(text, "Usually \"None.\"", name .. ": no questions is the normal case")
+	local ask = string.find(text, "One ask-tool call, three questions:\n1. `Post which comments?`, multiple choice", 1, true)
+	local action = string.find(text, "\n2. `Review action?`: `Approve` / `Request changes` / `Comment` / `None (comments only)`", 1, true)
+	local body = string.find(text, "\n3. `Review body?`: `None` (default) / `Draft one from my picks`", 1, true)
+	yes(ask and action and body and ask < action and action < body, name .. ": one ask, its three questions in order")
+	has(text, "default the blocking groups (none if nothing blocks)", name .. ": blocking comments are picked by default")
+	has(text, "`P2 except 5`", name .. ": Other may pick by numbers or exclusions")
+	has(text, "<You> = <Author> → only `Comment` / `None (comments only)`", name .. ": your own PR offers only what GitHub allows")
+	has(text, "The answers authorize: post at once, no further confirm, except a drafted body", name .. ": no second confirm")
+	has(text, "show it and ask `Post` / `Edit`", name .. ": a drafted body is shown before posting")
+	has(text, "never mentioning unselected ones", name .. ": the draft covers only the picks")
+	has(text, "`Approve` gets none; `Request changes` and `Comment` need one (GitHub): only the posted items' headers", name .. ": a body only as GitHub requires it")
+end
+
+case("prompts: the default Review asks which comments by severity, the action and an optional body from the picks", function(w: World)
+	reviewSeedAsks(w, "Review", { "P0 · blocking", "P1 · blocking", "P2 · blocking", "P2", "P3" })
+end)
+
+case("prompts: the default Quick review asks which comments by severity, the action and an optional body from the picks", function(w: World)
+	reviewSeedAsks(w, "Quick review", { "P0 · blocking", "P1 · blocking", "P2", "P3" })
+end)
+
 return {}
