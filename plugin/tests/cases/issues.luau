@@ -434,12 +434,12 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 		end
 		return n
 	end
-	eq(searched(), 2, "one search covers the project's issues, and Now reads the same query for its Jira source")
+	eq(searched(), 2, "one search covers the project's issues, and Now reads its own (the open sprint's) for its Jira source")
 	eq(#viewSearchesOf(s.gh, "search") + #viewSearchesOf(s.gh, "issue-search"), 0, "a Jira filter never searches through gh; only Now's fixed searches go there")
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me · 1 assigned", "the title names the filter, then what needs you")
+	eq(b.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "the title names the filter, then what needs you")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
 		if scope.id == "issues:v1" then
@@ -490,7 +490,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(saved.activeKind, "issues", "and its kind: a PR filter may have the same id")
 	local again = w.open(2, { "/work/r" }, saved)
 	w.flush()
-	eq(again.title(), "Plotroom · Assigned to me · 1 assigned", "a restored block shows the same view")
+	eq(again.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "a restored block shows the same view")
 end)
 
 case("host: issues always list In Progress, then To Do, then Done, in acli's priority order within each; a saved status order and Settings change nothing", function(w: World)
@@ -1258,7 +1258,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
-	eq(b.title(), "Plotroom · Assigned to me · 1 assigned", "and shown in place of the GitHub view restored")
+	eq(b.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")

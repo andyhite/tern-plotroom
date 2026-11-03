@@ -1767,6 +1767,7 @@ function M.probeClis(again: boolean?)
 						for _, s in running do
 							if M.alive(s) then
 								M.reloadViews(s)
+								M.nowRead(s) -- Now waited for this answer (its Jira query); a read already running is kept
 								s.cx:render()
 							end
 						end
@@ -2459,42 +2460,70 @@ function M.nowAgent(state: State, act: string): boolean
 end
 
 -- Now: everything that needs you, ranked. Its sources are fixed searches per signed-in gh login (the open pull requests
--- it wrote and is asked to review, the open issues assigned to it), Jira's open work assigned to you while acli is on,
--- and the unread notifications gh's active login takes part in; the agents come live from the window.
+-- it wrote and is asked to review, the open issues assigned to it, with who changed them lately), Jira's open work
+-- assigned to you while acli is on (the open sprint's, as My sprint reads it, while the site has sprints), and the unread
+-- notifications every signed-in login takes part in; the agents come live from the window.
 local NOW_MINE = "is:open author:@me archived:false"
 local NOW_REVIEW = "is:open user-review-requested:@me draft:false archived:false"
 local NOW_ASSIGNED = "is:open assignee:@me archived:false"
 local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
 
+-- When assigned `issue` was last seen (its triage entry's time), nil when it never was (New).
+local function seenAt(store: triage.Store, issue: any): number?
+	local key = triage.sanitizeKey(issue.key)
+	local e = if key then store.items[key] else nil
+	return if e and e.seen ~= nil then e.at else nil
+end
+
+-- What Jira's answer about `issue` (jira.yours) holds for: the issue as it is now and when it was last seen.
+local function yoursMark(store: triage.Store, issue: any): string
+	return triage.signature("issues", issue) .. "|" .. tostring(seenAt(store, issue))
+end
+
 -- Reads Now's sources once, while none is being read. A source that cannot be read keeps its last answer and says why
--- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login. While a sign-in
--- failure or a missing CLI holds the block, Now is not read either: only Refresh tries again, as for the views.
--- ponytail: a source failing for one login keeps that whole source's last answer; merge per login if several logins
+-- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login: a login whose
+-- notifications cannot be read keeps its own last ones. While a sign-in failure or a missing CLI holds the block, Now is
+-- not read either: only Refresh tries again, as for the views. While the Jira site's sprints are being asked, Now waits
+-- for the answer (probeClis reads it then): which Jira query it reads depends on it.
+-- ponytail: a search failing for one login keeps that whole source's last answer; merge per login if several logins
 -- fail apart often. A held sign-in pauses all of Now, not just that integration's sources.
 function M.nowRead(state: State)
 	local now = state.now
 	local held = state.problem
-	if now.busy or not M.alive(state) or not cli.ready() or (held and (held.kind == "auth" or held.kind == "missing")) then
+	if now.busy or not M.alive(state) or not cli.ready() or cli.sprintsAsking or (held and (held.kind == "auth" or held.kind == "missing")) then
 		return
 	end
 	now.busy = true
 	ghActive.note(state, true) -- learns the signed-in logins for the next read
 	local gen = now.gen
 	local fresh: { [string]: { any } } = { mine = {}, review = {}, assigned = {}, notices = {} }
-	local login: string? = nil
+	local finder: { [string]: string } = {}
 	local kept: { [string]: boolean } = {}
 	local problems: { string } = {}
 	local spent = 0
 	local pending = 1
+	local asked = false
 	local function live(): boolean
 		return M.alive(state) and gen == now.gen
 	end
-	local function fail(which: string, who: string?, why: string)
-		kept[which] = true
+	local function say(which: string, who: string?, why: string)
 		local line = NOW_LABEL[which] .. (if who then " (@" .. who .. ")" else "") .. ": " .. why
 		if not table.find(problems, line) then
 			table.insert(problems, line)
+		end
+	end
+	local function fail(which: string, who: string?, why: string)
+		kept[which] = true
+		say(which, who, why)
+	end
+	-- One login's notifications that could not be read: it says why and keeps its own last ones.
+	local function noticesFail(who: string, why: string)
+		say("notices", who, why)
+		for _, n in now.notices do
+			if n.login == who then
+				table.insert(fresh.notices, n)
+			end
 		end
 	end
 	local function settle()
@@ -2502,37 +2531,96 @@ function M.nowRead(state: State)
 		if pending > 0 or not live() then
 			return -- a Mark read since this read began: its answer is older than the marks
 		end
+		local store = M.store(state)
+		if not asked and not kept.assigned and store then
+			-- Jira's New or Changed assigned issues: was the newest change your own? A "yours" answer is asked again
+			-- every read (someone may have acted since); any other holds while the issue and its seen time do.
+			asked = true
+			local clock = os.time()
+			for _, issue in fresh.assigned do
+				local mark = yoursMark(store, issue)
+				local had = now.yours[issue.key]
+				if issue.tracker == "jira" and triage.status(store, "issues", issue, clock).fresh ~= "seen" and not (had and had.mark == mark and had.yours ~= true) then
+					pending += 1
+					jira.yours(issue.ref, seenAt(store, issue), function(yours: boolean?)
+						now.yours[issue.key] = { mark = mark, yours = yours }
+						settle()
+					end)
+				end
+			end
+			if pending > 0 then
+				return
+			end
+		end
 		local into = now :: any
 		for _, which in { "mine", "review", "assigned", "notices" } do
 			if not kept[which] then
 				into[which] = fresh[which]
 			end
 		end
-		if not kept.notices then
-			now.login = login
+		if not kept.assigned then
+			now.finder = finder
 		end
+		local yours: { [string]: { mark: string, yours: boolean? } } = {}
+		for _, issue in now.assigned do
+			yours[issue.key] = now.yours[issue.key]
+		end
+		now.yours = yours
 		now.busy, now.loaded, now.problems, now.cost, now.seq = false, true, problems, spent, now.seq + 1
 		M.nowEnsure(state)
 		state.cx:render()
 	end
-	local function search(which: string, account: string?, query: string, integration: string?)
+	local function search(which: string, account: string?, query: string, integration: string?, me: string?)
 		pending += 1
 		local function landed(result: any, problem: github.Problem?, cost: number)
 			spent += cost or 0
 			if result then
 				for _, it in (if integration then result.issues else result.prs) do
 					table.insert(fresh[which], it)
+					if integration == "github" and me and me ~= "" then
+						finder[it.key] = me
+					end
 				end
 			else
 				fail(which, if integration == "jira" then nil else account or ghActive.login, if problem then problem.message else "It could not be read.")
 			end
 			settle()
 		end
-		if integration then
+		if integration == "github" then
+			github.issues(account, query, live, landed, true) -- with who changed each lately (nowRows)
+		elseif integration then
 			TRACKERS[integration].search(account, query, live, landed)
 		else
 			github.search(account, query, live, landed)
 		end
+	end
+	local function notices(who: string)
+		pending += 1
+		local function read(login: string)
+			github.notifications(login, function(rows: { github.Notice }?, why: github.Problem?)
+				if rows then
+					for _, n in rows do
+						table.insert(fresh.notices, n)
+					end
+					if #rows >= github.NOTICE_CAP then
+						say("notices", login, "showing the newest " .. github.NOTICE_CAP .. "; the rest are on github.com")
+					end
+				else
+					noticesFail(login, if why then why.message else "They could not be read.")
+				end
+				settle()
+			end)
+		end
+		if who ~= "" then
+			return read(who)
+		end
+		github.login(nil, function(found: string?, problem: github.Problem?)
+			if not found then
+				fail("notices", nil, if problem then problem.message else "gh's active login is unknown.")
+				return settle()
+			end
+			read(found)
+		end)
 	end
 	if cli.on("github") then
 		local logins: { string } = if #ghActive.accounts > 0 then ghActive.accounts else { "" }
@@ -2540,35 +2628,66 @@ function M.nowRead(state: State)
 			local account = if who == "" or who == ghActive.login then nil else who
 			local wait = github.wait(os.time(), account)
 			if wait > 0 then
+				local why = "GitHub's rate limit is reached; read again after " .. os.date("%H:%M", os.time() + wait) .. "."
 				for _, which in { "mine", "review", "assigned" } do
-					fail(which, account, "GitHub's rate limit is reached; read again after " .. os.date("%H:%M", os.time() + wait) .. ".")
+					fail(which, account, why)
+				end
+				if who ~= "" then
+					noticesFail(who, why)
+				else
+					fail("notices", nil, why)
 				end
 			else
 				search("mine", account, NOW_MINE, nil)
 				search("review", account, NOW_REVIEW, nil)
-				search("assigned", account, NOW_ASSIGNED, "github")
+				search("assigned", account, NOW_ASSIGNED, "github", if who ~= "" then who else ghActive.login)
+				notices(who)
 			end
 		end
-		pending += 1
-		github.login(nil, function(who: string?, problem: github.Problem?)
-			if not who then
-				fail("notices", nil, if problem then problem.message else "gh's active login is unknown.")
-				return settle()
-			end
-			github.notifications(who, function(rows: { github.Notice }?, why: github.Problem?)
-				if rows then
-					fresh.notices, login = rows, who
-				else
-					fail("notices", who, if why then why.message else "They could not be read.")
-				end
-				settle()
-			end)
-		end)
 	end
 	if cli.on("jira") then
-		search("assigned", nil, NOW_JIRA, "jira")
+		search("assigned", nil, if cli.sprints == true then core.MY_SPRINT else NOW_JIRA, "jira")
 	end
 	settle()
+end
+
+-- Whether you made every change that makes assigned `issue` New or Changed, so Now leaves it out. GitHub: the events
+-- since you last saw it (New: since its newest assignment to the login that found it) are all that login's, and none
+-- of its later updates is left unexplained by them. Jira: jira.yours said so for the issue as it is now. What cannot be
+-- read (no events, a cut timeline, no answer) is not yours: the row is listed.
+local function ownChange(now: any, store: triage.Store, issue: any): boolean
+	if issue.tracker == "jira" then
+		local had = now.yours[issue.key]
+		return had ~= nil and had.yours == true and had.mark == yoursMark(store, issue)
+	end
+	local found: string?, events: { tracker.Event }? = now.finder[issue.key], issue.events
+	if not found or not events or #events == 0 then
+		return false
+	end
+	local me = string.lower(found)
+	local start = seenAt(store, issue)
+	if not start then
+		for _, e in events do
+			if e.to and string.lower(e.to) == me and (not start or e.at > start) then
+				start = e.at
+			end
+		end
+	end
+	if not start then
+		return false
+	end
+	local newest, oldest, mine = 0, math.huge, false
+	for _, e in events do
+		newest, oldest = math.max(newest, e.at), math.min(oldest, e.at)
+		if e.at >= start then
+			if not e.by or string.lower(e.by) ~= me then
+				return false
+			end
+			mine = true
+		end
+	end
+	local cut = #events >= github.TIMELINE and oldest >= start -- older changes since then may not have been read
+	return mine and not cut and issue.updated <= newest + 60
 end
 
 -- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, waiting?, title, url?, snoozed }.
@@ -2688,7 +2807,7 @@ function M.nowRows(state: State): { any }
 	local assigned: { any } = {}
 	for _, issue in now.assigned do
 		local st = if store then triage.status(store, "issues", issue, clock) else nil
-		if st and st.fresh ~= "seen" then
+		if st and st.fresh ~= "seen" and not ownChange(now, store :: triage.Store, issue) then
 			why[issue.key] = if st.fresh == "new" then "New" else "Changed"
 			table.insert(assigned, issue)
 		end
@@ -2720,7 +2839,7 @@ local SUMMARY: { { one: string, many: string } } = {
 	{ one = "review requested", many = "reviews requested" },
 	{ one = "Ready to merge", many = "Ready to merge" },
 	{ one = "notification", many = "notifications" },
-	{ one = "assigned", many = "assigned" },
+	{ one = "assigned: new or changed", many = "assigned: new or changed" },
 }
 function M.nowSummary(state: State): string?
 	local counts: { number } = { 0, 0, 0, 0, 0, 0 }

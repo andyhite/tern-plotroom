@@ -21,11 +21,11 @@ local savePrompts, searchItem, sectionIn, sha, windowCase, yes = h.savePrompts, 
 local asks = h.asks
 local viewSearchesOf = h.viewSearchesOf
 
--- acli's searches but Now's (its Jira source is the Assigned to me query, read with every refresh).
+-- acli's searches but Now's (its Jira source is the My sprint query while the site has sprints, read with every refresh).
 local function searchesOf(acli: h.Acli): number
 	local n = 0
 	for _, req in acli.requests do
-		if req.kind == "search" and not table.find(req.argv, h.JIRA_ASSIGNED) then
+		if req.kind == "search" and not table.find(req.argv, h.JIRA_NOW) then
 			n += 1
 		end
 	end

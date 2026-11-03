@@ -171,16 +171,20 @@ export type Settings = {
 export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
--- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`), and the unread notifications gh's
--- active login takes part in (`notices`, read as `login`). A source that could not be read keeps its last answer and
--- says why in `problems`. `seq` moves with every answer (the rows cache on it); `gen` is bumped by Mark read, so a read
--- that began before it is ignored; `cost` is the GitHub points the last read spent (it joins the refresh pace).
+-- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`, each GitHub one with the login
+-- that found it in `finder`), and the unread notifications every signed-in login takes part in (`notices`, each read as
+-- its `login`). A source that could not be read keeps its last answer and says why in `problems`, which also names a
+-- login whose notifications filled a whole page. `yours` is Jira's answer to whether an assigned issue's newest change
+-- was your own (jira.yours), for the issue as it was then (`mark`). `seq` moves with every answer (the rows cache on
+-- it); `gen` is bumped by Mark read, so a read that began before it is ignored; `cost` is the GitHub points the last read
+-- spent (it joins the refresh pace).
 export type Now = {
 	mine: { github.Pr },
 	review: { github.Pr },
 	assigned: { any },
+	finder: { [string]: string },
 	notices: { github.Notice },
-	login: string?,
+	yours: { [string]: { mark: string, yours: boolean? } },
 	problems: { string },
 	busy: boolean,
 	loaded: boolean,
@@ -486,6 +490,9 @@ M.CHECK = {
 	pending = { text = "Pending", tone = "warning", mark = "●" },
 } :: { [string]: { text: string, tone: string, mark: string } }
 
+-- The My sprint seed's JQL: Now reads Jira's assigned work with it while the site has sprints (engine.nowRead).
+M.MY_SPRINT = "assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done AND hierarchyLevel < 1"
+
 -- The two kinds of view the engine runs. `keys` is the `?` list of the queue (every shortcut of the kind, concise);
 -- `vars` the prompt editor's legend of the variables a prompt may use.
 local KINDS: { [string]: Kind } = {
@@ -554,7 +561,7 @@ local KINDS: { [string]: Kind } = {
 		seeds = {
 			{ name = "Assigned to me", integration = "github", query = "is:open assignee:@me archived:false", group = "repo" },
 			{ name = "Created by me", integration = "github", query = "is:open author:@me -assignee:@me archived:false", group = "repo" },
-			{ name = "My sprint", integration = "jira", query = "assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done AND hierarchyLevel < 1", group = "status", sprint = true },
+			{ name = "My sprint", integration = "jira", query = M.MY_SPRINT, group = "status", sprint = true },
 			{ name = "Up for grabs", integration = "jira", query = 'assignee is EMPTY AND sprint in openSprints() AND statusCategory = "To Do" AND hierarchyLevel < 1', group = "none", sprint = true },
 			{ name = "My epics", integration = "jira", query = "assignee = currentUser() AND hierarchyLevel = 1 AND statusCategory != Done", group = "status" },
 		},

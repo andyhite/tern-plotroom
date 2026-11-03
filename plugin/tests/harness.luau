@@ -1870,11 +1870,13 @@ local function newGh(w: World): Gh
 end
 M.newGh = newGh
 
-export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | count | sprints | view | projects | other
+export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | count | sprints | view | changes | owned | projects | other
 export type Acli = {
 	site: string?, -- the Jira site `acli jira auth status` names; nil: signed out, every jira command fails as unauthorized
 	searches: { [string]: { any } }, -- --jql value -> the work items it finds, in the order acli prints them; an unlisted query finds none
 	views: { [string]: any }, -- key -> the REST issue `workitem view` prints
+	changes: { [string]: any }, -- key -> what `workitem view <key> --fields updated,comment` prints (Now: who changed it last); none: not found
+	owned: { [string]: boolean }, -- key -> the signed-in user changed its assignee, status or priority lately (Now's CHANGED BY currentUser() count)
 	projects: { any }, -- what `project list` prints
 	override: ((AcliReq) -> Reply?)?, -- answers first: a failure, a malformed page
 	sprints: boolean, -- whether JQL knows a Sprint field (the `sprint is EMPTY --count` probe)
@@ -1884,7 +1886,7 @@ export type Acli = {
 -- Atlassian's acli as far as the Jira module reads it: `--version`, `jira auth status`, `jira workitem search|view` and
 -- `jira project list`.
 local function newAcli(w: World): Acli
-	local acli: Acli = { site = "acme.atlassian.net", searches = {}, views = {}, projects = {}, override = nil, sprints = true, requests = {} }
+	local acli: Acli = { site = "acme.atlassian.net", searches = {}, views = {}, changes = {}, owned = {}, projects = {}, override = nil, sprints = true, requests = {} }
 	w.respond(function(call: Call): Reply?
 		local argv = call.argv
 		if argv[1] ~= "acli" then
@@ -1897,6 +1899,11 @@ local function newAcli(w: World): Acli
 			kind = "auth"
 		elseif argv[2] == "jira" and argv[3] == "workitem" and (argv[4] == "search" or argv[4] == "view") then
 			kind = if argv[#argv] ~= "--count" then argv[4] elseif argv[6] == "sprint is EMPTY" then "sprints" else "count"
+			if kind == "view" and argv[#argv] == "updated,comment" then
+				kind = "changes" -- Now asks who changed an assigned issue last (jira.yours)
+			elseif kind == "count" and string.find(argv[6] or "", "CHANGED BY currentUser()", 1, true) then
+				kind = "owned"
+			end
 		elseif argv[2] == "jira" and argv[3] == "project" and argv[4] == "list" then
 			kind = "projects"
 		end
@@ -1920,6 +1927,15 @@ local function newAcli(w: World): Acli
 				return { stdout = "✓ Number of work items in the search: 0\n" }
 			end
 			return { status = 1, stderr = "✗ Error: failed to parse JQL query: field 'sprint' does not exist or you do not have permission to view it.\n" }
+		elseif kind == "changes" then
+			local item = acli.changes[argv[5] or ""]
+			if item == nil then
+				return { status = 1, stderr = "✗ Error: Issue does not exist or you do not have permission to see it.\n" }
+			end
+			return { stdout = jsonEncode(item) .. "\n" }
+		elseif kind == "owned" then
+			local key = string.match(argv[6] or "", "^key = (%S+) AND") or ""
+			return { stdout = "✓ Number of work items in the search: " .. (if acli.owned[key] then 1 else 0) .. "\n" }
 		elseif kind == "count" then
 			return { stdout = "✓ Number of work items in the search: " .. #(acli.searches[argv[6]] or {}) .. "\n" }
 		elseif kind == "search" then
@@ -3114,10 +3130,14 @@ M.issueWindow = issueWindow
 -- The Jira side of the issue filters: project ABC checked out at /work/r (its origin is on GitLab: a Jira project names
 -- no repository) whose remote serves its default branch at sha("b"). acli is signed in to acme.atlassian.net and finds
 -- under "Assigned to me" ABC-12 "Fix login" (In Progress, a High-priority Bug of Bob Ray, labelled ui) and ABC-13 "Old
--- bug" (Done), in that order, as the only issue filter. A Jira filter never searches through gh.
+-- bug" (Done), in that order, as the only issue filter; Now's Jira source (the open sprint's) finds the same two. A
+-- Jira filter never searches through gh.
 export type JiraScene = { git: Git, acli: Acli, gh: Gh }
 local JIRA_ASSIGNED = "(assignee = currentUser() AND statusCategory != Done) ORDER BY priority DESC, updated DESC"
 M.JIRA_ASSIGNED = JIRA_ASSIGNED
+-- Now's Jira source while the site has sprints (the fake's default): the My sprint query, as acli is asked it.
+local JIRA_NOW = "(assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done AND hierarchyLevel < 1) ORDER BY priority DESC, updated DESC"
+M.JIRA_NOW = JIRA_NOW
 
 local function jiraHost(w: World): JiraScene
 	w.load("host")
@@ -3135,6 +3155,7 @@ local function jiraHost(w: World): JiraScene
 		}),
 		jiraItem("ABC-13", "Old bug", { status = { name = "Done", statusCategory = { key = "done" } } }),
 	}
+	acli.searches[JIRA_NOW] = acli.searches[JIRA_ASSIGNED]
 	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
 	w.kv.put("jira-repos", { ABC = array({ "o/r" }) })
 	w.kv.put("views-issues", {

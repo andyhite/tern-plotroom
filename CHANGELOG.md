@@ -31,6 +31,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Now is more accurate. It reads every signed-in `gh` login's notifications as that login (a login that cannot read them says so alone; Mark read… names each account and marks each login's threads as that login), says when a login's notifications fill the one page it reads (`showing the newest 50; the rest are on github.com`), leaves out an assigned issue whose changes since you last saw it are all your own (assigning it to yourself, edits, comments; someone else's change lists it again), reads Jira's assigned work from the open sprint as **My sprint** does while the site has sprints, and its heading reads `N assigned: new or changed`.
 - Worktrees lists only linked worktrees, one group per repository: a repository's checkout itself is no longer listed, and the **Main** badge and preview fact are gone.
 - The pane title and Now's heading say what needs you by reason (`2 agents need you · 1 Blocked · 3 reviews requested`) instead of a bare `N need you`; the status bar's `N need you` stays the one cross-pane count and the one that is a button. The pane title no longer counts the view's items (`My PRs (12)`), and the queue's heading no longer shows Tern's result count at its right: both repeated the sidebar.
 - Protocol 35: Mark read… is planned as `mark-read` (was `inbox-read`), so a window asks only hosts that run this release.

@@ -744,6 +744,62 @@ function M.item(key: string, done: (tracker.Issue?, Problem?) -> (), shouldConti
 	end)
 end
 
+-- Whether the newest change to work item `key` was the signed-in user's own (Now leaves such an assigned issue out):
+-- done(true) when a comment of theirs, or an assignee, status or priority change they made, is that change; false when
+-- someone else commented after `since` (epoch seconds, nil: no lower bound is known); nil when acli cannot tell. Two
+-- reads at most: the item's update time and comments, then one count of the field changes they made since then.
+-- ponytail: acli reads no changelog, so a title or label edit of yours is not told apart (nil, listed) and a field
+-- change of someone else's before your newest one is not seen; read the changelog if acli ever exposes it.
+function M.yours(key: string, since: number?, done: (boolean?) -> ())
+	if type(key) ~= "string" or not string.match(key, KEY) then
+		return later(function()
+			done(nil)
+		end)
+	end
+	withSite(function(base)
+		local me = string.lower(email)
+		if not base or me == "" then
+			return done(nil)
+		end
+		acli({ "jira", "workitem", "view", key, "--json", "--fields", "updated,comment" }, function(out, problem)
+			noted(problem)
+			local ok, data = decode(out or "")
+			local fields = if ok then field(data, "fields") else nil
+			local updated = stamp(field(fields, "updated"))
+			if not updated then
+				return done(nil)
+			end
+			local mine = false
+			for _, c in list(field(fields, "comment", "comments")) do
+				local by = field(c, "author", "emailAddress")
+				local at = stamp(field(c, "updated")) or stamp(field(c, "created"))
+				if at then
+					if type(by) ~= "string" or string.lower(by) ~= me then
+						if since and at > since then
+							return done(false)
+						end
+					elseif math.abs(at - updated) <= 60 then
+						mine = true
+					end
+				end
+			end
+			if mine then
+				return done(true)
+			end
+			-- A minute before the update, as JQL counts relative minutes from now.
+			local ago = "-" .. (math.max(0, os.time() - updated) // 60 + 2) .. "m"
+			local changed: { string } = {}
+			for _, f in { "assignee", "status", "priority" } do
+				table.insert(changed, f .. ' CHANGED BY currentUser() AFTER "' .. ago .. '"')
+			end
+			acli({ "jira", "workitem", "search", "--jql", "key = " .. key .. " AND (" .. table.concat(changed, " OR ") .. ")", "--count" }, function(counted)
+				local n = if counted then tonumber(string.match(counted, "(%d+)%s*$")) else nil
+				done(if n and n > 0 then true else nil)
+			end)
+		end)
+	end)
+end
+
 -- `done(nil)` when acli's sign-in is still `who` (M.identity, read again now); else the problem, and nothing is sent.
 local function bound(who: Identity, done: (Problem?) -> ())
 	M.identity(function(now, problem)

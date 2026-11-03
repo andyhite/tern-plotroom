@@ -70,8 +70,31 @@ local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
 local PULL_GQL = "query($q: URI!) { rateLimit { cost } resource(url: $q) { ... on PullRequest { " .. PR_FIELDS .. " } } }"
 local PULL_JQ = "[.data.resource | select(.number != null) | " .. PR_ITEM_JQ .. "] as $items | {total:($items | length),next:null,cost:.data.rateLimit.cost,items:$items}"
-local ISSUE_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }"
-local ISSUE_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|{number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]}]}"
+local ISSUE_FIELDS = "number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } }"
+local ISSUE_ITEM = "{number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]"
+local function issueSearch(fields: string, item: string): (string, string)
+	return "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { " .. fields .. " } } } }",
+		"{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. item .. "}]}"
+end
+local ISSUE_GQL, ISSUE_JQ = issueSearch(ISSUE_FIELDS, ISSUE_ITEM)
+-- Now's assigned search also reads who changed each issue lately: its newest timeline events and its last body edit
+-- (TIMELINE events; ponytail: the newest 10, older changes since you last saw it count as unreadable, raise if often cut).
+local TIMELINE = 10
+local TIMELINE_TYPES = { "IssueComment", "AssignedEvent", "UnassignedEvent", "LabeledEvent", "UnlabeledEvent", "RenamedTitleEvent", "ClosedEvent", "ReopenedEvent", "MilestonedEvent", "DemilestonedEvent" }
+M.TIMELINE = TIMELINE
+local NOW_ISSUE_GQL: string, NOW_ISSUE_JQ: string = "", ""
+do
+	local names: { string } = {}
+	local spreads: { string } = {}
+	for _, t in TIMELINE_TYPES do
+		table.insert(names, (string.upper((string.gsub(t, "(%l)(%u)", "%1_%2")))))
+		table.insert(spreads, "... on " .. t .. " { createdAt " .. (if t == "IssueComment" then "author { login }" else "actor { login }") .. (if t == "AssignedEvent" then " assignee { ... on User { login } }" else "") .. " }")
+	end
+	NOW_ISSUE_GQL, NOW_ISSUE_JQ = issueSearch(
+		ISSUE_FIELDS .. " lastEditedAt editor { login } timelineItems(last: " .. TIMELINE .. ", itemTypes: [" .. table.concat(names, ", ") .. "]) { nodes { " .. table.concat(spreads, " ") .. " } }",
+		ISSUE_ITEM .. ",events:([(.timelineItems.nodes // [])[] | {at:.createdAt,by:(.actor.login // .author.login),to:.assignee.login}] + (if .lastEditedAt then [{at:.lastEditedAt,by:.editor.login,to:null}] else [] end))"
+	)
+end
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
@@ -413,6 +436,20 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 		end
 		return out
 	end
+	local events: { tracker.Event }? = nil
+	if type(item.events) == "table" then
+		local function who(v: any): string?
+			return if type(v) == "string" and #v <= 64 and string.match(v, "^[%w][%w%-_%.%[%]]*$") then v else nil
+		end
+		local list: { tracker.Event } = {}
+		for _, e in item.events do
+			local at = if type(e) == "table" then M.epoch(str(e.at)) else nil
+			if at then
+				table.insert(list, { at = at, by = who(e.by), to = who(e.to) })
+			end
+		end
+		events = list
+	end
 	local closed = item.state == "CLOSED"
 	return {
 		key = M.identity(o, r, n),
@@ -429,6 +466,7 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 		comments = count(item.comments),
 		created = M.epoch(str(item.createdAt)) or 0,
 		updated = M.epoch(str(item.updatedAt)) or 0,
+		events = events,
 	}, nil
 end
 
@@ -766,12 +804,24 @@ local function flatPr(n: any): any
 	}
 end
 
--- A search node of an issue as ISSUE_JQ shapes it.
+-- A search node of an issue as ISSUE_JQ (or NOW_ISSUE_JQ, with its events) shapes it.
 local function flatIssue(n: any): any
+	local events: { any }? = nil
+	local timeline = field(n, "timelineItems", "nodes")
+	if type(timeline) == "table" then
+		local list: { any } = {}
+		for _, e in timeline do
+			table.insert(list, { at = field(e, "createdAt"), by = field(e, "actor", "login") or field(e, "author", "login"), to = field(e, "assignee", "login") })
+		end
+		if type(n.lastEditedAt) == "string" then
+			table.insert(list, { at = n.lastEditedAt, by = field(n, "editor", "login") })
+		end
+		events = list
+	end
 	return {
 		number = n.number, title = n.title, url = n.url, state = n.state, reason = n.stateReason, updatedAt = n.updatedAt, createdAt = n.createdAt,
 		author = field(n, "author", "login"), comments = field(n, "comments", "totalCount"),
-		labels = names(n.labels, "name"), assignees = names(n.assignees, "login"),
+		labels = names(n.labels, "name"), assignees = names(n.assignees, "login"), events = events,
 	}
 end
 
@@ -920,14 +970,17 @@ function M.pull(account: string?, url: string, shouldContinue: () -> boolean, do
 	searchPrs(account, url, "", PULL_GQL, PULL_JQ, shouldContinue, done)
 end
 
--- All pages of the issue search; one swap-ready IssueResult at the end (see searchAll).
+-- All pages of the issue search; one swap-ready IssueResult at the end (see searchAll). `timeline`: each issue also
+-- carries its newest `events` (Now's assigned search, which asks who changed it).
 function M.issues(
 	account: string?,
 	query: string,
 	shouldContinue: () -> boolean,
-	done: (tracker.IssueResult?, Problem?, number) -> ()
+	done: (tracker.IssueResult?, Problem?, number) -> (),
+	timeline: boolean?
 )
-	searchAll(account, query, " is:issue sort:updated-desc", ISSUE_GQL, ISSUE_JQ, M.normalizeIssue, flatIssue, shouldContinue, function(items, total, complete, problem, spent, note)
+	local gql, jq = if timeline then NOW_ISSUE_GQL else ISSUE_GQL, if timeline then NOW_ISSUE_JQ else ISSUE_JQ
+	searchAll(account, query, " is:issue sort:updated-desc", gql, jq, M.normalizeIssue, flatIssue, shouldContinue, function(items, total, complete, problem, spent, note)
 		if not items then
 			return done(nil, problem, spent)
 		end
@@ -1940,9 +1993,11 @@ end
 
 -- One unread, participating notification thread: `id` the thread's (digits), `reason` GitHub's (review_requested,
 -- mention, ci_activity, ...), `kind` "pr" | "issue" | "other" and, for the first two, `number` and `url` (the page).
-export type Notice = { id: string, repo: string, title: string, reason: string, kind: string, number: number?, url: string?, updated: number }
+-- `login`: the gh login it was read as (M.notifications sets it).
+export type Notice = { id: string, repo: string, title: string, reason: string, kind: string, number: number?, url: string?, updated: number, login: string? }
 
 local NOTICE_CAP = 50 -- one page: ponytail: more unread threads than this are left to github.com until they are read
+M.NOTICE_CAP = NOTICE_CAP
 local NOTICE_POLL_S = 60 -- X-Poll-Interval's default
 local SUBJECT = { pulls = "pull", issues = "issues" }
 
@@ -2038,6 +2093,9 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 			return done(nil, { kind = "failed", message = "gh printed something other than the notifications." })
 		end
 		local notices = M.parseNotices(data)
+		for _, n in notices do
+			n.login = account
+		end
 		if (marks[account] or 0) ~= mark then
 			return done(notices, nil) -- begun before a Mark read: the caller drops it; the cache keeps what the mark cleared
 		end

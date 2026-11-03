@@ -760,51 +760,78 @@ local function mergesNow(state: State, item: any): boolean
 	return merge == "ready" or merge == "unstable"
 end
 
--- The plan of Now's Mark read…: the notification threads Now lists, the gh login they were read as (both settled now:
--- the commit marks exactly these as exactly that login, whatever the list or gh's active account become) and one
--- confirm. Read, never done: GitHub keeps the threads.
+-- The plan of Now's Mark read…: the notification threads Now lists, grouped by the gh login each was read as (both
+-- settled now: the commit marks exactly these, each as exactly its login, whatever the list or gh's active account
+-- become) and one confirm naming every account. Read, never done: GitHub keeps the threads.
 function M.markReadPlan(state: State, id: string)
-	local now = state.now
-	local login = now.login
-	local ids: { string } = {}
+	local logins: { string } = {}
+	local idsOf: { [string]: { string } } = {}
 	local perRepo: { [string]: number } = {}
 	local repos: { string } = {}
+	local n = 0
 	for _, row in engine.nowRows(state) do
-		local n = row.notice
-		if n then
-			table.insert(ids, n.id)
-			if not perRepo[n.repo] then
-				perRepo[n.repo] = 0
-				table.insert(repos, n.repo)
+		local notice = row.notice
+		local login = if notice then notice.login else nil
+		if notice and login then
+			if not idsOf[login] then
+				idsOf[login] = {}
+				table.insert(logins, login)
 			end
-			perRepo[n.repo] += 1
+			table.insert(idsOf[login], notice.id)
+			n += 1
+			local where = login .. " " .. notice.repo
+			if not perRepo[where] then
+				perRepo[where] = 0
+				table.insert(repos, where)
+			end
+			perRepo[where] += 1
 		end
 	end
-	if not state.nowOn or #ids == 0 or not login then
+	if not state.nowOn or n == 0 then
 		return reply(state, id, { problem = "Now lists no notifications to mark read." })
 	end
-	local n = #ids
+	table.sort(logins)
+	table.sort(repos)
+	local several = #logins > 1
+	local named: { string } = {}
+	for _, login in logins do
+		table.insert(named, "@" .. login)
+	end
 	local things = n .. " notification" .. (if n == 1 then "" else "s")
-	local lines: { string } = { "Account: @" .. login, "Mark " .. things .. " read (GitHub keeps them in the inbox; none is marked done)" }
-	for i, repo in repos do
+	local lines: { string } = { (if several then "Accounts: " else "Account: ") .. table.concat(named, ", "), "Mark " .. things .. " read (GitHub keeps them in the inbox; none is marked done)" }
+	for i, where in repos do
 		if i > 8 then
 			table.insert(lines, "and " .. (#repos - 8) .. " more repositories")
 			break
 		end
-		table.insert(lines, repo .. ": " .. perRepo[repo])
+		local login, repo = string.match(where, "^(%S+) (.*)$")
+		table.insert(lines, (if several then "@" .. (login or "") .. " " else "") .. (repo or where) .. ": " .. perRepo[where])
 	end
 	M.offer(state, id, { key = NOW_KEY }, { head = "Mark " .. things .. " read?", label = "Mark " .. n .. " read", lines = lines }, function(done)
-		github.markRead(ids, login, function(problem: github.Problem?, marked: number)
+		local marked = 0
+		local function finish(answer: any)
 			if alive(state) then
 				state.now.gen += 1 -- reads begun before this mark are stale; one fresh read replaces them
 				state.now.busy = false
 				engine.nowRead(state) -- Now reads again: what was marked is gone from it
 			end
-			if problem then
-				return done({ problem = (if marked > 0 then "Marked " .. marked .. " of " .. n .. " read, then stopped: " else "") .. M.whyOf(problem) })
+			done(answer)
+		end
+		-- Each login's threads as that login, one login after another; the first failure stops the rest.
+		local function step(i: number)
+			local login = logins[i]
+			if login == nil then
+				return finish({ ok = true, message = "Marked " .. things .. " read as " .. table.concat(named, " and ") })
 			end
-			done({ ok = true, message = "Marked " .. things .. " read as @" .. login })
-		end)
+			github.markRead(idsOf[login], login, function(problem: github.Problem?, count: number)
+				marked += count
+				if problem then
+					return finish({ problem = (if marked > 0 then "Marked " .. marked .. " of " .. n .. " read, then stopped: " else "") .. M.whyOf(problem) })
+				end
+				step(i + 1)
+			end)
+		end
+		step(1)
 	end)
 end
 

@@ -25,7 +25,10 @@ export type Issue = {
 	comments: number, -- Jira: 0, its count comes with the details
 	created: number, -- Jira: 0 (unknown); the details carry it
 	updated: number, -- Jira: 0 (unknown); the details carry it
+	events: { Event }?, -- GitHub, Now's assigned search only: the newest timeline events, oldest first
 }
+-- One change to an issue: when (epoch seconds), by which login (nil: unknown or deleted) and, for an assignment, to whom.
+export type Event = { at: number, by: string?, to: string? }
 export type Linked = { ref: string, title: string, url: string, state: string, relation: string?, status: { text: string, tone: string }? } -- state "open"|"draft"|"merged"|"closed"|"done"; relation (Jira) "blocks", "is blocked by", "subtask", ...; status (Jira) its workflow status as a badge
 export type Field = { label: string, value: string? } -- nil value: shown as None
 export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }

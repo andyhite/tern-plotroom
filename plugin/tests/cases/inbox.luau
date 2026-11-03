@@ -89,7 +89,7 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 			searchItem(4, "o/r", EPOCH - 90, { createdAt = h.iso(EPOCH - 6000) }),
 		}
 		s.gh.queries[ASSIGNED] = { issueItem(12, "o/r", EPOCH - 300) }
-		acli.searches[h.JIRA_ASSIGNED] = { jiraItem("ABC-1", "Fix login") }
+		acli.searches[h.JIRA_NOW] = { jiraItem("ABC-1", "Fix login") }
 	end)
 	local scopes = pickerOf(b).scopes
 	eq(scopes[1].id, "now", "Now is first in the sidebar")
@@ -115,7 +115,7 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 	end
 	eq(pickerOf(b).selected, "no_2fr_231", "the selection stays on its row as rows arrive above it")
 	eq(scopes[1].count, 9, "the sidebar counts them")
-	local need = "1 agent needs you · 1 Blocked · 2 reviews requested · 1 Ready to merge · 2 notifications · 2 assigned"
+	local need = "1 agent needs you · 1 Blocked · 2 reviews requested · 1 Ready to merge · 2 notifications · 2 assigned: new or changed"
 	eq(b.title(), "Plotroom · Now · " .. need, "the pane title says what needs you by kind, in Now's order, adding up to the sidebar's count")
 	local sub: { string } = {}
 	for _, span in pickerOf(b).subtitle do
@@ -357,7 +357,7 @@ case("now: without gh Now reads nothing from GitHub and says what needs you from
 	local s = hostScene(w, 3)
 	local acli = newAcli(w)
 	h.hx.uninstalled(w, "gh")
-	acli.searches[h.JIRA_ASSIGNED] = { jiraItem("ABC-1", "Fix login") }
+	acli.searches[h.JIRA_NOW] = { jiraItem("ABC-1", "Fix login") }
 	w.setOpensNow(true)
 	local b = w.open(1, { "/work/r" })
 	w.flush()
@@ -410,6 +410,195 @@ case("now: an item whose chain stopped at a limit ranks with Needs you and says 
 	local text = textOf(h.pickerNode(b))
 	has(text, "Plotroom stopped the item's chain of actions: 3 failed checks", "the preview says the chain stopped and why")
 	has(text, "Stopped: 3 failed checks", "as its Chain fact")
+end)
+
+-- Logins the notification reads were made as, sorted and once each.
+local function noticeLogins(s: h.HostScene): { string }
+	local seen: { [string]: boolean } = {}
+	local out: { string } = {}
+	for _, req in requestsOf(s.gh, "notifications") do
+		local login = req.login or "?"
+		if not seen[login] then
+			seen[login] = true
+			table.insert(out, login)
+		end
+	end
+	table.sort(out)
+	return out
+end
+
+case("now: every signed-in login's notifications are read as that login; one that cannot read them says why alone and the others are still listed", function(w: World)
+	local s, b = nowScene(w, nil, function(s: h.HostScene)
+		s.gh.tokens.work = "tok-work"
+		s.gh.inbox.work = { thread("31", "w/z", "mention", "Work thing", 4, true, "2026-10-19T09:00:00Z") }
+	end)
+	refreshNow(w, b)
+	same(listed(b), { "nw_2fz_234", "no_2fr_232", "no_2fr_237", "t13" }, "work's thread is listed beside octocat's, newest first")
+	same(noticeLogins(s), { "octocat", "work" }, "each read as its own login")
+	eq(b.title(), "Plotroom · Now · 4 notifications", "and counted")
+end)
+
+case("now: a login whose notifications cannot be read adds its own problem line; the other login's are listed and nothing falls back", function(w: World)
+	local s, b = nowScene(w, nil, function(s: h.HostScene)
+		s.gh.tokens.work = "tok-work"
+		s.gh.inbox.work = { thread("31", "w/z", "mention", "Work thing", 4, true) }
+		s.gh.inboxDenied.work = true
+	end)
+	refreshNow(w, b)
+	local sub = textOf(pickerOf(b).subtitle)
+	has(sub, "Notifications (@work): @work cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications", "work says why, with the fix")
+	eq(string.find(sub, "(@octocat)", 1, true), nil, "octocat has no problem")
+	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "octocat's threads are still listed")
+	same(noticeLogins(s), { "octocat", "work" }, "work was asked as itself, and its threads were never read as octocat")
+end)
+
+case("now: Mark read… across two logins names each account with its threads per repository, and commits each login's threads as that login", function(w: World)
+	local s, b = nowScene(w, nil, function(s: h.HostScene)
+		s.gh.tokens.work = "tok-work"
+		s.gh.inbox.work = { thread("31", "w/z", "mention", "Work thing", 4, true) }
+	end)
+	refreshNow(w, b)
+	local p = asks.hx.ask(w, b, { op = "act", name = "mark-read" })
+	eq(p.confirm.head, "Mark 4 notifications read?", "every listed thread")
+	same(p.confirm.lines, {
+		"Accounts: @octocat, @work",
+		"Mark 4 notifications read (GitHub keeps them in the inbox; none is marked done)",
+		"@octocat o/r: 2",
+		"@octocat x/y: 1",
+		"@work w/z: 1",
+	}, "each account, and each one's threads per repository")
+	s.gh.active = "work" -- gh's active account changes after the plan
+	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	eq(r.ok, true, "committed")
+	eq(r.message, "Marked 4 notifications read as @octocat and @work", "told with both accounts")
+	local as: { string } = {}
+	for _, req in requestsOf(s.gh, "mark-read") do
+		table.insert(as, (string.match(table.concat(req.call.argv, " "), "threads/(%d+)") or "?") .. "@" .. tostring(req.login))
+	end
+	same(as, { "11@octocat", "12@octocat", "13@octocat", "31@work" }, "each thread marked as the login it was read as, the one captured at plan time")
+end)
+
+-- One timeline event as Now's assigned search prints it: when, by whom and, for an assignment, to whom.
+local function ev(at: number, by: string, to: string?): { [string]: any }
+	return { at = h.iso(at), by = by, to = to or h.NULL }
+end
+
+-- An assigned GitHub issue of o/r with its newest timeline `events` (nil: they were not read).
+local function assignedIssue(n: number, updated: number, events: { { [string]: any } }?): { [string]: any }
+	return issueItem(n, "o/r", updated, { events = if events then h.array(events) else nil })
+end
+
+case("now: an assigned issue you changed yourself is not listed, until someone else changes it; one whose actor cannot be read is", function(w: World)
+	local s, b = nowScene(w, { thread("41", "o/r", "mention", "Issue 21", 21, true) }, function(s: h.HostScene)
+		s.gh.queries[ASSIGNED] = {
+			assignedIssue(21, EPOCH - 300, { ev(EPOCH - 300, "octocat", "octocat") }), -- you assigned it to yourself
+			assignedIssue(22, EPOCH - 400, { ev(EPOCH - 400, "boss", "octocat") }), -- someone else assigned it to you
+			assignedIssue(23, EPOCH - 440, { ev(EPOCH - 500, "octocat", "octocat"), ev(EPOCH - 450, "octocat"), ev(EPOCH - 440, "octocat") }), -- then labelled and renamed it
+			assignedIssue(24, EPOCH - 200, { ev(EPOCH - 2000, "carol"), ev(EPOCH - 200, "octocat") }), -- seen in between; only your comment since
+			assignedIssue(25, EPOCH - 500, nil), -- who changed it was not read
+			assignedIssue(26, EPOCH - 100, { ev(EPOCH - 100, "octocat") }), -- no assignment among its events
+			assignedIssue(27, EPOCH - 50, { ev(EPOCH - 300, "octocat", "octocat") }), -- updated after your last event
+		}
+		w.kv.put("triage", { version = 1, items = { ["o/r#24"] = { at = EPOCH - 1000, seen = "0000000000000000" } } })
+	end)
+	refreshNow(w, b)
+	same(whys(b), {
+		"no_2fr_2321 Mention",
+		"no_2fr_2327 Assigned: new",
+		"no_2fr_2326 Assigned: new",
+		"no_2fr_2322 Assigned: new",
+		"no_2fr_2325 Assigned: new",
+	}, "your own assignment, edits and comment list nothing; another's assignment and what cannot be read are listed; a notification about your own issue still is")
+	s.gh.queries[ASSIGNED] = {
+		assignedIssue(21, EPOCH + 30, { ev(EPOCH - 300, "octocat", "octocat"), ev(EPOCH + 30, "carol") }),
+		assignedIssue(24, EPOCH - 200, { ev(EPOCH - 2000, "carol"), ev(EPOCH - 200, "octocat") }),
+	}
+	w.advance(60 * 1000)
+	refreshNow(w, b)
+	has(table.concat(whys(b), ","), "no_2fr_2321 Mention", "the notification is listed")
+	eq(#pickerOf(b).items, 1, "o/r#21 once, at its higher rank")
+	s.gh.inbox.octocat = {}
+	s.gh.inboxStamp.octocat = "Tue, 20 Oct 2026 09:00:00 GMT"
+	w.advance(60 * 1000)
+	refreshNow(w, b)
+	same(whys(b), { "no_2fr_2321 Assigned: new" }, "someone else's comment lists it again; o/r#24 is still yours alone")
+end)
+
+case("now: a Jira issue whose newest change is your own is not listed, until someone else comments; one whose changes cannot be read is", function(w: World)
+	local comment = function(email: string, at: number): any
+		return { author = { emailAddress = email }, created = h.iso(at), updated = h.iso(at) }
+	end
+	local function changes(updated: number, comments: { any }): any
+		return { key = "x", fields = { updated = h.iso(updated), comment = { comments = h.array(comments) } } }
+	end
+	local _, b, acli = nowScene(w, {}, function(_, acli: h.Acli)
+		acli.searches[h.JIRA_NOW] = { jiraItem("ABC-1", "Self-assigned"), jiraItem("ABC-2", "Commented"), jiraItem("ABC-3", "Bob's"), jiraItem("ABC-4", "Unreadable"), jiraItem("ABC-5", "Seen") }
+		acli.changes["ABC-1"], acli.owned["ABC-1"] = changes(EPOCH - 120, {}), true -- you assigned it to yourself
+		acli.changes["ABC-2"] = changes(EPOCH - 60, { comment("bob@example.com", EPOCH - 900), comment("ann@example.com", EPOCH - 60) })
+		acli.changes["ABC-3"] = changes(EPOCH - 60, {}) -- someone else changed a field
+		acli.changes["ABC-5"], acli.owned["ABC-5"] = changes(EPOCH - 60, { comment("bob@example.com", EPOCH - 300) }), true
+		w.kv.put("triage", { version = 1, items = { ["abc#ABC-5"] = { at = EPOCH - 600, seen = "0000000000000000" } } })
+	end)
+	same(whys(b), { "nabc_23ABC-3 Assigned: new", "nabc_23ABC-4 Assigned: new", "nabc_23ABC-5 Assigned: changed" }, "your own assignment and comment list nothing; another's change, an unreadable one and a comment of Bob's since you saw it do")
+	acli.changes["ABC-1"], acli.owned["ABC-1"] = changes(EPOCH + 30, { comment("bob@example.com", EPOCH + 30) }), false
+	w.advance(60 * 1000)
+	refreshNow(w, b)
+	has(table.concat(listed(b), ","), "nabc_23ABC-1", "Bob's comment lists it again")
+end)
+
+-- Whether Now asked acli's search for exactly `jql`.
+local function askedJql(acli: h.Acli, jql: string): boolean
+	for _, req in acli.requests do
+		if req.kind == "search" and table.find(req.argv, jql) then
+			return true
+		end
+	end
+	return false
+end
+
+case("now: Jira's assigned work is My sprint's while the site has sprints", function(w: World)
+	local _, _, acli = nowScene(w, {})
+	yes(askedJql(acli, h.JIRA_NOW), "the open sprint's, as My sprint reads it")
+	yes(not askedJql(acli, h.JIRA_ASSIGNED), "not the backlog's")
+end)
+
+case("now: without sprints, Jira's assigned work is all your open work", function(w: World)
+	local _, _, acli = nowScene(w, {}, function(_, a: h.Acli)
+		a.sprints = false
+	end)
+	yes(askedJql(acli, h.JIRA_ASSIGNED), "all your open work")
+	yes(not askedJql(acli, h.JIRA_NOW), "and no sprint query")
+end)
+
+case("now: the Assigned heading says new or changed, and the preview says which", function(w: World)
+	local _, b = nowScene(w, {}, function(s: h.HostScene)
+		s.gh.queries[ASSIGNED] = { issueItem(12, "o/r", EPOCH - 300), issueItem(13, "o/r", EPOCH - 600) }
+		w.kv.put("triage", { version = 1, items = { ["o/r#13"] = { at = EPOCH - 3600, seen = "0000000000000000" } } })
+	end)
+	eq(b.title(), "Plotroom · Now · 2 assigned: new or changed", "the heading says what Now lists of your assigned issues")
+	same(whys(b), { "no_2fr_2312 Assigned: new", "no_2fr_2313 Assigned: changed" }, "the badges stay")
+	has(textOf(h.pickerNode(b)), "Assigned to you, and you haven't seen it yet", "a New one's preview")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
+	has(textOf(h.pickerNode(b)), "Assigned to you, and changed since you last saw it", "a Changed one's")
+end)
+
+local function ciThreads(n: number): { any }
+	local out: { any } = {}
+	for i = 1, n do
+		table.insert(out, thread(tostring(100 + i), "x/y", "ci_activity", "CI " .. i))
+	end
+	return out
+end
+
+case("now: a login whose notifications fill a whole page says the rest are on github.com", function(w: World)
+	local _, b = nowScene(w, ciThreads(50))
+	has(textOf(pickerOf(b).subtitle), "Notifications (@octocat): showing the newest 50; the rest are on github.com", "50 threads: the page is full")
+end)
+
+case("now: a login one thread short of a whole page has no cut-off line", function(w: World)
+	local _, b = nowScene(w, ciThreads(49))
+	eq(#pickerOf(b).items, 49, "all listed")
+	eq(string.find(textOf(pickerOf(b).subtitle), "showing the newest", 1, true), nil, "49: no line")
 end)
 
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)

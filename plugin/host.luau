@@ -562,7 +562,7 @@ local function blockDef(): BlockDef<State>
 				-- A new block opens on Now, unless it was launched to show one item; a restored one on the scope it saved.
 				nowOn = if mine then saved.now == true else pins[1] == nil,
 				nowAt = nil,
-				now = { mine = {}, review = {}, assigned = {}, notices = {}, login = nil, problems = {}, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
+				now = { mine = {}, review = {}, assigned = {}, finder = {}, notices = {}, yours = {}, problems = {}, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
 				agents = {},
 				agentInfo = {},
 				agentsOn = false,
