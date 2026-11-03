@@ -480,29 +480,22 @@ case("host: the empty queue's hint names the Settings key, or just Settings when
 	eq(pickerOf(b).empty[1].t, "No views yet. Open Settings to add one.", "or just Settings with neither")
 end)
 
-case("host: the In tab tooltip names the key that goes to the tab, or none once it is removed", function(w: World)
+case("host: the Go to tab button wears the key that goes to the tab, and is not shown once it is removed", function(w: World)
 	local s = hostScene(w, 3)
 	leaveWt(w, s, 1)
 	local b = openQueue(w)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1/src" })
 	b.render()
-	local function tip(): string?
-		for _, badge in pickerOf(b).items[1].badges do
-			if badge.text == "In tab" then
-				return badge.title
-			end
-		end
-		return nil
-	end
-	eq(tip(), "A tab works in this pull request's worktree (g goes there)", "the tooltip names the key")
+	same(actionOf(b, "goto").keys, { "g" }, "the default key")
 	w.kv.put("keys", { ["goto"] = "G" })
 	b.render()
-	eq(tip(), "A tab works in this pull request's worktree (G goes there)", "as it is now, the rows rebuilt")
-	same(actionOf(b, "goto").keys, { "G" }, "like the button's keycap")
+	same(actionOf(b, "goto").keys, { "G" }, "as it is now")
 	w.kv.put("keys", { ["goto"] = "" })
 	b.render()
-	eq(tip(), "A tab works in this pull request's worktree", "and not at all once it is removed")
-	eq(actionOf(b, "goto"), nil, "nor is the button shown")
+	eq(actionOf(b, "goto"), nil, "and not shown once it is removed")
+	for _, badge in pickerOf(b).items[1].badges or {} do
+		yes(badge.text ~= "In tab", "the row wears no In tab badge: the preview's chip says it")
+	end
 end)
 
 case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)

@@ -108,6 +108,11 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 		"no_2fr_2312 Assigned: new",
 		"nabc_23ABC-1 Assigned: new",
 	}, "agents that need input, your blocked PRs, reviews oldest first, your PRs ready to merge, notifications not already listed, then New items assigned to you; o/r#3 has nothing else and o/r#2's thread is not listed twice")
+	for _, row in pickerOf(b).items do
+		if row.id == "no_2fr_231" then
+			eq(h.detailText(row), "#1 · o/r", "a Now row names its repository (Now spans them all) and leaves what blocks it to its first badge")
+		end
+	end
 	eq(pickerOf(b).selected, "no_2fr_231", "the selection stays on its row as rows arrive above it")
 	eq(scopes[1].count, 9, "the sidebar counts them")
 	eq(b.title(), "Plotroom · Now · 9 need you", "and so does the pane title")
