@@ -89,11 +89,14 @@ function M.run()
 		["/a"] = { entry("/a", { main = true }), entry("/w1", { key = "#1", number = 1 }), entry("/shared") },
 		["/b"] = { entry("/b", { main = true }), entry("/w2", { locked = true }), entry("/gone", { prunable = true }) },
 	})
-	-- spans checkouts, lists a shared path once per repo (unnoted rows stay with the first), skips '', stays sequential, reports a failing checkout
+	-- spans checkouts, never lists a main checkout, lists a shared path once per repo (unnoted rows stay with the first), skips '', stays sequential, reports a failing checkout
 	local b = loaded(f, { ["o/z"] = "/b", ["o/a"] = "/a", ["o/dup"] = "/a", ["o/none"] = "", ["o/bad"] = "/nowhere" })
 	assert(f.max == 1)
 	assert(#f.calls == 4 and f.calls[1] == "inv:o/a" and f.calls[2] == "inv:o/bad" and f.calls[3] == "inv:o/dup" and f.calls[4] == "inv:o/z")
-	assert(#b.rows == 6 and #b.problems == 1)
+	assert(#b.rows == 4 and #b.problems == 1)
+	for _, r in b.rows do
+		assert(r.path ~= "/a" and r.path ~= "/b")
+	end
 	assert(board.rows(b)[1].repo == "o/a")
 	local w1 = board.rows(b)[1]
 	assert(w1.id == w1.repo .. "\0" .. w1.path)
@@ -105,7 +108,7 @@ function M.run()
 	for _, r in bsh.rows do
 		seenBy[r.path] = r.repo
 	end
-	assert(#bsh.rows == 4 and seenBy["/p1"] == "o/up" and seenBy["/p2"] == "o/fork" and seenBy["/s"] == "o/fork" and seenBy["/p3"] == "o/fork")
+	assert(#bsh.rows == 3 and seenBy["/p1"] == "o/up" and seenBy["/p2"] == "o/fork" and seenBy["/s"] == nil and seenBy["/p3"] == "o/fork")
 
 	-- remove refusals
 	local function row(path: string): board.Row
@@ -116,7 +119,7 @@ function M.run()
 		end
 		error("no row " .. path)
 	end
-	for _, p in { "/a", "/w2", "/gone" } do
+	for _, p in { "/w2", "/gone" } do
 		local ok = removeOf(b, f, row(p).id)
 		assert(not ok and row(p).refused ~= nil)
 	end
@@ -127,7 +130,7 @@ function M.run()
 	assert(not ok and f.calls[#f.calls] == "rm:/w1" and #f.removed == 0 and row("/w1").dirty == true)
 	f.dirty["/w1"] = false
 	local ok2 = removeOf(b, f, row("/w1").id)
-	assert(ok2 and #f.removed == 1 and #b.rows == 5)
+	assert(ok2 and #f.removed == 1 and #b.rows == 3)
 	-- the confirm's branch sentence follows the row's facts
 	assert(board.fate({ branch = nil } :: board.Row):find("no branch"))
 	assert(board.fate({ branch = "b", key = "#1" } :: board.Row):find("only if git confirms"))
@@ -184,7 +187,7 @@ function M.run()
 		checked, skipped = c, s
 	end)
 	assert(checked == board.CAP_CHECKS and skipped == 10 and asked == 20 and peak == 1)
-	assert(#b2.rows == 32 and #f2.removed == 0)
+	assert(#b2.rows == 31 and #f2.removed == 0)
 	local cands = 0
 	for _, r in b2.rows do
 		if r.candidate then
@@ -258,13 +261,13 @@ function M.run()
 	assert(not oldDone and b7.rows[1].path == "/w")
 
 	-- badges
-	local bd = board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", main = false, locked = true, missing = true, dirty = true, candidate = "merged" } :: board.Row, true)
+	local bd = board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", locked = true, missing = true, dirty = true, candidate = "merged" } :: board.Row, true)
 	local texts: { string } = {}
 	for _, x in bd do
 		table.insert(texts, x.text)
 	end
 	assert(table.concat(texts, ",") == "In tab,Changes,Merged,Locked,Missing,Unnoted")
-	for _, x in board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", main = false, number = 5, locked = false, missing = false } :: board.Row, false) do
+	for _, x in board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", number = 5, locked = false, missing = false } :: board.Row, false) do
 		assert(x.text ~= "Unnoted")
 	end
 	assert(board.label({ path = "/w/feature-x/", branch = "b" } :: any) == "feature-x")
@@ -284,11 +287,11 @@ function M.run()
 	assert(board.scan(bs, fs.api, 100, yes, function()
 		ticks += 1
 	end))
-	assert(fs.max == 1 and #fs.calls - before2 == 3 and fs.calls[before2 + 1] == "dirty:/w2" and not bs.scanning)
+	assert(fs.max == 1 and #fs.calls - before2 == 2 and fs.calls[before2 + 1] == "dirty:/w2" and not bs.scanning)
 	for _, r in bs.rows do
 		assert(r.missing or r.dirty == (r.path == "/w1"))
 	end
-	assert(not board.scan(bs, fs.api, 110, yes, function() end) and #fs.calls - before2 == 3)
+	assert(not board.scan(bs, fs.api, 110, yes, function() end) and #fs.calls - before2 == 2)
 	assert(board.scan(bs, fs.api, 110, yes, function() end, true))
 	assert(board.scan(bs, fs.api, 110 + board.SCAN_SECONDS, yes, function() end)) -- due this long after the forced scan started
 	-- offscreen: nothing starts; a live() that turns false stops it
