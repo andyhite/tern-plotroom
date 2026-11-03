@@ -378,7 +378,10 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	if v == nil then
 		local seeds: { Prompt } = {}
 		for _, p in kind.prompts do
-			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, outcome = p.outcome, checker = p.checker })
+			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, split = p.split, model = p.model, outcome = p.outcome, checker = p.checker })
+		end
+		for i, p in kind.prompts do
+			seeds[i].next = M.seedNext(kind, p.next, seeds)
 		end
 		return { version = 1, nextId = #seeds + 1, items = seeds }, nil
 	end
@@ -455,6 +458,34 @@ function M.nextOf(kind: Kind, nxt: string): (Kind, string)
 		return KINDS.prs, id
 	end
 	return kind, nxt
+end
+
+-- The saved `next` a seed's `next` (prompts.Seed) leads to, resolved by name: the action of `items` (kind's store) named
+-- like that seed, or for "prs:<seed id>" "prs:" .. the pull request action named like it. nil when there is none or the
+-- pull request store cannot be read: a dangling next would fail its chain start (reference.md › Chain limits).
+function M.seedNext(kind: Kind, nxt: string?, items: { Prompt }): string?
+	if not nxt then
+		return nil
+	end
+	local target, seedId = M.nextOf(kind, nxt)
+	local list = items
+	if target ~= kind then
+		local store = M.loadPrompts(target)
+		if not store then
+			return nil
+		end
+		list = store.items
+	end
+	for _, d in target.prompts do
+		if d.id == seedId then
+			for _, p in list do
+				if p.name == d.name then
+					return if target == kind then p.id else "prs:" .. p.id
+				end
+			end
+		end
+	end
+	return nil
 end
 
 -- Whether following `next` from prompt `from` leads back to it (a prompt naming itself included): a cycle. A qualified

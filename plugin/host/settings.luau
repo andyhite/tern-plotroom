@@ -4,6 +4,7 @@ local github = require("../github")
 local input = require("../input")
 local jira = require("../jira")
 local keys = require("../keys")
+local defaults = require("../prompts")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -20,11 +21,12 @@ type Prompts = core.Prompts
 type Settings = core.Settings
 type State = core.State
 type View = core.View
+type PromptSeed = defaults.Seed
 
 local INTEGRATIONS, KINDS, SETTINGS_ID, clip, printable, cli = core.INTEGRATIONS, core.KINDS, core.SETTINGS_ID, core.clip, core.printable, core.cli
 local PROMPT_CAP, chainReaches, editJiraRepos, editPrompts, editSetup, isTable, jiraReposOf, kindAndId, nextOf = storage.PROMPT_CAP, storage.chainReaches, storage.editJiraRepos, storage.editPrompts, storage.editSetup, storage.isTable, storage.jiraReposOf, storage.kindAndId, storage.nextOf
 local livePrompts, loadAll, loadPrompts, loadViews, promptById, readCheckouts, readMap = storage.livePrompts, storage.loadAll, storage.loadPrompts, storage.loadViews, storage.promptById, storage.readCheckouts, storage.readMap
-local removeRepo, saveCheckout, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
+local removeRepo, saveCheckout, seedNext, setupOf, stringList, writeViews, formats = storage.removeRepo, storage.saveCheckout, storage.seedNext, storage.setupOf, storage.stringList, storage.writeViews, storage.formats
 local accountOf, activeView, changed, groupLabel, login, orderedViews, parseRepo = engine.accountOf, engine.activeView, engine.changed, engine.groupLabel, engine.login, engine.orderedViews, engine.parseRepo
 local propagate, retry, snapKey, switchView, trackerOf, viewOf, waitOf, ghActive = engine.propagate, engine.retry, engine.snapKey, engine.switchView, engine.trackerOf, engine.viewOf, engine.waitOf, engine.ghActive
 local helpOverlay, paceLine, queuePicker, rpcNodes = render.helpOverlay, render.paceLine, render.queuePicker, render.rpcNodes
@@ -244,7 +246,8 @@ local function pageContent(state: State): ({ any }, { Node })
 				local qid = kind.id .. ":" .. p.id
 				local first = string.match(p.text, "^%s*([^\n]*)") or ""
 				if summary("popen:", qid, p.name, function()
-					local parts: { string } = { if first ~= "" then first else "Empty" }
+					-- The first line is cut short of the row's 120 so a model after it still shows.
+					local parts: { string } = { if first ~= "" then clip(first, 80) else "Empty" }
 					if p.model then
 						table.insert(parts, p.model)
 					end
@@ -1223,19 +1226,18 @@ function M.runAction(state: State, act: string, row: string)
 		local kind = KINDS[string.match(row, "^prestore:(%a+)$") or ""]
 		if kind then
 			s.errors[row] = editPrompts(kind, function(store: Prompts): string?
-				local added: { [Prompt]: string } = {} -- an added default -> the seed id of its checker
+				local added: { [Prompt]: PromptSeed } = {} -- an added default -> its seed
 				for _, d in require("../prompts").missing(kind.prompts, store.items) do
-					local p: Prompt = { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, outcome = d.outcome }
+					local p: Prompt = { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, split = d.split, model = d.model, outcome = d.outcome }
 					table.insert(store.items, p)
 					store.nextId += 1
-					if d.checker then
-						added[p] = d.checker
-					end
+					added[p] = d
 				end
-				-- A default's checker is named by its seed id: it is the saved action named like that seed.
-				for p, seedId in added do
+				-- A default's checker and next are named by seed id: each is the saved action named like that seed.
+				for p, seed in added do
+					p.next = seedNext(kind, seed.next, store.items)
 					for _, d in kind.prompts do
-						if d.id == seedId then
+						if d.id == seed.checker then
 							for _, other in store.items do
 								if other.name == d.name and other ~= p then
 									p.checker = other.id

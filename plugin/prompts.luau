@@ -3,11 +3,17 @@
 -- prompts-prs / prompts-issues is absent, and the first edit in Settings › Actions saves them as they stand. Written
 -- for an omp agent that Plotroom starts in the item's worktree (`worktree` false: the repository's main checkout), with
 -- the variables KINDS[kind].vars lists filled in. Each stays under host/storage's PROMPT_CAP, so it can be edited.
+-- Each seed sets every action option but two. No `key`: keys.luau gives only the command palette a default key, and
+-- default action keys would take keys the one-key preset (keys.preset) wants. No `status` (Move to status): it writes
+-- to Jira without a confirm, which is allowed only because the status is the user's own setting (reference.md › Trust),
+-- and Jira status names differ between projects.
 
 local M = {}
 
--- `checker` (nil: none) is the id of the seed of the same kind that checks its runs (an action's Checked by).
-export type Seed = { id: string, name: string, text: string, worktree: boolean?, outcome: string?, checker: string? }
+-- `checker` (nil: none) is the id of the seed of the same kind that checks its runs (an action's Checked by). `next`
+-- (nil: none) names its Next action the same way, a pull request seed as "prs:<seed id>"; host/storage's seedNext
+-- resolves it by name. `model` nil: omp's default; `split` true: opens beside the queue.
+export type Seed = { id: string, name: string, text: string, worktree: boolean?, split: boolean?, model: string?, outcome: string?, checker: string?, next: string? }
 
 -- What an action's run must leave behind (an action's Outcome, PRODUCT.md › Glossary › Outcome), in the order Settings
 -- lists them. Plotroom checks it against GitHub when the run's turn ends; "none" is never checked. A saved action
@@ -522,17 +528,18 @@ Requested edits to the tickets → show them again for approval, unless I author
 </critical>]==]
 
 M.prs = {
-	{ id = "p1", name = "Review", text = REVIEW, outcome = "review" },
-	{ id = "p2", name = "Quick review", text = QUICK_REVIEW, worktree = false, outcome = "review" },
+	{ id = "p1", name = "Review", text = REVIEW, model = "@slow", outcome = "review" },
+	-- The same review as Review, minus the worktree and running code: same model.
+	{ id = "p2", name = "Quick review", text = QUICK_REVIEW, worktree = false, split = true, model = "@slow", outcome = "review" },
 	{ id = "p3", name = "Address feedback", text = ADDRESS, outcome = "replied" },
 	{ id = "p4", name = "Watch", text = WATCH, outcome = "merged" },
 } :: { Seed }
 
 M.issues = {
-	{ id = "p1", name = "Implement", text = IMPLEMENT, outcome = "pr", checker = "p4" },
-	{ id = "p2", name = "Fix", text = FIX, outcome = "pr", checker = "p4" },
-	{ id = "p3", name = "Plan", text = PLAN, worktree = false },
-	{ id = "p4", name = "Check", text = CHECK },
+	{ id = "p1", name = "Implement", text = IMPLEMENT, outcome = "pr", checker = "p4", next = "prs:p4" },
+	{ id = "p2", name = "Fix", text = FIX, outcome = "pr", checker = "p4", next = "prs:p4" },
+	{ id = "p3", name = "Plan", text = PLAN, worktree = false, model = "@plan" },
+	{ id = "p4", name = "Check", text = CHECK, model = "@slow" },
 } :: { Seed }
 
 -- The `{criteria}` block: the acceptance criteria Plotroom saved on the run at dispatch (tracker.criteria), the same

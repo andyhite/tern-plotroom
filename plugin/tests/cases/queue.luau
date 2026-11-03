@@ -1776,6 +1776,71 @@ case("host: an issue action's Next action also offers the pull request actions b
 	eq(#w.kv.get("prompts-issues").items, 3, "the issue actions stay")
 end)
 
+case("host: the default actions set each action's model, Opens in and Next action; Implement and Fix lead into the pull request action named Watch, found by name, and into none without it", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("prompts-prs", nil)
+	w.kv.put("prompts-issues", nil)
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	-- Each default as Settings shows it: name, model, Opens in and Next action.
+	local function shown(kind: string): { string }
+		local out: { string } = {}
+		for i = 1, 4 do
+			local qid = kind .. ":p" .. i
+			expand(b, "popen:" .. qid)
+			table.insert(out, table.concat({ rowIn(b, "popen:" .. qid).label, rowIn(b, "pmodel:" .. qid).control.value, rowIn(b, "psplit:" .. qid).control.value, rowIn(b, "pnext:" .. qid).control.value }, "|"))
+		end
+		return out
+	end
+	same(shown("prs"), { "Review|@slow|tab|none", "Quick review|@slow|split|none", "Address feedback||tab|none", "Watch||tab|none" }, "the pull request defaults")
+	same(shown("issues"), { "Implement||tab|prs:p4", "Fix||tab|prs:p4", "Plan|@plan|tab|none", "Check|@slow|tab|none" }, "the issue defaults")
+	has(rowIn(b, "popen:prs:p1").hint, " · @slow", "the summary names the model")
+	expand(b, "popen:issues:p1")
+	local label: string? = nil
+	for _, o in rowIn(b, "pnext:issues:p1").control.options do
+		if o.value == "prs:p4" then
+			label = o.label
+		end
+	end
+	eq(label, "Watch (pull request)", "Implement's Next action reads as Watch")
+	local storage: any = w.load("host/storage")
+	local core: any = w.load("host/core")
+	local function nexts(): { string }
+		local out: { string } = {}
+		for _, p in storage.loadPrompts(core.KINDS.issues).items do
+			table.insert(out, p.name .. ">" .. (p.next or "-"))
+		end
+		return out
+	end
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Watch", "Watch {url}") })
+	same(nexts(), { "Implement>prs:p2", "Fix>prs:p2", "Plan>-", "Check>-" }, "a saved Watch under another id is the one led into")
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Watching", "Watch {url}") })
+	same(nexts(), { "Implement>-", "Fix>-", "Plan>-", "Check>-" }, "with Watch renamed, none: a dangling next is never seeded")
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	same(nexts(), { "Implement>-", "Fix>-", "Plan>-", "Check>-" }, "nor with Watch deleted")
+	w.kv.put("prompts-prs", "garbage")
+	same(nexts(), { "Implement>-", "Fix>-", "Plan>-", "Check>-" }, "nor when the pull request actions cannot be read")
+end)
+
+case("host: Add missing defaults restores each default's model and Opens in, and points Implement's and Fix's Next action at the saved Watch's id", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Watch", "My own watch") })
+	w.kv.put("prompts-issues", { version = 1, nextId = 3, items = array({ promptOf("p1", "Check", "My own check"), promptOf("p2", "Plan", "Plan {url}") }) })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:prs" })
+	local function rows(key: string): { string }
+		local out: { string } = {}
+		for _, p in w.kv.get(key).items do
+			table.insert(out, table.concat({ p.id, p.name, p.model or "-", if p.split then "split" else "tab", p.next or "-", p.checker or "-" }, " "))
+		end
+		return out
+	end
+	same(rows("prompts-prs"), { "p1 Watch - tab - -", "p2 Review @slow tab - -", "p3 Quick review @slow split - -", "p4 Address feedback - tab - -" }, "the pull request defaults come back with their model and Opens in")
+	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:issues" })
+	same(rows("prompts-issues"), { "p1 Check - tab - -", "p2 Plan - tab - -", "p3 Implement - tab prs:p1 p1", "p4 Fix - tab prs:p1 p1" }, "Implement and Fix lead into the saved Watch (p1, not the seed's p4); edited defaults keep their own options")
+end)
+
 case("host: a prompt's shortcut is one free key on the Keys page: the row refuses what the queue uses or another prompt has, and clearing it removes the key", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}", "t") })

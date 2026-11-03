@@ -359,6 +359,25 @@ windowCase("window: a prompt set to open in this tab starts its agent beside the
 	eq(w.toasts[#w.toasts].sub, "Review", "the second line is the action's name, not its prompt")
 end)
 
+windowCase("window: the default Quick review starts beside the queue as omp --model @slow", function(w: World)
+	local s, b = agentScene(w)
+	w.kv.put("prompts-prs", nil)
+	b.render()
+	cardSurface(w, b)
+	local agent: number? = nil
+	local start = w.cx.agents.start
+	w.cx.agents.start = function(self: any, opts: any): number
+		agent = start(self, opts)
+		return agent :: number
+	end
+	w.click(runLink("o/r", 5, "p2"))
+	w.flush()
+	eq(w.window.agents[1].command, "omp --model @slow", "with the default's model")
+	eq(w.window.agents[1].cwd, s.root, "in the main checkout")
+	eq(w.window.panes[agent :: number].tab, w.window.panes[1].tab, "as a block in the queue's tab")
+	eq(w.toasts[#w.toasts].sub, "Quick review", "the default Quick review")
+end)
+
 windowCase("window: a card button of a prompt the picker's size budget would cut still runs it, the request naming the prompt", function(w: World)
 	local s, b = agentScene(w)
 	local text = string.rep("x", 7900) .. " {url}"
