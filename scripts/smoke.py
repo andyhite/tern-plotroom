@@ -1558,7 +1558,7 @@ def sc_workflow(s: Smoke) -> None:
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
     s.wait_text("the Worktrees list lists the worktree git has, unnoted", "Unnoted")
-    s.wait_text("and the linked worktrees", "flow-linked")
+    s.wait_text("and the linked worktrees, titled by branch", "board-linked")
     s.eq("no Main badge: the checkout itself is not listed", False, any(t == "Main" for t in s.texts()))
     s.eq("nor its folder", False, any(t == str(root) for t in s.texts()))
     s.wait_text("the dirty worktree says so by itself", "Changes")
@@ -1587,15 +1587,16 @@ def sc_workflow(s: Smoke) -> None:
             seen_linked = True
             s.eq("the fetched title replaced Loading #1", False, any(t.startswith("Loading #1") for t in s.texts()))
             s.shot("board-linked-preview")
-        # An unlinked worktree's preview is titled by its folder: that text twice (the row's label and the preview's title).
-        elif sum(1 for t in ts if t == wt.name) >= 2:
+        # An unlinked worktree's preview is titled by its branch: that text at least twice (the row's title and the preview's title),
+        # with its folder path under the row.
+        elif sum(1 for t in ts if t == "board-branch") >= 2 and any(t == str(wt) for t in ts):
             seen_plain = True
             s.shot("board-unlinked-preview")
         if seen_linked and seen_plain and seen_both:
             break
     s.eq("a worktree linked to both a pull request and an issue previews both fetched titles", True, seen_both)
     s.eq("the linked worktree's preview names its pull request by the fetched title", True, seen_linked)
-    s.eq("the unlinked worktree's preview falls back to its folder name, apart from its row", True, seen_plain)
+    s.eq("the unlinked worktree's preview and row are titled by its branch, its path under the row", True, seen_plain)
     s.ctl_ok("key", "Escape")
     time.sleep(1.0)
     s.eq("Escape keeps the list's selection", 1, len(s.selection()))
@@ -1963,15 +1964,15 @@ def sc_previews(s: Smoke) -> None:
     s.ctl_ok("type", json.dumps("Worktrees"))
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
-    s.wait_text("the Worktrees list", "flow-preview")
+    s.wait_text("the Worktrees list", "preview-31")
     for n in range(12):  # walk the rows to the worktree made for #31
         if n:
             s.ctl_ok("key", "Down")
         time.sleep(0.7)
-        if "flow-preview" in s.preview_texts():
+        if "preview-31" in s.preview_texts():
             break
     s.wait_until("the worktree's preview, its pull request read", lambda: any("Preview PR 31" in t for t in s.preview_texts()))
-    in_order("a worktree: head, title, facts, linked pull requests", ["f/low", "Worktree", "flow-preview", "Branch", "Linked pull requests", "#31", "Preview PR 31"])
+    in_order("a worktree: head, title, facts, linked pull requests", ["f/low", "Worktree", "preview-31", "Branch", "Linked pull requests", "#31", "Preview PR 31"])
     s.shot("preview-worktree")
 
 

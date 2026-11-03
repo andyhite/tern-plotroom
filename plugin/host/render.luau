@@ -1792,7 +1792,7 @@ local function finishedConfirm(state: State): Node
 	for _, id in ids do
 		for _, r in engine.boardRows(state) do
 			if r.id == id then
-				table.insert(items, { k = if r.branch then r.branch else board.label(r), v = { ui.span(r.path, "code") } })
+				table.insert(items, { k = board.label(r), v = { ui.span(r.path, "code") } })
 			end
 		end
 	end

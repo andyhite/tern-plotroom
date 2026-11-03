@@ -270,8 +270,8 @@ function M.run()
 	for _, x in board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", number = 5, locked = false, missing = false } :: board.Row, false) do
 		assert(x.text ~= "Unnoted")
 	end
-	assert(board.label({ path = "/w/feature-x/", branch = "b" } :: any) == "feature-x")
-	assert(board.label({ path = "", branch = nil } :: any) == "(detached)")
+	assert(board.label({ path = "/w/feature-x/", branch = "b" } :: any) == "b")
+	assert(board.label({ path = "/w/feature-x/", branch = nil } :: any) == "(detached)")
 
 	-- automatic dirty scan: sequential, deduped, selected first, due-gated, failures never clean
 	local fs = fake({ ["/a"] = { entry("/a", { main = true }), entry("/w1"), entry("/w2"), entry("/gone", { prunable = true }) } })

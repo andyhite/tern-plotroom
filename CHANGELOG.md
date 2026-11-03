@@ -32,6 +32,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Changed
 
 - Worktrees lists only linked worktrees, one group per repository: a repository's checkout itself is no longer listed, and the **Main** badge and preview fact are gone.
+- Each Worktrees row is titled by its branch (a detached worktree reads "(detached)") instead of the worktree folder's name; the worktree's full path is the line under it.
 - The pane title and Now's heading say what needs you by reason (`2 agents need you · 1 Blocked · 3 reviews requested`) instead of a bare `N need you`; the status bar's `N need you` stays the one cross-pane count and the one that is a button. The pane title no longer counts the view's items (`My PRs (12)`), and the queue's heading no longer shows Tern's result count at its right: both repeated the sidebar.
 - Protocol 35: Mark read… is planned as `mark-read` (was `inbox-read`), so a window asks only hosts that run this release.
 - Protocol 34: a repository's missing-checkout answer may name the folder found for it. A window still asks protocol 33 hosts, which ask for a folder as before.
