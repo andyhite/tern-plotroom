@@ -15,56 +15,11 @@
 	display: none;
 }
 
-/* Keep the status label and actions in one bottom row; the native picker otherwise stacks two bars. */
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-sheet {
-	display: grid;
-	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-	grid-template-rows: auto minmax(0, 1fr) auto;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-head,
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-body {
-	grid-column: 1 / -1;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip {
-	grid-column: 1;
-	grid-row: 3;
-	min-width: 0;
-}
-
-/* The chips are always empty here; hiding them gives the label their room (it still ellipsizes natively when the pane is tiny). */
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip-chips {
+/* Tern counts the picker's results at the header's right, the number the sidebar already shows beside the view (and
+   Now's heading says what needs you, by kind): a bare number that repeats the sidebar is not shown. */
+[data-surface='plugin.plotroom.prs'] .sf-picker .pk-count {
 	display: none;
 }
-
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-strip-l {
-	flex: 1;
-	min-width: 0;
-	max-width: none;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.footer-status'] .pk-bar {
-	grid-column: 2;
-	grid-row: 3;
-	min-width: 0;
-}
-
-/* Tern's picker hides action-bar keycaps outside the omp console; every button here has a one-key shortcut worth showing. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbds {
-	display: inline-flex;
-	gap: 2px;
-}
-
-/* Tern's keycap is 20px, nearly the 28px button's height; 16px sits inside it like a label. */
-[data-surface='plugin.plotroom.prs'] .sf-picker .pk-btn .kbd {
-	min-width: 16px;
-	height: 16px;
-	padding: 0 4px;
-	border-radius: 4px;
-	font-size: 10px;
-}
-
 /* The PR description is a folded card only for its native clamp and "N more lines" button: no head row, no indent. */
 [data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.description'] > .sf-card-head {
 	display: none;

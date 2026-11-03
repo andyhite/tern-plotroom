@@ -4,7 +4,6 @@ local board = require("../board")
 local github = require("../github")
 local input = require("../input")
 local keys = require("../keys")
-local sorting = require("../sorting")
 local tracker = require("../tracker")
 local triage = require("../triage")
 local worktree = require("../worktree")
@@ -88,24 +87,18 @@ local function stageBadge(id: string, why: string?, note: Note?): { text: string
 	return if why then { text = b.text, tone = b.tone, title = why } else b
 end
 
--- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip, `go` is the key that
--- goes to the tab ("": none). The Worktree badge is left to the stage badge when that says Worktree.
-local function tabBadges(one: string, note: Note?, open: boolean, go: string, stage: string): { any }
+-- The Worktree badge an item's row starts with, left to the stage badge when that says Worktree.
+local function worktreeBadges(note: Note?, stage: string): { any }
 	local badges: { any } = {}
-	if open then
-		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree" .. (if go ~= "" then " (" .. go .. " goes there)" else "") })
-	end
 	if note and note.ok and stage ~= "worktree" then
 		table.insert(badges, { text = "Worktree", tone = noteTone(note), title = noteTitle(note) })
 	end
 	return badges
 end
 
--- The picker row `key` shows: its labels join `badges` (none: no badges prop).
-local function finishRow(key: string, title: string, author: string, detail: { any }, badges: { any }, labels: { string }): { [string]: any }
-	for _, l in labels do
-		table.insert(badges, { text = l })
-	end
+-- The picker row `key` shows: only what decides at the list level (LEDGER.md › Picker rows); labels, age, the
+-- review and the checks are the preview's.
+local function finishRow(key: string, title: string, author: string, detail: { any }, badges: { any }): { [string]: any }
 	return {
 		id = pickerId("n", key),
 		label = title,
@@ -116,58 +109,44 @@ local function finishRow(key: string, title: string, author: string, detail: { a
 	}
 end
 
--- A pull request's picker row; its stage says Merged or Closed, so only Draft is left of its state.
-local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
-	local check = if pr.checks then CHECK[pr.checks] else nil
-	local badges = tabBadges("pull request", note, open, go, stage)
+-- "#N", then " · repo" when `repos` (the view spans more than one repository).
+local function refDetail(ref: string, repo: string?, repos: boolean): { any }
+	local detail: { any } = { ui.span(ref, "num") }
+	if repos and repo then
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span(repo, "mono"))
+	end
+	return detail
+end
+
+-- A pull request's picker row: "#N · repo · <what blocks it>"; its stage says Merged or Closed, so only Draft is left
+-- of its state.
+local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string?, repos: boolean): { [string]: any }
+	local badges = worktreeBadges(note, stage)
 	if stateKind(pr) == "draft" then
 		table.insert(badges, STATE_BADGE.draft)
 	end
-	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
-	-- they don't read as the state and label badges.
-	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span(pr.repo, "mono"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
-	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
-	if review then
+	local detail = refDetail("#" .. pr.number, pr.repo, repos)
+	if why then
 		table.insert(detail, " · ")
-		table.insert(detail, ui.span(review.text, review.tone))
+		table.insert(detail, ui.span(why, "error"))
 	end
-	if check and pr.runTotal > 0 then
-		-- ponytail: passes among the search's first 25 checks (the total is exact); read the detail runs if that misleads.
-		local ok = 0
-		for _, r in pr.runs do
-			if r.status == "success" or r.status == "neutral" then
-				ok += 1
-			end
-		end
-		table.insert(detail, " · ")
-		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
-	end
-	return finishRow(pr.key, pr.title, pr.author, detail, badges, pr.labels)
+	return finishRow(pr.key, pr.title, pr.author, detail, badges)
 end
 
--- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its workflow
--- status or why it closed (the stage already says Closed), and its labels as badges. The preview lists the assignees; the rows do not.
-local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
-	local badges = tabBadges("issue", note, open, go, stage)
+-- An issue's picker row: "#N · repo" (Jira: "ABC-12 · Type", the key already names its project); its workflow status
+-- or why it closed (the stage already says Closed).
+local function issueRow(issue: tracker.Issue, note: Note?, stage: string, repos: boolean): { [string]: any }
+	local badges = worktreeBadges(note, stage)
 	local sb = issueBadge(issue)
 	if issue.status or (issue.state == "closed" and sb ~= STATE_BADGE.closed) then
 		table.insert(badges, sb)
 	end
-	local at = if issue.tracker == "github" then "@" else ""
-	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
-	if issue.tracker == "github" then
-		table.insert(detail, " · ")
-		table.insert(detail, ui.span(issue.repo, "mono")) -- a Jira key already names its project
-	end
-	table.insert(detail, " · ")
-	table.insert(detail, ui.span(at .. issue.author, "mono"))
-	if issue.created > 0 then
-		table.insert(detail, " opened " .. github.age(issue.created) .. " ago")
-	end
+	local detail = refDetail(tracker.refLabel(issue.ref), if issue.tracker == "github" then issue.repo else nil, repos)
 	if issue.type then
 		table.insert(detail, " · " .. issue.type)
 	end
-	return finishRow(issue.key, issue.title, issue.author, detail, badges, issue.labels)
+	return finishRow(issue.key, issue.title, issue.author, detail, badges)
 end
 
 -- An agent's state as a row badge: the window reports it (`agent-status`); an idle or exited agent is no sign the work is done.
@@ -216,9 +195,9 @@ local function checkBadge(info: { check: string? }?): { text: string, tone: stri
 end
 
 -- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
--- Snoozed) in front of `row`'s badges.
-local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
-	local extra: { any } = { stageBadge(stage, why, state.notes[item.key]) }
+-- Snoozed) in front of `row`'s badges. The stage badge carries no reason: a Blocked row's detail says what blocks it.
+local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string)
+	local extra: { any } = { stageBadge(stage, nil, state.notes[item.key]) }
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
@@ -287,32 +266,34 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	return ui.node("kv", { key = "stage", items = withValue(items) })
 end
 
--- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
--- ages), the set of items open in a tab changes or so does the key that goes to a tab.
-local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { any }
+-- The picker rows of a snapshot, built once: again only when a worktree report arrives, the block's state changes or
+-- the minute does (a snooze ends).
+local function rowsOf(state: State, snap: Snap): { any }
 	local minute = os.time() // 60
-	local go = (keys.load())["goto"]
-	local ids: { string } = {}
-	for id in open do
-		table.insert(ids, id)
-	end
-	table.sort(ids)
-	local openKey = go .. "|" .. table.concat(ids, ",") .. "|" .. state.rev
 	local cached = snap.rows
-	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsOpen == openKey then
+	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsState == state.rev then
 		return cached
+	end
+	-- A repository is worth a row's room only when the rows span more than one.
+	local repos, first = false, nil
+	for _, item in snap.items do
+		local repo = item.repo or ""
+		first = first or repo
+		if repo ~= first then
+			repos = true
+			break
+		end
 	end
 	local rows: { any } = {}
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
-		local isOpen = open[item.key] == true
 		local stage, why = engine.stage(state, snap.kind, item)
-		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go, stage) else pickerItem(item, state.notes[item.key], isOpen, go, stage)
-		decorate(state, snap.kind, item, row, stage, why)
+		local row = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, why, repos)
+		decorate(state, snap.kind, item, row, stage)
 		table.insert(rows, row)
 	end
 	tern.json.array(rows)
-	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
+	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsState = rows, state.noteSeq, minute, state.rev
 	return rows
 end
 
@@ -338,7 +319,7 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
-		-- How many need you (Now's rows not snoozed): the pane title says it, and the window's status line takes it.
+		-- How many need you (Now's rows not snoozed): the sidebar counts it, and the window's status line takes it.
 		ui.node("text", { key = "need", text = tostring(engine.nowCount(state)), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
@@ -433,8 +414,7 @@ end
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
 -- tab while a tab works in it, Agent (the picker of the saved prompts offered under this view, or typed text), Go to
 -- agent and Seen. A missing repository or checkout is asked for in the window's palette when one is needed. An
--- action's `keys` are its keycap: its configured key (Settings › General); the action bar shows only those
--- that have one.
+-- action's `keys` are its keycap: its configured key (Settings › General), which the worktree card's rows show.
 local AGENT_COMMANDS = { "agentint", "agentstop", "agentmsg" } -- Interrupt, Stop and Message the selected item's live agent
 type Action = { id: string, label: string, keys: { string }?, href: string }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
@@ -1165,22 +1145,10 @@ local function boardPreview(state: State): { Node }
 	return kids
 end
 
--- Only buttons with a key show.
-local function keyed(actions: { any }): { any }
-	local out: { any } = {}
-	for _, a in actions do
-		if a.keys then
-			table.insert(out, a)
-		end
-	end
-	return out
-end
-
--- Turns the queue's picker props into the Worktrees board's: its rows, subtitle and action bar.
+-- Turns the queue's picker props into the Worktrees board's: its rows and subtitle.
 local function boardProps(state: State, props: { [string]: any })
 	local items, order = engine.boardItems(state)
 	local row = engine.boardSelected(state)
-	local map = keys.load()
 	local rows = engine.boardRows(state)
 	local sub: { any } = {}
 	if state.boardBusy then
@@ -1196,7 +1164,6 @@ local function boardProps(state: State, props: { [string]: any })
 			table.insert(sub, ui.span(p, "warning"))
 		end
 	end
-	local removable = row and not row.main and not row.locked and not row.missing
 	props.icon, props.title, props.subtitle, props.noun = "folder", { ui.span("Worktrees", "strong") }, sub, "worktrees"
 	props.placeholder = "Worktrees are not searched"
 	props.state = if state.boardBusy and not state.board.loaded then "loading" else "ready"
@@ -1204,16 +1171,6 @@ local function boardProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if row then pickerId("w", row.id) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	local actions: { any } = {
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh"), disabled = if state.boardBusy then "Reading…" else nil },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
-		{ id = "wt-cleanup", label = "Find finished worktrees", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
-		{ id = "wt-remove", label = "Remove", keys = keys.caps(map, "wt-remove"), ["end"] = true, disabled = if removable then nil else "The main, locked or missing worktrees are not removed here" },
-	}
-	props.actions = keyed(actions)
-	-- Unkeyed, so `keyed` would drop it: Remove finished is a button with no shortcut.
-	table.insert(props.actions, { id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil })
 end
 
 -- The Agents scope's preview of the selected agent, in the order every preview shares (docs/reference.md › Finer points
@@ -1261,7 +1218,6 @@ end
 local function agentsProps(state: State, props: { [string]: any })
 	local rows = engine.agentRows(state)
 	local current = engine.agentSelected(state)
-	local map = keys.load()
 	local items: { any } = {}
 	local order: { any } = {}
 	local groups: { [string]: { any } } = {}
@@ -1332,11 +1288,6 @@ local function agentsProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if current then pickerId("g", current.key) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	props.actions = keyed({
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
-		{ id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true, disabled = if current then nil else "No agent is listed" },
-	})
 end
 
 -- What GitHub's notification reasons say, and how much each wants you; any other reason is shown as GitHub spelled it.
@@ -1455,9 +1406,6 @@ local function nowProps(state: State, props: { [string]: any })
 	local now = state.now
 	local rows = engine.nowRows(state)
 	local current = engine.nowSelected(state)
-	local map = keys.load()
-	local open = openItems(state)
-	local go = map["goto"]
 	local items: { any } = {}
 	local order: { any } = {}
 	for _, row in rows do
@@ -1466,7 +1414,8 @@ local function nowProps(state: State, props: { [string]: any })
 		if row.item and row.kind then
 			local stage = engine.stage(state, row.kind, row.item)
 			local note = state.notes[row.key]
-			item = if row.kind == "issues" then issueRow(row.item, note, open[row.key] == true, go, stage) else pickerItem(row.item, note, open[row.key] == true, go, stage)
+			-- Now spans every repository; its first badge already says what blocks a PR.
+			item = if row.kind == "issues" then issueRow(row.item, note, stage, true) else pickerItem(row.item, note, stage, nil, true)
 		else
 			local detail: { any } = {}
 			if row.notice then
@@ -1505,9 +1454,9 @@ local function nowProps(state: State, props: { [string]: any })
 		busy.fx = "shimmer"
 		table.insert(sub, busy)
 	end
-	local count = engine.nowCount(state)
-	if count > 0 then
-		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. count .. " need you", "accent"))
+	local need = engine.nowSummary(state)
+	if need then
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. need, "accent"))
 	end
 	for _, line in now.problems do
 		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. printable(line), "warning"))
@@ -1524,19 +1473,6 @@ local function nowProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
 	props.selected = if current then current.id else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	props.actions = keyed({
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true },
-	})
-	-- Unkeyed buttons, so `keyed` would drop them: an agent that needs you is gone to from its row, and answered when it
-	-- waits for input.
-	if current and current.rank == 1 and engine.agentHref(current.key) then
-		if current.waiting then
-			table.insert(props.actions, { id = "agentreply", label = "Reply…", ["end"] = true })
-		end
-		table.insert(props.actions, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true })
-	end
 end
 
 -- The one-key shortcuts as the checklist decided them ("use" | "no"), "set" when none is left to bind, else nil.
@@ -1649,7 +1585,7 @@ function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
 	local open = openItems(state)
-	local items: { any } = if snap then rowsOf(state, snap, open) else tern.json.array({})
+	local items: { any } = if snap then rowsOf(state, snap) else tern.json.array({})
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
@@ -1673,12 +1609,9 @@ function M.queuePicker(state: State): Node
 	elseif snap then
 		note(ui.span("updated " .. os.date("%H:%M", snap.fetched), "muted"))
 	end
-	-- The sort order shares the bottom row with the actions (plotroom.css).
-	local strip: { string } = {}
-	if view and not engine.isPin(view.id) then
-		-- Always shown: which order the list is in. A view with no saved sort keeps GitHub's search order, or Jira's
-		-- status order.
-		table.insert(strip, 1, "Sort: " .. (if view.sort then sorting.label(view.sort) elseif view.integration == "github" then "GitHub's order" else "Default (status order)"))
+	local wait = waitOf(state)
+	if wait > 0 then
+		note(ui.span("Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait), "warning"))
 	end
 	if state.showSnoozed then
 		note(ui.span("Snoozed shown", "muted"))
@@ -1706,35 +1639,8 @@ function M.queuePicker(state: State): Node
 
 	local dropdown = state.cx.cols <= 127
 	local scopes, activeScope = M.scopeRows(state)
-
-	local wait = waitOf(state)
 	local map = keys.load()
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
-	-- Only buttons with a key show: Settings and Refresh on the left, the selected item's on the right, the command
-	-- palette last in the corner.
-	local all: { any } = {
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{
-			id = "retry",
-			label = "Refresh",
-			keys = keys.caps(map, "refresh"),
-			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
-		},
-	}
-	for _, a in acts do
-		table.insert(all, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
-	end
-	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true })
-	local actions = keyed(all)
-	if not snap and problem then
-		-- The error card is all there is: it offers Refresh and Settings even without a key.
-		actions = {}
-		for _, a in all do
-			if a.keys or a.id == "settings" or a.id == "retry" then
-				table.insert(actions, a)
-			end
-		end
-	end
 	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
 	local hiddenHow = if map.snoozed ~= "" then "press " .. map.snoozed else "pick Show or hide snoozed in Commands"
 
@@ -1745,7 +1651,7 @@ function M.queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and not state.nowOn and #strip > 0 then ".footer-status" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1774,7 +1680,6 @@ function M.queuePicker(state: State): Node
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
 		scope = activeScope,
-		actions = actions,
 	}
 	if state.query then
 		local qp = input.props(state.query)
@@ -1799,9 +1704,6 @@ function M.queuePicker(state: State): Node
 		nowProps(state, props)
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
-		if #strip > 0 then
-			props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
-		end
 	end
 	-- Narrow: the scope dropdown beside the title names the view or list, so the title keeps only its markers.
 	if dropdown and activeScope and type(props.title) == "table" then

@@ -614,16 +614,15 @@ local function blockDef(): BlockDef<State>
 		end,
 
 		title = function(state: State): string?
-			local snap = state.snap
 			local v = activeView(state)
-			local need = engine.nowCount(state)
-			local tail = if need > 0 then " · " .. need .. " need you" else ""
+			local need = engine.nowSummary(state)
+			local tail = if need then " · " .. need else ""
 			if state.nowOn then
 				return "Plotroom · Now" .. tail
 			elseif not v then
 				return "Plotroom" .. tail
 			end
-			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. tail
+			return "Plotroom · " .. v.name .. tail
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView
@@ -1022,7 +1021,7 @@ local function blockDef(): BlockDef<State>
 			elseif act == "cancel-remove" then
 				state.removing = nil
 			elseif act == "goto" or act == "worktree" or act == "open-git" then
-				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
+				-- The worktree card's rows: a click in the preview carries the row's own id.
 				queueAction(state, act)
 			elseif act == "unpin" then
 				requests.unpin(state)
@@ -1188,7 +1187,7 @@ local function blockDef(): BlockDef<State>
 				elseif act == "retry" then
 					queueAction(state, "refresh")
 				elseif act then
-					-- An item's button in the action bar, or the command palette's: runs as its key does.
+					-- An item's command from the command palette: runs as its key does.
 					queueAction(state, act)
 				end
 			end

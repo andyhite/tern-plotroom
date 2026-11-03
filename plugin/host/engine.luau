@@ -2176,7 +2176,7 @@ function M.openGit(state: State): boolean
 	return true
 end
 
--- The board's own actions (`act`: the action bar's id or its key): true when it was one.
+-- The board's own actions (`act`: a Commands row's id or its key): true when it was one.
 function M.boardAct(state: State, act: string): boolean
 	local live = aliveFn(state)
 	local row = M.boardSelected(state)
@@ -2206,6 +2206,8 @@ function M.boardAct(state: State, act: string): boolean
 			state.cx:toast("info", "Still reading", "Remove it once the read has finished.")
 		elseif row and not row.main and not row.locked and not row.missing then
 			state.boardRemoving = row.id
+		elseif row then
+			state.cx:toast("info", "Not removed here", "The main, locked or missing worktrees are not removed here.")
 		end
 	elseif act == "wt-remove-finished" then
 		if state.boardBusy then
@@ -2699,7 +2701,7 @@ function M.nowRows(state: State): { any }
 	return rows
 end
 
--- How many need you: Now's rows that are not snoozed. What the pane title and the window's status line show.
+-- How many need you: Now's rows that are not snoozed. What the sidebar's Now entry and the window's status line show.
 function M.nowCount(state: State): number
 	local n = 0
 	for _, row in M.nowRows(state) do
@@ -2708,6 +2710,32 @@ function M.nowCount(state: State): number
 		end
 	end
 	return n
+end
+
+-- What needs you, by kind, in Now's rank order: `2 agents need you · 1 Blocked · 3 reviews requested`; nil when nothing
+-- does. Snoozed rows are left out, as in nowCount. The pane title and Now's heading say it.
+local SUMMARY: { { one: string, many: string } } = {
+	{ one = "agent needs you", many = "agents need you" },
+	{ one = "Blocked", many = "Blocked" },
+	{ one = "review requested", many = "reviews requested" },
+	{ one = "Ready to merge", many = "Ready to merge" },
+	{ one = "notification", many = "notifications" },
+	{ one = "assigned", many = "assigned" },
+}
+function M.nowSummary(state: State): string?
+	local counts: { number } = { 0, 0, 0, 0, 0, 0 }
+	for _, row in M.nowRows(state) do
+		if not row.snoozed then
+			counts[row.rank] += 1
+		end
+	end
+	local parts: { string } = {}
+	for rank, n in counts do
+		if n > 0 then
+			table.insert(parts, n .. " " .. (if n == 1 then SUMMARY[rank].one else SUMMARY[rank].many))
+		end
+	end
+	return if #parts > 0 then table.concat(parts, " · ") else nil
 end
 
 -- The row previewed and its place in the list (nil, 0 when there is none).

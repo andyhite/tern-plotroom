@@ -34,14 +34,15 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Mark seen | Commands | Keep | — | Approved | |
 | Snooze until 08:00 tomorrow; Show or hide snoozed; Unsnooze | Commands, preview | Keep | — | Approved | |
 | Needs attention only filter | Commands | Merge into **Now** | 2 | Approved | Three names today, and a partial answer to "what needs me". Done: removed; Now lists New and Changed assigned items |
-| Pane-title count and the `N need attention` status segment | Pane title, status bar | Merge into one **Now** count | 2 | Approved | Done: one `N need you` count in the pane title and the status bar |
-| Sort orders (Next sort order, sort per view) | Commands, Settings › Views | Keep | — | Approved | |
-| Search | Bottom bar, Commands | Keep | — | Approved | |
+| Pane-title count and the `N need attention` status segment | Pane title, status bar | Merge into one **Now** count | 2 | Approved | Done: `N need you` in the status bar is the one count and a button (shows Now); the pane title and Now's heading split it by reason (`2 agents need you · 1 Blocked · 3 reviews requested`); no header number repeats the sidebar |
+| Sort orders (Next sort order, sort per view) | Commands, Settings › Views | Keep | — | Approved | The order is announced by a toast when it changes; no `Sort:` line |
+| Search | Search field, Commands | Keep | — | Approved | |
 | Group by (repository, status, label) | Settings › Views | Keep | — | Approved | |
 | Preview: description, facts, checks, merge state, reviewers, closing issues; one shared order and one loading / error / empty state for every variant | Preview | Keep | 2 | Approved | Done: docs/reference.md › Finer points › Preview; one home per fact (the row's In tab is the card's Go to tab) |
 | Preview: worktree card (Up to date, Changes, unpushed count) | Preview | Keep | — | Approved | |
 | Stage on every item, and the suggested next move | Rows, preview, Commands | New | 2 | Approved | PRODUCT.md › Glossary › Stage |
-| Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts |
+| Picker rows: one field per Triage question. Keep: title (what is it?), author mark (mine to land or theirs to review?), number or Jira key (which one?), repository only when the view spans several (which codebase?), one blocking reason on a Blocked PR (what stops it?), stage (where does it stand?), agent state when the stage does not say it (is an agent on it?), outcome and checker verdict (did the run do what it claims?), New/Changed/Snoozed (has it changed since I looked?), Worktree (already started?), Draft (ready for review?), Jira status or closed reason (where in the team's workflow / done or dropped?), Jira type (bug or feature?). Cut to the preview: `@author` in the detail (the mark says it), age, review text, check counts, labels, In tab | Queue rows | Cut | 2 | Approved | Every field earns its place; no fact twice in a row (tern-plotroom#yxak) |
+| Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 
 ## Dispatch
 

@@ -1370,7 +1370,7 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "newest update first")
 	eq(pickerOf(b).selected, "no_2fr_2312", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (3)", "the title names the filter and counts the issues")
+	eq(b.title(), "Plotroom · Assigned to me", "the title names the filter; the sidebar counts the issues")
 	eq(pickerOf(b).noun, "issues", "the picker counts issues")
 	eq(pickerOf(b).placeholder, "Search the loaded issues", "and searches them")
 	eq(pickerOf(b).icon, "list-checks", "with an icon of its own")
@@ -1444,7 +1444,7 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	local wideIds, wide = snap()
 	eq(wide["issues:v1"].count, 3, "wide: the loaded filter has a count")
 	eq(pickerOf(b).title[1].t, "Assigned to me", "wide: the view's name is the title")
-	eq(pickerOf(b).strip.label, "Sort: GitHub's order", "a GitHub view with no saved sort is in GitHub's order")
+	eq(pickerOf(b).strip, nil, "no Sort strip: the order is announced by the toast when it changes")
 	b.cx.cols = 100
 	b.cx:render()
 	local narrowIds, narrow = snap()
@@ -1516,7 +1516,7 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#viewSearchesOf(s.gh, "search"), 1, "no pull request was searched for the issue filter")
 	eq(viewSearchesOf(s.gh, "issue-search")[1].fields.q, "is:open assignee:@me is:issue sort:updated-desc", "the issue search is the filter's own")
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the list is its issues")
-	eq(b.title(), "Plotroom · Assigned to me (3) · 3 need you", "the title names it, with Now's count")
+	eq(b.title(), "Plotroom · Assigned to me · 3 reviews requested", "the title names it, with what needs you")
 	eq(pickerOf(b).noun, "issues", "counted as issues")
 	eq(pickerOf(b).icon, "list-checks", "under the issue icon")
 	eq(buttonLink(b, "worktree"), issueLink("worktree", "o/r", "12"), "with the issue's buttons")
@@ -1584,7 +1584,7 @@ case("host: a search that lands after the filter switched to the other kind is d
 	w.advance(5000)
 	same(listed(b), { "no_2fr_2312", "no_2fr_2313", "no_2fr_2314" }, "the pull request answer that came late does not replace it")
 	eq(pickerOf(b).noun, "issues", "the block still counts issues")
-	eq(b.title(), "Plotroom · Assigned to me (3) · 3 need you", "under the issue filter's title")
+	eq(b.title(), "Plotroom · Assigned to me · 3 reviews requested", "under the issue filter's title")
 	pickScope(b, "prs:v1")
 	w.flush()
 	eq(#viewSearchesOf(s.gh, "search"), 2, "the late answer was dropped, not kept: the pull request filter searches again")
@@ -1625,7 +1625,7 @@ case("host: a pull request's worktree and an issue's stay each their own kind's 
 	eq(countLog(s.git, "worktree add"), 0, "nothing was made")
 end)
 
-case("host: an issue row names its number, repository, author and age, wears its labels, shows no assignee, and says why a closed issue closed", function(w: World)
+case("host: an issue row names its number, the repository only when the view spans more than one, its author once as the mark, leaves labels and age to the preview, shows no assignee, and says why a closed issue closed", function(w: World)
 	local s = issueHost(w)
 	s.gh.issueItems.octocat = {
 		issueItem(12, "o/r", EPOCH - 60, { title = "Fix login", labels = array({ "bug", "ui" }), assignees = array({ "ann", "bob" }), comments = 3 }),
@@ -1650,17 +1650,17 @@ case("host: an issue row names its number, repository, author and age, wears its
 	end
 	eq(row(1).id, "no_2fr_2312", "the id is n and the issue's reference")
 	eq(row(1).label, "Fix login", "the title is the label")
-	eq(detailText(row(1)), "#12 · o/r · @octo opened 1m ago", "the number, the repository, the author and the age")
-	eq(detailText(row(3)), "#14 · o/r · @octo opened 3m ago", "a lone assignee is not in the detail")
-	eq(detailText(row(2)), "#13 · o/r · @octo opened 2m ago", "nor is the lack of one")
-	eq(row(1).mark.text, "octo", "the author's mark")
+	eq(detailText(row(1)), "#12", "the number: one repository is not worth the room, the author is the mark, the age the preview's")
+	eq(detailText(row(3)), "#14", "a lone assignee is not in the detail")
+	eq(detailText(row(2)), "#13", "nor is the lack of one")
+	eq(row(1).mark.text, "octo", "the author's mark, the one place the row names them")
 	eq(row(1).facts, nil, "the rows carry no facts column: no comment count, no assignee")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
 	local head: any = findKey(pickerNode(b), "head")
 	eq(findKey(head, "integration").p.text, "GitHub", "the head row names GitHub")
 	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
-	eq(badges(1), "Not started/muted bug/- ui/-", "the rows lead with the stage, carry the labels and no integration badge")
+	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
 	eq(badges(2), "Closed/muted Completed/accent", "a completed issue")
 	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
 	eq(badges(4), "Closed/muted Duplicate/muted", "a duplicate")
@@ -1668,8 +1668,16 @@ case("host: an issue row names its number, repository, author and age, wears its
 	leaveIssueWt(w, s, 14)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-14/src" })
 	refreshNow(w, b)
-	eq(badges(3), "Closed/muted In tab/accent Worktree/- Not planned/muted", "a tab working in the issue's worktree marks its row, before its worktree and state; Closed outranks Worktree")
-	eq(badges(1), "Not started/muted bug/- ui/-", "and no other row")
+	eq(badges(3), "Closed/muted Worktree/- Not planned/muted", "a worktree is marked before the state, a tab working in it is not (the preview's chip says it); Closed outranks Worktree")
+	eq(badges(1), "Not started/muted", "and no other row")
+	table.insert(s.gh.issueItems.octocat, issueItem(17, "o/s", EPOCH - 360))
+	refreshNow(w, b)
+	local details: { [string]: string } = {}
+	for _, r in pickerOf(b).items do
+		details[r.id] = detailText(r)
+	end
+	eq(details.no_2fr_2312, "#12 · o/r", "once the rows span two repositories, each names its own")
+	eq(details.no_2fs_2317, "#17 · o/s", "the other's too")
 end)
 
 case("host: the issue preview shows its body, assignees, milestone, linked pull requests and the branch it would create", function(w: World)
@@ -1833,13 +1841,16 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	eq(stage(10), "Ready to merge", "no checks at all on a clean, approved PR")
 	eq(stage(11), "PR open", "a draft")
 	eq(stage(12), "Blocked", "an errored check blocks while GitHub's merge state does not say it is optional")
-	local blocked: any = nil
+	local rows: { [string]: any } = {}
 	for _, row in pickerOf(b).items do
-		if row.id == "no_2fr_235" then
-			blocked = row.badges[1]
-		end
+		rows[row.id] = row
 	end
-	eq(blocked.title, "Conflicts with its base", "a Blocked badge says why")
+	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the one thing that blocks it")
+	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with its base", "conflicts outrank the rest")
+	eq(detailText(rows.no_2fr_236), "#6 · Checks failing", "failing checks, with no ratio")
+	eq(rows.no_2fr_235.badges[1].title, nil, "the Blocked badge does not say it again")
+	eq(detailText(rows.no_2fr_239), "#9", "a review still required blocks nothing: no review text")
+	eq(detailText(rows.no_2fr_238), "#8", "nor do running checks")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
 	eq(factOf(b, "Stage"), "Blocked", "the preview's status part leads with the stage")
 	eq(factOf(b, "Blocked by"), "Changes requested", "and says what blocks it")
@@ -1917,7 +1928,7 @@ case("host: a block told to show a pull request selects it where its pull reques
 	eq(pickerOf(b).selected, "no_2fr_2345", "selected")
 	eq(pickerOf(b).scopes[2].label, "o/r#45", "under a scope named after it, first after Now in the sidebar")
 	eq(pickerOf(b).scope, pickerOf(b).scopes[2].id, "which is the active one")
-	eq(b.title(), "Plotroom · o/r#45 (1) · 3 need you", "the block's title names it")
+	eq(b.title(), "Plotroom · o/r#45 · 3 reviews requested", "the block's title names it")
 	b.event({ ev = "action", act = "show-pr", value = "https://example.com/o/r/pull/1" })
 	eq(#requestsOf(s.gh, "pull"), 1, "anything but a pull request URL is ignored")
 	eq(pickerOf(b).scopes[2].label, "o/r#45", "and keeps the pin")
@@ -2385,7 +2396,7 @@ case("host: an action saved with the removed carly field still loads, kv is left
 	eq(w.kv.get("prompts-prs").items[1].carly, nil, "and the saved action has no carly field")
 end)
 
-case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
+case("host: the issue's commands, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
 	leaveIssueWt(w, issueHost(w), 12)
 	saveIssuePrompts(w, {
 		issuePrompt("p1", "Triage", "Triage {url}", true, "t"),
@@ -2393,14 +2404,12 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 		issuePrompt("p3", "Blank", "", true, "b"),
 	})
 	local b = openIssues(w)
-	local function bar(): { string }
-		local out: { string } = {}
-		for _, a in pickerOf(b).actions do
-			table.insert(out, a.id)
-		end
-		return out
+	local function offers(id: string): boolean
+		return table.find(hx.palette(w, b).ids, id) ~= nil
 	end
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "Worktree, Agent, no button per prompt, Seen, and the command palette last")
+	eq(pickerOf(b).actions, nil, "no action bar")
+	yes(offers("worktree") and offers("seen"), "Worktree and Seen are Commands rows")
+	eq(offers("prompt-p1"), false, "no row per prompt")
 	eq(buttonLink(b, "open"), h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"), "Open's link carries the issue's page, percent-encoded")
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, buttonLink(b, "open"), "the preview head's Open icon opens it")
@@ -2428,14 +2437,14 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 	b.typeText("k")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12/src" })
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "goto", "agent", "seen", "more" }, "a tab in the issue's worktree adds Go to tab before Agent")
+	yes(offers("goto"), "a tab in the issue's worktree adds Go to tab")
 	eq(buttonLink(b, "goto"), issueLink("goto", "o/r", "12"), "with its link")
 	b.typeText("g")
 	eq(w.opened[#w.opened], issueLink("goto", "o/r", "12"), "g opens it")
 	table.remove(w.panes)
 	forgetCheckouts(w)
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
+	yes(offers("worktree"), "without a saved checkout Worktree stays: the window asks for one when it runs")
 	lacks(b.text(), "No checkout", "and the heading says nothing of it")
 	local opened = #w.opened
 	b.typeText("w")

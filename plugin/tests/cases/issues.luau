@@ -12,7 +12,7 @@ type Reply = h.Reply
 type Worktree = h.Worktree
 type World = h.World
 
-local EPOCH, JIRA_ASSIGNED, NULL, actionOf, agentScene, answerOf = h.EPOCH, h.JIRA_ASSIGNED, h.NULL, h.actionOf, h.agentScene, h.answerOf
+local EPOCH, JIRA_ASSIGNED, NULL, agentScene, answerOf = h.EPOCH, h.JIRA_ASSIGNED, h.NULL, h.agentScene, h.answerOf
 local array, asks, badgeOf, buttonLink, cardOf, cardSurface = h.array, h.asks, h.badgeOf, h.buttonLink, h.cardOf, h.cardSurface
 local cardText, case, chipsOf, countCalls, countLog, detailText = h.cardText, h.case, h.chipsOf, h.countCalls, h.countLog, h.detailText
 local editorCard, eq, expand, factOf, findKey, freshAsk = h.editorCard, h.eq, h.expand, h.factOf, h.findKey, h.freshAsk
@@ -439,7 +439,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	eq(b.title(), "Plotroom · Assigned to me (2) · 1 need you", "the title names the filter and counts the issues, then what needs you")
+	eq(b.title(), "Plotroom · Assigned to me · 1 assigned", "the title names the filter, then what needs you")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
 		if scope.id == "issues:v1" then
@@ -448,7 +448,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	end
 	eq(jira.label, "Assigned to me", "the sidebar lists the Jira view")
 	eq(jira.group, "Jira", "under Jira's group")
-	eq(actionOf(b, "repos"), nil, "the action bar has no repository button")
+	eq(table.find(hx.palette(w, b).ids, "repos"), nil, "Commands has no repository row")
 	b.typeText("q")
 	eq(#w.opened, 0, "and q opens nothing")
 	local function row(i: number): any
@@ -466,11 +466,12 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	end
 	eq(row(1).id, "nabc_23ABC-12", "the id is n and the issue's key, escaped")
 	eq(row(1).label, "Fix login", "the summary is the label")
-	eq(detailText(row(1)), "ABC-12 · Ann Lee · Bug", "the key, the reporter and the type: no repository, no age (the search carries no dates), no assignee")
-	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "the same for an unassigned issue")
+	eq(detailText(row(1)), "ABC-12 · Bug", "the key and the type: the reporter is the mark, no repository, no age, no assignee")
+	eq(row(1).mark.text, "Ann Lee", "the reporter's mark")
+	eq(detailText(row(2)), "ABC-13 · Task", "the same for an unassigned issue")
 	eq(row(1).facts, nil, "the rows carry no facts column: no assignee, no comment count")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
-	eq(badges(1), "Not started/muted In Progress/warning ui/-", "the stage, the workflow status toned by its category, then the labels; no integration badge")
+	eq(badges(1), "Not started/muted In Progress/warning", "the stage, then the workflow status toned by its category; the labels are the preview's; no integration badge")
 	eq(badges(2), "Closed/muted Done/success", "a done issue is Closed and says Done")
 	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open", "the preview head's Open icon is named Open")
 	b.typeText("?")
@@ -489,7 +490,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(saved.activeKind, "issues", "and its kind: a PR filter may have the same id")
 	local again = w.open(2, { "/work/r" }, saved)
 	w.flush()
-	eq(again.title(), "Plotroom · Assigned to me (2) · 1 need you", "a restored block shows the same view")
+	eq(again.title(), "Plotroom · Assigned to me · 1 assigned", "a restored block shows the same view")
 end)
 
 case("host: issues always list In Progress, then To Do, then Done, in acli's priority order within each; a saved status order and Settings change nothing", function(w: World)
@@ -679,11 +680,7 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	eq(badgeOf(b).text, "Worktree", "a worktree puts a badge on the row")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
-	local texts: { string } = {}
-	for _, badge in pickerOf(b).items[1].badges do
-		table.insert(texts, badge.text)
-	end
-	yes(table.find(texts, "In tab") ~= nil, "a tab in the worktree marks the issue: the directory keeps the key's case")
+	same(hx.inTab(w, b), { pickerOf(b).items[1].id }, "a tab in the worktree is known to work in the issue: the directory keeps the key's case")
 	local head: any = findKey(pickerNode(b), "head")
 	yes(head ~= nil, "the preview has a head row")
 	eq(findKey(head, "integration").p.text, "Jira", "naming the tracker")
@@ -1259,7 +1256,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
-	eq(b.title(), "Plotroom · Assigned to me (2) · 1 need you", "and shown in place of the GitHub view restored")
+	eq(b.title(), "Plotroom · Assigned to me · 1 assigned", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
@@ -2123,7 +2120,7 @@ case("host: a where request with a kind or key it cannot use is dropped", functi
 	eq(answerOf(b, "k1").path, nil, "a key of 200 bytes is answered")
 end)
 
-case("host: the In tab badge follows the panes working in a worktree the block knows, whatever its folder is called, and marks no other row", function(w: World)
+case("host: a tab is known to work in an item's worktree by the panes in a worktree the block knows, whatever its folder is called, and in no other item's", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60), searchItem(2, "o/r", EPOCH - 120), searchItem(12, "o/r", EPOCH - 180) }
 	s.gh.issueItems.octocat = { issueItem(2, "o/r", EPOCH - 60, { title = "Second" }), issueItem(12, "o/r", EPOCH - 120, { title = "Fix login" }) }
@@ -2138,18 +2135,18 @@ case("host: the In tab badge follows the panes working in a worktree the block k
 	w.fs.dirs["/wt/custom-name"] = true
 	local issues = openIssues(w, 1)
 	local prs = openQueue(w, 2)
-	-- Puts a pane working in `cwd` on the host, draws both panes and says which rows wear In tab: the PRs', then the issues'.
+	-- Puts a pane working in `cwd` on the host, draws both panes and says which items a tab works in: the PRs', then the issues'.
 	local nextPane = 8
 	local function working(cwd: string): { { string } }
 		nextPane += 1
 		table.insert(w.panes, { pane = nextPane, cwd = cwd })
 		prs.render()
 		issues.render()
-		return { hx.inTab(prs), hx.inTab(issues) }
+		return { hx.inTab(w, prs), hx.inTab(w, issues) }
 	end
 	prs.render()
 	issues.render()
-	same({ hx.inTab(prs), hx.inTab(issues) }, { {}, {} }, "no pane in a worktree, no badge")
+	same({ hx.inTab(w, prs), hx.inTab(w, issues) }, { {}, {} }, "no pane in a worktree, no tab")
 	same(working("/wt/plotroom-o_r-pr-12/src"), { { "no_2fr_2312" }, {} }, "a pane in a folder of pull request 12's worktree marks it; not 1, whose folder's name starts the same, nor issue 12")
 	same(working("/wt/custom-name"), { { "no_2fr_2312" }, { "no_2fr_232" } }, "a pane in issue 2's worktree marks the issue whatever the folder is called; not pull request 2")
 	same(working("/wt/plotroom-o_r-pr-1"), { { "no_2fr_231", "no_2fr_2312" }, { "no_2fr_232" } }, "a pane in the worktree itself marks it")
@@ -2159,7 +2156,7 @@ case("host: the In tab badge follows the panes working in a worktree the block k
 	end
 	prs.render()
 	issues.render()
-	same({ hx.inTab(prs), hx.inTab(issues) }, { {}, {} }, "with the panes gone, so are the badges")
+	same({ hx.inTab(w, prs), hx.inTab(w, issues) }, { {}, {} }, "with the panes gone, so are the tabs")
 	-- a worktree made now is found by its noted folder, however the formats named it
 	w.kv.put("pr-dir-format", "p{key}")
 	w.kv.put("issue-dir-format", "i{key}-{slug}")

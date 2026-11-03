@@ -83,7 +83,8 @@ export type Kind = {
 	vars: { { k: { Span }, v: string } }, -- the prompt editor's legend of variables
 	prompts: { prompts.Seed }, -- offered until its saved prompts are first changed
 }
--- `rows` caches the picker rows; `rowsRev` (worktree reports) and `rowsMin` (the minute, for the ages) say what built them.
+-- `rows` caches the picker rows; `rowsRev` (worktree reports), `rowsMin` (the minute, for snoozes) and `rowsState`
+-- (state.rev) say what built them.
 export type Snap = {
 	kind: string, -- what its items are: "prs" (github.Pr) or "issues" (tracker.Issue)
 	items: { any },
@@ -94,7 +95,7 @@ export type Snap = {
 	rows: { any }?,
 	rowsRev: number?,
 	rowsMin: number?,
-	rowsOpen: string?, -- the key that goes to a tab, then the ids of the items open in a tab, comma-joined
+	rowsState: number?,
 }
 -- What the local search lets through: computed once per snapshot and search text.
 export type Visible = { snap: Snap, needle: string, group: string, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }

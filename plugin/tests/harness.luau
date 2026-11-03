@@ -2887,16 +2887,6 @@ local function pickScope(b: Block, id: string)
 end
 M.pickScope = pickScope
 
-local function actionOf(b: Block, id: string): any
-	for _, action in pickerOf(b).actions do
-		if action.id == id then
-			return action
-		end
-	end
-	return nil
-end
-M.actionOf = actionOf
-
 -- One row of the settings page by id.
 local function rowIn(b: Block, id: string): any
 	for _, section in prefsOf(b).sections do
@@ -3230,14 +3220,18 @@ function hx.ask(w: World, b: Block, id: string, body: { [string]: any }): any
 	return answerOf(b, id)
 end
 
--- The picker rows of `b` that wear the "In tab" badge, as their ids in list order.
-function hx.inTab(b: Block): { string }
+-- The picker rows of `b` whose item a tab works in (the preview's In tab chip, Go to tab), as their ids in list order.
+function hx.inTab(w: World, b: Block): { string }
+	local engine: any = w.load("host/engine")
+	local open = engine.openItems(b.state())
+	local ids: { [string]: boolean } = {}
+	for key in open do
+		ids[engine.pickerId("n", key)] = true
+	end
 	local out: { string } = {}
 	for _, item in pickerOf(b).items do
-		for _, badge in item.badges or {} do
-			if badge.text == "In tab" then
-				table.insert(out, item.id)
-			end
+		if ids[item.id] then
+			table.insert(out, item.id)
 		end
 	end
 	return out
