@@ -55,6 +55,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Actions and Type a prompt… | Commands, Settings › Actions | Keep | — | Approved | |
 | Default actions (Review, Quick review, Address feedback, Watch, Implement, Fix, Plan) | Settings › Actions | Keep; outcomes added | 3 | Approved | Done: each names its default outcome |
 | Action fields: Model, Runs in, Opens in, Move to status (acli), key | Settings › Actions | Keep | — | Approved | |
+| Agent placement: each agent Beside the queue, or joining a worktree's tab, splits the largest pane of that tab along its longer side, never the queue's (the queue keeps its half) | Dispatch (Opens in) | New | — | Proposed | Spike tern-plotroom#ajat: today each agent beside the queue halves the queue's pane again, so at 5 agents the queue and the two newest are 94 px slivers at Tern's minimum; this rule keeps the queue at 1097 px and no agent below 274×480 px |
 | Action field: Next action (chains) | Settings › Actions | Keep; advances only on a Verified outcome | 3 | Approved | |
 | Action field: Tell Carly when it finishes, and the `plotroom_agents` Carly export | Settings › Actions, Carly | Cut | 1 | Approved | Serves no loop step that Tern's agent notifications and Now don't cover; adds jargon |
 | "An agent already works on it" guard | Commands | Keep | — | Approved | |
