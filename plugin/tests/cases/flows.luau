@@ -4282,6 +4282,21 @@ windowCase("window flows: Disagree with check… records a disagreement, with an
 	eq(runAt(w, "o/r#12", builder.started).disagree, nil, "a new verdict drops the disagreement with the old one")
 end)
 
+windowCase("window flows: a Plotroom block opened after the checker exited is still told its verdict, so Disagree with check… is offered there", function(w: World)
+	w.load("window")
+	w.kv.put("agent-links", array({ { key = "o/r#12", agent = 9, host = { id = 1, name = "", address = "" }, at = 1, checkAgent = 9, check = "pass" } }))
+	w.advance(4100)
+	flowHost(w) -- a fresh block: it holds no agent map yet
+	w.window.handlers.pane_created({ pane = 1 }, w.cx)
+	w.advance(4100)
+	local events = statusEvents(w)
+	yes(#events > 0, "no agent is live, yet the new block is told")
+	same(events[#events].map["o/r#12"], { state = "exited", check = "pass" }, "the exited checker's verdict, which offers Disagree with check…")
+	local told = #events
+	w.advance(8200)
+	eq(#statusEvents(w), told, "once the block holds it, it is not told again")
+end)
+
 windowCase("window flows: an undecided checked run is asked whether its work merged, as its login, and counts as agreed once it did", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

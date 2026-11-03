@@ -381,6 +381,9 @@ function M.needSync(cx: WindowCx)
 	end
 end
 
+local timer: TimerHandle? = nil -- the agents' status timer: runs only while a linked agent is live
+local told: { [number]: boolean } = {} -- Plotroom panes seen holding their host's agent map (agentSync)
+
 local function needTick(cx: WindowCx?)
 	needTimer = nil
 	if not cx then
@@ -388,6 +391,16 @@ local function needTick(cx: WindowCx?)
 	end
 	M.needSync(cx)
 	M.recheck(cx) -- outcomes due again, at most once a refresh each
+	if timer == nil and #readLinks() > 0 then
+		-- no live agent, so the status timer is off: a block opened since is still told exited agents' verdicts
+		-- (Disagree with check…), again each tick until it has rendered its main.agents
+		for _, pane in plotroomPanes(cx) do
+			if not told[pane] then
+				M.agentSync(cx)
+				break
+			end
+		end
+	end
 	if #plotroomPanes(cx) > 0 then
 		needTimer = tern.timer(SYNC_MS, needTick)
 	end
@@ -467,6 +480,7 @@ function M.agentSync(cx: WindowCx)
 	local panes = plotroomPanes(cx)
 	local links = readLinks()
 	if #panes == 0 then
+		told = {}
 		trackWaiting(cx, {}, nil, {})
 		return
 	end
@@ -486,6 +500,7 @@ function M.agentSync(cx: WindowCx)
 		end
 	end
 	trackWaiting(cx, covered, states, cwds)
+	local nowTold: { [number]: boolean } = {} -- rebuilt each sync, so a closed pane's id is never remembered
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
 		if host then
@@ -497,11 +512,13 @@ function M.agentSync(cx: WindowCx)
 					cx.session:event(pane, { ev = "action", act = "agent-status", value = tern.json.encode(map) })
 				end)
 			end
+			if ack ~= nil then
+				nowTold[pane] = true -- a rendered block takes the event at once; one not rendered yet is told again
+			end
 		end
 	end
+	told = nowTold
 end
-
-local timer: TimerHandle? = nil
 
 -- Whether there is anything to tell: a Plotroom block and a linked agent that has not exited.
 local function active(cx: WindowCx): boolean
