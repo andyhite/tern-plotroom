@@ -36,7 +36,7 @@ local discardEdit = settings.discardEdit
 local M = {}
 
 M.seq = 0 -- confirmation tokens issued by this runtime
-local NOW_KEY = "\0now" -- the key of Now's Mark read… plan: no item key holds a NUL
+local NOW_KEY = "\0now" -- the key of Now's Mark all notifications read… plan: no item key holds a NUL
 
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
@@ -761,12 +761,12 @@ local function mergesNow(state: State, item: any): boolean
 end
 
 -- Every notification thread Now read, while Now is shown and its Notifications reason is on: also those whose item Now
--- lists for a higher reason, a second thread on one item and a snoozed item's, so Mark read… leaves none unread.
+-- lists for a higher reason, a second thread on one item and a snoozed item's, so Mark all notifications read… leaves none unread.
 local function unread(state: State): { github.Notice }
 	return if state.nowOn and not state.now.prefs.off.notices then state.now.notices else {}
 end
 
--- The plan of Now's Mark read…: every thread Now read (unread), grouped by the gh login each was read as (both
+-- The plan of Now's Mark all notifications read…: every thread Now read (unread), grouped by the gh login each was read as (both
 -- settled now: the commit marks exactly these, each as exactly its login, whatever the list or gh's active account
 -- become) and one confirm naming every account. Read, never done: GitHub keeps the threads.
 function M.markReadPlan(state: State, id: string)

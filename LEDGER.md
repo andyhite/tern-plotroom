@@ -21,7 +21,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Restore defaults | Settings › Views, Settings › Actions | Keep, renamed **Add missing defaults** | 1 | Approved | It never overwrites edited defaults, and the current label implies it does |
 | Pins: Open item by URL, pasting a URL | Commands, Tern's palette, paste in the queue | Keep | — | Approved | Intake of one-off items |
 | Linked pull requests and issues | Preview | Keep | — | Approved | Navigation between the halves of one piece of work |
-| Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark read… |
+| Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark all notifications read… |
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
 | Open Plotroom button in the Files pane | Files pane | Keep | — | Approved | Entry point |
 | Plotroom: Open | Tern's palette | Keep | — | Approved | Entry point |

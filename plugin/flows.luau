@@ -1855,7 +1855,7 @@ M.COMMANDS = {
 		end,
 		anywhere = true,
 	},
-	{ id = "mark-read", title = "Plotroom: Mark Now's notifications read", label = "Mark read…", group = "Now", run = markRead },
+	{ id = "mark-read", title = "Plotroom: Mark all of Now's notifications read", label = "Mark all notifications read…", group = "Now", run = markRead },
 	{
 		id = "agent-go",
 		title = "Plotroom: Go to the selected item's agent",
