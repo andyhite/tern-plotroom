@@ -2985,6 +2985,35 @@ local function helpRows(node: any): { { keys: string, text: string } }
 end
 M.helpRows = helpRows
 
+-- The nodes under `node` whose look disagrees with what a click does there, as "path (kind, role)": a node with a
+-- click action or an href must wear render's button or link role, and no other node may. Hidden subtrees are skipped:
+-- Tern draws none of them (they are the links the window reads by key).
+local CLICK_ROLES = { ["plotroom.button"] = true, ["plotroom.link"] = true }
+function hx.miscued(node: any): { string }
+	local out: { string } = {}
+	local function walk(n: any, path: string)
+		if type(n) ~= "table" then
+			return
+		end
+		local p: any = if type(n.p) == "table" then n.p else {}
+		if p.hidden then
+			return
+		end
+		local here = path .. "." .. tostring(p.key or n.k)
+		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
+		if clicks ~= (CLICK_ROLES[p.role] == true) then
+			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
+		end
+		if type(n.c) == "table" then
+			for _, kid in n.c do
+				walk(kid, here)
+			end
+		end
+	end
+	walk(node, "")
+	return out
+end
+
 -- What block `b`'s published command palette (its hidden `main.palette` node) says now: the queue actions' ids in order
 -- with their groups, keys, labels and details by id, the ids of the window commands that apply, with the group the
 -- host gave each (nil: its own), and `next`, the window command the Next move runs (nil: none).

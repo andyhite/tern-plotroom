@@ -2713,4 +2713,61 @@ case("host: a scan reads the name formats once for every shown item", function(w
 	eq(countLog(s.git, "worktree list") >= 1, true, "the scan ran")
 end)
 
+case("host: everything clickable in a preview is a button or a link, and nothing else is", function(w: World)
+	local s = hostScene(w, 0)
+	local base = "https://github.com/o/r"
+	local done = "2026-01-01T00:00:00Z"
+	local checks = {
+		checkRun("build", "COMPLETED", "FAILURE", done, { id = "A", detailsUrl = base .. "/actions/runs/123/job/9" }),
+		checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "B" }),
+	}
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE", runs = array(checks), runTotal = 2 }) }
+	s.gh.checks["o/r#1"] = checks
+	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "## Why\nBecause.", reviews = array({ { login = "ann", state = "APPROVED" } }), requested = array({}) }
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	w.advance(300)
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	b.event({ ev = "toggle", id = "layer.queue.description", key = "description", collapsed = false })
+	local preview = pickerNode(b)
+	local next: any = findKey(preview, "next", "item")
+	eq(next.p.label, "Re-run failed checks", "a failed run's Next move")
+	eq(next.p.role, "plotroom.button", "is a button")
+	eq(findKey(preview, "run1", "item").p.role, "plotroom.link", "a check with a page is a link to it")
+	eq(findKey(preview, "run2", "item").p.role, nil, "a check without one is neither")
+	eq(findKey(preview, "r1", "item").p.role, nil, "nor is a reviewer's verdict")
+	eq(findKey(findKey(preview, "head"), "copy", "icon").p.role, "plotroom.button", "the head's Copy link is a button")
+	eq(findKey(findKey(preview, "head"), "open", "icon").p.role, "plotroom.link", "and its Open a link")
+	yes(findKey(preview, "less", "item") ~= nil and cardOf(b) ~= nil, "Show less and the worktree card are on screen")
+	same(hx.miscued(b.view().layer), {}, "the pull request preview: every click and link has its look, nothing else does")
+	pressCard(b, "remove")
+	yes(confirmOf(b) ~= nil, "the removal asks first")
+	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
+	b.press("escape")
+	eq(confirmOf(b), nil, "Escape keeps the worktree")
+	b.typeText("z")
+	b.typeText("Z")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	yes(findKey(pickerNode(b), "unsnooze", "item") ~= nil, "the snoozed pull request offers Unsnooze")
+	same(hx.miscued(pickerNode(b)), {}, "which is a button too")
+end)
+
+case("host: everything clickable in an issue preview and the shortcut list is a button or a link, and nothing else is", function(w: World)
+	local i = issueHost(w)
+	i.gh.issueDetail["o/r#12"] = {
+		body = "Steps",
+		milestone = "v2",
+		linked = array({ { number = 45, title = "Fix the login redirect", url = "https://github.com/o/r/pull/45", state = "OPEN", isDraft = false } }),
+	}
+	local ib = openIssues(w)
+	w.advance(300)
+	eq(findKey(pickerNode(ib), "pr1", "item").p.role, "plotroom.link", "an issue's linked pull request is a link")
+	same(hx.miscued(ib.view().layer), {}, "the issue preview: every click and link has its look, nothing else does")
+	ib.typeText("?")
+	yes(findKey(ib.view().layer, "help", "overlay") ~= nil, "the shortcut list is open")
+	same(hx.miscued(ib.view().layer), {}, "its Close is a button; its keycaps are neither")
+end)
+
 return {}

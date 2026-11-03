@@ -832,11 +832,13 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 		"Subtasks · 1",
 		"  Add test | ABC-14 | check | success | ABC-14 · Done",
 	}, "linked issues under one heading per relation, in the order Jira first names it; the icon and tone are the status category, the key at the right, the status in the tooltip")
+	same(hx.miscued(b.view().layer), {}, "Jira's linked rows open nothing, so they are neither buttons nor links")
 	-- an issue whose details cannot be read says why
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)
 	has(b.text(), "Could not load the details: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
 	has(b.text(), "Retry", "with a Retry button")
+	same(hx.miscued(b.view().layer), {}, "and Retry is a button")
 	eq(factOf(b, "Comments"), nil, "and what only the details know stays hidden")
 end)
 

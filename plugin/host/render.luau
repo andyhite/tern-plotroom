@@ -317,6 +317,21 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	return out
 end
 
+-- What a click does is drawn on the node itself (plotroom.css): an action is a button (BUTTON, a ring sized to its label),
+-- a row or icon that opens something is a link (LINK, the accent label). A node with no click and no href has neither.
+local BUTTON, LINK = "plotroom.button", "plotroom.link"
+
+-- An action `item` drawn as a button; `p` is its props.
+local function button(p: { [string]: any }): Node
+	p.role, p.basis = BUTTON, "content"
+	return ui.node("item", p)
+end
+
+-- Buttons side by side, wrapping when the preview is narrow (a list would stretch each ring across the row).
+local function buttonRow(key: string, buttons: { Node }): Node
+	return ui.node("row", { key = key, gap = "sm", wrap = true, align = "center" }, buttons)
+end
+
 -- The checks of the selected PR once loaded (Tern's shimmer meanwhile), with an error, its retry time and a Retry
 -- button when the load failed.
 local function checksNodes(state: State, pr: github.Pr): { Node }
@@ -345,7 +360,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		)
 		table.insert(
 			out,
-			ui.node("item", { key = "runs-retry", label = "Retry", icon = "redo", aria = "Retry loading all checks", actions = { click = "retry-checks" } })
+			button({ key = "runs-retry", label = "Retry", icon = "redo", aria = "Retry loading all checks", actions = { click = "retry-checks" } })
 		)
 	end
 	-- Every check, required ones apart, each group worst first (github.runs' order). The icon and its tone are the
@@ -367,7 +382,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		}
 		if r.url then
 			props.href = "plotroom://github/check/" .. i .. "/" .. pct(r.url)
-			props.actions = { click = "open" }
+			props.actions, props.role = { click = "open" }, LINK
 		end
 		table.insert(groups[if r.required then "required" else "runs"], ui.node("item", props))
 	end
@@ -466,6 +481,7 @@ local function refRow(key: string, label: string, name: string, full: string?): 
 		ui.node("icon", {
 			key = "copy",
 			name = "copy",
+			role = BUTTON,
 			href = whole,
 			actions = { click = "copy" },
 			title = "Copy " .. string.lower(label),
@@ -548,22 +564,18 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 			fresh = a
 		end
 	end
-	-- Buttons sized to their label (plotroom.css draws the ring), left to right: the tab, then Remove.
+	-- Buttons sized to their label, left to right: the tab, then Remove.
 	local buttons: { Node } = {}
-	local function button(p: { [string]: any })
-		p.role, p.basis = "plotroom.button", "content"
-		table.insert(buttons, ui.node("item", p))
-	end
 	if tab then
-		button({ key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } })
+		table.insert(buttons, button({ key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
 	else
-		button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } })
+		table.insert(buttons, button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
 	end
-	button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } })
+	table.insert(buttons, button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
 	if note.path and tern.fs.exists(note.path) then
-		button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } })
+		table.insert(buttons, button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
 	end
-	table.insert(body, ui.node("row", { key = "actions", gap = "sm", wrap = true }, buttons))
+	table.insert(body, buttonRow("actions", buttons))
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
 end
 
@@ -586,7 +598,7 @@ local function addDescription(out: { Node }, state: State, key: string, body: st
 		}),
 	}
 	if unfolded then
-		table.insert(nodes, ui.node("item", { key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
+		table.insert(nodes, button({ key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
 	end
 	table.move(nodes, 1, #nodes, #out + 1, out)
 end
@@ -615,6 +627,7 @@ local function headPrNodes(repo: string?, pr: github.HeadPr?): { Node }
 		ui.node("list", { key = "headpr" }, {
 			ui.node("item", {
 				key = "hp1",
+				role = LINK,
 				label = pr.title,
 				value = "#" .. pr.number,
 				icon = if pr.state == "merged" then "check" elseif pr.state == "closed" then "x" else "merge",
@@ -642,6 +655,7 @@ local function notedNodes(issue: tracker.Issue?): { Node }
 		ui.node("list", { key = "noted" }, {
 			ui.node("item", {
 				key = "issue1",
+				role = LINK,
 				label = issue.title,
 				value = ref,
 				icon = ISSUE_ICON,
@@ -655,24 +669,24 @@ local function notedNodes(issue: tracker.Issue?): { Node }
 	}
 end
 
--- The preview's own controls, native action rows: the suggested next move for the item's stage (engine.nextMove, run as
--- the Next move queue action), then Unpin while the item is pinned (nil when there is neither).
+-- The preview's own controls, as buttons: the suggested next move for the item's stage (engine.nextMove, run as the
+-- Next move queue action), then Unpin while the item is pinned, Unsnooze while it is snoozed (nil when there is none).
 local function previewControls(state: State, item: any): Node?
 	local rows: { Node } = {}
 	local move = engine.nextMove(state, state.kind.id, item)
 	if move then
 		local map = keys.load()
-		table.insert(rows, ui.node("item", { key = "next", label = move.label, value = "Next", icon = "arrow-right", tone = "accent", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
+		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", tone = "accent", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	if engine.pinFor(state.pins, item.key) then
-		table.insert(rows, ui.node("item", { key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
+		table.insert(rows, button({ key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
 	end
 	local st = if state.snap then engine.status(state, state.snap.kind, item) else nil
 	if st and st.snoozed then
-		table.insert(rows, ui.node("item", { key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
+		table.insert(rows, button({ key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
 	end
 	if #rows > 0 then
-		return ui.node("list", { key = "controls" }, rows)
+		return buttonRow("controls", rows)
 	end
 	return nil
 end
@@ -721,6 +735,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 			ui.node("icon", {
 				key = "copy",
 				name = "copy",
+				role = BUTTON,
 				href = pr.url,
 				actions = { click = "copy" },
 				title = "Copy link",
@@ -729,6 +744,7 @@ local function previewNodes(state: State, pr: github.Pr?, open: { [string]: bool
 			ui.node("icon", {
 				key = "open",
 				name = "globe",
+				role = LINK,
 				href = hrefOf(state, pr, "open"),
 				actions = { click = "open" },
 				title = "Open",
@@ -828,7 +844,7 @@ local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: Detai
 			}
 			local o, r, n = github.parsePrUrl(l.url)
 			if tr == "github" and o and r and n then
-				props.href, props.actions = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }
+				props.href, props.actions, props.role = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }, LINK
 			end
 			local k = l.relation or ""
 			if not at[k] then
@@ -857,7 +873,7 @@ local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: Detai
 				key = "linked-state",
 				spans = { ui.span("Could not load the details: " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") },
 			}),
-			ui.node("item", { key = "linked-retry", label = "Retry", icon = "redo", aria = "Retry loading the details", actions = { click = "retry-checks" } }),
+			button({ key = "linked-retry", label = "Retry", icon = "redo", aria = "Retry loading the details", actions = { click = "retry-checks" } }),
 		}
 	end
 	return {}
@@ -938,6 +954,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 			ui.node("icon", {
 				key = "copy",
 				name = "copy",
+				role = BUTTON,
 				href = issue.url,
 				actions = { click = "copy" },
 				title = "Copy link",
@@ -946,6 +963,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 			ui.node("icon", {
 				key = "open",
 				name = "globe",
+				role = LINK,
 				href = hrefOf(state, issue, "open"),
 				actions = { click = "open" },
 				title = "Open",
@@ -1018,8 +1036,8 @@ function M.helpOverlay(state: State): Node
 	end
 	return ui.node("overlay", { key = "help", modal = true, size = "md", head = "Keyboard shortcuts" }, {
 		ui.node("col", { key = "keys", gap = "xs" }, lines),
-		ui.node("list", { key = "buttons" }, {
-			ui.node("item", { key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
+		buttonRow("buttons", {
+			button({ key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
 		}),
 	})
 end
@@ -1532,15 +1550,20 @@ local function checklist(state: State): Node?
 		elseif how == "wait" then
 			asking = true
 		end
-		table.insert(lines, ui.node("item", {
+		local props: { [string]: any } = {
 			key = key,
 			label = label,
 			value = value,
 			icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil,
 			tone = if how == "done" then "success" elseif how == "wait" then "muted" else nil,
 			href = href,
-			actions = if click then { click = click } else nil,
-		}))
+		}
+		-- A line's one action: a setup guide is a page it opens, anything else does the step.
+		if click then
+			props.actions = { click = click }
+			props.role = if string.find(click, "^setup%-guide=") then LINK else BUTTON
+		end
+		table.insert(lines, ui.node("item", props))
 	end
 	local gh = cli.installed.github
 	if gh == nil or (gh and setup.signedIn == nil) then
@@ -1584,8 +1607,8 @@ local function checklist(state: State): Node?
 		end
 		shortcuts = ui.node("row", { key = "keys", gap = "sm", wrap = true, align = "center" }, {
 			ui.node("text", { key = "what", spans = { ui.span("One-key shortcuts (" .. table.concat(letters, " ") .. ")") } }),
-			ui.node("item", { key = "use", role = "plotroom.button", basis = "content", label = "Use them", icon = "check", actions = { click = "setup-keys=use" } }),
-			ui.node("item", { key = "no", role = "plotroom.button", basis = "content", label = "No thanks", icon = "x", actions = { click = "setup-keys=no" } }),
+			button({ key = "use", label = "Use them", icon = "check", actions = { click = "setup-keys=use" } }),
+			button({ key = "no", label = "No thanks", icon = "x", actions = { click = "setup-keys=no" } }),
 		})
 	end
 	if not state.getStarted and (asking or todo == 0) then
@@ -1595,8 +1618,8 @@ local function checklist(state: State): Node?
 		ui.node("text", { key = "head", spans = { ui.span("Get started", "strong"), ui.span("  " .. (if todo == 0 and not asking then "All set" else todo .. " to do"), "muted") } }),
 		ui.node("list", { key = "lines" }, lines),
 		shortcuts,
-		ui.node("list", { key = "end" }, {
-			ui.node("item", { key = "dismiss", label = if todo == 0 then "Close" else "Dismiss", icon = "x", tone = "muted", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
+		buttonRow("end", {
+			button({ key = "dismiss", label = if todo == 0 then "Close" else "Dismiss", icon = "x", tone = "muted", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
 		}),
 	})
 end
@@ -1754,12 +1777,12 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
 	end
 	local buttons: { Node } = {
-		ui.node("item", { key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
+		button({ key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
 	}
 	if dropAct then
-		table.insert(buttons, ui.node("item", { key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }))
+		table.insert(buttons, button({ key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }))
 	end
-	table.insert(kids, ui.node("list", { key = "buttons" }, buttons))
+	table.insert(kids, buttonRow("buttons", buttons))
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
 end
 

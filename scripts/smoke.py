@@ -66,7 +66,7 @@ SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
 # Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
 # answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
-# answers with the canned list in search.json (none: empty), a checks load with no checks, `auth status` with one
+# answers with the canned list in search.json (none: empty), a checks load with checks/<owner>__<name>__<n>.json (none: no checks), `auth status` with one
 # signed-in login (the repository picker's list, warmed after a search), `auth token` for that login, and Now's notifications read
 # with notifications.json (none: no thread). Header is prepended.
 FAKE_GH = r'''
@@ -96,6 +96,11 @@ if a[:2] == ["api", "graphql"]:
     if "o" in fields:
         if "first: 25" in fields.get("query", ""):  # the pull requests that close an issue (the --jq answer is a list): none
             sys.stdout.write("[]")
+            sys.exit(0)
+        f = os.path.join(SMOKE, "checks", "%s__%s__%s.json" % (fields.get("o"), fields.get("r"), fields.get("n")))
+        if os.path.exists(f):  # one pull request's checks page (the CHECKS_JQ answer), when a scenario wrote one
+            with open(f) as handle:
+                sys.stdout.write(handle.read())
             sys.exit(0)
         sys.stdout.write(json.dumps({"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
@@ -412,6 +417,10 @@ class Smoke:
 
         walk(json.loads(self.ctl("tree")).get("tree"))
         return out
+
+    def matches(self, sel: str) -> List[str]:
+        """The text of each visible element matching CSS selector `sel`."""
+        return [str(n.get("text") or "") for n in json.loads(self.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict)]
 
     def palette_rows(self) -> List[str]:
         """The option rows of Tern's open command palette (it is drawn outside the UI tree; the accessibility tree has it); empty when it is closed."""
@@ -1806,6 +1815,42 @@ def sc_outcome(s: Smoke) -> None:
     s.ctl_ok("key", "Escape")
 
 
+def sc_controls(s: Smoke) -> None:
+    """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run previews its Next move, Re-run failed checks, as a
+    button (role plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is
+    clicked: the shot shows them."""
+    stamp = "2026-01-01T00:00:00Z"
+
+    def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
+        return {"__typename": "CheckRun", "id": "run-" + name, "name": name, "status": "COMPLETED", "conclusion": conclusion, "startedAt": stamp,
+                "completedAt": stamp, "detailsUrl": url, "checkSuite": {"id": "suite-" + name, "app": None, "workflowRun": {"workflow": {"name": "CI"}}}}
+
+    runs = [run("build", "FAILURE", "https://github.com/a/gent/actions/runs/123/job/9"), run("lint", "SUCCESS", None)]
+    pr = {"number": 7, "title": "Controls PR 7", "url": "https://github.com/a/gent/pull/7", "author": "octo", "state": "OPEN", "isDraft": False,
+          "updatedAt": stamp, "createdAt": stamp, "head": "feature-7", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+          "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs)}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    (s.smoke / "checks").mkdir(exist_ok=True)
+    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": []}
+    (s.smoke / "checks" / "a__gent__7.json").write_text(json.dumps({"total": len(runs), "next": None, "nodes": runs, "about": about}), encoding="utf-8")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("agent"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
+    s.wait_text("the pull request", "Controls PR 7")
+    s.wait_until("its native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
+    s.wait_text("the Next move of a failed run", "Re-run failed checks")
+    scope = "[data-surface='plugin.plotroom.prs'] "
+    button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
+    s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
+    s.shot("controls")
+    s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))
+    s.shot("controls-loaded")
+    s.eq("the check without a page is neither", False, any("lint" in t for t in s.matches(button + ", " + link)))
+    s.ctl_ok("key", "Escape")
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -1831,6 +1876,7 @@ SCENARIOS = [
     ("URL prompts", sc_prompts),
     ("agent launch, jump and duplicate offer", sc_agent),
     ("action outcome", sc_outcome),
+    ("buttons and links", sc_controls),
 ]
 
 
