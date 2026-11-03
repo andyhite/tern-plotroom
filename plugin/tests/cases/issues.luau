@@ -1139,10 +1139,58 @@ windowCase("window: Implement and Fix push and open a draft PR before they repor
 		local report = string.find(text, "Report, then ask", 1, true)
 		yes(push ~= nil and create ~= nil and report ~= nil, name .. ": the push, the draft PR and the report are all steps")
 		yes((push :: number) < (create :: number) and (create :: number) < (report :: number), name .. ": the branch is pushed and the draft opened before the report")
-		has(text, "Ask: `Ship: all`, or any of `ticket comment`, `transition`, `ready`", name .. ": the report asks only for what stays behind approval")
+		has(text, "`Mark PR ready`, `Comment on the ticket`, `Move to <status>` (only when a status fits)", name .. ": the report asks only for what stays behind approval")
 		lacks(text, "push+PR", name .. ": the push and the draft PR are no longer asked for")
 		has(text, "NEVER comment on, transition, or edit the ticket, or mark the PR ready, before it.", name .. ": the ticket and ready still wait for approval")
 	end
+end)
+
+-- What the default actions promise at their approval step: one ask with choices and a default, and nothing drafted
+-- for posting before it is picked.
+local function seedText(w: World, kind: string, name: string): string
+	local storage: any = w.load("host/storage")
+	for _, p in (w.load("prompts") :: any)[kind] do
+		if p.name == name then
+			yes(#p.text <= storage.PROMPT_CAP, name .. " stays editable: " .. #p.text .. " bytes")
+			return p.text
+		end
+	end
+	error("no default " .. name)
+end
+
+case("prompts: the default Address feedback asks which items by category and whether to reply, and drafts replies only for the picks", function(w: World)
+	local text = seedText(w, "prs", "Address feedback")
+	lacks(text, "`Approve: all`", "no free-text approval format")
+	has(text, "Already addressed, Discuss, Decline → a one-line gist of the reply, no draft", "the plan shows a gist, not a drafted reply")
+	local items = string.find(text, "One ask-tool call, two questions:\n     1. `Which items?`, multiple choice: one option per non-empty category with its numbers (`Fix (F1, F3)`, `Already addressed (F2)`, `Discuss (F4)`, `Decline (F5)`); default every category.", 1, true)
+	local replies = string.find(text, "\n     2. `Replies?`: `Post replies for the picked items` (default) / `Fix only, no replies`", 1, true)
+	yes(items and replies and items < replies, "one ask, its two questions in order")
+	has(text, "\"Other\" takes numbers or exclusions", "Other picks by numbers or exclusions")
+	has(text, "The answers approve the picked Fix items' listed changes and pushing them.", "the picks approve the changes and the push")
+	local draft = string.find(text, "draft the full replies now, only for the picked items", 1, true)
+	local push = string.find(text, "   - Push.", 1, true)
+	yes(draft and push and draft < push, "full replies are drafted only after the picks, before the push")
+	has(text, "Show them once and ask `Post` / `Edit` before pushing. `Fix only, no replies` → draft nothing.", "the drafts are shown once; no replies means none")
+	has(text, "as shown; only links MAY be filled in", "replies are posted as shown")
+end)
+
+for _, seed in { { "Implement", "short summary" }, { "Fix", "root cause in one line" } } do
+	local name = seed[1]
+	case("prompts: the default " .. name .. " asks what to ship as choices, none by default, and drafts the ticket comment only if picked", function(w: World)
+		local text = seedText(w, "issues", name)
+		lacks(text, "Proposed ticket comment", name .. ": the report drafts no ticket comment")
+		lacks(text, "`Ship: all`", name .. ": no free-text approval format")
+		has(text, "The status to move it to, only when one fits.", name .. ": a status only when one fits")
+		has(text, "One ask-tool call, multiple choice, default none of them (the draft PR already exists): `Mark PR ready`, `Comment on the ticket`, `Move to <status>` (only when a status fits).", name .. ": one ask, its choices and default")
+		has(text, "Comment on the ticket: only now draft it (PR link, " .. seed[2] .. "), show it and ask `Post` / `Edit`; then `gh issue comment", name .. ": the comment is drafted and shown only once picked")
+	end)
+end
+
+case("prompts: the default Plan asks which tickets to file, all by default or only the first slice", function(w: World)
+	local text = seedText(w, "issues", "Plan")
+	lacks(text, "`File: all`", "no free-text approval format")
+	has(text, "One ask-tool call: `File which tickets?`: `All (T1–Tn)` (default) / `Only the first slice (T1…Tk)` when the plan has one; \"Other\" takes T-numbers or changes.", "one ask, its choices and default")
+	has(text, "Requested edits to the tickets → show them again for approval", "edited tickets are shown again before filing")
 end)
 
 windowCase("window: Open on an issue opens its URL beside the block it came from, whatever pane has focus", function(w: World)

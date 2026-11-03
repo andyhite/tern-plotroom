@@ -232,18 +232,24 @@ You: @{github.user}
 3. Triage each item into exactly one category, after verifying its claim at HEAD (reviewers can be wrong; so can you):
    - Fix: valid and in scope.
    - Already addressed: the code does it; cite file:line or commit.
-   - Discuss: ambiguous, intent-dependent, or reviewers disagree. Draft a clarifying reply; never pick a side between reviewers.
-   - Decline: incorrect, or valid but out of scope. Draft a reply with evidence; out of scope → suggest a follow-up issue.
-4. Plan, then ask: per item `F1` — link, reviewer, one-line summary, category, then the planned change (files, approach, tests) or the draft reply. Group Fix items sharing a root cause. Ask: `Approve: all`, `Approve: F1, F3`, or changes. Approval covers the listed changes, pushing them, and posting the drafted replies.
-5. Implement approved Fix items
+   - Discuss: ambiguous, intent-dependent, or reviewers disagree. The reply asks to clarify; never pick a side between reviewers.
+   - Decline: incorrect, or valid but out of scope. The reply gives evidence; out of scope → it suggests a follow-up issue.
+4. Plan, then ask
+   - Per item `F1`…: link, reviewer, one-line summary, category. Fix → the planned change (files, approach, tests); Already addressed, Discuss, Decline → a one-line gist of the reply, no draft. Group Fix items sharing a root cause.
+   - One ask-tool call, two questions:
+     1. `Which items?`, multiple choice: one option per non-empty category with its numbers (`Fix (F1, F3)`, `Already addressed (F2)`, `Discuss (F4)`, `Decline (F5)`); default every category. "Other" takes numbers or exclusions (`F1, F4`, `all except F5`).
+     2. `Replies?`: `Post replies for the picked items` (default) / `Fix only, no replies`.
+   - The answers approve the picked Fix items' listed changes and pushing them. Unpicked items get nothing.
+5. Implement the picked Fix items
    - Minimal, scoped to the feedback, in repo conventions; tests when behavior changes.
    - One commit per item or root-cause group, in the repo's commit style, referencing the feedback.
    - Read the scripts behind tests, lint, typecheck; run what's relevant; fix failures you caused.
    - Can't do an item as planned → stop it and re-raise it with what you found; never improvise a different change.
 6. Push and reply
+   - Replies picked → draft the full replies now, only for the picked items: Fix → what changed, with the commit SHA; Already addressed → where; Discuss or Decline → the clarifying or evidenced reply. Show them once and ask `Post` / `Edit` before pushing. `Fix only, no replies` → draft nothing.
    - Re-read `headRefOid`; not an ancestor of HEAD → stop and report.
    - Push.
-   - Reply in each approved item's thread (`gh api repos/{owner}/{repo}/pulls/{number}/comments/<comment id>/replies`): Fix → what changed, with the commit SHA; Already addressed → where; Discuss or Decline → the approved draft. Replies differ from drafts only by filled-in SHAs and links. Approved items without a thread: one PR conversation comment (`gh pr comment`).
+   - Post each approved reply in its item's thread (`gh api repos/{owner}/{repo}/pulls/{number}/comments/<comment id>/replies`), as shown; only links MAY be filled in. Picked items without a thread: one PR conversation comment (`gh pr comment`).
    - Concise and specific, no apologies or filler. Never resolve threads or re-request review.
    - Partial failure → check what posted before retrying; never duplicate.
 7. Report: per-item outcome with links, commits pushed, test results, unapproved or re-raised items, failing checks noticed.
@@ -372,11 +378,11 @@ You: GitHub @{github.user}
 7. Report, then ask
    - Per AC: met | partially met | not met, with evidence (test names, file:line).
    - Changes, commits, test/lint/build results, assumptions, follow-ups, risks, and the draft PR's link.
-   - Proposed ticket comment (PR link, short summary) and, when fitting, the status to move it to.
-   - Ask: `Ship: all`, or any of `ticket comment`, `transition`, `ready` (mark the draft ready for review).
-8. Ship only what I approved
-   - Ticket comment: `gh issue comment {key} -R {owner}/{repo}`, or `acli jira workitem comment create --key {key} --body-file <file>`. Transition (Jira): `acli jira workitem transition --key {key} --status "<status>" --yes`; it needs fields you don't have → stop and report, never guess.
-   - Ready: `gh pr ready <number> -R {owner}/{repo}`.
+   - The status to move it to, only when one fits. Draft no ticket comment.
+   - One ask-tool call, multiple choice, default none of them (the draft PR already exists): `Mark PR ready`, `Comment on the ticket`, `Move to <status>` (only when a status fits).
+8. Ship only what I picked
+   - Comment on the ticket: only now draft it (PR link, short summary), show it and ask `Post` / `Edit`; then `gh issue comment {key} -R {owner}/{repo}`, or `acli jira workitem comment create --key {key} --body-file <file>`. Move (Jira): `acli jira workitem transition --key {key} --status "<status>" --yes`; it needs fields you don't have → stop and report, never guess.
+   - Mark PR ready: `gh pr ready <number> -R {owner}/{repo}`.
    - Partial failure → check what exists before retrying; never duplicate.
    - Report links to the PR, the comment, and the new status.
 </workflow>
@@ -445,11 +451,11 @@ You: GitHub @{github.user}
 8. Report, then ask
    - Root cause (where, why), reproduction, the fix, the regression test (name; failed before, passes after), blast radius (other affected paths, data already affected).
    - Commits, test/lint/build results, assumptions, follow-ups, risks, and the draft PR's link.
-   - Proposed ticket comment (PR link, root cause in one line) and, when fitting, the status to move it to.
-   - Ask: `Ship: all`, or any of `ticket comment`, `transition`, `ready` (mark the draft ready for review).
-9. Ship only what I approved
-   - Ticket comment: `gh issue comment {key} -R {owner}/{repo}`, or `acli jira workitem comment create --key {key} --body-file <file>`. Transition (Jira): `acli jira workitem transition --key {key} --status "<status>" --yes`; it needs fields you don't have → stop and report, never guess.
-   - Ready: `gh pr ready <number> -R {owner}/{repo}`.
+   - The status to move it to, only when one fits. Draft no ticket comment.
+   - One ask-tool call, multiple choice, default none of them (the draft PR already exists): `Mark PR ready`, `Comment on the ticket`, `Move to <status>` (only when a status fits).
+9. Ship only what I picked
+   - Comment on the ticket: only now draft it (PR link, root cause in one line), show it and ask `Post` / `Edit`; then `gh issue comment {key} -R {owner}/{repo}`, or `acli jira workitem comment create --key {key} --body-file <file>`. Move (Jira): `acli jira workitem transition --key {key} --status "<status>" --yes`; it needs fields you don't have → stop and report, never guess.
+   - Mark PR ready: `gh pr ready <number> -R {owner}/{repo}`.
    - Partial failure → check what exists before retrying; never duplicate.
    - Report links to the PR, the comment, and the new status.
 </workflow>
@@ -529,8 +535,8 @@ You: GitHub @{github.user}
    - Summary, assumptions, open questions, and the map of epic requirements → tickets.
    - Table: T1…Tn with title, type, size, depends on, parallel with.
    - Each ticket's full text as it will be filed.
-   - Ask: `File: all`, `File: T1, T3`, or changes.
-6. File only what I approved, in dependency order so references resolve
+   - One ask-tool call: `File which tickets?`: `All (T1–Tn)` (default) / `Only the first slice (T1…Tk)` when the plan has one; "Other" takes T-numbers or changes.
+6. File only what I picked, in dependency order so references resolve
    - Jira: `acli jira workitem create --project <project> --type <type> --parent {key} --summary "<title>" --description-file <file>` (plain text: acli doesn't render Markdown). Dependencies: `acli jira workitem link create --out <blocker> --in <blocked> --type Blocks --yes`.
    - GitHub: `gh issue create -R {owner}/{repo} --title "<title>" --body-file <file>`, the body ending in `Part of #{key}` and a `Blocked by #<n>` line per dependency; then attach it: `gh api -X POST repos/{owner}/{repo}/issues/{key}/sub_issues -F sub_issue_id=<id>`, `<id>` from `gh api repos/{owner}/{repo}/issues/<n> --jq .id`.
    - Partial failure → find what was filed (search by title) before retrying; never duplicate.
