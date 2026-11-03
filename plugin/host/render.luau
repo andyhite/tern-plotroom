@@ -86,24 +86,18 @@ local function stageBadge(id: string, why: string?, note: Note?): { text: string
 	return if why then { text = b.text, tone = b.tone, title = why } else b
 end
 
--- The "In tab" and "Worktree" badges an item's row starts with; `one` names the item in the tooltip, `go` is the key that
--- goes to the tab ("": none). The Worktree badge is left to the stage badge when that says Worktree.
-local function tabBadges(one: string, note: Note?, open: boolean, go: string, stage: string): { any }
+-- The Worktree badge an item's row starts with, left to the stage badge when that says Worktree.
+local function worktreeBadges(note: Note?, stage: string): { any }
 	local badges: { any } = {}
-	if open then
-		table.insert(badges, { text = "In tab", tone = "accent", title = "A tab works in this " .. one .. "'s worktree" .. (if go ~= "" then " (" .. go .. " goes there)" else "") })
-	end
 	if note and note.ok and stage ~= "worktree" then
 		table.insert(badges, { text = "Worktree", tone = noteTone(note), title = noteTitle(note) })
 	end
 	return badges
 end
 
--- The picker row `key` shows: its labels join `badges` (none: no badges prop).
-local function finishRow(key: string, title: string, author: string, detail: { any }, badges: { any }, labels: { string }): { [string]: any }
-	for _, l in labels do
-		table.insert(badges, { text = l })
-	end
+-- The picker row `key` shows: only what decides at the list level (LEDGER.md › Picker rows); labels, age, the
+-- review and the checks are the preview's.
+local function finishRow(key: string, title: string, author: string, detail: { any }, badges: { any }): { [string]: any }
 	return {
 		id = pickerId("n", key),
 		label = title,
@@ -114,58 +108,44 @@ local function finishRow(key: string, title: string, author: string, detail: { a
 	}
 end
 
--- A pull request's picker row; its stage says Merged or Closed, so only Draft is left of its state.
-local function pickerItem(pr: github.Pr, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
-	local check = if pr.checks then CHECK[pr.checks] else nil
-	local badges = tabBadges("pull request", note, open, go, stage)
+-- "#N", then " · repo" when `repos` (the view spans more than one repository).
+local function refDetail(ref: string, repo: string?, repos: boolean): { any }
+	local detail: { any } = { ui.span(ref, "num") }
+	if repos and repo then
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span(repo, "mono"))
+	end
+	return detail
+end
+
+-- A pull request's picker row: "#N · repo · <what blocks it>"; its stage says Merged or Closed, so only Draft is left
+-- of its state.
+local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string?, repos: boolean): { [string]: any }
+	local badges = worktreeBadges(note, stage)
 	if stateKind(pr) == "draft" then
 		table.insert(badges, STATE_BADGE.draft)
 	end
-	-- GitHub's list row: "#N · @author opened 2h ago · Review required · ✓ 3/5", the review and checks as toned text so
-	-- they don't read as the state and label badges.
-	local detail: { any } = { ui.span("#" .. pr.number, "num"), " · ", ui.span(pr.repo, "mono"), " · ", ui.span("@" .. pr.author, "mono"), " opened " .. github.age(pr.created) .. " ago" }
-	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
-	if review then
+	local detail = refDetail("#" .. pr.number, pr.repo, repos)
+	if why then
 		table.insert(detail, " · ")
-		table.insert(detail, ui.span(review.text, review.tone))
+		table.insert(detail, ui.span(why, "error"))
 	end
-	if check and pr.runTotal > 0 then
-		-- ponytail: passes among the search's first 25 checks (the total is exact); read the detail runs if that misleads.
-		local ok = 0
-		for _, r in pr.runs do
-			if r.status == "success" or r.status == "neutral" then
-				ok += 1
-			end
-		end
-		table.insert(detail, " · ")
-		table.insert(detail, ui.span(check.mark .. " " .. ok .. "/" .. pr.runTotal, check.tone))
-	end
-	return finishRow(pr.key, pr.title, pr.author, detail, badges, pr.labels)
+	return finishRow(pr.key, pr.title, pr.author, detail, badges)
 end
 
--- An issue's picker row: "#N · repo · @author opened 2h ago" (Jira: "ABC-12 · Author · Type"); its workflow
--- status or why it closed (the stage already says Closed), and its labels as badges. The preview lists the assignees; the rows do not.
-local function issueRow(issue: tracker.Issue, note: Note?, open: boolean, go: string, stage: string): { [string]: any }
-	local badges = tabBadges("issue", note, open, go, stage)
+-- An issue's picker row: "#N · repo" (Jira: "ABC-12 · Type", the key already names its project); its workflow status
+-- or why it closed (the stage already says Closed).
+local function issueRow(issue: tracker.Issue, note: Note?, stage: string, repos: boolean): { [string]: any }
+	local badges = worktreeBadges(note, stage)
 	local sb = issueBadge(issue)
 	if issue.status or (issue.state == "closed" and sb ~= STATE_BADGE.closed) then
 		table.insert(badges, sb)
 	end
-	local at = if issue.tracker == "github" then "@" else ""
-	local detail: { any } = { ui.span(tracker.refLabel(issue.ref), "num") }
-	if issue.tracker == "github" then
-		table.insert(detail, " · ")
-		table.insert(detail, ui.span(issue.repo, "mono")) -- a Jira key already names its project
-	end
-	table.insert(detail, " · ")
-	table.insert(detail, ui.span(at .. issue.author, "mono"))
-	if issue.created > 0 then
-		table.insert(detail, " opened " .. github.age(issue.created) .. " ago")
-	end
+	local detail = refDetail(tracker.refLabel(issue.ref), if issue.tracker == "github" then issue.repo else nil, repos)
 	if issue.type then
 		table.insert(detail, " · " .. issue.type)
 	end
-	return finishRow(issue.key, issue.title, issue.author, detail, badges, issue.labels)
+	return finishRow(issue.key, issue.title, issue.author, detail, badges)
 end
 
 -- An agent's state as a row badge: the window reports it (`agent-status`); an idle or exited agent is no sign the work is done.
@@ -214,9 +194,9 @@ local function checkBadge(info: { check: string? }?): { text: string, tone: stri
 end
 
 -- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
--- Snoozed) in front of `row`'s badges.
-local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
-	local extra: { any } = { stageBadge(stage, why, state.notes[item.key]) }
+-- Snoozed) in front of `row`'s badges. The stage badge carries no reason: a Blocked row's detail says what blocks it.
+local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string)
+	local extra: { any } = { stageBadge(stage, nil, state.notes[item.key]) }
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
@@ -266,32 +246,34 @@ local function stageFact(state: State, kind: string, item: any): Node
 	return ui.node("kv", { key = "stage", items = items })
 end
 
--- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
--- ages), the set of items open in a tab changes or so does the key that goes to a tab.
-local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { any }
+-- The picker rows of a snapshot, built once: again only when a worktree report arrives, the block's state changes or
+-- the minute does (a snooze ends).
+local function rowsOf(state: State, snap: Snap): { any }
 	local minute = os.time() // 60
-	local go = (keys.load())["goto"]
-	local ids: { string } = {}
-	for id in open do
-		table.insert(ids, id)
-	end
-	table.sort(ids)
-	local openKey = go .. "|" .. table.concat(ids, ",") .. "|" .. state.rev
 	local cached = snap.rows
-	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsOpen == openKey then
+	if cached and snap.rowsRev == state.noteSeq and snap.rowsMin == minute and snap.rowsState == state.rev then
 		return cached
+	end
+	-- A repository is worth a row's room only when the rows span more than one.
+	local repos, first = false, nil
+	for _, item in snap.items do
+		local repo = item.repo or ""
+		first = first or repo
+		if repo ~= first then
+			repos = true
+			break
+		end
 	end
 	local rows: { any } = {}
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
-		local isOpen = open[item.key] == true
 		local stage, why = engine.stage(state, snap.kind, item)
-		local row = if issues then issueRow(item, state.notes[item.key], isOpen, go, stage) else pickerItem(item, state.notes[item.key], isOpen, go, stage)
-		decorate(state, snap.kind, item, row, stage, why)
+		local row = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, why, repos)
+		decorate(state, snap.kind, item, row, stage)
 		table.insert(rows, row)
 	end
 	tern.json.array(rows)
-	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsOpen = rows, state.noteSeq, minute, openKey
+	snap.rows, snap.rowsRev, snap.rowsMin, snap.rowsState = rows, state.noteSeq, minute, state.rev
 	return rows
 end
 
@@ -1445,9 +1427,6 @@ local function nowProps(state: State, props: { [string]: any })
 	local now = state.now
 	local rows = engine.nowRows(state)
 	local current = engine.nowSelected(state)
-	local map = keys.load()
-	local open = openItems(state)
-	local go = map["goto"]
 	local items: { any } = {}
 	local order: { any } = {}
 	for _, row in rows do
@@ -1456,7 +1435,8 @@ local function nowProps(state: State, props: { [string]: any })
 		if row.item and row.kind then
 			local stage = engine.stage(state, row.kind, row.item)
 			local note = state.notes[row.key]
-			item = if row.kind == "issues" then issueRow(row.item, note, open[row.key] == true, go, stage) else pickerItem(row.item, note, open[row.key] == true, go, stage)
+			-- Now spans every repository; its first badge already says what blocks a PR.
+			item = if row.kind == "issues" then issueRow(row.item, note, stage, true) else pickerItem(row.item, note, stage, nil, true)
 		else
 			local detail: { any } = {}
 			if row.notice then
@@ -1626,7 +1606,7 @@ function M.queuePicker(state: State): Node
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
 	local open = openItems(state)
-	local items: { any } = if snap then rowsOf(state, snap, open) else tern.json.array({})
+	local items: { any } = if snap then rowsOf(state, snap) else tern.json.array({})
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.

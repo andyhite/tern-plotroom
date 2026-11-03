@@ -1625,7 +1625,7 @@ case("host: a pull request's worktree and an issue's stay each their own kind's 
 	eq(countLog(s.git, "worktree add"), 0, "nothing was made")
 end)
 
-case("host: an issue row names its number, repository, author and age, wears its labels, shows no assignee, and says why a closed issue closed", function(w: World)
+case("host: an issue row names its number, the repository only when the view spans more than one, its author once as the mark, leaves labels and age to the preview, shows no assignee, and says why a closed issue closed", function(w: World)
 	local s = issueHost(w)
 	s.gh.issueItems.octocat = {
 		issueItem(12, "o/r", EPOCH - 60, { title = "Fix login", labels = array({ "bug", "ui" }), assignees = array({ "ann", "bob" }), comments = 3 }),
@@ -1650,17 +1650,17 @@ case("host: an issue row names its number, repository, author and age, wears its
 	end
 	eq(row(1).id, "no_2fr_2312", "the id is n and the issue's reference")
 	eq(row(1).label, "Fix login", "the title is the label")
-	eq(detailText(row(1)), "#12 · o/r · @octo opened 1m ago", "the number, the repository, the author and the age")
-	eq(detailText(row(3)), "#14 · o/r · @octo opened 3m ago", "a lone assignee is not in the detail")
-	eq(detailText(row(2)), "#13 · o/r · @octo opened 2m ago", "nor is the lack of one")
-	eq(row(1).mark.text, "octo", "the author's mark")
+	eq(detailText(row(1)), "#12", "the number: one repository is not worth the room, the author is the mark, the age the preview's")
+	eq(detailText(row(3)), "#14", "a lone assignee is not in the detail")
+	eq(detailText(row(2)), "#13", "nor is the lack of one")
+	eq(row(1).mark.text, "octo", "the author's mark, the one place the row names them")
 	eq(row(1).facts, nil, "the rows carry no facts column: no comment count, no assignee")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
 	local head: any = findKey(pickerNode(b), "head")
 	eq(findKey(head, "integration").p.text, "GitHub", "the head row names GitHub")
 	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
-	eq(badges(1), "Not started/muted bug/- ui/-", "the rows lead with the stage, carry the labels and no integration badge")
+	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
 	eq(badges(2), "Closed/muted Completed/accent", "a completed issue")
 	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
 	eq(badges(4), "Closed/muted Duplicate/muted", "a duplicate")
@@ -1668,8 +1668,16 @@ case("host: an issue row names its number, repository, author and age, wears its
 	leaveIssueWt(w, s, 14)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-14/src" })
 	refreshNow(w, b)
-	eq(badges(3), "Closed/muted In tab/accent Worktree/- Not planned/muted", "a tab working in the issue's worktree marks its row, before its worktree and state; Closed outranks Worktree")
-	eq(badges(1), "Not started/muted bug/- ui/-", "and no other row")
+	eq(badges(3), "Closed/muted Worktree/- Not planned/muted", "a worktree is marked before the state, a tab working in it is not (the preview's chip says it); Closed outranks Worktree")
+	eq(badges(1), "Not started/muted", "and no other row")
+	table.insert(s.gh.issueItems.octocat, issueItem(17, "o/s", EPOCH - 360))
+	refreshNow(w, b)
+	local details: { [string]: string } = {}
+	for _, r in pickerOf(b).items do
+		details[r.id] = detailText(r)
+	end
+	eq(details.no_2fr_2312, "#12 · o/r", "once the rows span two repositories, each names its own")
+	eq(details.no_2fs_2317, "#17 · o/s", "the other's too")
 end)
 
 case("host: the issue preview shows its body, assignees, milestone, linked pull requests and the branch it would create", function(w: World)
@@ -1832,13 +1840,16 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	eq(stage(10), "Ready to merge", "no checks at all on a clean, approved PR")
 	eq(stage(11), "PR open", "a draft")
 	eq(stage(12), "Blocked", "an errored check blocks while GitHub's merge state does not say it is optional")
-	local blocked: any = nil
+	local rows: { [string]: any } = {}
 	for _, row in pickerOf(b).items do
-		if row.id == "no_2fr_235" then
-			blocked = row.badges[1]
-		end
+		rows[row.id] = row
 	end
-	eq(blocked.title, "Conflicts with its base", "a Blocked badge says why")
+	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the one thing that blocks it")
+	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with its base", "conflicts outrank the rest")
+	eq(detailText(rows.no_2fr_236), "#6 · Checks failing", "failing checks, with no ratio")
+	eq(rows.no_2fr_235.badges[1].title, nil, "the Blocked badge does not say it again")
+	eq(detailText(rows.no_2fr_239), "#9", "a review still required blocks nothing: no review text")
+	eq(detailText(rows.no_2fr_238), "#8", "nor do running checks")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
 	eq(factOf(b, "Stage"), "Blocked", "the preview's first fact is the stage")
 	local about: any = findKey(pickerNode(b), "about")

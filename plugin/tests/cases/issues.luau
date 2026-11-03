@@ -466,11 +466,12 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	end
 	eq(row(1).id, "nabc_23ABC-12", "the id is n and the issue's key, escaped")
 	eq(row(1).label, "Fix login", "the summary is the label")
-	eq(detailText(row(1)), "ABC-12 · Ann Lee · Bug", "the key, the reporter and the type: no repository, no age (the search carries no dates), no assignee")
-	eq(detailText(row(2)), "ABC-13 · Ann Lee · Task", "the same for an unassigned issue")
+	eq(detailText(row(1)), "ABC-12 · Bug", "the key and the type: the reporter is the mark, no repository, no age, no assignee")
+	eq(row(1).mark.text, "Ann Lee", "the reporter's mark")
+	eq(detailText(row(2)), "ABC-13 · Task", "the same for an unassigned issue")
 	eq(row(1).facts, nil, "the rows carry no facts column: no assignee, no comment count")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
-	eq(badges(1), "Not started/muted In Progress/warning ui/-", "the stage, the workflow status toned by its category, then the labels; no integration badge")
+	eq(badges(1), "Not started/muted In Progress/warning", "the stage, then the workflow status toned by its category; the labels are the preview's; no integration badge")
 	eq(badges(2), "Closed/muted Done/success", "a done issue is Closed and says Done")
 	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open", "the preview head's Open icon is named Open")
 	b.typeText("?")
@@ -679,11 +680,7 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	eq(badgeOf(b).text, "Worktree", "a worktree puts a badge on the row")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
-	local texts: { string } = {}
-	for _, badge in pickerOf(b).items[1].badges do
-		table.insert(texts, badge.text)
-	end
-	yes(table.find(texts, "In tab") ~= nil, "a tab in the worktree marks the issue: the directory keeps the key's case")
+	same(hx.inTab(w, b), { pickerOf(b).items[1].id }, "a tab in the worktree is known to work in the issue: the directory keeps the key's case")
 	local head: any = findKey(pickerNode(b), "head")
 	yes(head ~= nil, "the preview has a head row")
 	eq(findKey(head, "integration").p.text, "Jira", "naming the tracker")
@@ -2123,7 +2120,7 @@ case("host: a where request with a kind or key it cannot use is dropped", functi
 	eq(answerOf(b, "k1").path, nil, "a key of 200 bytes is answered")
 end)
 
-case("host: the In tab badge follows the panes working in a worktree the block knows, whatever its folder is called, and marks no other row", function(w: World)
+case("host: a tab is known to work in an item's worktree by the panes in a worktree the block knows, whatever its folder is called, and in no other item's", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60), searchItem(2, "o/r", EPOCH - 120), searchItem(12, "o/r", EPOCH - 180) }
 	s.gh.issueItems.octocat = { issueItem(2, "o/r", EPOCH - 60, { title = "Second" }), issueItem(12, "o/r", EPOCH - 120, { title = "Fix login" }) }
@@ -2138,18 +2135,18 @@ case("host: the In tab badge follows the panes working in a worktree the block k
 	w.fs.dirs["/wt/custom-name"] = true
 	local issues = openIssues(w, 1)
 	local prs = openQueue(w, 2)
-	-- Puts a pane working in `cwd` on the host, draws both panes and says which rows wear In tab: the PRs', then the issues'.
+	-- Puts a pane working in `cwd` on the host, draws both panes and says which items a tab works in: the PRs', then the issues'.
 	local nextPane = 8
 	local function working(cwd: string): { { string } }
 		nextPane += 1
 		table.insert(w.panes, { pane = nextPane, cwd = cwd })
 		prs.render()
 		issues.render()
-		return { hx.inTab(prs), hx.inTab(issues) }
+		return { hx.inTab(w, prs), hx.inTab(w, issues) }
 	end
 	prs.render()
 	issues.render()
-	same({ hx.inTab(prs), hx.inTab(issues) }, { {}, {} }, "no pane in a worktree, no badge")
+	same({ hx.inTab(w, prs), hx.inTab(w, issues) }, { {}, {} }, "no pane in a worktree, no tab")
 	same(working("/wt/plotroom-o_r-pr-12/src"), { { "no_2fr_2312" }, {} }, "a pane in a folder of pull request 12's worktree marks it; not 1, whose folder's name starts the same, nor issue 12")
 	same(working("/wt/custom-name"), { { "no_2fr_2312" }, { "no_2fr_232" } }, "a pane in issue 2's worktree marks the issue whatever the folder is called; not pull request 2")
 	same(working("/wt/plotroom-o_r-pr-1"), { { "no_2fr_231", "no_2fr_2312" }, { "no_2fr_232" } }, "a pane in the worktree itself marks it")
@@ -2159,7 +2156,7 @@ case("host: the In tab badge follows the panes working in a worktree the block k
 	end
 	prs.render()
 	issues.render()
-	same({ hx.inTab(prs), hx.inTab(issues) }, { {}, {} }, "with the panes gone, so are the badges")
+	same({ hx.inTab(w, prs), hx.inTab(w, issues) }, { {}, {} }, "with the panes gone, so are the tabs")
 	-- a worktree made now is found by its noted folder, however the formats named it
 	w.kv.put("pr-dir-format", "p{key}")
 	w.kv.put("issue-dir-format", "i{key}-{slug}")
