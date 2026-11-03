@@ -1693,11 +1693,11 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 		}),
 	}
 	local b = openIssues(w)
-	has(b.text(), "Loading details…", "the linked pull requests shimmer while the details load")
+	has(b.text(), "Loading linked pull requests…", "the linked pull requests shimmer while the details load")
 	eq(#requestsOf(s.gh, "issue"), 0, "nothing loads the moment an issue is selected")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "issue"), 1, "the details load once the cursor rests")
-	lacks(b.text(), "Loading details…", "the shimmer is gone")
+	lacks(b.text(), "Loading linked pull requests…", "the shimmer is gone")
 	local preview = pickerNode(b)
 	local branch = findKey(preview, "branch")
 	eq(findKey(branch, "v").p.spans[1].t, "octocat/12-fix-login", "the branch Worktree would make: the default format over gh's active login, the issue's key and its title's slug")
@@ -1738,7 +1738,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	local less: any = findKey(pickerNode(b), "less", "item")
 	b.event({ ev = "action", id = "layer.queue.less", act = less.p.actions.click })
 	eq(card().p.collapsed, true, "Show less folds it again")
-	-- the chips: labels, and In tab while a tab works in the issue's worktree
+	-- the chips: the labels, among the facts; a tab in the issue's worktree is the worktree card's to say (Go to tab)
 	local function chips(): { string }
 		local out: { string } = {}
 		for _, chip in findKey(pickerNode(b), "chips").c do
@@ -1749,7 +1749,8 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	same(chips(), { "bug", "ui" }, "the labels are chips")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12" })
 	b.render()
-	same(chips(), { "In tab", "bug", "ui" }, "a tab in the issue's worktree adds In tab first")
+	same(chips(), { "bug", "ui" }, "a tab in the issue's worktree adds no chip")
+	yes(findKey(cardOf(b), "go", "item") ~= nil, "the worktree card offers Go to tab instead")
 	-- an issue with no milestone, assignee or pull request, and no description
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.advance(300)
@@ -1757,7 +1758,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	eq(factOf(b, "Milestone"), nil, "no milestone row")
 	eq(factOf(b, "Assignees"), nil, "no assignee row")
 	eq(findKey(pickerNode(b), "pr1"), nil, "no linked pull request")
-	lacks(b.text(), "Linked pull requests", "and no heading for them")
+	has(b.text(), "No linked pull requests", "the empty section says so under its heading")
 	eq(findKey(pickerNode(b), "description"), nil, "an empty body shows no card")
 	eq(findKey(findKey(pickerNode(b), "head"), "state", "badge").p.text, "Not planned", "a closed issue says why in the head's badge")
 end)
@@ -1776,12 +1777,12 @@ case("host: the issue preview shows the pull request whose head is its worktree'
 	eq(item.p.value, "#45", "its number")
 	eq(item.p.title, "#45 · Draft", "and its state")
 	eq(item.p.href, "plotroom://github/show/o/r/45", "a link that shows it in this block")
-	has(b.text(), "Pull request", "under its heading")
+	has(b.text(), "Linked pull requests", "under the linked pull requests' heading")
 	-- Another issue has no worktree: nothing is asked for it.
 	local asked = #requestsOf(s.gh, "head")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.advance(300)
-	eq(findKey(pickerNode(b), "headpr-head"), nil, "an issue with no worktree shows no pull request")
+	eq(findKey(pickerNode(b), "hp1"), nil, "an issue with no worktree shows no pull request")
 	eq(#requestsOf(s.gh, "head"), asked, "and looks none up")
 end)
 
@@ -1797,7 +1798,7 @@ case("host: the issue preview does not repeat a pull request the linked list alr
 	w.advance(300)
 	eq(#requestsOf(t.gh, "head"), 1, "the lookup ran")
 	yes(findKey(pickerNode(c), "pr1", "item") ~= nil, "the linked list shows the pull request")
-	eq(findKey(pickerNode(c), "headpr-head"), nil, "and the head lookup does not repeat it")
+	eq(findKey(pickerNode(c), "hp1"), nil, "and the head lookup does not repeat it")
 end)
 
 case("host stage: a pull request is Blocked by requested changes, conflicts or failing required checks, Ready to merge only when approved, passing and mergeable, else PR open", function(w: World)
@@ -1851,9 +1852,9 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	eq(detailText(rows.no_2fr_239), "#9", "a review still required blocks nothing: no review text")
 	eq(detailText(rows.no_2fr_238), "#8", "nor do running checks")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
-	eq(factOf(b, "Stage"), "Blocked", "the preview's first fact is the stage")
-	local about: any = findKey(pickerNode(b), "about")
-	eq(about.c[1].p.key, "stage", "first, above the branch")
+	eq(factOf(b, "Stage"), "Blocked", "the preview's status part leads with the stage")
+	eq(factOf(b, "Blocked by"), "Changes requested", "and says what blocks it")
+	eq(findKey(pickerNode(b), "about").c[1].p.key, "branch", "the facts start with the branch: the stage is not repeated there")
 end)
 
 -- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted
@@ -1973,7 +1974,7 @@ case("host: an issue's details that fail to load show the error and a Retry that
 	eq(#requestsOf(s.gh, "issue"), 1, "one load")
 	has(b.text(), "Server Error", "the error is on screen")
 	has(b.text(), "Retry", "with a Retry button")
-	lacks(b.text(), "Loading details…", "and no shimmer")
+	lacks(b.text(), "Loading linked pull requests…", "and no shimmer")
 	failing = false
 	b.event({ ev = "action", id = "layer.queue", act = "retry-checks" })
 	w.advance(300)

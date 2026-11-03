@@ -2734,7 +2734,8 @@ case("host worktrees board: the preview of a row names its folder, the pull requ
 	w.flush()
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "a row event selects it")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "title").p.spans[1].t, "pr5", "the preview's title is its folder's name")
-	has(b.text(), "Pull request #5", "the pull request it was made for is named")
+	has(b.text(), "Linked pull requests", "the pull request it was made for is under the linked pull requests")
+	has(b.text(), "#5", "named by its number")
 	has(b.text(), "Fix the board", "with the title the tracker answered")
 	local facts: { [string]: string } = {}
 	for _, fact in findKey(pickerNode(b), "facts", "kv").p.items do
@@ -2744,7 +2745,9 @@ case("host worktrees board: the preview of a row names its folder, the pull requ
 	eq(facts.Repository, "o/r", "the repository")
 	eq(facts.Path, "/wt/pr5", "the path")
 	yes(facts.Head ~= nil and #facts.Head <= 8, "a short head")
-	yes(facts.Status ~= nil, "and a status")
+	eq(facts.Status, nil, "the changes are not a fact")
+	local state: any = findKey(findKey(pickerNode(b), "head"), "state", "badge")
+	yes(state ~= nil and state.p.title ~= nil, "they are the head's badge, the status in its tooltip")
 	eq(findKey(pickerNode(b), "close-preview"), nil, "no Close preview row is offered")
 	eq(b.press("escape"), false, "Escape closes nothing")
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the preview stays open")

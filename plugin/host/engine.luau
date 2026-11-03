@@ -395,6 +395,23 @@ function M.rerunnable(state: State, item: any): boolean
 	return false
 end
 
+-- Whether `pr` is someone else's open pull request that asks for the review of the login the view runs as (by name; a
+-- team request does not count), as its loaded details say.
+function M.reviewAsked(state: State, pr: github.Pr): boolean
+	local who = M.login(state) or ghActive.login
+	if not who or pr.state ~= "open" or pr.draft or string.lower(pr.author) == string.lower(who) then
+		return false
+	end
+	local d = state.details[M.detailKey(state, pr)]
+	local reviews: { github.Review } = if d and d.about then d.about.reviews else {}
+	for _, r in reviews do
+		if r.state == "requested" and string.lower(r.login) == string.lower(who) then
+			return true
+		end
+	end
+	return false
+end
+
 -- The suggested next move for `item` (the selected one) in its stage, or nil when none applies: `id` is a queue action
 -- (`worktree`, `agentgo`), `remove` (the worktree card's Remove worktree…), `cmd:<flows.COMMANDS id>` or
 -- `run:<saved action id>`, each offered only where its own command is. A saved action is the one offered here under
@@ -436,14 +453,7 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	elseif mine or not me then
 		return nil
 	end
-	local d = state.details[M.detailKey(state, pr)]
-	local reviews: { github.Review } = if d and d.about then d.about.reviews else {}
-	for _, r in reviews do
-		if r.state == "requested" and string.lower(r.login) == me then
-			return action("Review")
-		end
-	end
-	return nil
+	return if M.reviewAsked(state, pr) then action("Review") else nil
 end
 
 -- Whether the list shows `item`: everything except snoozed items (unless shown), though an agent that waits for input

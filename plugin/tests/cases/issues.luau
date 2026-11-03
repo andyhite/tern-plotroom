@@ -782,13 +782,13 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 		return out
 	end
 	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
-	eq(findKey(pickerNode(b), "about").c[1].p.key, "stage", "the stage is the first fact, above them")
+	eq(factOf(b, "Stage"), "Not started", "the stage leads the status part, above the facts")
 	eq(factOf(b, "Reporter"), "Ann Lee", "the reporter is a name, not a login")
 	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
 	eq(factOf(b, "Type"), "Bug", "the type")
 	eq(factOf(b, "Priority"), "High", "and the priority, which the search carries")
 	has(b.text(), "Linked issues", "the linked items' heading shimmers meanwhile")
-	has(b.text(), "Loading details…", "with the details loading")
+	has(b.text(), "Loading linked issues…", "with the linked issues loading")
 	eq(acliCount(s.acli, "view"), 0, "the details wait for the cursor to rest")
 	w.advance(300)
 	eq(acliCount(s.acli, "view"), 1, "the details load once the cursor rests")
@@ -836,7 +836,7 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	-- an issue whose details cannot be read says why
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)
-	has(b.text(), "Could not load the details: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
+	has(b.text(), "Could not load linked issues: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
 	has(b.text(), "Retry", "with a Retry button")
 	same(hx.miscued(b.view().layer), {}, "and Retry is a button")
 	eq(factOf(b, "Comments"), nil, "and what only the details know stays hidden")

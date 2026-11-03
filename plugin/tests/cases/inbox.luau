@@ -135,6 +135,8 @@ case("now: snoozed items leave Now and its count until Show or hide snoozed list
 	same(listed(b), { "no_2fr_234", "no_2fr_235" }, "Show or hide snoozed lists it again")
 	has(table.concat(whys(b), ","), "Review requested", "under its reason")
 	eq(pickerOf(b).items[1].badges[2].text, "Snoozed", "marked Snoozed")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
+	eq(h.factOf(b, "Snoozed"), "Until Mon 13:00", "its preview says when the snooze ends (an hour after the clock's 12:00 UTC start)")
 	eq(b.title(), "Plotroom · Now · 1 review requested", "and still not counted")
 	b.typeText("Z")
 	asks.hx.agents(b, { ["o/r#4"] = "waiting_input" })

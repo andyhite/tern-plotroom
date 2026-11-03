@@ -3194,22 +3194,23 @@ local function detailText(row: any): string
 end
 M.detailText = detailText
 
--- The text of the selected item's property `key` ("Author", "Assignees", "Stage", "Outcome", "Check", ...); nil when it
--- shows none.
+-- The text of the selected item's fact `key` ("Author", "Assignees", "Stage", "Outcome", "Check", ...) in any part of
+-- its preview (status, agent or facts); nil when it shows none.
 local function factOf(b: Block, key: string): string?
-	local stage = key == "Stage" or key == "Outcome" or key == "Check" or key == "Findings"
-	local facts: any = findKey(findKey(pickerNode(b), "about"), if stage then "stage" else "facts", "kv")
-	for _, item in facts.p.items do
-		if item.k == key then
-			local out: { string } = {}
-			if type(item.v) == "table" then
-				for _, span in item.v do
-					table.insert(out, if type(span) == "table" then span.t else span)
+	for _, part in { "stage", "agent", "facts" } do
+		local facts: any = findKey(pickerNode(b), part, "kv")
+		for _, item in if facts then facts.p.items else {} do
+			if item.k == key then
+				local out: { string } = {}
+				if type(item.v) == "table" then
+					for _, span in item.v do
+						table.insert(out, if type(span) == "table" then span.t else span)
+					end
+				else
+					table.insert(out, item.v)
 				end
-			else
-				table.insert(out, item.v)
+				return table.concat(out)
 			end
-			return table.concat(out)
 		end
 	end
 	return nil
