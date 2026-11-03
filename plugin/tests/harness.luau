@@ -1666,7 +1666,6 @@ export type Gh = {
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
 	repos: { [string]: { string } }, -- login -> the repositories `user/repos` lists, most recently pushed first
 	inbox: { [string]: { any } }, -- login -> the notification threads `notifications?participating=true` answers with (raw API objects)
-	inboxStamp: { [string]: string }, -- login -> its Last-Modified; a request that sends it back as If-Modified-Since is answered 304
 	inboxPoll: number, -- X-Poll-Interval, seconds
 	inboxDenied: { [string]: boolean }, -- login -> a token that cannot read notifications (HTTP 403)
 	inboxRead: { string }, -- the thread ids marked read, in order
@@ -1693,7 +1692,6 @@ local function newGh(w: World): Gh
 		heads = {},
 		limits = {},
 		inbox = {},
-		inboxStamp = {},
 		inboxPoll = 60,
 		inboxDenied = {},
 		inboxRead = {},
@@ -1915,13 +1913,7 @@ local function newGh(w: World): Gh
 				table.insert(gh.inboxRead, string.match(path or "", "^notifications/threads/(%d+)$") or "")
 				return { stdout = "" }
 			end
-			local stamp = gh.inboxStamp[key] or "Mon, 19 Oct 2026 09:00:00 GMT"
-			local head = "X-Poll-Interval: " .. gh.inboxPoll .. "\r\nLast-Modified: " .. stamp .. "\r\n\r\n"
-			for _, a in argv do
-				if a == "If-Modified-Since: " .. stamp then
-					return { status = 1, stdout = "HTTP/2.0 304 Not Modified\r\n" .. head, stderr = "gh: HTTP 304\n" }
-				end
-			end
+			local head = "X-Poll-Interval: " .. gh.inboxPoll .. "\r\nLast-Modified: Mon, 19 Oct 2026 09:00:00 GMT\r\n\r\n"
 			return { stdout = "HTTP/2.0 200 OK\r\n" .. head .. jsonEncode(array(gh.inbox[key] or {})) }
 		end
 		return nil

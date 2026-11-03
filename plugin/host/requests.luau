@@ -760,7 +760,13 @@ local function mergesNow(state: State, item: any): boolean
 	return merge == "ready" or merge == "unstable"
 end
 
--- The plan of Now's Mark read…: the notification threads Now lists, grouped by the gh login each was read as (both
+-- Every notification thread Now read, while Now is shown and its Notifications reason is on: also those whose item Now
+-- lists for a higher reason, a second thread on one item and a snoozed item's, so Mark read… leaves none unread.
+local function unread(state: State): { github.Notice }
+	return if state.nowOn and not state.now.prefs.off.notices then state.now.notices else {}
+end
+
+-- The plan of Now's Mark read…: every thread Now read (unread), grouped by the gh login each was read as (both
 -- settled now: the commit marks exactly these, each as exactly its login, whatever the list or gh's active account
 -- become) and one confirm naming every account. Read, never done: GitHub keeps the threads.
 function M.markReadPlan(state: State, id: string)
@@ -769,10 +775,9 @@ function M.markReadPlan(state: State, id: string)
 	local perRepo: { [string]: number } = {}
 	local repos: { string } = {}
 	local n = 0
-	for _, row in engine.nowRows(state) do
-		local notice = row.notice
-		local login = if notice then notice.login else nil
-		if notice and login then
+	for _, notice in unread(state) do
+		local login = notice.login
+		if login then
 			if not idsOf[login] then
 				idsOf[login] = {}
 				table.insert(logins, login)
@@ -787,7 +792,7 @@ function M.markReadPlan(state: State, id: string)
 			perRepo[where] += 1
 		end
 	end
-	if not state.nowOn or n == 0 then
+	if n == 0 then
 		return reply(state, id, { problem = "Now lists no notifications to mark read." })
 	end
 	table.sort(logins)
@@ -1178,13 +1183,8 @@ end
 -- without one the command's own heading in flows.COMMANDS stands.
 function M.commands(state: State): { { id: string, group: string? } }
 	local out: { { id: string, group: string? } } = { { id = "open-url" }, { id = "get-started" }, { id = "usage-report" } }
-	if state.nowOn then
-		for _, row in engine.nowRows(state) do
-			if row.notice then
-				table.insert(out, { id = "mark-read", group = "Now" })
-				break
-			end
-		end
+	if #unread(state) > 0 then
+		table.insert(out, { id = "mark-read", group = "Now" })
 	end
 	local item, snap = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state), state.snap
 	if not item or not snap then

@@ -2080,15 +2080,16 @@ local function response(text: string): (number?, { [string]: string }, string)
 	return status, headers, rest
 end
 
--- What each login's last read answered: its Last-Modified (sent back as If-Modified-Since), the notices and the epoch second
--- before which GitHub asks not to read again (X-Poll-Interval). One per runtime, as the search quota is.
-local inboxes: { [string]: { lastModified: string?, notices: { Notice }, nextAt: number } } = {}
+-- What each login's last read answered: the notices and the epoch second before which GitHub asks not to read again
+-- (X-Poll-Interval). One per runtime, as the search quota is. No If-Modified-Since: GitHub's Last-Modified follows the
+-- newest thread update, not read state, so a 304 would keep threads marked read elsewhere listed.
+local inboxes: { [string]: { notices: { Notice }, nextAt: number } } = {}
 -- How many times each login's threads were marked read: a read begun before a mark must not refill the cache after it.
 local marks: { [string]: number } = {}
 
 -- The notices of gh login `account` that are unread and that it takes part in, newest first; done(notices, problem).
--- Within X-Poll-Interval of the last answer nothing is sent; after it the read is conditional, so an unchanged inbox
--- (304) answers from memory and costs no quota. A login that cannot read notifications is told the `gh auth refresh`
+-- Within X-Poll-Interval of the last answer nothing is sent; after it the inbox is read again, so a thread marked read
+-- anywhere leaves. A login that cannot read notifications is told the `gh auth refresh`
 -- that grants it; nothing falls back to another login. done never runs before this returns.
 function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 	local known = inboxes[account]
@@ -2099,21 +2100,13 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 			done(known.notices, nil)
 		end)
 	end
-	local args = { "api", "--hostname", "github.com", "--include" }
-	if known and known.lastModified then
-		table.insert(args, "-H")
-		table.insert(args, "If-Modified-Since: " .. known.lastModified)
-	end
-	table.insert(args, "notifications?participating=true&per_page=" .. NOTICE_CAP)
+	local args = { "api", "--hostname", "github.com", "--include", "notifications?participating=true&per_page=" .. NOTICE_CAP }
 	M.gh(args, function(out, problem, _, raw)
 		local body = observe(out, raw, problem, account, true)
-		local status, headers = response(out or raw or "")
+		local _, headers = response(out or raw or "")
 		local at = os.time()
 		local poll = whole(headers["x-poll-interval"] or "") or NOTICE_POLL_S
-		if known and (status == 304 or (problem and string.find(problem.message, "HTTP 304", 1, true))) then
-			known.nextAt = at + poll
-			return done(known.notices, nil)
-		elseif not out then
+		if not out then
 			local p: Problem = problem or { kind = "failed", message = "gh did not answer." }
 			if p.kind == "auth" or p.kind == "not-found" then
 				p = { kind = "auth", message = "@" .. account .. " cannot read GitHub notifications. Run: gh auth refresh -h github.com -s notifications" }
@@ -2131,7 +2124,7 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 		if (marks[account] or 0) ~= mark then
 			return done(notices, nil) -- begun before a Mark read: the caller drops it; the cache keeps what the mark cleared
 		end
-		inboxes[account] = { lastModified = headers["last-modified"], notices = notices, nextAt = at + poll }
+		inboxes[account] = { notices = notices, nextAt = at + poll }
 		done(notices, nil)
 	end, account)
 end

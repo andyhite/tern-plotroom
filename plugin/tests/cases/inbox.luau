@@ -62,16 +62,6 @@ local function whys(b: h.Block): { string }
 	return out
 end
 
-local function sentSince(req: GhReq): string?
-	for _, a in req.call.argv do
-		local stamp = string.match(a, "^If%-Modified%-Since: (.*)$")
-		if stamp then
-			return stamp
-		end
-	end
-	return nil
-end
-
 case("now: a new block opens on Now, first in the sidebar, which ranks what needs you top first and says why", function(w: World)
 	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }
 	local _, b = nowScene(w, {
@@ -240,23 +230,21 @@ case("now: Enter on a pull request shows it in the block as a linked one is, an 
 	eq(pickerOf(b).scope, "now", "and Now stays")
 end)
 
-case("now: an unchanged inbox costs nothing: no read within X-Poll-Interval, then a conditional read whose 304 keeps the rows", function(w: World)
+case("now: no read within X-Poll-Interval, then a full read, so a thread marked read elsewhere leaves", function(w: World)
 	local s, b = nowScene(w, nil, function(s: h.HostScene)
 		s.gh.inboxPoll = 300
 	end)
 	refreshNow(w, b)
 	local before = #pickerOf(b).items
 	eq(#requestsOf(s.gh, "notifications"), 1, "read once")
+	table.remove(s.gh.inbox.octocat, 1) -- marked read on github.com; GitHub's Last-Modified does not move for that
 	w.advance(200 * 1000)
 	w.flush()
 	eq(#requestsOf(s.gh, "notifications"), 1, "nothing is sent within the poll interval, Refresh or the queue's own refresh included")
 	w.advance(101 * 1000)
 	w.flush()
-	local reads = requestsOf(s.gh, "notifications")
-	eq(#reads, 2, "after it the queue's refresh reads again")
-	eq(sentSince(reads[1]), nil, "the first read is unconditional")
-	eq(sentSince(reads[2]), "Mon, 19 Oct 2026 09:00:00 GMT", "the next carries Last-Modified back")
-	eq(#pickerOf(b).items, before, "a 304 keeps the rows")
+	eq(#requestsOf(s.gh, "notifications"), 2, "after it the queue's refresh reads again")
+	eq(#pickerOf(b).items, before - 1, "and the thread read elsewhere is gone")
 end)
 
 case("now: Mark read… plans Now's listed threads as the login captured then, and commits exactly those after one confirm", function(w: World)
@@ -283,14 +271,14 @@ case("now: Mark read… plans Now's listed threads as the login captured then, a
 	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "no longer valid", "a plan commits once")
 end)
 
-case("now: Mark read… plans only the threads Now lists: a thread about an item listed higher is not among them", function(w: World)
+case("now: Mark read… plans every thread Now read, also one about an item listed higher", function(w: World)
 	local s, b = nowScene(w)
 	s.gh.queries[REVIEW] = { searchItem(2, "o/r", EPOCH - 60) }
 	refreshNow(w, b)
 	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "o/r#2 is listed once, as a review request")
 	eq(pickerOf(b).items[1].badges[1].text, "Review requested", "for its higher rank")
 	local p = asks.hx.ask(w, b, { op = "act", name = "mark-read" })
-	eq(p.confirm.head, "Mark 2 notifications read?", "only the two threads Now lists as notifications")
+	eq(p.confirm.head, "Mark 3 notifications read?", "its thread is marked too, so GitHub keeps none unread")
 end)
 
 case("now: a mark-read plan is refused off Now, after Now was left, and stops at the first thread that fails", function(w: World)
@@ -322,7 +310,6 @@ end)
 case("now: the palette offers Mark read… only while Now lists notifications, under Now", function(w: World)
 	local s, b = nowScene(w, {})
 	eq(table.find(h.hx.palette(w, b).commands, "mark-read"), nil, "no notification offers none")
-	s.gh.inboxStamp.octocat = "Tue, 20 Oct 2026 09:00:00 GMT"
 	s.gh.inbox.octocat = { thread("11", "o/r", "mention", "Hello", 2) }
 	w.advance(125 * 1000)
 	w.flush()
@@ -518,7 +505,6 @@ case("now: an assigned issue you changed yourself is not listed, until someone e
 	has(table.concat(whys(b), ","), "no_2fr_2321 Mention", "the notification is listed")
 	eq(#pickerOf(b).items, 1, "o/r#21 once, at its higher rank")
 	s.gh.inbox.octocat = {}
-	s.gh.inboxStamp.octocat = "Tue, 20 Oct 2026 09:00:00 GMT"
 	w.advance(60 * 1000)
 	refreshNow(w, b)
 	same(whys(b), { "no_2fr_2321 Assigned: new" }, "someone else's comment lists it again; o/r#24 is still yours alone")

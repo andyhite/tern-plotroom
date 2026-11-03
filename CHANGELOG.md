@@ -5,7 +5,6 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
-
 - Commands › Configuration › Copy usage report: plain text with how often each queue action, Commands row, Tern's palette command and action ran (on this machine and on the block's host) and how each agent run ended, with the median run time. Counts live in kv `usage`, the newest 1000 runs in kv `runs`; nothing leaves the machine.
 - Get started: a first-run checklist above the preview until every line is done or it is dismissed (Commands › Get started shows it again): `gh` installed and signed in, `omp` installed, a checkout for each listed repository without one, and the one-key shortcuts (Use them / No thanks). Each line not done has one action: a setup guide, **Use <folder>** for a checkout found, or a folder to choose (a new or empty one gets a clone).
 - Checkout detection: a repository with no checkout is offered the folder Plotroom opened in, or the folder of an open Tern pane on the same host, when it is inside a checkout with a remote on that github.com repository (verified as Settings › Repositories verifies; the disk is never scanned). Worktree, an action and Type a prompt… offer it as **Use <folder>** before asking for a folder.
@@ -21,17 +20,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Settings › General › **Reset all settings**: after a confirm (Cancel first), clears every saved setting (views, actions, keyboard shortcuts, repositories, checkouts, branch formats, setup commands, Jira projects' repositories, name formats, Now's switches, Get started) so the defaults come back in every open block, malformed stores included; triage, usage, runs and agent links stay.
 - Settings › Views › **Now**: switch each of Now's reasons (Blocked, Review requested, Ready to merge, Notifications, Assigned), each signed-in `gh` login and Jira on or off, and **Include team review requests** (off by default; a request asked only of a team names it in the preview). What is off is not read at all, so it costs no GitHub quota, and leaves Now, its heading, the pane title and `N need you` at once in every open block. With every reason off Now lists only agents that need you. The switches live in kv `now`; one that cannot be read is never written over.
 
-### Removed
-
-- The queue's bottom bar (the `Sort: …` line and the action buttons) in every view: actions are their keys and Commands rows, a sort change is announced by its **Sorted:** toast (Settings › Views › Sort by shows the current order), GitHub's rate-limit pause shows in the header as **Paused by GitHub until HH:MM:SS**, and Remove on a locked or missing worktree toasts why.
-- The Inbox list (its notifications and Mark read… are in Now), the Needs attention only filter with its `n` one-key shortcut, the pane title's `N new` and the status bar's `N need attention` and `N agents need input` segments (one `N need you` count replaces them; the toast for an agent that starts waiting stays).
-- Commands: Add label… and Remove label…, Re-run all jobs… and Cancel running workflow…, Send a Browser page element to an agent…, and the Jira transition… picker with its REST client. `PLOTROOM_JIRA_API_TOKEN` is no longer read; an action's Move to status (acli) still moves Jira issues.
-- The action field Tell Carly when it finishes and the `plotroom_agents` Carly export. Saved actions that carry it still load; the field is dropped the next time that kind's actions are saved.
-- Export and import of views and actions.
-- Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
-
 ### Changed
-
 - Now is more accurate. It reads every signed-in `gh` login's notifications as that login (a login that cannot read them says so alone; Mark read… names each account and marks each login's threads as that login), says when a login's notifications fill the one page it reads (`showing the newest 50; the rest are on github.com`), leaves out an assigned issue whose changes since you last saw it are all your own (assigning it to yourself, edits, comments; someone else's change lists it again), reads Jira's assigned work from the open sprint as **My sprint** does while the site has sprints, and its heading reads `N assigned: new or changed`.
 - Worktrees lists only linked worktrees, one group per repository: a repository's checkout itself is no longer listed, and the **Main** badge and preview fact are gone.
 - Each Worktrees row is titled by its branch (a detached worktree reads "(detached)") instead of the worktree folder's name; the worktree's full path is the line under it.
@@ -49,6 +38,17 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Every preview (pull request, GitHub issue, Jira issue, worktree, agent, Now row) shows its parts in one order: head, title, next move, status (stage, **Blocked by**, the agent's outcome and check), worktree or agent, description, facts, linked items, reviewers, checks ([docs/reference.md › Finer points › Preview](docs/reference.md#finer-points)). Linked items read **Linked issues** or **Linked pull requests** everywhere; Reviewers, Checks and linked items all say `Loading …`, `Could not load …` with Retry (a failed detail load no longer hides Reviewers), or `No …` when empty. A pull request lists the issues it closes. Someone else's pull request that asks for your review leads with its author and size. The merge state shows what the search said until the details load, reads **Unknown** (not a lasting "Checking…") while GitHub has not computed it, and is gone from merged and closed pull requests. Now's Snoozed fact shows the snooze's real end. The preview's In tab chip is gone (the worktree card's Go to tab says it).
 - Agent placement: an agent Beside the queue, or joining a worktree's open tab, halves that tab's largest pane along its longer side instead of halving the queue (or opening a tab and moving), so the queue keeps its first half: in a 2200×1000 window five agents beside the queue are each at least 270×470 px, where the queue and the newest two used to end 94 px wide. An agent beside the queue no longer opens a tab, even briefly.
 
+### Removed
+- The queue's bottom bar (the `Sort: …` line and the action buttons) in every view: actions are their keys and Commands rows, a sort change is announced by its **Sorted:** toast (Settings › Views › Sort by shows the current order), GitHub's rate-limit pause shows in the header as **Paused by GitHub until HH:MM:SS**, and Remove on a locked or missing worktree toasts why.
+- The Inbox list (its notifications and Mark read… are in Now), the Needs attention only filter with its `n` one-key shortcut, the pane title's `N new` and the status bar's `N need attention` and `N agents need input` segments (one `N need you` count replaces them; the toast for an agent that starts waiting stays).
+- Commands: Add label… and Remove label…, Re-run all jobs… and Cancel running workflow…, Send a Browser page element to an agent…, and the Jira transition… picker with its REST client. `PLOTROOM_JIRA_API_TOKEN` is no longer read; an action's Move to status (acli) still moves Jira issues.
+- The action field Tell Carly when it finishes and the `plotroom_agents` Carly export. Saved actions that carry it still load; the field is dropped the next time that kind's actions are saved.
+- Export and import of views and actions.
+- Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
+
+### Fixed
+- Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub.
+- Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub
 ## [0.33.0] - 2026-11-02
 
 ### Added
