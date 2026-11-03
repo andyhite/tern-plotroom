@@ -1,5 +1,6 @@
 --!strict
--- Model of the independent "Worktrees" sidebar view: every saved checkout's worktrees, beyond the current view or query.
+-- Model of the independent "Worktrees" sidebar view: every saved checkout's linked worktrees (never the checkout
+-- itself), beyond the current view or query.
 -- Pure state plus calls into an injected backend `api` (worktree.luau); the host renders rows and supplies `live`/`check`.
 
 local M = {}
@@ -71,7 +72,6 @@ export type Row = {
 	path: string,
 	branch: string?,
 	head: string?,
-	main: boolean,
 	key: string?,
 	number: number?,
 	inferred: boolean?,
@@ -224,6 +224,9 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 				table.insert(problems, q.repo .. ": " .. (problem or "could not list worktrees"))
 			else
 				for _, e in entries do
+					if e.main then
+						continue -- the repository's own checkout: not a worktree Plotroom made or removes
+					end
 					local noted = if e.repo then string.lower(e.repo) else nil
 					local mine = if noted and q.group[noted] then noted == string.lower(q.repo) else q.first
 					local id = q.repo .. "\0" .. e.path
@@ -238,7 +241,6 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 							path = e.path,
 							branch = e.branch,
 							head = e.head,
-							main = e.main,
 							key = e.key,
 							number = e.number,
 							inferred = e.inferred,
@@ -272,7 +274,7 @@ end
 function M.findCandidates(board: Board, check: Check, live: () -> boolean, done: (checked: number, skipped: number) -> ())
 	local todo: { Row } = {}
 	for _, r in board.rows do
-		if not r.main and not r.missing and (r.key ~= nil or r.number ~= nil) and r.inferred ~= true then
+		if not r.missing and (r.key ~= nil or r.number ~= nil) and r.inferred ~= true then
 			table.insert(todo, r)
 		end
 	end
@@ -318,9 +320,7 @@ function M.remove(board: Board, api: Api, id: string, live: () -> boolean, done:
 		row.refused = why
 		done(false, why)
 	end
-	if row.main then
-		return refuse("The main worktree is never removed.")
-	elseif row.locked then
+	if row.locked then
 		return refuse("The worktree is locked.")
 	elseif row.missing then
 		return refuse("The worktree folder is missing; prune it with git.")
@@ -359,7 +359,7 @@ end
 function M.finished(board: Board): { Row }
 	local out: { Row } = {}
 	for _, r in board.rows do
-		if (r.candidate == "merged" or r.candidate == "closed") and not r.main and not r.locked and not r.missing then
+		if (r.candidate == "merged" or r.candidate == "closed") and not r.locked and not r.missing then
 			table.insert(out, r)
 		end
 	end
@@ -371,7 +371,7 @@ end
 function M.unchecked(board: Board): number
 	local n = 0
 	for _, r in board.rows do
-		if not r.main and not r.locked and not r.missing and (r.key ~= nil or r.number ~= nil) and r.inferred ~= true and r.candidateChecked ~= true then
+		if not r.locked and not r.missing and (r.key ~= nil or r.number ~= nil) and r.inferred ~= true and r.candidateChecked ~= true then
 			n += 1
 		end
 	end
@@ -658,9 +658,6 @@ end
 
 function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, title: string? } }
 	local out: { { text: string, tone: string, title: string? } } = {}
-	if row.main then
-		table.insert(out, { text = "Main", tone = "accent", title = "The repository's main worktree" })
-	end
 	if openTab then
 		table.insert(out, { text = "In tab", tone = "accent", title = "A tab works in this worktree" })
 	end
@@ -685,7 +682,7 @@ function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, t
 	if row.missing then
 		table.insert(out, { text = "Missing", tone = "error", title = "The folder is gone" })
 	end
-	if not row.main and not row.key and not row.number then
+	if not row.key and not row.number then
 		table.insert(out, { text = "Unnoted", tone = "muted", title = "Not linked to an item" })
 	end
 	return out

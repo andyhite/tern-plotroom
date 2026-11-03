@@ -1119,7 +1119,6 @@ local function boardPreview(state: State): { Node }
 	local status: { Node } = {}
 	local needs = withValue({
 		{ k = "Cleanup", v = if cleanup then { ui.span(cleanup, if row.candidate then "warning" else nil) } else nil },
-		{ k = "Main", v = if row.main then { ui.span("The repository's main worktree, never removed here") } else nil },
 		{ k = "Locked", v = if row.locked then { ui.span("Locked with git worktree lock") } else nil },
 	})
 	if #needs > 0 then

@@ -2204,10 +2204,10 @@ function M.boardAct(state: State, act: string): boolean
 	elseif act == "wt-remove" then
 		if state.boardBusy then
 			state.cx:toast("info", "Still reading", "Remove it once the read has finished.")
-		elseif row and not row.main and not row.locked and not row.missing then
+		elseif row and not row.locked and not row.missing then
 			state.boardRemoving = row.id
 		elseif row then
-			state.cx:toast("info", "Not removed here", "The main, locked or missing worktrees are not removed here.")
+			state.cx:toast("info", "Not removed here", "Locked or missing worktrees are not removed here.")
 		end
 	elseif act == "wt-remove-finished" then
 		if state.boardBusy then

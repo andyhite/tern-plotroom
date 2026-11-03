@@ -22,7 +22,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Removed
 
-- The queue's bottom bar (the `Sort: …` line and the action buttons) in every view: actions are their keys and Commands rows, a sort change is announced by its **Sorted:** toast (Settings › Views › Sort by shows the current order), GitHub's rate-limit pause shows in the header as **Paused by GitHub until HH:MM:SS**, and Remove on a main, locked or missing worktree toasts why.
+- The queue's bottom bar (the `Sort: …` line and the action buttons) in every view: actions are their keys and Commands rows, a sort change is announced by its **Sorted:** toast (Settings › Views › Sort by shows the current order), GitHub's rate-limit pause shows in the header as **Paused by GitHub until HH:MM:SS**, and Remove on a locked or missing worktree toasts why.
 - The Inbox list (its notifications and Mark read… are in Now), the Needs attention only filter with its `n` one-key shortcut, the pane title's `N new` and the status bar's `N need attention` and `N agents need input` segments (one `N need you` count replaces them; the toast for an agent that starts waiting stays).
 - Commands: Add label… and Remove label…, Re-run all jobs… and Cancel running workflow…, Send a Browser page element to an agent…, and the Jira transition… picker with its REST client. `PLOTROOM_JIRA_API_TOKEN` is no longer read; an action's Move to status (acli) still moves Jira issues.
 - The action field Tell Carly when it finishes and the `plotroom_agents` Carly export. Saved actions that carry it still load; the field is dropped the next time that kind's actions are saved.
@@ -31,6 +31,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Changed
 
+- Worktrees lists only linked worktrees, one group per repository: a repository's checkout itself is no longer listed, and the **Main** badge and preview fact are gone.
 - The pane title and Now's heading say what needs you by reason (`2 agents need you · 1 Blocked · 3 reviews requested`) instead of a bare `N need you`; the status bar's `N need you` stays the one cross-pane count and the one that is a button. The pane title no longer counts the view's items (`My PRs (12)`), and the queue's heading no longer shows Tern's result count at its right: both repeated the sidebar.
 - Protocol 35: Mark read… is planned as `mark-read` (was `inbox-read`), so a window asks only hosts that run this release.
 - Protocol 34: a repository's missing-checkout answer may name the folder found for it. A window still asks protocol 33 hosts, which ask for a folder as before.
