@@ -333,6 +333,8 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 		palette,
 		-- This host's usage counts (usage.luau), for the window's Copy usage report.
 		ui.node("text", { key = "usage", text = usage.published(), hidden = true }),
+		-- The block's size in cells, `<cols>x<rows>`: the window's agent placement derives the tab's shape from it.
+		ui.node("text", { key = "size", text = state.cx.cols .. "x" .. state.cx.rows, hidden = true }),
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
@@ -1792,7 +1794,7 @@ local function finishedConfirm(state: State): Node
 	for _, id in ids do
 		for _, r in engine.boardRows(state) do
 			if r.id == id then
-				table.insert(items, { k = if r.branch then r.branch else board.label(r), v = { ui.span(r.path, "code") } })
+				table.insert(items, { k = board.label(r), v = { ui.span(r.path, "code") } })
 			end
 		end
 	end

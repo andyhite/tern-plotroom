@@ -2739,7 +2739,7 @@ case("host worktrees board: Remove finished worktrees asks once for only the row
 	eq(table.find(asks.hx.board(b), "o/r/12-fix"), nil, "the clean one left")
 end)
 
-case("host worktrees board: the preview of a row names its folder, the pull request or issue it was made for as the tracker answered, its branch, repository, path and head, and stays open on Escape", function(w: World)
+case("host worktrees board: the preview of a row names its branch, the pull request or issue it was made for as the tracker answered, its branch, repository, path and head, and stays open on Escape", function(w: World)
 	local s = asks.hx.boardScene(w)
 	s.gh.pulls["https://github.com/o/r/pull/5"] = searchItem(5, "o/r", EPOCH - 60, { title = "Fix the board" })
 	local b = openQueue(w)
@@ -2751,7 +2751,16 @@ case("host worktrees board: the preview of a row names its folder, the pull requ
 	w.advance(300)
 	w.flush()
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "a row event selects it")
-	eq(findKey(findKey(pickerNode(b), "titlerow"), "title").p.spans[1].t, "pr5", "the preview's title is its folder's name")
+	eq(findKey(findKey(pickerNode(b), "titlerow"), "title").p.spans[1].t, "feature", "the preview's title is its branch")
+	local row: any = nil
+	for _, item in pickerOf(b).items do
+		if item.id == asks.hx.rowId(b, "o/r/feature") then
+			row = item
+		end
+	end
+	eq(row.title, "feature", "the row's title is its branch")
+	eq(row.detail[1].t, "/wt/pr5", "the line under it is the worktree's full path")
+	eq(row.detail[3].t, "#5", "then the pull request's number")
 	has(b.text(), "Linked pull requests", "the pull request it was made for is under the linked pull requests")
 	has(b.text(), "#5", "named by its number")
 	has(b.text(), "Fix the board", "with the title the tracker answered")

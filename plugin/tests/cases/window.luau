@@ -378,6 +378,82 @@ windowCase("window: the default Quick review starts beside the queue as omp --mo
 	eq(w.toasts[#w.toasts].sub, "Quick review", "the default Quick review")
 end)
 
+-- Split tree `t` as text, panes named by `names` (e.g. "right(q,down(a1,a2))").
+local function shapeOf(t: any, names: { [number]: string }): string
+	if t.pane then
+		return names[t.pane] or tostring(t.pane)
+	end
+	return t.split .. "(" .. shapeOf(t[1], names) .. "," .. shapeOf(t[2], names) .. ")"
+end
+
+-- Starts `n` agents on o/r#5 with saved prompt p1, after the first through the duplicate offer, calling `each` after each
+-- start; the agents' panes, and how many tabs each agents:start opened.
+local function startAgents(w: World, n: number, each: (() -> ())?): ({ number }, { number })
+	local agents, opened: { number } = {}, {}
+	local start = w.cx.agents.start
+	w.cx.agents.start = function(self: any, opts: any): number
+		local before = #w.window.tabs
+		local a = start(self, opts)
+		table.insert(opened, #w.window.tabs - before)
+		table.insert(agents, a)
+		return a
+	end
+	for i = 1, n do
+		if i > 1 then
+			w.window.choose = "Start Review anyway"
+		end
+		w.click(runLink("o/r", 5, "p1"))
+		w.flush()
+		if each then
+			each()
+		end
+	end
+	return agents, opened
+end
+
+windowCase("window: each agent beside the queue halves the tab's largest other pane along its longer side, the queue keeps its half, and none opens a tab", function(w: World)
+	local _s, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.split = true
+	savePrompts(w, { review })
+	b.render() -- 140 x 40 cells: a cell twice as tall as wide, the queue's tab is 140 x 80
+	cardSurface(w, b)
+	local agents, opened = startAgents(w, 5, function()
+		b.cx.cols = 70 -- as Tern resizes the queue to its half
+		b.render()
+	end)
+	eq(#agents, 5, "five agents started")
+	same(opened, { 0, 0, 0, 0, 0 }, "agents:start opened no tab for any of them")
+	local names = { [1] = "q" }
+	for i, a in agents do
+		names[a] = "a" .. i
+		eq(w.window.panes[a].tab, w.window.panes[1].tab, "agent " .. i .. " is in the queue's tab")
+	end
+	-- q alone splits right; a1 (70 x 80) is taller, so down; a1 and a2 tie (70 x 40), the first in the tree goes right; then
+	-- a2 (70 x 40) right; then a1, a3, a2, a4 tie (35 x 40): a1, taller, down.
+	eq(shapeOf(w.cx.session:layout(w.window.panes[1].tab).root, names), "right(q,down(right(down(a1,a5),a3),right(a2,a4)))", "the queue keeps its first half")
+	eq(w.toasts[#w.toasts].text, "Agent started beside the queue for o/r#5", "the toast says where")
+end)
+
+windowCase("window: agents joining a worktree's open tab each halve that tab's largest pane along its longer side", function(w: World)
+	local s, b = agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	b.render()
+	cardSurface(w, b)
+	w.window.panes[50] = { cwd = s.target, tab = 50 } -- a shell already open in the worktree, in a tab of its own
+	table.insert(w.window.tabs, { id = 50, session = 1 })
+	local agents = startAgents(w, 3)
+	eq(#agents, 3, "three agents started")
+	local names = { [50] = "sh" }
+	for i, a in agents do
+		names[a] = "a" .. i
+		eq(w.window.panes[a].tab, 50, "agent " .. i .. " joined the worktree's tab")
+	end
+	-- The tab is 140 x 80 as the queue's: sh splits right; sh and a1 tie (70 x 80), sh, first and taller, down; then a1 down.
+	eq(shapeOf(w.cx.session:layout(50).root, names), "right(down(sh,a2),down(a1,a3))", "each split the largest pane along its longer side")
+	eq(w.toasts[#w.toasts].text, "Agent started in the tab of o/r#5", "the toast says where")
+end)
+
 windowCase("window: a card button of a prompt the picker's size budget would cut still runs it, the request naming the prompt", function(w: World)
 	local s, b = agentScene(w)
 	local text = string.rep("x", 7900) .. " {url}"

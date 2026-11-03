@@ -395,10 +395,10 @@ function M.removeFinished(board: Board, api: Api, ids: { string }, live: () -> b
 	step(1)
 end
 
--- The visible name: the folder's own name, which is what the user called the worktree. Branch, repository and path are
--- secondary facts (`M.facts`).
+-- The visible name: the branch, which is what the user recognises ("(detached)" without one). The worktree's path is the
+-- secondary fact under it; repository and the rest are `M.facts`.
 function M.label(row: Row): string
-	return string.match(row.path, "([^/\\]+)[/\\]*$") or row.branch or "(detached)"
+	return row.branch or "(detached)"
 end
 
 local function short(s: string, n: number): string

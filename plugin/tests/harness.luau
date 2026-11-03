@@ -389,6 +389,7 @@ export type Win = {
 	docs: { [string]: string }, -- path -> the text cx.docs:read answers with (a missing path fails)
 	docReads: { string }, -- every path cx.docs:read was asked for
 	opensBrowser: boolean, -- cx:open adds a Browser pane (the next id) to tab 1, as Tern does for a page opened beside
+	trees: { [number]: any }, -- each tab's split tree as cx.layout:move left it (session:layout prunes and extends it)
 }
 
 export type Kv = {
@@ -624,6 +625,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		docs = {},
 		docReads = {},
 		opensBrowser = false,
+		trees = {},
 	}
 	local nextId = 10
 
@@ -636,6 +638,42 @@ local function newWorld(instantiate: Loader, context: string): World
 		end
 		table.insert(win.launches, launch or {})
 		return nextId
+	end
+
+	-- Tab `tab`'s split tree: as cx.layout:move left it, less the panes no longer tiled in the tab, with the panes new to
+	-- it (lowest id first) split off the root's right half, as a pane that opened beside the rest.
+	local function treeOf(tab: number): any
+		local seen: { [number]: boolean } = {}
+		local function prune(t: any): any
+			if t == nil then
+				return nil
+			elseif t.pane then
+				local p = win.panes[t.pane]
+				if p and p.tab == tab and not p.parked and not seen[t.pane] then
+					seen[t.pane] = true
+					return t
+				end
+				return nil
+			end
+			local a, b = prune(t[1]), prune(t[2])
+			if a and b then
+				return { split = t.split, ratio = t.ratio, a, b }
+			end
+			return a or b
+		end
+		local root = prune(win.trees[tab])
+		local fresh: { number } = {}
+		for id, p in win.panes do
+			if p.tab == tab and not p.parked and not seen[id] then
+				table.insert(fresh, id)
+			end
+		end
+		table.sort(fresh)
+		for _, id in fresh do
+			root = if root then { split = "right", ratio = 0.5, root, { pane = id } } else { pane = id }
+		end
+		win.trees[tab] = root
+		return root
 	end
 
 	windowCx = {
@@ -681,6 +719,10 @@ local function newWorld(instantiate: Loader, context: string): World
 			tab_of = function(_self: any, id: number): number?
 				local p = win.panes[id]
 				return if p then p.tab else nil
+			end,
+			layout = function(_self: any, tab: number): any
+				local root = treeOf(tab)
+				return if root then { tab = tab, root = root, floats = {}, zoomed = false, focus = win.focused } else nil
 			end,
 			tabs = function(_self: any): any
 				local rows: { any } = {}
@@ -766,12 +808,28 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return p ~= nil, nil
 			end,
-			move = function(_self: any, pane: number, target: number, _dir: string): boolean
+			-- Beside target: target's leaf is halved, `pane` taking the half on side `dir`.
+			move = function(_self: any, pane: number, target: number, dir: string): boolean
 				local p, to = win.panes[pane], win.panes[target]
-				if p and to then
-					p.tab = to.tab
+				if p == nil or to == nil or pane == target then
+					return false
 				end
-				return p ~= nil and to ~= nil
+				local from = p.tab
+				p.tab = -1 -- out of every tree while it moves
+				treeOf(from)
+				local function put(t: any): any
+					if t.pane == target and dir ~= "swap" then
+						local leaf, first = { pane = pane }, dir == "left" or dir == "up"
+						return { split = if dir == "right" or dir == "left" then "right" else "down", ratio = 0.5, if first then leaf else t, if first then t else leaf }
+					elseif t.pane then
+						return t
+					end
+					return { split = t.split, ratio = t.ratio, put(t[1]), put(t[2]) }
+				end
+				local root = treeOf(to.tab)
+				win.trees[to.tab] = if root then put(root) else nil
+				p.tab = to.tab
+				return true
 			end,
 		},
 		hosts = {
@@ -849,7 +907,9 @@ local function newWorld(instantiate: Loader, context: string): World
 					opts.prompt = string.sub(p, 1, #p - #REPORT_TAIL)
 				end
 				table.insert(win.agents, opts)
-				local pane = addPane({ cwd = opts.cwd }, nil)
+				-- how = "split" opens it beside the focused pane, in its tab; otherwise in a tab of its own.
+				local beside = if opts.how == "split" and win.focused and win.panes[win.focused] then win.panes[win.focused].tab else nil
+				local pane = addPane({ cwd = opts.cwd }, beside)
 				win.agentStates[pane] = "working"
 				return pane
 			end,
