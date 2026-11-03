@@ -426,6 +426,8 @@ export type World = {
 	context: string,
 	sdk: any,
 	load: Require,
+	-- A plugin reload: a fresh VM loads module `name` again (fresh module state); the old VM's timers never fire.
+	reload: (string) -> any,
 	now: () -> number,
 	seconds: () -> number,
 	advance: (number) -> (),
@@ -509,6 +511,7 @@ local function newWorld(instantiate: Loader, context: string): World
 	local nowMs = 0
 	local seq = 0
 	local queue: { Event } = {}
+	local timers: { Event } = {} -- the plugin's own timers, which a reload drops
 	local env: { [string]: string? } = {}
 	local toasts: { Toast } = {}
 	local opened: { string } = {}
@@ -1016,6 +1019,7 @@ local function newWorld(instantiate: Loader, context: string): World
 			local ev = schedule(ms, function()
 				fn(if context == "window" then windowCx else nil)
 			end)
+			table.insert(timers, ev)
 			return {
 				cancel = function(_self: any)
 					ev.live = false
@@ -1396,10 +1400,20 @@ local function newWorld(instantiate: Loader, context: string): World
 		return block
 	end
 
-	local world: World = {
+	local world: World
+	world = {
 		context = context,
 		sdk = sdk,
 		load = load,
+		reload = function(name: string): any
+			for _, ev in timers do
+				ev.live = false
+			end
+			table.clear(timers)
+			local fresh = instantiate(sdk, fakeOs)
+			world.load = fresh
+			return fresh(name)
+		end,
 		now = function(): number
 			return nowMs
 		end,

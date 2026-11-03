@@ -166,7 +166,8 @@ export type Settings = {
 -- and its last end-of-run report (`attention` "none": no valid one); the outcome its action names (a prompts.OUTCOMES id)
 -- and what checking it on GitHub found (`verdict`: verified | not | unchecked; nil: none checked yet). A checker's agent
 -- also has its verdict on the run it checked (`check`: pass | fail) and, on a fail, its `findings` joined by " · ".
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string? }
+-- `stop`: why the item's chain stopped at Needs you (3 failed checks, 3 runs without progress, 3 failed starts).
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`), and the unread notifications gh's
@@ -534,6 +535,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{remote}", "code") }, v = "Git remote of the repository in its checkout (actions that run in a worktree)" },
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch (none for a pull request)" },
+			{ k = { ui.span("{findings}", "code") }, v = "In a fix round, what the checker found (or that the last run named no new commit); else says none" },
 		},
 		prompts = prompts.prs,
 	},
@@ -594,6 +596,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{jira.user}", "code") }, v = "Your Jira sign-in's email before the @ (Jira)" },
 			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch: GitHub task-list lines, a Jira description's Acceptance criteria section, else the description" },
+			{ k = { ui.span("{findings}", "code") }, v = "In a fix round, what the checker found (or that the last run named no new commit); else says none" },
 		},
 		prompts = prompts.issues,
 	},

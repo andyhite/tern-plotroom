@@ -603,7 +603,7 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	for _, item in findKey(editorCard(b), "list", "kv").p.items do
 		table.insert(legend, item.k[1].t)
 	end
-	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}", "{criteria}" }, "the variables of both trackers are listed, with the worktree's, the two users and the saved criteria")
+	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}", "{criteria}", "{findings}" }, "the variables of both trackers are listed, with the worktree's, the two users, the saved criteria and a fix round's findings")
 	b.press("escape")
 	page("repos")
 	eq(rowIn(b, "jopen:ABC").hint, "o/r", "the project's summary names its repositories")

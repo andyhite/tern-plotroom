@@ -35,7 +35,9 @@ export type Usage = { since: number, counts: { [string]: Count } }
 -- `login`, `ghRepo`, `number` and `branch`: what GitHub knows the run's work by, for its merge. A checked run (one a
 -- checker's verdict was recorded on; a checker's own run never is) has `checkedAt`, the verdict's time; `disagree`, the
 -- reason you gave for disagreeing with it ("" for none; nil: no disagreement); `merged`, true once its work merged.
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean? }
+-- `depth`: its place in a chain (0 or nil: started by hand); `checking`: it is a checker's run; `starts`: how many times
+-- the step after it failed to start. The chain's limits are counted from these (strikes).
+export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean?, depth: number?, checking: boolean?, starts: number? }
 -- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome. A checker's
 -- report also has `check` (pass | fail; prompts.checkBlock) and `findings`.
 export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string?, check: string?, findings: { string } }
@@ -228,6 +230,9 @@ local function runOf(r: any): Run?
 		or (r.checkedAt ~= nil and not whole(r.checkedAt))
 		or (r.disagree ~= nil and not textOk(r.disagree, TEXT_CAP))
 		or (r.merged ~= nil and r.merged ~= true)
+		or (r.depth ~= nil and not whole(r.depth))
+		or (r.checking ~= nil and type(r.checking) ~= "boolean")
+		or (r.starts ~= nil and not whole(r.starts))
 	then
 		return nil
 	end
@@ -238,7 +243,7 @@ local function runOf(r: any): Run?
 			end
 		end
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean? }
+	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean?, depth = r.depth, checking = r.checking, starts = r.starts }
 end
 
 -- The run log, newest first, or nil and why when it cannot be read or is malformed.
@@ -289,6 +294,9 @@ function M.appendRun(run: Run)
 		ghRepo = M.line(run.ghRepo, TEXT_CAP),
 		number = run.number,
 		branch = M.line(run.branch, TEXT_CAP),
+		depth = run.depth,
+		checking = run.checking,
+		starts = run.starts,
 	})
 	if not runs or not clean then
 		return
@@ -313,16 +321,16 @@ function M.text(s: any, cap: number): string?
 end
 
 -- Records what a checker found (`check`: pass | fail, with `findings`) on the run of item `key` that started at
--- `started`, now: it is a checked run from then, and a disagreement with an earlier verdict is dropped (it was about
--- that verdict). Nothing is written when the log cannot be read or is malformed, the run is not in it, or `check` is
--- not one of CHECKS.
+-- `started` (never a checker's own run), now: it is a checked run from then, and a disagreement with an earlier verdict
+-- is dropped (it was about that verdict). Nothing is written when the log cannot be read or is malformed, the run is not
+-- in it, or `check` is not one of CHECKS.
 function M.setCheck(key: string, started: number?, check: string, findings: { string })
 	local runs = M.readRuns()
 	if not runs or not M.CHECKS[check] then
 		return
 	end
 	for _, r in runs do
-		if r.key == key and r.started == started then
+		if r.key == key and r.started == started and not r.checking then
 			local kept: { string } = {}
 			for _, f in findings do
 				local l = M.line(f, TEXT_CAP)
@@ -338,34 +346,17 @@ function M.setCheck(key: string, started: number?, check: string, findings: { st
 	end
 end
 
--- Records `verdict` on the run of item `key` that started at `started` (the newest such). Nothing is written when the log
--- cannot be read or is malformed, the run is not in it, or the verdict is not one of VERDICTS.
-function M.setVerdict(key: string, started: number?, verdict: string)
-	local runs = M.readRuns()
-	if not runs or not M.VERDICTS[verdict] then
-		return
-	end
-	for _, r in runs do
-		if r.key == key and r.started == started then
-			if r.verdict ~= verdict then
-				r.verdict = verdict
-				pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any))
-			end
-			return
-		end
-	end
-end
-
--- Changes the run of item `key` that started at `started` with `change` (false: leave it) and saves the log; whether
--- it was saved. Nothing is written when the log cannot be read or is malformed, or the run is not in it.
-local function onRun(key: string, started: number?, change: (Run) -> boolean): boolean
+-- Changes the run of item `key` that started at `started` (the newest such; `built`: the newest that is no checker's)
+-- by `edit`, which says whether it changed anything, and saves the log; whether it was saved. Nothing is written when
+-- the log cannot be read or is malformed, or the run is not in it.
+local function patchRun(key: string, started: number?, edit: (Run) -> boolean, built: boolean?): boolean
 	local runs = M.readRuns()
 	if not runs then
 		return false
 	end
 	for _, r in runs do
-		if r.key == key and r.started == started then
-			return change(r) and (pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any)))
+		if r.key == key and r.started == started and not (built and r.checking) then
+			return edit(r) and (pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any)))
 		end
 	end
 	return false
@@ -375,21 +366,21 @@ end
 -- with `reason` cut to one line ("" for none); a second one replaces the first. Whether it was saved: never on a run
 -- with no verdict.
 function M.setDisagree(key: string, started: number?, reason: string?): boolean
-	return onRun(key, started, function(r: Run): boolean
+	return patchRun(key, started, function(r: Run): boolean
 		if not r.checkedAt then
 			return false
 		end
 		r.disagree = M.line(reason, TEXT_CAP) or ""
 		return true
-	end)
+	end, true)
 end
 
 -- Records that the work of the run of item `key` that started at `started` merged.
 function M.setMerged(key: string, started: number?)
-	onRun(key, started, function(r: Run): boolean
+	patchRun(key, started, function(r: Run): boolean
 		r.merged = true
 		return true
-	end)
+	end, true)
 end
 
 -- Whether you agree with the checker on run `r` at time `now`: "disagreed" once you recorded a disagreement, else
@@ -403,6 +394,73 @@ function M.agreement(r: Run, now: number): string?
 		return "agreed"
 	end
 	return nil
+end
+
+-- Records `verdict` on the run of item `key` that started at `started`; nothing for a verdict not in VERDICTS.
+function M.setVerdict(key: string, started: number?, verdict: string)
+	if M.VERDICTS[verdict] then
+		patchRun(key, started, function(r: Run): boolean
+			local changed = r.verdict ~= verdict
+			r.verdict = verdict
+			return changed
+		end)
+	end
+end
+
+-- Records the commit a later turn of a run's agent named, so the chain's progress counts it (strikes).
+function M.setCommit(key: string, started: number?, commit: string)
+	patchRun(key, started, function(r: Run): boolean
+		local changed = r.commit ~= commit
+		r.commit = commit
+		return changed
+	end)
+end
+
+-- Counts one failed start of the step after the (builder's) run of item `key` that started at `started`.
+function M.addStart(key: string, started: number?)
+	patchRun(key, started, function(r: Run): boolean
+		r.starts = (r.starts or 0) + 1
+		return true
+	end, true)
+end
+
+-- The chain limits' counters of item `key` in `runs` (newest first), counted back to the newest of its runs that was
+-- started by hand (depth 0 or none), that run included: `checks` failed checks, `idle` builder runs in a row (newest
+-- first; checkers' runs left out) that named no commit an earlier builder run of the chain had not, and `starts`
+-- failed starts; `findings`: those of the newest failed check.
+export type Strikes = { checks: number, idle: number, starts: number, findings: { string } }
+function M.strikes(runs: { Run }, key: string): Strikes
+	local out: Strikes = { checks = 0, idle = 0, starts = 0, findings = {} }
+	local built: { Run } = {}
+	for _, r in runs do
+		if r.key == key then
+			if r.checking and r.check == "fail" then
+				if out.checks == 0 then
+					for _, f in r.findings or {} :: { string } do
+						table.insert(out.findings, f)
+					end
+				end
+				out.checks += 1
+			elseif not r.checking then
+				table.insert(built, r)
+			end
+			out.starts += r.starts or 0
+			if not (r.depth and r.depth > 0) then
+				break
+			end
+		end
+	end
+	for i, r in built do
+		local new = r.commit ~= nil
+		for j = i + 1, #built do
+			new = new and built[j].commit ~= r.commit
+		end
+		if new then
+			break
+		end
+		out.idle += 1
+	end
+	return out
 end
 
 local function day(t: number): string
