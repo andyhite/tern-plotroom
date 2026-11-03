@@ -49,6 +49,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** is now **Mark all notifications read…** and marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub.
+- The default Implement and Fix actions push the branch and open a **draft** pull request once their work verifies, before they report, instead of waiting for `Ship`. Their PR opened outcome can now be Verified, and Watch finds the pull request when Check passes instead of stopping at 3 failed starts. The ticket comment, the transition and marking the PR ready still wait for your approval.
 
 ## [0.33.0] - 2026-11-02
 

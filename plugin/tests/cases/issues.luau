@@ -1125,6 +1125,26 @@ windowCase("window: with no prompts saved, an issue offers Implement and Fix in 
 	eq(w.kv.get("prompts-issues"), nil, "running them saves nothing")
 end)
 
+windowCase("window: Implement and Fix push and open a draft PR before they report, so the PR their outcome and Watch need exists when the check passes", function(w: World)
+	local _, b = issueWindow(w)
+	b.render()
+	cardSurface(w, b)
+	for i, name in { "Implement", "Fix" } do
+		w.window.choose = if i == 1 then { name, "main" } else { "Start another agent", name }
+		w.click(issueLink("agent", "o/r", "12"))
+		w.flush()
+		local text: string = w.window.agents[i].prompt
+		local push = string.find(text, "Push and open a draft PR, without asking", 1, true)
+		local create = string.find(text, "`git push -u origin octocat/12-fix-login`, then `gh pr create -R o/r --base <base> --head octocat/12-fix-login --draft`", 1, true)
+		local report = string.find(text, "Report, then ask", 1, true)
+		yes(push ~= nil and create ~= nil and report ~= nil, name .. ": the push, the draft PR and the report are all steps")
+		yes((push :: number) < (create :: number) and (create :: number) < (report :: number), name .. ": the branch is pushed and the draft opened before the report")
+		has(text, "Ask: `Ship: all`, or any of `ticket comment`, `transition`, `ready`", name .. ": the report asks only for what stays behind approval")
+		lacks(text, "push+PR", name .. ": the push and the draft PR are no longer asked for")
+		has(text, "NEVER comment on, transition, or edit the ticket, or mark the PR ready, before it.", name .. ": the ticket and ready still wait for approval")
+	end
+end)
+
 windowCase("window: Open on an issue opens its URL beside the block it came from, whatever pane has focus", function(w: World)
 	local _, b = issueWindow(w)
 	local open = h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12")
