@@ -41,6 +41,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Preview: description, facts, checks, merge state, reviewers | Preview | Keep | — | Approved | |
 | Preview: worktree card (Up to date, Changes, unpushed count) | Preview | Keep | — | Approved | |
 | Stage on every item, and the suggested next move | Rows, preview, Commands | New | 2 | Approved | PRODUCT.md › Glossary › Stage |
+| Picker rows: one field per Triage question. Keep: title (what is it?), author mark (mine to land or theirs to review?), number or Jira key (which one?), repository only when the view spans several (which codebase?), one blocking reason on a Blocked PR (what stops it?), stage (where does it stand?), agent state when the stage does not say it (is an agent on it?), outcome and checker verdict (did the run do what it claims?), New/Changed/Snoozed (has it changed since I looked?), Worktree (already started?), Draft (ready for review?), Jira status or closed reason (where in the team's workflow / done or dropped?), Jira type (bug or feature?). Cut to the preview: `@author` in the detail (the mark says it), age, review text, check counts, labels, In tab | Queue rows | Cut | 2 | Approved | Every field earns its place; no fact twice in a row (tern-plotroom#yxak) |
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 
 ## Dispatch
