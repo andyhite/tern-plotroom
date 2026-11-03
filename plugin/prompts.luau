@@ -43,6 +43,18 @@ local GH = [==[- GitHub: act only as @{github.user}. Prefix every `gh` and netwo
 ]==]
 local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop: end your turn with the plotroom-report block. Only my explicit answer approves; an automatic "Continue" or silence never does.
 ]==]
+-- Review and Quick review's approval step: one ask whose answers authorize posting, and the body rules that follow from it.
+local AUTHORIZE = [==[## Authorization
+One ask-tool call, three questions:
+1. `Post which comments?`, multiple choice: one option per non-empty group with its numbers (`P1 · blocking (1, 4)`, `P2 (2, 5)`, `Questions (Q1)`); default the blocking groups (none if nothing blocks). "Other" may give numbers or exclusions (`1, 3, Q1`, `P2 except 5`). None selected → no comments.
+2. `Review action?`: `Approve` / `Request changes` / `Comment` / `None (comments only)`; default the Recommendation's (withheld → None). <You> = <Author> → only `Comment` / `None (comments only)`: GitHub refuses the others on your own PR.
+3. `Review body?`: `None` (default) / `Draft one from my picks`.
+</report>
+
+<posting>
+- The answers authorize: post at once, no further confirm, except a drafted body: 1–3 sentences from only the selected items and the chosen action, never mentioning unselected ones; show it and ask `Post` / `Edit`.
+- Body `None`: `Approve` gets none; `Request changes` and `Comment` need one (GitHub): only the posted items' headers, one per line, no summary or assessment. Nothing to list → ask me for one line.
+]==]
 
 local REVIEW = [==[Review PR #{number} of {owner}/{repo}: report the actionable defects it introduces, with evidence. Post nothing until I authorize it.
 
@@ -70,15 +82,16 @@ You: @{github.user}
    - Reviewed head = `headRefOid`. HEAD differs: clean tree and HEAD its ancestor → `git pull --ff-only`; else stop and report (local work is mine).
    - `git fetch {remote} {base}`; review `{remote}/{base}...HEAD`; record the merge base.
 2. Context: description, linked issues, the full diff, repo guidance (AGENTS.md, CONTRIBUTING, lint and test config). Skim and list generated or vendored files, lockfiles, snapshots; check lockfiles for unexpected deps or major bumps. Missing context → report it; never invent it.
-3. Discussion: read every thread, resolved or not (`gh api graphql`: `pullRequest.reviewThreads`). Never duplicate a comment; link it. Re-verify others' blocking concerns at the reviewed head: still present → existing blocker, resolved or not.
-4. Analysis: inspect every changed file, deeper by risk. Trace callers, interfaces, tests; compare with the merge base for regressions. Risks: correctness (boundaries, null/empty, invalid states, errors), integration (contracts, compatibility, config, deps), data (validation, migrations, serialization, loss), security (authz, injection, secrets, trust boundaries), concurrency (races, retries, idempotency, cancellation), performance (unbounded growth, expensive queries), UX (regressions, a11y), tests, deployment (rollout, flags, observability).
-5. Validate each candidate: trigger, path, consequence; seek guards, caller guarantees, or tests disproving it. MAY run existing tests and builds after reading the scripts they invoke; ask before installing new or upgraded deps. No destructive ops, production systems, or credentials. Scratch files go in a temp dir outside the repo. Label each finding Observed (name the command) or Inferred (inspection).
-6. Cover the full diff or name the unreviewed scope. Write the report below, ask the authorization question, stop.
+3. Discussion: read every thread, resolved or not (`gh api graphql`: `pullRequest.reviewThreads`). Never duplicate a comment; link it. Re-verify others' blocking concerns at the reviewed head: still present → existing blocker.
+4. Analysis: inspect every changed file, deeper by risk. Trace callers, interfaces, tests; compare with the merge base for regressions. Risks: correctness (boundaries, null/empty, invalid states, errors), integration (contracts, config, deps), data (validation, migrations, loss), security (authz, injection, secrets, trust boundaries), concurrency (races, retries, idempotency), performance, UX, tests, deployment (rollout, flags).
+5. Validate each candidate: trigger, path, consequence; seek guards, caller guarantees, or tests disproving it. MAY run existing tests and builds after reading the scripts they invoke; ask before installing new or upgraded deps. No destructive ops, production systems, or credentials. Scratch files: a temp dir outside the repo. Label each finding Observed (name the command) or Inferred (inspection).
+6. Cover the full diff or name the unreviewed scope. Write the report below, ask the Authorization, stop.
 </workflow>
 
 <standards>
 - Report only actionable problems this PR introduces or worsens, each with evidence, trigger, impact, and a focused fix. Omit speculation, style preferences, and untouched pre-existing issues.
-- Missing tests: only for a concrete risk. One root cause: one finding listing every location. Depends on intent or unseen context: a Question.
+- Missing tests: only for a concrete risk. One root cause: one finding listing every location.
+- A Question only when its answer would change a finding's severity, whether it blocks, or the recommendation. Else drop it or put it in Reviewer notes.
 - Severity by demonstrated realistic impact: P0 widespread failure, severe security exposure, or irreversible data loss; P1 significant failure in a realistic supported scenario; P2 concrete defect with narrower impact; P3 minor.
 - Blocking: P0 and P1 always; P3 never; P2 unless a follow-up is documented (linked issue, ticket-referencing TODO, PR or thread statement): cite it. Never assume an undocumented follow-up.
 - Comments stand alone: concise, respectful, addressed to the author.
@@ -86,41 +99,30 @@ You: @{github.user}
 
 <report>
 ## Findings
-Numbered, by severity:
-1. `path/file.ext:42` — [P1, blocking] Title
+Grouped, in this order, empty groups omitted: `### P0 · blocking`, `### P1 · blocking`, `### P2 · blocking`, `### P2`, `### P3`. Numbers run 1…n across the groups:
+1. `path/file.ext:42` — Title
    Comment: trigger, wrong behavior, impact, evidence, fix. (Posted.)
    Validation: Observed|Inferred — test, repro, or path. (Never posted.)
    Anchor: RIGHT, line 42.
-Anchors: repo-relative paths, verified 1-based lines. RIGHT = reviewed head, LEFT = merge base; a range stays on one side inside one diff hunk, ideally 1–5 lines. Never force a location: use `Anchor: general` and cite file:line in the Comment. Numbers stay stable: mark withdrawals, never reuse.
+Anchors: repo-relative paths, verified 1-based lines. RIGHT = reviewed head, LEFT = merge base; a range stays on one side inside one diff hunk. Never force a location: use `Anchor: general` and cite file:line in the Comment. Numbers stay stable: mark withdrawals, never reuse.
 
 ## Questions
-Q1, Q2…, no severity: anchor (inline or general), postable question, why it matters. Omit if none.
+Q1, Q2…: anchor (inline or general), postable question, what its answer changes. Usually "None.": write that; never pad.
 
 ## Existing blockers
 E1, E2…: others' blocking concerns still present at the reviewed head, with thread link and what you checked. Never posted as comments. Omit if none.
 
 ## Reviewer notes (never posted)
-Scope; skimmed and unreviewed files; commands and results; threads checked; gaps; counts by severity and blocking.
+Scope; skimmed and unreviewed files; commands and results; threads checked; gaps.
 
 ## Recommendation
 First match wins: CHANGES REQUESTED (any blocking finding or existing blocker) · Review incomplete — recommendation withheld (say what's needed) · COMMENT (an open question would change the decision) · APPROVED. No findings and no blockers: "No actionable findings found."; only existing blockers: "No new findings. Existing blockers remain." Never imply the code is defect-free.
 
-## Proposed review body
-2–5 postable sentences: the change, the assessment, which items block. Reference `1`, `Q2`, `E1` (E-items with links). No reviewer notes.
-
-## Authorization
-Ask which items to post, `Comments: 1, 3, Q1` | `all` | `none`, and the review action, `Review: changes requested` | `approved` | `comment only` | `none`. If <You> and <Author> are the same login, offer only `comment only` or `none`, since GitHub refuses approving or requesting changes on your own PR.
-</report>
-
-<posting>
-- Prefix posted items: findings `**[1] P1 — Title**`, questions `**[Q1]**`. Post only Comment and question text.
-- The body MUST neither reference nor summarize unselected items. Selection changes the body → show it for approval first.
-- Requested edits → show them for approval, unless I authorized posting them as edited.
+]==] .. AUTHORIZE .. [==[- Prefix posted items: findings `**[1] P1 — Title**`, questions `**[Q1]**`. Post only Comment and question text; selected `Anchor: general` items go in the review body under their identifiers, as the comments themselves.
 - Before posting, re-read `headRefOid`. Changed → reassess affected findings, show the revised review, ask again. Confirm anchors still sit inside diff hunks.
-- With a review action: one review via `gh api repos/{owner}/{repo}/pulls/{number}/reviews` with `commit_id` = reviewed head, the event, the approved body, inline items as `comments`; general items appended to the body under their identifiers.
-- With `Review: none`: each inline item via `gh api repos/{owner}/{repo}/pulls/{number}/comments` with `commit_id`; all general items in one PR conversation comment that states the reviewed head SHA.
-- Partial failure → check what exists before retrying; never duplicate.
-- Report what posted, where, the review event, and failures, with links.
+- With a review action: one review via `gh api repos/{owner}/{repo}/pulls/{number}/reviews` with `commit_id` = reviewed head, the event, the body, inline items as `comments`.
+- With action None: each inline item via `gh api repos/{owner}/{repo}/pulls/{number}/comments` with `commit_id`; all general items in one PR conversation comment that states the reviewed head SHA.
+- Partial failure → check what exists before retrying; never duplicate. Report what posted (event, where) and what failed, with links.
 </posting>
 
 <critical>
@@ -156,41 +158,34 @@ You: @{github.user}
 3. Discussion: read the review threads (`gh api graphql`: `pullRequest.reviewThreads`). Never duplicate a comment; link it.
 4. Analysis: every changed file, deeper by risk: correctness (boundaries, null/empty, errors), contracts and callers of changed interfaces, data, security, concurrency.
 5. Validate each candidate by reading: trigger, path, consequence. Drop it if a guard, caller guarantee, or test disproves it.
-6. Write the report below, ask the authorization question, stop.
+6. Write the report below, ask the Authorization, stop.
 </workflow>
 
 <standards>
 - Report only actionable problems this PR introduces or worsens, each with trigger, impact, and a focused fix. Omit speculation, style preferences, and untouched pre-existing issues.
-- One root cause: one finding listing every location. Depends on intent or unseen context: a Question.
+- One root cause: one finding listing every location.
+- A Question only when its answer would change a finding's severity, whether it blocks, or the recommendation. Anything else: drop it or say it in the Recommendation.
 - Severity: P0 widespread failure, severe security exposure, or irreversible data loss; P1 significant failure in a realistic scenario; P2 concrete defect with narrower impact; P3 minor. P0 and P1 block.
 - Comments stand alone: concise, respectful, addressed to the author.
 </standards>
 
 <report>
 ## Findings
-Numbered, by severity:
-1. `path/file.ext:42` — [P1, blocking] Title
+Grouped, in this order, empty groups omitted: `### P0 · blocking`, `### P1 · blocking`, `### P2`, `### P3`. Numbers run 1…n across the groups:
+1. `path/file.ext:42` — Title
    Comment: trigger, wrong behavior, impact, fix. (Posted.)
    Anchor: RIGHT, line 42.
 Anchors: repo-relative paths, verified 1-based lines inside a diff hunk. RIGHT = reviewed head, LEFT = merge base. Never force a location: use `Anchor: general` and cite file:line in the Comment.
 
 ## Questions
-Q1, Q2…: anchor, postable question, why it matters. Omit if none.
+Q1, Q2…: anchor, postable question, which severity, blocking or recommendation its answer changes. Usually "None.": write that; never pad.
 
 ## Recommendation
 CHANGES REQUESTED (any blocking finding) · COMMENT (an open question would change the decision) · APPROVED. No findings: "No actionable findings found." Say it was read only: nothing was run.
 
-## Proposed review body
-2–4 postable sentences: the change, the assessment, which items block. Reference `1`, `Q2`.
-
-## Authorization
-Ask which items to post, `Comments: 1, 3, Q1` | `all` | `none`, and the review action, `Review: changes requested` | `approved` | `comment only` | `none`. If <You> and <Author> are the same login, offer only `comment only` or `none`, since GitHub refuses approving or requesting changes on your own PR.
-</report>
-
-<posting>
-- Prefix posted items: findings `**[1] P1 — Title**`, questions `**[Q1]**`. The body MUST neither reference nor summarize unselected items.
+]==] .. AUTHORIZE .. [==[- Prefix posted items: findings `**[1] P1 — Title**`, questions `**[Q1]**`. Selected `Anchor: general` items go in the review body under their identifiers, as the comments themselves.
 - Before posting, re-read `headRefOid`. Changed → reassess, show the revised review, ask again.
-- With a review action: one review via `gh api repos/{owner}/{repo}/pulls/{number}/reviews` with `commit_id` = reviewed head, the event, the approved body, inline items as `comments`. With `Review: none`: each inline item via `gh api repos/{owner}/{repo}/pulls/{number}/comments` with `commit_id`; general items in one `gh pr comment {number} -R {owner}/{repo}`.
+- With a review action: one review via `gh api repos/{owner}/{repo}/pulls/{number}/reviews` with `commit_id` = reviewed head, the event, the body, inline items as `comments`. With action None: each inline item via `gh api repos/{owner}/{repo}/pulls/{number}/comments` with `commit_id`; general items in one `gh pr comment {number} -R {owner}/{repo}`.
 - Partial failure → check what exists before retrying; never duplicate. Report what posted, with links.
 </posting>
 
