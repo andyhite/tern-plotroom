@@ -112,6 +112,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Keyboard shortcuts page and the one-key set | Settings | Merge into **General**; the one-key set is offered at first run | 1 | Approved | |
 | GitHub and Jira setup pages (when the CLI is missing) | Settings | Keep | — | Approved | |
 | First-run checklist | Queue | New | 1 | Approved | PRODUCT.md › Principles 4 |
+| Reset all settings | Settings › General | New | 1 | Approved | Starting over, and the way out of a corrupted store; keeps triage, usage, runs and agent links |
 | Export and import of views and actions | Commands › Configuration | Cut | 1 | Approved | About 700 lines for a rare move between machines; views and actions are re-created by hand |
 | `Plotroom:` commands in Tern's palette, except Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input (33 of 37 today) | Tern's palette | Hide: they stay in Commands; Tern's palette keeps only entry points and cross-pane commands. Tern-level key binds to hidden commands stop working. | 1 | Approved | Metric 2; Tern's palette is shared with every other plugin |
 | Protocol mismatch notice | Status bar | Keep; shows only outside the supported protocol range | 0 | Approved | |

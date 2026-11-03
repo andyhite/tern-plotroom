@@ -537,6 +537,13 @@ local function pageContent(state: State): ({ any }, { Node })
 				})
 			)
 		end
+		section("reset", "Reset")
+		row({
+			id = "reset:all",
+			label = "Reset all settings",
+			hint = "Clears views, actions, shortcuts, repositories, branch and folder formats and Get started; keeps triage, usage and agents",
+			control = { k = "action", act = "reset-all", label = "Reset" },
+		})
 	end
 	local capture = if s.edit and string.match(s.edit.row, "^p?key:") then s.edit.row else nil
 	for _, sec in sections do
@@ -1119,8 +1126,31 @@ function M.pressOption(state: State, row: string, option: string)
 	M.setValue(state, row, values)
 end
 
--- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>" or
--- "jremove:<project key>").
+-- The confirmed Reset all settings: deletes every settings key (storage.resetAll), then this block and every other one
+-- rereads storage and shows the defaults. Keys that could not be deleted are named on the row.
+local function resetAll(state: State)
+	local s = state.settings
+	if not s then
+		return
+	end
+	local failed = storage.resetAll()
+	s.edit, s.pick, s.open, s.confirm = nil, nil, nil, nil
+	s.errors = {}
+	if #failed > 0 then
+		s.errors["reset:all"] = "Could not clear: " .. table.concat(failed, ", ")
+	end
+	state.getStarted = nil
+	engine.reloadViews(state)
+	propagate(state)
+	if #failed > 0 then
+		state.cx:toast("error", "Some settings were not reset", table.concat(failed, ", "))
+	else
+		state.cx:toast("success", "Settings reset")
+	end
+end
+
+-- Deletes what the delete row `s.confirm` names ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repository>",
+-- "jremove:<project key>"), or resets every setting ("reset:all").
 function M.confirmDelete(state: State)
 	local s = state.settings
 	if not s then
@@ -1139,6 +1169,8 @@ function M.confirmDelete(state: State)
 		deleteRepo(state, s, id)
 	elseif kind == "jremove" then
 		deleteJira(s, id)
+	elseif kind == "reset" then
+		resetAll(state)
 	end
 end
 
@@ -1270,7 +1302,7 @@ function M.runAction(state: State, act: string, row: string)
 		end
 	elseif act == "edit-prompt" then
 		beginEdit(state, row)
-	elseif act == "delete" then
+	elseif act == "delete" or act == "reset-all" then
 		-- The window's palette asks (window.luau's `confirmDelete`); its answer comes back as confirm-delete for this row.
 		s.confirm = row
 		state.cx:render() -- the question is on screen before the window is told to read it

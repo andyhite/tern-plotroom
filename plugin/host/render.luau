@@ -57,6 +57,13 @@ local function deleteQuestion(state: State, row: string): { [string]: string }
 		return { row = row, head = "Remove repository “" .. (id or "") .. "”?", label = "Remove repository", detail = "Forgets its checkout and settings; no folder is touched" }
 	elseif kind == "jremove" then
 		return { row = row, head = "Remove Jira project “" .. (id or "") .. "”?", label = "Remove project", detail = "Forgets its repositories" }
+	elseif kind == "reset" then
+		return {
+			row = row,
+			head = "Reset all settings?",
+			label = "Reset all settings",
+			detail = "Clears views, actions, shortcuts, repositories, branch and folder formats and Get started in every Plotroom pane; keeps triage, usage and agents",
+		}
 	end
 	local view = viewOf(state, id or "")
 	return { row = row, head = "Delete view “" .. (if view then view.name else "this view") .. "”?", label = "Delete view", detail = "Gone from every Plotroom pane" }

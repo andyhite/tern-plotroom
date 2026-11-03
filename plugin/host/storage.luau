@@ -365,6 +365,26 @@ function M.removeRepo(repo: string): string?
 	return failed or jerr
 end
 
+-- Settings › General › Reset all settings: every kv key that holds a setting, so Plotroom starts as freshly installed.
+-- Work state stays: triage (seen, snooze), usage, runs, agent links and recent agents.
+M.SETTINGS_KEYS = {
+	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
+	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started",
+} :: { string }
+
+-- Deletes every settings key, going on past a failure; the keys that could not be deleted. A store that cannot be read
+-- or is malformed is deleted too: "never written over" guards against writes over data no one asked to discard, and a
+-- confirmed reset is the user discarding it (the way out of a corrupted store).
+function M.resetAll(): { string }
+	local failed: { string } = {}
+	for _, key in M.SETTINGS_KEYS do
+		if kvSet(key, nil) then
+			table.insert(failed, key)
+		end
+	end
+	return failed
+end
+
 local PROMPTS_BAD = "Actions are malformed; not overwriting them."
 M.PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer to the window (MENU_BUDGET)
 

@@ -160,7 +160,7 @@ export type Settings = {
 	edit: { row: string, model: input.Model }?, -- text row being edited; a multi-line model is a prompt's text; a shortcut row ("key:", "pkey:") takes the next key
 	pick: { row: string, option: string? }?, -- a choice or chips row the keys drive, `option` highlighted
 	errors: { [string]: string? }, -- row id -> warning under the row
-	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") awaiting confirmation; view and prompt ids are qualified by their kind
+	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") or "reset:all" awaiting confirmation; view and prompt ids are qualified by their kind
 }
 
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title;
