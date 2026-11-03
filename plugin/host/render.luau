@@ -6,6 +6,7 @@ local input = require("../input")
 local keys = require("../keys")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
+local triage = require("../triage")
 local worktree = require("../worktree")
 local usage = require("../usage")
 local core = require("./core")
@@ -245,17 +246,31 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
--- A preview's first fact, above its branch: the item's stage, toned as its row badge, its agent's checked outcome, and
--- what its checker found (a failed check lists its findings).
-local function stageFact(state: State, kind: string, item: any): Node
+-- The facts that have a value; a row without one is not shown.
+local function withValue(facts: { { [string]: any } }): { { [string]: any } }
+	local out = {}
+	for _, f in facts do
+		if f.v ~= nil then
+			table.insert(out, f)
+		end
+	end
+	return out
+end
+
+-- The status part of a PR's or issue's preview (what blocks it or needs you), under its next move: the item's stage,
+-- toned as its row badge, what blocks it, its agent's checked outcome and what its checker found (a failed check lists
+-- its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author).
+local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): Node
 	local id, why = engine.stage(state, kind, item)
 	local b = stageBadge(id, why, state.notes[item.key])
-	local items: { any } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
+	local items: { { [string]: any } } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
+	if id == "blocked" and why then
+		table.insert(items, { k = "Blocked by", v = { ui.span(why, "error") } })
+	end
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil
-	local v = verdictBadge(info)
-	if v then
-		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(info) :: string, v.tone) } })
+	if verdictBadge(info) then
+		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(info) :: string, (verdictBadge(info) :: any).tone) } })
 	end
 	local c = checkBadge(info)
 	if c and info then
@@ -264,7 +279,12 @@ local function stageFact(state: State, kind: string, item: any): Node
 			table.insert(items, { k = "Findings", v = { ui.span(printable(info.findings)) } })
 		end
 	end
-	return ui.node("kv", { key = "stage", items = items })
+	if lead then
+		for _, f in lead do
+			table.insert(items, f)
+		end
+	end
+	return ui.node("kv", { key = "stage", items = withValue(items) })
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
@@ -336,8 +356,31 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	return out
 end
 
--- The checks of the selected PR once loaded (Tern's shimmer meanwhile), with an error, its retry time and a Retry
--- button when the load failed.
+-- One section of a preview whose rows load, the same for every section: its heading, then while loading Tern's shimmer
+-- (`Loading <what>…`), after a failed detail load (`fail`) why, when it is tried again and a Retry button, after another
+-- failed read (`problem`, retried by its own Refresh) why, else `body` or, with nothing in it, `No <what>`. `key`
+-- prefixes each node's key.
+type Load = { loading: boolean?, fail: DetailFail?, problem: string? }
+local function section(key: string, head: string, what: string, body: { Node }, load: Load): { Node }
+	local out: { Node } = { ui.node("text", { key = key .. "-head", spans = { ui.span(head, "strong") } }) }
+	local fail = load.fail
+	if load.loading then
+		table.insert(out, ui.node("shimmer", { key = key .. "-loading", text = "Loading " .. what .. "…" }))
+		return out
+	elseif fail then
+		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
+		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") } }))
+		table.insert(out, ui.node("item", { key = key .. "-retry", label = "Retry", icon = "redo", aria = "Retry loading " .. what, actions = { click = "retry-checks" } }))
+	elseif load.problem then
+		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(load.problem), "error") } }))
+	elseif #body == 0 then
+		table.insert(out, ui.node("text", { key = key .. "-empty", spans = { ui.span("No " .. what, "muted") } }))
+	end
+	table.move(body, 1, #body, #out + 1, out)
+	return out
+end
+
+-- The Checks section of the selected PR (`section`): what the search carried stays listed under a failed load.
 local function checksNodes(state: State, pr: github.Pr): { Node }
 	local out: { Node } = {}
 	local key = detailKey(state, pr)
@@ -345,28 +388,6 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local fail = if key then state.detailFail[key] else nil
 	local runs: { github.Run } = if d then d.runs else pr.runs
 	local total = if d then d.total else pr.runTotal
-	local loading = pr.checks ~= nil and key ~= nil and d == nil and fail == nil
-	if #runs == 0 and not loading and not fail then
-		return out
-	end
-	table.insert(out, ui.node("text", { key = "runs-head", spans = { ui.span("Checks", "strong") } }))
-	if loading then
-		table.insert(out, ui.node("shimmer", { key = "runs-loading", text = "Loading checks…" }))
-		return out
-	elseif fail then
-		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
-		table.insert(
-			out,
-			ui.node("text", {
-				key = "runs-state",
-				spans = { ui.span("Could not load all checks: " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") },
-			})
-		)
-		table.insert(
-			out,
-			ui.node("item", { key = "runs-retry", label = "Retry", icon = "redo", aria = "Retry loading all checks", actions = { click = "retry-checks" } })
-		)
-	end
 	-- Every check, required ones apart, each group worst first (github.runs' order). The icon and its tone are the
 	-- status (the tooltip spells it out), so the value is only how long it took. A `workflow / job` name shows the job,
 	-- with the workflow dim after it and cut first. Only `item` rows go in a list: other kinds get no row behaviour.
@@ -406,7 +427,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
 	end
-	return out
+	return section("runs", "Checks", "checks", out, { loading = key ~= nil and d == nil and fail == nil, fail = fail })
 end
 
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
@@ -587,11 +608,14 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
 end
 
--- The description card of the item with key `key`, with no rule: it reads as part of the head. A folded bare card
--- shows its first lines under a fade and Tern's own "N more lines" button; its head row is hidden by plotroom.css, so
--- the text stands alone. `collapsed` mirrors state.descOpen (set by the card's toggle event), so Show less, a value
--- the card has not been sent yet, folds it again.
-local function addDescription(out: { Node }, state: State, key: string, body: string)
+-- The description part of the item with key `key`. A folded bare card shows its first lines under a fade and Tern's
+-- own "N more lines" button; its head row is hidden by plotroom.css, so the text stands alone. `collapsed` mirrors
+-- state.descOpen (set by the card's toggle event), so Show less, a value the card has not been sent yet, folds it again.
+-- Nothing for a blank body.
+local function descNodes(state: State, key: string, body: string?): { Node }
+	if not body or not string.find(body, "%S") then
+		return {}
+	end
 	local unfolded = state.descOpen == key
 	local nodes: { Node } = {
 		ui.node("card", {
@@ -608,71 +632,65 @@ local function addDescription(out: { Node }, state: State, key: string, body: st
 	if unfolded then
 		table.insert(nodes, ui.node("item", { key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
 	end
-	table.move(nodes, 1, #nodes, #out + 1, out)
+	return nodes
 end
 
--- The sidebar's facts that have a value; a row without one is not shown.
-local function withValue(facts: { { [string]: any } }): { { [string]: any } }
-	local out = {}
-	for _, f in facts do
-		if f.v ~= nil then
-			table.insert(out, f)
-		end
-	end
-	return out
-end
-
--- The pull request whose head is an issue's worktree branch, a link that shows it in this block (window.luau's `showPr`)
--- under a "Pull request" heading; nothing without one. `repo` is where the PR is.
-local function headPrNodes(repo: string?, pr: github.HeadPr?): { Node }
+-- The pull request whose head is an issue's worktree branch, a row that shows it in this block (window.luau's `showPr`;
+-- the list keyed "headpr", which window.luau reads); nil without one. `repo` is where the PR is.
+local function headPrList(repo: string?, pr: github.HeadPr?): Node?
 	if not pr or not repo then
-		return {}
+		return nil
 	end
 	local look = STATE_BADGE[pr.state] or STATE_BADGE.open
 	local what = "#" .. pr.number .. " · " .. look.text
-	return {
-		ui.node("text", { key = "headpr-head", spans = { ui.span("Pull request", "strong") } }),
-		ui.node("list", { key = "headpr" }, {
-			ui.node("item", {
-				key = "hp1",
-				label = pr.title,
-				value = "#" .. pr.number,
-				icon = if pr.state == "merged" then "check" elseif pr.state == "closed" then "x" else "merge",
-				tone = look.tone,
-				title = what,
-				aria = pr.title .. ", " .. what,
-				href = "plotroom://github/show/" .. repo .. "/" .. pr.number,
-				actions = { click = "open" },
-			}),
+	return ui.node("list", { key = "headpr" }, {
+		ui.node("item", {
+			key = "hp1",
+			label = pr.title,
+			value = "#" .. pr.number,
+			icon = if pr.state == "merged" then "check" elseif pr.state == "closed" then "x" else "merge",
+			tone = look.tone,
+			title = what,
+			aria = pr.title .. ", " .. what,
+			href = "plotroom://github/show/" .. repo .. "/" .. pr.number,
+			actions = { click = "open" },
 		}),
-	}
+	})
 end
 
--- The issue Plotroom noted for a pull request's worktree: key, title and status, a link that opens it in a Browser
--- block (as the issue's own Open does); nothing without one.
-local function notedNodes(issue: tracker.Issue?): { Node }
-	if not issue then
+-- A pull request's linked issues (those it closes, then the one Plotroom noted for its worktree, once): key, title and
+-- status, each a link that opens it in a Browser block (as the issue's own Open does), in the list keyed "noted", which
+-- window.luau reads. Nothing without any.
+local function linkedIssues(closing: { tracker.Linked }, noted: tracker.Issue?): { Node }
+	local all: { any } = table.clone(closing)
+	local listed = false
+	for _, c in closing do
+		listed = listed or (noted ~= nil and c.url == noted.url)
+	end
+	if noted and not listed then
+		table.insert(all, noted)
+	end
+	if #all == 0 then
 		return {}
 	end
-	local look = issue.status or STATE_BADGE[issue.state] or STATE_BADGE.open
-	local ref = tracker.refLabel(issue.ref)
-	local what = ref .. " · " .. look.text
-	return {
-		ui.node("text", { key = "noted-head", spans = { ui.span("Issue", "strong") } }),
-		ui.node("list", { key = "noted" }, {
-			ui.node("item", {
-				key = "issue1",
-				label = issue.title,
-				value = ref,
-				icon = ISSUE_ICON,
-				tone = look.tone,
-				title = what,
-				aria = issue.title .. ", " .. what,
-				href = "plotroom://issue/open/" .. pct(issue.url),
-				actions = { click = "open" },
-			}),
-		}),
-	}
+	local rows: { Node } = {}
+	for i, issue in all do
+		local look = issue.status or STATE_BADGE[issue.state] or STATE_BADGE.open
+		local ref = tracker.refLabel(issue.ref)
+		local what = ref .. " · " .. look.text
+		table.insert(rows, ui.node("item", {
+			key = "issue" .. i,
+			label = issue.title,
+			value = ref,
+			icon = if issue.state == "closed" or issue.state == "done" then "check" else ISSUE_ICON,
+			tone = look.tone,
+			title = what,
+			aria = issue.title .. ", " .. what,
+			href = "plotroom://issue/open/" .. pct(issue.url),
+			actions = { click = "open" },
+		}))
+	end
+	return { ui.node("list", { key = "noted" }, rows) }
 end
 
 -- The preview's own controls, native action rows: the suggested next move for the item's stage (engine.nextMove, run as
@@ -697,195 +715,174 @@ local function previewControls(state: State, item: any): Node?
 	return nil
 end
 
--- pr: selected(state) while the active view lists pull requests; acts: itemActions(state, pr, open).
-local function previewNodes(state: State, pr: github.Pr?, open: { [string]: boolean }, acts: { Action }): { Node }
+-- Every preview's first rows, in one shape: its head (the ref, the tracker or kind tag, the copy and open icons when it
+-- has a page, and its state badge at the right end, pushed there by an empty growing column), then its title.
+local function headNodes(ref: string, tag: { text: string, tone: string }, page: { copy: string, open: string, what: string }?, badge: any, title: string): { Node }
+	local head: { Node } = { ui.text({ ui.span(ref, "num") }), ui.node("badge", { key = "integration", text = tag.text, tone = tag.tone }) }
+	if page then
+		table.insert(head, ui.node("icon", { key = "copy", name = "copy", href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
+		table.insert(head, ui.node("icon", { key = "open", name = "globe", href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
+	end
+	table.insert(head, ui.node("col", { key = "fill", grow = 1 }))
+	if badge then
+		table.insert(head, ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }))
+	end
+	return {
+		ui.node("row", { key = "head", gap = "xs", align = "center" }, head),
+		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
+			ui.node("text", { key = "title", spans = { ui.span(title, "strong") } }),
+		}),
+	}
+end
+
+-- An item's labels, as badges among its facts (nil without any).
+local function labelRow(labels: { string }): Node?
+	local chips: { Node } = {}
+	for i, l in labels do
+		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
+	end
+	return if #chips > 0 then ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips) else nil
+end
+
+-- pr: selected(state) while the active view lists pull requests; acts: itemActions(state, pr, open). The parts follow
+-- the order every preview shares (docs/reference.md › Finer points › Preview).
+local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { Node }
 	if not pr then
 		cancelDetails(state)
 		return {}
 	end
-	-- The detail load also brings the merge state, reviewers and description, so a PR without checks needs it too.
+	-- The detail load also brings the merge state, reviewers, closing issues and description, so every PR needs it.
 	wantDetails(state, pr)
 	local check = if pr.checks then CHECK[pr.checks] else nil
 	local review = if pr.review then REVIEW_BADGE[pr.review] else nil
-	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
-	local chips: { Node } = {}
-	if open[pr.key] then
-		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
-	end
-	for i, l in pr.labels do
-		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
-	end
 	local dkey = detailKey(state, pr)
 	local detail = if dkey then state.details[dkey] else nil
 	local about = if detail then detail.about else nil
-	local loading = dkey ~= nil and detail == nil and state.detailFail[dkey] == nil
+	local fail = if dkey then state.detailFail[dkey] else nil
+	local loading = dkey ~= nil and detail == nil and fail == nil
+	-- The merge state as the search carried it until the details load; it says nothing about a merged or closed PR.
+	local merge = if about then about.merge else pr.merge
+	local m = if merge and pr.state == "open" then MERGE_STATE[merge] or MERGE_STATE.unknown else nil
+	local added, removed = pr.additions, pr.deletions
+	local diff = if added + removed > 0
+		then ui.node("meter", {
+			key = "diff",
+			parts = {
+				{ value = added / (added + removed), token = "ins", label = "+" .. added },
+				{ value = removed / (added + removed), token = "error", label = "−" .. removed },
+			},
+			label = spans(ui.span("+" .. added, "ins"), " ", ui.span("−" .. removed, "error")),
+			total = pr.files .. (if pr.files == 1 then " file" else " files"),
+		})
+		else nil
+	-- A review asked of you leads with who wrote it and how big it is; elsewhere they are plain facts.
+	local asked = engine.reviewAsked(state, pr)
+	local author = { k = "Author", v = "@" .. pr.author }
 	local facts: { { [string]: any } } = {
 		{ k = "Repository", v = { ui.span(pr.repo, "mono") } },
-		{ k = "Author", v = "@" .. pr.author },
+		{ k = "Merge", v = if m then { ui.span(m.text, m.tone) } else nil },
 		{ k = "Checks", v = if check then { ui.span(check.text, check.tone) } else nil },
 		{ k = "Review", v = if review then { ui.span(review.text, review.tone) } else nil },
+		if asked then { k = "Author" } else author,
 		{ k = "Comments", v = { ui.span(tostring(pr.comments), "num") } },
 		{ k = "Opened", v = github.age(pr.created) .. " ago" },
 		{ k = "Updated", v = github.age(pr.updated) .. " ago" },
 	}
-	if about then
-		local m = MERGE_STATE[about.merge] or MERGE_STATE.unknown
-		table.insert(facts, 2, { k = "Merge", v = { ui.span(m.text, m.tone) } })
-	end
-	local out: { Node } = {
-		buttonLinks(state, pr, acts),
-		-- The PR's state sits at the head row's right end; an empty growing column pushes it there.
-		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
-			ui.text({ ui.span("#" .. pr.number, "num") }),
-			ui.node("badge", { key = "integration", text = INTEGRATIONS.github.label, tone = "muted" }),
-			ui.node("icon", {
-				key = "copy",
-				name = "copy",
-				href = pr.url,
-				actions = { click = "copy" },
-				title = "Copy link",
-				aria = "Copy link to pull request #" .. pr.number,
-			}),
-			ui.node("icon", {
-				key = "open",
-				name = "globe",
-				href = hrefOf(state, pr, "open"),
-				actions = { click = "open" },
-				title = "Open",
-				aria = "Open pull request #" .. pr.number,
-			}),
-			ui.node("col", { key = "fill", grow = 1 }),
-			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
-		}),
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "title", spans = { ui.span(pr.title, "strong") } }),
-		}),
-	}
+	local sb = STATE_BADGE[stateKind(pr)] or STATE_BADGE.open
+	local out: { Node } = { buttonLinks(state, pr, acts) }
+	local top = headNodes("#" .. pr.number, { text = INTEGRATIONS.github.label, tone = "muted" }, { copy = pr.url, open = hrefOf(state, pr, "open"), what = "pull request #" .. pr.number }, sb, pr.title)
+	table.move(top, 1, #top, #out + 1, out)
 	local controls = previewControls(state, pr)
 	if controls then
 		table.insert(out, controls)
 	end
-	if #chips > 0 then
-		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
+	local status: { Node } = { stageFact(state, "prs", pr, if asked then { author } else nil) }
+	if asked and diff then
+		table.insert(status, diff)
 	end
+	addPart(out, "status", status)
 	addPart(out, "worktree", worktreeNodes(state, pr.key, acts))
-	addPart(out, "noted", notedNodes(if detail then detail.noted else nil))
-	if about and string.find(about.body, "%S") then
-		addDescription(out, state, pr.key, about.body)
-	end
+	addPart(out, "description", descNodes(state, pr.key, if about then about.body else nil))
 	local properties: { Node } = {
 		ui.node("col", { key = "about", gap = "sm" }, {
-			stageFact(state, "prs", pr),
 			refRow("branch", "Branch", pr.head),
 			refRow("base", "Base", pr.base),
 			ui.node("kv", { key = "facts", items = withValue(facts) }),
 		}),
 	}
-	local added, removed = pr.additions, pr.deletions
-	if added + removed > 0 then
-		table.insert(
-			properties,
-			ui.node("meter", {
-				key = "diff",
-				parts = {
-					{ value = added / (added + removed), token = "ins", label = "+" .. added },
-					{ value = removed / (added + removed), token = "error", label = "−" .. removed },
-				},
-				label = spans(ui.span("+" .. added, "ins"), " ", ui.span("−" .. removed, "error")),
-				total = pr.files .. (if pr.files == 1 then " file" else " files"),
-			})
-		)
+	local labels = labelRow(pr.labels)
+	if labels then
+		table.insert(properties, labels)
+	end
+	if diff and not asked then
+		table.insert(properties, diff)
 	end
 	addPart(out, "properties", properties)
-	if about and #about.reviews > 0 then
-		local rows: { Node } = {}
-		for i, r in about.reviews do
-			local v = VERDICT_ROW[r.state]
-			if v then
-				local what = "@" .. r.login .. " — " .. v.text
-				table.insert(rows, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
-			end
+	local load: Load = { loading = loading, fail = fail }
+	addPart(out, "linked", section("linked", "Linked issues", "linked issues", linkedIssues(if about then about.closing else {}, if detail then detail.noted else nil), load))
+	local reviewers: { Node } = {}
+	local reviews: { github.Review } = if about then about.reviews else {}
+	for i, r in reviews do
+		local v = VERDICT_ROW[r.state]
+		if v then
+			local what = "@" .. r.login .. " — " .. v.text
+			table.insert(reviewers, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
 		end
-		addPart(out, "reviewers", {
-			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
-			ui.node("list", { key = "reviewers" }, rows),
-		})
-	elseif loading then
-		addPart(out, "reviewers", {
-			ui.node("text", { key = "reviewers-head", spans = { ui.span("Reviewers", "strong") } }),
-			ui.node("shimmer", { key = "reviewers-loading", text = "Loading reviewers…" }),
-		})
 	end
+	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load))
 	addPart(out, "checks", checksNodes(state, pr))
 	return out
 end
 
--- The items that go with an issue, once its details loaded (Tern's shimmer meanwhile): the pull requests that close a
--- GitHub issue, each a link that shows it in this block (window.luau's `showPr`), the issues linked to a Jira
--- one. Or why the details did not load, with a Retry button; nothing when there are none. Like the checks: one row per
--- item, its title with the number or key at the right, the icon and its tone the state (the tooltip names it); Jira's
--- under a muted heading per relation ("Blocks · 1"), in the order Jira first names each. Items without a relation
--- (GitHub's) are the one list keyed "linked", which window.luau reads.
-local function linkedNodes(tr: string, detail: tracker.IssueDetail?, fail: DetailFail?, loading: boolean): { Node }
-	local head = ui.node("text", { key = "linked-head", spans = { ui.span(INTEGRATIONS[tr].linked, "strong") } })
-	if detail then
-		if #detail.linked == 0 then
-			return {}
-		end
-		local groups: { { relation: string?, rows: { Node } } } = {}
-		local at: { [string]: number } = {} -- relation ("" for none) -> its group
-		for i, l in detail.linked do
-			local look = l.status or STATE_BADGE[l.state] or STATE_BADGE.open
-			local what = tracker.refLabel(l.ref) .. " · " .. look.text
-			local props: { [string]: any } = {
-				key = "pr" .. i,
-				label = l.title,
-				value = tracker.refLabel(l.ref),
-				icon = if l.state == "done" then "check" elseif l.state == "closed" then "x" elseif tr == "jira" then ISSUE_ICON else "merge",
-				tone = look.tone,
-				title = what,
-				aria = l.title .. ", " .. what,
-			}
-			local o, r, n = github.parsePrUrl(l.url)
-			if tr == "github" and o and r and n then
-				props.href, props.actions = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }
-			end
-			local k = l.relation or ""
-			if not at[k] then
-				table.insert(groups, { relation = l.relation, rows = {} })
-				at[k] = #groups
-			end
-			table.insert(groups[at[k]].rows, ui.node("item", props))
-		end
-		local out: { Node } = { head }
-		for g, group in groups do
-			local relation = group.relation
-			if relation then
-				local name = if relation == "subtask" then "Subtasks" else string.upper(string.sub(relation, 1, 1)) .. string.sub(relation, 2)
-				table.insert(out, ui.node("text", { key = "linked-head" .. g, spans = { ui.span(name .. " · " .. #group.rows, "muted") } }))
-			end
-			table.insert(out, ui.node("list", { key = if relation then "linked" .. g else "linked" }, group.rows))
-		end
+-- The rows of the items linked to an issue (its Linked section's body, `section`): the pull requests that close a
+-- GitHub issue, each a link that shows it in this block (window.luau's `showPr`), the issues linked to a Jira one. Like
+-- the checks: one row per item, its title with the number or key at the right, the icon and its tone the state (the
+-- tooltip names it); Jira's under a muted heading per relation ("Blocks · 1"), in the order Jira first names each.
+-- Items without a relation (GitHub's) are the one list keyed "linked", which window.luau reads.
+local function linkedNodes(tr: string, detail: tracker.IssueDetail?): { Node }
+	local out: { Node } = {}
+	if not detail then
 		return out
-	elseif loading then
-		return { head, ui.node("shimmer", { key = "linked-loading", text = "Loading details…" }) }
-	elseif fail then
-		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
-		return {
-			head,
-			ui.node("text", {
-				key = "linked-state",
-				spans = { ui.span("Could not load the details: " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") },
-			}),
-			ui.node("item", { key = "linked-retry", label = "Retry", icon = "redo", aria = "Retry loading the details", actions = { click = "retry-checks" } }),
-		}
 	end
-	return {}
+	local groups: { { relation: string?, rows: { Node } } } = {}
+	local at: { [string]: number } = {} -- relation ("" for none) -> its group
+	for i, l in detail.linked do
+		local look = l.status or STATE_BADGE[l.state] or STATE_BADGE.open
+		local what = tracker.refLabel(l.ref) .. " · " .. look.text
+		local props: { [string]: any } = {
+			key = "pr" .. i,
+			label = l.title,
+			value = tracker.refLabel(l.ref),
+			icon = if l.state == "done" then "check" elseif l.state == "closed" then "x" elseif tr == "jira" then ISSUE_ICON else "merge",
+			tone = look.tone,
+			title = what,
+			aria = l.title .. ", " .. what,
+		}
+		local o, r, n = github.parsePrUrl(l.url)
+		if tr == "github" and o and r and n then
+			props.href, props.actions = "plotroom://github/show/" .. o .. "/" .. r .. "/" .. n, { click = "open" }
+		end
+		local k = l.relation or ""
+		if not at[k] then
+			table.insert(groups, { relation = l.relation, rows = {} })
+			at[k] = #groups
+		end
+		table.insert(groups[at[k]].rows, ui.node("item", props))
+	end
+	for g, group in groups do
+		local relation = group.relation
+		if relation then
+			local name = if relation == "subtask" then "Subtasks" else string.upper(string.sub(relation, 1, 1)) .. string.sub(relation, 2)
+			table.insert(out, ui.node("text", { key = "linked-head" .. g, spans = { ui.span(name .. " · " .. #group.rows, "muted") } }))
+		end
+		table.insert(out, ui.node("list", { key = if relation then "linked" .. g else "linked" }, group.rows))
+	end
+	return out
 end
 
--- The selected issue's sidebar: head, labels, description, worktree report, properties and its linked items. issue:
+-- The selected issue's preview, in the order every preview shares (docs/reference.md › Finer points › Preview). issue:
 -- selected(state) while the active view lists issues; acts: itemActions(state, issue, open).
-local function issuePreview(state: State, issue: tracker.Issue?, open: { [string]: boolean }, acts: { Action }): { Node }
+local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action }): { Node }
 	if not issue then
 		cancelDetails(state)
 		return {}
@@ -893,13 +890,6 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	-- The body, the tracker's own rows and the linked items come with the detail load.
 	wantDetails(state, issue)
 	local sb = issueBadge(issue)
-	local chips: { Node } = {}
-	if open[issue.key] then
-		table.insert(chips, ui.node("badge", { key = "tab", text = "In tab", tone = "accent" }))
-	end
-	for i, l in issue.labels do
-		table.insert(chips, ui.node("badge", { key = "label" .. i, text = l }))
-	end
 	local dkey = detailKey(state, issue)
 	local loaded = if dkey then state.details[dkey] else nil
 	local detail = if loaded then loaded.issue else nil
@@ -941,57 +931,43 @@ local function issuePreview(state: State, issue: tracker.Issue?, open: { [string
 	end
 	-- The Branch row shows the branch a new worktree would make (a linked PR's is taken instead); without one (a saved
 	-- format is unusable) there is none. A user not known yet (me.of) shows as its variable.
-	local about: { Node } = { stageFact(state, "issues", issue) }
+	local about: { Node } = {}
 	local code = codeRepoOf(issue)
 	local branch = if code then (engine.issueNames(issue, code, me.of(state, issue))) else nil
 	if branch then
 		table.insert(about, refRow("branch", "Branch", branch))
 	end
 	table.insert(about, ui.node("kv", { key = "facts", items = withValue(facts) }))
+	local properties: { Node } = { ui.node("col", { key = "about", gap = "sm" }, about) }
+	local labels = labelRow(issue.labels)
+	if labels then
+		table.insert(properties, labels)
+	end
 	local ref = tracker.refLabel(issue.ref)
-	local out: { Node } = {
-		buttonLinks(state, issue, acts),
-		-- The issue's state sits at the head row's right end; an empty growing column pushes it there.
-		ui.node("row", { key = "head", gap = "xs", align = "center" }, {
-			ui.text({ ui.span(ref, "num") }),
-			ui.node("badge", { key = "integration", text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }),
-			ui.node("icon", {
-				key = "copy",
-				name = "copy",
-				href = issue.url,
-				actions = { click = "copy" },
-				title = "Copy link",
-				aria = "Copy link to issue " .. ref,
-			}),
-			ui.node("icon", {
-				key = "open",
-				name = "globe",
-				href = hrefOf(state, issue, "open"),
-				actions = { click = "open" },
-				title = "Open",
-				aria = "Open issue " .. ref,
-			}),
-			ui.node("col", { key = "fill", grow = 1 }),
-			ui.node("badge", { key = "state", text = sb.text, tone = sb.tone }),
-		}),
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "title", spans = { ui.span(issue.title, "strong") } }),
-		}),
-	}
+	local out: { Node } = { buttonLinks(state, issue, acts) }
+	local tag = { text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }
+	local top = headNodes(ref, tag, { copy = issue.url, open = hrefOf(state, issue, "open"), what = "issue " .. ref }, sb, issue.title)
+	table.move(top, 1, #top, #out + 1, out)
 	local controls = previewControls(state, issue)
 	if controls then
 		table.insert(out, controls)
 	end
-	if #chips > 0 then
-		table.insert(out, ui.node("row", { key = "chips", gap = "xs", wrap = true }, chips))
-	end
-	if detail and string.find(detail.body, "%S") then
-		addDescription(out, state, issue.key, detail.body)
-	end
+	addPart(out, "status", { stageFact(state, "issues", issue) })
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
-	addPart(out, "properties", { ui.node("col", { key = "about", gap = "sm" }, about) })
-	addPart(out, "linked", linkedNodes(issue.tracker, detail, fail, loading))
-	addPart(out, "headpr", headPrNodes(code, if loaded and not loaded.headLinked then loaded.headPr else nil))
+	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil))
+	addPart(out, "properties", properties)
+	-- The PR whose head is the issue's worktree branch joins a GitHub issue's linked pull requests; a Jira issue's
+	-- linked items are issues, so it has a Linked pull requests section of its own while there is one.
+	local headPr = headPrList(code, if loaded and not loaded.headLinked then loaded.headPr else nil)
+	local linked = linkedNodes(issue.tracker, detail)
+	if headPr and issue.tracker == "github" then
+		table.insert(linked, headPr)
+	end
+	local heading = INTEGRATIONS[issue.tracker].linked
+	addPart(out, "linked", section("linked", heading, string.lower(heading), linked, { loading = loading, fail = fail }))
+	if headPr and issue.tracker ~= "github" then
+		addPart(out, "headpr", { ui.node("text", { key = "headpr-head", spans = { ui.span(INTEGRATIONS.github.linked, "strong") } }), headPr })
+	end
 	return out
 end
 
@@ -1111,64 +1087,76 @@ function M.scopeRows(state: State): ({ any }, string?)
 	return scopes, activeScope
 end
 
--- The board's preview of the selected worktree: its folder's name, the pull request and issue it was made for (each as
--- the tracker answered, or why not), its git facts and, hidden, the link the window opens its folder with.
+-- The board's preview of the selected worktree, in the order every preview shares (docs/reference.md › Finer points ›
+-- Preview): its repository and changes, its folder's name, what it needs (cleanup, a refusal), its git facts, the pull
+-- request and issue it was made for (each as the tracker answered, or why not) and, hidden, the link the window opens
+-- its folder with.
 local function boardPreview(state: State): { Node }
 	local row, at = engine.boardSelected(state)
 	if not row then
 		return {}
 	end
 	local p = board.preview(state.board, row)
-	local kids: { Node } = {
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "title", spans = { ui.span(p.title, "strong") } }),
-		}),
-	}
-	local function section(key: string, head: string, sec: any)
-		if not sec then
-			return
-		end
-		table.insert(kids, ui.node("rule", { key = "rule-" .. key }))
-		local info = sec.info
-		local nodes: { Node } = { ui.node("text", { key = key .. "-head", spans = { ui.span(head .. " " .. sec.ref, "strong") } }) }
-		if sec.state == "loading" then
-			table.insert(nodes, ui.node("shimmer", { key = key .. "-loading", text = "Loading " .. sec.ref .. "…" }))
-		elseif sec.state == "error" then
-			table.insert(nodes, ui.node("text", { key = key .. "-problem", spans = { ui.span("Could not read " .. sec.ref .. ": " .. brief(sec.problem or "no answer"), "error") } }))
-		elseif sec.state == "empty" or not info then
-			table.insert(nodes, ui.node("text", { key = key .. "-empty", spans = { ui.span(sec.ref .. " was not found by its tracker.", "muted") } }))
-		else
-			table.insert(nodes, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
-				ui.node("text", { key = "t", spans = { ui.span(printable(info.title), "strong") } }),
-				ui.node("badge", { key = "state", text = printable(info.state), tone = "muted" }),
-			}))
-			local facts: { { [string]: any } } = {
-				{ k = "Tracker", v = { ui.span(printable(info.tracker), "mono") } },
-				{ k = if key == "pr" then "Author" else "Assignee", v = if info.person then { ui.span(printable(info.person)) } else nil },
-			}
-			table.insert(nodes, ui.node("kv", { key = key .. "-facts", items = withValue(facts) }))
-			if info.excerpt then
-				table.insert(nodes, ui.node("text", { key = key .. "-excerpt", spans = { ui.span(printable(info.excerpt), "muted") } }))
-			end
-		end
-		table.move(nodes, 1, #nodes, #kids + 1, kids)
-	end
-	section("pr", "Pull request", p.pr)
-	section("issue", "Issue", p.issue)
+	local changes: { text: string, tone: string, title: string? } = if row.missing then { text = "Missing", tone = "error" }
+		elseif row.dirty == true then { text = "Changes", tone = "warning" }
+		elseif row.dirty == false then { text = "Clean", tone = "success" }
+		elseif row.scannedAt then { text = "Unknown", tone = "muted" }
+		else { text = "Reading…", tone = "muted" }
 	local facts: { { [string]: any } } = {}
 	for _, f in p.facts do
 		local style: string? = if f[1] == "Repository" then "mono" elseif f[1] == "Branch" or f[1] == "Path" or f[1] == "Head" then "code" else nil
-		table.insert(facts, { k = f[1], v = { ui.span(f[2], style) } })
+		if f[1] == "Status" then
+			changes.title = f[2] -- the head's badge says it
+		else
+			table.insert(facts, { k = f[1], v = { ui.span(f[2], style) } })
+		end
 	end
+	local kids: { Node } = headNodes(row.repo, { text = "Worktree", tone = "muted" }, nil, changes, p.title)
 	local cleanup = if row.candidate == "merged" then "Its pull request is merged" elseif row.candidate == "closed" then "Its item is closed" elseif row.candidateChecked then "Its item is still open" else nil
-	if cleanup then
-		table.insert(facts, { k = "Cleanup", v = { ui.span(cleanup) } })
+	local status: { Node } = {}
+	local needs = withValue({
+		{ k = "Cleanup", v = if cleanup then { ui.span(cleanup, if row.candidate then "warning" else nil) } else nil },
+		{ k = "Main", v = if row.main then { ui.span("The repository's main worktree, never removed here") } else nil },
+		{ k = "Locked", v = if row.locked then { ui.span("Locked with git worktree lock") } else nil },
+	})
+	if #needs > 0 then
+		table.insert(status, ui.node("kv", { key = "stage", items = needs }))
 	end
-	table.insert(kids, ui.node("rule", { key = "rule-facts" }))
-	table.insert(kids, ui.node("kv", { key = "facts", items = withValue(facts) }))
 	if row.refused then
-		table.insert(kids, ui.node("text", { key = "refused", spans = { ui.span(row.refused, "error") } }))
+		table.insert(status, ui.node("text", { key = "refused", spans = { ui.span(row.refused, "error") } }))
 	end
+	addPart(kids, "status", status)
+	addPart(kids, "properties", { ui.node("kv", { key = "facts", items = withValue(facts) }) })
+	local linked: { Node } = {}
+	local function half(key: string, heading: string, sec: any)
+		if not sec then
+			return
+		end
+		local info = sec.info
+		local body: { Node } = {}
+		if sec.state == "empty" or (sec.state == "ready" and not info) then
+			table.insert(body, ui.node("text", { key = key .. "-empty", spans = { ui.span(sec.ref .. " was not found by its tracker.", "muted") } }))
+		elseif sec.state == "ready" and info then
+			table.insert(body, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
+				ui.text({ ui.span(sec.ref, "num") }),
+				ui.node("text", { key = "t", spans = { ui.span(printable(info.title), "strong") } }),
+				ui.node("badge", { key = "state", text = printable(info.state), tone = "muted" }),
+			}))
+			local rows: { { [string]: any } } = {
+				{ k = "Tracker", v = { ui.span(printable(info.tracker), "mono") } },
+				{ k = if key == "pr" then "Author" else "Assignee", v = if info.person then { ui.span(printable(info.person)) } else nil },
+			}
+			table.insert(body, ui.node("kv", { key = key .. "-facts", items = withValue(rows) }))
+			if info.excerpt then
+				table.insert(body, ui.node("text", { key = key .. "-excerpt", spans = { ui.span(printable(info.excerpt), "muted") } }))
+			end
+		end
+		local nodes = section(key, heading, sec.ref, body, { loading = sec.state == "loading", problem = if sec.state == "error" then sec.problem or "no answer" else nil })
+		table.move(nodes, 1, #nodes, #linked + 1, linked)
+	end
+	half("pr", INTEGRATIONS.github.linked, p.pr)
+	half("issue", INTEGRATIONS.jira.linked, p.issue)
+	addPart(kids, "linked", linked)
 	local links: { Node } = { ui.node("text", { key = "wtopen", href = core.withToken("plotroom://worktrees/open/" .. at) }) }
 	if not row.missing then
 		table.insert(links, ui.node("text", { key = "git", href = core.withToken(core.GIT_LINK) }))
@@ -1228,8 +1216,9 @@ local function boardProps(state: State, props: { [string]: any })
 	table.insert(props.actions, { id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil })
 end
 
--- The Agents scope's preview of the selected agent: its item, its action, branch and state, and, hidden, the link the window
--- goes to its tab with.
+-- The Agents scope's preview of the selected agent, in the order every preview shares (docs/reference.md › Finer points
+-- › Preview): its item and state, what needs you (its report, outcome and check), the agent's action, branch and last
+-- run, and, hidden, the link the window goes to its tab with.
 local function agentsPreview(state: State): { Node }
 	local row = engine.agentSelected(state)
 	if not row then
@@ -1238,39 +1227,26 @@ local function agentsPreview(state: State): { Node }
 	local badge = AGENT_BADGE[row.state]
 	local report = REPORT_BADGE[row.attention or ""]
 	local href = engine.agentHref(row.key)
-	local facts: { { [string]: any } } = withValue({
-		{ k = "Item", v = { ui.span(printable(row.key), "mono") } },
-		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
-		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
-		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
-		{ k = "Report", v = if report then { ui.span(report.text) } else nil },
-		{ k = "Outcome", v = if verdictText(row) then { ui.span(verdictText(row) :: string) } else nil },
-		{ k = "Check", v = if checkBadge(row) then { ui.span((checkBadge(row) :: any).text) } else nil },
+	local verdict = verdictBadge(row)
+	local checked = checkBadge(row)
+	local needs = withValue({
+		{ k = "Report", v = if report then { ui.span(report.text, report.tone) } else nil },
+		{ k = "Outcome", v = if verdict then { ui.span(verdictText(row) :: string, verdict.tone) } else nil },
+		{ k = "Check", v = if checked then { ui.span(checked.text, checked.tone) } else nil },
 		{ k = "Findings", v = if row.check == "fail" and row.findings then { ui.span(printable(row.findings)) } else nil },
 		{ k = "Reason", v = if report and row.reason then { ui.span(printable(row.reason)) } else nil },
 		{ k = "Blocker", v = if report and row.blocker then { ui.span(printable(row.blocker), "error") } else nil },
 		{ k = "Last message", v = if row.last then { ui.span(printable(row.last)) } else nil },
 		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
-	local titlerow: { Node } = {
-		ui.node("text", { key = "title", spans = { ui.span(printable(row.title or row.key), "strong") } }),
-		ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }),
-	}
-	if report then
-		table.insert(titlerow, ui.node("badge", { key = "report", text = report.text, tone = report.tone, title = report.title }))
-	end
-	local verdict = verdictBadge(row)
-	if verdict then
-		table.insert(titlerow, ui.node("badge", { key = "outcome", text = verdict.text, tone = verdict.tone, title = verdict.title }))
-	end
-	local checked = checkBadge(row)
-	if checked then
-		table.insert(titlerow, ui.node("badge", { key = "check", text = checked.text, tone = checked.tone, title = checked.title }))
-	end
-	local kids: { Node } = {
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, titlerow),
-		ui.node("kv", { key = "facts", items = facts }),
-	}
+	local agent = withValue({
+		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
+		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
+		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
+	})
+	local kids: { Node } = headNodes(printable(row.key), { text = "Agent", tone = "muted" }, nil, badge, printable(row.title or row.key))
+	addPart(kids, "status", if #needs > 0 then { ui.node("kv", { key = "stage", items = needs }) } else {})
+	addPart(kids, "agent", if #agent > 0 then { ui.node("kv", { key = "agent", items = agent }) } else {})
 	if href then
 		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
 		for _, act in AGENT_COMMANDS do
@@ -1417,7 +1393,9 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 	return { text = "Assigned: " .. string.lower(row.why or ""), tone = if row.why == "New" then "accent" else "warning", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh
 end
 
--- Now's preview of the selected row: its title, why it is listed, its stage, and what Enter does.
+-- Now's preview of the selected row, in the order every preview shares (docs/reference.md › Finer points › Preview):
+-- its item and why it is listed, its title, what needs you (why, its stage, its agent's report, outcome and check, when
+-- a snooze ends), its agent's action, when GitHub last updated it, and what Enter does.
 local function nowPreview(state: State): { Node }
 	local row = engine.nowSelected(state)
 	if not row then
@@ -1442,33 +1420,34 @@ local function nowPreview(state: State): { Node }
 		table.insert(links, ui.node("text", { key = "agentreply", href = reply }))
 	end
 	local report = if agent then REPORT_BADGE[agent.attention or ""] else nil
-	return {
-		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
-			ui.node("text", { key = "title", spans = { ui.span(printable(row.title), "strong") } }),
-			ui.node("badge", { key = "why", text = badge.text, tone = badge.tone, title = badge.title }),
-		}),
+	local store = engine.store(state)
+	local snoozeEnd = if row.snoozed and store and row.key then triage.snoozeEnd(store, { key = row.key }, os.time()) else nil
+	local jira = (item and item.tracker == "jira") or (row.key ~= nil and string.match(row.key, "#%u[%u%d]*%-%d+$") ~= nil)
+	local ref = if row.key then printable(row.key) elseif n then printable(n.repo) else ""
+	local kids: { Node } = headNodes(ref, { text = if jira then INTEGRATIONS.jira.label else INTEGRATIONS.github.label, tone = if jira then "accent" else "muted" }, nil, badge, printable(row.title))
+	addPart(kids, "status", {
 		ui.node("kv", {
-			key = "facts",
+			key = "stage",
 			items = withValue({
 				{ k = "Why", v = { ui.span(sentence) } },
 				{ k = "Stage", v = if stage then { ui.span(stage.text, stage.tone) } else nil },
-				{ k = "Item", v = if row.key then { ui.span(printable(row.key), "mono") } elseif n then { ui.span(printable(n.repo), "mono") } else nil },
-				{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
 				{ k = "Chain", v = if agent and agent.stop then { ui.span("Stopped: " .. printable(agent.stop), "warning") } else nil },
-				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string) } else nil },
-				{ k = "Check", v = if checkBadge(agent) then { ui.span((checkBadge(agent) :: any).text) } else nil },
+				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string, (verdictBadge(agent) :: any).tone) } else nil },
+				{ k = "Check", v = if checkBadge(agent) then { ui.span((checkBadge(agent) :: any).text, (checkBadge(agent) :: any).tone) } else nil },
 				{ k = "Findings", v = if agent and agent.check == "fail" and agent.findings then { ui.span(printable(agent.findings)) } else nil },
-				{ k = "Report", v = if report and agent.attention ~= "none" then { ui.span(report.text) } else nil },
+				{ k = "Report", v = if report and agent.attention ~= "none" then { ui.span(report.text, report.tone) } else nil },
 				{ k = "Reason", v = if report and agent.reason then { ui.span(printable(agent.reason)) } else nil },
 				{ k = "Blocker", v = if report and agent.blocker then { ui.span(printable(agent.blocker), "error") } else nil },
 				{ k = "Last message", v = if agent and agent.last then { ui.span(printable(agent.last)) } else nil },
-				{ k = "Updated", v = if n and n.updated > 0 then { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } else nil },
-				{ k = "Snoozed", v = if row.snoozed then { ui.span("Until 08:00", "muted") } else nil },
+				{ k = "Snoozed", v = if snoozeEnd then { ui.span("Until " .. os.date("%a %H:%M", snoozeEnd), "muted") } else nil },
 			}),
 		}),
-		ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }),
-		ui.node("col", { key = "buttons", hidden = true }, links),
-	}
+	})
+	addPart(kids, "agent", if agent and agent.action then { ui.node("kv", { key = "agent", items = { { k = "Action", v = { ui.span(printable(agent.action)) } } } }) } else {})
+	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } } } }) } else {})
+	table.insert(kids, ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }))
+	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
+	return kids
 end
 
 -- Turns the queue's picker props into Now's: its rows top first, each as its view shows it with why it is listed first.
@@ -1819,7 +1798,7 @@ function M.queuePicker(state: State): Node
 		preview = nowPreview(state)
 		nowProps(state, props)
 	else
-		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
+		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
 		if #strip > 0 then
 			props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
 		end

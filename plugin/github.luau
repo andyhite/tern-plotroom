@@ -45,7 +45,7 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
-export type About = { merge: string, reviews: { Review }, body: string }
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked } }
 
 local GH_TIMEOUT_MS = 30 * 1000
 local CAP = 1000
@@ -939,13 +939,13 @@ local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
-	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } }"
+	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } }"
 local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { repository(owner: $o, name: $r) { pullRequest(number: $n) { "
 	.. ABOUT_FIELDS
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)]})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
 local CHECK_PAGES = 3
 
 local function login(v: any): string?
@@ -984,7 +984,15 @@ function M.about(raw: any): About
 	for _, who in (if type(t.requested) == "table" then t.requested else {}) :: { any } do
 		add(login(who), "requested")
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body) }
+	-- The issues this PR closes when it merges, as an issue's linked items are read.
+	local closing: { tracker.Linked } = {}
+	for _, n in (if type(t.closing) == "table" then t.closing else {}) :: { any } do
+		local num, title, url = field(n, "number"), field(n, "title"), field(n, "url")
+		if type(num) == "number" and type(title) == "string" and type(url) == "string" and string.sub(url, 1, 8) == "https://" then
+			table.insert(closing, { ref = tostring(num), title = title, url = url, state = if field(n, "state") == "CLOSED" then "closed" else "open" })
+		end
+	end
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page

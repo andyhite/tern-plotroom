@@ -38,7 +38,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Sort orders (Next sort order, sort per view) | Commands, Settings › Views | Keep | — | Approved | |
 | Search | Bottom bar, Commands | Keep | — | Approved | |
 | Group by (repository, status, label) | Settings › Views | Keep | — | Approved | |
-| Preview: description, facts, checks, merge state, reviewers | Preview | Keep | — | Approved | |
+| Preview: description, facts, checks, merge state, reviewers, closing issues; one shared order and one loading / error / empty state for every variant | Preview | Keep | 2 | Approved | Done: docs/reference.md › Finer points › Preview; one home per fact (the row's In tab is the card's Go to tab) |
 | Preview: worktree card (Up to date, Changes, unpushed count) | Preview | Keep | — | Approved | |
 | Stage on every item, and the suggested next move | Rows, preview, Commands | New | 2 | Approved | PRODUCT.md › Glossary › Stage |
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts |

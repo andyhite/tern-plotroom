@@ -470,7 +470,7 @@ M.MERGE_STATE = {
 	unstable = { text = "Checks failing", tone = "warning" },
 	ready = { text = "Ready", tone = "success" },
 	draft = { text = "Draft", tone = "muted" },
-	unknown = { text = "Checking…", tone = "muted" },
+	unknown = { text = "Unknown", tone = "muted" }, -- GitHub has not computed it (it does so lazily); the next refresh asks again
 } :: { [string]: { text: string, tone: string } }
 M.VERDICT_ROW = {
 	approved = { text = "Approved", tone = "success", icon = "check" },

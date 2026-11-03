@@ -97,8 +97,16 @@ if a[:2] == ["api", "graphql"]:
         if "first: 25" in fields.get("query", ""):  # the pull requests that close an issue (the --jq answer is a list): none
             sys.stdout.write("[]")
             sys.exit(0)
-        sys.stdout.write(json.dumps({"total": 0, "next": None, "nodes": []}))
+        key = "%s/%s#%s" % (fields["o"], fields.get("r"), fields.get("n"))
+        # one issue's details (issue-detail.json) or one pull request's checks and details (checks.json), as their --jq prints them; none: empty
+        name = "issue-detail.json" if "closedByPullRequestsReferences" in fields.get("query", "") else "checks.json"
+        f = os.path.join(SMOKE, name)
+        canned = (json.load(open(f)) if os.path.exists(f) else {}).get(key)
+        sys.stdout.write(json.dumps(canned if canned is not None else {"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
+if a[:2] == ["pr", "list"] and any(x.startswith("--head=") for x in a):  # the pull request on an issue's worktree branch: none
+    sys.stdout.write("[]")
+    sys.exit(0)
 if a == ["auth", "status", "--hostname", "github.com", "--json", "hosts"]:
     sys.stdout.write(json.dumps({"hosts": {"github.com": [{"state": "success", "active": True, "host": "github.com", "login": "smoke"}]}}))
     sys.exit(0)
@@ -137,6 +145,32 @@ if len(w) == 2 and w[0] in ("git-upload-pack", "git-receive-pack") and not w[1].
 with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
     log.write("ssh %r\n" % (a,))
 sys.exit(2)
+'''
+
+# Fake acli, installed only by the last scenario (the ones before run without Jira): `--version`, a signed-in `auth status` on acme.atlassian.net, empty
+# searches and counts, an empty project list, and `workitem view <KEY>` from jira.json (none: Jira's not-found error). Header is prepended.
+FAKE_ACLI = r'''
+import json, os, sys
+a = sys.argv[1:]
+if a == ["--version"]:
+    sys.stdout.write("acli version 1.3.36-stable\n")
+elif a[:3] == ["jira", "auth", "status"]:
+    sys.stdout.write("Authenticated\n  Site: acme.atlassian.net\n  Email: smoke@example.com\n")
+elif a[:3] == ["jira", "workitem", "search"]:
+    sys.stdout.write("Number of work items in the search: 0\n" if a[-1] == "--count" else "[\n  null\n]\n")
+elif a[:3] == ["jira", "project", "list"]:
+    sys.stdout.write("[]\n")
+elif a[:3] == ["jira", "workitem", "view"] and len(a) > 3:
+    f = os.path.join(SMOKE, "jira.json")
+    item = (json.load(open(f)) if os.path.exists(f) else {}).get(a[3])
+    if item is None:
+        sys.stderr.write("Error: Issue does not exist or you do not have permission to see it.\n")
+        sys.exit(1)
+    sys.stdout.write(json.dumps(item) + "\n")
+else:
+    with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
+        log.write("acli %r\n" % (a,))
+    sys.exit(2)
 '''
 
 
@@ -1534,13 +1568,14 @@ def sc_workflow(s: Smoke) -> None:
         ts = s.texts()
         if len(s.selection()) != 1 or not s.preview_texts():  # one visible row, and its native preview slot holds content
             continue
-        if any(t.startswith("Pull request #2") for t in ts):
+        pt = s.preview_texts()
+        if "#2" in pt:
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
             s.wait_until("the both-linked preview's fetched titles", lambda: any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts()))
             seen_both = True
             s.eq("no placeholder is left in the both-linked preview", False, any(t.startswith("Loading") and ("#2" in t or "#9" in t) for t in s.texts()))
             s.shot("board-both-preview")
-        elif any(t.startswith("Pull request #1") for t in ts):
+        elif "#1" in pt:
             # the tracker's answer, not the placeholder
             s.wait_until("the linked preview's fetched title", lambda: any("Flow PR 1" in t for t in s.texts()))
             seen_linked = True
@@ -1806,6 +1841,101 @@ def sc_outcome(s: Smoke) -> None:
     s.ctl_ok("key", "Escape")
 
 
+def sc_previews(s: Smoke) -> None:
+    """Every preview in one order (docs/reference.md › Finer points › Preview): a pull request with failing checks, a GitHub issue and a Jira issue, each
+    pinned by URL, and a worktree made for the pull request, each read back in the order its parts are drawn (head, title, status, description, facts,
+    linked items, reviewers and checks), with a headless shot of each. acli is a local fake installed here, so the scenarios before run without Jira."""
+    acli = s.tmp / "bin" / "acli"
+    acli.write_text("#!%s\nSMOKE = %r\n" % (sys.executable, str(s.smoke)) + FAKE_ACLI, encoding="utf-8")
+    acli.chmod(0o755)
+    stamp = "2026-01-01T00:00:00Z"
+    pr = {"number": 31, "title": "Preview PR 31", "url": "https://github.com/f/low/pull/31", "author": "octo", "state": "OPEN", "isDraft": False,
+          "updatedAt": stamp, "createdAt": stamp, "head": "preview-31", "base": "main", "additions": 40, "deletions": 12, "changedFiles": 3, "comments": 2,
+          "labels": ["ui"], "review": "CHANGES_REQUESTED", "mergeable": "MERGEABLE", "merge": "BLOCKED", "checks": "FAILURE", "runs": [], "runTotal": 2}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    run = {"__typename": "CheckRun", "status": "COMPLETED", "startedAt": "2026-01-01T00:00:00Z", "completedAt": "2026-01-01T00:01:30Z"}
+    (s.smoke / "checks.json").write_text(json.dumps({"f/low#31": {"total": 2, "next": None, "nodes": [
+        dict(run, id="c1", name="build", conclusion="FAILURE", isRequired=True, detailsUrl="https://github.com/f/low/actions/runs/7/job/1"),
+        dict(run, id="c2", name="lint", conclusion="SUCCESS", isRequired=False, detailsUrl="https://github.com/f/low/actions/runs/7/job/2"),
+    ], "about": {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "Moves the login redirect after sign-in.",
+                 "reviews": [{"login": "ann", "state": "CHANGES_REQUESTED"}], "requested": ["bob"],
+                 "closing": [{"number": 32, "title": "Preview issue 32", "url": "https://github.com/f/low/issues/32", "state": "OPEN"}]}}}), encoding="utf-8")
+    (s.smoke / "issues.json").write_text(json.dumps([{"number": 32, "title": "Preview issue 32", "url": "https://github.com/f/low/issues/32", "state": "OPEN",
+                                                      "reason": None, "updatedAt": stamp, "createdAt": stamp, "author": "octo", "comments": 1,
+                                                      "labels": ["bug"], "assignees": ["octo"]}]), encoding="utf-8")
+    (s.smoke / "issue-detail.json").write_text(json.dumps({"f/low#32": {"body": "Login fails after the redirect.", "milestone": "v2", "linked": [
+        {"number": 31, "title": "Preview PR 31", "url": "https://github.com/f/low/pull/31", "state": "OPEN", "isDraft": False}]}}), encoding="utf-8")
+    doc = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Sign-in loops on the Jira side."}]}]}
+    (s.smoke / "jira.json").write_text(json.dumps({"ABC-7": {"key": "ABC-7", "fields": {
+        "summary": "Preview Jira 7", "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}}, "issuetype": {"name": "Bug"},
+        "priority": {"name": "High"}, "reporter": {"displayName": "Ann Lee"}, "assignee": None, "labels": [], "description": doc,
+        "created": "2026-01-01T00:00:00.000+0000", "updated": "2026-01-01T00:00:00.000+0000",
+        "issuelinks": [{"type": {"inward": "is blocked by", "outward": "blocks"},
+                        "outwardIssue": {"key": "ABC-3", "fields": {"summary": "Login API", "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}}]}}}),
+        encoding="utf-8")
+    root = s.checkout("flow")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(root)
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_until("the new block opens on Now", s.on_now)
+    # The host remembers which CLIs start; Refresh asks again, so the acli just installed turns Jira on.
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Refresh"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    time.sleep(3.0)  # the probe and the refresh it starts
+
+    def in_order(what: str, needles: List[str]) -> None:
+        """`needles` are drawn in the preview, in that order (each the first text equal to it or starting with it)."""
+        pt = s.preview_texts()
+        at = [next((i for i, t in enumerate(pt) if t == n or t.startswith(n)), -1) for n in needles]
+        s.eq(what, needles, [n for i, n in sorted(zip(at, needles)) if i >= 0])
+
+    def pin(url: str, title: str, loaded: str) -> None:
+        s.ctl_ok("plugins", "run", "plugin.plotroom.open-url")
+        s.wait_text("the URL prompt", "URL")
+        s.ctl_ok("type", json.dumps(url))
+        s.ctl_ok("key", "Enter")
+        s.wait_text("the pinned row", title)
+        s.select_row()
+        s.wait_until("its preview, loaded", lambda: s.previewing() and any(loaded in t for t in s.preview_texts()))
+
+    pin("https://github.com/f/low/pull/31", "Preview PR 31", "build")
+    in_order("a pull request with failing checks: status, description, facts, linked issues, reviewers, checks",
+             ["#31", "Preview PR 31", "Stage", "Blocked by", "Moves the login redirect", "Branch", "Linked issues", "Reviewers", "Required · 1", "build"])
+    s.wait_text("the issue it closes", "Preview issue 32")
+    s.shot("preview-pr")
+    pin("https://github.com/f/low/issues/32", "Preview issue 32", "Login fails after the redirect.")
+    in_order("a GitHub issue: status, description, facts, linked pull requests",
+             ["#32", "Preview issue 32", "Stage", "Login fails after the redirect.", "Branch", "Linked pull requests", "Preview PR 31"])
+    s.shot("preview-issue")
+    pin("https://acme.atlassian.net/browse/ABC-7", "Preview Jira 7", "Sign-in loops")
+    in_order("a Jira issue: status, description, facts, linked issues",
+             ["ABC-7", "Preview Jira 7", "Stage", "Sign-in loops", "Project", "Linked issues", "Login API"])
+    s.shot("preview-jira")
+    made = s.tmp / "wts" / "flow-preview"
+    s.out(root, "worktree", "add", "-q", "-b", "preview-31", str(made))
+    s.out(root, "config", "branch.preview-31.plotroompr", "31")
+    s.out(root, "config", "branch.preview-31.plotroomrepo", "f/low")
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Worktrees"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the Worktrees list", "Main")
+    for n in range(12):  # walk the rows to the worktree made for #31
+        if n:
+            s.ctl_ok("key", "Down")
+        time.sleep(0.7)
+        if "flow-preview" in s.preview_texts():
+            break
+    s.wait_until("the worktree's preview, its pull request read", lambda: any("Preview PR 31" in t for t in s.preview_texts()))
+    in_order("a worktree: head, title, facts, linked pull requests", ["f/low", "Worktree", "flow-preview", "Branch", "Linked pull requests", "#31", "Preview PR 31"])
+    s.shot("preview-worktree")
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -1831,6 +1961,7 @@ SCENARIOS = [
     ("URL prompts", sc_prompts),
     ("agent launch, jump and duplicate offer", sc_agent),
     ("action outcome", sc_outcome),
+    ("every preview in one order", sc_previews),
 ]
 
 
