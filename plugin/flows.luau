@@ -303,9 +303,11 @@ local function plotroomPanes(cx: WindowCx): { number }
 end
 
 -- key -> state (and what the link recorded about the agent) for the links recorded on `host` (the newest link of a key
--- counts); an agent pane no longer listed is exited. An exited agent carries no text: its row is not shown, and the
--- report stays small. ponytail: the texts stop at INFO_BYTES of JSON-encoded size (escapes count: the host's cap is on the
--- encoded report), so a report of many live agents stays under its 40000-byte cap with state only for the rest; raise the host's cap with the count of agents if that is ever too few.
+-- counts); an agent pane no longer listed is exited. An exited agent carries no text but its checker verdict (`check`,
+-- for Disagree with check…): its row is not shown, and the report stays small. ponytail: the texts stop at INFO_BYTES of
+-- JSON-encoded size (escapes count: the host's cap is on the encoded report), so a report of many live agents stays
+-- under its 40000-byte cap with state and verdict only for the rest; raise the host's cap with the count of agents if
+-- that is ever too few.
 local function statusMap(links: { Link }, host: HostId, states: { [number]: string }, cwds: { [number]: string }, notes: Notes): { [string]: StatusRow }
 	local map: { [string]: StatusRow } = {}
 	local count = 0
@@ -314,7 +316,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 		if map[l.key] == nil and hostSame(l.host, host) and count < LINKS_CAP then
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
-			local row: StatusRow = { state = state }
+			local row: StatusRow = { state = state, check = l.check }
 			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil }
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
@@ -678,16 +680,52 @@ local function checkOutcome(cx: WindowCx, l: Link)
 	end
 end
 
+-- How often the checked runs still undecided (usage.agreement) are asked whether their work merged, and which are in
+-- flight ("<key>|<started>").
+local MERGE_SWEEP_S = 10 * 60
+local sweptAt = 0
+local merging: { [string]: boolean } = {}
+
+-- Asks the lowest Plotroom block, as each run's login, whether the work of every undecided checked run merged (the
+-- `outcome` op with Merged), and marks those that did. Quiet, like checkOutcome. A run that names no login, repository,
+-- pull request or branch waits out its AGREE_AFTER_S. ponytail: one block asks for every host's runs; a login that only
+-- another host holds stays undecided until the time rule, so keep the host on the run if that shows up.
+local function checkMerges(cx: WindowCx, now: number)
+	local block = plotroomPanes(cx)[1]
+	local runs = if block then usage.readRuns() else nil
+	for _, r in runs or {} :: { usage.Run } do
+		local id = r.key .. "|" .. (r.started or 0)
+		if r.checkedAt and not usage.agreement(r, now) and r.login and r.ghRepo and (r.number or r.branch) and not merging[id] then
+			merging[id] = true
+			local key, started = r.key, r.started
+			local args = { outcome = "merged", repo = r.ghRepo, number = r.number, branch = r.branch, since = 0, login = r.login }
+			local sent = e().ask(cx, block :: number, "outcome", args, OUTCOME_MS, function(a: any, _cx2: WindowCx)
+				merging[id] = nil
+				if a.verdict == "verified" then
+					usage.setMerged(key, started)
+				end
+			end, true)
+			if not sent then
+				merging[id] = nil
+			end
+		end
+	end
+end
+
 -- Checks again what is due: each item's newest link (per host) whose run has ended and whose outcome was never checked
 -- (no block, or an older host, at its turn end), is Unchecked, or is Merged and Not verified while its agent has not
--- exited, once per RECHECK_S.
+-- exited, once per RECHECK_S; and the merges of undecided checked runs once per MERGE_SWEEP_S.
 function M.recheck(cx: WindowCx)
+	local now = os.time()
+	if now - sweptAt >= MERGE_SWEEP_S then
+		sweptAt = now
+		checkMerges(cx, now)
+	end
 	local links, healthy = readLinks()
 	if not healthy or #links == 0 then
 		return
 	end
 	local states, _, cwds = agentStates(cx)
-	local now = os.time()
 	local seen: { [string]: boolean } = {}
 	for _, l in links do
 		local k = l.host.id .. "|" .. l.host.address .. "|" .. l.key
@@ -775,6 +813,10 @@ function M.recordResult(cx: WindowCx, agent: number, result: string): Check?
 					criteria = l.criteria,
 					check = verdict,
 					findings = if verdict then findings else nil,
+					login = l.login,
+					ghRepo = l.ghRepo,
+					number = l.number,
+					branch = l.branch,
 				})
 			end
 			if verdict then
@@ -911,7 +953,11 @@ end
 -- Interrupt, Stop, Message or Reply (`act`: agentint | agentstop | agentmsg | agentreply) the live agent recorded for
 -- `key`. Stop asks first; each step looks the agent up again, so one that exited meanwhile only toasts. Reply is Now's
 -- Message agent… for an agent that needs input: one that stopped waiting gets the same toast and nothing is sent.
+-- agentdisagree is Disagree with check… (M.disagree), which needs no live agent.
 function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
+	if act == "agentdisagree" then
+		return M.disagree(cx, pane, key)
+	end
 	local waiting = act == "agentreply"
 	local function reachable(cx2: WindowCx): Link?
 		local link, state = M.liveAgent(cx2, pane, key)
@@ -952,6 +998,33 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 			end
 		end)
 	end
+end
+
+-- Disagree with check…: the newest link of `key` on `pane`'s host must be a checker with a verdict (exited or not);
+-- asks for an optional one-line reason, then records the disagreement on the run that checker checked (usage.setDisagree).
+-- Escape records nothing.
+function M.disagree(cx: WindowCx, pane: number, key: string)
+	local host = hostOf(cx, pane)
+	local checker: Link? = nil
+	for _, l in (readLinks()) do
+		if host and l.key == key and hostSame(l.host, host) then
+			checker = if l.checkAgent and l.check then l else nil
+			break
+		end
+	end
+	if not checker then
+		return cx:toast("info", "No check to disagree with for " .. key)
+	end
+	local c = checker :: Link
+	cx:prompt({ placeholder = "Why the check of " .. key .. " is wrong (optional)", icon = "merge", action = "record" }):next(function(text, _, cx2)
+		if not cx2 or text == nil then
+			return
+		elseif usage.setDisagree(key, c.checkStarted, trim(text)) then
+			cx2:toast("success", "Disagreement recorded for " .. key, "The usage report counts it against the checker.")
+		else
+			cx2:toast("error", "Disagreement not recorded for " .. key, "The checked run is not in the run log, or the log cannot be read.")
+		end
+	end)
 end
 
 -- ---------------------------------------------------------------- context for an agent

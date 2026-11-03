@@ -287,7 +287,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.flush()
 	local runs: any = w.kv.get("runs")
 	eq(#runs, 1000, "the cap holds")
-	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none" }, "the run: item key, action, kind, model, where it ran, start, end, result and no report")
+	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none", ghRepo = "o/r", number = 5, branch = "fix-5" }, "the run: item key, action, kind, model, where it ran, start, end, result, what GitHub knows its work by and no report")
 	eq(runs[2].key, "o/r#1", "the earlier runs follow")
 	eq(runs[1000].key, "o/r#999", "and the oldest one went")
 	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
@@ -4230,6 +4230,137 @@ windowCase("window flows: a passing check marks the checked run Checked; a faili
 	same({ l.check, l.findings }, { "fail", "The checker gave no pass or fail." }, "a report without a check is a fail, saying so")
 end)
 
+-- The run log's record of item `key`'s run that started at `started`.
+local function runAt(w: World, key: string, started: number?): any
+	for _, r in (w.kv.get("runs") or {}) :: any do
+		if r.key == key and r.started == started then
+			return r
+		end
+	end
+	return nil
+end
+
+windowCase("window flows: Disagree with check… records a disagreement, with an optional one-line reason, on the run the checker checked, even once the checker exited", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = "plotroom://issue/agentdisagree/o/r/12"
+	st.link("layer.queue.buttons.agentdisagree", link)
+	local builder = startChecked(w, st, "- [ ] Login works")
+	w.window.typed = "too strict"
+	w.click(link)
+	w.flush()
+	has(w.toasts[#w.toasts].text, "No check to disagree with for o/r#12", "no verdict yet: nothing to disagree with")
+	eq(runAt(w, "o/r#12", builder.started), nil, "and nothing is recorded")
+	w.advance(60 * 1000) -- the builder's turn takes a minute: its checker starts later
+	local checker = builderCommits(w, st, builder, sha("c"))
+	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`))
+	agentFinished(w, checker.agent, "done")
+	local run = runAt(w, "o/r#12", builder.started)
+	eq(type(run.checkedAt), "number", "the builder's run is a checked run from its verdict")
+	eq(run.disagree, nil, "with no disagreement yet")
+	eq(runAt(w, "o/r#12", checker.started).checkedAt, nil, "the checker's own run is no checked run")
+	w.window.panes[checker.agent] = nil -- the checker exited
+	w.advance(4100)
+	same(statusEvents(w)[#statusEvents(w)].map["o/r#12"], { state = "exited", check = "pass" }, "an exited checker still tells the block its verdict, and nothing else")
+	w.window.typed = nil
+	w.click(link)
+	w.flush()
+	eq(runAt(w, "o/r#12", builder.started).disagree, nil, "Escape records nothing")
+	w.window.typed = "  The criteria\nnever asked for that  "
+	w.click(link)
+	w.flush()
+	eq(runAt(w, "o/r#12", builder.started).disagree, "The criteria never asked for that", "the reason, as one trimmed line")
+	eq(w.toasts[#w.toasts].text, "Disagreement recorded for o/r#12", "and says so")
+	w.window.typed = ""
+	w.click(link)
+	w.flush()
+	eq(runAt(w, "o/r#12", builder.started).disagree, "", "a reason is optional: a second disagreement replaces the first")
+	-- a new verdict on the same run is a new decision: the disagreement was about the earlier one
+	local again = builderCommits(w, st, builder, sha("e"))
+	lastSays(w, again.agent, reportBlock(`\{"attention": "ok", "reason": "One unmet", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "fail", "findings": ["AC1"]}`))
+	agentFinished(w, again.agent, "done")
+	eq(runAt(w, "o/r#12", builder.started).disagree, nil, "a new verdict drops the disagreement with the old one")
+end)
+
+windowCase("window flows: an undecided checked run is asked whether its work merged, as its login, and counts as agreed once it did", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local now = EPOCH
+	local day = 86400
+	w.kv.put(
+		"runs",
+		array({
+			{ key = "o/r#12", action = "Implement", result = "done", started = now - 900, ended = now - 600, check = "pass", checkedAt = now - 300, login = "cat", ghRepo = "o/r", branch = "12-fix" },
+			{ key = "o/r#5", action = "Fix", result = "done", started = now - 900, ended = now - 600, check = "fail", checkedAt = now - 300, disagree = "", login = "cat", ghRepo = "o/r", number = 5 },
+			{ key = "o/r#6", action = "Fix", result = "done", started = now - 9 * day, ended = now - 8 * day, check = "pass", checkedAt = now - 8 * day, login = "cat", ghRepo = "o/r", number = 6 },
+			{ key = "o/r#7", action = "Fix", result = "done", started = now - 900, ended = now - 600, check = "pass", checkedAt = now - 300 },
+			{ key = "o/r#8", action = "Check", result = "done", started = now - 500, ended = now - 400, check = "pass", login = "cat", ghRepo = "o/r", number = 8 },
+		})
+	)
+	w.advance(4100)
+	local asked = outcomeAsks(w)
+	eq(#asked, 1, "only the undecided checked run that names its work is asked: a disagreement or a week-old verdict is decided, and a checker's own run is no checked run")
+	same({ asked[1].outcome, asked[1].repo, asked[1].branch, asked[1].login, asked[1].since }, { "merged", "o/r", "12-fix", "cat", 0 } :: { any }, "Merged, on the run's branch, as its login")
+	eq(asked[1].number, nil, "an issue's run names no pull request")
+	st.reply("outcome", { verdict = "not" })
+	w.advance(60 * 1000)
+	eq(#outcomeAsks(w), 1, "not merged: not asked again within ten minutes")
+	w.advance(600 * 1000)
+	eq(#outcomeAsks(w), 2, "asked again at the next sweep")
+	st.reply("outcome", { verdict = "verified" })
+	eq(runAt(w, "o/r#12", now - 900).merged, true, "its work merged")
+	w.advance(600 * 1000)
+	eq(#outcomeAsks(w), 2, "a decided run is never asked again")
+	w.window.focused = 1
+	w.command("usage-report")
+	local text = w.copied[#w.copied]
+	has(text, "Checked runs 4 · disagreements 1 · undecided 1", "the checked runs: merged, disagreed, a week old and one still undecided")
+	has(text, "Agreement 66% (2 of the last 3 decided runs) · Autopilot gate 80% over 20 decided runs · not met", "agreement over the decided runs, beside the gate")
+end)
+
+case("usage: a checked run is agreed once merged or a week after its verdict, disagreed once you said so; agreement is over the last 20 decided runs, beside the Autopilot gate", function(w: World)
+	local usage: any = w.load("usage")
+	local now = EPOCH
+	local week = 7 * 86400
+	eq(usage.agreement({ checkedAt = now - week + 1 }, now), nil, "undecided a second before the week is out")
+	eq(usage.agreement({ checkedAt = now - week }, now), "agreed", "agreed once it is")
+	eq(usage.agreement({ checkedAt = now - 60, merged = true }, now), "agreed", "or once its work merged")
+	eq(usage.agreement({ checkedAt = now - 2 * week, merged = true, disagree = "" }, now), "disagreed", "a disagreement wins over both")
+	eq(usage.agreement({ check = "pass" }, now), nil, "a run with no recorded verdict is no checked run")
+	local function report(runs: { any }): string
+		return usage.report({ host = { value = { since = 0, counts = {} } }, here = { value = { since = 0, counts = {} } }, runs = { value = runs }, name = function(id: string): string
+			return id
+		end, outcome = function(): string?
+			return nil
+		end })
+	end
+	local function checked(n: number, fields: { [string]: any }): any
+		local r: any = { key = "o/r#" .. n, action = "Implement", result = "done", ended = now - n, check = "pass", checkedAt = now - 60 }
+		for k, v in fields do
+			r[k] = v
+		end
+		return r
+	end
+	local runs: { any } = { checked(1, {}), { key = "o/r#2", action = "Check", result = "done", ended = now, check = "pass" } } -- undecided, and a checker's own run
+	table.insert(runs, checked(3, { disagree = "too strict" }))
+	table.insert(runs, checked(4, { disagree = "", merged = true }))
+	for i = 5, 21 do
+		table.insert(runs, checked(i, if i % 2 == 0 then { merged = true } else { checkedAt = now - week }))
+	end
+	for i = 22, 26 do
+		table.insert(runs, checked(i, { disagree = "" }))
+	end
+	local text = report(runs)
+	has(text, "Checked runs 25 · disagreements 7 · undecided 1", "every checked run, every disagreement and those still undecided")
+	has(text, "Agreement 85% (17 of the last 20 decided runs) · Autopilot gate 80% over 20 decided runs · met", "the newest 20 decided runs: 17 agreed and 3 disagreed, older ones left out")
+	for _ = 22, 26 do
+		table.remove(runs) -- the older disagreements: 19 decided runs are left
+	end
+	text = report(runs)
+	has(text, "Agreement 89% (17 of the last 19 decided runs) · Autopilot gate 80% over 20 decided runs · not met", "fewer than 20 decided runs never meet the gate")
+	has(report({}), "Agreement unknown: no decided runs yet", "with none decided, agreement is unknown")
+end)
+
 case("host agents: a passing check shows Checked; a failing one is Needs you with its findings in the preview", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
@@ -4261,6 +4392,31 @@ case("host agents: a passing check shows Checked; a failing one is Needs you wit
 	pickScope(b, "agents")
 	w.flush()
 	has(badges("go_2fr_232"), "Checked", "the Agents row says it")
+end)
+
+case("host agents: Disagree with check… is a Commands row and hidden link only while the selected item's checker has a verdict, exited or not, and opens the window's link", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).ids, "agentdisagree") ~= nil
+	end
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Implement" } })
+	yes(not offered(), "an agent with no check: no row")
+	eq(findKey(pickerNode(b), "agentdisagree"), nil, "nor hidden link")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Check", check = "pass" } })
+	local p = hx.palette(w, b)
+	eq(p.labels.agentdisagree, "Disagree with check…", "a checker with a verdict: the row, named so")
+	eq(p.groups.agentdisagree, "Actions", "in the Actions group")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "exited", check = "fail" } })
+	yes(offered(), "still offered once the checker exited")
+	eq(findKey(pickerNode(b), "agentdisagree").p.href, prLink("agentdisagree", "o/r", 1), "the hidden link the window checks")
+	b.event({ ev = "action", act = "queue", value = "agentdisagree" })
+	eq(w.opened[#w.opened], prLink("agentdisagree", "o/r", 1), "the pick opens the selected item's link")
+	b.typeText("j")
+	local opened = #w.opened
+	yes(not offered(), "another item with no check: no row")
+	b.event({ ev = "action", act = "queue", value = "agentdisagree" })
+	eq(#w.opened, opened, "and the action opens nothing")
 end)
 
 case("host criteria: the block reads an issue's acceptance criteria from GitHub's task list or Jira's section, and says why when it cannot", function(w: World)

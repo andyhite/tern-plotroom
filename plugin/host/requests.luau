@@ -1732,7 +1732,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 	end
 	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
-	labels.agentint, labels.agentstop, labels.agentmsg = "Interrupt agent", "Stop agent…", "Message agent…"
+	labels.agentint, labels.agentstop, labels.agentmsg, labels.agentdisagree = "Interrupt agent", "Stop agent…", "Message agent…", "Disagree with check…"
 	local function addAgentCommands(group: string)
 		for _, id in { "agentint", "agentstop", "agentmsg" } do
 			add(id, group)
@@ -1776,6 +1776,10 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 		if state.agents[item.key] and state.agents[item.key] ~= "exited" then
 			addAgentCommands("Actions")
+		end
+		local info = state.agentInfo[item.key]
+		if info and info.check then
+			add("agentdisagree", "Actions")
 		end
 	end
 	if state.agentsOn then

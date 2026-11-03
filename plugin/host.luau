@@ -96,6 +96,13 @@ local function runQueueAction(state: State, act: string): boolean
 		openSettings(state)
 	elseif act == "more" then
 		state.cx:open("plotroom://more")
+	elseif act == "agentdisagree" then
+		-- Disagree with check… needs the selected item's checker verdict; its agent may have exited
+		local info = if chosen then state.agentInfo[chosen.key] else nil
+		if not chosen or not info or not info.check then
+			return false
+		end
+		openSelected(state, act, false)
 	elseif act == "open" or act == "worktree" or act == "agent" or act == "goto" or AGENT_ACTS[act] then
 		-- an agent command needs an agent not exited (Go to agent shows any state it knows)
 		if not chosen or (act == "goto" and not openItems(state)[chosen.key]) or (AGENT_ACTS[act] and (state.agents[chosen.key] == nil or (act ~= "agentgo" and state.agents[chosen.key] == "exited"))) then

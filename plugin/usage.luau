@@ -22,6 +22,8 @@ M.CRITERIA_CAP = 8000
 M.ATTENTION = { ok = true, stuck = true, ["needs-human"] = true }
 M.VERDICTS = { verified = true, ["not"] = true, unchecked = true }
 M.CHECKS = { pass = true, fail = true }
+M.AGREE_AFTER_S = 7 * 86400 -- a checked run with no disagreement counts as agreed this long after its verdict
+M.AGREEMENT_N, M.AGREEMENT_GATE = 20, 0.8 -- PRODUCT.md › Metrics row 6: the Autopilot gate
 
 export type Count = { n: number, at: number }
 export type Usage = { since: number, counts: { [string]: Count } }
@@ -30,7 +32,10 @@ export type Usage = { since: number, counts: { [string]: Count } }
 -- before reports were read). `outcome`: what the action said the run must leave behind (a prompts.OUTCOMES id; nil:
 -- none), `verdict`: what checking it on GitHub found last (verified | not | unchecked). `criteria`: the acceptance
 -- criteria saved on it at dispatch. `check`: what its checker found (pass | fail; nil: not checked), with `findings`.
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }? }
+-- `login`, `ghRepo`, `number` and `branch`: what GitHub knows the run's work by, for its merge. A checked run (one a
+-- checker's verdict was recorded on; a checker's own run never is) has `checkedAt`, the verdict's time; `disagree`, the
+-- reason you gave for disagreeing with it ("" for none; nil: no disagreement); `merged`, true once its work merged.
+export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean? }
 -- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome. A checker's
 -- report also has `check` (pass | fail; prompts.checkBlock) and `findings`.
 export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string?, check: string?, findings: { string } }
@@ -216,6 +221,13 @@ local function runOf(r: any): Run?
 		or (r.criteria ~= nil and not textOk(r.criteria, M.CRITERIA_CAP))
 		or (r.check ~= nil and not M.CHECKS[r.check])
 		or (r.findings ~= nil and (not findings or #findings > EVIDENCE_N))
+		or (r.login ~= nil and not textOk(r.login, TEXT_CAP))
+		or (r.ghRepo ~= nil and not textOk(r.ghRepo, TEXT_CAP))
+		or (r.number ~= nil and not whole(r.number))
+		or (r.branch ~= nil and not textOk(r.branch, TEXT_CAP))
+		or (r.checkedAt ~= nil and not whole(r.checkedAt))
+		or (r.disagree ~= nil and not textOk(r.disagree, TEXT_CAP))
+		or (r.merged ~= nil and r.merged ~= true)
 	then
 		return nil
 	end
@@ -226,7 +238,7 @@ local function runOf(r: any): Run?
 			end
 		end
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil }
+	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean? }
 end
 
 -- The run log, newest first, or nil and why when it cannot be read or is malformed.
@@ -273,6 +285,10 @@ function M.appendRun(run: Run)
 		criteria = M.text(run.criteria, M.CRITERIA_CAP),
 		check = run.check,
 		findings = run.findings,
+		login = M.line(run.login, TEXT_CAP),
+		ghRepo = M.line(run.ghRepo, TEXT_CAP),
+		number = run.number,
+		branch = M.line(run.branch, TEXT_CAP),
 	})
 	if not runs or not clean then
 		return
@@ -297,8 +313,9 @@ function M.text(s: any, cap: number): string?
 end
 
 -- Records what a checker found (`check`: pass | fail, with `findings`) on the run of item `key` that started at
--- `started`. Nothing is written when the log cannot be read or is malformed, the run is not in it, or `check` is not
--- one of CHECKS.
+-- `started`, now: it is a checked run from then, and a disagreement with an earlier verdict is dropped (it was about
+-- that verdict). Nothing is written when the log cannot be read or is malformed, the run is not in it, or `check` is
+-- not one of CHECKS.
 function M.setCheck(key: string, started: number?, check: string, findings: { string })
 	local runs = M.readRuns()
 	if not runs or not M.CHECKS[check] then
@@ -314,6 +331,7 @@ function M.setCheck(key: string, started: number?, check: string, findings: { st
 				end
 			end
 			r.check, r.findings = check, if #kept > 0 then tern.json.array(kept) :: any else nil
+			r.checkedAt, r.disagree = os.time(), nil
 			pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any))
 			return
 		end
@@ -336,6 +354,55 @@ function M.setVerdict(key: string, started: number?, verdict: string)
 			return
 		end
 	end
+end
+
+-- Changes the run of item `key` that started at `started` with `change` (false: leave it) and saves the log; whether
+-- it was saved. Nothing is written when the log cannot be read or is malformed, or the run is not in it.
+local function onRun(key: string, started: number?, change: (Run) -> boolean): boolean
+	local runs = M.readRuns()
+	if not runs then
+		return false
+	end
+	for _, r in runs do
+		if r.key == key and r.started == started then
+			return change(r) and (pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any)))
+		end
+	end
+	return false
+end
+
+-- Records that you disagree with the checker's verdict on the checked run of item `key` that started at `started`,
+-- with `reason` cut to one line ("" for none); a second one replaces the first. Whether it was saved: never on a run
+-- with no verdict.
+function M.setDisagree(key: string, started: number?, reason: string?): boolean
+	return onRun(key, started, function(r: Run): boolean
+		if not r.checkedAt then
+			return false
+		end
+		r.disagree = M.line(reason, TEXT_CAP) or ""
+		return true
+	end)
+end
+
+-- Records that the work of the run of item `key` that started at `started` merged.
+function M.setMerged(key: string, started: number?)
+	onRun(key, started, function(r: Run): boolean
+		r.merged = true
+		return true
+	end)
+end
+
+-- Whether you agree with the checker on run `r` at time `now`: "disagreed" once you recorded a disagreement, else
+-- "agreed" once its work merged or AGREE_AFTER_S after the verdict; nil while undecided or for a run with no verdict.
+function M.agreement(r: Run, now: number): string?
+	if not r.checkedAt then
+		return nil
+	elseif r.disagree then
+		return "disagreed"
+	elseif r.merged or now - r.checkedAt >= M.AGREE_AFTER_S then
+		return "agreed"
+	end
+	return nil
 end
 
 local function day(t: number): string
@@ -495,6 +562,30 @@ function M.report(i: Inputs): string
 	end
 	if #names == 0 then
 		table.insert(out, "None")
+	end
+
+	-- Checker agreement (PRODUCT.md › Metrics row 6): the log is newest first, so the last decided runs lead.
+	table.insert(out, "")
+	table.insert(out, "Checker agreement")
+	local now = os.time()
+	local checked, disagreed, undecided, decided, agreed = 0, 0, 0, 0, 0
+	for _, r in runs do
+		local a = M.agreement(r, now)
+		checked += if r.checkedAt then 1 else 0
+		disagreed += if a == "disagreed" then 1 else 0
+		undecided += if r.checkedAt and not a then 1 else 0
+		if a and decided < M.AGREEMENT_N then
+			decided += 1
+			agreed += if a == "agreed" then 1 else 0
+		end
+	end
+	table.insert(out, "Checked runs " .. checked .. " · disagreements " .. disagreed .. " · undecided " .. undecided)
+	local met = decided >= M.AGREEMENT_N and agreed >= M.AGREEMENT_GATE * decided
+	local gate = "Autopilot gate " .. math.floor(M.AGREEMENT_GATE * 100) .. "% over " .. M.AGREEMENT_N .. " decided runs · " .. (if met then "met" else "not met")
+	if decided == 0 then
+		table.insert(out, "Agreement unknown: no decided runs yet · " .. gate)
+	else
+		table.insert(out, "Agreement " .. (agreed * 100 // decided) .. "% (" .. agreed .. " of the last " .. decided .. " decided " .. (if decided == 1 then "run" else "runs") .. ") · " .. gate)
 	end
 	return table.concat(out, "\n") .. "\n"
 end

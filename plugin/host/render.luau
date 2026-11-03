@@ -436,6 +436,10 @@ local function itemActions(state: State, item: any, open: { [string]: boolean })
 			table.insert(out, { id = act, label = act, href = hrefOf(state, item, act) })
 		end
 	end
+	-- Disagree with check… (palette only): while the item's newest agent is a checker with a verdict, exited or not.
+	if (state.agentInfo[item.key] or {} :: core.AgentInfo).check then
+		table.insert(out, { id = "agentdisagree", label = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
+	end
 	-- Triage is the block's own (no link).
 	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
 	return out
