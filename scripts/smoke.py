@@ -1819,6 +1819,82 @@ def sc_agent(s: Smoke) -> None:
     s.eq("dismissing the review pushed nothing: the remote's refs are as before", refs_before, s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)"))
 
 
+def sc_placement(s: Smoke) -> None:
+    """Five agents started Beside the queue in the 2200x1000 window, through the action picker and the duplicate offer: no start opens a tab, the queue
+    keeps the width of its first split (within one cell) and every agent's pane is at least 270x470 px. The one pull request action, saved straight into
+    the plugin's kv.json, opens beside the queue with no model, so the agent setting's fake agent (sc_agent's) runs it: no omp, no model, no network.
+    The pull request actions are put back as they were afterwards."""
+    stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
+    s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
+    kv = json.loads(stores[0].read_text(encoding="utf-8"))
+    saved = kv.get("prompts-prs")
+    kv["prompts-prs"] = {"version": 1, "nextId": 2, "items": [{"id": "p1", "name": "Beside", "text": "smoke placement {url}", "worktree": False, "split": True}]}
+    stores[0].write_text(json.dumps(kv), encoding="utf-8")
+    try:
+        placed(s)
+    finally:
+        kv = json.loads(stores[0].read_text(encoding="utf-8"))
+        kv.pop("prompts-prs", None)
+        if saved is not None:
+            kv["prompts-prs"] = saved
+        stores[0].write_text(json.dumps(kv), encoding="utf-8")
+
+
+def placed(s: Smoke) -> None:
+    """sc_placement's run, with its action saved."""
+    stamp = "2026-01-01T00:00:00Z"
+    pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
+          "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+          "labels": [], "runs": [], "runTotal": 0}
+    (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("agent"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
+    s.wait_text("the pull request", "Agent PR 1")
+    queue = s.state()["focused"]["id"]  # type: ignore[index]
+    tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
+
+    def rects() -> List[List[float]]:
+        """The visible tab's tiled panes, [x, y, w, h] in px, left to right then top to bottom."""
+        nodes = json.loads(s.ctl("tree", ".tn-stage > section.tn-pane")).get("nodes") or []
+        return sorted((n["rect"] for n in nodes if isinstance(n, dict) and n.get("rect")), key=lambda r: (round(r[0]), round(r[1])))
+
+    # The queue opened beside the tab's shell: close the shell, so the queue fills its tab.
+    s.ctl_ok("focus", "left")
+    s.eq("the shell is left of the queue", True, s.state()["focused"]["id"] != queue)  # type: ignore[index]
+    s.ctl_ok("close")
+    s.wait_until("the queue alone in its tab", lambda: len(rects()) == 1)
+    first = 0.0
+    for n in range(1, 6):
+        # `ctl focus` waits forever while the focused pane runs a foreground program (the fake agent): a click on the queue's row focuses it.
+        s.ctl_ok("click", "[data-surface='plugin.plotroom.prs'] .pk-row")
+        s.wait_until("the queue is focused before agent %d" % n, lambda: s.state()["focused"]["id"] == queue)  # type: ignore[index]
+        s.select_row()
+        s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+        s.wait_until("the action picker or the duplicate offer", lambda: any(t.startswith("Run on ") or "An agent already works on" in t for t in s.texts()))
+        if any("An agent already works on" in t for t in s.texts()):
+            s.ctl_ok("type", json.dumps("Start another"))
+            s.ctl_ok("picker", "enter")
+            s.wait_text("the action picker", "Run on ")
+        s.ctl_ok("type", json.dumps("Beside"))
+        s.ctl_ok("picker", "enter")
+        s.wait_until("agent %d's pane beside the queue" % n, lambda: len(rects()) == n + 1)
+        s.eq("agent %d opened no tab" % n, tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+        if n == 1:
+            first = rects()[0][2]
+    time.sleep(1.0)  # let the last split settle
+    s.shot("placement-5")
+    shown = rects()
+    s.contains("the newest agent (focused) runs the fake agent, not omp", "fake-agent.sh", json.dumps(s.state()["focused"]))  # type: ignore[index]
+    cols = next(p["cols"] for p in s.state()["panes"] if p["id"] == queue)  # type: ignore[union-attr]
+    cell = shown[0][2] / max(1, cols)
+    s.eq("the queue keeps its first split's width (%.0f px, one cell %.1f px): %r" % (first, cell, shown), True, abs(shown[0][2] - first) <= cell + 0.5)
+    small = [r for r in shown[1:] if r[2] < 270 or r[3] < 470]
+    s.eq("every agent's pane is at least 270x470 px: %r" % shown, [], small)
+
+
 def sc_outcome(s: Smoke) -> None:
     """Settings › Actions in real Tern: the default Review action's open form has an Outcome row reading Review posted (its default) and a
     Checked by row; the issue actions list the default Check. Checking outcomes and starting a checker need a model's turn end, so the
@@ -1997,6 +2073,7 @@ SCENARIOS = [
     ("triage, sort and worktrees board", sc_workflow),
     ("URL prompts", sc_prompts),
     ("agent launch, jump and duplicate offer", sc_agent),
+    ("agents beside the queue keep it at its half", sc_placement),
     ("action outcome", sc_outcome),
     ("buttons and links", sc_controls),
     ("every preview in one order", sc_previews),

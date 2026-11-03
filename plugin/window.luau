@@ -543,10 +543,70 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 	cx:toast(level, "Worktree ready for " .. t.label, if r.setup then r.summary .. " · running setup" else r.summary)
 end
 
+-- The leaves of split tree `t` with their sizes, the tree laid over a w × h box ([1] is left/top at a split).
+local function leaves(t: any, w: number, h: number, out: { { pane: number, w: number, h: number } })
+	if type(t) ~= "table" then
+		return
+	elseif type(t.pane) == "number" then
+		table.insert(out, { pane = t.pane, w = w, h = h })
+		return
+	end
+	local r = if type(t.ratio) == "number" then t.ratio else 0.5
+	if t.split == "right" then
+		leaves(t[1], w * r, h, out)
+		leaves(t[2], w * (1 - r), h, out)
+	else
+		leaves(t[1], w, h * r, out)
+		leaves(t[2], w, h * (1 - r), out)
+	end
+end
+
+local function tabLeaves(cx: WindowCx, tab: number?, w: number, h: number): { { pane: number, w: number, h: number } }
+	local out = {}
+	if tab then
+		local ok, lay = pcall(function()
+			return cx.session:layout(tab)
+		end)
+		if ok and type(lay) == "table" then
+			leaves(lay.root, w, h, out)
+		end
+	end
+	return out
+end
+
+-- Where the next agent goes in `tab` (docs/reference.md › Dispatch): the largest tiled pane, never the queue's pane
+-- `queue` while another is there, split along its longer side; nil when the tab has no tree. The split tree gives only
+-- ratios, so the frame's shape comes from the queue block's size in cells (its hidden `main.size`, a cell taken as twice
+-- as tall as wide) over its share of its own tab; every tab of a window has that frame. Read before the agent starts,
+-- so its own pane is never a candidate.
+local function placement(cx: WindowCx, tab: number?, queue: number): (number?, Dir?)
+	local fw, fh = 2, 1 -- ponytail: an older host publishes no size; a wide window is assumed
+	local cols, rows = string.match(tostring(nodeProp(readNode(cx, queue, "main.size"), "text")), "^(%d+)x(%d+)$")
+	if cols then
+		for _, l in tabLeaves(cx, cx.session:tab_of(queue), 1, 1) do
+			if l.pane == queue and l.w > 0 and l.h > 0 then
+				fw, fh = tonumber(cols) :: number / l.w, 2 * tonumber(rows) :: number / l.h
+			end
+		end
+	end
+	local ls = tabLeaves(cx, tab, fw, fh)
+	local best: { pane: number, w: number, h: number }? = nil
+	for _, l in ls do
+		if not (l.pane == queue and #ls > 1) and (best == nil or l.w * l.h > best.w * best.h * (1 + 1e-9)) then
+			best = l
+		end
+	end
+	if best == nil then
+		return nil, nil
+	end
+	local side: Dir = if best.w >= best.h then "right" else "down"
+	return best.pane, side
+end
+
 -- Starts an agent at `r.path` with `prompt` and the fixed end-of-run report contract (prompts.REPORT) after it, as
--- `omp --model <model>` when the prompt names one. `split`: as a block
--- beside the queue (pane `pane`), in its tab. Else `join` (a worktree): in the target's open tab when there is one,
--- else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
+-- `omp --model <model>` when the prompt names one. `split`: as a block beside the queue (pane `pane`), in its tab,
+-- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
+-- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
 -- shell's `last` status if agents trip over a half-done setup.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
@@ -594,9 +654,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
 	local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
+	-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
+	local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
+	if split then
+		cx.layout:focus(pane)
+	end
 	local ok, agent = pcall(function()
 		-- Omitted, the command is the agent setting's (omp); a model needs its own command line.
-		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
+		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = if model then "omp --model " .. model else nil })
 	end)
 	if not ok or type(agent) ~= "number" then
 		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -614,15 +679,17 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	if split then
-		if cx.layout:move(agent, pane, "right") then
-			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
-			return true
+		if target and side then
+			cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
 		end
-		nameTab(cx, agent, t)
-		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not open beside the queue.")
+		cx:toast("success", "Agent started beside the queue for " .. t.label, named)
 		return true
 	end
 	if tab then
+		if target and side and cx.layout:move(agent, target, side) then
+			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+			return true
+		end
 		local moved, why = cx.layout:move_to_tab(agent, tab)
 		if moved then
 			cx:toast("success", "Agent started in the tab of " .. t.label, named)

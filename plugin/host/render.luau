@@ -326,6 +326,8 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 		palette,
 		-- This host's usage counts (usage.luau), for the window's Copy usage report.
 		ui.node("text", { key = "usage", text = usage.published(), hidden = true }),
+		-- The block's size in cells, `<cols>x<rows>`: the window's agent placement derives the tab's shape from it.
+		ui.node("text", { key = "size", text = state.cx.cols .. "x" .. state.cx.rows, hidden = true }),
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
