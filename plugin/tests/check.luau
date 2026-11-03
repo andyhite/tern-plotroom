@@ -11,6 +11,7 @@ local process = require("../process")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
 local sorting = require("../sorting")
+local usage = require("../usage")
 
 local M = {}
 
@@ -394,6 +395,27 @@ function M.run()
 	assert(tracker.criteria("jira", "## Acceptance criteria\n\n## Next\nbody") == "## Acceptance criteria\n\n## Next\nbody", "an empty section falls back to the description")
 	assert(tracker.criteria("github", "") == "", "an empty description has none")
 	assert(utf8.len(tracker.criteria("github", string.rep("é", 2500))) == tracker.CRITERIA_CHARS + 2, "cut at CRITERIA_CHARS characters and marked")
+	-- a chain's limits counted from the item's runs, newest first, back to the run started by hand
+	local function run(depth: number?, commit: string?, extra: { [string]: any }?): any
+		local r: { [string]: any } = { key = "o/r#1", action = "A", ended = 0, result = "done", depth = depth, commit = commit }
+		for k, v in (extra or {}) :: { [string]: any } do
+			r[k] = v
+		end
+		return r
+	end
+	local s = usage.strikes({
+		run(4, "a"), -- no new commit: the hand run named it
+		run(3, nil, { checking = true, check = "fail", findings = { "AC2" } }),
+		run(2, "b", { starts = 1 }),
+		run(1, nil, { checking = true, check = "fail", findings = { "AC1" } }),
+		run(0, "a", { starts = 1 }),
+		run(3, nil, { checking = true, check = "fail" }), -- an earlier chain, not counted
+	}, "o/r#1")
+	assert(s.checks == 2 and s.starts == 2, "failed checks and starts count back to the hand run")
+	assert(s.idle == 1, "a commit an earlier run of the chain named is no progress")
+	assert(s.findings[1] == "AC2" and #s.findings == 1, "the newest failed check's findings")
+	assert(usage.strikes({ run(2, nil), run(1, nil), run(nil, nil), run(1, nil) }, "o/r#1").idle == 3, "runs with no commit in a row; a run with no depth starts the count")
+	assert(usage.strikes({ run(0, "a"), run(1, "x", { key = "o/r#2", checking = true, check = "fail" }) }, "o/r#1").checks == 0, "another item's runs never count")
 	require("./triage_check").run()
 	require("./board_check").run()
 end

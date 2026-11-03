@@ -324,7 +324,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				row({
 					id = "pnext:" .. qid,
 					label = "Next action",
-					hint = "Starts for the same item, in the same tab and worktree, when this agent finishes",
+					hint = "Starts for the same item, in the same tab and worktree, once this action's run is Verified or its check passes",
 					control = { k = "choice", style = "menu", value = if p.next and nextStore and promptById(nextStore :: Prompts, nextId) then p.next else "none", options = tern.json.array(nextOptions) },
 				})
 				local checkers: { any } = { { value = "none", label = "None" } }

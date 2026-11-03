@@ -296,7 +296,7 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -308,7 +308,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1390,6 +1390,8 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		local verdict = verdictText(agent)
 		if row.waiting then
 			return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+		elseif agent.stop then
+			return { text = printable(agent.stop), tone = "warning", title = "Plotroom stopped the item's chain of actions" }, "Plotroom stopped the item's chain of actions: " .. printable(agent.stop)
 		elseif agent.check == "fail" then
 			return CHECK_BADGE.fail, CHECK_BADGE.fail.title
 		elseif agent.attention == "stuck" or agent.attention == "needs-human" then
@@ -1448,6 +1450,7 @@ local function nowPreview(state: State): { Node }
 				{ k = "Stage", v = if stage then { ui.span(stage.text, stage.tone) } else nil },
 				{ k = "Item", v = if row.key then { ui.span(printable(row.key), "mono") } elseif n then { ui.span(printable(n.repo), "mono") } else nil },
 				{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
+				{ k = "Chain", v = if agent and agent.stop then { ui.span("Stopped: " .. printable(agent.stop), "warning") } else nil },
 				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string) } else nil },
 				{ k = "Check", v = if checkBadge(agent) then { ui.span((checkBadge(agent) :: any).text) } else nil },
 				{ k = "Findings", v = if agent and agent.check == "fail" and agent.findings then { ui.span(printable(agent.findings)) } else nil },

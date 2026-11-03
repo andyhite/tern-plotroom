@@ -542,6 +542,19 @@ function M.criteriaBlock(text: string?): string
 	return "<criteria>\nAcceptance criteria Plotroom saved when this work was dispatched; no agent can change them.\n\n" .. body .. "\n</criteria>"
 end
 
+-- The `{findings}` block: what a fix round must fix, one finding per line (a failed check's findings, or that the last
+-- run named no new commit). `text` nil: this run is no fix round. The findings cannot close the block.
+function M.findingsBlock(text: string?): string
+	if not text or not string.find(text, "%S") then
+		return "<findings>\nNone: this run is not a fix round.\n</findings>"
+	end
+	local lines: { string } = {}
+	for line in string.gmatch(text, "[^\n]+") do
+		table.insert(lines, "- " .. (string.gsub(line, "</(%s*[Ff][Ii][Nn][Dd][Ii][Nn][Gg][Ss])", "</ %1")))
+	end
+	return "<findings>\nThis is a fix round: the last run of this action fell short. Fix every finding, then end with a new commit:\n\n" .. table.concat(lines, "\n") .. "\n</findings>"
+end
+
 -- What Plotroom appends to a checker's prompt, after REPORT: the run under check (its action's name and the commit its
 -- report named) and the two report fields only a check gives. Users cannot edit it: usage.reportOf reads them.
 function M.checkBlock(action: string, commit: string): string

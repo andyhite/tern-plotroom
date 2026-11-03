@@ -392,6 +392,18 @@ case("now: an idle checker whose check failed ranks with Needs you, its findings
 	has(text, "found what fails", "and says why it is listed")
 end)
 
+case("now: an item whose chain stopped at a limit ranks with Needs you and says which limit; a working agent does not", function(w: World)
+	local _, b = nowScene(w, {})
+	asks.hx.agents(b, {
+		["o/r#3"] = { state = "idle", action = "Check", check = "fail", findings = "AC1", stop = "3 failed checks" },
+		["o/r#4"] = { state = "working", action = "Implement", stop = "3 failed starts" },
+	})
+	same(whys(b), { "no_2fr_233 3 failed checks" }, "the limit is why it is listed, before the failed check")
+	local text = textOf(h.pickerNode(b))
+	has(text, "Plotroom stopped the item's chain of actions: 3 failed checks", "the preview says the chain stopped and why")
+	has(text, "Stopped: 3 failed checks", "as its Chain fact")
+end)
+
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)
 	local github = w.load("github") :: any
 	local notices = github.parseNotices(h.array({

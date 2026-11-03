@@ -26,6 +26,8 @@ export type Env = {
 	follow: (cx: WindowCx, pane: number, nodeId: string, missing: string?, typed: boolean?) -> (),
 	-- Every Tern palette command's title by id (window.luau fills it as it registers them), for the usage report.
 	titles: { [string]: string },
+	-- Starts the chain steps now due (dueSteps); flows calls it when a verdict or the 4 s tick may have made one due.
+	drive: (cx: WindowCx) -> (),
 }
 
 -- A Plotroom block's host: Tern's slot id and its address ("" for this machine), the name only for people.
@@ -43,16 +45,20 @@ type Chain = { action: string, name: string, next: string?, kind: string, repo: 
 -- `criteria`: the acceptance criteria saved on the run at dispatch. A builder's `checkedCommit` is the last commit a
 -- checker was started for. A checker's link names the run it checks (`checkAgent`, `checkStarted`) and what it found
 -- (`check`: pass | fail; `findings` joined by " · ").
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string? }
+-- `gate`: where a run of a chained or checked action stands in its chain (GATES); `gateFindings` the findings a fix
+-- round gets as `{findings}`, one per line. `stop`: why its item's chain stopped at Needs you (a limit; on the item's
+-- newest link, so a later run clears it).
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
 -- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
--- `criteria`, `checkAgent` and `checkStarted` as on Link.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string? }
--- A check to start (recordResult): checker action `chain.checker` on the chain's item, for the run of `agent` that
--- started at `started` and ended at `commit`, with that run's saved `criteria`, from Plotroom block `block`.
-export type Check = { chain: Chain, agent: number, started: number?, commit: string, criteria: string?, block: number }
+-- `criteria`, `checkAgent` and `checkStarted` as on Link. `from`: the chain step this agent was started for.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number?, from: Step? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
+-- A chain step due to start (dueSteps), from the run of `agent` (its link's `host` and `started`) on item `key`:
+-- `step` "check" (checker `chain.checker` on `commit`), "next" (`chain.next`) or "fix" (`chain.action` again, with
+-- `findings`), at chain `depth`, from Plotroom block `block`, with the run's saved `criteria`.
+export type Step = { step: string, chain: Chain, key: string, agent: number, host: HostId, started: number?, commit: string?, criteria: string?, findings: string?, block: number, depth: number }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
@@ -61,6 +67,17 @@ local LINKS_CAP = 200
 local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 200, 100 -- the host takes up to 120, 200 and 256; a branch is also what an outcome is checked on
 local LAST_CAP, RESULT_CAP = 200, 10 -- an agent's last message or delivery error; a run's result and its HH:MM
 local FINDINGS_CAP = 1000 -- a check's findings as one line (the host takes up to 1000)
+local FIX_CAP = 5000 -- a fix round's findings, one per line (a report keeps 20 of 200 bytes each)
+local STOP_CAP = 40 -- why a chain stopped (the host takes up to 40)
+-- A run's place in its chain (Link.gate): "outcome" waits for its outcome's verdict, "check" for its check to start and
+-- "checking" for the check's verdict; "next" and "fix" are due to start (the next action, or the action again for a fix
+-- round); "held" waits for the user (its report asked for them) and is decided again at the agent's next turn end;
+-- "over" ends it here. Nil: not decided yet, or not chained.
+local GATES = { outcome = true, check = true, checking = true, next = true, fix = true, held = true, over = true }
+local STARTS = { check = true, next = true, fix = true } -- the gates that start an agent
+M.LIMIT = 3 -- failed checks, runs without progress or failed starts that stop a chain at Needs you
+M.MAX_CHAIN = 8 -- actions in one chain, checks included; Settings refuses loops, this stops one that got into the store anyway
+M.NO_COMMIT = "The last run named no new commit on its branch, so there was nothing new to check."
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
@@ -175,7 +192,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings", "gate", "gateFindings", "stop" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -219,6 +236,9 @@ local function linkOf(row: any): Link?
 		checkStarted = row.checkStarted,
 		check = if texts.check and usage.CHECKS[texts.check] then texts.check else nil,
 		findings = clip(texts.findings, FINDINGS_CAP),
+		gate = if texts.gate and GATES[texts.gate] then texts.gate else nil,
+		gateFindings = usage.text(texts.gateFindings, FIX_CAP),
+		stop = clip(texts.stop, STOP_CAP),
 	}
 end
 
@@ -248,7 +268,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -315,7 +335,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
-			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil }
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil, stop = l.stop }
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
 				row = full
@@ -328,7 +348,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings;" per key
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop;" per key
 -- in order: host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
@@ -339,7 +359,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -386,6 +406,7 @@ local function needTick(cx: WindowCx?)
 	end
 	M.needSync(cx)
 	M.recheck(cx) -- outcomes due again, at most once a refresh each
+	e().drive(cx) -- chain steps due, and starts that failed or were cut by a reload
 	if #plotroomPanes(cx) > 0 then
 		needTimer = tern.timer(SYNC_MS, needTick)
 	end
@@ -541,6 +562,15 @@ function M.ensureSync(cx: WindowCx)
 	end
 end
 
+-- Chain steps whose start is in flight in this plugin VM, by stepId -> when it began (dueSteps), and steps whose last
+-- start failed -> when they may be tried again (startFailed).
+local starting: { [string]: number } = {}
+local retryAt: { [string]: number } = {}
+local RETRY_S = 30
+local function stepId(host: HostId, agent: number, started: number?): string
+	return host.id .. "|" .. host.address .. "|" .. agent .. "|" .. (started or 0)
+end
+
 -- Records that agent block `agent`, started from the Plotroom block `pane`, works on `key`. No link when the two are
 -- not on the same host, or the saved links cannot be read. `chain`: the saved action it ran; earlier agents of the key
 -- that ran a saved action stay linked, so a chain's panes can each be mapped back to their action.
@@ -554,10 +584,21 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
 	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil, criteria = if info then usage.text(info.criteria, usage.CRITERIA_CAP) else nil, checkAgent = if info then info.checkAgent else nil, checkStarted = if info then info.checkStarted else nil } }
+	-- The agent of a chain step ends that step on the run it came from (a check now waits for its verdict); one started
+	-- by hand ends every open step of its item, so an older chain never starts an agent beside it.
+	local from = if info then info.from else nil
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
+			if from and l.agent == from.agent and hostSame(l.host, from.host) and l.started == from.started and l.gate == from.step then
+				l.gate = if from.step == "check" then "checking" else "over"
+			elseif not from and l.key == key and hostSame(l.host, host) and l.gate and l.gate ~= "over" then
+				l.gate = "over"
+			end
 			table.insert(out, l)
 		end
+	end
+	if from then
+		starting[stepId(from.host, from.agent, from.started)] = nil
 	end
 	if not writeLinks(out) then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The agent links could not be saved.")
@@ -582,37 +623,174 @@ local function chainBlock(cx: WindowCx, host: HostId, from: number?): number?
 	return block
 end
 
--- The chain of the finished agent pane `agent`, once: its link says what to start next, and the next action is cleared
--- so a later finish of the same agent (another turn) starts nothing. `result`: how the turn ended; any but "done" clears
--- it whether or not a block is open. Returns that chain and the Plotroom block on the agent's host to start it from
--- (chainBlock); nil for an agent with no next action or an unreadable store; no block for a "done" turn leaves the
--- action for the agent's next finish.
-function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, number?)
-	local host = hostOf(cx, agent)
-	local links, healthy = readLinks()
-	if not host or not healthy then
-		return nil, nil
-	end
-	for _, l in links do
-		if l.agent == agent and hostSame(l.host, host) then
-			-- The newest link of the pane only: a pane id reused after a restart never starts an older chain.
-			if not (l.chain and l.chain.next) then
-				return nil, nil
-			end
-			local block = chainBlock(cx, host, l.chain.pane)
-			-- No Plotroom block on that host: the next action stays for the agent's next finish.
-			if not block and result == "done" then
-				return table.clone(l.chain), nil
-			end
-			local taken: Chain = table.clone(l.chain)
-			l.chain.next = nil
-			if not writeLinks(links) then
-				return nil, nil
-			end
-			return taken, block
+-- The item a chain works on as the user reads it: "o/r#12", or a Jira issue's key.
+local function itemLabel(c: Chain): string
+	return if string.find(c.repo, "/", 1, true) then c.repo .. "#" .. c.ref else c.ref
+end
+
+local function actionLabel(c: Chain): string
+	return if c.name ~= "" then c.name else "the action"
+end
+
+-- Ends link `l`'s chain at Needs you for `why` (a limit): the item's newest link on its host carries it, for Now.
+local function stopChain(cx: WindowCx, links: { Link }, l: Link, why: string)
+	l.gate = "over"
+	for _, x in links do
+		if x.key == l.key and hostSame(x.host, l.host) then
+			x.stop = why
+			break
 		end
 	end
-	return nil, nil
+	cx:toast("info", "Chain stopped for " .. (if l.chain then itemLabel(l.chain) else l.key), why)
+end
+
+-- A checker's verdict on the run it checks (`c` is the checker's link, in `links`): a pass makes that run's next action
+-- due, a fail a fix round with the checker's `findings`, until LIMIT failed checks on the item stop the chain. Only a
+-- run whose check is still awaited moves.
+local function settleCheck(cx: WindowCx, links: { Link }, c: Link, verdict: string, findings: { string }, runs: { usage.Run }?)
+	for _, b in links do
+		if b.agent == c.checkAgent and hostSame(b.host, c.host) and b.started == c.checkStarted then
+			if b.gate ~= "checking" or not b.chain then
+				return
+			elseif verdict == "pass" then
+				b.gate = if b.chain.next then "next" else "over"
+			elseif runs and usage.strikes(runs, b.key).checks >= M.LIMIT then
+				stopChain(cx, links, b, M.LIMIT .. " failed checks")
+			else
+				b.gate, b.gateFindings = "fix", usage.text(table.concat(findings, "\n"), FIX_CAP)
+			end
+			return
+		end
+	end
+end
+
+-- Where the run on link `l` (in `links`) goes at its agent's turn end, for an action with a next action or a checker,
+-- decided once (again only while it waits for the user): another result than "done" ends the chain; a new commit
+-- starts the check; a report that asks for the user waits for them; a checked action's run without a new commit starts
+-- another round, until LIMIT such runs in a row; an action with an outcome waits for its verdict; one with neither
+-- has nothing that could verify it, so its next action never starts. `runs` (nil: unreadable) counts the limits.
+local function gateRun(cx: WindowCx, links: { Link }, l: Link, result: string, report: usage.Report?, runs: { usage.Run }?)
+	local c = l.chain
+	if not c or l.checkAgent or not (c.next or c.checker) or not (l.gate == nil or l.gate == "held") then
+		return
+	end
+	local label, item = actionLabel(c), itemLabel(c)
+	if result ~= "done" then
+		l.gate = "over"
+		if c.next then
+			cx:toast("info", "Next action not started after " .. label .. " for " .. item, if result == "failed" then "The agent reported a failure." elseif result == "exited" then "The agent's program exited." else "The agent's pane was closed.")
+		end
+		return
+	end
+	local s = usage.strikes(runs or {}, l.key)
+	local commit = if report then report.commit else nil
+	if c.checker and commit and s.idle == 0 then
+		l.gate, l.checkedCommit = "check", commit
+	elseif report and (report.attention == "stuck" or report.attention == "needs-human") then
+		l.gate = "held"
+	elseif c.checker then
+		if s.idle >= M.LIMIT then
+			return stopChain(cx, links, l, M.LIMIT .. " runs without progress")
+		end
+		local lines = { M.NO_COMMIT }
+		for _, f in s.findings do
+			table.insert(lines, f)
+		end
+		l.gate, l.gateFindings = "fix", usage.text(table.concat(lines, "\n"), FIX_CAP)
+	elseif l.outcome then
+		l.gate = "outcome"
+	else
+		l.gate = "over"
+		return cx:toast("info", "Next action not started after " .. label .. " for " .. item, "Nothing verifies its run: give " .. label .. " an outcome or a checker in Settings › Actions.")
+	end
+	if STARTS[l.gate :: string] and not chainBlock(cx, l.host, c.pane) then
+		cx:toast("info", (if l.gate == "check" then "Check" else "Fix round") .. " waits for Plotroom", "Open Plotroom on the agent's host; it starts then.")
+	end
+end
+
+-- How long a step's start may take before it counts as failed: the action (30 s), then the worktree and the criteria
+-- (5 minutes each), with room for a question the start asks on the way.
+local START_S = 12 * 60
+
+-- The chain steps due to start now: each link whose gate starts an agent and whose start is not in flight in this
+-- plugin VM (a reload forgets those, so a start a reload cut off is due again; one that got as far as recording its
+-- agent ended the gate, so nothing starts twice), with a Plotroom block on its host. A start in flight past START_S
+-- counts as failed; LIMIT failed starts on the item stop the chain. Each returned step is marked in flight.
+function M.dueSteps(cx: WindowCx): { Step }
+	local due: { Step } = {}
+	local links, healthy = readLinks()
+	if not healthy then
+		return due
+	end
+	local now = os.time()
+	local runs: { usage.Run }? = nil
+	local changed = false
+	for _, l in links do
+		local c = l.chain
+		if c and l.gate and STARTS[l.gate] then
+			local id = stepId(l.host, l.agent, l.started)
+			local at: number? = starting[id]
+			if at and now - at >= START_S then
+				starting[id], at = nil, nil
+				usage.addStart(l.key, l.started)
+				runs = nil
+			end
+			local block = if at or now < (retryAt[id] or 0) then nil else chainBlock(cx, l.host, c.pane)
+			if block then
+				local read = runs or usage.readRuns() or {}
+				runs = read
+				if usage.strikes(read, l.key).starts >= M.LIMIT then
+					stopChain(cx, links, l, M.LIMIT .. " failed starts")
+					changed = true
+				else
+					starting[id] = now
+					table.insert(due, { step = l.gate :: string, chain = table.clone(c), key = l.key, agent = l.agent, host = l.host, started = l.started, commit = l.checkedCommit, criteria = l.criteria, findings = l.gateFindings, block = block, depth = c.depth + (if l.gate ~= "check" and c.checker then 2 else 1) })
+				end
+			end
+		end
+	end
+	if changed then
+		writeLinks(links)
+	end
+	return due
+end
+
+-- A step's start failed (the action is gone, no worktree, the agent did not start, the request was not sent): it
+-- counts on its run in the run log, and dueSteps tries again after RETRY_S.
+function M.startFailed(s: Step)
+	local id = stepId(s.host, s.agent, s.started)
+	if starting[id] then
+		starting[id], retryAt[id] = nil, os.time() + RETRY_S
+		usage.addStart(s.key, s.started)
+	end
+end
+
+-- Whether step `s` is still due on its run: one ended meanwhile (an action started by hand) starts no agent.
+function M.stillDue(s: Step): boolean
+	for _, l in (readLinks()) do
+		if l.agent == s.agent and hostSame(l.host, s.host) and l.started == s.started then
+			return l.gate == s.step
+		end
+	end
+	return false
+end
+
+-- Ends step `s` without starting it (the chain is too long).
+function M.endStep(s: Step)
+	starting[stepId(s.host, s.agent, s.started)] = nil
+	local links, healthy = readLinks()
+	if not healthy then
+		return
+	end
+	for _, l in links do
+		if l.agent == s.agent and hostSame(l.host, s.host) and l.started == s.started then
+			if l.gate == s.step then
+				l.gate = "over"
+				writeLinks(links)
+			end
+			return
+		end
+	end
 end
 
 -- The text of the agent pane `agent`'s last message when it is the agent's (omp's chat transcript); nil when it cannot
@@ -645,8 +823,10 @@ end
 
 -- Asks a Plotroom block on link `l`'s host to check its outcome on GitHub as the run's login (host/requests' `outcome`
 -- op), then records the verdict on the link (read again, so a newer write is kept) and on its run in the run log, and
--- tells the blocks. Asked quietly: no toasts, as a background check. Nothing without a block on that host, a check of
--- the same run in flight, or a host too old to check: a later tick asks again.
+-- tells the blocks. A run whose chain waits for this verdict moves: Verified makes its next action due, Not verified
+-- ends the chain with a toast (the run is Needs you); Unchecked waits for the next check. Asked quietly: no toasts, as
+-- a background check. Nothing without a block on that host, a check of the same run in flight, or a host too old to
+-- check: a later tick asks again.
 local function checkOutcome(cx: WindowCx, l: Link)
 	local id = l.host.id .. "|" .. l.host.address .. "|" .. l.agent .. "|" .. (l.started or 0)
 	local block = blockOn(cx, l.host)
@@ -665,9 +845,18 @@ local function checkOutcome(cx: WindowCx, l: Link)
 		for _, x in links do
 			if x.agent == l.agent and hostSame(x.host, l.host) and x.started == l.started then
 				x.verdict, x.checked = verdict, os.time()
+				if x.gate == "outcome" and x.chain then
+					if verdict == "verified" then
+						x.gate = "next"
+					elseif verdict == "not" then
+						x.gate = "over"
+						cx2:toast("info", "Next action not started after " .. actionLabel(x.chain) .. " for " .. itemLabel(x.chain), "Not verified: GitHub does not show " .. (prompts.outcomeLabel(x.outcome) or "its outcome") .. ".")
+					end
+				end
 				if writeLinks(links) then
 					usage.setVerdict(x.key, x.started, verdict)
 					M.agentSync(cx2)
+					e().drive(cx2)
 				end
 				return
 			end
@@ -711,14 +900,13 @@ end
 -- store that cannot be read.
 -- A checker's run (its link names the run it checks) records its verdict, on its first turn end or a later one whose
 -- report gives one: the report's `check`, else fail (missing data never passes), with its findings, on its link and
--- on the checked run in the run log. A run of an action with a checker whose report names a commit no check was
--- started for returns the Check to start; with no Plotroom block on the agent's host it toasts and waits for the next
--- turn end.
-function M.recordResult(cx: WindowCx, agent: number, result: string): Check?
+-- on the checked run in the run log, and settles that run's chain (settleCheck). Any other run's chain is decided by
+-- gateRun. The caller starts what became due (window's drive).
+function M.recordResult(cx: WindowCx, agent: number, result: string)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
 	if not healthy or not host then
-		return nil
+		return
 	end
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, host) then
@@ -741,20 +929,6 @@ function M.recordResult(cx: WindowCx, agent: number, result: string): Check?
 				end
 				l.check, l.findings = verdict, clip(table.concat(findings, " · "), FINDINGS_CAP)
 			end
-			local toCheck: Check? = nil
-			local commit = if report then report.commit else nil
-			if l.chain and l.chain.checker and not l.checkAgent and commit and commit ~= l.checkedCommit then
-				local block = chainBlock(cx, host, l.chain.pane)
-				if block then
-					l.checkedCommit = commit
-					toCheck = { chain = table.clone(l.chain), agent = l.agent, started = l.started, commit = commit, criteria = l.criteria, block = block }
-				else
-					cx:toast("info", "Check waits for Plotroom", "Open Plotroom on the agent's host; the next time the agent finishes with a commit, its check starts.")
-				end
-			end
-			if not writeLinks(links) then
-				return nil
-			end
 			if first then
 				usage.appendRun({
 					key = l.key,
@@ -775,16 +949,27 @@ function M.recordResult(cx: WindowCx, agent: number, result: string): Check?
 					criteria = l.criteria,
 					check = verdict,
 					findings = if verdict then findings else nil,
+					depth = if l.chain then l.chain.depth else nil,
+					checking = if l.checkAgent then true else nil,
 				})
+			elseif report and report.commit then
+				usage.setCommit(l.key, l.started, report.commit)
 			end
 			if verdict then
 				usage.setCheck(l.key, l.checkStarted, verdict, findings)
 			end
-			checkOutcome(cx, l)
-			return toCheck
+			local runs = usage.readRuns()
+			if verdict then
+				settleCheck(cx, links, l, verdict, findings, runs)
+			else
+				gateRun(cx, links, l, result, report, runs)
+			end
+			if writeLinks(links) then
+				checkOutcome(cx, l)
+			end
+			return
 		end
 	end
-	return nil
 end
 
 -- The newest link for `key` on `pane`'s host, and its state; nil link when none, with state "exited" for one whose

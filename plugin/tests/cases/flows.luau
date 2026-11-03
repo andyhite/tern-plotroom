@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -287,7 +287,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.flush()
 	local runs: any = w.kv.get("runs")
 	eq(#runs, 1000, "the cap holds")
-	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none" }, "the run: item key, action, kind, model, where it ran, start, end, result and no report")
+	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none", depth = 0 }, "the run: item key, action, kind, model, where it ran, start, end, result, no report, and depth 0: started by hand")
 	eq(runs[2].key, "o/r#1", "the earlier runs follow")
 	eq(runs[1000].key, "o/r#999", "and the oldest one went")
 	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
@@ -3112,16 +3112,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working||||||||||||||;o/r#2=idle||||||||||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working|||||||||||||||;o/r#2=idle|||||||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input||||||||||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input|||||||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
-	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet;", "the recorded texts are part of it")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet", stop = "3 failed checks" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -3151,14 +3151,14 @@ case("host move-status: moves a Jira issue with acli, leaves one already there a
 	eq(#ran, 2, "it was tried once")
 end)
 
--- Starts the action Review (p1, next p2) on o/r#5 through the real link flow and returns its link.
+-- Starts the action Review (p1, next p2, outcome Review posted) on o/r#5 through the real link flow and returns its link.
 local function startChained(w: World, st: FlowStub): any
 	st.link("layer.queue.buttons.agent", "plotroom://github/agent/o/r/5")
 	st.palette({ items = { { id = "p1", label = "Review" } } })
 	w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Review" } else "Review"
 	w.click("plotroom://github/agent/o/r/5")
 	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, next = "p2" } } })
+	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, next = "p2", outcome = "review" } } })
 	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true })
 	return (w.kv.get("agent-links") :: any)[1]
 end
@@ -3168,14 +3168,28 @@ local function agentFinished(w: World, pane: number, result: string)
 	w.flush()
 end
 
-windowCase("window flows: a finished agent starts its action's next action for the same item, in its tab and worktree, once", function(w: World)
+local function countOps(st: FlowStub, op: string): number
+	local n = 0
+	for _, o in st.ops() do
+		n += if o == op then 1 else 0
+	end
+	return n
+end
+
+windowCase("window flows: a Verified run starts its action's next action for the same item, in its tab and worktree, once", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local first = startChained(w, st)
 	eq(first.chain.action, "p1", "the link keeps the action the agent ran")
 	eq(first.chain.next, "p2", "and the one to start when it finishes")
 	agentFinished(w, first.agent, "done")
-	eq(st.ops()[#st.ops()], "action", "done asks the block's host for the next action")
+	eq(st.ops()[#st.ops()], "outcome", "done asks for the run's outcome first")
+	eq(countOps(st, "action"), 0, "and starts nothing before the verdict")
+	st.reply("outcome", { verdict = "unchecked" })
+	eq(countOps(st, "action"), 0, "an Unchecked run waits")
+	w.advance(61 * 1000) -- an Unchecked run is checked again once a refresh
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 1, "a Verified run asks the block's host for the next action")
 	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
 	st.reply("worktree", { path = "/wt/r5", summary = "Reused", created = false, current = true })
 	eq(#w.window.agents, 2, "the next agent started")
@@ -3187,33 +3201,45 @@ windowCase("window flows: a finished agent starts its action's next action for t
 	eq(links[1].chain.name, "Fix", "named for it")
 	eq(links[1].chain.depth, 1, "one step along the chain")
 	eq(links[1].chain.next, nil, "and with no next of its own")
+	eq(links[2].gate, "over", "the run it followed has done its part")
 	eq(w.window.panes[links[1].agent].tab, w.window.panes[first.agent].tab, "in the tab of the agent that finished")
-	local asked = #st.ops()
 	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), asked, "another turn of the same agent starts nothing")
+	st.reply("outcome", { verdict = "verified" })
+	w.advance(60 * 1000)
+	eq(countOps(st, "action"), 1, "another turn of the same agent, Verified again, starts nothing")
 	agentFinished(w, links[1].agent, "done")
-	eq(#st.ops(), asked, "an action without a next action ends the chain")
+	eq(countOps(st, "action"), 1, "an action without a next action ends the chain")
 end)
+
+-- Answers every request of `op` still unanswered with `answer`; how many there were.
+local function answerAll(st: FlowStub, op: string, answer: any): number
+	local n = 0
+	while pcall(st.reply, op, answer) do
+		n += 1
+	end
+	return n
+end
 
 windowCase("window flows: a failed, exited or closed agent stops its chain with a toast, and a next action that is gone starts nothing", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local first = startChained(w, st)
-	local ops = #st.ops()
 	agentFinished(w, first.agent, "failed")
-	eq(#st.ops(), ops, "no request for the next action")
 	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "the toast names the action and the item")
 	eq(w.toasts[#w.toasts].sub, "The agent reported a failure.", "and why")
 	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), ops, "the chain stays stopped")
+	answerAll(st, "outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 0, "the chain stays stopped, even when its run is Verified")
 	eq(#w.window.agents, 1, "no second agent")
 	local second = startChained(w, st)
 	agentFinished(w, second.agent, "closed")
 	eq(w.toasts[#w.toasts].sub, "The agent's pane was closed.", "a closed pane says so")
 	local third = startChained(w, st)
 	agentFinished(w, third.agent, "done")
+	answerAll(st, "outcome", { verdict = "verified" })
 	st.reply("action", { problem = "That action no longer exists." })
 	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "a next action that was deleted is toasted")
+	eq(w.toasts[#w.toasts].sub, "That action no longer exists.", "with the host's reason")
 	eq(#w.window.agents, 3, "and no agent starts for it")
 end)
 
@@ -3229,15 +3255,15 @@ windowCase("window flows: Go to agent names the action an agent ran, so the agen
 	eq(pick.action, "go or start", "and Enter says it goes to the agent or starts another")
 end)
 
--- Starts the issue action Implement (p1, next prs:p2) on o/r#12 through the real link flow and returns its link; `wt`
--- false runs it in the main checkout, which has no branch.
+-- Starts the issue action Implement (p1, next prs:p2, outcome PR opened) on o/r#12 through the real link flow and
+-- returns its link; `wt` false runs it in the main checkout, which has no branch.
 local function startIssueChained(w: World, st: FlowStub, wt: boolean): any
 	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
 	st.palette({ items = { { id = "p1", label = "Implement" } } })
 	w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Implement" } else "Implement"
 	w.click("plotroom://issue/agent/o/r/12")
 	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = wt, next = "prs:p2" } } })
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = wt, next = "prs:p2", outcome = "pr" } } })
 	local vars: any = { url = "https://github.com/o/r/issues/12", title = "Fix login" }
 	if wt then
 		vars.branch = "12-fix"
@@ -3272,6 +3298,7 @@ windowCase("window flows: an issue action whose next is a pull request action ru
 	eq(first.chain.branch, "12-fix", "the worktree's branch")
 	eq(first.chain.code, "o/r", "and the code repository")
 	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
 	local asked = st.reply("action", { label = "Watch", send = "Watch {url}", worktree = true, pr = 45 })
 	eq(asked.kind, "pr", "a pull request action is asked for")
 	eq(asked.pid, "p2", "by its own id")
@@ -3295,21 +3322,26 @@ windowCase("window flows: an issue action's pull request action stops with a toa
 	local st = flowHost(w)
 	local first = startIssueChained(w, st, true)
 	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
 	st.reply("action", { problem = "No pull request of o/r has 12-fix as its branch." })
 	eq(w.toasts[#w.toasts].text, "Next action not started after Implement for o/r#12", "the toast names the action and the issue")
 	eq(w.toasts[#w.toasts].sub, "No pull request of o/r has 12-fix as its branch.", "and why")
 	eq(#w.window.agents, 1, "nothing started")
 	local second = startIssueChained(w, st, true)
+	eq((w.kv.get("agent-links") :: any)[2].gate, "over", "an action started by hand ends the earlier run's step")
 	agentFinished(w, second.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
 	st.reply("action", { problem = "The pull request of 12-fix (#40) is merged, not open." })
-	has(w.toasts[#w.toasts].sub, "merged", "a merged one stops the chain")
+	has(w.toasts[#w.toasts].sub, "merged", "a merged one is not run on")
 	eq(#w.window.agents, 2, "and nothing started")
 	local third = startIssueChained(w, st, false)
 	eq(third.chain.branch, nil, "the main checkout has no branch")
-	local ops = #st.ops()
+	local asked = countOps(st, "action")
 	agentFinished(w, third.agent, "done")
-	eq(#st.ops(), ops, "no lookup is asked")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), asked, "no lookup is asked")
 	has(w.toasts[#w.toasts].sub, "worktree", "the toast says there is no branch to look up")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "over", "and the chain ends there")
 	eq(#w.window.agents, 3, "and nothing started")
 end)
 
@@ -3345,28 +3377,49 @@ windowCase("window flows: a chain stops after 8 actions and an exited agent stop
 	local links: any = w.kv.get("agent-links")
 	links[1].chain.depth = 7
 	w.kv.put("agent-links", links)
-	local ops = #st.ops()
 	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), ops, "no request for a ninth action")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 0, "no request for a ninth action")
 	eq(w.toasts[#w.toasts].sub, "A chain of actions stops after 8.", "the toast says why")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "over", "and the chain ends there")
 	local second = startChained(w, st)
 	agentFinished(w, second.agent, "exited")
 	eq(w.toasts[#w.toasts].sub, "The agent's program exited.", "an exited result toasts")
 end)
 
-windowCase("window flows: a finished agent whose host has no Plotroom block keeps its next action and toasts, and its next done finish advances", function(w: World)
+windowCase("window flows: a Verified run's next action waits while its host has no Plotroom block, and starts once one opens", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local first = startChained(w, st)
+	agentFinished(w, first.agent, "done")
 	w.window.panes[1].block = nil
-	local ops = #st.ops()
-	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), ops, "nothing is asked")
-	eq(w.toasts[#w.toasts].text, "Next action waits for Plotroom", "the toast says to open Plotroom")
-	eq((w.kv.get("agent-links") :: any)[1].chain.next, "p2", "the next action is kept")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 0, "nothing is asked with no block")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "next", "the next action stays due")
+	w.advance(10 * 1000)
+	eq(countOps(st, "action"), 0, "and waits")
 	w.window.panes[1].block = "plugin.plotroom.prs"
+	w.window.handlers.pane_created({ pane = 1 }, w.cx)
+	w.flush()
+	eq(countOps(st, "action"), 1, "a Plotroom block opening starts it")
+end)
+
+windowCase("window flows: an action with a next action but no outcome or checker starts nothing, and says why", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	st.link("layer.queue.buttons.agent", "plotroom://github/agent/o/r/5")
+	st.palette({ items = { { id = "p1", label = "Review" } } })
+	w.window.choose = "Review"
+	w.click("plotroom://github/agent/o/r/5")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, next = "p2" } } })
+	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true })
+	local first = (w.kv.get("agent-links") :: any)[1]
 	agentFinished(w, first.agent, "done")
-	eq(st.ops()[#st.ops()], "action", "the next done finish asks for it")
+	w.advance(10 * 1000)
+	eq(countOps(st, "action"), 0, "nothing verifies the run, so its next action never starts")
+	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "the toast names the action and the item")
+	has(w.toasts[#w.toasts].sub, "an outcome or a checker", "and says what would let it start")
 end)
 
 windowCase("window flows: a pane id reused by a newer link never starts an older chain, and recording an agent drops older links of its pane", function(w: World)
@@ -3377,9 +3430,9 @@ windowCase("window flows: a pane id reused by a newer link never starts an older
 	local newest = table.clone(links[1])
 	newest.chain = nil
 	w.kv.put("agent-links", { newest, links[1] })
-	local ops = #st.ops()
 	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), ops, "the older link's chain is ignored")
+	answerAll(st, "outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 0, "the older link's chain is ignored")
 	w.kv.put("agent-links", { links[1] })
 	local f: any = w.load("flows")
 	f.recordAgent(w.cx, 1, "o/r#9", first.agent, nil, nil)
@@ -3396,10 +3449,11 @@ windowCase("window flows: a chained issue step reuses the code repository the ch
 	w.window.choose = "Implement"
 	w.click("plotroom://issue/agent/o/r/12")
 	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, next = "p2" } } })
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, next = "p2", outcome = "pr" } } })
 	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "x/code" })
 	local first = (w.kv.get("agent-links") :: any)[1]
 	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
 	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
 	local asked = st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = {}, code = "x/code" })
 	eq(asked.target, "x/code", "the host is told the repository, so it asks nothing")
@@ -3445,29 +3499,29 @@ windowCase("window flows: a chain's next action starts from the block that start
 	eq(first.chain.pane, 1, "the link records the block the chain started from")
 	w.window.panes[3] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
 	local links: any = w.kv.get("agent-links")
-	links[1].chain.pane = 3
+	links[1].chain.pane, links[1].gate = 3, "next"
 	w.kv.put("agent-links", links)
-	local _, block = f.takeChain(w.cx, first.agent, "done")
-	eq(block, 3, "the starting block is preferred over a lower one")
-	links[1].chain.next = "p2"
+	local due = f.dueSteps(w.cx)
+	eq(due[1].block, 3, "the starting block is preferred over a lower one")
+	f.endStep(due[1])
 	w.kv.put("agent-links", links)
 	w.window.panes[3].block = nil
-	_, block = f.takeChain(w.cx, first.agent, "done")
-	eq(block, 1, "once it is no Plotroom block the lowest one on the host runs it")
+	due = f.dueSteps(w.cx)
+	eq(due[1].block, 1, "once it is no Plotroom block the lowest one on the host runs it")
 end)
 
-windowCase("window flows: a failed turn clears the next action even with no Plotroom block open, and says it was not started", function(w: World)
+windowCase("window flows: a failed turn ends the chain even with no Plotroom block open, and says the next action was not started", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local first = startChained(w, st)
 	w.window.panes[1].block = nil
 	agentFinished(w, first.agent, "failed")
-	eq((w.kv.get("agent-links") :: any)[1].chain.next, nil, "the next action is gone")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "over", "the chain ends")
 	has(w.toasts[#w.toasts].text, "Next action not started", "and the user is told")
 	w.window.panes[1].block = "plugin.plotroom.prs"
-	local ops = #st.ops()
 	agentFinished(w, first.agent, "done")
-	eq(#st.ops(), ops, "a later finish starts nothing")
+	answerAll(st, "outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 0, "a later finish starts nothing")
 end)
 
 windowCase("window flows: the status timer stops with no live agent", function(w: World)
@@ -4122,39 +4176,63 @@ case("host mutations: a confirmation older than five minutes says it expired", f
 	eq(#seen, before, "and nothing was sent")
 end)
 
--- Starts Implement (p1, checked by p4) on issue o/r#12 in its worktree; the host reads its acceptance criteria as
--- `criteria`. Returns the builder's link.
-local function startChecked(w: World, st: FlowStub, criteria: string): any
+-- Starts Implement (p1, checked by p4, next `next`) on issue o/r#12 in its worktree; the host reads its acceptance
+-- criteria as `criteria`. Returns the builder's link.
+local function startChecked(w: World, st: FlowStub, criteria: string, next: string?): any
 	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
 	st.palette({ items = { { id = "p1", label = "Implement" } } })
-	w.window.choose = "Implement"
+	w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Implement" } else "Implement"
 	w.click("plotroom://issue/agent/o/r/12")
 	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, checker = "p4" } } })
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, checker = "p4", next = next } } })
 	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", title = "Fix login", branch = "12-fix" }, code = "o/r" })
 	local asked = st.reply("criteria", { criteria = criteria })
 	eq(asked.repo .. "#" .. asked.ref, "o/r#12", "the criteria are read from the issue at dispatch")
 	return (w.kv.get("agent-links") :: any)[1]
 end
 
-local function countOps(st: FlowStub, op: string): number
-	local n = 0
-	for _, o in st.ops() do
-		n += if o == op then 1 else 0
-	end
-	return n
+-- The builder `link` ends its turn with a report naming `commit` (nil: none) and attention `attention` (default ok).
+local function builderEnds(w: World, link: any, commit: string?, attention: string?)
+	local named = if commit then `"{commit}"` else "null"
+	lastSays(w, link.agent, reportBlock(`\{"attention": "{attention or "ok"}", "reason": "Ready to ship", "commit": {named}, "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, link.agent, "done")
 end
 
 -- The builder `link` ends its turn with a report naming `commit`; the host answers the checker action Check and its
 -- worktree. Returns the checker's link.
 local function builderCommits(w: World, st: FlowStub, link: any, commit: string): any
-	lastSays(w, link.agent, reportBlock(`\{"attention": "needs-human", "reason": "Ready to ship", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`))
-	agentFinished(w, link.agent, "done")
+	builderEnds(w, link, commit, "needs-human")
 	local asked = st.reply("action", { label = "Check", send = "Check {key} on {branch}\n\n{criteria}", worktree = true })
 	eq(asked.pid, "p4", "the host is asked for the checker action")
 	local prepared = st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { key = "12", branch = "12-fix" }, code = "o/r" })
 	eq(prepared.target, "o/r", "on the same item, in the repository the run was worked in")
 	return (w.kv.get("agent-links") :: any)[1]
+end
+
+-- The checker `link` ends its turn with verdict `check` (nil: none given) and `findings`.
+local function checkSays(w: World, link: any, check: string?, findings: { string }?)
+	local verdict = if check then `, "check": "{check}"` else ""
+	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Checked", "commit": null, "pr": null, "evidence": [], "blocker": null{verdict}, "findings": {jsonEncode(array(findings or {}))}}`))
+	agentFinished(w, link.agent, "done")
+end
+
+-- The host answers a fix round's request for the builder action Implement (checked by p4, next `next`) and its worktree;
+-- returns the fix round's link.
+local function fixRound(w: World, st: FlowStub, next: string?): any
+	local asked = st.reply("action", { label = "Implement", send = "Do {url}", worktree = true, checker = "p4", next = next })
+	eq(asked.pid, "p1", "a fix round asks for the builder's own action")
+	st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "o/r" })
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+-- The builder's run (not its checker's) that started at `started`.
+local function runAt(w: World, started: number): any
+	for _, r in w.kv.get("runs") :: any do
+		if r.started == started and not r.checking then
+			return r
+		end
+	end
+	return nil
 end
 
 windowCase("window flows: a run that ends with a commit starts its checker as a fresh agent on the same item, with the criteria saved at dispatch", function(w: World)
@@ -4168,9 +4246,9 @@ windowCase("window flows: a run that ends with a commit starts its checker as a 
 	eq(builder.criteria, "- [ ] Login works\n- [ ] Errors say why", "which are saved on the run")
 	eq(builder.chain.checker, "p4", "and the link knows its checker")
 	local commit = sha("c")
-	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Exploring", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
-	agentFinished(w, builder.agent, "done")
-	eq(countOps(st, "action"), 0, "a turn with no commit starts no check")
+	builderEnds(w, builder, nil, "needs-human")
+	eq(countOps(st, "action"), 0, "a turn with no commit that asks for you starts no check and no fix round")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "held", "the chain waits for you")
 	local checker = builderCommits(w, st, builder, commit)
 	eq(countOps(st, "criteria"), 1, "the checker gets the run's snapshot: the issue is not read again")
 	eq(#w.window.agents, 2, "a second agent started")
@@ -4189,7 +4267,7 @@ windowCase("window flows: a run that ends with a commit starts its checker as a 
 	eq(countOps(st, "action"), 1, "another turn ending at the same commit starts no second check")
 	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "Checked", "commit": "{sha("d")}", "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`))
 	agentFinished(w, checker.agent, "done")
-	eq(countOps(st, "action"), 1, "a check that names a commit starts nothing")
+	eq(countOps(st, "action"), 1, "a passing check of an action with no next action starts nothing")
 end)
 
 windowCase("window flows: a passing check marks the checked run Checked; a failing one keeps its findings for the preview and Now", function(w: World)
@@ -4199,35 +4277,174 @@ windowCase("window flows: a passing check marks the checked run Checked; a faili
 	local checker = builderCommits(w, st, builder, sha("c"))
 	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": ["luau tests pass"], "blocker": null, "check": "PASS", "findings": []}`))
 	agentFinished(w, checker.agent, "done")
-	local function runOf(started: number): any
-		for _, r in w.kv.get("runs") :: any do
-			if r.started == started then
-				return r
-			end
-		end
-		return nil
-	end
-	eq(runOf(builder.started).check, "pass", "the checked run is Checked")
-	eq(runOf(builder.started).criteria, "- [ ] Login works", "and keeps its criteria")
+	eq(runAt(w, builder.started).check, "pass", "the checked run is Checked")
+	eq(runAt(w, builder.started).criteria, "- [ ] Login works", "and keeps its criteria")
 	eq((w.kv.get("agent-links") :: any)[1].check, "pass", "the checker's link says it")
 	w.advance(4100)
 	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#12"]
 	same({ row.check, row.findings }, { "pass" } :: { any }, "and the block is told: a pass, no findings")
-	-- another commit is checked again, and this check fails
-	local again = builderCommits(w, st, builder, sha("e"))
-	lastSays(w, again.agent, reportBlock(`\{"attention": "ok", "reason": "One unmet", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "fail", "findings": ["Login works: no test covers a wrong password", "Errors say why: the toast is empty"]}`))
-	agentFinished(w, again.agent, "done")
-	eq(runOf(builder.started).check, "fail", "the run's check is now a fail")
-	same(runOf(builder.started).findings, { "Login works: no test covers a wrong password", "Errors say why: the toast is empty" }, "with its findings")
+	-- a run started again by hand is checked again, and this check fails
+	local second = startChecked(w, st, "- [ ] Login works")
+	local again = builderCommits(w, st, second, sha("e"))
+	checkSays(w, again, "fail", { "Login works: no test covers a wrong password", "Errors say why: the toast is empty" })
+	eq(runAt(w, second.started).check, "fail", "the run's check is a fail")
+	same(runAt(w, second.started).findings, { "Login works: no test covers a wrong password", "Errors say why: the toast is empty" }, "with its findings")
 	w.advance(4100)
 	row = statusEvents(w)[#statusEvents(w)].map["o/r#12"]
 	same({ row.check, row.findings }, { "fail", "Login works: no test covers a wrong password · Errors say why: the toast is empty" }, "the block gets the findings")
 	-- a checker that gives no verdict fails: missing data never passes
-	local third = builderCommits(w, st, builder, sha("f"))
-	lastSays(w, third.agent, reportBlock(`\{"attention": "ok", "reason": "Looked around", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
-	agentFinished(w, third.agent, "done")
+	local fix = fixRound(w, st)
+	local third = builderCommits(w, st, fix, sha("f"))
+	checkSays(w, third, nil)
 	local l: any = (w.kv.get("agent-links") :: any)[1]
 	same({ l.check, l.findings }, { "fail", "The checker gave no pass or fail." }, "a report without a check is a fail, saying so")
+end)
+
+windowCase("window flows: a failed check starts the builder's action again with the findings as {findings} and the same criteria; a passing one then starts the next action", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local builder = startChecked(w, st, "- [ ] Login works", "p3")
+	local checker = builderCommits(w, st, builder, sha("c"))
+	eq(countOps(st, "action"), 1, "while the check runs, the next action waits")
+	checkSays(w, checker, "fail", { "Login works: no test covers a wrong password" })
+	local fix = fixRound(w, st, "p3")
+	eq(#w.window.agents, 3, "a fresh agent runs the fix round")
+	local fp: string = w.window.agents[3].prompt
+	has(fp, "Do https://github.com/o/r/issues/12", "the builder action's own text")
+	has(fp, "<findings>", "with the findings block, added since its text names none")
+	has(fp, "- Login works: no test covers a wrong password", "holding the checker's findings")
+	has(fp, "- [ ] Login works", "and the criteria saved at dispatch")
+	eq(countOps(st, "criteria"), 1, "which are not read again")
+	same({ fix.chain.action, fix.chain.depth, fix.criteria }, { "p1", 2, "- [ ] Login works" } :: { any }, "the same action, two steps on (after the check), with the same criteria")
+	eq(w.window.panes[fix.agent].tab, w.window.panes[builder.agent].tab, "in the builder's tab")
+	local check2 = builderCommits(w, st, fix, sha("d"))
+	checkSays(w, check2, "pass")
+	local asked = st.reply("action", { label = "Ship", send = "Ship {url}", worktree = true })
+	eq(asked.pid, "p3", "a passing check starts the next action")
+	st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "o/r" })
+	eq(w.window.agents[#w.window.agents].prompt, "Ship https://github.com/o/r/issues/12", "which runs")
+	lacks(w.window.agents[#w.window.agents].prompt, "<findings>", "a next action is no fix round")
+end)
+
+windowCase("window flows: after 3 failed checks on an item the chain stops at Needs you with 3 failed checks", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local run = startChecked(w, st, "- [ ] Login works")
+	for i = 1, 3 do
+		local checker = builderCommits(w, st, run, sha(tostring(i)))
+		checkSays(w, checker, "fail", { "AC1 unmet, round " .. i })
+		if i < 3 then
+			run = fixRound(w, st)
+		end
+	end
+	eq(countOps(st, "action"), 5, "three checks and two fix rounds, no third round")
+	eq(w.toasts[#w.toasts].text, "Chain stopped for o/r#12", "the toast names the item")
+	eq(w.toasts[#w.toasts].sub, "3 failed checks", "and the limit")
+	local links: any = w.kv.get("agent-links")
+	eq(links[1].stop, "3 failed checks", "the item's newest link says why, for Now")
+	w.advance(4100)
+	eq(statusEvents(w)[#statusEvents(w)].map["o/r#12"].stop, "3 failed checks", "and the block is told")
+	w.advance(120 * 1000)
+	eq(countOps(st, "action"), 5, "nothing starts later either")
+end)
+
+windowCase("window flows: 3 runs in a row with no new commit stop the chain with 3 runs without progress; a run with no new commit is not checked again", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local builder = startChecked(w, st, "- [ ] Login works")
+	local checker = builderCommits(w, st, builder, sha("c"))
+	checkSays(w, checker, "fail", { "AC1 unmet" })
+	local run = fixRound(w, st)
+	for i = 1, 3 do
+		builderEnds(w, run, sha("c")) -- the commit the checked run already named
+		eq(countOps(st, "criteria"), 1, "nothing is read for it")
+		if i < 3 then
+			run = fixRound(w, st)
+			has(w.window.agents[#w.window.agents].prompt, "no new commit", "the next round is told the last one named no new commit")
+			has(w.window.agents[#w.window.agents].prompt, "AC1 unmet", "and the last check's findings")
+		end
+	end
+	eq(countOps(st, "action"), 4, "one check, three fix rounds, and no fourth round")
+	eq(w.toasts[#w.toasts].sub, "3 runs without progress", "the chain stops for no progress")
+	eq((w.kv.get("agent-links") :: any)[1].stop, "3 runs without progress", "at Needs you")
+	local runs: any = w.kv.get("runs")
+	same({ runs[1].depth, runs[2].depth, runs[3].depth }, { 6, 4, 2 } :: { any }, "the counters come from the item's runs in the run log")
+end)
+
+windowCase("window flows: 3 failed starts stop the chain with 3 failed starts, each tried again after a wait", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
+	st.reply("action", { problem = "The block's host is busy." })
+	eq(w.toasts[#w.toasts].sub, "The block's host is busy.", "a failed start says why")
+	w.advance(10 * 1000)
+	eq(countOps(st, "action"), 1, "and is not tried again at once")
+	w.advance(25 * 1000)
+	eq(countOps(st, "action"), 2, "but after a wait")
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	st.reply("worktree", { problem = "git worktree add failed" })
+	w.advance(35 * 1000)
+	eq(countOps(st, "action"), 3, "a worktree that fails counts as a failed start too")
+	w.cx.agents.start = function(_self: any, _opts: any): number
+		error("no agent program", 0)
+	end
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Reused", created = false, current = true })
+	eq(runAt(w, first.started).starts, 3, "three failed starts are on the run")
+	w.advance(35 * 1000)
+	eq(countOps(st, "action"), 3, "no fourth try")
+	eq(w.toasts[#w.toasts].text, "Chain stopped for o/r#5", "the chain stops")
+	eq(w.toasts[#w.toasts].sub, "3 failed starts", "for its failed starts")
+	eq((w.kv.get("agent-links") :: any)[1].stop, "3 failed starts", "at Needs you")
+end)
+
+windowCase("window flows: starting an action by hand resets the counters and ends the item's open steps", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local run = startChecked(w, st, "- [ ] Login works")
+	for i = 1, 2 do
+		checkSays(w, builderCommits(w, st, run, sha(tostring(i))), "fail", { "AC1" })
+		run = fixRound(w, st)
+	end
+	-- the third round ends with a commit, and while its check is being started the user starts Implement by hand
+	builderEnds(w, run, sha("3"))
+	eq((w.kv.get("agent-links") :: any)[1].gate, "check", "a check is due")
+	local hand = startChecked(w, st, "- [ ] Login works")
+	local links: any = w.kv.get("agent-links")
+	eq(links[2].gate, "over", "the hand start ended the open step")
+	local agents = #w.window.agents
+	st.reply("action", { label = "Check", send = "Check {key}", worktree = true })
+	st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { key = "12" }, code = "o/r" })
+	eq(#w.window.agents, agents, "the check already on its way starts no agent")
+	local checks = countOps(st, "action")
+	checkSays(w, builderCommits(w, st, hand, sha("4")), "fail", { "AC1" })
+	eq(countOps(st, "action"), checks + 2, "its own check failed once and a fix round starts: the counters began again")
+	eq(runAt(w, hand.started).depth, 0, "the run started by hand is where the counting starts")
+end)
+
+windowCase("window flows: a plugin reload mid-chain resumes the due step from the stored chain, without a duplicate agent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 1, "the next action's start began")
+	w.advance(1000) -- request ids carry the clock, so the reloaded plugin's never repeat the old one's
+	w.reload("window") -- before the host answered: the request dies with the old VM
+	w.flush()
+	eq(countOps(st, "action"), 2, "the reloaded plugin starts the step again from kv")
+	pcall(st.reply, "action", { label = "Fix", send = "Fix {url}", worktree = true }) -- the dead request's answer finds no one
+	eq(#w.window.agents, 1, "the old request starts nothing")
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Reused", created = false, current = true })
+	eq(#w.window.agents, 2, "the next agent started once")
+	w.reload("window")
+	w.flush()
+	w.advance(60 * 1000)
+	eq(countOps(st, "action"), 2, "a reload after it started starts nothing more")
+	eq(#w.window.agents, 2, "no duplicate agent")
 end)
 
 case("host agents: a passing check shows Checked; a failing one is Needs you with its findings in the preview", function(w: World)
