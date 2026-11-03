@@ -1494,7 +1494,7 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("hidden again", lambda: not any("Flow PR 1" in t for t in s.texts()))
     s.ctl_ok("plugins", "run", "plugin.plotroom.sort")
     s.wait_text("the sort toast", "Sorted: ")
-    s.wait_until("the sort is stated in the view's own line, not only a toast", lambda: any(t.startswith("Sort: ") for t in s.texts()))
+    s.eq("the sort is announced only by the toast: no Sort: line", False, any(t.startswith("Sort: ") for t in s.texts()))
     s.shot("sorted")
     # The board: one unnoted worktree, made dirty with no press; one linked to the pull request the fake gh answers for.
     linked = s.tmp / "wts" / "flow-linked"

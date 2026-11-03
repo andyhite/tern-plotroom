@@ -35,8 +35,8 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Snooze until 08:00 tomorrow; Show or hide snoozed; Unsnooze | Commands, preview | Keep | — | Approved | |
 | Needs attention only filter | Commands | Merge into **Now** | 2 | Approved | Three names today, and a partial answer to "what needs me". Done: removed; Now lists New and Changed assigned items |
 | Pane-title count and the `N need attention` status segment | Pane title, status bar | Merge into one **Now** count | 2 | Approved | Done: one `N need you` count in the pane title and the status bar |
-| Sort orders (Next sort order, sort per view) | Commands, Settings › Views | Keep | — | Approved | |
-| Search | Bottom bar, Commands | Keep | — | Approved | |
+| Sort orders (Next sort order, sort per view) | Commands, Settings › Views | Keep | — | Approved | The order is announced by a toast when it changes; no `Sort:` line |
+| Search | Search field, Commands | Keep | — | Approved | |
 | Group by (repository, status, label) | Settings › Views | Keep | — | Approved | |
 | Preview: description, facts, checks, merge state, reviewers | Preview | Keep | — | Approved | |
 | Preview: worktree card (Up to date, Changes, unpushed count) | Preview | Keep | — | Approved | |

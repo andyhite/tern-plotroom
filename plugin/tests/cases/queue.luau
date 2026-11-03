@@ -10,7 +10,7 @@ type HostScene = h.HostScene
 type Reply = h.Reply
 type World = h.World
 
-local EPOCH, NULL, actionOf, agentScene, answerOf, array = h.EPOCH, h.NULL, h.actionOf, h.agentScene, h.answerOf, h.array
+local EPOCH, NULL, agentScene, answerOf, array = h.EPOCH, h.NULL, h.agentScene, h.answerOf, h.array
 local bindKey, case, editorCard, eq, expand, findKey = h.bindKey, h.case, h.editorCard, h.eq, h.expand, h.findKey
 local forgetCheckouts, goToSettings, has, helpEntries, helpRows, hostScene = h.forgetCheckouts, h.goToSettings, h.has, h.helpEntries, h.helpRows, h.hostScene
 local hx, jsonDecode, jsonEncode, lacks, leaveWt, listPr = h.hx, h.jsonDecode, h.jsonEncode, h.lacks, h.leaveWt, h.listPr
@@ -265,7 +265,7 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
 end)
 
-case("host: Settings › General binds an action to a key: the key works, ? and the action bar show it, and Reset goes back to no key", function(w: World)
+case("host: Settings › General binds an action to a key: the key works, ? and Commands show it, and Reset goes back to no key", function(w: World)
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
@@ -290,10 +290,8 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	eq(row.changed, false, "the default is no change")
 	eq(row.defaultLabel, "None", "and is what Reset goes back to")
 	eq(rowIn(b, "key:more").control.value, ".", "the command palette's key is .")
-	eq(#pickerOf(b).actions, 1, "the action bar has one button")
-	for _, a in pickerOf(b).actions do
-		eq(a.id, "more", "the action bar shows only the command palette's button, the one with a key")
-	end
+	eq(pickerOf(b).actions, nil, "the queue has no action bar")
+	eq(pickerOf(b).strip, nil, "nor a strip")
 	eq(bindKey(b, "worktree", "w"), nil, "a free key is accepted")
 	eq(prefsOf(b).editing, nil, "and closes the edit")
 	same(w.kv.get("keys"), { worktree = "w" }, "it is saved as the one difference from the defaults")
@@ -315,8 +313,8 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	eq(pickerOf(b).selected, "no_2fr_233", "and the arrow still does")
 	b.typeText("k")
 	eq(pickerOf(b).selected, "no_2fr_233", "an action nobody bound has no key")
-	same(actionOf(b, "worktree").keys, { "w" }, "the action bar shows the button once it has a key")
-	eq(actionOf(b, "agent"), nil, "and none for an action without one")
+	eq(hx.palette(w, b).keys.worktree, "w", "Commands shows the key once it is bound")
+	eq(hx.palette(w, b).keys.seen, "", "and none for an action without one")
 	b.typeText("?")
 	eq(findKey(b.view().layer, "help"), nil, "? opens nothing")
 	b.typeText("h")
@@ -395,7 +393,7 @@ case("host: a key removed after Use one-key shortcuts stays removed when it is u
 	eq((w.kv.get("keys") :: any)["wt-remove"], "", "using the set again keeps it unbound")
 end)
 
-case("host: an empty Keys row removes a shortcut: no key does it, ? and the action bar leave it out, and the command palette's Reset brings its . back", function(w: World)
+case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands leave it out, and the command palette's Reset brings its . back", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	goToSettings(b, "general")
@@ -432,8 +430,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	eq(pickerOf(b).selected, "no_2fr_232", "k does not move up")
 	b.press("up")
 	eq(pickerOf(b).selected, "no_2fr_231", "the arrow does")
-	eq(actionOf(b, "worktree"), nil, "the action bar leaves the button out")
-	eq(actionOf(b, "more"), nil, "the palette's too")
+	eq(hx.palette(w, b).keys.worktree, "", "Commands shows no key for it")
 	b.typeText("?")
 	local shown: { string } = {}
 	for _, r in helpRows(b.view().layer) do
@@ -449,7 +446,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and the acti
 	eq(findKey(b.view().layer, "help"), nil, "no key opens the list")
 	b.typeText("s")
 	eq(findKey(b.view().layer, "settings", "prefs"), nil, "no key opens Settings")
-	eq(actionOf(b, "settings"), nil, "and its button is gone")
+	eq(hx.palette(w, b).keys.settings, "", "and Commands shows none")
 	b.event({ ev = "action", id = "layer.queue", act = "settings" })
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "the event still opens it")
 	b.typeText("?")
@@ -498,11 +495,11 @@ case("host: the In tab tooltip names the key that goes to the tab, or none once 
 	w.kv.put("keys", { ["goto"] = "G" })
 	b.render()
 	eq(tip(), "A tab works in this pull request's worktree (G goes there)", "as it is now, the rows rebuilt")
-	same(actionOf(b, "goto").keys, { "G" }, "like the button's keycap")
+	eq(hx.palette(w, b).keys["goto"], "G", "like Commands' Go to tab row")
 	w.kv.put("keys", { ["goto"] = "" })
 	b.render()
 	eq(tip(), "A tab works in this pull request's worktree", "and not at all once it is removed")
-	eq(actionOf(b, "goto"), nil, "nor is the button shown")
+	eq(hx.palette(w, b).keys["goto"], "", "nor does Commands show one")
 end)
 
 case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
@@ -1530,7 +1527,7 @@ case("host: the menu asked for one prompt answers just that one, if it is offere
 	eq(#only("p9"), 0, "none that is not saved")
 end)
 
-case("host: the picker's action bar has Settings and Refresh on the left, then the PR's Worktree, Go to tab and Agent by the command palette, with no button per prompt and Open in the preview's head; each opens the link the card keeps unseen, beside each offered prompt's", function(w: World)
+case("host: the queue has no action bar: the PR's Worktree and Go to tab are Commands rows, Open the preview head's icon; each opens the link the card keeps unseen, beside each offered prompt's", function(w: World)
 	local s = hostScene(w, 3)
 	savePrompts(w, {
 		promptOf("p1", "Mine", "Review {url}", "e"),
@@ -1544,41 +1541,20 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 		{ id = "v2", name = "Review requested", integration = "github", query = "is:open review-requested:@me", group = "none", prompts = array({ "p3" }) },
 	}) })
 	local b = openQueue(w)
-	-- The ids of the action bar's buttons, in order.
-	local function bar(): { string }
-		local out: { string } = {}
-		for _, a in pickerOf(b).actions do
-			table.insert(out, a.id)
-		end
-		return out
-	end
-	local function action(id: string): any
-		for _, a in pickerOf(b).actions do
-			if a.id == id then
-				return a
-			end
-		end
-		return nil
+	local function ids(): { string }
+		return hx.palette(w, b).ids
 	end
 	local function link(id: string): string?
 		local node: any = findKey(findKey(pickerNode(b), "buttons"), id)
 		return if node then node.p.href else nil
 	end
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "one Agent button, none per saved prompt; Seen before the command palette, which is last")
-	eq(action("more")["end"], true, "the command palette is last, in the corner")
-	eq(action("more").label, "Commands", "named Commands")
-	same(action("more").keys, { "." }, "with its key")
-	eq(action("open"), nil, "Open is no button of the bar")
+	eq(pickerOf(b).actions, nil, "no action bar")
+	same({ ids()[1], ids()[2] }, { "open", "worktree" }, "the PR's actions lead Commands")
+	eq(table.find(ids(), "prompt-p1"), nil, "no row per saved prompt")
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, link("open"), "but an icon in the preview's head, opening the hidden Open link")
 	eq(globe.p.actions.click, "open", "on click")
 	eq(globe.p.title, "Open", "named Open")
-	eq(action("settings")["end"], nil, "Settings and Refresh sit on the left")
-	eq(action("retry")["end"], nil, "both of them")
-	eq(action("worktree")["end"], true, "the PR's buttons sit on the right, by Open")
-	eq(action("agent")["end"], true, "Agent too")
-	eq(action("agent").label, "Agent", "named Agent")
-	same(action("agent").keys, { "a" }, "with the Agent picker's key")
 	eq(findKey(pickerNode(b), "buttons").p.hidden, true, "the links sit in an unseen node")
 	eq(link("agent"), prLink("agent", "o/r", 1), "Agent's link opens the picker on the selected pull request")
 	eq(link("prompt-p1"), runLink("o/r", 1, "p1"), "each offered prompt's link runs it, for its shortcut")
@@ -1593,13 +1569,13 @@ case("host: the picker's action bar has Settings and Refresh on the left, then t
 	leaveWt(w, s, 1)
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-pr-1" })
 	refreshNow(w, b)
-	same(bar(), { "settings", "retry", "worktree", "goto", "agent", "seen", "more" }, "a tab in the pull request's worktree adds Go to tab before Agent")
+	yes(table.find(ids(), "goto") ~= nil, "a tab in the pull request's worktree adds Go to tab")
 	eq(link("goto"), prLink("goto", "o/r", 1), "with its link")
 	table.remove(w.panes)
 	b.press("tab")
 	b.press("down")
 	w.flush()
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "under Review requested the bar stays the same")
+	eq(table.find(ids(), "goto"), nil, "under Review requested no tab works in it")
 	eq(link("prompt-p3"), runLink("o/r", 1, "p3"), "and the prompt links swap")
 	eq(link("prompt-p1"), nil, "for the ones it lists")
 	b.press("e")
@@ -1983,13 +1959,13 @@ case("host: a key changed in one block reaches the other live blocks, and a clos
 	local drawn, closed = c.renders(), gone.renders()
 	eq(bindKey(a, "worktree", "W"), nil, "the key is saved")
 	yes(c.renders() > drawn, "the other block is drawn again")
-	same(actionOf(c, "worktree").keys, { "W" }, "and shows the new key")
+	eq(hx.palette(w, c).keys.worktree, "W", "and shows the new key")
 	eq(gone.renders(), closed, "a closed pane is not drawn")
 	eq(c.press("w", nil, "w"), false, "the other block's old key is its pane's again")
 	eq(c.press("w", "s", "W"), true, "and the new one works there")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "on its selected pull request")
 	a.event({ ev = "change", id = "layer.settings", item = "key:worktree" })
-	eq(actionOf(c, "worktree"), nil, "Reset reaches it too: back to no key, the button goes")
+	eq(hx.palette(w, c).keys.worktree, "", "Reset reaches it too: back to no key")
 end)
 
 case("host: a prompt's model is a model pattern or omp role: the row refuses anything else, the menu sends it, reset clears it", function(w: World)
@@ -2387,7 +2363,7 @@ case("host: a rejected query pauses only itself: no automatic retry, and another
 	eq(pickerOf(b).state, "error", "and it is rejected again")
 end)
 
-case("host: the error card offers Refresh and Settings with the default keys, though neither has a key", function(w: World)
+case("host: the error card has no action bar; Commands offers Refresh and Settings with the default keys", function(w: World)
 	local s = hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	s.gh.override = function(req: GhReq): Reply?
@@ -2398,11 +2374,10 @@ case("host: the error card offers Refresh and Settings with the default keys, th
 	end
 	local b = openQueue(w)
 	eq(pickerOf(b).state, "error", "the card shows")
-	local ids: { string } = {}
-	for _, a in pickerOf(b).actions do
-		table.insert(ids, a.id)
-	end
-	same(ids, { "settings", "retry", "more" }, "Settings and Refresh sit beside the palette")
+	eq(pickerOf(b).actions, nil, "no action bar")
+	local ids = hx.palette(w, b).ids
+	yes(table.find(ids, "refresh") ~= nil, "Commands offers Refresh")
+	yes(table.find(ids, "settings") ~= nil, "and Settings")
 end)
 
 case("host: a list emptied by snoozing says how many rows are hidden and which key shows them", function(w: World)
@@ -2731,7 +2706,7 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	local b = openQueue(w)
 	eq(#viewSearchesOf(s.gh, "search"), 1, "the first search was refused")
 	eq(pickerOf(b).state, "error", "the card says so")
-	eq(type(actionOf(b, "retry").disabled), "string", "and Refresh is shown as paused")
+	has(b.text(), "Paused by GitHub until", "and the header says Refresh is paused")
 	b.typeText("r")
 	w.flush()
 	eq(#viewSearchesOf(s.gh, "search"), 1, "Refresh does not hammer a limited account")
@@ -2741,7 +2716,7 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	w.advance(1000)
 	eq(#viewSearchesOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
-	eq(actionOf(b, "retry").disabled, nil, "Refresh is available again")
+	lacks(b.text(), "Paused by GitHub", "the pause note is gone")
 end)
 
 case("host: clicking a view refreshes it, even a fresh cached one or the one already shown, and the worktrees list back to it", function(w: World)

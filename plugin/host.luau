@@ -1022,7 +1022,7 @@ local function blockDef(): BlockDef<State>
 			elseif act == "cancel-remove" then
 				state.removing = nil
 			elseif act == "goto" or act == "worktree" or act == "open-git" then
-				-- The worktree card's rows and the action bar's buttons alike: a click in the preview carries the row's own id.
+				-- The worktree card's rows: a click in the preview carries the row's own id.
 				queueAction(state, act)
 			elseif act == "unpin" then
 				requests.unpin(state)
@@ -1188,7 +1188,7 @@ local function blockDef(): BlockDef<State>
 				elseif act == "retry" then
 					queueAction(state, "refresh")
 				elseif act then
-					-- An item's button in the action bar, or the command palette's: runs as its key does.
+					-- An item's command from the command palette: runs as its key does.
 					queueAction(state, act)
 				end
 			end

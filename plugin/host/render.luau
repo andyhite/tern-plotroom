@@ -4,7 +4,6 @@ local board = require("../board")
 local github = require("../github")
 local input = require("../input")
 local keys = require("../keys")
-local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
 local usage = require("../usage")
@@ -412,8 +411,7 @@ end
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
 -- tab while a tab works in it, Agent (the picker of the saved prompts offered under this view, or typed text), Go to
 -- agent and Seen. A missing repository or checkout is asked for in the window's palette when one is needed. An
--- action's `keys` are its keycap: its configured key (Settings › General); the action bar shows only those
--- that have one.
+-- action's `keys` are its keycap: its configured key (Settings › General), which the worktree card's rows show.
 local AGENT_COMMANDS = { "agentint", "agentstop", "agentmsg" } -- Interrupt, Stop and Message the selected item's live agent
 type Action = { id: string, label: string, keys: { string }?, href: string }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
@@ -1177,22 +1175,10 @@ local function boardPreview(state: State): { Node }
 	return kids
 end
 
--- Only buttons with a key show.
-local function keyed(actions: { any }): { any }
-	local out: { any } = {}
-	for _, a in actions do
-		if a.keys then
-			table.insert(out, a)
-		end
-	end
-	return out
-end
-
--- Turns the queue's picker props into the Worktrees board's: its rows, subtitle and action bar.
+-- Turns the queue's picker props into the Worktrees board's: its rows and subtitle.
 local function boardProps(state: State, props: { [string]: any })
 	local items, order = engine.boardItems(state)
 	local row = engine.boardSelected(state)
-	local map = keys.load()
 	local rows = engine.boardRows(state)
 	local sub: { any } = {}
 	if state.boardBusy then
@@ -1208,7 +1194,6 @@ local function boardProps(state: State, props: { [string]: any })
 			table.insert(sub, ui.span(p, "warning"))
 		end
 	end
-	local removable = row and not row.main and not row.locked and not row.missing
 	props.icon, props.title, props.subtitle, props.noun = "folder", { ui.span("Worktrees", "strong") }, sub, "worktrees"
 	props.placeholder = "Worktrees are not searched"
 	props.state = if state.boardBusy and not state.board.loaded then "loading" else "ready"
@@ -1216,16 +1201,6 @@ local function boardProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if row then pickerId("w", row.id) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	local actions: { any } = {
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh"), disabled = if state.boardBusy then "Reading…" else nil },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
-		{ id = "wt-cleanup", label = "Find finished worktrees", keys = keys.caps(map, "wt-cleanup"), ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil },
-		{ id = "wt-remove", label = "Remove", keys = keys.caps(map, "wt-remove"), ["end"] = true, disabled = if removable then nil else "The main, locked or missing worktrees are not removed here" },
-	}
-	props.actions = keyed(actions)
-	-- Unkeyed, so `keyed` would drop it: Remove finished is a button with no shortcut.
-	table.insert(props.actions, { id = "wt-remove-finished", label = "Remove finished", ["end"] = true, disabled = if state.boardBusy then "Reading…" else nil })
 end
 
 -- The Agents scope's preview of the selected agent: its item, its action, branch and state, and, hidden, the link the window
@@ -1285,7 +1260,6 @@ end
 local function agentsProps(state: State, props: { [string]: any })
 	local rows = engine.agentRows(state)
 	local current = engine.agentSelected(state)
-	local map = keys.load()
 	local items: { any } = {}
 	local order: { any } = {}
 	local groups: { [string]: { any } } = {}
@@ -1356,11 +1330,6 @@ local function agentsProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if current then pickerId("g", current.key) else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	props.actions = keyed({
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more") },
-		{ id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true, disabled = if current then nil else "No agent is listed" },
-	})
 end
 
 -- What GitHub's notification reasons say, and how much each wants you; any other reason is shown as GitHub spelled it.
@@ -1545,19 +1514,6 @@ local function nowProps(state: State, props: { [string]: any })
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
 	props.selected = if current then current.id else nil
 	props.columns, props.query, props.cursor = {}, nil, nil
-	props.actions = keyed({
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
-		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true },
-	})
-	-- Unkeyed buttons, so `keyed` would drop them: an agent that needs you is gone to from its row, and answered when it
-	-- waits for input.
-	if current and current.rank == 1 and engine.agentHref(current.key) then
-		if current.waiting then
-			table.insert(props.actions, { id = "agentreply", label = "Reply…", ["end"] = true })
-		end
-		table.insert(props.actions, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true })
-	end
 end
 
 -- The one-key shortcuts as the checklist decided them ("use" | "no"), "set" when none is left to bind, else nil.
@@ -1694,12 +1650,9 @@ function M.queuePicker(state: State): Node
 	elseif snap then
 		note(ui.span("updated " .. os.date("%H:%M", snap.fetched), "muted"))
 	end
-	-- The sort order shares the bottom row with the actions (plotroom.css).
-	local strip: { string } = {}
-	if view and not engine.isPin(view.id) then
-		-- Always shown: which order the list is in. A view with no saved sort keeps GitHub's search order, or Jira's
-		-- status order.
-		table.insert(strip, 1, "Sort: " .. (if view.sort then sorting.label(view.sort) elseif view.integration == "github" then "GitHub's order" else "Default (status order)"))
+	local wait = waitOf(state)
+	if wait > 0 then
+		note(ui.span("Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait), "warning"))
 	end
 	if state.showSnoozed then
 		note(ui.span("Snoozed shown", "muted"))
@@ -1727,35 +1680,8 @@ function M.queuePicker(state: State): Node
 
 	local dropdown = state.cx.cols <= 127
 	local scopes, activeScope = M.scopeRows(state)
-
-	local wait = waitOf(state)
 	local map = keys.load()
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
-	-- Only buttons with a key show: Settings and Refresh on the left, the selected item's on the right, the command
-	-- palette last in the corner.
-	local all: { any } = {
-		{ id = "settings", label = "Settings", keys = keys.caps(map, "settings") },
-		{
-			id = "retry",
-			label = "Refresh",
-			keys = keys.caps(map, "refresh"),
-			disabled = if wait > 0 then "Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait) else nil,
-		},
-	}
-	for _, a in acts do
-		table.insert(all, { id = a.id, label = a.label, keys = a.keys, ["end"] = true })
-	end
-	table.insert(all, { id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true })
-	local actions = keyed(all)
-	if not snap and problem then
-		-- The error card is all there is: it offers Refresh and Settings even without a key.
-		actions = {}
-		for _, a in all do
-			if a.keys or a.id == "settings" or a.id == "retry" then
-				table.insert(actions, a)
-			end
-		end
-	end
 	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
 	local hiddenHow = if map.snoozed ~= "" then "press " .. map.snoozed else "pick Show or hide snoozed in Commands"
 
@@ -1766,7 +1692,7 @@ function M.queuePicker(state: State): Node
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
 		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if not state.boardOn and not state.agentsOn and not state.nowOn and #strip > 0 then ".footer-status" else ""),
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1795,7 +1721,6 @@ function M.queuePicker(state: State): Node
 		focus = state.focus,
 		scopes = tern.json.array(scopes),
 		scope = activeScope,
-		actions = actions,
 	}
 	if state.query then
 		local qp = input.props(state.query)
@@ -1820,9 +1745,6 @@ function M.queuePicker(state: State): Node
 		nowProps(state, props)
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, open, acts) else previewNodes(state, item, open, acts)
-		if #strip > 0 then
-			props.strip = { label = table.concat(strip, " · "), items = tern.json.array({}) }
-		end
 	end
 	-- Narrow: the scope dropdown beside the title names the view or list, so the title keeps only its markers.
 	if dropdown and activeScope and type(props.title) == "table" then
