@@ -353,6 +353,33 @@ case("now: without gh Now reads nothing from GitHub and says what needs you from
 	same(listed(b), { "nabc_23ABC-1" }, "Jira's New issue assigned to you is listed")
 end)
 
+case("now: an idle agent whose outcome is Not verified, or whose report says stuck or needs human, ranks with Needs you, with Go to agent and no Reply…", function(w: World)
+	local _, b = nowScene(w, {})
+	asks.hx.agents(b, {
+		["o/r#3"] = { state = "idle", action = "Implement", outcome = "pr", verdict = "not" },
+		["o/r#4"] = { state = "idle", action = "Fix", attention = "needs-human", reason = "Which base?" },
+		["o/r#5"] = { state = "idle", outcome = "review", verdict = "verified" },
+		["o/r#6"] = { state = "working", outcome = "pr", verdict = "not" },
+		["o/r#7"] = { state = "idle", outcome = "pr", verdict = "unchecked" },
+		["o/r#8"] = { state = "exited" },
+	})
+	same(whys(b), { "no_2fr_233 PR opened: Not verified", "no_2fr_234 Report: needs human" }, "Not verified and a needs-human report rank first; Verified, Unchecked and a working agent do not")
+	eq(b.title(), "Plotroom · Now · 2 need you", "and are counted")
+	local text = textOf(h.pickerNode(b))
+	has(text, "GitHub does not show what its run must leave behind: PR opened: Not verified", "the preview says why")
+	has(text, "Implement", "with the action")
+	local p = h.hx.palette(w, b)
+	yes(table.find(p.ids, "agentgo") ~= nil, "Go to agent is offered")
+	eq(table.find(p.ids, "agentreply"), nil, "Reply… is not: the agent waits for no input")
+	local actions: { string } = {}
+	for _, a in pickerOf(b).actions do
+		table.insert(actions, a.id)
+	end
+	eq(table.find(actions, "agentreply"), nil, "nor is its button")
+	asks.hx.agents(b, { ["o/r#3"] = { state = "idle", attention = "stuck", reason = "No database", outcome = "pr", verdict = "verified" } })
+	same(whys(b), { "no_2fr_233 Report: stuck" }, "a stuck report needs you whatever the outcome")
+end)
+
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)
 	local github = w.load("github") :: any
 	local notices = github.parseNotices(h.array({

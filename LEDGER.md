@@ -52,12 +52,12 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Setup commands | Settings › Repositories | Keep | — | Approved | |
 | Name formats (branch and folder) | Settings › Worktrees | Merge into Settings › **Repositories** | 1 | Approved | A whole page for three fields |
 | Actions and Type a prompt… | Commands, Settings › Actions | Keep | — | Approved | |
-| Default actions (Review, Quick review, Address feedback, Watch, Implement, Fix, Plan) | Settings › Actions | Keep; outcomes added | 3 | Approved | |
+| Default actions (Review, Quick review, Address feedback, Watch, Implement, Fix, Plan) | Settings › Actions | Keep; outcomes added | 3 | Approved | Done: each names its default outcome |
 | Action fields: Model, Runs in, Opens in, Move to status (acli), key | Settings › Actions | Keep | — | Approved | |
 | Action field: Next action (chains) | Settings › Actions | Keep; advances only on a Verified outcome | 3 | Approved | |
 | Action field: Tell Carly when it finishes, and the `plotroom_agents` Carly export | Settings › Actions, Carly | Cut | 1 | Approved | Serves no loop step that Tern's agent notifications and Now don't cover; adds jargon |
 | "An agent already works on it" guard | Commands | Keep | — | Approved | |
-| Checker actions, fixed end-of-run report, outcomes, three-strike limits | Settings › Actions, run log | New | 3 | Approved | PRODUCT.md › Roadmap › Phase 3. Done: the fixed end-of-run report, read into the run log and shown in Agents |
+| Checker actions, fixed end-of-run report, outcomes, three-strike limits | Settings › Actions, run log | New | 3 | Approved | PRODUCT.md › Roadmap › Phase 3. Done: the fixed end-of-run report, read into the run log and shown in Agents; outcomes per action, checked on GitHub into Verified, Not verified or Unchecked on the run log, the row, Agents and Now |
 | Autopilot | One opted-in view | New | 5 | Approved | Gated by PRODUCT.md › Metrics row 6 |
 
 ## Supervise

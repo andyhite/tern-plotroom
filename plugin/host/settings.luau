@@ -297,6 +297,16 @@ local function pageContent(state: State): ({ any }, { Node })
 						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
 					},
 				})
+				local outcomes: { any } = {}
+				for _, o in require("../prompts").OUTCOMES do
+					table.insert(outcomes, { value = o.id, label = o.label })
+				end
+				row({
+					id = "poutcome:" .. qid,
+					label = "Outcome",
+					hint = "What its run must leave behind, checked on GitHub when the agent's turn ends",
+					control = { k = "choice", style = "menu", value = p.outcome or "none", options = tern.json.array(outcomes) },
+				})
 				local nextOptions: { any } = { { value = "none", label = "None" } }
 				for _, other in list do
 					if other.id ~= p.id and not chainReaches(prompts :: Prompts, p.id, other.id) then
@@ -904,6 +914,14 @@ function M.setValue(state: State, row: string, value: any)
 			p.next = to
 			return nil
 		end)
+	elseif kind == "poutcome" then
+		if not (choice and (choice == "none" or require("../prompts").outcomeLabel(choice))) then
+			return
+		end
+		s.errors[row] = editPrompt(state, id, function(_, p)
+			p.outcome = if choice == "none" then nil else choice
+			return nil
+		end)
 	elseif kind == "pwhere" or kind == "psplit" then
 		local yes = if kind == "pwhere" then "worktree" else "split"
 		local no = if kind == "pwhere" then "checkout" else "tab"
@@ -1178,7 +1196,7 @@ function M.runAction(state: State, act: string, row: string)
 		if kind then
 			s.errors[row] = editPrompts(kind, function(store: Prompts): string?
 				for _, d in require("../prompts").missing(kind.prompts, store.items) do
-					table.insert(store.items, { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree })
+					table.insert(store.items, { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, outcome = d.outcome })
 					store.nextId += 1
 				end
 				return nil

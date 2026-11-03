@@ -185,6 +185,26 @@ local REPORT_BADGE: { [string]: { text: string, tone: string, title: string } } 
 	none = { text = "No report", tone = "muted", title = "Its agent's last turn ended without a valid end-of-run report" },
 }
 
+-- What checking a run's outcome on GitHub found, as a badge naming the outcome (prompts.OUTCOMES); nil when the action
+-- names none or no check has answered yet.
+local VERDICT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
+	verified = { text = "Verified", tone = "success", title = "GitHub shows what the run must leave behind: " },
+	["not"] = { text = "Not verified", tone = "warning", title = "GitHub does not show what the run must leave behind: " },
+	unchecked = { text = "Unchecked", tone = "muted", title = "GitHub could not be read, so it is checked again at the next refresh: " },
+}
+local function verdictBadge(info: { outcome: string?, verdict: string? }?): { text: string, tone: string, title: string }?
+	local label = if info then require("../prompts").outcomeLabel(info.outcome) else nil
+	local b = if info and label then VERDICT_BADGE[info.verdict or ""] else nil
+	return if b and label then { text = b.text, tone = b.tone, title = b.title .. label } else nil
+end
+
+-- The Outcome fact: "<outcome>: <verdict>", nil when verdictBadge has none.
+local function verdictText(info: { outcome: string?, verdict: string? }?): string?
+	local b = verdictBadge(info)
+	local label = if info then require("../prompts").outcomeLabel(info.outcome) else nil
+	return if b and label then label .. ": " .. b.text else nil
+end
+
 -- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
 -- Snoozed) in front of `row`'s badges.
 local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
@@ -192,6 +212,10 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
+	end
+	local verdict = if state.agents[item.key] and state.agents[item.key] ~= "exited" then verdictBadge(state.agentInfo[item.key]) else nil
+	if verdict then
+		table.insert(extra, verdict)
 	end
 	local st = engine.status(state, kind, item)
 	if st and st.snoozed then
@@ -208,11 +232,17 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
--- A preview's first fact, above its branch: the item's stage, toned as its row badge.
+-- A preview's first fact, above its branch: the item's stage, toned as its row badge, and its agent's checked outcome.
 local function stageFact(state: State, kind: string, item: any): Node
 	local id, why = engine.stage(state, kind, item)
 	local b = stageBadge(id, why, state.notes[item.key])
-	return ui.node("kv", { key = "stage", items = { { k = "Stage", v = { ui.span(b.text, b.tone) } } } })
+	local items: { any } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
+	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
+	local v = if live then verdictBadge(state.agentInfo[item.key]) else nil
+	if v then
+		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(state.agentInfo[item.key]) :: string, v.tone) } })
+	end
+	return ui.node("kv", { key = "stage", items = items })
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the minute changes (the
@@ -244,7 +274,7 @@ local function rowsOf(state: State, snap: Snap, open: { [string]: boolean }): { 
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -256,7 +286,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1188,6 +1218,7 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
 		{ k = "Report", v = if report then { ui.span(report.text) } else nil },
+		{ k = "Outcome", v = if verdictText(row) then { ui.span(verdictText(row) :: string) } else nil },
 		{ k = "Reason", v = if report and row.reason then { ui.span(printable(row.reason)) } else nil },
 		{ k = "Blocker", v = if report and row.blocker then { ui.span(printable(row.blocker), "error") } else nil },
 		{ k = "Last message", v = if row.last then { ui.span(printable(row.last)) } else nil },
@@ -1199,6 +1230,10 @@ local function agentsPreview(state: State): { Node }
 	}
 	if report then
 		table.insert(titlerow, ui.node("badge", { key = "report", text = report.text, tone = report.tone, title = report.title }))
+	end
+	local verdict = verdictBadge(row)
+	if verdict then
+		table.insert(titlerow, ui.node("badge", { key = "outcome", text = verdict.text, tone = verdict.tone, title = verdict.title }))
 	end
 	local kids: { Node } = {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, titlerow),
@@ -1256,7 +1291,15 @@ local function agentsProps(state: State, props: { [string]: any })
 			table.insert(detail, ui.span(printable(row.last), "muted"))
 		end
 		local id = pickerId("g", row.key)
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = { AGENT_BADGE[row.state], report } })
+		local badges: { any } = { AGENT_BADGE[row.state] }
+		if report then
+			table.insert(badges, report)
+		end
+		local verdict = verdictBadge(row)
+		if verdict then
+			table.insert(badges, verdict)
+		end
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
 			table.insert(names, row.repo)
@@ -1311,7 +1354,15 @@ end
 -- Why Now lists `row` (engine.nowRows): its badge, and the sentence its preview says it with.
 local function nowWhy(row: any): ({ text: string, tone: string, title: string }, string)
 	if row.rank == 1 then
-		return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+		local agent = row.agent or {}
+		local verdict = verdictText(agent)
+		if row.waiting then
+			return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+		elseif agent.attention == "stuck" or agent.attention == "needs-human" then
+			local report = REPORT_BADGE[agent.attention]
+			return { text = report.text, tone = report.tone, title = report.title }, report.title
+		end
+		return { text = verdict or "Not verified", tone = "warning", title = "GitHub does not show what its run must leave behind" }, "GitHub does not show what its run must leave behind: " .. (verdict or "Not verified")
 	elseif row.rank == 2 then
 		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
 	elseif row.rank == 3 then
@@ -1339,13 +1390,18 @@ local function nowPreview(state: State): { Node }
 		local id, why = engine.stage(state, row.kind, item)
 		stage = stageBadge(id, why, state.notes[item.key])
 	end
-	local reply = if row.rank == 1 and row.key then engine.agentHref(row.key, "agentreply") else nil
-	local enter = if reply then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
+	local go = if row.rank == 1 and row.key then engine.agentHref(row.key) else nil
+	local reply = if go and row.waiting then engine.agentHref(row.key, "agentreply") else nil
+	local enter = if go then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
 	-- The links Go to agent and Reply… open (the window honours only links its block shows).
 	local links: { Node } = {}
-	if reply then
-		links = { ui.node("text", { key = "agentgo", href = engine.agentHref(row.key) }), ui.node("text", { key = "agentreply", href = reply }) }
+	if go then
+		table.insert(links, ui.node("text", { key = "agentgo", href = go }))
 	end
+	if reply then
+		table.insert(links, ui.node("text", { key = "agentreply", href = reply }))
+	end
+	local report = if agent then REPORT_BADGE[agent.attention or ""] else nil
 	return {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, {
 			ui.node("text", { key = "title", spans = { ui.span(printable(row.title), "strong") } }),
@@ -1358,6 +1414,10 @@ local function nowPreview(state: State): { Node }
 				{ k = "Stage", v = if stage then { ui.span(stage.text, stage.tone) } else nil },
 				{ k = "Item", v = if row.key then { ui.span(printable(row.key), "mono") } elseif n then { ui.span(printable(n.repo), "mono") } else nil },
 				{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
+				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string) } else nil },
+				{ k = "Report", v = if report and agent.attention ~= "none" then { ui.span(report.text) } else nil },
+				{ k = "Reason", v = if report and agent.reason then { ui.span(printable(agent.reason)) } else nil },
+				{ k = "Blocker", v = if report and agent.blocker then { ui.span(printable(agent.blocker), "error") } else nil },
 				{ k = "Last message", v = if agent and agent.last then { ui.span(printable(agent.last)) } else nil },
 				{ k = "Updated", v = if n and n.updated > 0 then { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } else nil },
 				{ k = "Snoozed", v = if row.snoozed then { ui.span("Until 08:00", "muted") } else nil },
@@ -1447,9 +1507,12 @@ local function nowProps(state: State, props: { [string]: any })
 		{ id = "retry", label = "Refresh", keys = keys.caps(map, "refresh") },
 		{ id = "more", label = "Commands", keys = keys.caps(map, "more"), ["end"] = true },
 	})
-	-- Unkeyed buttons, so `keyed` would drop them: an agent that needs input is answered or gone to from its row.
+	-- Unkeyed buttons, so `keyed` would drop them: an agent that needs you is gone to from its row, and answered when it
+	-- waits for input.
 	if current and current.rank == 1 and engine.agentHref(current.key) then
-		table.insert(props.actions, { id = "agentreply", label = "Reply…", ["end"] = true })
+		if current.waiting then
+			table.insert(props.actions, { id = "agentreply", label = "Reply…", ["end"] = true })
+		end
 		table.insert(props.actions, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), ["end"] = true })
 	end
 end

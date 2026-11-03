@@ -1780,6 +1780,29 @@ def sc_agent(s: Smoke) -> None:
     s.eq("dismissing the review pushed nothing: the remote's refs are as before", refs_before, s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)"))
 
 
+def sc_outcome(s: Smoke) -> None:
+    """Settings › Actions in real Tern: the default Review action's open form has an Outcome row reading Review posted (its default). Checking
+    outcomes needs a model's turn end, so the regression cases cover that."""
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("agent"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_until("the new block opens on Now", s.on_now)
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Settings"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_text("Settings opens", "Repositories")
+    s.ctl_ok("click", ".nav-row:nth-child(2)")  # Actions
+    s.wait_text("the Actions page", "Pull request actions")
+    s.ctl_ok("click", ".btn.sm")  # the first action's Edit: Review
+    s.wait_text("Review's form has an Outcome row", "Outcome")
+    s.wait_text("reading its default", "Review posted")
+    s.shot("action-outcome")
+    s.ctl_ok("key", "Escape")
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -1804,6 +1827,7 @@ SCENARIOS = [
     ("triage, sort and worktrees board", sc_workflow),
     ("URL prompts", sc_prompts),
     ("agent launch, jump and duplicate offer", sc_agent),
+    ("action outcome", sc_outcome),
 ]
 
 

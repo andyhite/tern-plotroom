@@ -332,17 +332,30 @@ function M.status(state: State, kind: string, item: any): any
 	return if store then triage.status(store, kind, item, os.time()) else nil
 end
 
--- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents), its worktree
--- (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. `why` says what blocks a PR.
--- A fact GitHub did not give (merge state unknown) never makes Ready to merge.
+-- Whether the agent of item `key` needs you: it waits for input; or, idle after its turn, its end-of-run report says
+-- `stuck` or `needs-human`, or its run's outcome was checked Not verified. A working agent does not (you answered it),
+-- and an exited one is no longer listed.
+function M.needsYou(state: State, key: string): boolean
+	local agent = state.agents[key]
+	if agent == "waiting_input" then
+		return true
+	elseif agent ~= "idle" then
+		return false
+	end
+	local info: AgentInfo = state.agentInfo[key] or {}
+	return info.attention == "stuck" or info.attention == "needs-human" or info.verdict == "not"
+end
+
+-- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents, needsYou), its
+-- worktree (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. `why` says what
+-- blocks a PR. A fact GitHub did not give (merge state unknown) never makes Ready to merge.
 function M.stage(state: State, kind: string, item: any): (string, string?)
 	if item.state == "merged" or item.state == "closed" then
 		return item.state
 	end
-	local agent = state.agents[item.key]
-	if agent == "waiting_input" then
+	if M.needsYou(state, item.key) then
 		return "needs"
-	elseif agent == "working" then
+	elseif state.agents[item.key] == "working" then
 		return "working"
 	end
 	if kind == "prs" then
@@ -440,7 +453,7 @@ function M.keep(state: State, kind: string, item: any): boolean
 	if shown and M.isPin(shown.id) then
 		return true -- the one item shown on its own is never filtered out
 	end
-	if state.showSnoozed or state.agents[item.key] == "waiting_input" then
+	if state.showSnoozed or M.needsYou(state, item.key) then
 		return true
 	end
 	local store = M.store(state)
@@ -456,7 +469,7 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	local store = M.store(state)
 	local now = os.time()
 	for _, item in snap.items do
-		if state.agents[item.key] == "waiting_input" or not (store and triage.snoozed(store, item, now)) then
+		if M.needsYou(state, item.key) or not (store and triage.snoozed(store, item, now)) then
 			n += 1
 		end
 	end
@@ -2293,9 +2306,9 @@ tern.on("command_finished", function(ev: any, _cx: any)
 	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended?, attention?, reason?, blocker? }): replaces what the rows show. An optional text that is not a clean
--- string within its cap is dropped, never trusted.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200 }
+-- result?, ended?, attention?, reason?, blocker?, outcome?, verdict? }): replaces what the rows show. An optional text
+-- that is not a clean string within its cap is dropped, never trusted.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10 }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -2355,7 +2368,7 @@ function M.agentRows(state: State): { any }
 	for key, st in state.agents do
 		if st ~= "exited" then
 			local info: AgentInfo = state.agentInfo[key] or {}
-			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended, attention = info.attention, reason = info.reason, blocker = info.blocker })
+			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended, attention = info.attention, reason = info.reason, blocker = info.blocker, outcome = info.outcome, verdict = info.verdict, needs = M.needsYou(state, key) })
 		end
 	end
 	table.sort(rows, function(a: any, b: any): boolean
@@ -2426,7 +2439,7 @@ end
 -- follows the link Now's preview carries. false when the row is no such agent.
 function M.nowAgent(state: State, act: string): boolean
 	local row = M.nowSelected(state)
-	local href = if row and row.rank == 1 and row.key then M.agentHref(row.key, act) else nil
+	local href = if row and row.rank == 1 and row.key and (act ~= "agentreply" or row.waiting) then M.agentHref(row.key, act) else nil
 	if href then
 		state.cx:open(href)
 	end
@@ -2546,11 +2559,11 @@ function M.nowRead(state: State)
 	settle()
 end
 
--- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, title, url?, snoozed }. Ranks:
--- 1 an agent needs input, 2 your pull request is Blocked (`why` says by what), 3 your review is requested (oldest
--- first), 4 your pull request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you
--- is New or Changed (`why`). An item is listed once, at its highest rank; a snoozed one only while snoozed items are
--- shown (an agent that needs input is always listed, as in the views).
+-- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, waiting?, title, url?, snoozed }.
+-- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` says by
+-- what), 3 your review is requested (oldest first), 4 your pull request is Ready to merge, 5 an unread notification you
+-- take part in, 6 an issue assigned to you is New or Changed (`why`). An item is listed once, at its highest rank; a
+-- snoozed one only while snoozed items are shown (an agent that needs you is always listed, as in the views).
 function M.nowRows(state: State): { any }
 	local now = state.now
 	local clock = os.time()
@@ -2583,8 +2596,8 @@ function M.nowRows(state: State): { any }
 		table.insert(rows, { id = M.pickerId("n", item.key), key = item.key, rank = rank, why = why, kind = kind, item = item, title = item.title, url = item.url, snoozed = snoozed })
 	end
 	local waiting: { string } = {}
-	for key, st in state.agents do
-		if st == "waiting_input" then
+	for key in state.agents do
+		if M.needsYou(state, key) then
 			table.insert(waiting, key)
 		end
 	end
@@ -2600,6 +2613,7 @@ function M.nowRows(state: State): { any }
 			kind = if found then found.kind else nil,
 			item = if found then found.item else nil,
 			agent = info,
+			waiting = state.agents[key] == "waiting_input", -- else idle: its report or its outcome check needs you
 			title = if found then found.item.title elseif info.title then info.title else key,
 			url = if found then found.item.url else nil,
 			snoozed = false,

@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -363,6 +363,115 @@ windowCase("window flows: a malformed report records No report", function(w: Wor
 	w.flush()
 	eq((w.kv.get("runs") :: any)[1].attention, "none", "an attention outside ok, stuck and needs-human is no report")
 	lacks(jsonEncode(w.kv.get("runs")), "Shipped", "and none of it is kept")
+end)
+
+-- Starts the saved action `name` with outcome `outcome` on o/r#5 as gh login cat; its link and the worktree request.
+local function startWithOutcome(w: World, st: FlowStub, name: string, outcome: string): (any, any)
+	local url = "plotroom://github/agent/o/r/5"
+	st.link("layer.queue.buttons.agent", url)
+	st.palette({ items = { { id = "p1", label = name } } })
+	w.window.choose = name
+	w.click(url)
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = name, send = "Work on {url}", worktree = true, outcome = outcome } } })
+	local asked = st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing", ["github.user"] = "cat" })
+	return (w.kv.get("agent-links") :: any)[1], asked
+end
+
+-- The newest outcome request the window sent, decoded.
+local function outcomeAsks(w: World): { any }
+	local out: { any } = {}
+	for _, q in requestsSent(w) do
+		if q.op == "outcome" then
+			table.insert(out, q)
+		end
+	end
+	return out
+end
+
+windowCase("window flows: an action's outcome is checked as the run's login at each turn end; the verdict goes on the link, the run and the block", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link, asked = startWithOutcome(w, st, "Address feedback", "replied")
+	eq(asked.users, true, "the login is asked for even though the prompt names none: the outcome is checked as it")
+	same({ link.outcome, link.login, link.ghRepo, link.number, link.branch }, { "replied", "cat", "o/r", 5, "fix-5" } :: { any }, "the link keeps what the check needs")
+	local commit = sha("a")
+	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Replied and pushed", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("runs") :: any)[1].outcome, "replied", "the run records its outcome")
+	eq((w.kv.get("runs") :: any)[1].verdict, nil, "and no verdict before the check answers: never Verified on no data")
+	local q = st.reply("outcome", { verdict = "not" })
+	same({ q.outcome, q.repo, q.number, q.branch, q.commit, q.since, q.login }, { "replied", "o/r", 5, "fix-5", commit, link.started, "cat" } :: { any }, "the check names the run's facts, its start and login")
+	eq((w.kv.get("agent-links") :: any)[1].verdict, "not", "Not verified on the link")
+	eq((w.kv.get("runs") :: any)[1].verdict, "not", "and on the run")
+	w.advance(4100)
+	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
+	same({ row.outcome, row.verdict }, { "replied", "not" }, "and the block is told it")
+	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Done now", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	q = st.reply("outcome", { verdict = "verified" })
+	eq(q.commit, commit, "a later turn is checked again, with the last commit reported")
+	eq((w.kv.get("runs") :: any)[1].verdict, "verified", "the same run is Verified")
+	eq(#(w.kv.get("runs") :: any), 1, "with no second run")
+	for _, t in w.toasts do
+		lacks(t.text, "did not answer", "no check is toasted")
+	end
+end)
+
+windowCase("window flows: an action with no outcome is never checked, and a host too old to check is not asked or toasted", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = startReview(w)
+	eq(link.outcome, nil, "Review here names no outcome")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#outcomeAsks(w), 0, "no check")
+	eq((w.kv.get("runs") :: any)[1].outcome, nil, "and no outcome on the run")
+	w.window.panes[link.agent] = nil -- that agent is gone, so nothing asks about starting another
+	local main: any = w.window.surfaces[1].main.c
+	main[1].p.text = "35"
+	local toasts = #w.toasts
+	local other = startWithOutcome(w, st, "Watch", "merged")
+	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
+	w.flush()
+	w.advance(130 * 1000)
+	eq(#outcomeAsks(w), 0, "a host on protocol 35 is not asked, at the turn end or later")
+	eq((w.kv.get("agent-links") :: any)[1].verdict, nil, "the run has no verdict")
+	for i = toasts + 1, #w.toasts do
+		lacks(w.toasts[i].text, "older version", "and no version toast is shown for it")
+	end
+end)
+
+windowCase("window flows: an Unchecked run is checked again once a refresh, a Merged one until it merges or its agent exits", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = startWithOutcome(w, st, "Watch", "merged")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	st.reply("outcome", { verdict = "unchecked", why = "HTTP 502" })
+	eq((w.kv.get("agent-links") :: any)[1].verdict, "unchecked", "Unchecked")
+	w.advance(30 * 1000)
+	eq(#outcomeAsks(w), 1, "not again within the minute")
+	w.advance(35 * 1000)
+	eq(#outcomeAsks(w), 2, "asked again at the next refresh")
+	st.reply("outcome", { verdict = "not" })
+	w.advance(65 * 1000)
+	eq(#outcomeAsks(w), 3, "Merged and Not verified while its agent runs: asked again")
+	st.reply("outcome", { verdict = "verified" })
+	w.advance(130 * 1000)
+	eq(#outcomeAsks(w), 3, "Verified: never again")
+	eq((w.kv.get("runs") :: any)[1].verdict, "verified", "the run is Verified")
+	w.window.panes[link.agent] = nil
+	local other = startWithOutcome(w, st, "Watch", "merged")
+	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
+	w.flush()
+	st.reply("outcome", { verdict = "not" })
+	w.window.panes[other.agent] = nil
+	w.advance(130 * 1000)
+	eq(#outcomeAsks(w), 4, "an exited agent's Merged run is not checked again")
+	eq((w.kv.get("agent-links") :: any)[1].verdict, "not", "and stays Not verified")
 end)
 
 case("usage: reportOf takes only a well-formed plotroom-report block", function(w: World)
@@ -3003,16 +3112,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working||||||||||;o/r#2=idle||||||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working||||||||||||;o/r#2=idle||||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input||||||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input||||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
-	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database;", "the recorded texts are part of it")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -3452,6 +3561,119 @@ case("host agents: the Agents list shows the last message, delivery error and la
 	has(detail, "omp needs updating", "and the delivery error")
 	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", last = "bad\ntext", result = 5 } })
 	same(b.state().agentInfo["o/r#1"], {}, "texts that are not clean strings are dropped")
+end)
+
+case("host agents: a run's checked outcome shows on its row, the preview and the Agents list; Not verified or a stuck report is Needs you while the agent is idle", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local function badges(id: string): { string }
+		for _, row in pickerOf(b).items do
+			if row.id == id then
+				local out: { string } = {}
+				for _, badge in row.badges or {} do
+					table.insert(out, badge.text)
+				end
+				return out
+			end
+		end
+		return {}
+	end
+	asks.hx.agents(b, {
+		["o/r#1"] = { state = "idle", action = "Implement", outcome = "pr", verdict = "not" },
+		["o/r#2"] = { state = "idle", action = "Review", outcome = "review", verdict = "verified" },
+		["o/r#3"] = { state = "idle", action = "Watch", outcome = "merged", verdict = "unchecked", attention = "stuck" },
+	})
+	eq(asks.hx.stage(b, "no_2fr_231"), "Needs you", "Not verified is Needs you")
+	has(table.concat(badges("no_2fr_231"), ","), "Not verified", "and its row says Not verified")
+	eq(asks.hx.stage(b, "no_2fr_232"), "PR open", "Verified leaves the stage to GitHub")
+	has(table.concat(badges("no_2fr_232"), ","), "Verified", "and its row says Verified")
+	eq(asks.hx.stage(b, "no_2fr_233"), "Needs you", "a stuck report is Needs you, Unchecked or not")
+	has(table.concat(badges("no_2fr_233"), ","), "Unchecked", "and its row says Unchecked")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	eq(h.factOf(b, "Outcome"), "PR opened: Not verified", "the preview names the outcome and its verdict")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", outcome = "pr", verdict = "not" } })
+	eq(asks.hx.stage(b, "no_2fr_231"), "Agent working", "once you answer it, the agent works again")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "exited" } })
+	eq(asks.hx.stage(b, "no_2fr_231"), "PR open", "an exited agent's outcome no longer shows")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Implement", outcome = "pr", verdict = "verified" } })
+	pickScope(b, "agents")
+	w.flush()
+	has(table.concat(badges("go_2fr_231"), ","), "Verified", "the Agents row says it")
+	local out: { string } = {}
+	collectTexts(pickerNode(b), out)
+	has(table.concat(out, "|"), "PR opened: Verified", "and so does its preview")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", outcome = "pr", verdict = "maybe" } })
+	same(badges("go_2fr_231"), { "Idle" }, "a verdict that is none of the three shows nothing")
+end)
+
+case("host outcome: the block answers an outcome check with GitHub's verdict, and a malformed one is Unchecked without asking", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	local before = #s.gh.requests
+	local a = asks.hx.ask(w, b, { op = "outcome", outcome = "pr", repo = "o/r", since = EPOCH, login = "octocat" })
+	same({ a.verdict, a.why }, { "not", "The run had no branch." }, "a run that left no branch opened no pull request")
+	for _, bad: { [string]: any } in { { repo = "nope" }, { commit = "abc" }, { number = 1.5 }, { branch = "a\nb" }, { since = "now" } } :: { any } do
+		local q: { [string]: any } = { op = "outcome", outcome = "pushed", repo = "o/r", branch = "b", since = EPOCH, login = "octocat" }
+		for k, v in bad do
+			q[k] = v
+		end
+		eq(asks.hx.ask(w, b, q).verdict, "unchecked", "malformed: " .. jsonEncode(bad))
+	end
+	eq(#s.gh.requests, before, "GitHub was never asked")
+end)
+
+case("host actions: default actions name their outcome, a saved action without one reads as None, and Settings sets it", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local storage: any = w.load("host/storage")
+	local core: any = w.load("host/core")
+	local function outcomes(kind: any): { string }
+		local out: { string } = {}
+		for _, p in storage.loadPrompts(kind).items do
+			table.insert(out, p.name .. "=" .. (p.outcome or "none"))
+		end
+		return out
+	end
+	w.kv.put("prompts-prs", nil)
+	w.kv.put("prompts-issues", nil)
+	same(outcomes(core.KINDS.prs), { "Review=review", "Quick review=review", "Address feedback=replied", "Watch=merged" }, "pull request defaults")
+	same(outcomes(core.KINDS.issues), { "Implement=pr", "Fix=pr", "Plan=none" }, "issue defaults")
+	w.kv.put("prompts-prs", { version = 1, nextId = 3, items = array({ { id = "p1", name = "Review", text = "Review {url}" }, { id = "p2", name = "Later", text = "x", outcome = "a-future-one" } }) })
+	same(outcomes(core.KINDS.prs), { "Review=none", "Later=none" }, "a saved action without an outcome, or with one this version does not know, has none")
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	local row = rowIn(b, "poutcome:prs:p1")
+	eq(row.label, "Outcome", "the action's Outcome row")
+	eq(row.control.value, "none", "reads None")
+	local labels: { string } = {}
+	for _, o in row.control.options do
+		table.insert(labels, o.label)
+	end
+	same(labels, { "None", "Review posted", "PR opened", "Pushed", "Replied to feedback", "Merged" }, "with the six outcomes")
+	b.event({ ev = "change", id = "layer.settings", item = "poutcome:prs:p1", value = "pushed" })
+	eq((w.kv.get("prompts-prs") :: any).items[1].outcome, "pushed", "a choice is saved")
+	b.event({ ev = "change", id = "layer.settings", item = "poutcome:prs:p1", value = "bogus" })
+	eq((w.kv.get("prompts-prs") :: any).items[1].outcome, "pushed", "an outcome not offered changes nothing")
+	b.event({ ev = "change", id = "layer.settings", item = "poutcome:prs:p1", value = "none" })
+	eq((w.kv.get("prompts-prs") :: any).items[1].outcome, nil, "None clears it")
+end)
+
+case("usage: the report counts each action's outcomes as verified, not verified and unchecked", function(w: World)
+	local usage: any = w.load("usage")
+	local prompts: any = w.load("prompts")
+	local runs: { any } = {
+		{ key = "o/r#1", action = "Implement", result = "done", ended = EPOCH, outcome = "pr", verdict = "verified" },
+		{ key = "o/r#2", action = "Implement", result = "done", ended = EPOCH, outcome = "pr", verdict = "verified" },
+		{ key = "o/r#3", action = "Implement", result = "done", ended = EPOCH, outcome = "pr", verdict = "not" },
+		{ key = "o/r#4", action = "Implement", result = "failed", ended = EPOCH, outcome = "pr" },
+		{ key = "o/r#5", action = "Plan", result = "done", ended = EPOCH },
+	}
+	local text = usage.report({ host = { value = { since = 0, counts = {} } }, here = { value = { since = 0, counts = {} } }, runs = { value = runs }, name = function(id: string): string
+		return id
+	end, outcome = prompts.outcomeLabel })
+	has(text, "Implement · 4 runs", "the action's runs")
+	has(text, "  Outcome PR opened · verified 2, not verified 1, unchecked 1", "and its outcome counts: a run never checked counts as unchecked")
+	lacks(string.match(text, "Plan[^\n]*\n[^\n]*") or "", "Outcome", "an action with no outcome has no outcome line")
 end)
 
 -- ---------------------------------------------------------------- agent events, Files, selection

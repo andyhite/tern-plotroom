@@ -1257,6 +1257,114 @@ function M.pullByHead(repo: string, branch: string, account: string?, done: (Hea
 	end, account)
 end
 
+-- What an outcome check reads (host/requests' `outcome` op): outcome `outcome` (a prompts.OUTCOMES id) of a run on
+-- `repo` that started at `since` (seconds since the epoch) as gh login `login`. `number`: the pull request the run
+-- worked on (a pull request action); `branch`: the worktree's branch; `commit`: the commit its report names.
+export type OutcomeCheck = { outcome: string, repo: string, number: number?, branch: string?, commit: string?, since: number, login: string }
+
+-- Whether `nodes` (GraphQL nodes) holds one by `who` (any case) stamped `key` at or after `since`.
+local function since(nodes: any, key: string, who: string, from: number, by: string?): boolean
+	if type(nodes) ~= "table" then
+		return false
+	end
+	for _, n in nodes do
+		local at = M.stamp(field(n, key))
+		local author = field(n, by or "author", "login")
+		if at and at >= from and type(author) == "string" and string.lower(author) == string.lower(who) then
+			return true
+		end
+	end
+	return false
+end
+
+local OUTCOME_PR = "pullRequest(number: $n) { merged headRefOid reviews(last: 100, author: $a) { nodes { submittedAt author { login } } } comments(last: 100) { nodes { createdAt author { login } } } reviewThreads(last: 100) { nodes { resolvedBy { login } comments(last: 50) { nodes { createdAt author { login } } } } } }"
+local OUTCOME_HEAD = "open: pullRequests(headRefName: $b, states: OPEN, first: 1) { totalCount } merged: pullRequests(headRefName: $b, states: MERGED, first: 1) { totalCount } ref(qualifiedName: $q) { target { oid } }"
+
+-- Checks `c` against GitHub as `c.login`, which must hold it: "verified" or "not", or "unchecked" and why when a fact
+-- could not be read (rate limit, gh failure, unexpected data). Facts the run left nothing to check by (no pull request
+-- for a review, no branch for a pull request, no reported commit for a push) are "not": missing data is never
+-- verified. ponytail: GitHub's API gives no time for a thread's resolution, so for Replied to feedback a thread resolved
+-- by the login counts whenever it was resolved; the reported commit at the head stands in for the push being new.
+-- done never runs before this call returns.
+function M.outcome(c: OutcomeCheck, done: (string, string?) -> ())
+	local o = c.outcome
+	local owner, name = string.match(c.repo, "^([^/]+)/([^/]+)$")
+	local who = login(c.login)
+	local needsPr = o == "review" or o == "replied" or (c.number ~= nil and (o == "merged" or o == "pushed"))
+	local commit = if type(c.commit) == "string" then string.lower(c.commit) else nil
+	local function answer(verdict: string, why: string?)
+		later(function()
+			done(verdict, why)
+		end)
+	end
+	if not owner or not name or not who then
+		return answer("unchecked", "The run's repository or GitHub login is unknown.")
+	elseif needsPr and not c.number then
+		return answer("not", "The run worked on no pull request.")
+	elseif not needsPr and not c.branch then
+		return answer("not", "The run had no branch.")
+	elseif (o == "pushed" or o == "replied") and not commit then
+		return answer("not", "The run reported no commit.")
+	elseif o ~= "review" and o ~= "pr" and o ~= "pushed" and o ~= "replied" and o ~= "merged" then
+		return answer("not", "Unknown outcome.")
+	end
+	local wait = M.wait(os.time(), who)
+	if wait > 0 then
+		return answer("unchecked", "GitHub's rate limit is reached until " .. os.date("%H:%M", os.time() + wait) .. ".")
+	end
+	local args: { string } = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "o=" .. owner, "-f", "r=" .. name }
+	local query: string
+	if needsPr then
+		query = "query($o: String!, $r: String!, $n: Int!, $a: String!) { repository(owner: $o, name: $r) { " .. OUTCOME_PR .. " } }"
+		table.insert(args, "-F")
+		table.insert(args, "n=" .. (c.number :: number))
+		table.insert(args, "-f")
+		table.insert(args, "a=" .. who)
+	else
+		query = "query($o: String!, $r: String!, $b: String!, $q: String!) { repository(owner: $o, name: $r) { " .. OUTCOME_HEAD .. " } }"
+		table.insert(args, "-f")
+		table.insert(args, "b=" .. (c.branch :: string))
+		table.insert(args, "-f")
+		table.insert(args, "q=refs/heads/" .. (c.branch :: string))
+	end
+	table.insert(args, "-f")
+	table.insert(args, "query=" .. query)
+	M.gh(args, function(out, problem, _, raw)
+		local body = observe(out, raw, problem, who)
+		if not out then
+			return done("unchecked", if problem then problem.message else "gh gave no answer.")
+		end
+		local ok, data = pcall(tern.json.decode, body)
+		local repo = if ok then field(data, "data", "repository") else nil
+		local pr = field(repo, "pullRequest")
+		if type(repo) ~= "table" or (needsPr and type(pr) ~= "table") then
+			return done("unchecked", "gh printed unexpected pull request data.")
+		end
+		local yes = false
+		if not needsPr then
+			local oid = field(repo, "ref", "target", "oid")
+			yes = if o == "pr" then (tonumber(field(repo, "open", "totalCount")) or 0) > 0
+				elseif o == "merged" then (tonumber(field(repo, "merged", "totalCount")) or 0) > 0
+				else type(oid) == "string" and string.lower(oid) == commit
+		elseif o == "review" then
+			yes = since(field(pr, "reviews", "nodes"), "submittedAt", who, c.since)
+		elseif o == "merged" then
+			yes = field(pr, "merged") == true
+		else
+			local head = field(pr, "headRefOid")
+			local pushed = type(head) == "string" and string.lower(head) == commit
+			local replied = since(field(pr, "comments", "nodes"), "createdAt", who, c.since)
+			local threads = field(pr, "reviewThreads", "nodes")
+			for _, t in if type(threads) == "table" then threads else {} do
+				local by = field(t, "resolvedBy", "login")
+				replied = replied or since(field(t, "comments", "nodes"), "createdAt", who, c.since) or (type(by) == "string" and string.lower(by) == string.lower(who))
+			end
+			yes = if o == "pushed" then pushed else pushed and replied
+		end
+		done(if yes then "verified" else "not", nil)
+	end, who)
+end
+
 -- What the repository picker lists, read slowly from gh, so kept by `key`: a known value answers at once (one older
 -- than LIST_TTL_S is then read again in the background), and callers during a read share it. `read` calls its
 -- callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.

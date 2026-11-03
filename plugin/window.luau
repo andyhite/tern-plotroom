@@ -83,8 +83,9 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
--- chained before it and `tab` is the tab the previous one ran in, which the next one joins.
-type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number? }
+-- chained before it and `tab` is the tab the previous one ran in, which the next one joins. `outcome` (a saved action's
+-- prompts.OUTCOMES id; nil: none) is what its run must leave behind, checked when the agent's turn ends.
+type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string? }
 local MAX_CHAIN = 8 -- actions in one chain; Settings refuses loops, this stops one that got into the store anyway
 
 local function prTarget(owner: string, name: string, n: number): Target
@@ -364,9 +365,15 @@ local answered: (WindowCx, string) -> ()
 
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
 -- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
--- so instead. False when nothing was sent: an older host that does not know `op` is refused at once.
-local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> ()): boolean
-	if not sameVersion(cx, pane, op) then
+-- so instead. False when nothing was sent: an older host that does not know `op` is refused at once. `quiet` (a
+-- background request): neither the refusal nor a missing answer is toasted.
+local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> (), quiet: boolean?): boolean
+	if quiet then
+		local p = protocolOf(cx, pane)
+		if not (inRange(p) and (rpc.SINCE[op] or rpc.MIN) <= (p :: number)) then
+			return false
+		end
+	elseif not sameVersion(cx, pane, op) then
 		return false
 	end
 	requests += 1
@@ -375,7 +382,7 @@ local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any
 	local timer = tern.timer(ms, function(cx2: WindowCx?)
 		if pending[id] then
 			pending[id] = nil
-			if cx2 then
+			if cx2 and not quiet then
 				cx2:toast("error", "Plotroom: the block's host did not answer", "Try again; if it keeps happening, reload plugins on that host.")
 			end
 		end
@@ -842,18 +849,19 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				finishWorktree(cx2, pane, t, ready)
 			elseif t.kind == "pr" then
 				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title) })
+				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
 			else
 				local vars: any = a.vars
-				local started = finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code) })
+				local started = finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) })
 				if started and prompt.status then
 					moveStatus(cx2, pane, t, prompt.status)
 				end
 			end
 		end)
 	end
-	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one.
-	local users = prompt ~= nil and (string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
+	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one, or its outcome
+	-- is checked as the GitHub login it runs as.
+	local users = prompt ~= nil and (prompt.outcome ~= nil or string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
 		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users }, PREPARE_MS, done)
@@ -897,7 +905,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil }
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil }
 				local function go(cx3: WindowCx)
 					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
 				end
@@ -1714,6 +1722,7 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 			id = id,
 			name = if type(a.label) == "string" then a.label else nil,
 			next = if type(a.next) == "string" then a.next else nil,
+			outcome = if type(a.outcome) == "string" then a.outcome else nil,
 			depth = chain.depth + 1,
 			tab = tab,
 		}, a.worktree ~= false, if chain.kind == "issue" and chain.code then { target = chain.code } else {})

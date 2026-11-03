@@ -6,7 +6,29 @@
 
 local M = {}
 
-export type Seed = { id: string, name: string, text: string, worktree: boolean? }
+export type Seed = { id: string, name: string, text: string, worktree: boolean?, outcome: string? }
+
+-- What an action's run must leave behind (an action's Outcome, PRODUCT.md › Glossary › Outcome), in the order Settings
+-- lists them. Plotroom checks it against GitHub when the run's turn ends; "none" is never checked. A saved action
+-- without one, or with an id not listed here, has none.
+M.OUTCOMES = {
+	{ id = "none", label = "None" },
+	{ id = "review", label = "Review posted" },
+	{ id = "pr", label = "PR opened" },
+	{ id = "pushed", label = "Pushed" },
+	{ id = "replied", label = "Replied to feedback" },
+	{ id = "merged", label = "Merged" },
+}
+
+-- The label of outcome `id`; nil for "none" or an id not listed.
+function M.outcomeLabel(id: string?): string?
+	for _, o in M.OUTCOMES do
+		if o.id == id and id ~= "none" then
+			return o.label
+		end
+	end
+	return nil
+end
 
 local FRESH = [==[- Fresh worktree: Plotroom MAY still be running the repo's setup commands in the shell beside you. Missing dependencies → wait and retry before installing anything.
 ]==]
@@ -465,15 +487,15 @@ Requested edits to the tickets → show them again for approval, unless I author
 </critical>]==]
 
 M.prs = {
-	{ id = "p1", name = "Review", text = REVIEW },
-	{ id = "p2", name = "Quick review", text = QUICK_REVIEW, worktree = false },
-	{ id = "p3", name = "Address feedback", text = ADDRESS },
-	{ id = "p4", name = "Watch", text = WATCH },
+	{ id = "p1", name = "Review", text = REVIEW, outcome = "review" },
+	{ id = "p2", name = "Quick review", text = QUICK_REVIEW, worktree = false, outcome = "review" },
+	{ id = "p3", name = "Address feedback", text = ADDRESS, outcome = "replied" },
+	{ id = "p4", name = "Watch", text = WATCH, outcome = "merged" },
 } :: { Seed }
 
 M.issues = {
-	{ id = "p1", name = "Implement", text = IMPLEMENT },
-	{ id = "p2", name = "Fix", text = FIX },
+	{ id = "p1", name = "Implement", text = IMPLEMENT, outcome = "pr" },
+	{ id = "p2", name = "Fix", text = FIX, outcome = "pr" },
 	{ id = "p3", name = "Plan", text = PLAN, worktree = false },
 } :: { Seed }
 

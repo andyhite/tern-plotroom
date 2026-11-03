@@ -1,5 +1,6 @@
 --!strict
 -- Saved views, prompts, checkouts, setup commands, Jira project map and the name formats, all in kv.
+local defaults = require("../prompts") -- the default actions and the outcomes they may name
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
@@ -377,7 +378,7 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	if v == nil then
 		local seeds: { Prompt } = {}
 		for _, p in kind.prompts do
-			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree })
+			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, outcome = p.outcome })
 		end
 		return { version = 1, nextId = #seeds + 1, items = seeds }, nil
 	end
@@ -397,10 +398,13 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.model ~= nil and type(p.model) ~= "string")
 			or (p.status ~= nil and type(p.status) ~= "string")
 			or (p.next ~= nil and type(p.next) ~= "string")
+			or (p.outcome ~= nil and type(p.outcome) ~= "string")
 		then
 			return nil, PROMPTS_BAD
 		end
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
+		-- An outcome this version does not know (or none saved: an action from before outcomes) reads as None.
+		local outcome = if defaults.outcomeLabel(p.outcome) then p.outcome else nil
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = outcome })
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -417,7 +421,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = p.outcome })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil

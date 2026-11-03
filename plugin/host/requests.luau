@@ -172,6 +172,7 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
 			next = p.next, -- the action that starts when its agent finishes
+			outcome = p.outcome, -- what its run must leave behind (prompts.OUTCOMES); omitted: none
 			key = p.key,
 		})
 	end
@@ -1568,7 +1569,7 @@ function M.rpc(state: State, raw: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end
@@ -1660,6 +1661,27 @@ function M.rpc(state: State, raw: any)
 		-- a note of the kind asked about.
 		local note = state.notes[q.key]
 		reply(state, id, { path = if note and note.ok and note.kind == (if q.kind == "pr" then "prs" else "issues") then note.path else nil })
+	elseif q.op == "outcome" then
+		-- Checks what a run left behind on GitHub as the run's login (github.outcome): {verdict, why?}.
+		local repo, n, branch, commit = parseRepo(q.repo), q.number, q.branch, q.commit
+		local function textOk(v: any, cap: number): boolean
+			return v == nil or (type(v) == "string" and v ~= "" and #v <= cap and not string.find(v, "%c"))
+		end
+		if
+			not repo
+			or type(q.outcome) ~= "string"
+			or type(q.login) ~= "string"
+			or #q.login > 64
+			or type(q.since) ~= "number"
+			or (n ~= nil and not (type(n) == "number" and n >= 1 and n == math.floor(n)))
+			or not textOk(branch, 255)
+			or not (commit == nil or (type(commit) == "string" and string.match(commit, "^%x+$") and (#commit == 40 or #commit == 64)))
+		then
+			return reply(state, id, { verdict = "unchecked", why = "The check was malformed." })
+		end
+		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
+			reply(state, id, { verdict = verdict, why = why })
+		end)
 	else
 		M.workflowRpc(state, id, q)
 	end
@@ -1767,8 +1789,10 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 	if state.nowOn then
 		local row = engine.nowSelected(state)
 		if row and row.rank == 1 and row.key and engine.agentHref(row.key) then
-			labels.agentreply = "Reply…"
-			add("agentreply", "Now")
+			if row.waiting then
+				labels.agentreply = "Reply…"
+				add("agentreply", "Now")
+			end
 			add("agentgo", "Now")
 		end
 		add("snoozed", "Filter & Sort")

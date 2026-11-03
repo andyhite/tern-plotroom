@@ -2007,4 +2007,106 @@ case("github.notifications: a REST rate limit does not pause the GraphQL searche
 	eq(github.wait(w.seconds(), "octocat"), 0, "but searches are not held back")
 end)
 
+case("github.outcome: every outcome is Verified or Not verified from GitHub's facts as the run's login, Unchecked when they cannot be read", function(w: World)
+	local github: any = w.load("github")
+	local since = EPOCH - 600
+	local commit = sha("c")
+	local pr: any, head: any, fail: string? = nil, nil, nil
+	w.respond(function(call: Call): Reply?
+		if call.argv[2] == "auth" then
+			return { stdout = "tok-cat\n" }
+		elseif fail then
+			return { status = 1, stderr = fail }
+		end
+		local q = ""
+		for _, a in call.argv do
+			if string.sub(a, 1, 6) == "query=" then
+				q = a
+			end
+		end
+		return { stdout = jsonEncode({ data = { repository = if string.find(q, "pullRequest(number", 1, true) then { pullRequest = pr } else head } }) }
+	end)
+	local function check(c: { [string]: any }): (string?, string?)
+		local base: { [string]: any } = { repo = "o/r", since = since, login = "cat" }
+		for k, v in c do
+			base[k] = v
+		end
+		local verdict, why = nil, nil
+		github.outcome(base, function(v: string, y: string?)
+			verdict, why = v, y
+		end)
+		w.flush()
+		return verdict, why
+	end
+	local function by(who: string, at: number): any
+		return { submittedAt = h.iso(at), createdAt = h.iso(at), author = { login = who } }
+	end
+
+	-- Review posted: a review by the login after the run started.
+	pr = { reviews = { nodes = { by("Cat", since + 60) } } }
+	eq(check({ outcome = "review", number = 5 }), "verified", "a review by the login (any case) after the start")
+	local call = w.calls[#w.calls]
+	eq(call.env.GH_TOKEN, "tok-cat", "read as the run's login")
+	yes(table.find(call.argv, "a=cat") ~= nil and table.find(call.argv, "n=5") ~= nil, "asking for that login's reviews of the pull request")
+	pr = { reviews = { nodes = { by("cat", since - 60), by("dog", since + 60) } } }
+	eq(check({ outcome = "review", number = 5 }), "not", "one before the start, or by another login, is not")
+	eq(check({ outcome = "review" }), "not", "a run on no pull request posted no review")
+
+	-- PR opened: an open or draft pull request whose head is the worktree's branch.
+	head = { open = { totalCount = 1 }, merged = { totalCount = 0 } }
+	eq(check({ outcome = "pr", branch = "cat/12-fix" }), "verified", "an open pull request of the branch")
+	yes(table.find(w.calls[#w.calls].argv, "b=cat/12-fix") ~= nil, "looked up by the branch")
+	head = { open = { totalCount = 0 }, merged = { totalCount = 1 } }
+	eq(check({ outcome = "pr", branch = "cat/12-fix" }), "not", "a merged one is not open")
+	local calls = #w.calls
+	eq(check({ outcome = "pr" }), "not", "a run with no branch opened none")
+	eq(#w.calls, calls, "without asking GitHub")
+
+	-- Pushed: the branch on GitHub is at the reported commit.
+	head = { ref = { target = { oid = string.upper(commit) } } }
+	eq(check({ outcome = "pushed", branch = "cat/12-fix", commit = commit }), "verified", "the branch is at the reported commit")
+	head = { ref = { target = { oid = sha("d") } } }
+	eq(check({ outcome = "pushed", branch = "cat/12-fix", commit = commit }), "not", "at another commit")
+	head = { ref = NULL }
+	eq(check({ outcome = "pushed", branch = "cat/12-fix", commit = commit }), "not", "a branch GitHub does not have")
+	eq(check({ outcome = "pushed", branch = "cat/12-fix" }), "not", "a run that reported no commit")
+	pr = { headRefOid = commit }
+	eq(check({ outcome = "pushed", number = 5, commit = commit }), "verified", "a pull request's head, for a run on one")
+
+	-- Replied to feedback: a reply or a resolved thread by the login after the start, plus the push.
+	pr = { headRefOid = commit, comments = { nodes = {} }, reviewThreads = { nodes = { { comments = { nodes = { by("dog", since - 900), by("cat", since + 30) } } } } } }
+	eq(check({ outcome = "replied", number = 5, commit = commit }), "verified", "a reply in a review thread, and the push")
+	pr = { headRefOid = commit, comments = { nodes = { by("cat", since + 30) } }, reviewThreads = { nodes = {} } }
+	eq(check({ outcome = "replied", number = 5, commit = commit }), "verified", "or in the conversation")
+	pr = { headRefOid = commit, comments = { nodes = {} }, reviewThreads = { nodes = { { resolvedBy = { login = "cat" }, comments = { nodes = { by("dog", since - 900) } } } } } }
+	eq(check({ outcome = "replied", number = 5, commit = commit }), "verified", "or a thread it resolved")
+	pr = { headRefOid = sha("d"), comments = { nodes = { by("cat", since + 30) } }, reviewThreads = { nodes = {} } }
+	eq(check({ outcome = "replied", number = 5, commit = commit }), "not", "replies without the push are not")
+	pr = { headRefOid = commit, comments = { nodes = { by("cat", since - 30) } }, reviewThreads = { nodes = {} } }
+	eq(check({ outcome = "replied", number = 5, commit = commit }), "not", "nor a push with only earlier replies")
+
+	-- Merged.
+	pr = { merged = true }
+	eq(check({ outcome = "merged", number = 5 }), "verified", "a merged pull request")
+	pr = { merged = false }
+	eq(check({ outcome = "merged", number = 5 }), "not", "one not merged yet")
+	head = { merged = { totalCount = 1 } }
+	eq(check({ outcome = "merged", branch = "cat/12-fix" }), "verified", "an issue run's branch merged through its pull request")
+
+	-- Unchecked: a fact that cannot be read is never verified.
+	pr = NULL
+	eq(check({ outcome = "merged", number = 5 }), "unchecked", "a pull request GitHub gave no data for")
+	fail = "HTTP 502: Bad Gateway\n"
+	for _, c: { [string]: any } in { { outcome = "review", number = 5 }, { outcome = "pr", branch = "b" }, { outcome = "pushed", branch = "b", commit = commit }, { outcome = "replied", number = 5, commit = commit }, { outcome = "merged", number = 5 } } :: { any } do
+		local verdict, why = check(c)
+		eq(verdict, "unchecked", c.outcome .. ": gh failing is Unchecked")
+		has(why or "", "502", "with gh's reason")
+	end
+	fail = "HTTP 429: API rate limit exceeded\n"
+	eq(check({ outcome = "review", number = 5 }), "unchecked", "a rate limit is Unchecked")
+	calls = #w.calls
+	eq(check({ outcome = "review", number = 5 }), "unchecked", "and while it holds")
+	eq(#w.calls, calls, "GitHub is not asked")
+end)
+
 return {}

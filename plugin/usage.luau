@@ -17,13 +17,15 @@ local TEXT_CAP = 200
 local COMMIT_CAP, PR_CAP, EVIDENCE_N = 64, 500, 20 -- a SHA-256 commit id; a pull request URL; evidence strings kept
 local REPORT_BYTES = 64 * 1024 -- a longer report block is not read
 M.ATTENTION = { ok = true, stuck = true, ["needs-human"] = true }
+M.VERDICTS = { verified = true, ["not"] = true, unchecked = true }
 
 export type Count = { n: number, at: number }
 export type Usage = { since: number, counts: { [string]: Count } }
 -- `runsIn`: "worktree" or "main checkout"; `started`/`ended`: seconds since the epoch (an old link has no start).
 -- `attention`..`blocker`: the agent's end-of-run report (`attention` "none": it gave no valid one; nil: a run logged
--- before reports were read).
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string? }
+-- before reports were read). `outcome`: what the action said the run must leave behind (a prompts.OUTCOMES id; nil:
+-- none), `verdict`: what checking it on GitHub found last (verified | not | unchecked).
+export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string? }
 -- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome.
 export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string? }
 
@@ -194,6 +196,8 @@ local function runOf(r: any): Run?
 		or (r.pr ~= nil and not textOk(r.pr, PR_CAP))
 		or (r.evidence ~= nil and (not evidence or #evidence > EVIDENCE_N))
 		or (r.blocker ~= nil and not textOk(r.blocker, TEXT_CAP))
+		or (r.outcome ~= nil and not textOk(r.outcome, ID_CAP))
+		or (r.verdict ~= nil and not M.VERDICTS[r.verdict])
 	then
 		return nil
 	end
@@ -204,7 +208,7 @@ local function runOf(r: any): Run?
 			end
 		end
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker }
+	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string? }
 end
 
 -- The run log, newest first, or nil and why when it cannot be read or is malformed.
@@ -246,6 +250,8 @@ function M.appendRun(run: Run)
 		pr = M.line(run.pr, PR_CAP),
 		evidence = run.evidence,
 		blocker = M.line(run.blocker, TEXT_CAP),
+		outcome = M.line(run.outcome, ID_CAP),
+		verdict = run.verdict,
 	})
 	if not runs or not clean then
 		return
@@ -255,6 +261,24 @@ function M.appendRun(run: Run)
 		table.insert(rows, runs[i])
 	end
 	pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(rows))
+end
+
+-- Records `verdict` on the run of item `key` that started at `started` (the newest such). Nothing is written when the log
+-- cannot be read or is malformed, the run is not in it, or the verdict is not one of VERDICTS.
+function M.setVerdict(key: string, started: number?, verdict: string)
+	local runs = M.readRuns()
+	if not runs or not M.VERDICTS[verdict] then
+		return
+	end
+	for _, r in runs do
+		if r.key == key and r.started == started then
+			if r.verdict ~= verdict then
+				r.verdict = verdict
+				pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any))
+			end
+			return
+		end
+	end
 end
 
 local function day(t: number): string
@@ -281,6 +305,7 @@ export type Inputs = {
 	here: Part<Usage>, -- this machine: every other count
 	runs: Part<{ Run }>,
 	name: (id: string) -> string, -- what a count's id is called
+	outcome: (id: string) -> string?, -- what an outcome id is called (prompts.outcomeLabel); nil: none
 }
 
 -- The plain-text report: the counts since the first recorded day, then the runs by action. A part that could not be
@@ -350,13 +375,13 @@ function M.report(i: Inputs): string
 
 	table.insert(out, "")
 	table.insert(out, "Runs")
-	local groups: { [string]: { results: { [string]: number }, times: { number }, n: number } } = {}
+	local groups: { [string]: { results: { [string]: number }, times: { number }, n: number, outcomes: { [string]: { [string]: number } } } } = {}
 	local names: { string } = {}
 	for _, r in runs do
 		local name = if r.action ~= "" then r.action else "Unnamed"
 		local g = groups[name]
 		if not g then
-			g = { results = {}, times = {}, n = 0 }
+			g = { results = {}, times = {}, n = 0, outcomes = {} }
 			groups[name] = g
 			table.insert(names, name)
 		end
@@ -364,6 +389,14 @@ function M.report(i: Inputs): string
 		g.results[r.result] = (g.results[r.result] or 0) + 1
 		if r.started and r.ended >= r.started then
 			table.insert(g.times, r.ended - r.started)
+		end
+		local label = if r.outcome then i.outcome(r.outcome) else nil
+		if label then
+			-- A run whose check never answered (no verdict) counts as Unchecked: missing data is never Verified.
+			local v = r.verdict or "unchecked"
+			local o = g.outcomes[label] or {}
+			g.outcomes[label] = o
+			o[v] = (o[v] or 0) + 1
 		end
 	end
 	table.sort(names, function(a, b)
@@ -393,6 +426,15 @@ function M.report(i: Inputs): string
 			median = duration(if #t % 2 == 1 then t[mid] else (t[mid] + t[mid + 1]) / 2)
 		end
 		table.insert(out, name .. " · " .. g.n .. (if g.n == 1 then " run" else " runs") .. " · " .. table.concat(parts, ", ") .. " · median " .. median)
+		local labels: { string } = {}
+		for label in g.outcomes do
+			table.insert(labels, label)
+		end
+		table.sort(labels)
+		for _, label in labels do
+			local o = g.outcomes[label]
+			table.insert(out, "  Outcome " .. label .. " · verified " .. (o.verified or 0) .. ", not verified " .. (o["not"] or 0) .. ", unchecked " .. (o.unchecked or 0))
+		end
 	end
 	if #names == 0 then
 		table.insert(out, "None")

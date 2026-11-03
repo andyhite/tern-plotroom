@@ -6,13 +6,15 @@
 
 local input = require("./input")
 local keys = require("./keys")
+local prompts = require("./prompts")
 local usage = require("./usage")
 local trim = input.trim
 
 local M = {}
 
 export type Env = {
-	ask: (cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> ()) -> boolean,
+	-- `quiet`: a background request: an older host or no answer is not toasted (no answer: done is not called).
+	ask: (cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> (), quiet: boolean?) -> boolean,
 	isPlotroom: (cx: WindowCx, pane: number) -> boolean,
 	readNode: (cx: WindowCx, pane: number, id: string) -> any?,
 	nodeProp: (node: any, prop: string) -> any?,
@@ -35,19 +37,21 @@ type HostId = { id: number, name: string, address: string }
 type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number? }
 -- `started` (seconds since the epoch), `kind`, `model` and `runsIn` go into the run log (usage.luau) when its turn ends.
 -- `attention`, `reason` and `blocker`: its agent's last end-of-run report (`attention` "none": no valid one), for the
--- Agents list.
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string? }
+-- Agents list. `outcome` (a prompts.OUTCOMES id; nil: none) is what its action says the run must leave behind, checked
+-- on GitHub as gh login `login` on repository `ghRepo` (pull request `number`, the worktree's `branch`, the report's
+-- `commit`); `verdict` is what the last check found (verified | not | unchecked) and `checked` when it was asked.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
--- ("worktree" or "main checkout") are for the run log.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string? }
+-- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string? }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
-local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 100, 100 -- the host takes up to 120, 200 and 256
+local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 200, 100 -- the host takes up to 120, 200 and 256; a branch is also what an outcome is checked on
 local LAST_CAP, RESULT_CAP = 200, 10 -- an agent's last message or delivery error; a run's result and its HH:MM
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
@@ -162,15 +166,17 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
 		end
 		texts[field] = v
 	end
-	if row.started ~= nil and type(row.started) ~= "number" then
-		return nil
+	for _, field in { "started", "number", "checked" } do
+		if row[field] ~= nil and type(row[field]) ~= "number" then
+			return nil
+		end
 	end
 	return {
 		key = row.key,
@@ -191,6 +197,13 @@ local function linkOf(row: any): Link?
 		attention = clip(texts.attention, ACTION_CAP),
 		reason = clip(texts.reason, LAST_CAP),
 		blocker = clip(texts.blocker, LAST_CAP),
+		outcome = clip(texts.outcome, ACTION_CAP),
+		verdict = if texts.verdict and usage.VERDICTS[texts.verdict] then texts.verdict else nil,
+		login = clip(texts.login, ACTION_CAP),
+		ghRepo = clip(texts.ghRepo, TITLE_CAP),
+		number = row.number,
+		commit = clip(texts.commit, ACTION_CAP + 4),
+		checked = row.checked,
 	}
 end
 
@@ -220,7 +233,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -287,7 +300,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
-			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker }
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil }
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
 				row = full
@@ -300,8 +313,8 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker;" per key in order: host/render's
--- `agentSig` spells it the same.
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict;" per key in order:
+-- host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
@@ -311,7 +324,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -357,6 +370,7 @@ local function needTick(cx: WindowCx?)
 		return -- the window went away: the next window_start or pane_created starts it again
 	end
 	M.needSync(cx)
+	M.recheck(cx) -- outcomes due again, at most once a refresh each
 	if #plotroomPanes(cx) > 0 then
 		needTimer = tern.timer(SYNC_MS, needTick)
 	end
@@ -524,7 +538,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil } }
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			table.insert(out, l)
@@ -591,12 +605,90 @@ local function lastReply(cx: WindowCx, agent: number): string?
 	return if type(m) == "table" and m.role == "assistant" and type(m.text) == "string" then m.text else nil
 end
 
+-- How long an outcome check may take the block's host (one gh token read and one GraphQL read, 30 s each at most), and
+-- how often an Unchecked run, or a Merged one whose agent still runs, is checked again: the default refresh pace
+-- (host/core POLL_MS).
+local OUTCOME_MS = 90 * 1000
+local RECHECK_S = 60
+local checking: { [string]: number } = {} -- "<host>|<agent>|<started>" -> when its check was asked, while in flight
+
+-- The lowest Plotroom block on `host`, the one outcome checks ask; nil when none is open there.
+local function blockOn(cx: WindowCx, host: HostId): number?
+	for _, p in plotroomPanes(cx) do
+		local ph = hostOf(cx, p)
+		if ph and hostSame(ph, host) then
+			return p
+		end
+	end
+	return nil
+end
+
+-- Asks a Plotroom block on link `l`'s host to check its outcome on GitHub as the run's login (host/requests' `outcome`
+-- op), then records the verdict on the link (read again, so a newer write is kept) and on its run in the run log, and
+-- tells the blocks. Asked quietly: no toasts, as a background check. Nothing without a block on that host, a check of
+-- the same run in flight, or a host too old to check: a later tick asks again.
+local function checkOutcome(cx: WindowCx, l: Link)
+	local id = l.host.id .. "|" .. l.host.address .. "|" .. l.agent .. "|" .. (l.started or 0)
+	local block = blockOn(cx, l.host)
+	if not l.outcome or not block or (checking[id] and os.time() - checking[id] < OUTCOME_MS // 1000 * 2) then
+		return
+	end
+	checking[id] = os.time()
+	local args = { outcome = l.outcome, repo = l.ghRepo, number = l.number, branch = l.branch, commit = l.commit, since = l.started or 0, login = l.login }
+	local sent = e().ask(cx, block, "outcome", args, OUTCOME_MS, function(a: any, cx2: WindowCx)
+		checking[id] = nil
+		local verdict = if type(a.verdict) == "string" and usage.VERDICTS[a.verdict] then a.verdict else "unchecked"
+		local links, healthy = readLinks()
+		if not healthy then
+			return
+		end
+		for _, x in links do
+			if x.agent == l.agent and hostSame(x.host, l.host) and x.started == l.started then
+				x.verdict, x.checked = verdict, os.time()
+				if writeLinks(links) then
+					usage.setVerdict(x.key, x.started, verdict)
+					M.agentSync(cx2)
+				end
+				return
+			end
+		end
+	end, true)
+	if not sent then
+		checking[id] = nil
+	end
+end
+
+-- Checks again what is due: each item's newest link (per host) whose run has ended and whose outcome was never checked
+-- (no block, or an older host, at its turn end), is Unchecked, or is Merged and Not verified while its agent has not
+-- exited, once per RECHECK_S.
+function M.recheck(cx: WindowCx)
+	local links, healthy = readLinks()
+	if not healthy or #links == 0 then
+		return
+	end
+	local states, _, cwds = agentStates(cx)
+	local now = os.time()
+	local seen: { [string]: boolean } = {}
+	for _, l in links do
+		local k = l.host.id .. "|" .. l.host.address .. "|" .. l.key
+		if not seen[k] then
+			seen[k] = true
+			local live = states ~= nil and (stateOf(l, states, cwds) or "exited") ~= "exited"
+			local due = l.verdict == nil or l.verdict == "unchecked" or (l.outcome == "merged" and l.verdict == "not" and live)
+			if l.outcome and l.result and due and now - (l.checked or 0) >= RECHECK_S then
+				checkOutcome(cx, l)
+			end
+		end
+	end
+end
+
 -- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed), when (HH:MM) and the end-of-run report
 -- in its last message (usage.reportOf) on its link, for the Agents list. The first turn end of a link appends its run,
 -- with that report, to the run log (kv `runs`): a run ends with its agent's first turn, so later turns of the same
 -- agent add no record. A turn with no valid report records "none" on the first turn and keeps the shown report on a
--- later one (a prompt typed into the agent carries no contract). Nothing for an agent with no link or a store that
--- cannot be read.
+-- later one (a prompt typed into the agent carries no contract). Every turn end of a link whose action names an
+-- outcome checks it (checkOutcome), with the commit the newest report named. Nothing for an agent with no link or a
+-- store that cannot be read.
 function M.recordResult(cx: WindowCx, agent: number, result: string)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
@@ -610,28 +702,33 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
 			if report then
 				l.attention, l.reason, l.blocker = report.attention, clip(report.reason, LAST_CAP), clip(report.blocker, LAST_CAP)
+				l.commit = report.commit or l.commit
 			elseif first then
 				l.attention, l.reason, l.blocker = "none", nil, nil
 			end
-			if not writeLinks(links) or not first then
+			if not writeLinks(links) then
 				return
 			end
-			usage.appendRun({
-				key = l.key,
-				action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
-				kind = l.kind,
-				model = l.model,
-				runsIn = l.runsIn,
-				started = l.started,
-				ended = os.time(),
-				result = result,
-				attention = if report then report.attention else "none",
-				reason = if report then report.reason else nil,
-				commit = if report then report.commit else nil,
-				pr = if report then report.pr else nil,
-				evidence = if report then report.evidence else nil,
-				blocker = if report then report.blocker else nil,
-			})
+			if first then
+				usage.appendRun({
+					key = l.key,
+					action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
+					kind = l.kind,
+					model = l.model,
+					runsIn = l.runsIn,
+					started = l.started,
+					ended = os.time(),
+					result = result,
+					attention = if report then report.attention else "none",
+					reason = if report then report.reason else nil,
+					commit = if report then report.commit else nil,
+					pr = if report then report.pr else nil,
+					evidence = if report then report.evidence else nil,
+					blocker = if report then report.blocker else nil,
+					outcome = l.outcome,
+				})
+			end
+			checkOutcome(cx, l)
 			return
 		end
 	end
@@ -1508,7 +1605,7 @@ function usageReport(cx: WindowCx, pane: number)
 	end
 	local here, hereWhy = usage.readUsage()
 	local runs, runsWhy = usage.readRuns()
-	local report = usage.report({ host = hostPart, here = { value = here, problem = hereWhy }, runs = { value = runs, problem = runsWhy }, name = usageName })
+	local report = usage.report({ host = hostPart, here = { value = here, problem = hereWhy }, runs = { value = runs, problem = runsWhy }, name = usageName, outcome = prompts.outcomeLabel })
 	cx:copy(report)
 	local missing = (if hostPart.problem then 1 else 0) + (if hereWhy then 1 else 0) + (if runsWhy then 1 else 0)
 	if missing > 0 then
