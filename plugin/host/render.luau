@@ -318,7 +318,7 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	local out: { Node } = {
 		ui.node("text", { key = "rpc", text = RPC_PROTOCOL, hidden = true }),
 		ui.node("text", { key = "agents", text = agentSig(state), hidden = true }),
-		-- How many need you (Now's rows not snoozed): the pane title says it, and the window's status line takes it.
+		-- How many need you (Now's rows not snoozed): the sidebar counts it, and the window's status line takes it.
 		ui.node("text", { key = "need", text = tostring(engine.nowCount(state)), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
 		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
@@ -1526,9 +1526,9 @@ local function nowProps(state: State, props: { [string]: any })
 		busy.fx = "shimmer"
 		table.insert(sub, busy)
 	end
-	local count = engine.nowCount(state)
-	if count > 0 then
-		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. count .. " need you", "accent"))
+	local need = engine.nowSummary(state)
+	if need then
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. need, "accent"))
 	end
 	for _, line in now.problems do
 		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. printable(line), "warning"))

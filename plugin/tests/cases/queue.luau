@@ -64,8 +64,7 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "newest update first")
 	eq(pickerOf(b).selected, "no_2fr_231", "the first PR is selected as the list arrives")
 	eq(pickerOf(b).state, "ready", "the list is ready")
-	has(b.title(), "My PRs", "the title names the filter")
-	has(b.title(), "(3)", "and counts the PRs")
+	eq(b.title(), "Plotroom · My PRs · 3 reviews requested", "the title names the filter, not its count (the sidebar has it), then what needs you")
 	local prHead: any = findKey(pickerNode(b), "head")
 	eq(findKey(prHead, "integration").p.text, "GitHub", "the preview's head row carries the integration badge")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row does not")
@@ -617,7 +616,7 @@ case("host: the palette copies the selected item's link, number and branch, and 
 	b.event({ ev = "action", act = "queue", value = "copy-number" })
 	b.event({ ev = "action", act = "queue", value = "copy-branch" })
 	same(w.copied, { item.url, "#" .. item.number, item.head }, "each row copies its text")
-	eq(b.title(), "Plotroom · My PRs (3) · 3 need you", "the title names the view and its count, and Now's count read off Now")
+	eq(b.title(), "Plotroom · My PRs · 3 reviews requested", "the title names the view, then what needs you read off Now, by kind")
 end)
 
 case("host: the palette's Views rows show the sidebar's scopes as a click does, and a scope the sidebar no longer lists is refused", function(w: World)

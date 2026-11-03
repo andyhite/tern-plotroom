@@ -614,16 +614,15 @@ local function blockDef(): BlockDef<State>
 		end,
 
 		title = function(state: State): string?
-			local snap = state.snap
 			local v = activeView(state)
-			local need = engine.nowCount(state)
-			local tail = if need > 0 then " · " .. need .. " need you" else ""
+			local need = engine.nowSummary(state)
+			local tail = if need then " · " .. need else ""
 			if state.nowOn then
 				return "Plotroom · Now" .. tail
 			elseif not v then
 				return "Plotroom" .. tail
 			end
-			return "Plotroom · " .. v.name .. (if snap then " (" .. #snap.items .. ")" else "") .. tail
+			return "Plotroom · " .. v.name .. tail
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView

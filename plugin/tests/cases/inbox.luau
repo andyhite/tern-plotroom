@@ -110,7 +110,13 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 	}, "agents that need input, your blocked PRs, reviews oldest first, your PRs ready to merge, notifications not already listed, then New items assigned to you; o/r#3 has nothing else and o/r#2's thread is not listed twice")
 	eq(pickerOf(b).selected, "no_2fr_231", "the selection stays on its row as rows arrive above it")
 	eq(scopes[1].count, 9, "the sidebar counts them")
-	eq(b.title(), "Plotroom · Now · 9 need you", "and so does the pane title")
+	local need = "1 agent needs you · 1 Blocked · 2 reviews requested · 1 Ready to merge · 2 notifications · 2 assigned"
+	eq(b.title(), "Plotroom · Now · " .. need, "the pane title says what needs you by kind, in Now's order, adding up to the sidebar's count")
+	local sub: { string } = {}
+	for _, span in pickerOf(b).subtitle do
+		table.insert(sub, if type(span) == "string" then span else span.t)
+	end
+	eq(table.concat(sub), need, "and so does Now's heading, with no bare count")
 end)
 
 case("now: snoozed items leave Now and its count until Show or hide snoozed lists them; an agent that needs input is always listed", function(w: World)
@@ -119,13 +125,12 @@ case("now: snoozed items leave Now and its count until Show or hide snoozed list
 		w.kv.put("triage", { version = 1, items = { ["o/r#4"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
 	end)
 	same(listed(b), { "no_2fr_235" }, "the snoozed one is not in Now")
-	eq(b.title(), "Plotroom · Now · 1 need you", "and the count leaves it out")
-	eq(b.title(), "Plotroom · Now · 1 need you", "and the count")
+	eq(b.title(), "Plotroom · Now · 1 review requested", "and the count leaves it out")
 	b.typeText("Z")
 	same(listed(b), { "no_2fr_234", "no_2fr_235" }, "Show or hide snoozed lists it again")
 	has(table.concat(whys(b), ","), "Review requested", "under its reason")
 	eq(pickerOf(b).items[1].badges[2].text, "Snoozed", "marked Snoozed")
-	eq(b.title(), "Plotroom · Now · 1 need you", "and still not counted")
+	eq(b.title(), "Plotroom · Now · 1 review requested", "and still not counted")
 	b.typeText("Z")
 	asks.hx.agents(b, { ["o/r#4"] = "waiting_input" })
 	same(listed(b), { "no_2fr_234", "no_2fr_235" }, "an agent that needs input lists its snoozed item")
@@ -195,12 +200,12 @@ case("now: a block on a view counts what needs you, and a review request that ar
 	local b = w.open(1, { "/work/r" })
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v1", "the block shows a view, not Now")
-	eq(b.title(), "Plotroom · My PRs (3) · 1 need you", "the waiting review request is counted off Now")
+	eq(b.title(), "Plotroom · My PRs · 1 review requested", "the waiting review request is counted off Now")
 	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
 	w.advance(10 * 60 * 1000)
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v1", "still on the view")
-	eq(b.title(), "Plotroom · My PRs (3) · 2 need you", "the queue's refresh read Now again and counts the new one")
+	eq(b.title(), "Plotroom · My PRs · 2 reviews requested", "the queue's refresh read Now again and counts the new one")
 end)
 
 case("now: Enter on a pull request shows it in the block as a linked one is, an issue pinned, and a thread about neither says so", function(w: World)
@@ -364,7 +369,7 @@ case("now: an idle agent whose outcome is Not verified, or whose report says stu
 		["o/r#8"] = { state = "exited" },
 	})
 	same(whys(b), { "no_2fr_233 PR opened: Not verified", "no_2fr_234 Report: needs human" }, "Not verified and a needs-human report rank first; Verified, Unchecked and a working agent do not")
-	eq(b.title(), "Plotroom · Now · 2 need you", "and are counted")
+	eq(b.title(), "Plotroom · Now · 2 agents need you", "and are counted")
 	local text = textOf(h.pickerNode(b))
 	has(text, "GitHub does not show what its run must leave behind: PR opened: Not verified", "the preview says why")
 	has(text, "Implement", "with the action")
