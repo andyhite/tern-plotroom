@@ -280,7 +280,7 @@ You: @{github.user}
 
 <pass>
 1. Sync
-   - `gh pr view {number} -R {owner}/{repo} --json state,headRefOid,mergeable,statusCheckRollup,reviews,comments`, and review threads (`gh api graphql`: `pullRequest.reviewThreads`). Merged or closed → final report, stop. `mergeable` UNKNOWN → poll again before treating it as conflicted.
+   - `gh pr view {number} -R {owner}/{repo} --json state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments`, and review threads (`gh api graphql`: `pullRequest.reviewThreads`). Merged or closed → final report, stop. `mergeable` UNKNOWN → poll again before treating it as conflicted.
    - Dirty tree → stop and report.
    - `headRefOid` ahead of HEAD → `git pull --ff-only`; diverged → escalate and stop.
 2. Conflicts, only when GitHub reports them (never rebase just because `{base}` moved)
@@ -305,6 +305,7 @@ You: @{github.user}
 6. Limits
    - At most 2 fix attempts per distinct check or feedback item; still failing → escalate it, stop acting on it, keep watching the rest.
    - Track handled comment IDs and escalated items across passes; never act on one item twice without new activity on it.
+   - `isDraft` and nothing to act on (no conflicts, failing checks, or feedback) → escalate once: "PR is still a draft: mark it ready when you want reviews"; keep watching. Never mark it ready yourself.
 7. Wait ~2 min while checks run, ~5 min otherwise, in sleeps your shell tool's timeout allows; then start the next pass. Stop after 8 h with no new PR activity, or when I say stop.
 </pass>
 

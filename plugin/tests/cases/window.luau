@@ -227,6 +227,18 @@ windowCase("window: with no prompts saved, a pull request offers the default pro
 	eq(w.kv.get("prompts-prs"), nil, "running them saves nothing")
 end)
 
+windowCase("window: the default Watch reads whether the PR is a draft and escalates a draft with nothing to act on once, without marking it ready", function(w: World)
+	agentScene(w)
+	w.window.choose = "Watch"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	local text: string = w.window.agents[1].prompt
+	has(text, "`gh pr view 5 -R o/r --json state,isDraft,", "the sync reads isDraft")
+	has(text, "`isDraft` and nothing to act on (no conflicts, failing checks, or feedback) → escalate once: \"PR is still a draft: mark it ready when you want reviews\"; keep watching.", "a draft with nothing to act on is escalated, and watching goes on")
+	has(text, "Never mark it ready yourself.", "Watch leaves marking it ready to you")
+	has(text, "NEVER merge, close, approve, change state", "and still never changes the PR's state")
+end)
+
 windowCase("window: Recent lists only prompts that are still saved, and with none saved the picker says where to write them", function(w: World)
 	local _, b = agentScene(w)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })

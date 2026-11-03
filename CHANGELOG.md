@@ -49,6 +49,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 - Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** is now **Mark all notifications read…** and marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub.
 - The default Implement and Fix actions push the branch and open a **draft** pull request once their work verifies, before they report, instead of waiting for `Ship`. Their PR opened outcome can now be Verified, and Watch finds the pull request when Check passes instead of stopping at 3 failed starts. The ticket comment, the transition and marking the PR ready still wait for your approval.
+- The default Watch action reads whether its pull request is a draft and, when a draft has nothing to fix, escalates once ("PR is still a draft: mark it ready when you want reviews") and keeps watching, instead of passing quietly until its 8 h limit. It still never marks the PR ready itself. Saved actions are not changed; Settings › Actions › Add missing defaults does not overwrite an edited Watch.
 
 ## [0.33.0] - 2026-11-02
 
