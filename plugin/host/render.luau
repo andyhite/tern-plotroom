@@ -1357,7 +1357,8 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 	elseif row.rank == 2 then
 		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
 	elseif row.rank == 3 then
-		return { text = "Review requested", tone = "accent", title = "Your review is requested" }, "Your review is requested"
+		local asked = if row.why then "Your team's review is requested: " .. printable(row.why) else "Your review is requested"
+		return { text = "Review requested", tone = "accent", title = asked }, asked
 	elseif row.rank == 4 then
 		return { text = "Ready to merge", tone = "success", title = "Your pull request is ready to merge" }, "Your pull request is ready to merge"
 	elseif row.rank == 5 then
@@ -1493,7 +1494,12 @@ local function nowProps(state: State, props: { [string]: any })
 	props.placeholder = "Now is not searched"
 	props.state = if not now.loaded and #rows == 0 then "loading" else "ready"
 	props.message = nil
-	props.empty = { ui.span("Nothing needs you right now.", "muted") }
+	-- Every reason switched off (Settings › Views › Now): only the agents that need you are listed.
+	local allOff = true
+	for _, r in core.NOW_REASONS do
+		allOff = allOff and now.prefs.off[r.id] == true
+	end
+	props.empty = { ui.span(if allOff then "Only agents are listed: Settings › Views › Now" else "Nothing needs you right now.", "muted") }
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
 	props.selected = if current then current.id else nil
 	props.columns, props.query, props.cursor = {}, nil, nil

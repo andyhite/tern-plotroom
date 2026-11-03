@@ -99,6 +99,38 @@ local function pageContent(state: State): ({ any }, { Node })
 		return false
 	end
 	if s.page == "views" then
+		-- Now's card first: which reasons and accounts feed Now, each switched on or off. Switches saved where they
+		-- cannot be read, or malformed, are shown as the defaults Now runs with, and say why instead of changing.
+		local prefs, unreadable = storage.readNow()
+		local function switch(on: boolean): { [string]: any }
+			return { k = "choice", style = "segmented", value = if on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) }
+		end
+		section("now")
+		if not summary("nopen:", "now", "Now", function()
+			local listed: { string } = {}
+			for _, r in core.NOW_REASONS do
+				if not prefs.off[r.id] then
+					table.insert(listed, r.label)
+				end
+			end
+			return if #listed > 0 then table.concat(listed, " · ") else "Only agents"
+		end) then
+			for _, r in core.NOW_REASONS do
+				row({ id = "now:" .. r.id, label = r.label, disabled = unreadable, control = switch(not prefs.off[r.id]) })
+				if r.id == "review" then
+					row({ id = "now:teams", label = "Include team review requests", hint = "Requests of a team you are on, not only of you", disabled = unreadable, control = switch(prefs.teams) })
+				end
+			end
+			section("now-accounts", "Accounts")
+			if cli.on("github") then
+				for _, who in ghActive.accounts do
+					row({ id = "now:login:" .. who, label = INTEGRATIONS.github.label .. " - " .. who, disabled = unreadable, control = switch(not prefs.logins[string.lower(who)]) })
+				end
+			end
+			if cli.on("jira") then
+				row({ id = "now:jira", label = INTEGRATIONS.jira.label, disabled = unreadable, control = switch(prefs.jira) })
+			end
+		end
 		-- The saved prompts of each kind, read once: a view offers those of its own kind.
 		local promptLists: { [string]: { Prompt } } = {}
 		local kindOptions: { any } = {}
@@ -923,7 +955,32 @@ function M.setValue(state: State, row: string, value: any)
 	if not kind or not id then
 		return
 	end
-	if kind == "pnext" then
+	if kind == "now" then
+		-- One of Now's switches (Settings › Views › Now): a reason, team review requests, a gh login or Jira.
+		local who = string.match(id, "^login:([%w%-_]+)$")
+		local reason = false
+		for _, r in core.NOW_REASONS do
+			reason = reason or r.id == id
+		end
+		if (choice ~= "on" and choice ~= "off") or not (who or reason or id == "teams" or id == "jira") then
+			return
+		end
+		local on = choice == "on"
+		s.errors[row] = storage.editNow(function(p)
+			if who then
+				p.logins[string.lower(who)] = not on -- editNow saves only the ones that are off
+			elseif id == "teams" then
+				p.teams = on
+			elseif id == "jira" then
+				p.jira = on
+			else
+				p.off[id] = not on
+			end
+		end)
+		if not s.errors[row] then
+			engine.nowPrefsChanged(state)
+		end
+	elseif kind == "pnext" then
 		if not choice then
 			return
 		end
@@ -1142,6 +1199,7 @@ local function resetAll(state: State)
 	state.getStarted = nil
 	engine.reloadViews(state)
 	propagate(state)
+	engine.nowPrefsChanged(state)
 	if #failed > 0 then
 		state.cx:toast("error", "Some settings were not reset", table.concat(failed, ", "))
 	else
@@ -1295,7 +1353,7 @@ function M.runAction(state: State, act: string, row: string)
 			-- The form's first field takes the focus.
 			local first = ({ vopen = "name:", popen = "pname:", ropen = "checkout:", jopen = "jrepos:" } :: { [string]: string })[which or ""]
 			s.open = id
-			s.focus = (first or "") .. (id or "")
+			s.focus = if which == "nopen" then "now:blocked" else (first or "") .. (id or "")
 		else
 			s.open = nil
 			s.focus = row

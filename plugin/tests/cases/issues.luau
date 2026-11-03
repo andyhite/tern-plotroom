@@ -267,7 +267,7 @@ case("host: each Views group of an available account or Jira ends in an Add butt
 		end
 		return out
 	end
-	same(ids(), { "vopen:prs:v1", "vadd:github:user-a", "vrestore:github:user-a", "vopen:issues:v1", "vadd:github:user-b", "vrestore:github:user-b", "vopen:issues:v2", "vadd:jira:", "vrestore:jira:" }, "user-a's group with the view that follows it, its Add and Add missing defaults, the view of both logins in a group of its own with neither, user-b's group with only its buttons, Jira's group with its view and buttons; no status order row")
+	same(ids(), { "nopen:now", "vopen:prs:v1", "vadd:github:user-a", "vrestore:github:user-a", "vopen:issues:v1", "vadd:github:user-b", "vrestore:github:user-b", "vopen:issues:v2", "vadd:jira:", "vrestore:jira:" }, "Now's card, then user-a's group with the view that follows it, its Add and Add missing defaults, the view of both logins in a group of its own with neither, user-b's group with only its buttons, Jira's group with its view and buttons; no status order row")
 	eq(sectionIn(b, "vadd:github:user-a").id, "add:github:user-a", "the Add of a group with views closes it in a section of its own")
 	eq(sectionIn(b, "vadd:github:user-a").title, nil, "with no title")
 	eq(sectionIn(b, "vopen:issues:v1").id, "group:github - user-a, user-b", "the view of two logins sits in the group of both, named by its lowercased label")
@@ -1261,7 +1261,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	eq(b.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")
-	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
+	same(hx.rows(b), { "nopen:now", "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Now's card and Jira's group alone")
 	b.press("escape")
 	goToSettings(b, "prompts")
 	same(hx.rows(b), { "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "popen:issues:p4", "padd:issues" }, "Prompts has the issue prompts alone, the defaults here: the pull request one stays saved, unlisted")

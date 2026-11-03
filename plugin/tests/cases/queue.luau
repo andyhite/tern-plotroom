@@ -699,7 +699,7 @@ case("host: Escape cancels a settings edit, Enter saves it, and a rejected value
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
 	goToSettings(b, "views")
-	eq(prefsOf(b).focus, "vopen:prs:v1", "the first view is a one-row summary")
+	eq(prefsOf(b).focus, "nopen:now", "Now's card is first, a one-row summary")
 	expand(b, "vopen:prs:v1")
 	eq(prefsOf(b).focus, "name:prs:v1", "the first row is focused")
 	b.press("enter")
@@ -735,6 +735,25 @@ case("host: Escape cancels a settings edit, Enter saves it, and a rejected value
 	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 2, "the active view searches again")
 	has(searches[2].fields.q, "label:bug", "with its new query")
+end)
+
+case("settings: Now's switches saved malformed are shown as the defaults Now runs with, say why, and are never written over", function(w: World)
+	local s = hostScene(w, 3)
+	w.kv.put("now", { off = "review" })
+	local b = openQueue(w)
+	refreshNow(w, b)
+	local reviewed = false
+	for _, req in requestsOf(s.gh, "search") do
+		reviewed = reviewed or string.find(req.fields.q or "", "user-review-requested:@me draft:false", 1, true) ~= nil
+	end
+	yes(reviewed, "Now runs with every reason on")
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	eq(rowIn(b, "now:review").control.value, "on", "shown as the default")
+	has(rowIn(b, "now:review").disabled, "malformed", "and says why it cannot change")
+	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = "off" })
+	same(w.kv.get("now"), { off = "review" }, "the saved store is untouched")
+	has(rowIn(b, "now:review").warning, "malformed", "the row says why")
 end)
 
 case("host: a view that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)

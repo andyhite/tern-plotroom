@@ -39,6 +39,9 @@ export type Pr = {
 	runs: { Run },
 	runTotal: number,
 	labels: { string },
+	-- Only from a search with `teams` (Now's review requests): the users (logins) and teams ("org/slug") asked to review.
+	reviewers: { string }?,
+	teams: { string }?,
 }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note: string? }
@@ -103,6 +106,10 @@ local MERGE: { [string]: string } =
 	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
 local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
 local REVIEWERS = 20 -- latestReviews and reviewRequests are read up to this many each
+-- The PR search with who was asked to review each (M.search's `teams`).
+local TEAMS_GQL = string.gsub(SEARCH_GQL, "%.%.%. on PullRequest { ", "... on PullRequest { reviewRequests(first: " .. REVIEWERS .. ") { nodes { requestedReviewer { ... on User { login } ... on Team { combinedSlug } } } } ", 1)
+local TEAMS_JQ = string.sub(SEARCH_JQ, 1, -4)
+	.. ",reviewers:[(.reviewRequests.nodes // [])[] | .requestedReviewer.login // empty],teams:[(.reviewRequests.nodes // [])[] | .requestedReviewer.combinedSlug // empty]}]}"
 local BODY_CHARS = 20000
 
 -- Seconds since the epoch of a UTC date and time (days-from-civil; `os.time` with a table would read local time).
@@ -343,6 +350,19 @@ function M.normalize(item: any): (Pr?, string?)
 			end
 		end
 	end
+	-- The strings of `v` matching `pattern`, nil when `v` is no list (a search without `teams`).
+	local function names(v: any, pattern: string): { string }?
+		if type(v) ~= "table" then
+			return nil
+		end
+		local out: { string } = {}
+		for _, s in v do
+			if type(s) == "string" and string.match(s, pattern) then
+				table.insert(out, s)
+			end
+		end
+		return out
+	end
 	local runs = M.runs(item.runs)
 	return {
 		key = M.identity(o, r, n),
@@ -369,6 +389,8 @@ function M.normalize(item: any): (Pr?, string?)
 		runs = runs,
 		runTotal = #runs + math.max(0, count(item.runTotal) - (if type(item.runs) == "table" then #item.runs else 0)),
 		labels = labels,
+		reviewers = names(item.reviewers, "^[%w%-_]+$"),
+		teams = names(item.teams, "^[%w%-_]+/[%w%-_%.]+$"),
 	}, nil
 end
 
@@ -794,7 +816,7 @@ end
 local function flatPr(n: any): any
 	local commits = field(n, "commits", "nodes")
 	local roll = field(if type(commits) == "table" then commits[1] else nil, "commit", "statusCheckRollup")
-	return {
+	local flat: { [string]: any } = {
 		number = n.number, title = n.title, url = n.url, isDraft = n.isDraft, state = n.state, updatedAt = n.updatedAt, createdAt = n.createdAt,
 		author = field(n, "author", "login"), head = n.headRefName, headSha = n.headRefOid,
 		fork = if n.isCrossRepository == true then (field(n, "headRepositoryOwner", "login") or field(n, "author", "login")) else nil,
@@ -802,6 +824,15 @@ local function flatPr(n: any): any
 		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
 		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
 	}
+	local asked = field(n, "reviewRequests", "nodes")
+	if type(asked) == "table" then
+		flat.reviewers, flat.teams = {}, {}
+		for _, r in asked do
+			table.insert(flat.reviewers, field(r, "requestedReviewer", "login"))
+			table.insert(flat.teams, field(r, "requestedReviewer", "combinedSlug"))
+		end
+	end
+	return flat
 end
 
 -- A search node of an issue as ISSUE_JQ (or NOW_ISSUE_JQ, with its events) shapes it.
@@ -960,9 +991,10 @@ local function searchPrs(account: string?, query: string, qualifier: string, gql
 	end)
 end
 
--- All pages of the PR search (see searchAll).
-function M.search(account: string?, query: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> ())
-	searchPrs(account, query, " is:pr sort:updated-desc", SEARCH_GQL, SEARCH_JQ, shouldContinue, done)
+-- All pages of the PR search (see searchAll). `teams`: each pull request also says who was asked to review it
+-- (`reviewers`, `teams`), as Now's review requests of your teams need.
+function M.search(account: string?, query: string, shouldContinue: () -> boolean, done: (SearchResult?, Problem?, number) -> (), teams: boolean?)
+	searchPrs(account, query, " is:pr sort:updated-desc", if teams then TEAMS_GQL else SEARCH_GQL, if teams then TEAMS_JQ else SEARCH_JQ, shouldContinue, done)
 end
 
 -- The pull request at `url` alone, in the shape M.search answers: none when the login sees no PR there.

@@ -369,7 +369,7 @@ end
 -- Work state stays: triage (seen, snooze), usage, runs, agent links and recent agents.
 M.SETTINGS_KEYS = {
 	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
-	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started",
+	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now",
 } :: { string }
 
 -- Deletes every settings key, going on past a failure; the keys that could not be deleted. A store that cannot be read
@@ -559,6 +559,61 @@ end
 function formats.prDir(repo: string, n: number, title: string, snap: { [string]: any }?): (string?, string?)
 	local owner, name = core.splitRepo(string.lower(repo))
 	return tracker.render(formats.of("prdir", snap), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
+end
+
+-- Now's switches as saved (kv "now": { off = {reason...}, logins = {off...}, jira = bool, teams = bool }), and why they
+-- could not be read. An absent store, and one that cannot be read or is malformed, gives the defaults (every reason,
+-- login and Jira on, team review requests off); editNow never writes over the last two.
+function M.readNow(): (core.NowPrefs, string?)
+	local prefs: core.NowPrefs = { off = {}, logins = {}, jira = true, teams = false }
+	local ok, v = pcall(tern.kv.get, "now")
+	if not ok then
+		return prefs, "Now's saved switches could not be read: " .. tostring(v)
+	end
+	if v == nil then
+		return prefs, nil
+	end
+	local function list(x: any, into: { [string]: boolean }): boolean
+		if x == nil then
+			return true
+		elseif not isTable(x) then
+			return false
+		end
+		for _, s in x do
+			if type(s) ~= "string" then
+				return false
+			end
+			into[string.lower(s)] = true
+		end
+		return true
+	end
+	local off, logins = {}, {}
+	if not isTable(v) or (v.jira ~= nil and type(v.jira) ~= "boolean") or (v.teams ~= nil and type(v.teams) ~= "boolean") or not list(v.off, off) or not list(v.logins, logins) then
+		return prefs, "Now's saved switches are malformed; not overwriting them."
+	end
+	return { off = off, logins = logins, jira = v.jira ~= false, teams = v.teams == true }, nil
+end
+
+-- Rereads Now's switches, lets `fn` change them and saves them; an error message or nil. A store that cannot be read
+-- or is malformed is never written over.
+function M.editNow(fn: (core.NowPrefs) -> ()): string?
+	local prefs, err = M.readNow()
+	if err then
+		return err
+	end
+	fn(prefs)
+	local function keys(set: { [string]: boolean }): any
+		local out: { string } = {}
+		for k, on in set do
+			if on then
+				table.insert(out, k)
+			end
+		end
+		table.sort(out)
+		return tern.json.array(out)
+	end
+	local werr = kvSet("now", { off = keys(prefs.off), logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams })
+	return if werr then "Could not save: " .. werr else nil
 end
 
 return M

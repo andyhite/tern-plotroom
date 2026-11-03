@@ -2462,9 +2462,11 @@ end
 -- Now: everything that needs you, ranked. Its sources are fixed searches per signed-in gh login (the open pull requests
 -- it wrote and is asked to review, the open issues assigned to it, with who changed them lately), Jira's open work
 -- assigned to you while acli is on (the open sprint's, as My sprint reads it, while the site has sprints), and the unread
--- notifications every signed-in login takes part in; the agents come live from the window.
+-- notifications every signed-in login takes part in; the agents come live from the window. Settings › Views › Now
+-- switches reasons and accounts off (now.prefs): what is off is not read at all.
 local NOW_MINE = "is:open author:@me archived:false"
 local NOW_REVIEW = "is:open user-review-requested:@me draft:false archived:false"
+local NOW_REVIEW_TEAMS = "is:open review-requested:@me draft:false archived:false" -- your teams' requests too
 local NOW_ASSIGNED = "is:open assignee:@me archived:false"
 local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
@@ -2495,9 +2497,15 @@ function M.nowRead(state: State)
 		return
 	end
 	now.busy = true
+	now.prefs, now.prefsProblem = storage.readNow()
+	local prefs = now.prefs
+	local function on(reason: string): boolean
+		return not prefs.off[reason]
+	end
 	ghActive.note(state, true) -- learns the signed-in logins for the next read
 	local gen = now.gen
 	local fresh: { [string]: { any } } = { mine = {}, review = {}, assigned = {}, notices = {} }
+	local teams: { [string]: string } = {}
 	local finder: { [string]: string } = {}
 	local kept: { [string]: boolean } = {}
 	local problems: { string } = {}
@@ -2561,6 +2569,9 @@ function M.nowRead(state: State)
 		if not kept.assigned then
 			now.finder = finder
 		end
+		if not kept.review then
+			now.teams = teams
+		end
 		local yours: { [string]: { mark: string, yours: boolean? } } = {}
 		for _, issue in now.assigned do
 			yours[issue.key] = now.yours[issue.key]
@@ -2572,6 +2583,7 @@ function M.nowRead(state: State)
 	end
 	local function search(which: string, account: string?, query: string, integration: string?, me: string?)
 		pending += 1
+		local asTeam = which == "review" and prefs.teams
 		local function landed(result: any, problem: github.Problem?, cost: number)
 			spent += cost or 0
 			if result then
@@ -2579,6 +2591,14 @@ function M.nowRead(state: State)
 					table.insert(fresh[which], it)
 					if integration == "github" and me and me ~= "" then
 						finder[it.key] = me
+					end
+					-- A request asked of a team and not of you: the preview's Why line names the team.
+					local direct = false
+					for _, who in it.reviewers or {} do
+						direct = direct or (me ~= nil and string.lower(who) == string.lower(me))
+					end
+					if asTeam and not direct and it.teams and #it.teams > 0 then
+						teams[it.key] = "@" .. table.concat(it.teams, ", @")
 					end
 				end
 			else
@@ -2591,7 +2611,7 @@ function M.nowRead(state: State)
 		elseif integration then
 			TRACKERS[integration].search(account, query, live, landed)
 		else
-			github.search(account, query, live, landed)
+			github.search(account, query, live, landed, asTeam)
 		end
 	end
 	local function notices(who: string)
@@ -2625,27 +2645,52 @@ function M.nowRead(state: State)
 	if cli.on("github") then
 		local logins: { string } = if #ghActive.accounts > 0 then ghActive.accounts else { "" }
 		for _, who in logins do
+			local me = if who ~= "" then who else ghActive.login
+			if me and prefs.logins[string.lower(me)] then
+				continue -- switched off: not searched, its notifications not read
+			end
 			local account = if who == "" or who == ghActive.login then nil else who
 			local wait = github.wait(os.time(), account)
+			-- What this login is asked for, as the reasons switched on need: Blocked and Ready to merge share one search.
+			local wants: { string } = {}
+			if on("blocked") or on("ready") then
+				table.insert(wants, "mine")
+			end
+			if on("review") then
+				table.insert(wants, "review")
+			end
+			if on("assigned") then
+				table.insert(wants, "assigned")
+			end
 			if wait > 0 then
 				local why = "GitHub's rate limit is reached; read again after " .. os.date("%H:%M", os.time() + wait) .. "."
-				for _, which in { "mine", "review", "assigned" } do
+				for _, which in wants do
 					fail(which, account, why)
 				end
-				if who ~= "" then
+				if not on("notices") then
+					continue
+				elseif who ~= "" then
 					noticesFail(who, why)
 				else
 					fail("notices", nil, why)
 				end
 			else
-				search("mine", account, NOW_MINE, nil)
-				search("review", account, NOW_REVIEW, nil)
-				search("assigned", account, NOW_ASSIGNED, "github", if who ~= "" then who else ghActive.login)
-				notices(who)
+				for _, which in wants do
+					if which == "mine" then
+						search("mine", account, NOW_MINE, nil)
+					elseif which == "review" then
+						search("review", account, if prefs.teams then NOW_REVIEW_TEAMS else NOW_REVIEW, nil, me)
+					else
+						search("assigned", account, NOW_ASSIGNED, "github", me)
+					end
+				end
+				if on("notices") then
+					notices(who)
+				end
 			end
 		end
 	end
-	if cli.on("jira") then
+	if cli.on("jira") and prefs.jira and on("assigned") then
 		search("assigned", nil, if cli.sprints == true then core.MY_SPRINT else NOW_JIRA, "jira")
 	end
 	settle()
@@ -2692,8 +2737,9 @@ end
 
 -- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, waiting?, title, url?, snoozed }.
 -- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` says by
--- what), 3 your review is requested (oldest first), 4 your pull request is Ready to merge, 5 an unread notification you
--- take part in, 6 an issue assigned to you is New or Changed (`why`). An item is listed once, at its highest rank; a
+-- what), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
+-- request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you is New or Changed
+-- (`why`). A reason switched off in Settings › Views › Now lists nothing. An item is listed once, at its highest rank; a
 -- snoozed one only while snoozed items are shown (an agent that needs you is always listed, as in the views).
 function M.nowRows(state: State): { any }
 	local now = state.now
@@ -2715,9 +2761,11 @@ function M.nowRows(state: State): { any }
 	for _, issue in now.assigned do
 		known[issue.key] = { item = issue, kind = "issues" }
 	end
+	local REASON_OF = { "", "blocked", "review", "ready", "notices", "assigned" }
+	local off = now.prefs.off
 	local function add(rank: number, kind: string?, item: any, why: string?)
-		if taken[item.key] then
-			return
+		if taken[item.key] or off[REASON_OF[rank]] then
+			return -- a reason switched off lists nothing, even before Now is read again
 		end
 		taken[item.key] = true
 		local snoozed = store ~= nil and triage.snoozed(store, item, clock)
@@ -2778,7 +2826,7 @@ function M.nowRows(state: State): { any }
 		add(2, "prs", pr, why[pr.key])
 	end
 	for _, pr in review do
-		add(3, "prs", pr, nil)
+		add(3, "prs", pr, now.teams[pr.key]) -- `why`: the teams it was asked of, when not of you
 	end
 	for _, pr in ready do
 		add(4, "prs", pr, nil)
@@ -2790,7 +2838,8 @@ function M.nowRows(state: State): { any }
 	table.sort(notices, function(a: github.Notice, b: github.Notice): boolean
 		return if a.updated ~= b.updated then a.updated > b.updated else a.id < b.id
 	end)
-	for _, n in notices do
+	local shown: { github.Notice } = if off.notices then {} else notices
+	for _, n in shown do
 		local key = if n.number then string.lower(n.repo) .. "#" .. n.number else nil
 		if not key then
 			table.insert(rows, { id = "t" .. n.id, rank = 5, notice = n, title = n.title, snoozed = false })
@@ -2890,6 +2939,25 @@ function M.openNow(state: State)
 	state.nowOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"
 	M.nowEnsure(state)
 	M.nowRead(state)
+end
+
+-- Now's switches changed (Settings › Views › Now, in `origin`): every live block rereads them, drops what is now off at
+-- once and reads Now again, a read begun before the change being ignored.
+function M.nowPrefsChanged(origin: State)
+	for _, s in running do
+		if M.alive(s) then
+			local now = s.now
+			now.prefs, now.prefsProblem = storage.readNow()
+			now.gen += 1
+			now.busy = false
+			now.seq += 1
+			M.nowEnsure(s)
+			M.nowRead(s)
+			if s ~= origin then
+				s.cx:render()
+			end
+		end
+	end
 end
 
 -- A palette command of the window about triage (`triage` event).

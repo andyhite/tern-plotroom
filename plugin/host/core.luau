@@ -177,7 +177,9 @@ export type AgentInfo = { action: string?, branch: string?, title: string?, last
 -- login whose notifications filled a whole page. `yours` is Jira's answer to whether an assigned issue's newest change
 -- was your own (jira.yours), for the issue as it was then (`mark`). `seq` moves with every answer (the rows cache on
 -- it); `gen` is bumped by Mark read, so a read that began before it is ignored; `cost` is the GitHub points the last read
--- spent (it joins the refresh pace).
+-- spent (it joins the refresh pace). `prefs` is which reasons and accounts feed Now (storage.readNow), `prefsProblem` why
+-- they could not be read (the defaults hold then); `teams` names, by pull request key, the teams a review requested only
+-- of a team was asked of.
 export type Now = {
 	mine: { github.Pr },
 	review: { github.Pr },
@@ -185,7 +187,10 @@ export type Now = {
 	finder: { [string]: string },
 	notices: { github.Notice },
 	yours: { [string]: { mark: string, yours: boolean? } },
+	teams: { [string]: string },
 	problems: { string },
+	prefs: NowPrefs,
+	prefsProblem: string?,
 	busy: boolean,
 	loaded: boolean,
 	gen: number,
@@ -193,6 +198,19 @@ export type Now = {
 	cost: number,
 	rows: { any }?,
 	rowsKey: string?,
+}
+
+-- Which reasons and accounts feed Now (Settings › Views › Now, kv "now"): the reasons switched off (NOW_REASONS ids),
+-- the gh logins switched off (lowercase), Jira's switch, and whether review requests of your teams count.
+export type NowPrefs = { off: { [string]: boolean }, logins: { [string]: boolean }, jira: boolean, teams: boolean }
+
+-- Now's reasons in Now's order, as Settings › Views › Now switches them.
+M.NOW_REASONS = {
+	{ id = "blocked", label = "Blocked" },
+	{ id = "review", label = "Review requested" },
+	{ id = "ready", label = "Ready to merge" },
+	{ id = "notices", label = "Notifications" },
+	{ id = "assigned", label = "Assigned" },
 }
 
 export type State = {

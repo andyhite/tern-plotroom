@@ -1924,6 +1924,29 @@ def sc_outcome(s: Smoke) -> None:
     s.ctl_ok("key", "Escape")
 
 
+def sc_now_settings(s: Smoke) -> None:
+    """Settings › Views in real Tern: Now's card is first, and its open form has a switch per reason (Include team review requests under
+    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that."""
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("agent"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_until("the new block opens on Now", s.on_now)
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Settings"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_text("Settings opens", "Repositories")
+    s.ctl_ok("click", ".nav-row:nth-child(1)")  # Views
+    s.wait_text("Now's card summarizes its reasons", "Blocked · Review requested · Ready to merge · Notifications · Assigned")
+    s.ctl_ok("click", ".btn.sm")  # the first Edit: Now's
+    s.wait_text("a switch under Review requested", "Include team review requests")
+    s.wait_text("and the accounts", "Accounts")
+    s.shot("settings-now")
+    s.ctl_ok("key", "Escape")
+
+
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run previews its Next move, Re-run failed checks, as a
     button (role plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is
@@ -2078,6 +2101,7 @@ SCENARIOS = [
     ("agent launch, jump and duplicate offer", sc_agent),
     ("agents beside the queue keep it at its half", sc_placement),
     ("action outcome", sc_outcome),
+    ("Settings › Views › Now", sc_now_settings),
     ("buttons and links", sc_controls),
     ("every preview in one order", sc_previews),
 ]

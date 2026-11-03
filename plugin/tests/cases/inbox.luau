@@ -7,9 +7,9 @@ type GhReq = h.GhReq
 type Reply = h.Reply
 type World = h.World
 
-local asks, case, collectTexts, eq, has = h.asks, h.case, h.collectTexts, h.eq, h.has
+local asks, case, collectTexts, eq, expand, goToSettings, has = h.asks, h.case, h.collectTexts, h.eq, h.expand, h.goToSettings, h.has
 local hostScene, issueItem, jiraItem, listed, newAcli = h.hostScene, h.issueItem, h.jiraItem, h.listed, h.newAcli
-local pickScope, pickerOf, refreshNow, requestsOf, same, searchItem, yes = h.pickScope, h.pickerOf, h.refreshNow, h.requestsOf, h.same, h.searchItem, h.yes
+local pickScope, pickerOf, refreshNow, requestsOf, rowIn, same, searchItem, yes = h.pickScope, h.pickerOf, h.refreshNow, h.requestsOf, h.rowIn, h.same, h.searchItem, h.yes
 local EPOCH = h.EPOCH
 
 -- Now's fixed searches, as the gh model tells them apart.
@@ -599,6 +599,151 @@ case("now: a login one thread short of a whole page has no cut-off line", functi
 	local _, b = nowScene(w, ciThreads(49))
 	eq(#pickerOf(b).items, 49, "all listed")
 	eq(string.find(textOf(pickerOf(b).subtitle), "showing the newest", 1, true), nil, "49: no line")
+end)
+
+-- Now's switches as Settings › Views › Now saves them (kv "now").
+local function nowPrefs(w: World, prefs: { [string]: any })
+	w.kv.put("now", prefs)
+end
+
+-- What Now asked GitHub since request number `from`, as "<login> <source>" (mine, review, teams, assigned, notices),
+-- sorted and once each.
+local function nowAsks(s: h.HostScene, from: number): { string }
+	local out: { string } = {}
+	for i = from + 1, #s.gh.requests do
+		local req = s.gh.requests[i]
+		local q = req.fields.q or ""
+		local what: string? = if req.kind == "notifications"
+			then "notices"
+			elseif string.find(q, REVIEW, 1, true) then "review"
+			elseif string.find(q, "is:open review-requested:@me", 1, true) then "teams"
+			elseif string.find(q, MINE, 1, true) then "mine"
+			elseif string.find(q, ASSIGNED, 1, true) then "assigned"
+			else nil
+		local line = (req.login or "?") .. " " .. (what or "")
+		if what and not table.find(out, line) then
+			table.insert(out, line)
+		end
+	end
+	table.sort(out)
+	return out
+end
+
+-- Sets Now's switch `id` (a reason, "teams", "jira" or "login:<login>") as its row in Settings › Views › Now does.
+local function flip(w: World, b: h.Block, id: string, value: string)
+	goToSettings(b, "views")
+	b.event({ ev = "change", id = "layer.settings", item = "now:" .. id, value = value })
+	w.flush()
+end
+
+case("now: a reason switched off is not read, and its rows, heading part and count are gone at once", function(w: World)
+	local s, b = nowScene(w, nil, function(s: h.HostScene)
+		s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90) }
+	end)
+	eq(b.title(), "Plotroom · Now · 1 review requested · 3 notifications", "listed before")
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	eq(h.prefsOf(b).focus, "now:blocked", "Now's card opens on its first switch")
+	eq(rowIn(b, "now:review").control.value, "on", "every reason is on by default")
+	local from = #s.gh.requests
+	flip(w, b, "review", "off")
+	same(w.kv.get("now").off, { "review" }, "saved as a reason that is off")
+	eq(b.title(), "Plotroom · Now · 3 notifications", "its heading part is gone")
+	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "and its row")
+	eq(pickerOf(b).scopes[1].count, 3, "the sidebar does not count it")
+	refreshNow(w, b)
+	same(nowAsks(s, from), { "octocat assigned", "octocat mine" }, "its search is not sent (the inbox is not due again yet)")
+end)
+
+case("now: with Blocked off and Ready to merge on, your pull requests are still searched and only the ready ones listed", function(w: World)
+	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }
+	local s, b = nowScene(w, {}, function(s: h.HostScene)
+		nowPrefs(w, { off = h.array({ "blocked" }) })
+		s.gh.queries[MINE] = { searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED" }), searchItem(2, "o/r", EPOCH - 120, ready) }
+	end)
+	same(whys(b), { "no_2fr_232 Ready to merge" }, "the Blocked one is not listed")
+	has(table.concat(nowAsks(s, 0), ","), "octocat mine", "your pull requests were searched")
+	local from = #s.gh.requests
+	flip(w, b, "ready", "off")
+	refreshNow(w, b)
+	same(nowAsks(s, from), { "octocat assigned", "octocat review" }, "with both off, they are not")
+	same(listed(b), {}, "and nothing of theirs is listed")
+end)
+
+case("now: a login switched off is neither searched nor asked for notifications; a login that signs in later is on", function(w: World)
+	local s, b = nowScene(w, nil, function(s: h.HostScene)
+		s.gh.tokens.work = "tok-work"
+		s.gh.inbox.work = { thread("31", "w/z", "mention", "Work thing", 4, true) }
+		nowPrefs(w, { logins = h.array({ "work" }) })
+	end)
+	refreshNow(w, b)
+	same(nowAsks(s, 0), { "octocat assigned", "octocat mine", "octocat notices", "octocat review" }, "work is asked nothing")
+	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "and its thread is not listed")
+	s.gh.tokens.later = "tok-later"
+	w.advance(11 * 60 * 1000) -- the signed-in logins are read again
+	refreshNow(w, b)
+	refreshNow(w, b)
+	has(table.concat(nowAsks(s, 0), ","), "later notices", "a login that signs in later is read")
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	eq(rowIn(b, "now:login:later").control.value, "on", "and its switch is on")
+	eq(rowIn(b, "now:login:work").control.value, "off", "work's is off")
+	flip(w, b, "login:work", "on")
+	eq(#w.kv.get("now").logins, 0, "only logins that are off are saved")
+	has(table.concat(listed(b), ","), "nw_2fz_234", "work's thread is read and listed at once")
+end)
+
+case("now: Jira switched off is not searched for Now", function(w: World)
+	local _, b, acli = nowScene(w, {})
+	yes(askedJql(acli, h.JIRA_NOW), "on by default")
+	acli.requests = {}
+	flip(w, b, "jira", "off")
+	refreshNow(w, b)
+	yes(not askedJql(acli, h.JIRA_NOW), "off: not asked")
+	eq(w.kv.get("now").jira, false, "saved")
+end)
+
+case("now: with team review requests on, a request asked only of your team is listed and names the team; off, it is not", function(w: World)
+	local mine = searchItem(4, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 600), teams = h.array({ "acme/web" }), reviewers = h.array({ "octocat" }) })
+	local s, b = nowScene(w, {}, function(s: h.HostScene)
+		s.gh.queries[REVIEW] = { mine }
+		s.gh.queries["is:open review-requested:@me"] = { mine, searchItem(6, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 60), teams = h.array({ "acme/web" }), reviewers = h.array({}) }) }
+	end)
+	same(listed(b), { "no_2fr_234" }, "off: only the request asked of you")
+	local from = #s.gh.requests
+	flip(w, b, "teams", "on")
+	eq(w.kv.get("now").teams, true, "saved")
+	same(nowAsks(s, from), { "octocat assigned", "octocat mine", "octocat teams" }, "the review search asks for your teams' requests too")
+	same(whys(b), { "no_2fr_234 Review requested", "no_2fr_236 Review requested" }, "the team's request is listed under Review requested")
+	b.press("escape")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_236" })
+	has(textOf(h.pickerNode(b)), "Your team's review is requested: @acme/web", "its Why line names the team")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
+	has(textOf(h.pickerNode(b)), "Your review is requested", "one asked of you too says so")
+	flip(w, b, "teams", "off")
+	same(listed(b), { "no_2fr_234" }, "off again: the team's request is gone")
+end)
+
+case("now: with every reason off Now reads nothing and lists only agents that need you, and says so", function(w: World)
+	local s, b = nowScene(w, nil, function()
+		nowPrefs(w, { off = h.array({ "blocked", "review", "ready", "notices", "assigned" }) })
+	end)
+	same(nowAsks(s, 0), {}, "nothing is read")
+	same(listed(b), {}, "nothing is listed")
+	has(textOf(pickerOf(b).empty), "Only agents are listed: Settings › Views › Now", "the empty state says why")
+	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
+	same(listed(b), { "no_2fr_233" }, "an agent that needs you is listed")
+	eq(b.title(), "Plotroom · Now · 1 agent needs you", "and counted")
+end)
+
+case("now: a switch changed in one block applies at once to every other block", function(w: World)
+	local _, b = nowScene(w)
+	local c = w.open(2, { "/work/r" })
+	w.flush()
+	eq(c.title(), "Plotroom · Now · 3 notifications", "the other block lists the notifications")
+	flip(w, b, "notices", "off")
+	eq(c.title(), "Plotroom · Now", "and drops them at once")
+	same(listed(c), {}, "from its list too")
 end)
 
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)
