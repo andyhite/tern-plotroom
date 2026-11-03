@@ -1444,7 +1444,7 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	local wideIds, wide = snap()
 	eq(wide["issues:v1"].count, 3, "wide: the loaded filter has a count")
 	eq(pickerOf(b).title[1].t, "Assigned to me", "wide: the view's name is the title")
-	eq(pickerOf(b).strip.label, "Sort: GitHub's order", "a GitHub view with no saved sort is in GitHub's order")
+	eq(pickerOf(b).strip, nil, "no Sort strip: the order is announced by the toast when it changes")
 	b.cx.cols = 100
 	b.cx:render()
 	local narrowIds, narrow = snap()
@@ -2395,7 +2395,7 @@ case("host: an action saved with the removed carly field still loads, kv is left
 	eq(w.kv.get("prompts-prs").items[1].carly, nil, "and the saved action has no carly field")
 end)
 
-case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
+case("host: the issue's commands, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
 	leaveIssueWt(w, issueHost(w), 12)
 	saveIssuePrompts(w, {
 		issuePrompt("p1", "Triage", "Triage {url}", true, "t"),
@@ -2403,14 +2403,12 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 		issuePrompt("p3", "Blank", "", true, "b"),
 	})
 	local b = openIssues(w)
-	local function bar(): { string }
-		local out: { string } = {}
-		for _, a in pickerOf(b).actions do
-			table.insert(out, a.id)
-		end
-		return out
+	local function offers(id: string): boolean
+		return table.find(hx.palette(w, b).ids, id) ~= nil
 	end
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "Worktree, Agent, no button per prompt, Seen, and the command palette last")
+	eq(pickerOf(b).actions, nil, "no action bar")
+	yes(offers("worktree") and offers("seen"), "Worktree and Seen are Commands rows")
+	eq(offers("prompt-p1"), false, "no row per prompt")
 	eq(buttonLink(b, "open"), h.tokened("plotroom://issue/open/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fissues%2F12"), "Open's link carries the issue's page, percent-encoded")
 	local globe: any = findKey(findKey(pickerNode(b), "head"), "open", "icon")
 	eq(globe.p.href, buttonLink(b, "open"), "the preview head's Open icon opens it")
@@ -2438,14 +2436,14 @@ case("host: the issue's buttons, keys and links: Worktree, Go to tab and Agent, 
 	b.typeText("k")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12/src" })
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "goto", "agent", "seen", "more" }, "a tab in the issue's worktree adds Go to tab before Agent")
+	yes(offers("goto"), "a tab in the issue's worktree adds Go to tab")
 	eq(buttonLink(b, "goto"), issueLink("goto", "o/r", "12"), "with its link")
 	b.typeText("g")
 	eq(w.opened[#w.opened], issueLink("goto", "o/r", "12"), "g opens it")
 	table.remove(w.panes)
 	forgetCheckouts(w)
 	b.render()
-	same(bar(), { "settings", "retry", "worktree", "agent", "seen", "more" }, "without a saved checkout the buttons stay: the window asks for one when it runs")
+	yes(offers("worktree"), "without a saved checkout Worktree stays: the window asks for one when it runs")
 	lacks(b.text(), "No checkout", "and the heading says nothing of it")
 	local opened = #w.opened
 	b.typeText("w")

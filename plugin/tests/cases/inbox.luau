@@ -381,11 +381,7 @@ case("now: an idle agent whose outcome is Not verified, or whose report says stu
 	local p = h.hx.palette(w, b)
 	yes(table.find(p.ids, "agentgo") ~= nil, "Go to agent is offered")
 	eq(table.find(p.ids, "agentreply"), nil, "Reply… is not: the agent waits for no input")
-	local actions: { string } = {}
-	for _, a in pickerOf(b).actions do
-		table.insert(actions, a.id)
-	end
-	eq(table.find(actions, "agentreply"), nil, "nor is its button")
+	eq(h.findKey(h.pickerNode(b), "agentreply"), nil, "nor is its hidden link")
 	asks.hx.agents(b, { ["o/r#3"] = { state = "idle", attention = "stuck", reason = "No database", outcome = "pr", verdict = "verified" } })
 	same(whys(b), { "no_2fr_233 Report: stuck" }, "a stuck report needs you whatever the outcome")
 end)

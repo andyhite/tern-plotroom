@@ -12,7 +12,7 @@ type Reply = h.Reply
 type Worktree = h.Worktree
 type World = h.World
 
-local EPOCH, JIRA_ASSIGNED, NULL, actionOf, agentScene, answerOf = h.EPOCH, h.JIRA_ASSIGNED, h.NULL, h.actionOf, h.agentScene, h.answerOf
+local EPOCH, JIRA_ASSIGNED, NULL, agentScene, answerOf = h.EPOCH, h.JIRA_ASSIGNED, h.NULL, h.agentScene, h.answerOf
 local array, asks, badgeOf, buttonLink, cardOf, cardSurface = h.array, h.asks, h.badgeOf, h.buttonLink, h.cardOf, h.cardSurface
 local cardText, case, chipsOf, countCalls, countLog, detailText = h.cardText, h.case, h.chipsOf, h.countCalls, h.countLog, h.detailText
 local editorCard, eq, expand, factOf, findKey, freshAsk = h.editorCard, h.eq, h.expand, h.factOf, h.findKey, h.freshAsk
@@ -448,7 +448,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	end
 	eq(jira.label, "Assigned to me", "the sidebar lists the Jira view")
 	eq(jira.group, "Jira", "under Jira's group")
-	eq(actionOf(b, "repos"), nil, "the action bar has no repository button")
+	eq(table.find(hx.palette(w, b).ids, "repos"), nil, "Commands has no repository row")
 	b.typeText("q")
 	eq(#w.opened, 0, "and q opens nothing")
 	local function row(i: number): any

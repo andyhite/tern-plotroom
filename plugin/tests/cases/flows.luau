@@ -9,7 +9,7 @@ type GhReq = h.GhReq
 type Reply = h.Reply
 type World = h.World
 
-local EPOCH, JIRA_ASSIGNED, acliCount, actionOf, answerOf, array = h.EPOCH, h.JIRA_ASSIGNED, h.acliCount, h.actionOf, h.answerOf, h.array
+local EPOCH, JIRA_ASSIGNED, acliCount, answerOf, array = h.EPOCH, h.JIRA_ASSIGNED, h.acliCount, h.answerOf, h.array
 local asks, buttonLink, case, checkRun, collectTexts, confirmOf = h.asks, h.buttonLink, h.case, h.checkRun, h.collectTexts, h.confirmOf
 local countLog, detailText, eq, expand, findKey, goToSettings = h.countLog, h.detailText, h.eq, h.expand, h.findKey, h.goToSettings
 local has, hostScene, hx, issueHost, issueItem, jiraHost = h.has, h.hostScene, h.hx, h.issueHost, h.issueItem, h.jiraHost
@@ -1744,30 +1744,28 @@ case("host agents: agent-status shows a badge per row, drops values and keys it 
 	eq(n, 200, "at most 200 keys are kept")
 end)
 
-case("host agents: Go to agent is a button, a hidden link and the G key only for a row whose agent state is known", function(w: World)
+case("host agents: Go to agent is a Commands row, a hidden link and the G key only for a row whose agent state is known", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
-	eq(actionOf(b, "agentgo"), nil, "no state yet: no button")
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).ids, "agentgo") ~= nil
+	end
+	eq(offered(), false, "no state yet: no Commands row")
 	eq(buttonLink(b, "agentgo"), nil, "and no link")
 	eq(b.press("G", "s", "G"), false, "G is left to the pane")
 	asks.hx.agents(b, { ["o/r#1"] = "working" })
-	eq(actionOf(b, "agentgo").label, "Go to agent", "a known state adds the button")
-	same(actionOf(b, "agentgo").keys, { "G" }, "with its key")
+	eq(offered(), true, "a known state adds the row")
+	eq(hx.palette(w, b).keys.agentgo, "G", "with its key")
 	eq(buttonLink(b, "agentgo"), prLink("agentgo", "o/r", 1), "and the link the window follows")
-	local ids: { string } = {}
-	for _, a in pickerOf(b).actions do
-		table.insert(ids, a.id)
-	end
-	same(ids, { "settings", "retry", "worktree", "agent", "agentgo", "seen", "more" }, "after Agent, before Seen and the command palette")
 	eq(b.press("G", "s", "G"), true, "G is handled")
 	eq(w.opened[#w.opened], prLink("agentgo", "o/r", 1), "and opens the link")
 	b.typeText("j")
-	eq(actionOf(b, "agentgo"), nil, "a row with no state has no button")
+	eq(offered(), false, "a row with no state has no Commands row")
 	eq(buttonLink(b, "agentgo"), nil, "nor a link")
 	eq(b.press("G", "s", "G"), false, "and G is the pane's again")
 	asks.hx.agents(b, {})
 	b.typeText("k")
-	eq(actionOf(b, "agentgo"), nil, "an empty report takes the button away")
+	eq(offered(), false, "an empty report takes the row away")
 end)
 
 case("host mutations: assign-me offers a plan naming the issue and the account that only its commit runs", function(w: World)
@@ -2512,11 +2510,8 @@ case("host agents: Now's row and preview show what an agent that needs input las
 	collectTexts(row.detail, detail)
 	has(table.concat(detail), "Rebase onto main first?", "which shows its last message")
 	has(b.text(), "Rebase onto main first?", "and so does the preview")
-	local labels: { [string]: string } = {}
-	for _, a in pickerOf(b).actions do
-		labels[a.id] = a.label
-	end
-	eq(labels.agentreply, "Reply…", "the preview offers Reply…")
+	local labels = hx.palette(w, b).labels
+	eq(labels.agentreply, "Reply…", "Commands offers Reply…")
 	eq(labels.agentgo, "Go to agent", "and Go to agent")
 	eq(findKey(pickerNode(b), "agentreply").p.href, prLink("agentreply", "o/r", 5), "Reply's hidden link the window checks")
 	eq(findKey(pickerNode(b), "agentgo").p.href, prLink("agentgo", "o/r", 5), "and Go to agent's")
@@ -2828,11 +2823,12 @@ case("host worktrees board: a preview read that lands while a cleanup runs leave
 	end
 	b.typeText("r")
 	w.flush()
-	eq(actionOf(b, "retry").disabled, nil, "the reload is over")
+	yes(not b.state().boardBusy, "the reload is over")
 	has(b.text(), "Loading #5…", "and the preview reads pull request 5 again")
 	b.typeText("u")
 	w.flush()
-	eq(actionOf(b, "retry").disabled, "Reading…", "the cleanup holds the board")
+	yes(b.state().boardBusy, "the cleanup holds the board")
+	has(b.text(), "Reading checkouts…", "which the header says")
 	w.advance(1000)
 	local function cleanups(): number
 		local n = 0
@@ -2845,35 +2841,30 @@ case("host worktrees board: a preview read that lands while a cleanup runs leave
 	end
 	has(b.text(), "Fix the board", "the preview's read has landed")
 	eq(cleanups(), 0, "while the cleanup still waits on gh")
-	eq(actionOf(b, "retry").disabled, "Reading…", "Refresh stays disabled while the cleanup runs")
-	eq(actionOf(b, "wt-cleanup").disabled, "Reading…", "and so does a second cleanup")
+	yes(b.state().boardBusy, "the board stays busy while the cleanup runs")
 	b.typeText("d")
 	eq(asks.toasted(w, "Still reading"), 1, "Remove waits for the cleanup")
 	eq(b.state().boardRemoving, nil, "and asks nothing meanwhile")
 	w.advance(4000)
 	eq(cleanups(), 1, "the cleanup ends with its toast")
-	eq(actionOf(b, "retry").disabled, nil, "and only then is the board free")
+	yes(not b.state().boardBusy, "and only then is the board free")
 end)
 
-case("host worktrees board: with the default keys its bar shows only the command palette; a bound key brings its button back", function(w: World)
+case("host worktrees board: no action bar; Commands offers Find and Remove finished worktrees, and a bound key works", function(w: World)
 	asks.hx.boardScene(w)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
 	pickScope(b, "worktrees")
 	w.flush()
-	local function bar(): { string }
-		local ids: { string } = {}
-		for _, a in pickerOf(b).actions do
-			table.insert(ids, a.id)
-		end
-		return ids
-	end
-	same(bar(), { "more", "wt-remove-finished" }, "no Find cleanup, Remove or Open button without a key; Remove finished has none and shows")
+	eq(pickerOf(b).actions, nil, "no action bar")
+	local p = hx.palette(w, b)
+	yes(table.find(p.ids, "wt-cleanup") ~= nil and table.find(p.ids, "wt-remove-finished") ~= nil, "Commands offers both")
+	eq(p.keys["wt-cleanup"], "", "Find finished worktrees has no key by default")
 	eq(b.press("u", nil, "u"), false, "u is no shortcut by default")
 	w.kv.put("keys", { ["wt-cleanup"] = "u" })
 	b.render()
-	same(bar(), { "more", "wt-cleanup", "wt-remove-finished" }, "bound, Find cleanup shows")
-	same(actionOf(b, "wt-cleanup").keys, { "u" }, "with its key")
+	eq(hx.palette(w, b).keys["wt-cleanup"], "u", "bound, Commands shows its key")
+	eq(b.press("u", nil, "u"), true, "and u runs it")
 end)
 
 case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d again removes it without force, and dirty, main and locked rows are refused", function(w: World)
@@ -2883,7 +2874,7 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 	pickScope(b, "worktrees")
 	w.flush()
 	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
-	eq(actionOf(b, "wt-remove").disabled, nil, "so Remove is on for its linked worktree")
+	eq(table.find(hx.palette(w, b).ids, "wt-remove") ~= nil, true, "so Commands offers Remove for its linked worktree")
 	b.typeText("d")
 	local overlay = confirmOf(b)
 	yes(overlay ~= nil, "d asks first")
@@ -2922,9 +2913,10 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 	yes(pickerOf(b).selected ~= nil, "the row that took its place is previewed")
 	for _, name in { "o/r/main", "o/r/lk" } do
 		b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, name) })
-		yes(actionOf(b, "wt-remove").disabled ~= nil, name .. ": Remove is disabled")
 		b.typeText("d")
 		eq(confirmOf(b), nil, name .. ": d asks nothing")
+		eq(w.toasts[#w.toasts].text, "Not removed here", name .. ": and says why")
+		eq(w.toasts[#w.toasts].sub, "The main, locked or missing worktrees are not removed here.", name .. ": in full")
 		eq(table.find(hx.palette(w, b).ids, "wt-remove"), nil, name .. ": the palette lists no Remove either")
 	end
 	eq(countLog(s.git, "worktree remove /work/r"), 0, "the main worktree was never offered to git")
@@ -3065,8 +3057,7 @@ case("host keys: a saved custom key equal to an action's default leaves that act
 	hostScene(w, 3)
 	w.kv.put("keys", { worktree = "." })
 	local b = openQueue(w)
-	eq(actionOf(b, "more"), nil, "the command palette has no key, so no button: the user's binding holds .")
-	same(actionOf(b, "worktree").keys, { "." }, "the custom binding is the Worktree key")
+	eq(hx.palette(w, b).keys.worktree, ".", "the custom binding is the Worktree key")
 	local opened = #w.opened
 	eq(b.press(".", nil, "."), true, ". is handled")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and still makes the worktree")

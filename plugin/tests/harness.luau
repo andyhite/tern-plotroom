@@ -2887,16 +2887,6 @@ local function pickScope(b: Block, id: string)
 end
 M.pickScope = pickScope
 
-local function actionOf(b: Block, id: string): any
-	for _, action in pickerOf(b).actions do
-		if action.id == id then
-			return action
-		end
-	end
-	return nil
-end
-M.actionOf = actionOf
-
 -- One row of the settings page by id.
 local function rowIn(b: Block, id: string): any
 	for _, section in prefsOf(b).sections do

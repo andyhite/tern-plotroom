@@ -2166,7 +2166,7 @@ function M.openGit(state: State): boolean
 	return true
 end
 
--- The board's own actions (`act`: the action bar's id or its key): true when it was one.
+-- The board's own actions (`act`: a Commands row's id or its key): true when it was one.
 function M.boardAct(state: State, act: string): boolean
 	local live = aliveFn(state)
 	local row = M.boardSelected(state)
@@ -2196,6 +2196,8 @@ function M.boardAct(state: State, act: string): boolean
 			state.cx:toast("info", "Still reading", "Remove it once the read has finished.")
 		elseif row and not row.main and not row.locked and not row.missing then
 			state.boardRemoving = row.id
+		elseif row then
+			state.cx:toast("info", "Not removed here", "The main, locked or missing worktrees are not removed here.")
 		end
 	elseif act == "wt-remove-finished" then
 		if state.boardBusy then
