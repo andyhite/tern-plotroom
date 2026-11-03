@@ -4510,6 +4510,30 @@ windowCase("window flows: a failed check starts the builder's action again with 
 	lacks(w.window.agents[#w.window.agents].prompt, "<findings>", "a next action is no fix round")
 end)
 
+windowCase("window flows: a fix round of the seed Implement or Fix reads its findings before the workflow, which builds on the last round's commits without asking", function(w: World)
+	w.load("window")
+	local prompts: any = w.load("prompts")
+	local st = flowHost(w)
+	local run = startChecked(w, st, "- [ ] Login works")
+	for round, seed in { prompts.issues[1], prompts.issues[2] } do
+		local checker = builderCommits(w, st, run, sha(tostring(round)))
+		checkSays(w, checker, "fail", { "Login works: round " .. round .. " has no wrong-password test" })
+		st.reply("action", { label = seed.name, send = seed.text, worktree = true, checker = "p4" })
+		st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "o/r" })
+		run = (w.kv.get("agent-links") :: any)[1]
+		local p: string = w.window.agents[#w.window.agents].prompt
+		local findings = string.find(p, "- Login works: round " .. round .. " has no wrong-password test", 1, true)
+		local criteria, workflow = string.find(p, "- [ ] Login works", 1, true), string.find(p, "<workflow>", 1, true)
+		local rule = string.find(p, "<findings> lists findings → this is a fix round: build on the existing commits without asking", 1, true)
+		local ask = string.find(p, "Commits beyond base with no PR → ask", 1, true)
+		yes(criteria and findings and workflow and rule and ask, seed.name .. ": the criteria, the findings and both preflight rules are in the prompt")
+		yes((criteria :: number) < (findings :: number) and (findings :: number) < (workflow :: number), seed.name .. ": the findings follow the criteria, before the workflow")
+		yes((rule :: number) < (ask :: number), seed.name .. ": the fix-round rule comes before the ask about commits beyond base")
+		local _, blocks = string.gsub(p, "<findings>\n", "")
+		eq(blocks, 1, seed.name .. ": one findings block, not one more appended at the end")
+	end
+end)
+
 windowCase("window flows: after 3 failed checks on an item the chain stops at Needs you with 3 failed checks", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
