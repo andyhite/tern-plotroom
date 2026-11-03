@@ -4289,6 +4289,24 @@ windowCase("window flows: a run that ends with a commit starts its checker as a 
 	eq(countOps(st, "action"), 1, "a passing check of an action with no next action starts nothing")
 end)
 
+windowCase("window flows: the default Check acts as the run's GitHub login and leaves the tree as it found it", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local builder = startChecked(w, st, "- [ ] Login works")
+	builderEnds(w, builder, sha("c"), "needs-human")
+	local check = (w.load("prompts") :: any).issues[4]
+	eq(check.name, "Check", "the issue defaults' checker")
+	st.reply("action", { label = "Check", send = check.text, worktree = true })
+	local prepared = st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { key = "12", url = "https://github.com/o/r/issues/12", title = "Fix login", owner = "o", repo = "r", branch = "12-fix", base = "main", remote = "origin", ["github.user"] = "cat" }, code = "o/r" })
+	eq(prepared.users, true, "the host is asked for the gh login the checker runs as")
+	local cp: string = w.window.agents[2].prompt
+	has(cp, "act only as @cat", "the checker acts as the run's login")
+	has(cp, "`GH_TOKEN=$(gh auth token --user cat)`", "its gh and networked git commands use that login's token")
+	has(cp, "Scratch files go in a temp dir outside the repo", "scratch files stay out of the builder's worktree")
+	has(cp, "`git status --porcelain` clean, or what you left and why", "and the report says how the tree was left")
+	lacks(cp, "{github.user}", "the login is filled in")
+end)
+
 windowCase("window flows: a passing check marks the checked run Checked; a failing one keeps its findings for the preview and Now", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
