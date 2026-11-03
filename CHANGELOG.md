@@ -48,6 +48,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** is now **Mark all notifications read…** and marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub.
+- Fix rounds of the default Implement and Fix build on the last round's commits instead of asking whether to, which left every round at Needs you with no new commit: both prompts read `{findings}` right after `{criteria}`, and their preflight tells the agent to fix exactly those findings and end with a new commit. Saved actions keep their own text.
 
 ## [0.33.0] - 2026-11-02
 
