@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -3112,16 +3112,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working||||||||||||;o/r#2=idle||||||||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working||||||||||||||;o/r#2=idle||||||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input||||||||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input||||||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
-	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not;", "the recorded texts are part of it")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -3637,7 +3637,7 @@ case("host actions: default actions name their outcome, a saved action without o
 	w.kv.put("prompts-prs", nil)
 	w.kv.put("prompts-issues", nil)
 	same(outcomes(core.KINDS.prs), { "Review=review", "Quick review=review", "Address feedback=replied", "Watch=merged" }, "pull request defaults")
-	same(outcomes(core.KINDS.issues), { "Implement=pr", "Fix=pr", "Plan=none" }, "issue defaults")
+	same(outcomes(core.KINDS.issues), { "Implement=pr", "Fix=pr", "Plan=none", "Check=none" }, "issue defaults")
 	w.kv.put("prompts-prs", { version = 1, nextId = 3, items = array({ { id = "p1", name = "Review", text = "Review {url}" }, { id = "p2", name = "Later", text = "x", outcome = "a-future-one" } }) })
 	same(outcomes(core.KINDS.prs), { "Review=none", "Later=none" }, "a saved action without an outcome, or with one this version does not know, has none")
 	goToSettings(b, "prompts")
@@ -4120,6 +4120,185 @@ case("host mutations: a confirmation older than five minutes says it expired", f
 	w.advance(301 * 1000)
 	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "That confirmation expired after 5 minutes; nothing was sent.", "the age is named, not a changed selection")
 	eq(#seen, before, "and nothing was sent")
+end)
+
+-- Starts Implement (p1, checked by p4) on issue o/r#12 in its worktree; the host reads its acceptance criteria as
+-- `criteria`. Returns the builder's link.
+local function startChecked(w: World, st: FlowStub, criteria: string): any
+	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
+	st.palette({ items = { { id = "p1", label = "Implement" } } })
+	w.window.choose = "Implement"
+	w.click("plotroom://issue/agent/o/r/12")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, checker = "p4" } } })
+	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", title = "Fix login", branch = "12-fix" }, code = "o/r" })
+	local asked = st.reply("criteria", { criteria = criteria })
+	eq(asked.repo .. "#" .. asked.ref, "o/r#12", "the criteria are read from the issue at dispatch")
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+local function countOps(st: FlowStub, op: string): number
+	local n = 0
+	for _, o in st.ops() do
+		n += if o == op then 1 else 0
+	end
+	return n
+end
+
+-- The builder `link` ends its turn with a report naming `commit`; the host answers the checker action Check and its
+-- worktree. Returns the checker's link.
+local function builderCommits(w: World, st: FlowStub, link: any, commit: string): any
+	lastSays(w, link.agent, reportBlock(`\{"attention": "needs-human", "reason": "Ready to ship", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, link.agent, "done")
+	local asked = st.reply("action", { label = "Check", send = "Check {key} on {branch}\n\n{criteria}", worktree = true })
+	eq(asked.pid, "p4", "the host is asked for the checker action")
+	local prepared = st.reply("issue", { path = "/wt/i12", summary = "Reused", created = false, current = true, vars = { key = "12", branch = "12-fix" }, code = "o/r" })
+	eq(prepared.target, "o/r", "on the same item, in the repository the run was worked in")
+	return (w.kv.get("agent-links") :: any)[1]
+end
+
+windowCase("window flows: a run that ends with a commit starts its checker as a fresh agent on the same item, with the criteria saved at dispatch", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local builder = startChecked(w, st, "- [ ] Login works\n- [ ] Errors say why")
+	local prompt: string = w.window.agents[1].prompt
+	has(prompt, "Do https://github.com/o/r/issues/12", "the builder's prompt")
+	has(prompt, "<criteria>", "gets the criteria block, added since its text names none")
+	has(prompt, "- [ ] Login works\n- [ ] Errors say why", "with the saved criteria")
+	eq(builder.criteria, "- [ ] Login works\n- [ ] Errors say why", "which are saved on the run")
+	eq(builder.chain.checker, "p4", "and the link knows its checker")
+	local commit = sha("c")
+	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Exploring", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, builder.agent, "done")
+	eq(countOps(st, "action"), 0, "a turn with no commit starts no check")
+	local checker = builderCommits(w, st, builder, commit)
+	eq(countOps(st, "criteria"), 1, "the checker gets the run's snapshot: the issue is not read again")
+	eq(#w.window.agents, 2, "a second agent started")
+	yes(checker.agent ~= builder.agent, "a new agent, never the builder's pane")
+	eq(w.window.panes[checker.agent].tab, w.window.panes[builder.agent].tab, "in the builder's tab")
+	local cp: string = w.window.agents[2].prompt
+	has(cp, "Check 12 on 12-fix", "the checker action's text")
+	has(cp, "- [ ] Login works\n- [ ] Errors say why", "with the same criteria")
+	has(cp, "<plotroom-check>", "and the fixed check contract")
+	has(cp, "the run of Implement that ended at commit " .. commit, "naming the run and its commit")
+	eq(w.window.agents[2].report, true, "the end-of-run contract still comes last")
+	same({ checker.checkAgent, checker.checkStarted, checker.criteria }, { builder.agent, builder.started, builder.criteria } :: { any }, "the checker's link names the run it checks and keeps its criteria")
+	eq(checker.chain.checker, nil, "a check has no checker of its own")
+	eq(checker.chain.depth, 1, "and is a step of the chain")
+	agentFinished(w, builder.agent, "done")
+	eq(countOps(st, "action"), 1, "another turn ending at the same commit starts no second check")
+	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "Checked", "commit": "{sha("d")}", "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`))
+	agentFinished(w, checker.agent, "done")
+	eq(countOps(st, "action"), 1, "a check that names a commit starts nothing")
+end)
+
+windowCase("window flows: a passing check marks the checked run Checked; a failing one keeps its findings for the preview and Now", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local builder = startChecked(w, st, "- [ ] Login works")
+	local checker = builderCommits(w, st, builder, sha("c"))
+	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": ["luau tests pass"], "blocker": null, "check": "PASS", "findings": []}`))
+	agentFinished(w, checker.agent, "done")
+	local function runOf(started: number): any
+		for _, r in w.kv.get("runs") :: any do
+			if r.started == started then
+				return r
+			end
+		end
+		return nil
+	end
+	eq(runOf(builder.started).check, "pass", "the checked run is Checked")
+	eq(runOf(builder.started).criteria, "- [ ] Login works", "and keeps its criteria")
+	eq((w.kv.get("agent-links") :: any)[1].check, "pass", "the checker's link says it")
+	w.advance(4100)
+	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#12"]
+	same({ row.check, row.findings }, { "pass" } :: { any }, "and the block is told: a pass, no findings")
+	-- another commit is checked again, and this check fails
+	local again = builderCommits(w, st, builder, sha("e"))
+	lastSays(w, again.agent, reportBlock(`\{"attention": "ok", "reason": "One unmet", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "fail", "findings": ["Login works: no test covers a wrong password", "Errors say why: the toast is empty"]}`))
+	agentFinished(w, again.agent, "done")
+	eq(runOf(builder.started).check, "fail", "the run's check is now a fail")
+	same(runOf(builder.started).findings, { "Login works: no test covers a wrong password", "Errors say why: the toast is empty" }, "with its findings")
+	w.advance(4100)
+	row = statusEvents(w)[#statusEvents(w)].map["o/r#12"]
+	same({ row.check, row.findings }, { "fail", "Login works: no test covers a wrong password · Errors say why: the toast is empty" }, "the block gets the findings")
+	-- a checker that gives no verdict fails: missing data never passes
+	local third = builderCommits(w, st, builder, sha("f"))
+	lastSays(w, third.agent, reportBlock(`\{"attention": "ok", "reason": "Looked around", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, third.agent, "done")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.check, l.findings }, { "fail", "The checker gave no pass or fail." }, "a report without a check is a fail, saying so")
+end)
+
+case("host agents: a passing check shows Checked; a failing one is Needs you with its findings in the preview", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local function badges(id: string): string
+		for _, row in pickerOf(b).items do
+			if row.id == id then
+				local out: { string } = {}
+				for _, badge in row.badges or {} do
+					table.insert(out, badge.text)
+				end
+				return table.concat(out, ",")
+			end
+		end
+		return ""
+	end
+	asks.hx.agents(b, {
+		["o/r#1"] = { state = "idle", action = "Check", check = "fail", findings = "AC1: no test · AC2: empty toast" },
+		["o/r#2"] = { state = "idle", action = "Check", check = "pass" },
+		["o/r#3"] = { state = "working", action = "Check", check = "fail", findings = "AC1" },
+	})
+	eq(asks.hx.stage(b, "no_2fr_231"), "Needs you", "a failed check is Needs you")
+	has(badges("no_2fr_231"), "Check failed", "and its row says Check failed")
+	eq(asks.hx.stage(b, "no_2fr_232"), "PR open", "a pass leaves the stage to GitHub")
+	has(badges("no_2fr_232"), "Checked", "and its row says Checked")
+	eq(asks.hx.stage(b, "no_2fr_233"), "Agent working", "a working agent does not need you")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	eq(h.factOf(b, "Check"), "Check failed", "the preview says the check failed")
+	eq(h.factOf(b, "Findings"), "AC1: no test · AC2: empty toast", "with its findings")
+	pickScope(b, "agents")
+	w.flush()
+	has(badges("go_2fr_232"), "Checked", "the Agents row says it")
+end)
+
+case("host criteria: the block reads an issue's acceptance criteria from GitHub's task list or Jira's section, and says why when it cannot", function(w: World)
+	local s = issueHost(w)
+	s.gh.issueDetail["o/r#12"] = { body = "Login fails.\n\n- [ ] Login works\n- [x] Logout works\n\nThanks", linked = array({}) }
+	local b = openIssues(w)
+	eq(asks.hx.ask(w, b, { op = "criteria", repo = "o/r", ref = "12" }).criteria, "- [ ] Login works\n- [x] Logout works", "GitHub: the task-list lines")
+	s.gh.issueDetail["o/r#12"] = { body = "Just fix it.", linked = array({}) }
+	eq(asks.hx.ask(w, b, { op = "criteria", repo = "o/r", ref = "12" }).criteria, "Just fix it.", "no task list: the whole description")
+	has(asks.hx.ask(w, b, { op = "criteria", repo = "o/r", ref = "99" }).problem, "not loaded", "an issue not loaded here is refused")
+end)
+
+case("host criteria: a Jira issue's criteria are its description's Acceptance criteria section", function(w: World)
+	local s = jiraHost(w)
+	local function text(t: string): any
+		return { type = "text", text = t }
+	end
+	s.acli.views["ABC-12"] = {
+		key = "ABC-12",
+		fields = {
+			description = {
+				type = "doc",
+				version = 1,
+				content = array({
+					{ type = "paragraph", content = array({ text("Login fails on Safari.") }) },
+					{ type = "heading", attrs = { level = 2 }, content = array({ text("Acceptance criteria") }) },
+					{ type = "bulletList", content = array({ { type = "listItem", content = array({ { type = "paragraph", content = array({ text("AC1 login works") }) } }) } }) },
+					{ type = "heading", attrs = { level = 2 }, content = array({ text("Notes") }) },
+					{ type = "paragraph", content = array({ text("Seen since 2.3") }) },
+				}),
+			},
+		},
+	}
+	local b = openIssues(w)
+	local got: string = asks.hx.ask(w, b, { op = "criteria", repo = "ABC", ref = "ABC-12" }).criteria
+	has(got, "AC1 login works", "the section's items")
+	lacks(got, "Safari", "not the text before it")
+	lacks(got, "Seen since", "nor the next section")
 end)
 
 return {}

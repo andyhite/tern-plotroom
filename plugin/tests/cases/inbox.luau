@@ -380,6 +380,18 @@ case("now: an idle agent whose outcome is Not verified, or whose report says stu
 	same(whys(b), { "no_2fr_233 Report: stuck" }, "a stuck report needs you whatever the outcome")
 end)
 
+case("now: an idle checker whose check failed ranks with Needs you, its findings in the preview; a passing one does not", function(w: World)
+	local _, b = nowScene(w, {})
+	asks.hx.agents(b, {
+		["o/r#3"] = { state = "idle", action = "Check", check = "fail", findings = "AC1: no test", attention = "ok" },
+		["o/r#4"] = { state = "idle", action = "Check", check = "pass" },
+	})
+	same(whys(b), { "no_2fr_233 Check failed" }, "a failed check needs you; a pass does not")
+	local text = textOf(h.pickerNode(b))
+	has(text, "AC1: no test", "the preview lists the findings")
+	has(text, "found what fails", "and says why it is listed")
+end)
+
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)
 	local github = w.load("github") :: any
 	local notices = github.parseNotices(h.array({

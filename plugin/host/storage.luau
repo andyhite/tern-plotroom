@@ -378,7 +378,7 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	if v == nil then
 		local seeds: { Prompt } = {}
 		for _, p in kind.prompts do
-			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, outcome = p.outcome })
+			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, outcome = p.outcome, checker = p.checker })
 		end
 		return { version = 1, nextId = #seeds + 1, items = seeds }, nil
 	end
@@ -399,12 +399,23 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.status ~= nil and type(p.status) ~= "string")
 			or (p.next ~= nil and type(p.next) ~= "string")
 			or (p.outcome ~= nil and type(p.outcome) ~= "string")
+			or (p.checker ~= nil and type(p.checker) ~= "string")
 		then
 			return nil, PROMPTS_BAD
 		end
 		-- An outcome this version does not know (or none saved: an action from before outcomes) reads as None.
 		local outcome = if defaults.outcomeLabel(p.outcome) then p.outcome else nil
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = outcome })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = outcome, checker = p.checker })
+	end
+	-- A checker that is the action itself, or no action of the store, reads as none: an action never checks itself.
+	local ids: { [string]: boolean } = {}
+	for _, p in items do
+		ids[p.id] = true
+	end
+	for _, p in items do
+		if p.checker and (p.checker == p.id or not ids[p.checker]) then
+			p.checker = nil
+		end
 	end
 	return { version = 1, nextId = v.nextId, items = items }, nil
 end
@@ -421,7 +432,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = p.outcome })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil

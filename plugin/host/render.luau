@@ -205,6 +205,15 @@ local function verdictText(info: { outcome: string?, verdict: string? }?): strin
 	return if b and label then label .. ": " .. b.text else nil
 end
 
+-- What a checker found on the run it checked (`check`), as a badge; nil while there is no verdict.
+local CHECK_BADGE: { [string]: { text: string, tone: string, title: string } } = {
+	pass = { text = "Checked", tone = "success", title = "A fresh agent checked the work against the acceptance criteria and found every one met" },
+	fail = { text = "Check failed", tone = "warning", title = "A fresh agent checked the work against the acceptance criteria and found what fails" },
+}
+local function checkBadge(info: { check: string? }?): { text: string, tone: string, title: string }?
+	return if info then CHECK_BADGE[info.check or ""] else nil
+end
+
 -- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
 -- Snoozed) in front of `row`'s badges.
 local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, why: string?)
@@ -213,9 +222,13 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
 	end
-	local verdict = if state.agents[item.key] and state.agents[item.key] ~= "exited" then verdictBadge(state.agentInfo[item.key]) else nil
+	local info = if state.agents[item.key] and state.agents[item.key] ~= "exited" then state.agentInfo[item.key] else nil
+	local verdict, checked = verdictBadge(info), checkBadge(info)
 	if verdict then
 		table.insert(extra, verdict)
+	end
+	if checked then
+		table.insert(extra, checked)
 	end
 	local st = engine.status(state, kind, item)
 	if st and st.snoozed then
@@ -232,15 +245,24 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
--- A preview's first fact, above its branch: the item's stage, toned as its row badge, and its agent's checked outcome.
+-- A preview's first fact, above its branch: the item's stage, toned as its row badge, its agent's checked outcome, and
+-- what its checker found (a failed check lists its findings).
 local function stageFact(state: State, kind: string, item: any): Node
 	local id, why = engine.stage(state, kind, item)
 	local b = stageBadge(id, why, state.notes[item.key])
 	local items: { any } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
-	local v = if live then verdictBadge(state.agentInfo[item.key]) else nil
+	local info = if live then state.agentInfo[item.key] else nil
+	local v = verdictBadge(info)
 	if v then
-		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(state.agentInfo[item.key]) :: string, v.tone) } })
+		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(info) :: string, v.tone) } })
+	end
+	local c = checkBadge(info)
+	if c and info then
+		table.insert(items, { k = "Check", v = { ui.span(c.text, c.tone) } })
+		if info.check == "fail" and info.findings then
+			table.insert(items, { k = "Findings", v = { ui.span(printable(info.findings)) } })
+		end
 	end
 	return ui.node("kv", { key = "stage", items = items })
 end
@@ -286,7 +308,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1219,6 +1241,8 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
 		{ k = "Report", v = if report then { ui.span(report.text) } else nil },
 		{ k = "Outcome", v = if verdictText(row) then { ui.span(verdictText(row) :: string) } else nil },
+		{ k = "Check", v = if checkBadge(row) then { ui.span((checkBadge(row) :: any).text) } else nil },
+		{ k = "Findings", v = if row.check == "fail" and row.findings then { ui.span(printable(row.findings)) } else nil },
 		{ k = "Reason", v = if report and row.reason then { ui.span(printable(row.reason)) } else nil },
 		{ k = "Blocker", v = if report and row.blocker then { ui.span(printable(row.blocker), "error") } else nil },
 		{ k = "Last message", v = if row.last then { ui.span(printable(row.last)) } else nil },
@@ -1234,6 +1258,10 @@ local function agentsPreview(state: State): { Node }
 	local verdict = verdictBadge(row)
 	if verdict then
 		table.insert(titlerow, ui.node("badge", { key = "outcome", text = verdict.text, tone = verdict.tone, title = verdict.title }))
+	end
+	local checked = checkBadge(row)
+	if checked then
+		table.insert(titlerow, ui.node("badge", { key = "check", text = checked.text, tone = checked.tone, title = checked.title }))
 	end
 	local kids: { Node } = {
 		ui.node("row", { key = "titlerow", gap = "xs", align = "center" }, titlerow),
@@ -1299,6 +1327,10 @@ local function agentsProps(state: State, props: { [string]: any })
 		if verdict then
 			table.insert(badges, verdict)
 		end
+		local checked = checkBadge(row)
+		if checked then
+			table.insert(badges, checked)
+		end
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
@@ -1358,6 +1390,8 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		local verdict = verdictText(agent)
 		if row.waiting then
 			return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+		elseif agent.check == "fail" then
+			return CHECK_BADGE.fail, CHECK_BADGE.fail.title
 		elseif agent.attention == "stuck" or agent.attention == "needs-human" then
 			local report = REPORT_BADGE[agent.attention]
 			return { text = report.text, tone = report.tone, title = report.title }, report.title
@@ -1415,6 +1449,8 @@ local function nowPreview(state: State): { Node }
 				{ k = "Item", v = if row.key then { ui.span(printable(row.key), "mono") } elseif n then { ui.span(printable(n.repo), "mono") } else nil },
 				{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
 				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string) } else nil },
+				{ k = "Check", v = if checkBadge(agent) then { ui.span((checkBadge(agent) :: any).text) } else nil },
+				{ k = "Findings", v = if agent and agent.check == "fail" and agent.findings then { ui.span(printable(agent.findings)) } else nil },
 				{ k = "Report", v = if report and agent.attention ~= "none" then { ui.span(report.text) } else nil },
 				{ k = "Reason", v = if report and agent.reason then { ui.span(printable(agent.reason)) } else nil },
 				{ k = "Blocker", v = if report and agent.blocker then { ui.span(printable(agent.blocker), "error") } else nil },

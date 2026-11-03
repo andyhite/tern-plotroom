@@ -327,6 +327,18 @@ local function pageContent(state: State): ({ any }, { Node })
 					hint = "Starts for the same item, in the same tab and worktree, when this agent finishes",
 					control = { k = "choice", style = "menu", value = if p.next and nextStore and promptById(nextStore :: Prompts, nextId) then p.next else "none", options = tern.json.array(nextOptions) },
 				})
+				local checkers: { any } = { { value = "none", label = "None" } }
+				for _, other in list do
+					if other.id ~= p.id then
+						table.insert(checkers, { value = other.id, label = clip(printable(other.name), 60) })
+					end
+				end
+				row({
+					id = "pchecker:" .. qid,
+					label = "Checked by",
+					hint = "When its run ends with a commit, a fresh agent runs this action on the same item and checks the work against the acceptance criteria",
+					control = { k = "choice", style = "menu", value = p.checker or "none", options = tern.json.array(checkers) },
+				})
 				section("after:" .. qid)
 			end
 			-- prefs draws no section without rows, so with none saved the kind's title goes on its buttons'.
@@ -829,6 +841,9 @@ local function deletePrompt(state: State, s: Settings, id: string)
 			if p.next == saved then
 				p.next = nil -- a next action that is gone is dropped
 			end
+			if p.checker == saved then
+				p.checker = nil -- so is a checker
+			end
 		end
 		return nil
 	end)
@@ -920,6 +935,19 @@ function M.setValue(state: State, row: string, value: any)
 		end
 		s.errors[row] = editPrompt(state, id, function(_, p)
 			p.outcome = if choice == "none" then nil else choice
+			return nil
+		end)
+	elseif kind == "pchecker" then
+		if not choice then
+			return
+		end
+		s.errors[row] = editPrompt(state, id, function(store, p)
+			if choice == p.id then
+				return "An action cannot check itself."
+			elseif choice ~= "none" and not promptById(store, choice) then
+				return "That action was deleted elsewhere."
+			end
+			p.checker = if choice == "none" then nil else choice
 			return nil
 		end)
 	elseif kind == "pwhere" or kind == "psplit" then
@@ -1195,9 +1223,26 @@ function M.runAction(state: State, act: string, row: string)
 		local kind = KINDS[string.match(row, "^prestore:(%a+)$") or ""]
 		if kind then
 			s.errors[row] = editPrompts(kind, function(store: Prompts): string?
+				local added: { [Prompt]: string } = {} -- an added default -> the seed id of its checker
 				for _, d in require("../prompts").missing(kind.prompts, store.items) do
-					table.insert(store.items, { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, outcome = d.outcome })
+					local p: Prompt = { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, outcome = d.outcome }
+					table.insert(store.items, p)
 					store.nextId += 1
+					if d.checker then
+						added[p] = d.checker
+					end
+				end
+				-- A default's checker is named by its seed id: it is the saved action named like that seed.
+				for p, seedId in added do
+					for _, d in kind.prompts do
+						if d.id == seedId then
+							for _, other in store.items do
+								if other.name == d.name and other ~= p then
+									p.checker = other.id
+								end
+							end
+						end
+					end
 				end
 				return nil
 			end)

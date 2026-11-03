@@ -603,7 +603,7 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	for _, item in findKey(editorCard(b), "list", "kv").p.items do
 		table.insert(legend, item.k[1].t)
 	end
-	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}" }, "the variables of both trackers are listed, with the worktree's and the two users")
+	same(legend, { "{url}", "{key}", "{title}", "{author}", "{labels}", "{branch}", "{base}", "{remote}", "{owner}", "{repo}", "{number}", "{project}", "{status}", "{type}", "{github.user}", "{jira.user}", "{criteria}" }, "the variables of both trackers are listed, with the worktree's, the two users and the saved criteria")
 	b.press("escape")
 	page("repos")
 	eq(rowIn(b, "jopen:ABC").hint, "o/r", "the project's summary names its repositories")
@@ -1248,7 +1248,7 @@ case("host: without gh, an issue action's Next action offers no pull request act
 	local b = openIssues(w)
 	goToSettings(b, "prompts")
 	expand(b, "popen:issues:p1")
-	same(asks.hx.options(b, "pnext:issues:p1"), { "none", "p2", "p3" }, "only the issue actions: a pull request action could only fail")
+	same(asks.hx.options(b, "pnext:issues:p1"), { "none", "p2", "p3", "p4" }, "only the issue actions: a pull request action could only fail")
 end)
 
 case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt or request, and Settings shows its setup guide until gh starts", function(w: World)
@@ -1265,7 +1265,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	same(hx.rows(b), { "vopen:issues:v1", "vadd:jira:", "vrestore:jira:" }, "Views has Jira's group alone")
 	b.press("escape")
 	goToSettings(b, "prompts")
-	same(hx.rows(b), { "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues" }, "Prompts has the issue prompts alone, the defaults here: the pull request one stays saved, unlisted")
+	same(hx.rows(b), { "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "popen:issues:p4", "padd:issues" }, "Prompts has the issue prompts alone, the defaults here: the pull request one stays saved, unlisted")
 	b.press("escape")
 	goToSettings(b, "repos")
 	same(hx.rows(b), { "fmt:branch", "fmt:issuedir", "ropen:o/r", "radd", "jopen:ABC", "jadd" }, "Repositories has no pull request folder name")

@@ -33,19 +33,26 @@ type HostId = { id: number, name: string, address: string }
 -- The saved action an agent ran, kept with its link: `next` (nil once started or stopped) is the action to start when the
 -- agent finishes, for the same item (`kind`, `repo`, `ref`), or `prs:<id>` for a pull request action on the pull request
 -- of the agent's worktree `branch` in the code repository `code` (an issue's `repo` can be a Jira project key); `depth`
--- counts the actions chained before it.
-type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number? }
+-- counts the actions chained before it. `checker` (nil: none) is the action that checks a run of it ending with a commit.
+type Chain = { action: string, name: string, next: string?, kind: string, repo: string, ref: string, depth: number, code: string?, branch: string?, pane: number?, checker: string? }
 -- `started` (seconds since the epoch), `kind`, `model` and `runsIn` go into the run log (usage.luau) when its turn ends.
 -- `attention`, `reason` and `blocker`: its agent's last end-of-run report (`attention` "none": no valid one), for the
 -- Agents list. `outcome` (a prompts.OUTCOMES id; nil: none) is what its action says the run must leave behind, checked
 -- on GitHub as gh login `login` on repository `ghRepo` (pull request `number`, the worktree's `branch`, the report's
 -- `commit`); `verdict` is what the last check found (verified | not | unchecked) and `checked` when it was asked.
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number? }
+-- `criteria`: the acceptance criteria saved on the run at dispatch. A builder's `checkedCommit` is the last commit a
+-- checker was started for. A checker's link names the run it checks (`checkAgent`, `checkStarted`) and what it found
+-- (`check`: pass | fail; `findings` joined by " · ").
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
--- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string? }
+-- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
+-- `criteria`, `checkAgent` and `checkStarted` as on Link.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number? }
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string? }
+-- A check to start (recordResult): checker action `chain.checker` on the chain's item, for the run of `agent` that
+-- started at `started` and ended at `commit`, with that run's saved `criteria`, from Plotroom block `block`.
+export type Check = { chain: Chain, agent: number, started: number?, commit: string, criteria: string?, block: number }
 type Notes = { [number]: { last: string?, err: string? } }
 type Plan = { token: string, head: string, label: string, lines: { string } }
 
@@ -53,6 +60,7 @@ local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
 local ACTION_CAP, BRANCH_CAP, TITLE_CAP = 60, 200, 100 -- the host takes up to 120, 200 and 256; a branch is also what an outcome is checked on
 local LAST_CAP, RESULT_CAP = 200, 10 -- an agent's last message or delivery error; a run's result and its HH:MM
+local FINDINGS_CAP = 1000 -- a check's findings as one line (the host takes up to 1000)
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
@@ -159,21 +167,22 @@ local function linkOf(row: any): Link?
 			or (r.code ~= nil and type(r.code) ~= "string")
 			or (r.branch ~= nil and type(r.branch) ~= "string")
 			or (r.pane ~= nil and type(r.pane) ~= "number")
+			or (r.checker ~= nil and type(r.checker) ~= "string")
 		then
 			return nil
 		end
-		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth, code = r.code, branch = r.branch, pane = r.pane }
+		c = { action = r.action, name = r.name, next = r.next, kind = tostring(r.kind), repo = r.repo, ref = r.ref, depth = r.depth, code = r.code, branch = r.branch, pane = r.pane, checker = r.checker }
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
 		end
 		texts[field] = v
 	end
-	for _, field in { "started", "number", "checked" } do
+	for _, field in { "started", "number", "checked", "checkAgent", "checkStarted" } do
 		if row[field] ~= nil and type(row[field]) ~= "number" then
 			return nil
 		end
@@ -204,6 +213,12 @@ local function linkOf(row: any): Link?
 		number = row.number,
 		commit = clip(texts.commit, ACTION_CAP + 4),
 		checked = row.checked,
+		criteria = usage.text(texts.criteria, usage.CRITERIA_CAP),
+		checkedCommit = clip(texts.checkedCommit, ACTION_CAP + 4),
+		checkAgent = row.checkAgent,
+		checkStarted = row.checkStarted,
+		check = if texts.check and usage.CHECKS[texts.check] then texts.check else nil,
+		findings = clip(texts.findings, FINDINGS_CAP),
 	}
 end
 
@@ -233,7 +248,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -300,7 +315,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state }
-			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil }
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil }
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
 				row = full
@@ -313,8 +328,8 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict;" per key in order:
--- host/render's `agentSig` spells it the same.
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings;" per key
+-- in order: host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
@@ -324,7 +339,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -538,7 +553,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil, criteria = if info then usage.text(info.criteria, usage.CRITERIA_CAP) else nil, checkAgent = if info then info.checkAgent else nil, checkStarted = if info then info.checkStarted else nil } }
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			table.insert(out, l)
@@ -551,11 +566,27 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	M.ensureSync(cx)
 end
 
+-- The Plotroom block on `host` to start a chain's next action or check from: `from` (the block that started the chain)
+-- while it is still one on that host, else the lowest; nil when none is open there.
+local function chainBlock(cx: WindowCx, host: HostId, from: number?): number?
+	local block: number? = nil
+	for _, p in plotroomPanes(cx) do
+		local ph = hostOf(cx, p)
+		if ph and hostSame(ph, host) then
+			if p == from then
+				return p
+			end
+			block = block or p
+		end
+	end
+	return block
+end
+
 -- The chain of the finished agent pane `agent`, once: its link says what to start next, and the next action is cleared
 -- so a later finish of the same agent (another turn) starts nothing. `result`: how the turn ended; any but "done" clears
--- it whether or not a block is open. Returns that chain and the Plotroom block on the agent's host to start it from (the
--- block that started the chain while it is still one on that host, else the lowest); nil for an agent with no next
--- action or an unreadable store; no block for a "done" turn leaves the action for the agent's next finish.
+-- it whether or not a block is open. Returns that chain and the Plotroom block on the agent's host to start it from
+-- (chainBlock); nil for an agent with no next action or an unreadable store; no block for a "done" turn leaves the
+-- action for the agent's next finish.
 function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, number?)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
@@ -568,18 +599,7 @@ function M.takeChain(cx: WindowCx, agent: number, result: string): (Chain?, numb
 			if not (l.chain and l.chain.next) then
 				return nil, nil
 			end
-			local block: number? = nil
-			local from = l.chain.pane
-			for _, p in plotroomPanes(cx) do
-				local ph = hostOf(cx, p)
-				if ph and hostSame(ph, host) then
-					if p == from then
-						block = p
-						break
-					end
-					block = block or p
-				end
-			end
+			local block = chainBlock(cx, host, l.chain.pane)
 			-- No Plotroom block on that host: the next action stays for the agent's next finish.
 			if not block and result == "done" then
 				return table.clone(l.chain), nil
@@ -689,11 +709,16 @@ end
 -- later one (a prompt typed into the agent carries no contract). Every turn end of a link whose action names an
 -- outcome checks it (checkOutcome), with the commit the newest report named. Nothing for an agent with no link or a
 -- store that cannot be read.
-function M.recordResult(cx: WindowCx, agent: number, result: string)
+-- A checker's run (its link names the run it checks) records its verdict, on its first turn end or a later one whose
+-- report gives one: the report's `check`, else fail (missing data never passes), with its findings, on its link and
+-- on the checked run in the run log. A run of an action with a checker whose report names a commit no check was
+-- started for returns the Check to start; with no Plotroom block on the agent's host it toasts and waits for the next
+-- turn end.
+function M.recordResult(cx: WindowCx, agent: number, result: string): Check?
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
 	if not healthy or not host then
-		return
+		return nil
 	end
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, host) then
@@ -706,8 +731,29 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 			elseif first then
 				l.attention, l.reason, l.blocker = "none", nil, nil
 			end
+			local verdict: string? = nil
+			local findings: { string } = {}
+			if l.checkAgent and (first or (report and report.check)) then
+				verdict = if report and report.check then report.check else "fail"
+				findings = if report then report.findings else {}
+				if verdict == "fail" and #findings == 0 then
+					findings = { if not report then "The checker ended without a report." elseif not report.check then "The checker gave no pass or fail." else "The checker gave no findings." }
+				end
+				l.check, l.findings = verdict, clip(table.concat(findings, " · "), FINDINGS_CAP)
+			end
+			local toCheck: Check? = nil
+			local commit = if report then report.commit else nil
+			if l.chain and l.chain.checker and not l.checkAgent and commit and commit ~= l.checkedCommit then
+				local block = chainBlock(cx, host, l.chain.pane)
+				if block then
+					l.checkedCommit = commit
+					toCheck = { chain = table.clone(l.chain), agent = l.agent, started = l.started, commit = commit, criteria = l.criteria, block = block }
+				else
+					cx:toast("info", "Check waits for Plotroom", "Open Plotroom on the agent's host; the next time the agent finishes with a commit, its check starts.")
+				end
+			end
 			if not writeLinks(links) then
-				return
+				return nil
 			end
 			if first then
 				usage.appendRun({
@@ -726,12 +772,19 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 					evidence = if report then report.evidence else nil,
 					blocker = if report then report.blocker else nil,
 					outcome = l.outcome,
+					criteria = l.criteria,
+					check = verdict,
+					findings = if verdict then findings else nil,
 				})
 			end
+			if verdict then
+				usage.setCheck(l.key, l.checkStarted, verdict, findings)
+			end
 			checkOutcome(cx, l)
-			return
+			return toCheck
 		end
 	end
+	return nil
 end
 
 -- The newest link for `key` on `pane`'s host, and its state; nil link when none, with state "exited" for one whose

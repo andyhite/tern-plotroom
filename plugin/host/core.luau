@@ -58,8 +58,9 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
 -- alias such as @slow. `next` (nil: none) is the id of another prompt of the kind that starts for the same item, in the same
 -- tab and worktree, when this prompt's agent finishes. `outcome` (nil: none) is what its run must leave behind, a
--- prompts.OUTCOMES id, checked against GitHub when the run's turn ends.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, outcome: string? }
+-- prompts.OUTCOMES id, checked against GitHub when the run's turn ends. `checker` (nil: none) is the id of another
+-- prompt of the kind (Checked by) that a fresh agent runs on the same item when a run of this one ends with a commit.
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, outcome: string?, checker: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › General; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -163,8 +164,9 @@ export type Settings = {
 
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title;
 -- and its last end-of-run report (`attention` "none": no valid one); the outcome its action names (a prompts.OUTCOMES id)
--- and what checking it on GitHub found (`verdict`: verified | not | unchecked; nil: none checked yet).
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string? }
+-- and what checking it on GitHub found (`verdict`: verified | not | unchecked; nil: none checked yet). A checker's agent
+-- also has its verdict on the run it checked (`check`: pass | fail) and, on a fail, its `findings` joined by " · ".
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`), and the unread notifications gh's
@@ -450,7 +452,7 @@ M.REVIEW_BADGE = {
 M.STAGE = {
 	merged = { text = "Merged", tone = "accent" },
 	closed = { text = "Closed", tone = "muted" },
-	needs = { text = "Needs you", tone = "warning", title = "Its agent waits for your input, reported it is stuck or needs you, or its outcome is Not verified" },
+	needs = { text = "Needs you", tone = "warning", title = "Its agent waits for your input, reported it is stuck or needs you, its outcome is Not verified, or its check failed" },
 	working = { text = "Agent working", tone = "accent", title = "An agent is working on it" },
 	blocked = { text = "Blocked", tone = "error" },
 	ready = { text = "Ready to merge", tone = "success" },
@@ -531,6 +533,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{base}", "code") }, v = "Branch it merges into" },
 			{ k = { ui.span("{remote}", "code") }, v = "Git remote of the repository in its checkout (actions that run in a worktree)" },
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
+			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch (none for a pull request)" },
 		},
 		prompts = prompts.prs,
 	},
@@ -590,6 +593,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{type}", "code") }, v = "Issue type (Jira)" },
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{jira.user}", "code") }, v = "Your Jira sign-in's email before the @ (Jira)" },
+			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch: GitHub task-list lines, a Jira description's Acceptance criteria section, else the description" },
 		},
 		prompts = prompts.issues,
 	},

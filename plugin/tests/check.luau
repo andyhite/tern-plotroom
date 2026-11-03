@@ -382,6 +382,18 @@ function M.run()
 	assert(byCat[1] == wipLow and byCat[2] == todoLow and byCat[3] == doneHi, "a category rank orders before the priority")
 	assert(sorting.cycle("prs", "github", nil) == "updated" and sorting.cycle("prs", "github", "review") == "size" and sorting.cycle("prs", "github", "size") == nil and sorting.cycle("issues", "jira", "priority") == nil, "the cycle ends on the default order")
 	assert(sorting.label("bogus") == sorting.label(nil), "an unknown sort reads as the default order")
+
+	-- acceptance criteria saved at dispatch: GitHub task lists, a Jira section, else the description
+	assert(tracker.criteria("github", "Intro\n- [ ] Login works\n  * [x] Logout works\n1. [ ] Errors say why\n- plain item\nOutro") == "- [ ] Login works\n  * [x] Logout works\n1. [ ] Errors say why", "a GitHub issue keeps only its task-list lines")
+	assert(tracker.criteria("github", "\n\nLogin fails.\r\nFix it.\n\n") == "Login fails.\nFix it.", "without task lines, the whole description, its blank ends trimmed")
+	assert(tracker.criteria("github", "## Acceptance criteria\n- login works") == "## Acceptance criteria\n- login works", "a GitHub issue has no section rule: the whole description")
+	local doc = "# Story\nAs a user…\n## Acceptance Criteria:\n- AC1 login\n### Detail\n- AC2 logout\n## Notes\nnone"
+	assert(tracker.criteria("jira", doc) == "- AC1 login\n### Detail\n- AC2 logout", "a Jira description's section runs to the next heading as high")
+	assert(tracker.criteria("jira", "Intro\n*Acceptance criteria*\n- AC1\n# Next\nx") == "- AC1", "a line naming the section starts it; any heading ends it")
+	assert(tracker.criteria("jira", "Just do it\n- [ ] not a task list on Jira") == "Just do it\n- [ ] not a task list on Jira", "no section: the whole description")
+	assert(tracker.criteria("jira", "## Acceptance criteria\n\n## Next\nbody") == "## Acceptance criteria\n\n## Next\nbody", "an empty section falls back to the description")
+	assert(tracker.criteria("github", "") == "", "an empty description has none")
+	assert(utf8.len(tracker.criteria("github", string.rep("é", 2500))) == tracker.CRITERIA_CHARS + 2, "cut at CRITERIA_CHARS characters and marked")
 	require("./triage_check").run()
 	require("./board_check").run()
 end

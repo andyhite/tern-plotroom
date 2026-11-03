@@ -3161,9 +3161,11 @@ local function detailText(row: any): string
 end
 M.detailText = detailText
 
--- The text of the selected item's property `key` ("Author", "Assignees", "Stage", "Outcome", ...); nil when it shows none.
+-- The text of the selected item's property `key` ("Author", "Assignees", "Stage", "Outcome", "Check", ...); nil when it
+-- shows none.
 local function factOf(b: Block, key: string): string?
-	local facts: any = findKey(findKey(pickerNode(b), "about"), if key == "Stage" or key == "Outcome" then "stage" else "facts", "kv")
+	local stage = key == "Stage" or key == "Outcome" or key == "Check" or key == "Findings"
+	local facts: any = findKey(findKey(pickerNode(b), "about"), if stage then "stage" else "facts", "kv")
 	for _, item in facts.p.items do
 		if item.k == key then
 			local out: { string } = {}
@@ -3276,7 +3278,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "36" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "37" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

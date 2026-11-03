@@ -1781,8 +1781,9 @@ def sc_agent(s: Smoke) -> None:
 
 
 def sc_outcome(s: Smoke) -> None:
-    """Settings › Actions in real Tern: the default Review action's open form has an Outcome row reading Review posted (its default). Checking
-    outcomes needs a model's turn end, so the regression cases cover that."""
+    """Settings › Actions in real Tern: the default Review action's open form has an Outcome row reading Review posted (its default) and a
+    Checked by row; the issue actions list the default Check. Checking outcomes and starting a checker need a model's turn end, so the
+    regression cases cover those."""
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -1796,9 +1797,11 @@ def sc_outcome(s: Smoke) -> None:
     s.wait_text("Settings opens", "Repositories")
     s.ctl_ok("click", ".nav-row:nth-child(2)")  # Actions
     s.wait_text("the Actions page", "Pull request actions")
+    s.wait_text("the issue actions list the default Check", "Check the work on")
     s.ctl_ok("click", ".btn.sm")  # the first action's Edit: Review
     s.wait_text("Review's form has an Outcome row", "Outcome")
     s.wait_text("reading its default", "Review posted")
+    s.wait_text("and a Checked by row", "Checked by")
     s.shot("action-outcome")
     s.ctl_ok("key", "Escape")
 

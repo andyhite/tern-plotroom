@@ -144,6 +144,61 @@ function M.clip(text: string, n: number, tail: string): string
 	return text
 end
 
+-- How much of a description a run's acceptance criteria keep, in characters.
+M.CRITERIA_CHARS = 2000
+
+-- `lines` joined, without the blank ones at either end.
+local function trimLines(lines: { string }): string
+	local first, last = 1, #lines
+	while first <= last and not string.find(lines[first], "%S") do
+		first += 1
+	end
+	while last >= first and not string.find(lines[last], "%S") do
+		last -= 1
+	end
+	return table.concat(lines, "\n", first, last)
+end
+
+-- The acceptance criteria of an issue of tracker `name` ("github" | "jira") whose description is `body`, as saved on a
+-- run at dispatch: a GitHub issue's task-list lines (`- [ ] …`, `1. [x] …`), a Jira description's Acceptance criteria
+-- section (from its heading, or a line saying only that, to the next heading as high), else the whole description;
+-- cut to CRITERIA_CHARS. "" when the description is empty.
+function M.criteria(name: string, body: string): string
+	local lines: { string } = {}
+	for line in string.gmatch(string.gsub(body, "\r\n?", "\n") .. "\n", "([^\n]*)\n") do
+		table.insert(lines, (string.gsub(line, "%s+$", "")))
+	end
+	local picked: { string } = {}
+	if name == "github" then
+		for _, line in lines do
+			if string.match(line, "^%s*[-*+]%s+%[[ xX]%]") or string.match(line, "^%s*%d+[.)]%s+%[[ xX]%]") then
+				table.insert(picked, line)
+			end
+		end
+	else
+		local level: number? = nil -- inside the section: the level of its heading (0: a plain line named it)
+		for _, line in lines do
+			local hashes = string.match(line, "^(#+)%s")
+			if level then
+				if hashes and (level == 0 or #hashes <= level) then
+					break
+				end
+				table.insert(picked, line)
+			else
+				local bare = string.lower((string.gsub(string.gsub(line, "^[#%s*_]+", ""), "[%s*_:]+$", "")))
+				if bare == "acceptance criteria" then
+					level = if hashes then #hashes else 0
+				end
+			end
+		end
+	end
+	local text = trimLines(picked)
+	if text == "" then
+		text = trimLines(lines)
+	end
+	return M.clip(text, M.CRITERIA_CHARS, "\n…")
+end
+
 -- Jira's status categories, fixed across every site, in the default sort order: what is being worked on first.
 M.CATEGORIES = { "indeterminate", "new", "done" }
 M.CATEGORY_LABEL = { indeterminate = "In Progress", new = "To Do", done = "Done" }

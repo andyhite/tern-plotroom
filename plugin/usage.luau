@@ -16,18 +16,24 @@ local ID_CAP = 200
 local TEXT_CAP = 200
 local COMMIT_CAP, PR_CAP, EVIDENCE_N = 64, 500, 20 -- a SHA-256 commit id; a pull request URL; evidence strings kept
 local REPORT_BYTES = 64 * 1024 -- a longer report block is not read
+-- A run's saved acceptance criteria (tracker.CRITERIA_CHARS characters, up to 4 bytes each). ponytail: kept on every
+-- run that has them, so a full log of such runs is ~8 MB; keep them on the newest runs only if kv `runs` gets slow.
+M.CRITERIA_CAP = 8000
 M.ATTENTION = { ok = true, stuck = true, ["needs-human"] = true }
 M.VERDICTS = { verified = true, ["not"] = true, unchecked = true }
+M.CHECKS = { pass = true, fail = true }
 
 export type Count = { n: number, at: number }
 export type Usage = { since: number, counts: { [string]: Count } }
 -- `runsIn`: "worktree" or "main checkout"; `started`/`ended`: seconds since the epoch (an old link has no start).
 -- `attention`..`blocker`: the agent's end-of-run report (`attention` "none": it gave no valid one; nil: a run logged
 -- before reports were read). `outcome`: what the action said the run must leave behind (a prompts.OUTCOMES id; nil:
--- none), `verdict`: what checking it on GitHub found last (verified | not | unchecked).
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string? }
--- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome.
-export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string? }
+-- none), `verdict`: what checking it on GitHub found last (verified | not | unchecked). `criteria`: the acceptance
+-- criteria saved on it at dispatch. `check`: what its checker found (pass | fail; nil: not checked), with `findings`.
+export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }? }
+-- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome. A checker's
+-- report also has `check` (pass | fail; prompts.checkBlock) and `findings`.
+export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string?, check: string?, findings: { string } }
 
 -- `s` as one line of at most `cap` bytes, cut at a character boundary; nil when it is no string or empty.
 function M.line(s: any, cap: number): string?
@@ -159,20 +165,28 @@ function M.reportOf(text: any): Report?
 	then
 		return nil
 	end
-	local kept: { string } = {}
-	for _, s in evidence do
-		local l = M.line(s, TEXT_CAP)
-		if l and #kept < EVIDENCE_N then
-			table.insert(kept, l)
+	local function cut(list: { string }?): { string }
+		local kept: { string } = {}
+		for _, s in (list or {}) :: { string } do
+			local l = M.line(s, TEXT_CAP)
+			if l and #kept < EVIDENCE_N then
+				table.insert(kept, l)
+			end
 		end
+		return kept
 	end
+	-- A check that is neither pass nor fail is none (a checker's run then counts as a fail); findings that are no list
+	-- of strings are none.
+	local check = if type(r.check) == "string" then string.lower(r.check) else nil
 	return {
 		attention = r.attention,
 		reason = M.line(r.reason, TEXT_CAP) :: string,
 		commit = if commit then string.lower(commit) else nil,
 		pr = M.line(pr, PR_CAP),
-		evidence = kept,
+		evidence = cut(evidence),
 		blocker = M.line(r.blocker, TEXT_CAP),
+		check = if check and M.CHECKS[check] then check else nil,
+		findings = cut(strings(r.findings)),
 	}
 end
 
@@ -181,6 +195,7 @@ local function runOf(r: any): Run?
 		return nil
 	end
 	local evidence = if r.evidence ~= nil then strings(r.evidence) else nil
+	local findings = if r.findings ~= nil then strings(r.findings) else nil
 	if
 		not textOk(r.key, ID_CAP)
 		or not textOk(r.action, TEXT_CAP)
@@ -198,17 +213,20 @@ local function runOf(r: any): Run?
 		or (r.blocker ~= nil and not textOk(r.blocker, TEXT_CAP))
 		or (r.outcome ~= nil and not textOk(r.outcome, ID_CAP))
 		or (r.verdict ~= nil and not M.VERDICTS[r.verdict])
+		or (r.criteria ~= nil and not textOk(r.criteria, M.CRITERIA_CAP))
+		or (r.check ~= nil and not M.CHECKS[r.check])
+		or (r.findings ~= nil and (not findings or #findings > EVIDENCE_N))
 	then
 		return nil
 	end
-	if evidence then
-		for _, s in evidence do
+	for _, list in { evidence or {} :: { string }, findings or {} :: { string } } do
+		for _, s in list do
 			if not textOk(s, TEXT_CAP) then
 				return nil
 			end
 		end
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string? }
+	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil }
 end
 
 -- The run log, newest first, or nil and why when it cannot be read or is malformed.
@@ -252,6 +270,9 @@ function M.appendRun(run: Run)
 		blocker = M.line(run.blocker, TEXT_CAP),
 		outcome = M.line(run.outcome, ID_CAP),
 		verdict = run.verdict,
+		criteria = M.text(run.criteria, M.CRITERIA_CAP),
+		check = run.check,
+		findings = run.findings,
 	})
 	if not runs or not clean then
 		return
@@ -261,6 +282,42 @@ function M.appendRun(run: Run)
 		table.insert(rows, runs[i])
 	end
 	pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(rows))
+end
+
+-- `s` cut to at most `cap` bytes at a character boundary, line breaks kept; nil when it is no string or blank.
+function M.text(s: any, cap: number): string?
+	if type(s) ~= "string" or not string.find(s, "%S") then
+		return nil
+	end
+	local text = string.sub(s, 1, cap)
+	while #text > 0 and not utf8.len(text) do
+		text = string.sub(text, 1, -2)
+	end
+	return text
+end
+
+-- Records what a checker found (`check`: pass | fail, with `findings`) on the run of item `key` that started at
+-- `started`. Nothing is written when the log cannot be read or is malformed, the run is not in it, or `check` is not
+-- one of CHECKS.
+function M.setCheck(key: string, started: number?, check: string, findings: { string })
+	local runs = M.readRuns()
+	if not runs or not M.CHECKS[check] then
+		return
+	end
+	for _, r in runs do
+		if r.key == key and r.started == started then
+			local kept: { string } = {}
+			for _, f in findings do
+				local l = M.line(f, TEXT_CAP)
+				if l and #kept < EVIDENCE_N then
+					table.insert(kept, l)
+				end
+			end
+			r.check, r.findings = check, if #kept > 0 then tern.json.array(kept) :: any else nil
+			pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any))
+			return
+		end
+	end
 end
 
 -- Records `verdict` on the run of item `key` that started at `started` (the newest such). Nothing is written when the log

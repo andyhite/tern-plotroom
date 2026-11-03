@@ -84,9 +84,12 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
 -- chained before it and `tab` is the tab the previous one ran in, which the next one joins. `outcome` (a saved action's
--- prompts.OUTCOMES id; nil: none) is what its run must leave behind, checked when the agent's turn ends.
-type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string? }
-local MAX_CHAIN = 8 -- actions in one chain; Settings refuses loops, this stops one that got into the store anyway
+-- prompts.OUTCOMES id; nil: none) is what its run must leave behind, checked when the agent's turn ends. `checker` (nil:
+-- none) is the saved action a fresh agent runs when a run of this one ends with a commit. `criteria` is the acceptance
+-- criteria snapshot to fill `{criteria}` with ("": none saved; nil: read from the issue now, at dispatch). A check job
+-- has `check`, the run it checks: its agent, start, the commit its report named and its action's name.
+type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string?, checker: string?, criteria: string?, check: { agent: number, started: number?, commit: string, action: string }? }
+local MAX_CHAIN = 8 -- actions in one chain, checks included; Settings refuses loops, this stops one that got into the store anyway
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -588,9 +591,11 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			cx:toast("error", "Setup did not run for " .. t.label, "Its tab did not open.")
 		end
 	end
+	-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
+	local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
 	local ok, agent = pcall(function()
 		-- Omitted, the command is the agent setting's (omp); a model needs its own command line.
-		return cx.agents:start({ prompt = prompt .. "\n\n" .. prompts.REPORT, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
+		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = "tab", command = if model then "omp --model " .. model else nil })
 	end)
 	if not ok or type(agent) ~= "number" then
 		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -598,10 +603,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	local chain: any = nil
 	if job.id then
-		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane }
+		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane, checker = job.checker }
 		usage.bump("action:" .. (job.name or job.id))
 	end
 	info.cwd = path
+	info.criteria = job.criteria
+	if job.check then
+		info.checkAgent, info.checkStarted = job.check.agent, job.check.started
+	end
 	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
 	if split then
 		if cx.layout:move(agent, pane, "right") then
@@ -665,7 +674,7 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 		repo = repo,
 		number = tostring(n),
 	}
-	for _, k in { "title", "author", "branch", "base", "remote", "github.user" } do
+	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end
@@ -844,20 +853,51 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			return cx2:toast("error", "Worktree failed", if type(a.problem) == "string" then a.problem else "The block's host gave no worktree")
 		end
 		local ready: Ready = r
-		afterReady(cx2, ready, function()
-			if not prompt then
-				finishWorktree(cx2, pane, t, ready)
-			elseif t.kind == "pr" then
-				local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
-				finishAgent(cx2, pane, t, ready, fill(prompt.text, owner or "", name or "", tonumber(t.ref) :: number, a), prompt, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
-			else
-				local vars: any = a.vars
-				local started = finishAgent(cx2, pane, t, ready, fillVars(prompt.text, vars), prompt, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) })
-				if started and prompt.status then
-					moveStatus(cx2, pane, t, prompt.status)
+		-- Starts the agent with the run's acceptance criteria `criteria` (Job.criteria) as its `{criteria}` block, added
+		-- at the end when a builder with a checker, or a check, does not name it.
+		local function run(cx3: WindowCx, criteria: string?)
+			afterReady(cx3, ready, function()
+				if not prompt then
+					return finishWorktree(cx3, pane, t, ready)
 				end
+				local job: Job = table.clone(prompt)
+				job.criteria = criteria
+				local text = prompt.text
+				if (prompt.checker or prompt.check) and not string.find(text, "{criteria}", 1, true) then
+					text ..= "\n\n{criteria}"
+				end
+				local block = prompts.criteriaBlock(criteria)
+				if t.kind == "pr" then
+					local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
+					a.criteria = block
+					finishAgent(cx3, pane, t, ready, fill(text, owner or "", name or "", tonumber(t.ref) :: number, a), job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
+				else
+					local vars: any = a.vars
+					if type(vars) == "table" then
+						vars.criteria = block
+					end
+					local started = finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) })
+					if started and prompt.status then
+						moveStatus(cx3, pane, t, prompt.status)
+					end
+				end
+			end)
+		end
+		-- An issue run that has a checker or names {criteria} saves the issue's acceptance criteria now, at dispatch
+		-- (host/requests' `criteria`); a check reuses the snapshot of the run it checks. A pull request has none.
+		local wants = prompt ~= nil and prompt.criteria == nil and t.kind == "issue" and (prompt.checker ~= nil or string.find(prompt.text, "{criteria}", 1, true) ~= nil)
+		if not wants then
+			return run(cx2, if prompt then prompt.criteria else nil)
+		end
+		local sent = ask(cx2, pane, "criteria", { repo = t.repo, ref = t.ref }, PREPARE_MS, function(b: any, cx3: WindowCx)
+			if type(b.problem) == "string" then
+				cx3:toast("info", "No acceptance criteria saved for " .. t.label, b.problem)
 			end
+			run(cx3, if type(b.criteria) == "string" then b.criteria else "")
 		end)
+		if not sent then
+			run(cx2, "")
+		end
 	end
 	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one, or its outcome
 	-- is checked as the GitHub login it runs as.
@@ -905,7 +945,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil }
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil, checker = if type(it.checker) == "string" then it.checker else nil }
 				local function go(cx3: WindowCx)
 					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
 				end
@@ -1723,6 +1763,7 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 			name = if type(a.label) == "string" then a.label else nil,
 			next = if type(a.next) == "string" then a.next else nil,
 			outcome = if type(a.outcome) == "string" then a.outcome else nil,
+			checker = if type(a.checker) == "string" then a.checker else nil,
 			depth = chain.depth + 1,
 			tab = tab,
 		}, a.worktree ~= false, if chain.kind == "issue" and chain.code then { target = chain.code } else {})
@@ -1752,13 +1793,54 @@ local function advanceChain(cx: WindowCx, agent: number, result: string)
 	end)
 end
 
+-- Starts the checker of a run that ended with a commit (flows.recordResult's Check): the saved action `chain.checker`
+-- of the run's kind, as a new agent on the same item (never in the builder's pane: it joins the builder's tab), with the
+-- run's saved criteria and the fixed check contract. It is a link in the chain (MAX_CHAIN) but starts neither its own
+-- checker nor its next action: its verdict goes to the run it checks.
+local function startCheck(cx: WindowCx, check: flows.Check)
+	local chain = check.chain
+	local t: Target
+	if chain.kind == "pr" then
+		local owner, name = string.match(chain.repo, "^([^/]+)/([^/]+)$")
+		t = prTarget(owner or "", name or "", tonumber(chain.ref) or 0)
+	else
+		t = issueTarget(chain.repo, chain.ref)
+	end
+	local label = if chain.name ~= "" then chain.name else "the action"
+	if chain.depth + 1 >= MAX_CHAIN then
+		return cx:toast("info", "Check not started after " .. label .. " for " .. t.label, "A chain of actions stops after " .. MAX_CHAIN .. ".")
+	end
+	local tab = cx.session:tab_of(check.agent)
+	ask(cx, check.block, "action", { kind = chain.kind, pid = chain.checker }, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.send) ~= "string" then
+			return cx2:toast("error", "Check not started after " .. label .. " for " .. t.label, if type(a.problem) == "string" then a.problem else "The checker action is gone.")
+		end
+		prepareTarget(cx2, check.block, t, {
+			text = a.send,
+			model = if type(a.model) == "string" then a.model else nil,
+			split = a.split == true,
+			id = chain.checker,
+			name = if type(a.label) == "string" then a.label else nil,
+			outcome = if type(a.outcome) == "string" then a.outcome else nil,
+			depth = chain.depth + 1,
+			tab = tab,
+			criteria = check.criteria or "",
+			check = { agent = check.agent, started = check.started, commit = check.commit, action = label },
+		}, a.worktree ~= false, if chain.kind == "issue" and chain.code then { target = chain.code } else {})
+	end)
+end
+
 tern.on("agent_finished", function(ev: any, cx: WindowCx)
+	local check: flows.Check? = nil
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
-		flows.recordResult(cx, ev.pane, ev.result)
+		check = flows.recordResult(cx, ev.pane, ev.result)
 	end
 	flows.agentSync(cx)
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
 		advanceChain(cx, ev.pane, ev.result)
+	end
+	if check then
+		startCheck(cx, check)
 	end
 end)
 

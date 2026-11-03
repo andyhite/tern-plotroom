@@ -173,6 +173,7 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
 			next = p.next, -- the action that starts when its agent finishes
 			outcome = p.outcome, -- what its run must leave behind (prompts.OUTCOMES); omitted: none
+			checker = p.checker, -- the action a fresh agent runs to check a run of it that ends with a commit
 			key = p.key,
 		})
 	end
@@ -1569,7 +1570,7 @@ function M.rpc(state: State, raw: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end
@@ -1654,6 +1655,27 @@ function M.rpc(state: State, raw: any)
 			return
 		end
 		prepareIssue(state, id, repo, ref, q.worktree, target, { pr = pr, fresh = q.fresh == true, base = base }, q.users == true)
+	elseif q.op == "criteria" and type(q.repo) == "string" and worktree.validProject(q.repo) and type(q.ref) == "string" and #q.ref <= 64 and string.match(q.ref, "^[%w_%-]+$") then
+		-- The acceptance criteria of a loaded issue, read fresh from its tracker when a run is dispatched
+		-- (tracker.criteria): {criteria} ("" for an empty description), or {problem}.
+		local issue = loadedIssue(state, string.lower(q.repo) .. "#" .. q.ref)
+		if not issue then
+			return reply(state, id, { problem = "That issue is not loaded here any more." })
+		end
+		local found: tracker.Issue = issue
+		local function got(detail: tracker.IssueDetail?, problem: github.Problem?)
+			if not alive(state) then
+				return
+			elseif not detail then
+				return reply(state, id, { problem = "Its description could not be read: " .. (if problem then M.whyOf(problem) else "no answer") })
+			end
+			reply(state, id, { criteria = tracker.criteria(found.tracker, detail.body) })
+		end
+		if found.tracker == "jira" then
+			jira.issue(found.ref, got)
+		else
+			github.issue(found.repo, tonumber(found.ref) :: number, login(state), got)
+		end
 	elseif q.op == "move-status" and type(q.ref) == "string" and #q.ref <= 64 and type(q.status) == "string" and q.status ~= "" and #q.status <= core.STATUS_CAP then
 		moveStatus(state, id, q.ref, q.status)
 	elseif q.op == "where" and (q.kind == "pr" or q.kind == "issue") and type(q.key) == "string" and #q.key <= 200 then

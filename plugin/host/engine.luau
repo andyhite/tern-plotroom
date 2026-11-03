@@ -333,8 +333,8 @@ function M.status(state: State, kind: string, item: any): any
 end
 
 -- Whether the agent of item `key` needs you: it waits for input; or, idle after its turn, its end-of-run report says
--- `stuck` or `needs-human`, or its run's outcome was checked Not verified. A working agent does not (you answered it),
--- and an exited one is no longer listed.
+-- `stuck` or `needs-human`, its run's outcome was checked Not verified, or it is a checker whose check failed. A working
+-- agent does not (you answered it), and an exited one is no longer listed.
 function M.needsYou(state: State, key: string): boolean
 	local agent = state.agents[key]
 	if agent == "waiting_input" then
@@ -343,7 +343,7 @@ function M.needsYou(state: State, key: string): boolean
 		return false
 	end
 	local info: AgentInfo = state.agentInfo[key] or {}
-	return info.attention == "stuck" or info.attention == "needs-human" or info.verdict == "not"
+	return info.attention == "stuck" or info.attention == "needs-human" or info.verdict == "not" or info.check == "fail"
 end
 
 -- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents, needsYou), its
@@ -2306,9 +2306,9 @@ tern.on("command_finished", function(ev: any, _cx: any)
 	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended?, attention?, reason?, blocker?, outcome?, verdict? }): replaces what the rows show. An optional text
--- that is not a clean string within its cap is dropped, never trusted.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10 }
+-- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings? }): replaces what the rows show.
+-- An optional text that is not a clean string within its cap is dropped, never trusted.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000 }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -2368,7 +2368,7 @@ function M.agentRows(state: State): { any }
 	for key, st in state.agents do
 		if st ~= "exited" then
 			local info: AgentInfo = state.agentInfo[key] or {}
-			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended, attention = info.attention, reason = info.reason, blocker = info.blocker, outcome = info.outcome, verdict = info.verdict, needs = M.needsYou(state, key) })
+			table.insert(rows, { key = key, state = st, repo = string.match(key, "^(.-)#") or key, action = info.action, branch = info.branch, title = info.title, last = info.last, err = info.err, result = info.result, ended = info.ended, attention = info.attention, reason = info.reason, blocker = info.blocker, outcome = info.outcome, verdict = info.verdict, check = info.check, findings = info.findings, needs = M.needsYou(state, key) })
 		end
 	end
 	table.sort(rows, function(a: any, b: any): boolean

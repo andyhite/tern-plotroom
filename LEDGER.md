@@ -57,7 +57,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Action field: Next action (chains) | Settings › Actions | Keep; advances only on a Verified outcome | 3 | Approved | |
 | Action field: Tell Carly when it finishes, and the `plotroom_agents` Carly export | Settings › Actions, Carly | Cut | 1 | Approved | Serves no loop step that Tern's agent notifications and Now don't cover; adds jargon |
 | "An agent already works on it" guard | Commands | Keep | — | Approved | |
-| Checker actions, fixed end-of-run report, outcomes, three-strike limits | Settings › Actions, run log | New | 3 | Approved | PRODUCT.md › Roadmap › Phase 3. Done: the fixed end-of-run report, read into the run log and shown in Agents; outcomes per action, checked on GitHub into Verified, Not verified or Unchecked on the run log, the row, Agents and Now |
+| Checker actions, fixed end-of-run report, outcomes, three-strike limits | Settings › Actions, run log | New | 3 | Approved | PRODUCT.md › Roadmap › Phase 3. Done: the fixed end-of-run report, read into the run log and shown in Agents; outcomes per action, checked on GitHub into Verified, Not verified or Unchecked on the run log, the row, Agents and Now; checker actions (Checked by, the default Check) run by a fresh agent against the acceptance criteria saved at dispatch, Checked or Check failed on the run log, the row, Agents and Now |
 | Autopilot | One opted-in view | New | 5 | Approved | Gated by PRODUCT.md › Metrics row 6 |
 
 ## Supervise

@@ -1741,6 +1741,47 @@ case("host: Settings > Actions' Next action row offers the other actions, refuse
 	eq(w.kv.get("prompts-prs").items[1].next, nil, "and no longer anyone's next action")
 end)
 
+case("host: Settings > Actions' Checked by row offers the other actions, refuses the action itself, and deleting the checker clears it; Implement and Fix are checked by Check", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Fix", "Fix {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	eq(rowIn(b, "pchecker:prs:p1").label, "Checked by", "the action's Checked by row")
+	eq(rowIn(b, "pchecker:prs:p1").control.value, "none", "an action starts checked by none")
+	same(asks.hx.options(b, "pchecker:prs:p1"), { "none", "p2" }, "the other actions are offered, never itself")
+	b.event({ ev = "change", id = "layer.settings", item = "pchecker:prs:p1", value = "p1" })
+	eq(w.kv.get("prompts-prs").items[1].checker, nil, "an action that checks itself is refused and nothing is saved")
+	has(rowIn(b, "pchecker:prs:p1").warning, "cannot check itself", "with the reason on its row")
+	b.event({ ev = "change", id = "layer.settings", item = "pchecker:prs:p1", value = "p2" })
+	eq(w.kv.get("prompts-prs").items[1].checker, "p2", "choosing another saves it")
+	eq(rowIn(b, "pchecker:prs:p1").control.value, "p2", "the row shows it")
+	b.event({ ev = "change", id = "layer.settings", item = "pchecker:prs:p1", value = "none" })
+	eq(w.kv.get("prompts-prs").items[1].checker, nil, "None clears it")
+	b.event({ ev = "change", id = "layer.settings", item = "pchecker:prs:p1", value = "p2" })
+	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:prs:p2" })
+	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p2" })
+	eq(#w.kv.get("prompts-prs").items, 1, "the checker is deleted")
+	eq(w.kv.get("prompts-prs").items[1].checker, nil, "and checks nothing any more")
+	local storage: any = w.load("host/storage")
+	local core: any = w.load("host/core")
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ { id = "p1", name = "Review", text = "x", checker = "p1" } }) })
+	eq(storage.loadPrompts(core.KINDS.prs).items[1].checker, nil, "a saved action naming itself reads as checked by none")
+	w.kv.put("prompts-issues", nil)
+	local defaults: { string } = {}
+	for _, p in storage.loadPrompts(core.KINDS.issues).items do
+		table.insert(defaults, p.id .. " " .. p.name .. ">" .. (p.checker or "-"))
+	end
+	same(defaults, { "p1 Implement>p4", "p2 Fix>p4", "p3 Plan>-", "p4 Check>-" }, "the issue defaults: Implement and Fix are checked by Check")
+	w.kv.put("prompts-issues", { version = 1, nextId = 3, items = array({ promptOf("p1", "Check", "My own check"), promptOf("p2", "Plan", "Plan {url}") }) })
+	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:issues" })
+	local restored: { string } = {}
+	for _, p in w.kv.get("prompts-issues").items do
+		table.insert(restored, p.id .. " " .. p.name .. ">" .. (p.checker or "-"))
+	end
+	same(restored, { "p1 Check>-", "p2 Plan>-", "p3 Implement>p1", "p4 Fix>p1" }, "Add missing defaults points them at the saved action named Check")
+end)
+
 case("host: an issue action's Next action also offers the pull request actions by kind, saved qualified; a pull request action never offers issue actions, and deleting one clears it as a next", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Watch", "Watch {url}") })
@@ -1777,7 +1818,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "poutcome:prs:p1", "pnext:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, its outcome and its next action: no shortcut")
+	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "poutcome:prs:p1", "pnext:prs:p1", "pchecker:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, its outcome, its next action and its checker: no shortcut")
 	goToSettings(b, "general")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Review", "the Keys page has a row for the saved action, named for it")
