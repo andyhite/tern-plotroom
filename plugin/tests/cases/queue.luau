@@ -3603,8 +3603,8 @@ case("host next move: an issue goes Worktree, then Draft PR…, a closed one wit
 	same(nextOf(w, b, "no_2fr_2314"), {}, "and a closed one without stays without")
 end)
 
--- What the default Review and Quick review promise at the approval step: findings to pick by severity, one ask with the
--- three questions and their choices, no review body drafted before the picks, and a body only as GitHub needs it.
+-- What the default Review and Quick review promise at the approval step: findings to pick by severity, a Draft review
+-- proposed through Plotroom's omp extension and posted only as sent back, with the old ask as the fallback.
 local function reviewSeedAsks(w: World, name: string, groups: { string })
 	local storage: any = w.load("host/storage")
 	local seed: any
@@ -3614,9 +3614,9 @@ local function reviewSeedAsks(w: World, name: string, groups: { string })
 		end
 	end
 	local text: string = seed.text
+	eq(seed.outcome, "review", name .. ": its outcome is still Review posted")
 	yes(#text <= storage.PROMPT_CAP, name .. " stays editable: " .. #text .. " bytes")
 	lacks(text, "Proposed review body", name .. ": no body is drafted before anything is picked")
-	lacks(text, "Comments: 1, 3, Q1", name .. ": no free-text authorization format")
 	local at = 0
 	for _, g in groups do
 		local found = string.find(text, "`### " .. g .. "`", 1, true)
@@ -3625,25 +3625,33 @@ local function reviewSeedAsks(w: World, name: string, groups: { string })
 	end
 	has(text, "Numbers run 1…n across the groups", name .. ": numbers stay stable across the groups")
 	has(text, "A Question only when its answer would change a finding's severity, whether it blocks, or the recommendation", name .. ": the Question bar")
-	has(text, "Usually \"None.\"", name .. ": no questions is the normal case")
-	local ask = string.find(text, "One ask-tool call, three questions:\n1. `Post which comments?`, multiple choice", 1, true)
+	has(text, "Write the report below, propose the Draft review, stop.", name .. ": the workflow ends in a Draft review")
+	-- The Draft review: proposed, then the turn ends; nothing posts until the choices come back.
+	local propose = string.find(text, "Call `plotroom_propose_review` (`verdict`: the Recommendation's; withheld, or <You> = <Author> → `comment`", 1, true)
+	local fallback = string.find(text, "No such tool (Plotroom's omp extension did not load) → say so; ask instead, in one ask-tool call:\n1. `Post which comments?`, multiple choice", 1, true)
+	yes(propose and fallback and propose < fallback, name .. ": proposes first; the ask only without the tool, and says so")
+	has(text, "then end your turn (report `needs-human`). It posts nothing.", name .. ": the proposal ends the turn with the report")
+	has(text, "My Draft review choices (a JSON block) authorize posting exactly them, at once, as one review. Its instructions ask for changes → revise, propose again, stop.", name .. ": posts only what is sent back, or revises")
+	has(text, "re-read `headRefOid`. Not the reviewed head → say so, reassess, propose again for the new head", name .. ": a moved head is proposed again, not posted")
+	has(text, "`gh api repos/{owner}/{repo}/pulls/{number}/reviews --input -` (JSON on stdin): `commit_id` = reviewed head", name .. ": one review, at the reviewed head, argv only")
+	-- The fallback: today's ask.
 	local action = string.find(text, "\n2. `Review action?`: `Approve` / `Request changes` / `Comment` / `None (comments only)`", 1, true)
 	local body = string.find(text, "\n3. `Review body?`: `None` (default) / `Draft one from my picks`", 1, true)
-	yes(ask and action and body and ask < action and action < body, name .. ": one ask, its three questions in order")
+	yes(fallback and action and body and fallback < action and action < body, name .. ": one ask, its three questions in order")
 	has(text, "default the blocking groups (none if nothing blocks)", name .. ": blocking comments are picked by default")
 	has(text, "`P2 except 5`", name .. ": Other may pick by numbers or exclusions")
-	has(text, "<You> = <Author> → only `Comment` / `None (comments only)`", name .. ": your own PR offers only what GitHub allows")
-	has(text, "The answers authorize: post at once, no further confirm, except a drafted body", name .. ": no second confirm")
+	has(text, "<You> = <Author> → only the last two", name .. ": your own PR offers only what GitHub allows")
+	has(text, "The ask's answers authorize: post at once, no further confirm, except a drafted body", name .. ": no second confirm")
 	has(text, "show it and ask `Post` / `Edit`", name .. ": a drafted body is shown before posting")
 	has(text, "never mentioning unselected ones", name .. ": the draft covers only the picks")
 	has(text, "`Approve` gets none; `Request changes` and `Comment` need one (GitHub): only the posted items' headers", name .. ": a body only as GitHub requires it")
 end
 
-case("prompts: the default Review asks which comments by severity, the action and an optional body from the picks", function(w: World)
+case("prompts: the default Review proposes a Draft review, posts only the choices sent back, and falls back to the ask without the extension", function(w: World)
 	reviewSeedAsks(w, "Review", { "P0 · blocking", "P1 · blocking", "P2 · blocking", "P2", "P3" })
 end)
 
-case("prompts: the default Quick review asks which comments by severity, the action and an optional body from the picks", function(w: World)
+case("prompts: the default Quick review proposes a Draft review, posts only the choices sent back, and falls back to the ask without the extension", function(w: World)
 	reviewSeedAsks(w, "Quick review", { "P0 · blocking", "P1 · blocking", "P2", "P3" })
 end)
 

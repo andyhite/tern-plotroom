@@ -73,7 +73,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Failing checks' log excerpts: `{failures}` for actions, and each failing check's first error line with its excerpt in a fold in the preview | Prompt variables, preview (Checks) | New | 2 | Approved | Dispatch (and Land): an agent starts with the failure in hand. GitHub Actions only (`gh run view --log-failed`), read once per check and head commit; no log viewer, the check's page is one click away. Adopted from tern-pr-guide |
 | Autopilot | One opted-in view | New | 5 | Approved | Gated by PRODUCT.md › Metrics row 6 |
 | Plotroom's omp extension: tools Plotroom's agents load with `-e`, starting with Propose a Draft review | Agents Plotroom starts | New | 6 | Approved | Agents hand structured work back instead of text Plotroom parses |
-| Review and Quick review end in a Draft review; the agent posts only what you send back | Settings › Actions (default prompts) | New | 6 | Approved | PRODUCT.md › Principles 3 and 5 |
+| Review and Quick review end in a Draft review; the agent posts only what you send back | Settings › Actions (default prompts) | New | 6 | Approved | PRODUCT.md › Principles 3 and 5. tern-plotroom#qyt3: the prompts propose with `plotroom_propose_review`, post the sent choices as one review after re-reading the head, and fall back to the ask without the extension |
 
 ## Supervise
 
