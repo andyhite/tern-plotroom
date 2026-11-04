@@ -125,6 +125,8 @@ local function runQueueAction(state: State, act: string): boolean
 		return engine.goScope(state, string.sub(act, 7))
 	elseif act == "unpin" then
 		return requests.unpin(state)
+	elseif act == "nownext" then
+		return engine.nowNext(state)
 	elseif act == "next" then
 		local move = if chosen and not (state.boardOn or state.agentsOn or state.nowOn) then engine.nextMove(state, state.kind.id, chosen) else nil
 		if not chosen or not move then
@@ -563,6 +565,7 @@ local function blockDef(): BlockDef<State>
 				-- A new block opens on Now, unless it was launched to show one item; a restored one on the scope it saved.
 				nowOn = if mine then saved.now == true else pins[1] == nil,
 				nowAt = nil,
+				nowWalk = nil,
 				now = { mine = {}, review = {}, assigned = {}, finder = {}, notices = {}, yours = {}, teams = {}, problems = {}, prefs = nowPrefs, prefsProblem = nowProblem, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
 				agents = {},
 				agentInfo = {},
@@ -785,7 +788,7 @@ local function blockDef(): BlockDef<State>
 					else
 						enter()
 					end
-				elseif lact == "refresh" or lact == "settings" or lact == "help" or lact == "more" then
+				elseif lact == "refresh" or lact == "settings" or lact == "help" or lact == "more" or lact == "nownext" then
 					queueAction(state, lact)
 				elseif not extra(lact) then
 					return false
@@ -1126,6 +1129,9 @@ local function blockDef(): BlockDef<State>
 						-- Now's rows are not the queue's items either.
 						for _, r in engine.nowRows(state) do
 							if item and r.id == item then
+								if r.id ~= state.nowAt then
+									engine.nowStop(state) -- a hand move
+								end
 								state.nowAt, state.focus = r.id, "list"
 								if ev.ev == "activate" then
 									openNowRow(state)

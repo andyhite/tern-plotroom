@@ -16,6 +16,7 @@ M.ACTIONS = {
 	{ id = "down", label = "Move down", default = "", preset = "j" },
 	{ id = "up", label = "Move up", default = "", preset = "k" },
 	{ id = "next", label = "Next move", default = "", preset = "x" },
+	{ id = "nownext", label = "Next in Now", default = "", preset = "n" },
 	{ id = "worktree", label = "Worktree", default = "", preset = "w" },
 	{ id = "goto", label = "Go to tab", default = "", preset = "g" },
 	{ id = "agent", label = "Agent picker", default = "", preset = "a" },
@@ -35,7 +36,7 @@ M.ACTIONS = {
 
 -- The built-in shortcuts a saved action's own key beats while that action is offered for the selected item: it was
 -- that key's first. Every other built-in key wins over a saved action's.
-M.YIELDS = { agentgo = true, seen = true, snooze = true, snoozed = true, sort = true, more = true, next = true }
+M.YIELDS = { agentgo = true, seen = true, snooze = true, snoozed = true, sort = true, more = true, next = true, nownext = true }
 
 local function actionOf(id: string): Action?
 	for _, a in M.ACTIONS do
