@@ -144,6 +144,14 @@ function M.validModel(s: string): boolean
 	return #s <= 100 and string.match(s, "^@?[%w][%w%._:/%-]*$") ~= nil
 end
 
+-- The levels `omp --thinking` takes, in its order: an action's Effort (nil: omp's default) is one of them.
+-- ponytail: fixed copy of omp's list; read it from omp if omp adds levels often.
+M.EFFORTS = { "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto" }
+
+function M.validEffort(s: string): boolean
+	return table.find(M.EFFORTS, s) ~= nil
+end
+
 -- One name as a ref component. Git refuses a component that starts with a dot, holds `..` or ends in `.lock`, all
 -- of which GitHub allows (`.github`, `a..b`, `x.lock`), so each such dot becomes `%2E`. A GitHub name never holds
 -- `%`, so two names cannot collide, and every other name is unchanged.

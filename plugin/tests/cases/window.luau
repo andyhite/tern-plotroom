@@ -333,6 +333,70 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	eq(w.toasts[#w.toasts].level, "error", "the user is told")
 end)
 
+windowCase("window: an action's effort starts its agent with --thinking <level>, after its model; with no model, alone", function(w: World)
+	local _, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.model, review.effort = "@slow", "high"
+	local quick = promptOf("p2", "Quick", "Quick {url}")
+	quick.effort = "low"
+	savePrompts(w, { review, quick })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(commandOf(w.window.agents[1]), OMP .. " --model @slow --thinking high", "the model, then the effort")
+	w.window.choose = "Start Quick anyway"
+	w.click(runLink("o/r", 5, "p2"))
+	w.flush()
+	eq(commandOf(w.window.agents[2]), OMP .. " --thinking low", "an effort on omp's default model")
+end)
+
+windowCase("window: Settings' Model button opens a picker of omp's default, the roles and the models by provider; the pick is saved on that action", function(w: World)
+	local _, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.model = "retired/model-x"
+	savePrompts(w, { review })
+	h.goToSettings(b, "prompts")
+	w.flush()
+	w.window.choose = "claude-haiku-4-5"
+	w.click("plotroom://model/prs:p1")
+	w.flush()
+	local pick = w.window.picks[#w.window.picks]
+	local shown: { string } = {}
+	for _, item in pick.items do
+		table.insert(shown, item.group .. ": " .. item.label .. (if item.current then " ✓" else "") .. (if item.detail then " (" .. item.detail .. ")" else ""))
+	end
+	same(shown, {
+		"Default: omp's default (The model omp runs with no --model)",
+		"Default: retired/model-x ✓ (Not in omp's list)",
+		"Roles: @plan",
+		"Roles: @review (openai/gpt-5.2:high)",
+		"Roles: @slow (anthropic/claude-opus-4-5:max)",
+		"Roles: @smol",
+		"anthropic: claude-opus-4-5",
+		"anthropic: claude-haiku-4-5",
+		"openai: gpt-5.2",
+	}, "omp's default, the saved model omp no longer lists (current, marked), the roles with their models, then each provider's models")
+	eq(w.kv.get("prompts-prs").items[1].model, "anthropic/claude-haiku-4-5", "the pick is saved as its selector")
+	w.window.choose = "@slow"
+	w.click("plotroom://model/prs:p1")
+	w.flush()
+	eq(w.kv.get("prompts-prs").items[1].model, "@slow", "a role is saved as its alias")
+	local current: { string } = {}
+	for _, item in w.window.picks[#w.window.picks].items do
+		if item.current then
+			table.insert(current, item.label)
+		end
+	end
+	same(current, { "claude-haiku-4-5" }, "the picker had checked the model saved then, and only it")
+	w.window.choose = "omp's default"
+	w.click("plotroom://model/prs:p1")
+	w.flush()
+	eq(w.kv.get("prompts-prs").items[1].model, nil, "omp's default resets it")
+	w.click("plotroom://model/prs:p1; rm")
+	eq(w.toasts[#w.toasts].text, "Plotroom: malformed link", "a malformed link asks nothing")
+end)
+
 windowCase("window: a PR prompt set to the main checkout starts its agent in a new tab at the checkout, with the PR's details and no worktree", function(w: World)
 	local s, b = agentScene(w)
 	local review = promptOf("p1", "Review", "Review {url}: {title} by {author}, {branch} into {base}")
