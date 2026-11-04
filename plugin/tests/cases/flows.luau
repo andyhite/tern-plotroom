@@ -4441,6 +4441,60 @@ windowCase("window flows: a run that ends with a commit starts its checker as a 
 	eq(countOps(st, "action"), 1, "a passing check of an action with no next action starts nothing")
 end)
 
+windowCase("window flows: a seed Fix on a Jira issue that committed and stops at its Ship ask waits for you, then goes on to Check and Watch; a report naming no commit still starts a fix round", function(w: World)
+	w.load("window")
+	local fix: any = (w.load("prompts") :: any).issues[2]
+	eq(fix.name, "Fix", "the issue defaults' Fix")
+	same({ fix.checker, fix.next }, { "p4", "prs:p4" } :: { any }, "is checked by Check, then leads into Watch")
+	local st = flowHost(w)
+	local function start(): any
+		st.link("layer.queue.buttons.agent", "plotroom://issue/agent/ABC/ABC-12")
+		st.palette({ items = { { id = "p2", label = "Fix" } } })
+		w.window.choose = if #w.window.agents > 0 then { "Start another agent", "Fix" } else "Fix"
+		w.click("plotroom://issue/agent/ABC/ABC-12")
+		w.flush()
+		st.reply("menu", { items = { { id = "p2", label = "Fix", send = "Fix {key}", worktree = true, checker = fix.checker, next = fix.next } } })
+		st.reply("issue", { path = "/wt/abc12", summary = "Created", created = true, current = true, vars = { key = "ABC-12", branch = "ABC-12-login" }, code = "o/r" })
+		st.reply("criteria", { criteria = "AC1 login works" })
+		return (w.kv.get("agent-links") :: any)[1]
+	end
+	local builder = start()
+	eq(builder.key, "abc#ABC-12", "a Jira issue's run")
+	-- The turn ends at the Ship ask: the agent's last message is the ask, with no report yet.
+	lastSays(w, builder.agent, "Fixed and pushed; draft PR opened. Which of these should I do?")
+	w.window.agentStates[builder.agent] = "waiting_input"
+	agentFinished(w, builder.agent, "done")
+	eq(countOps(st, "action"), 0, "no fix round and no check starts")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "held", "the chain waits for you")
+	-- A report that says ok with no commit, while the agent still shows its ask, waits too.
+	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Asked what to ship", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, builder.agent, "done")
+	eq(countOps(st, "action"), 0, "an agent waiting on its ask starts no fix round")
+	eq((w.kv.get("agent-links") :: any)[1].gate, "held", "and still waits")
+	-- You answer; the agent ships and ends with its report naming the commit it made.
+	w.window.agentStates[builder.agent] = "idle"
+	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Shipped", "commit": "{sha("c")}", "pr": "https://github.com/o/r/pull/45", "evidence": [], "blocker": null}`))
+	agentFinished(w, builder.agent, "done")
+	local asked = st.reply("action", { label = "Check", send = "Check {key}", worktree = true })
+	eq(asked.pid, "p4", "Check starts for the commit")
+	st.reply("issue", { path = "/wt/abc12", summary = "Reused", created = false, current = true, vars = { key = "ABC-12", branch = "ABC-12-login" }, code = "o/r" })
+	local checker = (w.kv.get("agent-links") :: any)[1]
+	has(w.window.agents[2].prompt, "ended at commit " .. sha("c"), "naming the commit")
+	checkSays(w, checker, "pass")
+	local next = st.reply("action", { label = "Watch", send = "Watch {url}", worktree = true, pr = 45 })
+	same({ next.kind, next.pid, next.repo, next.branch }, { "pr", "p4", "o/r", "ABC-12-login" } :: { any }, "a passing check starts Watch on the branch's pull request")
+	st.reply("worktree", { path = "/wt/abc12", summary = "Reused", created = false, current = true })
+	eq(w.window.agents[3].prompt, "Watch https://github.com/o/r/pull/45", "which runs")
+	eq(countOps(st, "action"), 2, "and no fix round ever started")
+	-- A run whose report names no commit, with nothing waiting on you, still starts a fix round.
+	local again = start()
+	w.window.agentStates[again.agent] = "idle"
+	lastSays(w, again.agent, reportBlock(`\{"attention": "ok", "reason": "Nothing to change", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	agentFinished(w, again.agent, "done")
+	local round = st.reply("action", { label = "Fix", send = "Fix {key}", worktree = true, checker = "p4", next = "prs:p4" })
+	eq(round.pid, "p2", "the fix round runs Fix again")
+end)
+
 windowCase("window flows: the default Check acts as the run's GitHub login and leaves the tree as it found it", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

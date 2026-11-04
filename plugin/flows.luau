@@ -725,11 +725,19 @@ local function settleCheck(cx: WindowCx, links: { Link }, c: Link, verdict: stri
 	end
 end
 
+-- Whether link `l`'s agent waits for input now (an ask it is showing).
+local function waitsForInput(cx: WindowCx, l: Link): boolean
+	local states, _, cwds = agentStates(cx)
+	return states ~= nil and stateOf(l, states, cwds) == "waiting_input"
+end
+
 -- Where the run on link `l` (in `links`) goes at its agent's turn end, for an action with a next action or a checker,
 -- decided once (again only while it waits for the user): another result than "done" ends the chain; a new commit
--- starts the check; a report that asks for the user waits for them; a checked action's run without a new commit starts
--- another round, until LIMIT such runs in a row; an action with an outcome waits for its verdict; one with neither
--- has nothing that could verify it, so its next action never starts. `runs` (nil: unreadable) counts the limits.
+-- starts the check; a report that asks for the user waits for them; so does a checked action's turn that ends with no
+-- report, or with its agent waiting for input (a Ship ask the report did not follow): nothing says it made no commit;
+-- any other checked action's run without a new commit starts another round, until LIMIT such runs in a row; an action
+-- with an outcome waits for its verdict; one with neither has nothing that could verify it, so its next action never
+-- starts. `runs` (nil: unreadable) counts the limits.
 local function gateRun(cx: WindowCx, links: { Link }, l: Link, result: string, report: usage.Report?, runs: { usage.Run }?)
 	local c = l.chain
 	if not c or l.checkAgent or not (c.next or c.checker) or not (l.gate == nil or l.gate == "held") then
@@ -748,6 +756,8 @@ local function gateRun(cx: WindowCx, links: { Link }, l: Link, result: string, r
 	if c.checker and commit and s.idle == 0 then
 		l.gate, l.checkedCommit = "check", commit
 	elseif report and (report.attention == "stuck" or report.attention == "needs-human") then
+		l.gate = "held"
+	elseif c.checker and (not report or waitsForInput(cx, l)) then
 		l.gate = "held"
 	elseif c.checker then
 		if s.idle >= M.LIMIT then
