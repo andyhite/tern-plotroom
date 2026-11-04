@@ -14,6 +14,7 @@ local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
+local logs = require("../logs")
 
 local core = require("./core")
 local storage = require("./storage")
@@ -225,11 +226,27 @@ local function readUsers(state: State, key: string, wt: boolean, jira: boolean, 
 	end)
 end
 
+-- The `{failures}` block of `repo`#`n`: its checks read fresh, then each failing check's log, read once per head commit
+-- (engine.failures); a checks read that fails says so in the block.
+local function readFailures(state: State, repo: string, n: number, go: (string) -> ())
+	github.checks(repo, n, login(state), function(runs, _, problem, about)
+		local head = if about then about.head else nil
+		if not runs or not about or not head then
+			local why = if problem then problem.message else "GitHub named no head commit."
+			return go("<failures>\nPlotroom could not read the checks: " .. clip(printable(why), 300) .. "\n</failures>")
+		end
+		engine.failures(state, repo, head, runs, about.files, function(list)
+			go(logs.block(head, list, storage.PROMPT_CAP))
+		end)
+	end)
+end
+
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- for the prompt that runs there.
-local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean)
+-- and `failures` the `{failures}` block, for the prompt that runs there.
+local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean)
+	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
 	if wt and preparing[key] then
 		return reply(state, id, { busy = true })
@@ -258,6 +275,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				title = meta.title,
 				author = meta.author,
 				["github.user"] = found["github.user"],
+				failures = failed,
 			})
 		end)
 	end
@@ -307,15 +325,31 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					title = r.title,
 					author = r.author,
 					["github.user"] = found["github.user"],
+					failures = failed,
 				})
 			end)
 		end)
 	end
 	local go: ({ [string]: string }) -> () = if wt then open else main
-	if not users then
-		return go({})
+	local function start(found: { [string]: string })
+		if not failures then
+			return go(found)
+		end
+		readFailures(state, repo, n, function(text)
+			if not alive(state) then
+				if wt then
+					preparing[key] = nil
+				end
+				return
+			end
+			failed = text
+			go(found)
+		end)
 	end
-	readUsers(state, key, wt, false, go)
+	if not users then
+		return start({})
+	end
+	readUsers(state, key, wt, false, start)
 end
 
 -- How the window answered an issue worktree's questions: a linked PR to check out, or a new branch (`fresh`) from `base`.
@@ -760,6 +794,14 @@ local function mergesNow(state: State, item: any): boolean
 	return merge == "ready" or merge == "unstable"
 end
 
+-- Push empty commit… applies: an open PR of the repository itself (not a fork's branch) with a known head whose preview
+-- shows the branch neither behind its base (Update branch… covers that) nor in conflict, nor its merge state unknown.
+local function emptyCommits(state: State, item: any): boolean
+	local d = state.details[detailKey(state, item)]
+	local merge = if d and d.about then d.about.merge else nil
+	return item.state == "open" and item.fork == nil and type(item.headSha) == "string" and merge ~= nil and merge ~= "behind" and merge ~= "conflicts" and merge ~= "unknown"
+end
+
 -- Every notification thread Now read, while Now is shown and its Notifications reason is on: also those whose item Now
 -- lists for a higher reason, a second thread on one item and a snoozed item's, so Mark all notifications read… leaves none unread.
 local function unread(state: State): { github.Notice }
@@ -1087,6 +1129,32 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, "Updated the branch of " .. target)
 			end)
 		end)
+	elseif name == "pr-empty-commit" then
+		if not prs then
+			return no("Empty commits are for pull requests.")
+		elseif not emptyCommits(state, item) then
+			return no("That pull request is not open with its own branch up to date and free of conflicts; Update branch… covers a branch behind its base.")
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		local sha: string = item.headSha
+		return M.offer(state, id, item, {
+			head = "Push an empty commit to " .. target .. "?",
+			label = "Push empty commit",
+			lines = {
+				target .. ": " .. printable(item.title),
+				"Account: @" .. account,
+				"Branch: " .. printable(item.head),
+				"Head: " .. string.sub(sha, 1, 7) .. "; the new commit has its tree and it as parent, so checks run again",
+				"Refused if the branch moved since",
+			},
+		}, function(done)
+			github.emptyCommit(item.repo, item.number, item.head, sha, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, "Pushed an empty commit to " .. target)
+			end)
+		end)
 	elseif name == "comment" then
 		local body = github.commentText(q.text)
 		if not body then
@@ -1208,6 +1276,9 @@ function M.commands(state: State): { { id: string, group: string? } }
 			local d = state.details[detailKey(state, item)]
 			if d and d.about and d.about.merge == "behind" then
 				add("pr-update-branch")
+			end
+			if emptyCommits(state, item) then
+				add("pr-empty-commit")
 			end
 		end
 		add("comment")
@@ -1637,7 +1708,7 @@ function M.rpc(state: State, raw: any)
 		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
 			return
 		end
-		prepare(state, id, repo, n, q.worktree ~= false, q.users == true)
+		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path

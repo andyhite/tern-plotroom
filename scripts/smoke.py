@@ -2049,7 +2049,7 @@ def sc_previews(s: Smoke) -> None:
     ], "about": {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "Moves the login redirect after sign-in.",
                  "reviews": [{"login": "ann", "state": "CHANGES_REQUESTED"}], "requested": ["bob"],
                  "closing": [{"number": 32, "title": "Preview issue 32", "url": "https://github.com/f/low/issues/32", "state": "OPEN"}],
-                 "paths": ["src/login.ts"], "recent": [{"login": "ann", "body": "Please keep the old redirect for admins."}]}}}), encoding="utf-8")
+                 "files": ["src/login.ts"], "recent": [{"login": "ann", "body": "Please keep the old redirect for admins."}]}}}), encoding="utf-8")
     (s.smoke / "issues.json").write_text(json.dumps([{"number": 32, "title": "Preview issue 32", "url": "https://github.com/f/low/issues/32", "state": "OPEN",
                                                       "reason": None, "updatedAt": stamp, "createdAt": stamp, "author": "octo", "comments": 1,
                                                       "labels": ["bug"], "assignees": ["octo"]}]), encoding="utf-8")
