@@ -125,6 +125,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | GitHub and Jira setup pages (when the CLI is missing) | Settings | Keep | — | Approved | |
 | First-run checklist | Queue | New | 1 | Approved | PRODUCT.md › Principles 4 |
 | Reset all settings | Settings › General | New | 1 | Approved | Starting over, and the way out of a corrupted store; keeps triage, usage, runs and agent links |
+| Key footer: at most 5 bound keys for the selection (Commands, Shortcut list, Next move, then the most used); actions show their key where they appear | Queue, Commands, preview | New | — | Approved | Trust: a second user finds the keys. Adopted from tern-pr-guide (DESIGN.md › Keycaps); tern-plotroom#4ban |
 | Export and import of views and actions | Commands › Configuration | Cut | 1 | Approved | About 700 lines for a rare move between machines; views and actions are re-created by hand |
 | `Plotroom:` commands in Tern's palette, except Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input (33 of 37 today) | Tern's palette | Hide: they stay in Commands; Tern's palette keeps only entry points and cross-pane commands. Tern-level key binds to hidden commands stop working. | 1 | Approved | Metric 2; Tern's palette is shared with every other plugin |
 | Protocol mismatch notice | Status bar | Keep; shows only outside the supported protocol range | 0 | Approved | |
