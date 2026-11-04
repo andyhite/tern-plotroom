@@ -1680,6 +1680,8 @@ export type Gh = {
 	checks: { [string]: { any } }, -- "owner/repo#N" -> check nodes of its latest commit
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
+	evidence: { [string]: { any } }, -- "owner/repo#N" -> {head, files, runs} as EVIDENCE_JQ prints it; none: no files, no runs, head null
+	history: { [string]: { any } }, -- "owner/repo@base@workflow" -> the runs `run list` prints ({conclusion, status}), newest first; none: no runs
 	linked: { [string]: { any } }, -- "owner/repo#ref" (an issue number or a Jira key) -> the pull requests PR_LINK_JQ prints for it: {number, title, head, branch, base}
 	heads: { [string]: { any } }, -- "owner/repo@branch" -> the pull requests `pr list --head` prints for it: {number, title, state, isDraft, url}
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
@@ -1707,6 +1709,8 @@ local function newGh(w: World): Gh
 		checks = {},
 		checkTotal = {},
 		about = {},
+		evidence = {},
+		history = {},
 		linked = {},
 		heads = {},
 		limits = {},
@@ -1809,8 +1813,12 @@ local function newGh(w: World): Gh
 		local kind = "other"
 		if argv[2] == "pr" and argv[3] == "list" then
 			kind = "head" -- the pull requests whose head is a branch
+		elseif argv[2] == "run" and argv[3] == "list" then
+			kind = "history" -- a workflow's recent runs on a branch
 		elseif argv[2] == "repo" and argv[3] == "clone" then
 			kind = "clone"
+		elseif string.find(fields.query or "", "checkType: ALL", 1, true) then
+			kind = "flaky" -- a pull request's Likely flaky evidence
 		elseif string.find(fields.query or "", "resource(url: $q)", 1, true) then
 			kind = "pull"
 		elseif string.find(fields.query or "", "baseRepository { nameWithOwner }", 1, true) then
@@ -1853,7 +1861,7 @@ local function newGh(w: World): Gh
 		end
 		local key = login or ""
 		local lim = gh.limits[key]
-		if kind == "search" or kind == "issue-search" or kind == "checks" or kind == "issue" or kind == "pull" then
+		if kind == "search" or kind == "issue-search" or kind == "checks" or kind == "issue" or kind == "pull" or kind == "flaky" then
 			if lim and lim.remaining <= 0 then
 				return { status = 1, stdout = headers(lim), stderr = "gh: API rate limit already exceeded for user ID 1. (HTTP 403)\n" }
 			end
@@ -1881,6 +1889,20 @@ local function newGh(w: World): Gh
 			local slice, cursor = page(nodes, fields.after)
 			local body = jsonEncode({ total = gh.checkTotal[id] or #nodes, next = cursor, nodes = slice, about = gh.about[id] })
 			return { stdout = headers(lim) .. body }
+		elseif kind == "flaky" then
+			local id = (fields.o or "") .. "/" .. (fields.r or "") .. "#" .. (fields.n or "")
+			local body = jsonEncode(gh.evidence[id] or { head = NULL, files = array({}), runs = array({}) })
+			return { stdout = headers(lim) .. body }
+		elseif kind == "history" then
+			local repo, branch, workflow = "", "", ""
+			for j = 4, #argv do
+				if argv[j - 1] == "--repo" then
+					repo = (string.gsub(argv[j], "^github%.com/", ""))
+				end
+				branch = string.match(argv[j], "^%-%-branch=(.*)$") or branch
+				workflow = string.match(argv[j], "^%-%-workflow=(.*)$") or workflow
+			end
+			return { stdout = jsonEncode(array(gh.history[repo .. "@" .. branch .. "@" .. workflow] or {})) }
 		elseif kind == "issue-search" then
 			local list = gh.issueItems[key] or {}
 			for text, found in gh.queries do
