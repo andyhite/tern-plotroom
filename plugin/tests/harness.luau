@@ -2936,8 +2936,8 @@ local function requestsOf(gh: Gh, kind: string): { GhReq }
 end
 M.requestsOf = requestsOf
 
--- Now's fixed GitHub searches, which every refresh sends (engine NOW_MINE, NOW_REVIEW, NOW_ASSIGNED).
-local NOW_QUERIES = { "is:open author:@me archived:false ", "is:open user-review-requested:@me draft:false archived:false ", "is:open assignee:@me archived:false " }
+-- Now's fixed GitHub searches, which every refresh sends (engine NOW_MINE, NOW_REVIEW, NOW_DISMISSED, NOW_ASSIGNED).
+local NOW_QUERIES = { "is:open author:@me archived:false ", "is:open user-review-requested:@me draft:false archived:false ", "is:open reviewed-by:@me -author:@me draft:false archived:false ", "is:open assignee:@me archived:false " }
 
 -- requestsOf without Now's fixed searches: what the views searched. A seed view with Now's query counts as Now's.
 local function viewSearchesOf(gh: Gh, kind: string): { GhReq }
