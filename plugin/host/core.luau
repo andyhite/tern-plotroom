@@ -58,11 +58,12 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
--- alias such as @slow. `next` (nil: none) is the id of another prompt of the kind that starts for the same item, in the same
+-- alias such as @slow. `effort` (nil: omp's default) is its `omp --thinking` level (worktree.EFFORTS). `next` (nil:
+-- none) is the id of another prompt of the kind that starts for the same item, in the same
 -- tab and worktree, when this prompt's agent finishes. `outcome` (nil: none) is what its run must leave behind, a
 -- prompts.OUTCOMES id, checked against GitHub when the run's turn ends. `checker` (nil: none) is the id of another
 -- prompt of the kind (Checked by) that a fresh agent runs on the same item when a run of this one ends with a commit.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, outcome: string?, checker: string? }
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, effort: string?, status: string?, next: string?, outcome: string?, checker: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › General; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
