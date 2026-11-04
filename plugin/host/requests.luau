@@ -13,6 +13,7 @@ local keys = require("../keys")
 local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
+local usage = require("../usage")
 local worktree = require("../worktree")
 local logs = require("../logs")
 
@@ -26,6 +27,9 @@ local ui = tern.ui
 
 type State = core.State
 type Prompt = core.Prompt
+-- A queue action Commands offers (paletteActions); `key` "" when none.
+type QueueAction = { id: string, label: string, key: string, group: string, detail: string? }
+type KeyEntry = { key: string, label: string, first: number, use: number, at: number }
 
 local COMMENT_ROWS, KINDS, clip, printable, cli = core.COMMENT_ROWS, core.KINDS, core.clip, core.printable, core.cli
 local checkoutOf, editJiraRepos, isTable, jiraReposOf, loadPrompts, promptById = storage.checkoutOf, storage.editJiraRepos, storage.isTable, storage.jiraReposOf, storage.loadPrompts, storage.promptById
@@ -191,14 +195,94 @@ end
 
 -- The hidden `main.palette` node, on every render: the command palette's and the agent picker's rows (saved actions
 -- without their text, queue actions, window commands), so the window opens either without a round trip to this host.
-function M.paletteNode(state: State): Node
+-- `queue`: paletteActions(state), which keyBar shares.
+function M.paletteNode(state: State, queue: { QueueAction }): Node
 	local items, problem = menuRows(state, nil, false)
 	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
 	local move = if item then engine.nextMove(state, state.kind.id, item) else nil
 	-- The window command the Next move runs (`next`), when it is one: the window runs it as its own row would.
 	local cmd = if move then string.match(move.id, "^cmd:(.+)$") else nil
-	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(M.paletteActions(state)), commands = tern.json.array(M.commands(state)), next = cmd })
+	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(queue), commands = tern.json.array(M.commands(state)), next = cmd })
 	return ui.node("text", { key = "palette", text = text, hidden = true })
+end
+
+local KEY_BAR_MAX = 5
+local KEY_BAR_FIRST = { more = 1, help = 2, next = 3 } -- Commands, Shortcut list, the Next move, in this order
+
+-- The key footer under the queue: at most KEY_BAR_MAX keys that work now, each with what it does. From `queue`
+-- (paletteActions(state)) plus Commands, the Agent picker and the selected item's saved actions with a key of their
+-- own: Commands, Shortcut list and the Next move first, then the most used (this host's usage counts), ties in
+-- Commands' order. An action with no key is not listed, and a key shows only what it runs: a saved action's key over a
+-- built-in one only where it beats it (keys.YIELDS). Nil when no key is bound.
+function M.keyBar(state: State, queue: { QueueAction }): Node?
+	local map = keys.load()
+	local u = usage.readUsage()
+	local counts = if u then u.counts else {}
+	local function used(id: string): number
+		local c = counts[id]
+		return if c then c.n else 0
+	end
+	local byKey: { [string]: KeyEntry } = {}
+	local saved: { [string]: boolean } = {}
+	local list: { KeyEntry } = {}
+	local n = 0
+	-- `use`: its usage count id; `first`: its place among KEY_BAR_FIRST, else after them.
+	local function add(key: string, label: string, use: string, first: number?, isSaved: boolean)
+		n += 1
+		local e: KeyEntry = { key = key, label = label, first = first or 99, use = used(use), at = n }
+		byKey[key] = e
+		saved[key] = isSaved
+		table.insert(list, e)
+	end
+	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
+	if item then
+		-- The key handler runs the last offered action holding a key.
+		local mine = offered(state)
+		local last: { [string]: Prompt } = {}
+		for _, o in mine do
+			local p = o.prompt
+			if p.key and p.key ~= "" and string.match(p.id, "^%w+$") then
+				last[p.key] = p
+			end
+		end
+		for _, o in mine do
+			local p = o.prompt
+			if p.key and last[p.key] == p then
+				add(p.key, clip(printable(p.name), 40), "action:" .. p.name, nil, true)
+			end
+		end
+	end
+	local rows: { QueueAction } = { { id = "more", label = "Commands", key = map.more or "", group = "" } }
+	if item then
+		table.insert(rows, { id = "agent", label = "Agent picker", key = map.agent or "", group = "" })
+	end
+	for _, a in queue do
+		table.insert(rows, a)
+	end
+	for _, a in rows do
+		local held = byKey[a.key]
+		if a.key == "" or (held and not saved[a.key]) or (held and keys.YIELDS[a.id]) then
+			continue
+		elseif held then
+			-- A built-in key that is not one of keys.YIELDS runs before the saved action holding it.
+			table.remove(list, table.find(list, held))
+		end
+		add(a.key, a.label, "queue:" .. a.id, KEY_BAR_FIRST[a.id], false)
+	end
+	table.sort(list, function(x: KeyEntry, y: KeyEntry): boolean
+		if x.first ~= y.first then
+			return x.first < y.first
+		elseif x.use ~= y.use then
+			return x.use > y.use
+		end
+		return x.at < y.at
+	end)
+	local nodes: { Node } = {}
+	for i = 1, math.min(#list, KEY_BAR_MAX) do
+		local e = list[i]
+		table.insert(nodes, ui.node("text", { key = "k" .. i, spans = { ui.span(e.key, "key"), ui.span(" " .. e.label, "muted") } }))
+	end
+	return if #nodes > 0 then ui.node("row", { key = "keybar", role = "plotroom.keys", gap = "md", align = "center" }, nodes) else nil
 end
 
 -- Marks `key` busy and runs `open`, which starts a worktree and answers `id` itself; if it raises, the mark is cleared
@@ -245,8 +329,10 @@ end
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- and `failures` the `{failures}` block, for the prompt that runs there.
-local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean)
+-- and `failures` the `{failures}` block, for the prompt that runs there. `premerge`: an agent will resolve conflicts
+-- there, so a clean worktree of a PR GitHub reports conflicting first gets its base merged (worktree.premerge), and the
+-- answer carries what that did (`merge`).
+local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
 	if wt and preparing[key] then
@@ -298,36 +384,49 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					noteWorktree(state, key, "prs", nil, why)
 					return reply(state, id, { problem = why })
 				end
-				local current = r.head == r.prHead
-				local summary = worktree.describe(r)
-				noteWorktree(state, key, "prs", {
-					root = r.root,
-					repo = repo,
-					path = r.path,
-					branch = r.branch,
-					ref = r.ref,
-					current = current,
-					dirty = r.dirty,
-					ahead = r.ahead,
-					summary = summary,
-					update = worktree.update(r),
-				}, nil)
-				reply(state, id, {
-					path = r.path,
-					created = r.created,
-					current = current,
-					dirty = r.dirty,
-					ahead = r.ahead,
-					summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
-					setup = if r.created and not r.fork then setupLine(repo) else nil,
-					remote = r.remote,
-					branch = r.prRef,
-					base = r.prBase,
-					title = r.title,
-					author = r.author,
-					["github.user"] = found["github.user"],
-					failures = failed,
-				})
+				local function answer(merge: worktree.Merge?)
+					local current = r.head == r.prHead
+					local summary = worktree.describe(r)
+					noteWorktree(state, key, "prs", {
+						root = r.root,
+						repo = repo,
+						path = r.path,
+						branch = r.branch,
+						ref = r.ref,
+						current = current,
+						dirty = r.dirty,
+						ahead = r.ahead,
+						summary = summary,
+						update = worktree.update(r),
+					}, nil)
+					reply(state, id, {
+						path = r.path,
+						created = r.created,
+						current = current,
+						dirty = r.dirty,
+						ahead = r.ahead,
+						summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
+						setup = if r.created and not r.fork then setupLine(repo) else nil,
+						remote = r.remote,
+						branch = r.prRef,
+						base = r.prBase,
+						title = r.title,
+						author = r.author,
+						["github.user"] = found["github.user"],
+						failures = failed,
+						merge = merge,
+					})
+				end
+				if not (premerge and r.conflicts and r.dirty == false and r.prBase ~= "") then
+					return answer(nil)
+				end
+				preparing[key] = true -- a second request waits for the merge, as for the worktree
+				worktree.premerge(r.path, r.remote, r.prBase, function(merge)
+					preparing[key] = nil
+					if alive(state) then
+						answer(merge)
+					end
+				end)
 			end)
 		end)
 	end
@@ -1748,7 +1847,7 @@ function M.rpc(state: State, raw: any)
 		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
 			return
 		end
-		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true)
+		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true, q.premerge == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
@@ -1854,13 +1953,13 @@ end
 -- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
 -- Settings and the shortcut list; Now Reply… and Go to agent (while its row's agent needs input), Show or hide snoozed,
 -- Refresh, the scopes, Settings and the shortcut list. Next in Now is offered everywhere.
-function M.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
+function M.paletteActions(state: State): { QueueAction }
 	local map = keys.load()
 	local labels: { [string]: string } = { unpin = "Unpin" }
 	for _, a in keys.ACTIONS do
 		labels[a.id] = a.label
 	end
-	local out: { { id: string, label: string, key: string, group: string, detail: string? } } = {}
+	local out: { QueueAction } = {}
 	local function add(id: string, group: string)
 		table.insert(out, { id = id, label = labels[id], key = map[id] or "", group = group })
 	end

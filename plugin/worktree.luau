@@ -48,6 +48,7 @@ export type Result = {
 	dirty: boolean?,
 	fork: boolean, -- the pull request comes from a fork: its checkout runs no hooks, and no setup
 	ahead: number?,
+	conflicts: boolean, -- GitHub reports the pull request conflicts with its base (prBase)
 }
 
 -- `ref` and `number` when the worktree is on a linked pull request's branch.
@@ -1454,8 +1455,136 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 						dirty = o.dirty,
 						ahead = o.ahead,
 						fork = m.fork ~= nil,
+						conflicts = m.conflicts,
 					}, nil, cx2)
 				end)
+			end)
+		end)
+	end)
+end
+
+-- Conflicted lockfiles Plotroom regenerates (by file name): taken from the base, then rewritten by their tool, run in
+-- the lockfile's folder. Any other lockfile (yarn.lock, bun.lockb, ...) stays a conflict for the agent.
+M.LOCKFILES = {
+	["package-lock.json"] = { "npm", "install", "--package-lock-only", "--ignore-scripts" },
+	["pnpm-lock.yaml"] = { "pnpm", "install", "--lockfile-only", "--ignore-scripts" },
+	["Cargo.lock"] = { "cargo", "update", "--workspace" },
+	["go.sum"] = { "go", "mod", "tidy" },
+	["poetry.lock"] = { "poetry", "lock", "--no-update" },
+	["uv.lock"] = { "uv", "lock" },
+	["Gemfile.lock"] = { "bundle", "lock" },
+	["composer.lock"] = { "composer", "update", "--lock", "--no-scripts" },
+} :: { [string]: { string } }
+
+-- What `premerge` did: merged `base` (`<remote>/<branch>`) into the worktree's branch; regenerated these lockfiles;
+-- `failed` lockfiles whose tool failed (left conflicted, `why`); `remaining` files still conflicted (failed ones
+-- included). `committed`: no conflict remained and the merge is committed (never pushed); otherwise the merge is left in
+-- progress for the agent. `problem`: the commit itself failed.
+export type Merge = { base: string, committed: boolean, regenerated: { string }, remaining: { string }, failed: { { file: string, why: string } }, problem: string? }
+
+local function conflicted(path: string, done: (({ string })?, string?) -> ())
+	git(path, { "diff", "--name-only", "--diff-filter=U", "-z" }, LOCAL_MS, function(out, err)
+		if not out then
+			return done(nil, err)
+		end
+		local files: { string } = {}
+		for f in string.gmatch(out, "[^\0]+") do
+			table.insert(files, f)
+		end
+		done(files, nil)
+	end)
+end
+
+-- Merges `remote`/`base` into the clean worktree at `path` before an agent resolves conflicts there: conflicted
+-- lockfiles Plotroom knows (M.LOCKFILES) are taken from the base and regenerated, and with no conflict left the merge is
+-- committed. done(merge, problem, cx); a problem (the fetch, or a merge that stopped for another reason, which is
+-- aborted) leaves the branch as it was.
+function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
+	if not string.match(base, "^[%w_][%w_%./%-]*$") or not M.validSegment(remote) then
+		return process.later(function(cx)
+			done(nil, "Base " .. base .. " is not a branch Plotroom merges", cx)
+		end)
+	end
+	local tracking = "refs/remotes/" .. remote .. "/" .. base
+	local m: Merge = { base = remote .. "/" .. base, committed = false, regenerated = {}, remaining = {}, failed = {} }
+	local function finish()
+		conflicted(path, function(files, err)
+			if not files then
+				return process.later(function(cx)
+					done(nil, err, cx)
+				end)
+			end
+			m.remaining = files
+			if #files > 0 then
+				return process.later(function(cx)
+					done(m, nil, cx)
+				end)
+			end
+			git(path, { "commit", "--no-edit" }, NET_MS, function(_, cerr, cx)
+				m.committed = cerr == nil
+				m.problem = cerr
+				done(m, nil, cx)
+			end)
+		end)
+	end
+	-- One lockfile after another: from the base, regenerated, staged; a failing tool restores the conflict.
+	local function regenerate(locks: { string }, i: number)
+		local file = locks[i]
+		if not file then
+			return finish()
+		end
+		local function failed(why: string)
+			table.insert(m.failed, { file = file, why = why })
+			git(path, { "checkout", "-m", "--", file }, LOCAL_MS, function()
+				regenerate(locks, i + 1)
+			end)
+		end
+		git(path, { "checkout", "--theirs", "--", file }, LOCAL_MS, function(_, err)
+			if err then
+				return failed(err)
+			end
+			local tool = M.LOCKFILES[string.match(file, "([^/]+)$") or ""]
+			local dir = string.match(file, "^(.*)/[^/]+$")
+			process.run(tool, { cwd = if dir then path .. "/" .. dir else path, timeout_ms = NET_MS, env = ENV }, function(r, perr)
+				if not r then
+					return failed(perr or (tool[1] .. " could not be started"))
+				elseif r.timed_out then
+					return failed(tool[1] .. " timed out")
+				elseif r.status ~= 0 then
+					return failed(table.concat(tool, " ") .. " failed: " .. github.firstLines(if r.stderr ~= "" then r.stderr else r.stdout, 1))
+				end
+				git(path, { "add", "--", file }, LOCAL_MS, function(_, aerr)
+					if aerr then
+						return failed(aerr)
+					end
+					table.insert(m.regenerated, file)
+					regenerate(locks, i + 1)
+				end)
+			end)
+		end)
+	end
+	git(path, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, ferr, cx)
+		if ferr then
+			return done(nil, ferr, cx)
+		end
+		git(path, { "merge", "--no-edit", tracking }, NET_MS, function(_, merr, cx1)
+			if not merr then
+				m.committed = true -- merged cleanly after all: the base moved since GitHub looked
+				return done(m, nil, cx1)
+			end
+			conflicted(path, function(files, err)
+				if not files or #files == 0 then
+					return git(path, { "merge", "--abort" }, LOCAL_MS, function(_, _, cx2)
+						done(nil, err or merr, cx2)
+					end)
+				end
+				local locks: { string } = {}
+				for _, f in files do
+					if M.LOCKFILES[string.match(f, "([^/]+)$") or ""] then
+						table.insert(locks, f)
+					end
+				end
+				regenerate(locks, 1)
 			end)
 		end)
 	end)
