@@ -83,6 +83,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Feature | Where | Verdict | Phase | Status | Why |
 | --- | --- | --- | --- | --- | --- |
 | Merge… (including auto-merge); Approve…; Request changes…; Update branch… | Commands | Keep | — | Approved | The core of landing |
+| Push empty commit… (a new head through GitHub's git database API, no checkout, so checks run again; open PR not behind and without conflicts, never a fork's branch) | Commands | New | — | Approved | tern-plotroom#bcd7, adopted from tern-pr-guide; Update branch… covers a branch behind its base |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
