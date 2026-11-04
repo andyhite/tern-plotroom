@@ -6,7 +6,7 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 45
+M.PROTOCOL = 46
 M.MIN = 35
 -- op → the protocol that added it; an op not listed is known to every host in range. 36: `outcome`, and the actions'
 -- optional `outcome` field. 37: `criteria`, and the actions' optional `checker` field. 38: agent-status's optional
@@ -16,7 +16,7 @@ M.MIN = 35
 -- Actions › Model's picker), and the actions' optional `effort` field. 43: a pull request worktree answer's optional
 -- `flaky` field. 44: act's optional `check` field (Ignore this check…). 45: `models` also for `summary:model`
 -- (Settings › General › Summary model's picker). Not a SINCE row: only a host at 45 draws that row's button, so only
--- one asks.
-M.SINCE = { outcome = 36, criteria = 37, models = 42 } :: { [string]: number }
+-- one asks. 46: `review` (when a run's Draft review file was written).
+M.SINCE = { outcome = 36, criteria = 37, models = 42, review = 46 } :: { [string]: number }
 
 return M

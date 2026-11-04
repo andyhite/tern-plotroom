@@ -1619,6 +1619,37 @@ function M.remoteBranches(checkout: string, repo: string, done: Cb<{ string }>)
 	end)
 end
 
+-- The diff a Draft review is about (host only): `git diff <remote>/<base>...<head>` in the checkout or worktree at `path`
+-- of `repo`, `<remote>` being its remote for `repo`, with three lines of context as GitHub's diff has (the lines a review
+-- comment may sit on). When a commit is missing there, the base branch and the pull request's head
+-- (`refs/pull/<number>/head`) are fetched once and the diff is read again. done(diff, problem, cx).
+function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, done: Cb<string>)
+	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
+		return process.later(function(cx)
+			done(nil, "The review names a base or head commit Plotroom does not read.", cx)
+		end)
+	end
+	M.resolveRepository(path, repo, function(info, why, cx)
+		if not info then
+			return done(nil, why, cx)
+		end
+		local tracking = "refs/remotes/" .. info.remote .. "/" .. base
+		local args = { "diff", "--no-color", "--no-ext-diff", "-U3", "--src-prefix=a/", "--dst-prefix=b/", tracking .. "..." .. head, "--" }
+		git(info.root, args, LOCAL_MS, function(out, _, cx1)
+			if out then
+				return done(out, nil, cx1)
+			end
+			local fetch = { "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking, "refs/pull/" .. number .. "/head" }
+			git(info.root, fetch, NET_MS, function(_, ferr, cx2)
+				if ferr then
+					return done(nil, ferr, cx2)
+				end
+				git(info.root, args, LOCAL_MS, done)
+			end)
+		end)
+	end)
+end
+
 -- Whether `repo` is a project issue links may name: a GitHub `owner/name` or a Jira project key.
 function M.validProject(repo: string): boolean
 	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")

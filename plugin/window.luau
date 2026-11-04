@@ -1501,6 +1501,10 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		end
 		return true
 	end
+	if url == "plotroom://review/send" then
+		flows.reviewSend(cx, pane)
+		return true
+	end
 	if url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
@@ -1997,6 +2001,7 @@ end
 tern.on("agent_finished", function(ev: any, cx: WindowCx)
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
 		flows.recordResult(cx, ev.pane, ev.result)
+		flows.reviewAfter(cx, ev.pane)
 	end
 	flows.agentSync(cx)
 	drive(cx)
@@ -2060,6 +2065,17 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 		title = "Plotroom: Worktree smoke",
 		run = function(cx: WindowCx)
 			require("./tests/runtime").run(cx)
+		end,
+	})
+	-- Smoke's fake agent ends no turn: this runs what a turn end of the focused agent runs for its Draft review.
+	tern.command({
+		id = "review-smoke",
+		title = "Plotroom: Draft review smoke",
+		run = function(cx: WindowCx)
+			local pane = cx.session:focused()
+			if pane then
+				flows.reviewAfter(cx, pane)
+			end
 		end,
 	})
 end

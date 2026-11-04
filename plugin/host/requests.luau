@@ -22,6 +22,7 @@ local storage = require("./storage")
 local engine = require("./engine")
 local render = require("./render")
 local settings = require("./settings")
+local review = require("./review")
 
 local ui = tern.ui
 
@@ -2010,6 +2011,9 @@ function M.rpc(state: State, raw: any)
 		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
+	elseif q.op == "review" and review.validRun(q.run) then
+		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none.
+		reply(state, id, { at = review.fileAt(q.run) })
 	else
 		M.workflowRpc(state, id, q)
 	end
@@ -2129,8 +2133,8 @@ function M.paletteActions(state: State): { QueueAction }
 			end
 			add("agentgo", "Now")
 		end
-		labels["now-layout"] = if state.nowBoard then "Show Now as List" else "Show Now as Board"
-		add("now-layout", "Filter & Sort")
+		labels.layout = if state.now.prefs.board then "Show Now as List" else "Show Now as Board"
+		add("layout", "Filter & Sort")
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
 		add("nownext", "Now")
@@ -2140,8 +2144,13 @@ function M.paletteActions(state: State): { QueueAction }
 		return out
 	end
 	local view = activeView(state)
+	local saved = if view and not engine.isPin(view.id) then view else nil -- a pinned item is no saved view
+	if saved then
+		labels.layout = if saved.layout == "board" then "Show as List" else "Show as Board"
+		add("layout", "Filter & Sort")
+	end
 	for _, id in { "snoozed", "sort", "search", "refresh" } do
-		if id ~= "sort" or (view and not engine.isPin(view.id) and #sorting.choices(view.kind, view.integration) > 0) then
+		if id ~= "sort" or (saved and #sorting.choices(saved.kind, saved.integration) > 0) then
 			add(id, "Filter & Sort")
 		end
 	end

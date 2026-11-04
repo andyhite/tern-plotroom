@@ -889,11 +889,27 @@ function M.mark(state: State, act: string)
 	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) else "Snooze ended", item.key)
 end
 
+-- The narrowest block, in terminal columns, that lays a Board out; a narrower one shows the List. Measured in real Tern
+-- (c226): below about 80 columns a card's number and why it is listed no longer fit its column.
+M.BOARD_MIN_COLS = 80
+
+-- Whether the block shows a Board: Now with its Layout Board (Settings › Views › Now), or a saved view with its own;
+-- and the block wide enough.
+function M.lanesShown(state: State): boolean
+	if state.cx.cols < M.BOARD_MIN_COLS or state.boardOn or state.agentsOn then
+		return false
+	elseif state.nowOn then
+		return state.now.prefs.board
+	end
+	local view = M.activeView(state)
+	return view ~= nil and view.layout == "board"
+end
+
 -- The selected item is marked seen as its preview is shown, with the data it shows now: a later refresh that changes it
--- marks it again while it stays shown. Never on a background fetch or the list's Worktrees.
+-- marks it again while it stays shown. Never on a background fetch, the list's Worktrees or a Board (it has no preview).
 function M.autoSeen(state: State)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn then
+	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn or M.lanesShown(state) then
 		return
 	end
 	local st = M.status(state, snap.kind, item)
@@ -3548,54 +3564,89 @@ function M.nowMove(state: State, delta: number)
 	M.nowStop(state)
 end
 
--- Now as a Board: its columns in order, each listing Now's rows (nowRows' order kept) by their item's stage. The last
--- two are the fold. A row with no item (an agent or a notification Now holds no item for) is in Needs you: Now lists it
--- because it needs you.
-M.NOW_COLUMNS = {
+-- A Board (Now's, or a view's laid out as one): its columns in order, each listing the list's rows (in the list's order)
+-- by their item's stage; those marked `fold` sit in the fold. A Now row with no item (an agent or a notification Now
+-- holds no item for) is in Needs you: Now lists it because it needs you, and so does a merged or closed item it lists.
+-- A view's merged or closed items are in Merged or closed, drawn only when it holds some.
+M.LANES = {
 	{ id = "needs", label = "Needs you" },
 	{ id = "working", label = "Agent working" },
 	{ id = "waiting", label = "Waiting" },
 	{ id = "ready", label = "Ready to merge" },
 	{ id = "none", label = "Not started", fold = true },
 	{ id = "worktree", label = "Worktree", fold = true },
+	{ id = "done", label = "Merged or closed", fold = true },
 }
-local COLUMN_OF: { [string]: string } = { needs = "needs", blocked = "needs", working = "working", pr = "waiting", ready = "ready", none = "none", worktree = "worktree" }
--- The narrowest block, in terminal columns, that lays Now out as a Board; a narrower one shows the List. Measured in
--- real Tern (c226): below about 80 columns a card's number and why it is listed no longer fit its column.
-M.BOARD_MIN_COLS = 80
+local LANE_OF: { [string]: string } = { needs = "needs", blocked = "needs", working = "working", pr = "waiting", ready = "ready", none = "none", worktree = "worktree", merged = "done", closed = "done" }
 
--- The Board's columns, { id, label, fold?, rows }, built once per nowRows answer.
-function M.nowColumns(state: State): { any }
-	local now = state.now
-	local rows = M.nowRows(state)
-	if now.cols and now.colsOf == rows then
-		return now.cols :: { any }
+-- The rows a Board lays out, each { id, key?, item?, kind?, title, ... }: Now's (nowRows), or the view's items its
+-- search and snoozing let through (filtered), in the List's order and with the List's picker ids.
+function M.laneRows(state: State): { any }
+	if state.nowOn then
+		return M.nowRows(state)
 	end
+	local vis, snap = M.filtered(state), state.snap
+	if not vis or not snap then
+		return {}
+	end
+	local made = state.lanes
+	if made and made.of == vis.items then
+		return made.rows
+	end
+	local rows: { any } = {}
+	for _, item in vis.items do
+		table.insert(rows, { id = M.pickerId("n", item.key), key = item.key, item = item, kind = snap.kind, title = item.title })
+	end
+	return rows
+end
+
+-- The Board's columns, { id, label, fold?, rows }, built once per list (laneRows) and worktree change (noteSeq).
+function M.laneColumns(state: State): { any }
+	local rows = M.laneRows(state)
+	local made = state.lanes
+	-- A view's rows are made in laneRows, so the cache is keyed by what they were made of: its visible items.
+	local vis = if state.nowOn then nil else M.filtered(state)
+	local of = if vis then vis.items else rows
+	if made and made.of == of and made.seq == state.noteSeq then
+		return made.cols
+	end
+	local done = not state.nowOn
 	local cols: { any } = {}
 	local at: { [string]: any } = {}
-	for _, c in M.NOW_COLUMNS do
-		local col = { id = c.id, label = c.label, fold = c.fold, rows = {} }
-		table.insert(cols, col)
-		at[c.id] = col
+	for _, l in M.LANES do
+		if l.id ~= "done" or done then
+			local col = { id = l.id, label = l.label, fold = l.fold, rows = {} }
+			table.insert(cols, col)
+			at[l.id] = col
+		end
 	end
 	for _, row in rows do
 		local stage = if row.item and row.kind then (M.stage(state, row.kind, row.item)) else nil
-		table.insert(at[COLUMN_OF[stage or ""] or "needs"].rows, row)
+		local lane = LANE_OF[stage or ""]
+		table.insert(at[if lane and at[lane] then lane else "needs"].rows, row)
 	end
-	now.cols, now.colsOf = cols, rows
+	if done and #at.done.rows == 0 then
+		table.remove(cols)
+	end
+	state.lanes = { of = of, seq = state.noteSeq, rows = rows, cols = cols }
 	return cols
 end
 
--- Whether Now shows as a Board: chosen, and the block wide enough.
-function M.nowBoardShown(state: State): boolean
-	return state.nowOn and state.nowBoard and state.cx.cols >= M.BOARD_MIN_COLS
+-- The picker id of the row a Board shows selected: Now's previewed row, or the view's cursor.
+local function laneSelected(state: State): string?
+	if state.nowOn then
+		return state.nowAt
+	end
+	return if state.cursor then M.pickerId("n", state.cursor) else nil
 end
+M.laneSelected = laneSelected
 
 -- The selected row's column and place in it (0, 0 when none is selected).
-function M.nowBoardAt(state: State): (number, number)
-	for c, col in M.nowColumns(state) do
+function M.laneAt(state: State): (number, number)
+	local id = laneSelected(state)
+	for c, col in M.laneColumns(state) do
 		for i, row in col.rows do
-			if row.id == state.nowAt then
+			if row.id == id then
 				return c, i
 			end
 		end
@@ -3603,21 +3654,33 @@ function M.nowBoardAt(state: State): (number, number)
 	return 0, 0
 end
 
+-- Selects Board row `row`: Now's previewed row, or the view's cursor.
+function M.lanePick(state: State, row: any)
+	if state.nowOn then
+		state.nowAt = row.id
+		M.nowStop(state)
+	else
+		M.select(state, row.key)
+	end
+end
+
 -- Moves the Board's selection `dy` rows in its column, or `dx` columns across to the nearest column with rows, at the
--- same place or its last row. A move into the fold opens it.
-function M.nowBoardMove(state: State, dx: number, dy: number)
-	local cols = M.nowColumns(state)
-	local c, i = M.nowBoardAt(state)
+-- same place or its last row. With none selected it starts at the first row. A move into the fold opens it.
+function M.laneMove(state: State, dx: number, dy: number)
+	local cols = M.laneColumns(state)
+	local c, i = M.laneAt(state)
 	if c == 0 then
-		M.nowEnsure(state)
-		c, i = M.nowBoardAt(state)
+		for at, col in cols do
+			if c == 0 and #col.rows > 0 then
+				c, i = at, 1
+			end
+		end
 		if c == 0 then
 			return
 		end
 	end
 	if dy ~= 0 then
-		local list = cols[c].rows
-		i = math.clamp(i + dy, 1, #list)
+		i = math.clamp(i + dy, 1, #cols[c].rows)
 	end
 	if dx ~= 0 then
 		local step = if dx < 0 then -1 else 1
@@ -3629,9 +3692,9 @@ function M.nowBoardMove(state: State, dx: number, dy: number)
 			c, i = to, math.min(i, #cols[to].rows)
 		end
 	end
-	state.nowAt = cols[c].rows[i].id
+	M.lanePick(state, cols[c].rows[i])
 	if cols[c].fold then
-		state.nowFold = true
+		state.lanesFold = true
 	end
 end
 
@@ -3701,17 +3764,19 @@ function M.openNow(state: State)
 end
 
 -- Now's switches changed (Settings › Views › Now, in `origin`): every live block rereads them, drops what is now off at
--- once and reads Now again, a read begun before the change being ignored.
-function M.nowPrefsChanged(origin: State)
+-- once and reads Now again, a read begun before the change being ignored. Only its layout (`layout`): each just draws.
+function M.nowPrefsChanged(origin: State, layout: boolean?)
 	for _, s in running do
 		if M.alive(s) then
 			local now = s.now
 			now.prefs, now.prefsProblem = storage.readNow()
-			now.gen += 1
-			now.busy = false
-			now.seq += 1
-			M.nowEnsure(s)
-			M.nowRead(s)
+			if not layout then
+				now.gen += 1
+				now.busy = false
+				now.seq += 1
+				M.nowEnsure(s)
+				M.nowRead(s)
+			end
 			if s ~= origin then
 				s.cx:render()
 			end

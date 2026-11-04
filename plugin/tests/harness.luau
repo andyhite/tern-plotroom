@@ -446,6 +446,7 @@ export type World = {
 	blocks: { [string]: any },
 	lenses: { [string]: any }, -- manifest lens id -> its LensDef, as `tern.lens.define` got it
 	open: (number, { string }?, any?) -> Block, -- pane, launch args, saved state: the Plotroom block, `prs`
+	openReview: (number, { string }?, any?) -> Block, -- the same for the Draft review block, `review`
 	setEncodeViews: (boolean) -> (),
 	-- A block opened with no saved state opens on Now, as in Tern, only after setOpensNow(true): otherwise it opens as a
 	-- restored one that saved no scope (on its first view), so a case about a view never sees Now's searches.
@@ -711,6 +712,12 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 		run = function(_self: any, pane: number, text: string)
 			table.insert(win.runs, { pane = pane, text = text })
+		end,
+		-- A block of `kind` in the tab of `opts.target` (else a new tab), as cx:new_block opens it: its launch records the
+		-- kind, args, how and opts (`newBlock` true).
+		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
+			local target = if opts then win.panes[opts.target] else nil
+			return addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
 		end,
 		session = {
 			pane = function(_self: any, id: number): any
@@ -1271,6 +1278,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 		},
 		ui = {
+			diff = function(text: string, path: string?): any
+				return { k = "diff", p = { text = text, path = path } }
+			end,
 			span = function(t: string, s: string?): any
 				return { t = t, s = s }
 			end,
@@ -1305,8 +1315,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		},
 		block = {
 			define = function(id: string, def: any)
-				if id ~= "prs" then
-					error("tern.block.define block \"" .. id .. "\" is not declared in plugin.toml: the plugin declares one block, prs", 0)
+				if id ~= "prs" and id ~= "review" then
+					error("tern.block.define block \"" .. id .. "\" is not declared in plugin.toml: the plugin declares the blocks prs and review", 0)
 				end
 				blocks[id] = def
 			end,
@@ -1351,17 +1361,17 @@ local function newWorld(instantiate: Loader, context: string): World
 	local load = instantiate(sdk, fakeOs)
 	linkToken = (load("host/core") :: any).TOKEN -- this world's host token: the links its blocks render carry it
 
-	local function open(pane: number, args: { string }?, savedState: any?): Block
-		local def: any = blocks.prs
+	local function openKind(kind: string, pane: number, args: { string }?, savedState: any?): Block
+		local def: any = blocks[kind]
 		if def == nil then
-			error("load \"host\" before opening the block", 2)
+			error("load \"host\" before opening the block", 3)
 		end
 		local state: any = nil
 		local last: any = nil
 		local renders = 0
 		local persisted: any = savedState
-		local cwd = if args then args[1] else nil
-		if savedState == nil and not opensNow and not (args and args[2]) then
+		local cwd = if args and kind == "prs" then args[1] else nil
+		if kind == "prs" and savedState == nil and not opensNow and not (args and args[2]) then
 			savedState = { version = 2, launchCwd = cwd }
 		end
 		local cx: any
@@ -1481,6 +1491,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		}
 		return block
 	end
+	local function open(pane: number, args: { string }?, savedState: any?): Block
+		return openKind("prs", pane, args, savedState)
+	end
 
 	local world: World
 	world = {
@@ -1521,6 +1534,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		blocks = blocks,
 		lenses = lenses,
 		open = open,
+		openReview = function(pane: number, args: { string }?, savedState: any?): Block
+			return openKind("review", pane, args, savedState)
+		end,
 		setEncodeViews = function(on: boolean)
 			encodeViews = on
 		end,
@@ -2618,6 +2634,31 @@ M.pickerOf = pickerOf
 -- Helpers shared by several case files, in one table.
 local hx = {}
 M.hx = hx
+
+-- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
+-- nil, nil when the block shows no Board.
+function hx.board(b: Block): ({ string }?, string?)
+	local node = findKey(pickerNode(b), "board", "col")
+	if not node then
+		return nil, nil
+	end
+	local cols: { string } = {}
+	local selected: string? = nil
+	for _, group in node.c do
+		if group.p.key == "lanes" or group.p.key == "fold" then
+			for _, col in group.c do
+				local list = findKey(col, "list", "list")
+				local ids: { string } = {}
+				for _, card in list.c do
+					table.insert(ids, card.p.key)
+				end
+				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
+				selected = list.p.selected or selected
+			end
+		end
+	end
+	return cols, selected
+end
 
 -- The settings view's page props: the side sheet in the layer, after the queue's picker.
 local function prefsOf(b: Block): any
