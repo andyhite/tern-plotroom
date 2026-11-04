@@ -43,8 +43,8 @@
 	display: inline-flex;
 }
 
-/* Now as a Board (host/render's nowBoardNode): the picker's row list is emptied and hidden, and the Board is drawn in its
-   preview pane, which then spans the picker beside the scope rail.
+/* A Board, Now's or a view's (host/render's boardNode): the picker's row list is emptied and hidden, and the Board is
+   drawn in its preview pane, which then spans the picker beside the scope rail.
    ponytail: `.pk-main` and `.pk-pv` are Tern's inner picker classes ("may change"); a picker prop for custom content,
    or a board kind, would replace these two rules. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.board'] .pk-main {

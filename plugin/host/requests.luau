@@ -2130,8 +2130,8 @@ function M.paletteActions(state: State): { QueueAction }
 			end
 			add("agentgo", "Now")
 		end
-		labels["now-layout"] = if state.nowBoard then "Show Now as List" else "Show Now as Board"
-		add("now-layout", "Filter & Sort")
+		labels.layout = if state.now.prefs.board then "Show Now as List" else "Show Now as Board"
+		add("layout", "Filter & Sort")
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
 		add("nownext", "Now")
@@ -2141,8 +2141,13 @@ function M.paletteActions(state: State): { QueueAction }
 		return out
 	end
 	local view = activeView(state)
+	local saved = if view and not engine.isPin(view.id) then view else nil -- a pinned item is no saved view
+	if saved then
+		labels.layout = if saved.layout == "board" then "Show as List" else "Show as Board"
+		add("layout", "Filter & Sort")
+	end
 	for _, id in { "snoozed", "sort", "search", "refresh" } do
-		if id ~= "sort" or (view and not engine.isPin(view.id) and #sorting.choices(view.kind, view.integration) > 0) then
+		if id ~= "sort" or (saved and #sorting.choices(saved.kind, saved.integration) > 0) then
 			add(id, "Filter & Sort")
 		end
 	end

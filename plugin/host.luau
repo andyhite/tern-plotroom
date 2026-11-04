@@ -118,12 +118,9 @@ local function runQueueAction(state: State, act: string): boolean
 		engine.mark(state, act)
 	elseif act == "snoozed" then
 		engine.toggle(state, act)
-	elseif act == "now-layout" then
-		-- Now as a Board or as the List (the Board shows only in a wide enough block: engine.nowBoardShown)
-		if not state.nowOn then
-			return false
-		end
-		state.nowBoard = not state.nowBoard
+	elseif act == "layout" then
+		-- Now or the view as a Board or as the List (a Board shows only in a wide enough block: engine.lanesShown)
+		return settings.toggleLayout(state)
 	elseif act == "sort" then
 		settings.cycleSort(state)
 	elseif string.sub(act, 1, 3) == "wt-" then
@@ -578,8 +575,8 @@ local function blockDef(): BlockDef<State>
 				-- A new block opens on Now, unless it was launched to show one item; a restored one on the scope it saved.
 				nowOn = if mine then saved.now == true else pins[1] == nil,
 				nowAt = nil,
-				nowBoard = mine and saved.nowBoard == true,
-				nowFold = false,
+				lanesFold = false,
+				lanes = nil,
 				nowWalk = nil,
 				now = { mine = {}, review = {}, assigned = {}, finder = {}, notices = {}, yours = {}, teams = {}, problems = {}, prefs = nowPrefs, prefsProblem = nowProblem, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
 				agents = {},
@@ -852,17 +849,17 @@ local function blockDef(): BlockDef<State>
 			if state.nowOn then
 				-- Now: Enter goes to the agent or shows the item. As a Board, Up and Down move in the column and Left
 				-- and Right across the columns.
-				local laid = engine.nowBoardShown(state)
+				local laid = engine.lanesShown(state)
 				if laid and state.focus ~= "scopes" then
 					local lact = if plain then keys.action((keys.load()), k) else nil
 					if name == "left" or lact == "left" or name == "right" or lact == "right" then
-						engine.nowBoardMove(state, if name == "left" or lact == "left" then -1 else 1, 0)
+						engine.laneMove(state, if name == "left" or lact == "left" then -1 else 1, 0)
 						return true
 					end
 				end
 				return listKeys(function(d)
 					if laid then
-						engine.nowBoardMove(state, 0, d)
+						engine.laneMove(state, 0, d)
 					else
 						engine.nowMove(state, d)
 					end
@@ -880,6 +877,16 @@ local function blockDef(): BlockDef<State>
 			end
 			local searching = state.query ~= nil
 			local scopes = state.focus == "scopes"
+			-- A view as a Board: Up and Down (and Page Up/Down, Home/End) move in the column, Left and Right across the
+			-- columns (in the search field they move its caret).
+			local laid = not scopes and engine.lanesShown(state)
+			local function move(d: number)
+				if laid then
+					engine.laneMove(state, 0, d)
+				else
+					moveCursor(state, d)
+				end
+			end
 			-- The queue action the key is (Settings › General). While searching it is text, and with ctrl, alt or meta it is no shortcut.
 			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
@@ -898,6 +905,8 @@ local function blockDef(): BlockDef<State>
 			end
 			if name == "tab" and plain then
 				state.focus = if scopes then "list" else "scopes"
+			elseif laid and (act == "left" or act == "right" or (not searching and (name == "left" or name == "right"))) then
+				engine.laneMove(state, if name == "left" or act == "left" then -1 else 1, 0)
 			elseif name == "escape" then
 				local q = state.query
 				if q then
@@ -912,22 +921,22 @@ local function blockDef(): BlockDef<State>
 				if scopes then
 					moveView(state, -1)
 				else
-					moveCursor(state, -1)
+					move(-1)
 				end
 			elseif name == "down" or act == "down" then
 				if scopes then
 					moveView(state, 1)
 				else
-					moveCursor(state, 1)
+					move(1)
 				end
 			elseif name == "page_up" or name == "page_down" then
-				moveCursor(state, if name == "page_up" then -10 else 10)
+				move(if name == "page_up" then -10 else 10)
 			elseif not searching and (name == "home" or name == "end") then
 				local d = if name == "home" then -100000 else 100000
 				if scopes then
 					moveView(state, d)
 				else
-					moveCursor(state, d)
+					move(d)
 				end
 			elseif name == "enter" then
 				if scopes then
@@ -1013,16 +1022,21 @@ local function blockDef(): BlockDef<State>
 				engine.openBoard(state)
 			elseif act == "open-now" then
 				engine.openNow(state)
-			elseif act == "now-fold" then
-				state.nowFold = not state.nowFold
-			elseif (ev.ev == "select" or ev.ev == "activate") and item and state.nowOn and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." then
-				-- A Board card: its node id ends in Now's row id.
+			elseif act == "lanes-fold" then
+				state.lanesFold = not state.lanesFold
+			elseif (ev.ev == "select" or ev.ev == "activate") and item and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." and engine.lanesShown(state) then
+				-- A Board card: its node id ends in its row's picker id.
 				local id = string.match(item, "([^%.]+)$")
-				for _, r in engine.nowRows(state) do
+				for _, r in engine.laneRows(state) do
 					if r.id == id then
-						state.nowAt, state.focus = r.id, "list"
+						engine.lanePick(state, r)
+						state.focus = "list"
 						if ev.ev == "activate" then
-							openNowRow(state)
+							if state.nowOn then
+								openNowRow(state)
+							else
+								openSelected(state, "open", false)
+							end
 						end
 					end
 				end
@@ -1260,7 +1274,6 @@ local function blockDef(): BlockDef<State>
 				activeLogin = state.activeLogin,
 				pause = pause,
 				now = if state.nowOn then true else nil,
-				nowBoard = if state.nowBoard then true else nil,
 				snoozed = if state.showSnoozed then true else nil,
 				pins = requests.pinUrls(state),
 			}
