@@ -1436,7 +1436,7 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(first.author, "Ann Lee", "the reporter")
 	eq(first.state, "open", "an unfinished status is open")
 	eq(first.reason, nil, "no close reason")
-	same(first.status, { text = "In Progress", tone = "warning" }, "the workflow status, toned by its category")
+	same(first.status, { text = "In Progress", tone = "muted" }, "the workflow status, neutral unless Done")
 	eq(first.type, "Bug", "type")
 	eq(first.priority, "High", "priority")
 	same(first.labels, { "ui", "bug" }, "labels")
@@ -1692,7 +1692,7 @@ case("jira.issue: body as markdown, fields, links and dates", function(w: World)
 	same(out.detail.linked, {
 		{ ref = "ABC-3", title = "Login API", url = "https://acme.atlassian.net/browse/ABC-3", state = "done", relation = "blocks", status = { text = "Done", tone = "success" } },
 		{ ref = "ABC-4", title = "Design", url = "https://acme.atlassian.net/browse/ABC-4", state = "open", relation = "is blocked by", status = { text = "To Do", tone = "muted" } },
-		{ ref = "ABC-13", title = "Add a test", url = "https://acme.atlassian.net/browse/ABC-13", state = "open", relation = "subtask", status = { text = "In Progress", tone = "warning" } },
+		{ ref = "ABC-13", title = "Add a test", url = "https://acme.atlassian.net/browse/ABC-13", state = "open", relation = "subtask", status = { text = "In Progress", tone = "muted" } },
 	}, "an outward link, an inward one, a subtask, each with its status (here its category's name: no status name); a link with no key is dropped")
 	eq(out.detail.comments, 2, "comments")
 	eq(out.detail.created, github.epoch("2026-05-27T14:38:49Z"), "a -0500 offset is converted to UTC")

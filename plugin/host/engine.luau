@@ -1679,7 +1679,7 @@ function M.boardItems(state: State): ({ any }, { any })
 		local detail: { any } = { ui.span(row.path, "mono") }
 		if row.key or row.number then
 			table.insert(detail, " · ")
-			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "num"))
+			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "mono"))
 		end
 		local id = M.pickerId("w", row.id)
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = board.badges(row, open[row.path] == true) })

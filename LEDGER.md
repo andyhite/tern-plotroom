@@ -120,3 +120,4 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | CHANGELOG; version separate from the protocol; supported protocol range | Repository | New | 0 | Approved | Two-host installs without a reinstall for every change |
 | Polite refresh and rate-limit backoff | Engine | Keep | — | Approved | |
 | Developer commands (`PLOTROOM_SELFTEST=1`) | Tern's palette | Keep | — | Approved | Hidden unless the variable is set |
+| DESIGN.md: one meaning per colour (your turn, needs fixing, done, agent working, checks running), everything else neutral | Every surface | New | 1 | Approved | Trust and coherence: a colour you can read at a glance; adopted from tern-pr-guide |

@@ -454,30 +454,32 @@ M.INTEGRATIONS = {
 	},
 } :: { [string]: Integration }
 
+-- Every tone below follows DESIGN.md's Color Meaning Rule: accent is your turn, error needs fixing, success is done,
+-- pending is an agent working, warning is checks running; anything else is muted.
 M.STATE_BADGE = {
-	open = { text = "Open", tone = "success" },
+	open = { text = "Open", tone = "muted" },
 	draft = { text = "Draft", tone = "muted" },
-	merged = { text = "Merged", tone = "accent" },
-	closed = { text = "Closed", tone = "error" },
+	merged = { text = "Merged", tone = "success" },
+	closed = { text = "Closed", tone = "muted" },
 	done = { text = "Done", tone = "success" },
 } :: { [string]: { text: string, tone: string } }
 -- Why a closed issue closed; any other reason (or none) is a plain Closed.
 local CLOSED_REASON: { [string]: { text: string, tone: string } } = {
-	completed = { text = "Completed", tone = "accent" },
+	completed = { text = "Completed", tone = "success" },
 	["not-planned"] = { text = "Not planned", tone = "muted" },
 	duplicate = { text = "Duplicate", tone = "muted" },
 }
 M.REVIEW_BADGE = {
 	approved = { text = "Approved", tone = "success" },
 	changes = { text = "Changes requested", tone = "error" },
-	required = { text = "Review required", tone = "warning" },
+	required = { text = "Review required", tone = "muted" },
 } :: { [string]: { text: string, tone: string } }
 -- An item's stage (PRODUCT.md › Glossary › Stage) as a badge; engine.stage derives which.
 M.STAGE = {
-	merged = { text = "Merged", tone = "accent" },
+	merged = { text = "Merged", tone = "success" },
 	closed = { text = "Closed", tone = "muted" },
-	needs = { text = "Needs you", tone = "warning", title = "Its agent waits for your input, reported it is stuck or needs you, its outcome is Not verified, or its check failed" },
-	working = { text = "Agent working", tone = "accent", title = "An agent is working on it" },
+	needs = { text = "Needs you", tone = "accent", title = "Its agent waits for your input, reported it is stuck or needs you, its outcome is Not verified, or its check failed" },
+	working = { text = "Agent working", tone = "pending", title = "An agent is working on it" },
 	blocked = { text = "Blocked", tone = "error" },
 	ready = { text = "Ready to merge", tone = "success" },
 	pr = { text = "PR open", tone = "muted" },
@@ -488,9 +490,9 @@ M.RUN_TONE = { success = "success", failure = "error", pending = "warning", neut
 M.RUN_ICON = { success = "check", failure = "x", pending = "clock", neutral = "minus" } :: { [string]: string }
 M.MERGE_STATE = {
 	conflicts = { text = "Conflicts", tone = "error" },
-	behind = { text = "Behind base", tone = "warning" },
-	blocked = { text = "Blocked", tone = "warning" },
-	unstable = { text = "Checks failing", tone = "warning" },
+	behind = { text = "Behind base", tone = "muted" },
+	blocked = { text = "Blocked", tone = "muted" },
+	unstable = { text = "Checks failing", tone = "error" },
 	ready = { text = "Ready", tone = "success" },
 	draft = { text = "Draft", tone = "muted" },
 	unknown = { text = "Unknown", tone = "muted" }, -- GitHub has not computed it (it does so lazily); the next refresh asks again
@@ -500,7 +502,7 @@ M.VERDICT_ROW = {
 	changes = { text = "Changes requested", tone = "error", icon = "x" },
 	commented = { text = "Commented", tone = "muted", icon = "message" },
 	dismissed = { text = "Dismissed", tone = "muted", icon = "slash" },
-	requested = { text = "Requested", tone = "warning", icon = "clock" },
+	requested = { text = "Requested", tone = "muted", icon = "clock" },
 } :: { [string]: { text: string, tone: string, icon: string } }
 M.CHECK = {
 	success = { text = "Passing", tone = "success", mark = "✓" },

@@ -69,15 +69,10 @@ local function deleteQuestion(state: State, row: string): { [string]: string }
 	return { row = row, head = "Delete view “" .. (if view then view.name else "this view") .. "”?", label = "Delete view", detail = "Gone from every Plotroom pane" }
 end
 
--- How a worktree report stands: success only for a current, clean worktree; a stale or changed one deserves a look.
--- nil (no tone) while its changes are unread, as for a worktree the last scan found: git has not been asked yet.
+-- How a worktree report stands: error when it could not be prepared; otherwise no tone, since a stale, changed or clean
+-- worktree is none of DESIGN.md's colour meanings (its badge text says which).
 local function noteTone(note: Note): string?
-	if not note.ok then
-		return "error"
-	elseif not note.current or note.dirty == true then
-		return "warning"
-	end
-	return if note.dirty == false then "success" else nil
+	return if note.ok then nil else "error"
 end
 
 -- What a worktree's badge says on hover: its attempt's summary and where it is.
@@ -118,7 +113,7 @@ end
 
 -- "#N", then " · repo" when `repos` (the view spans more than one repository).
 local function refDetail(ref: string, repo: string?, repos: boolean): { any }
-	local detail: { any } = { ui.span(ref, "num") }
+	local detail: { any } = { ui.span(ref, "mono") }
 	if repos and repo then
 		table.insert(detail, " · ")
 		table.insert(detail, ui.span(repo, "mono"))
@@ -158,8 +153,8 @@ end
 
 -- An agent's state as a row badge: the window reports it (`agent-status`); an idle or exited agent is no sign the work is done.
 local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
-	working = { text = "Working", tone = "accent", title = "An agent is working on it" },
-	waiting_input = { text = "Needs input", tone = "warning", title = "Its agent is waiting for your input" },
+	working = { text = "Working", tone = "pending", title = "An agent is working on it" },
+	waiting_input = { text = "Needs input", tone = "accent", title = "Its agent is waiting for your input" },
 	idle = { text = "Idle", tone = "muted", title = "Its agent is idle; that does not mean the work is done" },
 	exited = { text = "Exited", tone = "muted", title = "Its agent has exited" },
 }
@@ -168,7 +163,7 @@ local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } =
 local REPORT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
 	ok = { text = "Report: ok", tone = "muted", title = "Its agent reported nothing blocks it; a claim, not a check" },
 	stuck = { text = "Report: stuck", tone = "error", title = "Its agent reported it cannot go on" },
-	["needs-human"] = { text = "Report: needs human", tone = "warning", title = "Its agent reported it waits for you" },
+	["needs-human"] = { text = "Report: needs human", tone = "accent", title = "Its agent reported it waits for you" },
 	none = { text = "No report", tone = "muted", title = "Its agent's last turn ended without a valid end-of-run report" },
 }
 
@@ -176,7 +171,7 @@ local REPORT_BADGE: { [string]: { text: string, tone: string, title: string } } 
 -- names none or no check has answered yet.
 local VERDICT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
 	verified = { text = "Verified", tone = "success", title = "GitHub shows what the run must leave behind: " },
-	["not"] = { text = "Not verified", tone = "warning", title = "GitHub does not show what the run must leave behind: " },
+	["not"] = { text = "Not verified", tone = "accent", title = "GitHub does not show what the run must leave behind: " },
 	unchecked = { text = "Unchecked", tone = "muted", title = "GitHub could not be read, so it is checked again at the next refresh: " },
 }
 local function verdictBadge(info: { outcome: string?, verdict: string? }?): { text: string, tone: string, title: string }?
@@ -195,7 +190,7 @@ end
 -- What a checker found on the run it checked (`check`), as a badge; nil while there is no verdict.
 local CHECK_BADGE: { [string]: { text: string, tone: string, title: string } } = {
 	pass = { text = "Checked", tone = "success", title = "A fresh agent checked the work against the acceptance criteria and found every one met" },
-	fail = { text = "Check failed", tone = "warning", title = "A fresh agent checked the work against the acceptance criteria and found what fails" },
+	fail = { text = "Check failed", tone = "accent", title = "A fresh agent checked the work against the acceptance criteria and found what fails" },
 }
 local function checkBadge(info: { check: string? }?): { text: string, tone: string, title: string }?
 	return if info then CHECK_BADGE[info.check or ""] else nil
@@ -223,7 +218,7 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	elseif st and st.fresh == "new" then
 		table.insert(extra, { text = "New", tone = "accent", title = "Not marked seen yet" })
 	elseif st and st.fresh == "changed" then
-		table.insert(extra, { text = "Changed", tone = "warning", title = "Changed since you marked it seen" })
+		table.insert(extra, { text = "Changed", tone = "accent", title = "Changed since you marked it seen" })
 	end
 	local badges: { any } = if row.badges then row.badges else {}
 	for i, b in extra do
@@ -550,19 +545,19 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 		table.insert(chips, ui.node("badge", {
 			key = "sync",
 			text = if note.current then "Up to date" else "Not at PR head",
-			tone = if note.current then "success" else "warning",
+			tone = "muted",
 			title = note.summary,
 		}))
 	end
 	table.insert(chips, ui.node("badge", {
 		key = "changes",
 		text = if note.dirty == true then "Uncommitted changes" elseif note.dirty == false then "Clean" else "Changes unchecked",
-		tone = if note.dirty == true then "warning" elseif note.dirty == false then "success" else "muted",
+		tone = "muted",
 		title = note.summary,
 	}))
 	local ahead = note.ahead or 0
 	if ahead > 0 then
-		table.insert(chips, ui.node("badge", { key = "ahead", text = ahead .. " unpushed", tone = "warning", title = "Commits on this branch its upstream does not have" }))
+		table.insert(chips, ui.node("badge", { key = "ahead", text = ahead .. " unpushed", tone = "muted", title = "Commits on this branch its upstream does not have" }))
 	end
 	local body: { Node } = { heading(ui.node("row", { key = "status", gap = "xs", wrap = true }, chips)) }
 	if note.refused then
@@ -602,7 +597,7 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	else
 		table.insert(buttons, button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
 	end
-	table.insert(buttons, button({ key = "remove", label = "Remove worktree", icon = "trash", tone = "error", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
+	table.insert(buttons, button({ key = "remove", label = "Remove worktree", icon = "trash", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
 	if note.path and tern.fs.exists(note.path) then
 		table.insert(buttons, button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
 	end
@@ -704,7 +699,7 @@ local function previewControls(state: State, item: any): Node?
 	local move = engine.nextMove(state, state.kind.id, item)
 	if move then
 		local map = keys.load()
-		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", tone = "accent", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
+		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	if engine.pinFor(state.pins, item.key) then
 		table.insert(rows, button({ key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
@@ -722,7 +717,7 @@ end
 -- Every preview's first rows, in one shape: its head (the ref, the tracker or kind tag, the copy and open icons when it
 -- has a page, and its state badge at the right end, pushed there by an empty growing column), then its title.
 local function headNodes(ref: string, tag: { text: string, tone: string }, page: { copy: string, open: string, what: string }?, badge: any, title: string): { Node }
-	local head: { Node } = { ui.text({ ui.span(ref, "num") }), ui.node("badge", { key = "integration", text = tag.text, tone = tag.tone }) }
+	local head: { Node } = { ui.text({ ui.span(ref, "mono") }), ui.node("badge", { key = "integration", text = tag.text, tone = tag.tone }) }
 	if page then
 		table.insert(head, ui.node("icon", { key = "copy", name = "copy", role = BUTTON, href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
 		table.insert(head, ui.node("icon", { key = "open", name = "globe", role = LINK, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
@@ -772,10 +767,10 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		then ui.node("meter", {
 			key = "diff",
 			parts = {
-				{ value = added / (added + removed), token = "ins", label = "+" .. added },
-				{ value = removed / (added + removed), token = "error", label = "−" .. removed },
+				{ value = added / (added + removed), token = "muted", label = "+" .. added },
+				{ value = removed / (added + removed), token = "dim", label = "−" .. removed },
 			},
-			label = spans(ui.span("+" .. added, "ins"), " ", ui.span("−" .. removed, "error")),
+			label = spans(ui.span("+" .. added, "muted"), " ", ui.span("−" .. removed, "muted")),
 			total = pr.files .. (if pr.files == 1 then " file" else " files"),
 		})
 		else nil
@@ -788,7 +783,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		{ k = "Checks", v = if check then { ui.span(check.text, check.tone) } else nil },
 		{ k = "Review", v = if review then { ui.span(review.text, review.tone) } else nil },
 		if asked then { k = "Author" } else author,
-		{ k = "Comments", v = { ui.span(tostring(pr.comments), "num") } },
+		{ k = "Comments", v = { ui.span(tostring(pr.comments), "mono") } },
 		{ k = "Opened", v = github.age(pr.created) .. " ago" },
 		{ k = "Updated", v = github.age(pr.updated) .. " ago" },
 	}
@@ -926,7 +921,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	local created = if issue.created > 0 then issue.created elseif detail then detail.created else nil
 	local updated = if issue.updated > 0 then issue.updated elseif detail then detail.updated else nil
 	if comments then
-		table.insert(facts, { k = "Comments", v = { ui.span(tostring(comments), "num") } })
+		table.insert(facts, { k = "Comments", v = { ui.span(tostring(comments), "mono") } })
 	end
 	if created then
 		table.insert(facts, { k = "Opened", v = github.age(created) .. " ago" })
@@ -950,7 +945,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	end
 	local ref = tracker.refLabel(issue.ref)
 	local out: { Node } = { buttonLinks(state, issue, acts) }
-	local tag = { text = INTEGRATIONS[issue.tracker].label, tone = if issue.tracker == "jira" then "accent" else "muted" }
+	local tag = { text = INTEGRATIONS[issue.tracker].label, tone = "muted" }
 	local top = headNodes(ref, tag, { copy = issue.url, open = hrefOf(state, issue, "open"), what = "issue " .. ref }, sb, issue.title)
 	table.move(top, 1, #top, #out + 1, out)
 	local controls = previewControls(state, issue)
@@ -1103,8 +1098,8 @@ local function boardPreview(state: State): { Node }
 	end
 	local p = board.preview(state.board, row)
 	local changes: { text: string, tone: string, title: string? } = if row.missing then { text = "Missing", tone = "error" }
-		elseif row.dirty == true then { text = "Changes", tone = "warning" }
-		elseif row.dirty == false then { text = "Clean", tone = "success" }
+		elseif row.dirty == true then { text = "Changes", tone = "muted" }
+		elseif row.dirty == false then { text = "Clean", tone = "muted" }
 		elseif row.scannedAt then { text = "Unknown", tone = "muted" }
 		else { text = "Reading…", tone = "muted" }
 	local facts: { { [string]: any } } = {}
@@ -1120,7 +1115,7 @@ local function boardPreview(state: State): { Node }
 	local cleanup = if row.candidate == "merged" then "Its pull request is merged" elseif row.candidate == "closed" then "Its item is closed" elseif row.candidateChecked then "Its item is still open" else nil
 	local status: { Node } = {}
 	local needs = withValue({
-		{ k = "Cleanup", v = if cleanup then { ui.span(cleanup, if row.candidate then "warning" else nil) } else nil },
+		{ k = "Cleanup", v = if cleanup then { ui.span(cleanup) } else nil },
 		{ k = "Locked", v = if row.locked then { ui.span("Locked with git worktree lock") } else nil },
 	})
 	if #needs > 0 then
@@ -1142,7 +1137,7 @@ local function boardPreview(state: State): { Node }
 			table.insert(body, ui.node("text", { key = key .. "-empty", spans = { ui.span(sec.ref .. " was not found by its tracker.", "muted") } }))
 		elseif sec.state == "ready" and info then
 			table.insert(body, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
-				ui.text({ ui.span(sec.ref, "num") }),
+				ui.text({ ui.span(sec.ref, "mono") }),
 				ui.node("text", { key = "t", spans = { ui.span(printable(info.title), "strong") } }),
 				ui.node("badge", { key = "state", text = printable(info.state), tone = "muted" }),
 			}))
@@ -1185,7 +1180,7 @@ local function boardProps(state: State, props: { [string]: any })
 	for i, p in state.board.problems do
 		if i <= 2 then
 			table.insert(sub, ui.span(" · ", "muted"))
-			table.insert(sub, ui.span(p, "warning"))
+			table.insert(sub, ui.span(p, "error"))
 		end
 	end
 	props.icon, props.title, props.subtitle, props.noun = "folder", { ui.span("Worktrees", "strong") }, sub, "worktrees"
@@ -1321,8 +1316,8 @@ local REASON: { [string]: { text: string, tone: string } } = {
 	team_mention = { text = "Team mention", tone = "accent" },
 	assign = { text = "Assigned", tone = "accent" },
 	approval_requested = { text = "Approval requested", tone = "accent" },
-	ci_activity = { text = "CI", tone = "warning" },
-	security_alert = { text = "Security alert", tone = "warning" },
+	ci_activity = { text = "CI", tone = "muted" },
+	security_alert = { text = "Security alert", tone = "error" },
 	author = { text = "Your item", tone = "muted" },
 	comment = { text = "Comment", tone = "muted" },
 	state_change = { text = "State change", tone = "muted" },
@@ -1344,16 +1339,16 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		local agent = row.agent or {}
 		local verdict = verdictText(agent)
 		if row.waiting then
-			return { text = "Agent needs input", tone = "warning", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
+			return { text = "Agent needs input", tone = "accent", title = "Its agent is waiting for your input" }, "Its agent is waiting for your input"
 		elseif agent.stop then
-			return { text = printable(agent.stop), tone = "warning", title = "Plotroom stopped the item's chain of actions" }, "Plotroom stopped the item's chain of actions: " .. printable(agent.stop)
+			return { text = printable(agent.stop), tone = "accent", title = "Plotroom stopped the item's chain of actions" }, "Plotroom stopped the item's chain of actions: " .. printable(agent.stop)
 		elseif agent.check == "fail" then
 			return CHECK_BADGE.fail, CHECK_BADGE.fail.title
 		elseif agent.attention == "stuck" or agent.attention == "needs-human" then
 			local report = REPORT_BADGE[agent.attention]
 			return { text = report.text, tone = report.tone, title = report.title }, report.title
 		end
-		return { text = verdict or "Not verified", tone = "warning", title = "GitHub does not show what its run must leave behind" }, "GitHub does not show what its run must leave behind: " .. (verdict or "Not verified")
+		return { text = verdict or "Not verified", tone = "accent", title = "GitHub does not show what its run must leave behind" }, "GitHub does not show what its run must leave behind: " .. (verdict or "Not verified")
 	elseif row.rank == 2 then
 		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
 	elseif row.rank == 3 then
@@ -1366,7 +1361,7 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		return { text = reason.text, tone = "accent", title = "GitHub notified you: " .. reason.text }, "An unread notification you take part in: " .. reason.text
 	end
 	local fresh = if row.why == "New" then "and you haven't seen it yet" else "and changed since you last saw it"
-	return { text = "Assigned: " .. string.lower(row.why or ""), tone = if row.why == "New" then "accent" else "warning", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh
+	return { text = "Assigned: " .. string.lower(row.why or ""), tone = "accent", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh
 end
 
 -- Now's preview of the selected row, in the order every preview shares (docs/reference.md › Finer points › Preview):
@@ -1400,14 +1395,14 @@ local function nowPreview(state: State): { Node }
 	local snoozeEnd = if row.snoozed and store and row.key then triage.snoozeEnd(store, { key = row.key }, os.time()) else nil
 	local jira = (item and item.tracker == "jira") or (row.key ~= nil and string.match(row.key, "#%u[%u%d]*%-%d+$") ~= nil)
 	local ref = if row.key then printable(row.key) elseif n then printable(n.repo) else ""
-	local kids: { Node } = headNodes(ref, { text = if jira then INTEGRATIONS.jira.label else INTEGRATIONS.github.label, tone = if jira then "accent" else "muted" }, nil, badge, printable(row.title))
+	local kids: { Node } = headNodes(ref, { text = if jira then INTEGRATIONS.jira.label else INTEGRATIONS.github.label, tone = "muted" }, nil, badge, printable(row.title))
 	addPart(kids, "status", {
 		ui.node("kv", {
 			key = "stage",
 			items = withValue({
 				{ k = "Why", v = { ui.span(sentence) } },
 				{ k = "Stage", v = if stage then { ui.span(stage.text, stage.tone) } else nil },
-				{ k = "Chain", v = if agent and agent.stop then { ui.span("Stopped: " .. printable(agent.stop), "warning") } else nil },
+				{ k = "Chain", v = if agent and agent.stop then { ui.span("Stopped: " .. printable(agent.stop), "accent") } else nil },
 				{ k = "Outcome", v = if verdictText(agent) then { ui.span(verdictText(agent) :: string, (verdictBadge(agent) :: any).tone) } else nil },
 				{ k = "Check", v = if checkBadge(agent) then { ui.span((checkBadge(agent) :: any).text, (checkBadge(agent) :: any).tone) } else nil },
 				{ k = "Findings", v = if agent and agent.check == "fail" and agent.findings then { ui.span(printable(agent.findings)) } else nil },
@@ -1447,7 +1442,7 @@ local function nowProps(state: State, props: { [string]: any })
 				table.insert(detail, ui.span(printable(row.notice.repo), "mono"))
 				if row.notice.number then
 					table.insert(detail, " · ")
-					table.insert(detail, ui.span("#" .. row.notice.number, "num"))
+					table.insert(detail, ui.span("#" .. row.notice.number, "mono"))
 				end
 			else
 				table.insert(detail, ui.span(printable(row.key), "mono"))
@@ -1484,7 +1479,7 @@ local function nowProps(state: State, props: { [string]: any })
 		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. need, "accent"))
 	end
 	for _, line in now.problems do
-		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. printable(line), "warning"))
+		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. printable(line), "error"))
 	end
 	if state.showSnoozed then
 		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. "Snoozed shown", "muted"))
@@ -1626,9 +1621,9 @@ function M.queuePicker(state: State): Node
 	-- The active view's name is the heading; the sidebar lists them all.
 	local title: { any } = { ui.span(if view then view.name else "Plotroom", "strong") }
 	if snap and problem then
-		table.insert(title, ui.span("  stale", "warning"))
+		table.insert(title, ui.span("  stale", "muted"))
 	elseif snap and not snap.complete then
-		table.insert(title, ui.span("  partial", "warning"))
+		table.insert(title, ui.span("  partial", "muted"))
 	end
 	local subtitle: { any } = {}
 	local function note(span: any)
@@ -1646,7 +1641,7 @@ function M.queuePicker(state: State): Node
 	end
 	local wait = waitOf(state)
 	if wait > 0 then
-		note(ui.span("Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait), "warning"))
+		note(ui.span("Paused by GitHub until " .. os.date("%H:%M:%S", os.time() + wait), "muted"))
 	end
 	if state.showSnoozed then
 		note(ui.span("Snoozed shown", "muted"))
@@ -1660,10 +1655,10 @@ function M.queuePicker(state: State): Node
 		note(busy)
 	end
 	if problem and snap then
-		note(ui.span((headOf(state, problem.kind) or "Plotroom") .. ", showing the last results", "warning"))
+		note(ui.span((headOf(state, problem.kind) or "Plotroom") .. ", showing the last results", "muted"))
 	end
 	if snap and not snap.complete then
-		note(ui.span(snap.note or "Partial results: narrow this view", "warning"))
+		note(ui.span(snap.note or "Partial results: narrow this view", "muted"))
 	end
 	for _, id in { "prs", "issues" } do
 		local locked = state.locked[id]
@@ -1765,13 +1760,13 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 		ui.node("kv", { key = "facts", items = facts }),
 	}
 	if tabbed then
-		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.", "warning") } }))
+		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.") } }))
 	end
 	local buttons: { Node } = {
 		button({ key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
 	}
 	if dropAct then
-		table.insert(buttons, button({ key = "delete", label = "Remove", icon = "trash", tone = "error", hint = { "d" }, actions = { click = dropAct } }))
+		table.insert(buttons, button({ key = "delete", label = "Remove", icon = "trash", hint = { "d" }, actions = { click = dropAct } }))
 	end
 	table.insert(kids, buttonRow("buttons", buttons))
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)

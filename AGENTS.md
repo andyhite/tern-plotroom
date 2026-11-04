@@ -66,6 +66,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - Errors are values: `Problem = {kind, message}` (kinds in `github.luau`). Wrap `tern.kv`/`tern.json` calls in `pcall`; validate untrusted input at the boundary (store validators, `parsePage`, size caps).
 - Stale-callback guards are mandatory: check `alive(state)` and `state.gen` in host callbacks; the window uses `defer` to fetch a fresh `cx`.
 - Security: every command is an argv array; never build shell strings.
+- **Visual design lives in [DESIGN.md](DESIGN.md)**: tokens, typography, spacing, the components as built, and the Color Meaning Rule (a colour means your turn, needs fixing, done, agent working or checks running; everything else is neutral). Read it before any UI change; a new component is added to DESIGN.md before it is built. `hx.offPalette` checks a view against it.
 - UI: native Tern kinds only (`picker`, `prefs`, `list`/`item`, `overlay`, `kv`, `badge`, `md`, `meter`, `spinner`, `icon`…). The pinned 0.9.8 SDK has no `button` kind (`ui.el("button")` is unstyled HTML), so a button is an `item` with `hint` keycaps and `actions={click=...}`, built by render's `button()` (role `plotroom.button`, ringed by `plotroom.css`). Every node with a click action or an `href` wears `plotroom.button` (it does something) or `plotroom.link` (it opens something), and no other node does; `hx.miscued` checks a view for it. The queue picker has no action bar or strip: every action is a key and a Commands row. Keys must be stable because the window locates nodes by dotted key. Prompt text uses an `editor` node under `role = "omp.prefs.editor"`.
 - CSS (`plotroom.css`): only where no kind or prop covers it; never restyle what a kind draws. Every selector starts with `[data-surface='plugin.plotroom.prs']`; use Tern tokens; lengths are `px`/`em`/`vw`/`vh`/`%` only (Tern's CSS reference rejects `ch` and `rem`); no logical properties or `:has()`. `scripts/check.py test` lints this.
 - Deliberate shortcuts carry a `ponytail:` comment naming the ceiling and upgrade path.
@@ -74,6 +75,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 ## Important Files
 
 - `PRODUCT.md` — product direction: who it is for, the loop, principles, out of scope, glossary, roadmap, metrics, decisions.
+- `DESIGN.md` — the visual system: tokens (Tern variables only), typography, spacing, radii, components, the Color Meaning Rule and the copy and control rules.
 - `README.md` — the product page: pitch, who it is for, the loop as one table, screenshots, install and first run, links. Its screenshots are PNGs under `docs/images/` (never under `plugin/`, which ships), cropped from smoke's headless shots (`PLOTROOM_SMOKE_SHOTS=<dir> python3 scripts/check.py smoke`), each under 400 KB.
 - `docs/reference.md` — the user-facing behavior spec, by loop step (Setup, Commands and keys, Intake, Triage, Dispatch, Supervise, Land, Clean up, Trust, Finer points) in the glossary's words. Update it with every behavior change.
 - `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
