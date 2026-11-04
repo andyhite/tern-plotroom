@@ -48,12 +48,15 @@ type Chain = { action: string, name: string, next: string?, kind: string, repo: 
 -- `gate`: where a run of a chained or checked action stands in its chain (GATES); `gateFindings` the findings a fix
 -- round gets as `{findings}`, one per line. `stop`: why its item's chain stopped at Needs you (a limit; on the item's
 -- newest link, so a later run clears it).
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string? }
+-- `run`: as on AgentInfo.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string?, run: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
 -- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
 -- `criteria`, `checkAgent` and `checkStarted` as on Link. `from`: the chain step this agent was started for.
-export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number?, from: Step? }
+-- `run`: the run id its agent was started with (PLOTROOM_RUN), naming its Draft review folder; nil when it started
+-- without Plotroom's omp extension.
+export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number?, from: Step?, run: string? }
 -- `since` and `expected` (whole seconds as text) only while the agent is working: when its run or turn began on this
 -- machine's clock, and the median of its action's finished runs (usage.medians; nil: too few, or a later turn).
 type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
@@ -195,7 +198,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings", "gate", "gateFindings", "stop" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings", "gate", "gateFindings", "stop", "run" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -242,6 +245,7 @@ local function linkOf(row: any): Link?
 		gate = if texts.gate and GATES[texts.gate] then texts.gate else nil,
 		gateFindings = usage.text(texts.gateFindings, FIX_CAP),
 		stop = clip(texts.stop, STOP_CAP),
+		run = clip(texts.run, ACTION_CAP),
 	}
 end
 
@@ -271,7 +275,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop, run = l.run })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -638,7 +642,7 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not healthy then
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
 	end
-	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil, criteria = if info then usage.text(info.criteria, usage.CRITERIA_CAP) else nil, checkAgent = if info then info.checkAgent else nil, checkStarted = if info then info.checkStarted else nil } }
+	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil, criteria = if info then usage.text(info.criteria, usage.CRITERIA_CAP) else nil, checkAgent = if info then info.checkAgent else nil, checkStarted = if info then info.checkStarted else nil, run = if info then clip(info.run, ACTION_CAP) else nil } }
 	-- The agent of a chain step ends that step on the run it came from (a check now waits for its verdict); one started
 	-- by hand ends every open step of its item, so an older chain never starts an agent beside it.
 	local from = if info then info.from else nil

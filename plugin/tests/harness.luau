@@ -1051,8 +1051,9 @@ local function newWorld(instantiate: Loader, context: string): World
 	-- (`w.kv.store["get-started"] = nil :: any`).
 	kvStore["get-started"] = jsonEncode({ dismissed = true })
 
-	-- fs: absolute paths only; failures raise
-	local files: { [string]: string } = {}
+	-- fs: absolute paths only; failures raise. Plotroom's omp extension is installed (tern.plugin.dir below); a case
+	-- about it missing removes it before the host loads.
+	local files: { [string]: string } = { ["/plugins/plotroom/omp/plotroom.ts"] = "// Plotroom's omp extension\n" }
 	local dirs: { [string]: boolean } = { ["/"] = true }
 	local denyMkdir: { [string]: string } = {}
 	local mkdirs: { string } = {}
@@ -1064,7 +1065,7 @@ local function newWorld(instantiate: Loader, context: string): World
 
 	local sdk: any = {
 		context = context,
-		plugin = { id = "plotroom", name = "Tern Plotroom", version = "0.1.0" },
+		plugin = { id = "plotroom", name = "Tern Plotroom", version = "0.1.0", dir = "/plugins/plotroom", data = "/data/plotroom" },
 		runtime = { os = "macos", jit = false },
 		log = {
 			debug = function() end,

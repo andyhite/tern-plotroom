@@ -604,8 +604,24 @@ local function placement(cx: WindowCx, tab: number?, queue: number): (number?, D
 	return best.pane, side
 end
 
+-- The command line an agent starts with (docs/reference.md › Dispatch): omp loading Plotroom's extension, with run id
+-- `run` and Plotroom's data directory in its environment, as the queue block's host publishes them (`main.omp`), and
+-- `--model`/`--thinking` (`flags`, each with a leading space) when the action names them. Without the extension on that
+-- host: what started agents before it (nil: the agent setting's command), and why, for a toast.
+local function agentCommand(cx: WindowCx, pane: number, flags: string, run: string): (string?, string?)
+	-- Smoke runs a fake omp (no model, no network): Tern starts agents with the user's login PATH, which smoke cannot change.
+	local smoke = if tern.getenv("PLOTROOM_SELFTEST") == "1" then tern.getenv("PLOTROOM_SMOKE_OMP") else nil
+	local omp = if smoke then worktree.shellWord(smoke) else "omp"
+	local ok, o = pcall(tern.json.decode, tostring(nodeProp(readNode(cx, pane, "main.omp"), "text")))
+	if ok and type(o) == "table" and type(o.ext) == "string" and type(o.data) == "string" then
+		return "PLOTROOM_RUN=" .. run .. " PLOTROOM_DATA=" .. worktree.shellWord(o.data) .. " " .. omp .. " -e " .. worktree.shellWord(o.ext) .. flags, nil
+	end
+	local why = if ok and type(o) == "table" then "The extension is not in Plotroom's folder on the block's host, so it cannot propose a Draft review." else "The block's host runs an older Plotroom, which does not say where its omp extension is."
+	return if flags ~= "" then omp .. flags else nil, why
+end
+
 -- Starts an agent at `r.path` with `prompt` and the fixed end-of-run report contract (prompts.REPORT) after it, as
--- `omp --model <model> --thinking <effort>` with what the prompt names. `split`: as a block beside the queue (pane `pane`), in its tab,
+-- agentCommand says (omp with Plotroom's extension, the prompt's model and effort). `split`: as a block beside the queue (pane `pane`), in its tab,
 -- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
 -- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
@@ -621,15 +637,8 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		cx:toast("error", "Agent not started for " .. t.label, "The action's effort is not one omp takes: " .. effort)
 		return false
 	end
-	-- Omitted, the command is the agent setting's (omp); a model or effort needs its own command line.
-	local flags: { string } = {}
-	if model then
-		table.insert(flags, "--model " .. model)
-	end
-	if effort then
-		table.insert(flags, "--thinking " .. effort)
-	end
-	local command = if #flags > 0 then "omp " .. table.concat(flags, " ") else nil
+	-- A model or effort adds its flags to the command line agentCommand builds.
+	local flags = (if model then " --model " .. model else "") .. (if effort then " --thinking " .. effort else "")
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
@@ -672,12 +681,19 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	if split then
 		cx.layout:focus(pane)
 	end
+	local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
+	local command, without = agentCommand(cx, pane, flags, run)
 	local ok, agent = pcall(function()
 		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
 	end)
 	if not ok or type(agent) ~= "number" then
 		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
 		return false
+	end
+	if without then
+		cx:toast("info", "Agent started without Plotroom's omp extension", without)
+	else
+		info.run = run
 	end
 	local chain: any = nil
 	if job.id then
