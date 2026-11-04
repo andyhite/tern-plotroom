@@ -446,7 +446,7 @@ function M.flakyText(state: State, key: string): string
 end
 
 -- Whether `pr` is someone else's open pull request that asks for the review of the login the view runs as (by name; a
--- team request does not count), as its loaded details say.
+-- team request does not count), as its loaded details say. Your dismissed review asks for it again.
 function M.reviewAsked(state: State, pr: github.Pr): boolean
 	local who = M.login(state) or ghActive.login
 	if not who or pr.state ~= "open" or pr.draft or string.lower(pr.author) == string.lower(who) then
@@ -455,7 +455,7 @@ function M.reviewAsked(state: State, pr: github.Pr): boolean
 	local d = state.details[M.detailKey(state, pr)]
 	local reviews: { github.Review } = if d and d.about then d.about.reviews else {}
 	for _, r in reviews do
-		if r.state == "requested" and string.lower(r.login) == string.lower(who) then
+		if (r.state == "requested" or r.state == "dismissed") and string.lower(r.login) == string.lower(who) then
 			return true
 		end
 	end
@@ -2646,6 +2646,9 @@ end
 local NOW_MINE = "is:open author:@me archived:false"
 local NOW_REVIEW = "is:open user-review-requested:@me draft:false archived:false"
 local NOW_REVIEW_TEAMS = "is:open review-requested:@me draft:false archived:false" -- your teams' requests too
+-- Reviews of yours that were dismissed ask for it again; GitHub's search has no qualifier for them, so these are kept
+-- only where your latest review is dismissed. ponytail: every open PR you reviewed is read; narrow if it costs.
+local NOW_DISMISSED = "is:open reviewed-by:@me -author:@me draft:false archived:false"
 local NOW_ASSIGNED = "is:open assignee:@me archived:false"
 local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
@@ -2760,13 +2763,16 @@ function M.nowRead(state: State)
 		M.nowEnsure(state)
 		state.cx:render()
 	end
-	local function search(which: string, account: string?, query: string, integration: string?, me: string?)
+	local function search(which: string, account: string?, query: string, integration: string?, me: string?, dismissed: boolean?)
 		pending += 1
-		local asTeam = which == "review" and prefs.teams
+		local asTeam = which == "review" and prefs.teams and not dismissed
 		local function landed(result: any, problem: github.Problem?, cost: number)
 			spent += cost or 0
 			if result then
 				for _, it in (if integration then result.issues else result.prs) do
+					if dismissed and it.yourReview ~= "dismissed" then
+						continue
+					end
 					table.insert(fresh[which], it)
 					if integration == "github" and me and me ~= "" then
 						finder[it.key] = me
@@ -2859,6 +2865,7 @@ function M.nowRead(state: State)
 						search("mine", account, NOW_MINE, nil)
 					elseif which == "review" then
 						search("review", account, if prefs.teams then NOW_REVIEW_TEAMS else NOW_REVIEW, nil, me)
+						search("review", account, NOW_DISMISSED, nil, me, true)
 					else
 						search("assigned", account, NOW_ASSIGNED, "github", me)
 					end

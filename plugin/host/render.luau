@@ -126,8 +126,8 @@ local function refDetail(ref: string, repo: string?, repos: boolean): { any }
 	return detail
 end
 
--- A pull request's picker row: "#N · repo · <what blocks it>"; its stage says Merged or Closed, so only Draft is left
--- of its state.
+-- A pull request's picker row: "#N · repo · <what blocks it>", or "New commits since you approved" when its head moved
+-- after your approval; its stage says Merged or Closed, so only Draft is left of its state.
 local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string?, repos: boolean): { [string]: any }
 	local badges = worktreeBadges(note, stage)
 	if stateKind(pr) == "draft" then
@@ -137,6 +137,9 @@ local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string
 	if why then
 		table.insert(detail, " · ")
 		table.insert(detail, ui.span(why, "error"))
+	elseif pr.newCommits then
+		table.insert(detail, " · ")
+		table.insert(detail, ui.span("New commits since you approved", "warning"))
 	end
 	return finishRow(pr.key, pr.title, pr.author, detail, badges)
 end
@@ -1361,7 +1364,10 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 	elseif row.rank == 2 then
 		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
 	elseif row.rank == 3 then
-		local asked = if row.why then "Your team's review is requested: " .. printable(row.why) else "Your review is requested"
+		local asked = if row.why
+			then "Your team's review is requested: " .. printable(row.why)
+			elseif row.item and row.item.yourReview == "dismissed" then "Your review was dismissed, so it is requested again"
+			else "Your review is requested"
 		return { text = "Review requested", tone = "accent", title = asked }, asked
 	elseif row.rank == 4 then
 		return { text = "Ready to merge", tone = "success", title = "Your pull request is ready to merge" }, "Your pull request is ready to merge"

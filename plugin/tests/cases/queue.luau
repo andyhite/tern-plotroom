@@ -3338,6 +3338,58 @@ case("host next move: each pull request stage maps to its move, shown first in C
 	has(findKey(b.view().layer, "confirm", "overlay").p.head, "Remove worktree", "which asks first, as the card's Remove worktree does")
 end)
 
+case("host review recency: a PR you approved whose head moved says New commits since you approved (and is Changed); your dismissed review or a request after your approval makes Review its next move", function(w: World)
+	local s = hostScene(w, 0)
+	local function approved(n: number, at: string, extra: { [string]: any }?): { [string]: any }
+		local item = searchItem(n, "o/r", EPOCH - n * 60, { yours = "APPROVED", yoursAt = at, headSha = sha("a") })
+		for k, v in (extra or {}) :: { [string]: any } do
+			item[k] = v
+		end
+		return item
+	end
+	s.gh.items.octocat = {
+		approved(1, string.upper(sha("b"))), -- approved an older head
+		approved(2, sha("a")), -- approved this head
+		searchItem(3, "o/r", EPOCH - 180, { yours = "DISMISSED", yoursAt = sha("b"), headSha = sha("a") }),
+		approved(4, sha("b")), -- the author asked again
+		approved(5, sha("b"), { state = "MERGED" }),
+	}
+	local function about(reviews: { any }, requested: { string }): { [string]: any }
+		return { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array(reviews), requested = array(requested) }
+	end
+	s.gh.about["o/r#1"] = about({ { login = "octocat", state = "APPROVED" } }, {})
+	s.gh.about["o/r#2"] = about({ { login = "octocat", state = "APPROVED" } }, {})
+	s.gh.about["o/r#3"] = about({ { login = "octocat", state = "DISMISSED" } }, {})
+	s.gh.about["o/r#4"] = about({ { login = "octocat", state = "APPROVED" } }, { "octocat" })
+	local b = openQueue(w)
+	local function details(): { string }
+		local out: { string } = {}
+		for _, row in pickerOf(b).items do
+			table.insert(out, h.detailText(row))
+		end
+		return out
+	end
+	same(details(), { "#1 · New commits since you approved", "#2", "#3", "#4 · New commits since you approved", "#5" }, "only an open PR whose head is not the commit you approved says so")
+	eq(nextOf(w, b, "no_2fr_231").row, nil, "approved, nothing asked again: no move, even with new commits")
+	eq(nextOf(w, b, "no_2fr_233").row, "Review", "your review was dismissed: Review")
+	eq(nextOf(w, b, "no_2fr_234").row, "Review", "asked again after you approved: Review")
+	eq(nextOf(w, b, "no_2fr_231").row, nil, "and back on the first, still none")
+	same(asks.hx.marks(b), { "-", "New", "-", "-", "New" }, "the rows read are seen")
+	s.gh.items.octocat[1] = approved(1, sha("a"))
+	s.gh.items.octocat[2] = approved(2, sha("a"), { headSha = sha("c") })
+	refreshNow(w, b)
+	same(details(), { "#1", "#2 · New commits since you approved", "#3", "#4 · New commits since you approved", "#5" }, "derived again on every refresh: approving the head clears it, a push raises it")
+	eq(asks.hx.marks(b)[2], "New", "an unseen row stays New")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
+	w.advance(300)
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	w.advance(300)
+	s.gh.items.octocat[2] = approved(2, sha("a"), { headSha = sha("d") })
+	refreshNow(w, b)
+	eq(asks.hx.marks(b)[2], "Changed", "a push after you saw it is Changed too")
+	eq(h.detailText(pickerOf(b).items[2]), "#2 · New commits since you approved", "and still says why")
+end)
+
 case("host next move: an issue goes Worktree, then Draft PR…, a closed one with a worktree Remove worktree…, an unrelated closed one nothing", function(w: World)
 	local s = h.issueHost(w)
 	local b = h.openIssues(w)
