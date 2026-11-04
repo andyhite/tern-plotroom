@@ -56,11 +56,12 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
 -- main checkout. `split` (nil means false) opens its agent as a block beside the queue in the queue's tab rather than
 -- in a tab of its own. `model` (nil: omp's default) is what `omp --model` runs it with: a model pattern or a role
--- alias such as @slow. `next` (nil: none) is the id of another prompt of the kind that starts for the same item, in the same
+-- alias such as @slow. `effort` (nil: omp's default) is its `omp --thinking` level (worktree.EFFORTS). `next` (nil:
+-- none) is the id of another prompt of the kind that starts for the same item, in the same
 -- tab and worktree, when this prompt's agent finishes. `outcome` (nil: none) is what its run must leave behind, a
 -- prompts.OUTCOMES id, checked against GitHub when the run's turn ends. `checker` (nil: none) is the id of another
 -- prompt of the kind (Checked by) that a fresh agent runs on the same item when a run of this one ends with a commit.
-export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, status: string?, next: string?, outcome: string?, checker: string? }
+export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, effort: string?, status: string?, next: string?, outcome: string?, checker: string? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › General; a removed
 -- one adds none), and what they do. A row left with no key is not listed.
@@ -117,6 +118,9 @@ end
 export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
+-- The Likely flaky marks of one PR's failing checks (engine.gatherFlaky): the head commit they were judged at, and per
+-- check link the check's name and why it is likely flaky. A check with no mark is not.
+export type Flaky = { sha: string, marks: { [string]: { name: string, reason: string } } }
 -- One failing check's log as read for one head commit: its excerpt (logs.parse, jobs one after another), its first error
 -- line and the changed-file lines it names, or why it could not be read; `at` is when, so a failed read is tried again.
 export type CiLog = { lines: { string }?, first: string?, refs: { string }, problem: string?, at: number }
@@ -255,6 +259,8 @@ export type State = {
 	ciLogs: { [string]: CiLog }, -- failing checks' logs by head commit and check link, read once each (engine.failures)
 	ciBusy: { [string]: { (CiLog) -> () } }, -- log reads running, with who waits for them
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
+	flaky: { [string]: Flaky }, -- item key -> its Likely flaky marks, judged once per head commit
+	flakyBusy: { [string]: boolean }, -- item keys whose evidence is being read
 	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
 	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
@@ -575,6 +581,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch (none for a pull request)" },
 			{ k = { ui.span("{findings}", "code") }, v = "In a fix round, what the checker found (or that the last run named no new commit); else says none" },
+			{ k = { ui.span("{flaky}", "code") }, v = "Its failing checks Plotroom marks Likely flaky, with why and the head commit, when the agent starts; else says none" },
 			{ k = { ui.span("{failures}", "code") }, v = "Each failing check's log excerpt and the changed-file lines it names (GitHub Actions)" },
 		},
 		prompts = prompts.prs,

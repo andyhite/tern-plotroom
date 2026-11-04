@@ -60,6 +60,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Actions and Type a prompt… | Commands, Settings › Actions | Keep | — | Approved | |
 | Default actions (Review, Quick review, Address feedback, Watch, Implement, Fix, Plan) | Settings › Actions | Keep; outcomes added | 3 | Approved | Done: each names its default outcome, and sets Model, Opens in and Next action (Implement and Fix → Watch) |
 | Action fields: Model, Runs in, Opens in, Move to status (acli), key | Settings › Actions | Keep | — | Approved | Defaults set Model and Opens in; none sets a key or Move to status |
+| Action fields: Model picked from omp's models (omp's default, role aliases, models by provider, with search) and Effort | Settings › Actions | New | — | Approved | tern-plotroom#6fwm, adopted from tern-pr-guide: a model is chosen from what omp lists instead of typed; Effort passes `--thinking`. Falls back to the text field when omp cannot list models |
 | Agent placement: each agent Beside the queue, or joining a worktree's tab, splits the largest pane of that tab along its longer side, never the queue's (the queue keeps its half) | Dispatch (Opens in) | New | — | Approved | Spike tern-plotroom#ajat: today each agent beside the queue halves the queue's pane again, so at 5 agents the queue and the two newest are 94 px slivers at Tern's minimum; this rule keeps the queue at 1097 px and no agent below 274×480 px. The author approved it on 2026-11-03 (tern-plotroom#jd78): each split halves the pane, alternating by its shape |
 | Action field: Next action (chains) | Settings › Actions | Keep; advances only on a Verified outcome | 3 | Approved | Default Implement and Fix lead into Watch |
 | Action field: Tell Carly when it finishes, and the `plotroom_agents` Carly export | Settings › Actions, Carly | Cut | 1 | Approved | Serves no loop step that Tern's agent notifications and Now don't cover; adds jargon |
@@ -99,6 +100,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
 | Close issue…; Reopen issue… | Commands | Keep | — | Approved | "Won't do" is a triage outcome |
 | Re-run failed checks | Commands | Keep | — | Approved | |
+| Likely flaky: a failing check that also fails on the base branch, or passed earlier on the same head commit, is marked so, and the Next move re-runs only when every failing check is | Preview checks, Blocked detail, Next move, Watch's prompt | New | — | Approved | tern-plotroom#zaq6, adopted from tern-pr-guide. Landing stalls on red checks the PR did not cause; the mark says which re-run is worth it, and your own PR's other failures go to Watch, which fixes them |
 | Re-run all jobs…; Cancel running workflow… | Commands | Cut | 1 | Approved | Managing CI belongs to GitHub; Re-run failed checks covers the loop |
 | Add label…; Remove label… | Commands | Cut | 1 | Approved | Tracker housekeeping, not a loop step |
 | Jira transition… (REST API; needs `PLOTROOM_JIRA_API_TOKEN`) | Commands | Cut | 1 | Approved | The only feature that needs a token; an action's Move to status (acli) stays |

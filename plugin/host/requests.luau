@@ -173,6 +173,7 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 			group = if o.here and active then "For " .. clip(printable(active.name), 60) else "All actions",
 			send = if withText then p.text else nil,
 			model = p.model,
+			effort = p.effort, -- its `omp --thinking` level; omitted: omp's default
 			worktree = p.worktree ~= false, -- where it runs: the item's worktree, else the main checkout
 			split = if p.split then true else nil, -- its agent opens beside the queue; omitted: a tab of its own
 			status = p.status, -- an issue action's Jira status to move to when its agent starts
@@ -328,9 +329,9 @@ end
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- and `failures` the `{failures}` block, for the prompt that runs there. `premerge`: an agent will resolve conflicts
--- there, so a clean worktree of a PR GitHub reports conflicting first gets its base merged (worktree.premerge), and the
--- answer carries what that did (`merge`).
+-- and `failures` the `{failures}` block, for the prompt that runs there; it always carries `{flaky}` (engine.flakyText).
+-- `premerge`: an agent will resolve conflicts there, so a clean worktree of a PR GitHub reports conflicting first gets
+-- its base merged (worktree.premerge), and the answer carries what that did (`merge`).
 local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
@@ -361,6 +362,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				title = meta.title,
 				author = meta.author,
 				["github.user"] = found["github.user"],
+				flaky = engine.flakyText(state, key),
 				failures = failed,
 			})
 		end)
@@ -412,6 +414,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						title = r.title,
 						author = r.author,
 						["github.user"] = found["github.user"],
+						flaky = engine.flakyText(state, key),
 						failures = failed,
 						merge = merge,
 					})
@@ -1767,7 +1770,7 @@ function M.rpc(state: State, raw: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, effort = p.effort, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end
@@ -1791,6 +1794,45 @@ function M.rpc(state: State, raw: any)
 		end)
 	elseif q.op == "menu" then
 		menu(state, id, if type(q.only) == "string" then q.only else nil)
+	elseif q.op == "models" and type(q.prompt) == "string" and #q.prompt <= 80 then
+		-- Settings › Actions › Model's picker: omp's role aliases and models (settings.loadModels) and the action's saved
+		-- model: `current`, `listed` (what of the list it names; nil with `current`: omp no longer lists it).
+		local kind, pid = storage.kindAndId(q.prompt)
+		if not kind then
+			return
+		end
+		local store, why = loadPrompts(kind)
+		local p = if store then promptById(store, pid) else nil
+		if not p then
+			return reply(state, id, { problem = why or "That action no longer exists." })
+		end
+		local current = p.model
+		local function answer()
+			local o = settings.omp
+			if o.failed or not o.models then
+				return reply(state, id, { problem = o.failed or "omp did not list its models." })
+			end
+			-- The models sent stop at MENU_BUDGET encoded characters, so the answer fits the window's surface read.
+			local models: { string } = {}
+			local size = 0
+			for _, sel in o.models do
+				size += #sel + 3
+				if size > MENU_BUDGET then
+					break
+				end
+				table.insert(models, sel)
+			end
+			local roles: { any } = {}
+			for _, r in o.roles :: { { name: string, model: string } } do
+				table.insert(roles, { name = r.name, model = r.model })
+			end
+			reply(state, id, { current = current, listed = if current then settings.listedModel(current) else nil, roles = tern.json.array(roles), models = tern.json.array(models) })
+		end
+		if not settings.omp.loading and (settings.omp.models or settings.omp.failed) then
+			answer()
+		else
+			settings.loadModels(state, answer)
+		end
 	elseif q.op == "repos" then
 		repos(state, id)
 	elseif q.op == "profile" and type(q.login) == "string" and string.match(q.login, "^[%w%-_]+$") then
