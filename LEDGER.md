@@ -101,6 +101,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
 | Close issue…; Reopen issue… | Commands | Keep | — | Approved | "Won't do" is a triage outcome |
 | Re-run failed checks | Commands | Keep | — | Approved | |
+| Likely flaky: a failing check that also fails on the base branch, or passed earlier on the same head commit, is marked so, and the Next move re-runs only when every failing check is | Preview checks, Blocked detail, Next move, Watch's prompt | New | — | Approved | tern-plotroom#zaq6, adopted from tern-pr-guide. Landing stalls on red checks the PR did not cause; the mark says which re-run is worth it, and your own PR's other failures go to Watch, which fixes them |
 | Re-run all jobs…; Cancel running workflow… | Commands | Cut | 1 | Approved | Managing CI belongs to GitHub; Re-run failed checks covers the loop |
 | Add label…; Remove label… | Commands | Cut | 1 | Approved | Tracker housekeeping, not a loop step |
 | Jira transition… (REST API; needs `PLOTROOM_JIRA_API_TOKEN`) | Commands | Cut | 1 | Approved | The only feature that needs a token; an action's Move to status (acli) stays |

@@ -329,9 +329,9 @@ end
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- and `failures` the `{failures}` block, for the prompt that runs there. `premerge`: an agent will resolve conflicts
--- there, so a clean worktree of a PR GitHub reports conflicting first gets its base merged (worktree.premerge), and the
--- answer carries what that did (`merge`).
+-- and `failures` the `{failures}` block, for the prompt that runs there; it always carries `{flaky}` (engine.flakyText).
+-- `premerge`: an agent will resolve conflicts there, so a clean worktree of a PR GitHub reports conflicting first gets
+-- its base merged (worktree.premerge), and the answer carries what that did (`merge`).
 local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
@@ -362,6 +362,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				title = meta.title,
 				author = meta.author,
 				["github.user"] = found["github.user"],
+				flaky = engine.flakyText(state, key),
 				failures = failed,
 			})
 		end)
@@ -413,6 +414,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						title = r.title,
 						author = r.author,
 						["github.user"] = found["github.user"],
+						flaky = engine.flakyText(state, key),
 						failures = failed,
 						merge = merge,
 					})

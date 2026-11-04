@@ -204,7 +204,7 @@ windowCase("window: with no prompts saved, a pull request offers the default pro
 		w.flush()
 		local agent = w.window.agents[i]
 		eq(agent.cwd, if d.worktree == false then s.root else s.target, name .. " runs where its default says: the main checkout or the PR's worktree")
-		local values: { [string]: string } = { number = "5", owner = "o", repo = "r", branch = "feature", base = "main", remote = "origin" }
+		local values: { [string]: string } = { number = "5", owner = "o", repo = "r", branch = "feature", base = "main", remote = "origin", flaky = "none" }
 		local lines = string.split(agent.prompt, "\n")
 		local function present(line: string, what: string)
 			local want = line:gsub("{(%w+)}", function(k)
