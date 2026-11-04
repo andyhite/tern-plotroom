@@ -222,6 +222,7 @@ export type State = {
 	views: { View }, -- every saved view of both kinds, pull request views first (kv views-prs, then views-issues)
 	pins: { View }, -- items pinned by URL (requests.show), each a one-item scope under the sidebar's Pins group, in the order pinned; never saved with the views
 	locked: { [string]: string }, -- kind id -> why its saved views cannot be changed (unreadable, malformed, unwritable); absent: they can
+	ignored: { [string]: { [string]: boolean } }, -- lowercase "owner/name" -> the names of its ignored checks (kv ignored-checks)
 	snaps: { [string]: Snap },
 	snap: Snap?,
 	cursor: string?,

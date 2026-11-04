@@ -656,6 +656,21 @@ case("now: with Blocked off and Ready to merge on, your pull requests are still 
 	same(listed(b), {}, "and nothing of theirs is listed")
 end)
 
+case("now: your pull request failing only an ignored check is not listed as Blocked; one failing another check is", function(w: World)
+	local done = "2026-01-01T00:00:00Z"
+	local only = { h.checkRun("approval", "COMPLETED", "FAILURE", done, { id = "A" }) }
+	local more = { h.checkRun("approval", "COMPLETED", "FAILURE", done, { id = "B" }), h.checkRun("build", "COMPLETED", "FAILURE", done, { id = "C" }) }
+	local _, b = nowScene(w, {}, function(s: h.HostScene)
+		w.kv.put("ignored-checks", { ["o/r"] = h.array({ "approval" }) })
+		s.gh.queries[MINE] = {
+			searchItem(1, "o/r", EPOCH - 60, { review = "APPROVED", merge = "BLOCKED", checks = "FAILURE", runs = h.array(only), runTotal = 1 }),
+			searchItem(2, "o/r", EPOCH - 120, { review = "APPROVED", merge = "BLOCKED", checks = "FAILURE", runs = h.array(more), runTotal = 2 }),
+		}
+		s.gh.checks["o/r#1"], s.gh.checks["o/r#2"] = only, more
+	end)
+	same(whys(b), { "no_2fr_232 Blocked: checks failing" }, "only the PR another check blocks needs you")
+end)
+
 case("now: a login switched off is neither searched nor asked for notifications; a login that signs in later is on", function(w: World)
 	local s, b = nowScene(w, nil, function(s: h.HostScene)
 		s.gh.tokens.work = "tok-work"

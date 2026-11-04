@@ -400,12 +400,14 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local groups: { [string]: { Node } } = { required = {}, runs = {} }
 	for i, r in runs do
 		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
-		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "")
+		-- An ignored failing check still shows failing; its value says Ignored (it blocks nothing).
+		local ignored = r.status == "failure" and engine.ignored(state, pr, r)
+		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "")
 		local props: { [string]: any } = {
 			key = "run" .. i,
 			label = job or r.name,
 			detail = workflow,
-			value = r.took,
+			value = if ignored then "Ignored" else r.took,
 			icon = RUN_ICON[r.status],
 			tone = RUN_TONE[r.status],
 			title = what,

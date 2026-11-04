@@ -362,7 +362,8 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 		local pr: github.Pr = item
 		-- ponytail: the search cannot ask which checks are required; GitHub's merge state saying only optional checks
 		-- fail (unstable) or none (ready) clears a failing rollup. Read the detail runs' `required` if that misleads.
-		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready"
+		-- A failure only of ignored checks (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
+		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr)
 		if pr.review == "changes" or pr.merge == "conflicts" or failing then
 			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" else "Checks failing"
 		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
@@ -383,6 +384,35 @@ end
 function M.runsOf(state: State, item: any): { github.Run }
 	local d = state.details[M.detailKey(state, item)]
 	return if d then d.runs else item.runs
+end
+
+-- Whether check `r` of `pr` is ignored in its repository (kv ignored-checks, by exact name).
+function M.ignored(state: State, pr: any, r: github.Run): boolean
+	local set = state.ignored[string.lower(pr.repo)]
+	return set ~= nil and set[r.name] == true
+end
+
+-- Whether every failing check of `pr` is an ignored one, as far as its listed checks show: a list cut short (more checks
+-- than loaded) or one with no failing check listed leaves the failure counted.
+function M.onlyIgnoredFail(state: State, pr: any): boolean
+	if not state.ignored[string.lower(pr.repo)] then
+		return false
+	end
+	local d = state.details[M.detailKey(state, pr)]
+	local runs: { github.Run } = if d then d.runs else pr.runs
+	if (if d then d.total else pr.runTotal) > #runs then
+		return false
+	end
+	local any = false
+	for _, r in runs do
+		if r.status == "failure" then
+			if not M.ignored(state, pr, r) then
+				return false
+			end
+			any = true
+		end
+	end
+	return any
 end
 
 -- Whether `item` (a pull request) has a failed workflow run Re-run failed checks can start again.

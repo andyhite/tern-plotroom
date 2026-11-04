@@ -469,6 +469,25 @@ local function pageContent(state: State): ({ any }, { Node })
 		-- listed the card's title goes on its Add button's.
 		section(if #names > 0 then "add:repo" else "add-to:repo", if #names > 0 then nil else "Repositories")
 		row({ id = "radd", label = "", control = { k = "action", act = "add-repo", label = "Add repository" } })
+		-- Ignored checks (Ignore this check… adds them), one row per repository and check name, each removed at once.
+		local ignoredMap, ignoredOff = storage.readIgnored()
+		local ignored: { [string]: { string } } = ignoredMap or {}
+		local ignoredRepos: { string } = {}
+		for repo in ignored do
+			table.insert(ignoredRepos, repo)
+		end
+		table.sort(ignoredRepos)
+		if ignoredOff or #ignoredRepos > 0 then
+			section("ignored", "Ignored checks")
+		end
+		if ignoredOff then
+			row({ id = "ignored", label = "Ignored checks", warning = ignoredOff, disabled = ignoredOff, control = { k = "action", act = "unignore", label = "Remove" } })
+		end
+		for _, repo in ignoredRepos do
+			for _, name in ignored[repo] do
+				row({ id = "unignore:" .. repo .. ":" .. name, label = clip(printable(name), 120), hint = repo, control = { k = "action", act = "unignore", label = "Remove" } })
+			end
+		end
 		if cli.on("jira") then
 			local map, unreadable = readMap("jira-repos", "Jira project repositories")
 			local keys: { string } = {}
@@ -1376,6 +1395,21 @@ function M.runAction(state: State, act: string, row: string)
 			if row == "guide:" .. c.id then
 				state.cx:open(c.url)
 			end
+		end
+	elseif act == "unignore" then
+		local repo, name = string.match(row, "^unignore:([^:]+):(.+)$")
+		if repo and name then
+			s.errors[row] = storage.editIgnored(repo, function(list: { string })
+				local i = table.find(list, name)
+				if i then
+					table.remove(list, i)
+				end
+			end)
+			if not s.errors[row] then
+				s.focus = "radd" -- the removed row is gone
+			end
+			loadAll(state)
+			propagate(state)
 		end
 	end
 end
