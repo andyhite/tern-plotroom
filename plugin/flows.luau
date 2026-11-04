@@ -1586,6 +1586,33 @@ local function rerunFailed(cx: WindowCx, pane: number)
 	runAction(cx, pane, "rerun-failed", "Nothing to re-run", "No failed runs to re-run", "Which failed run to re-run?")
 end
 
+-- Ignore this check…: the host answers the failing checks not yet ignored to pick from (several) or a plan.
+local function ignoreCheck(cx: WindowCx, pane: number)
+	local title = "Check not ignored"
+	e().ask(cx, pane, "act", { name = "ignore-check" }, ACT_MS, function(a: any, cx2: WindowCx)
+		local why = problemOf(a)
+		if why then
+			return cx2:toast("error", title, why)
+		elseif type(a.checks) ~= "table" then
+			return M.confirmPlan(cx2, pane, a, nil)
+		end
+		local items: { PickItem } = {}
+		for _, name in a.checks do
+			if type(name) == "string" then
+				table.insert(items, { label = name, check = name })
+			end
+		end
+		if #items == 0 then
+			return cx2:toast("info", "No failing check to ignore")
+		end
+		cx2:pick({ items = items, placeholder = "Which failing check to ignore in this repository?", icon = "merge", action = "plan" }):next(function(item, _, cx3)
+			if item and cx3 then
+				planAct(cx3, pane, title, { name = "ignore-check", check = item.check })
+			end
+		end)
+	end)
+end
+
 -- Now's notifications marked read: the host names the listed threads and the account in the confirm.
 local function markRead(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not marked read", { name = "mark-read" })
@@ -1923,6 +1950,7 @@ M.COMMANDS = {
 	{ id = "pr-update-branch", title = "Plotroom: Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
 	{ id = "pr-empty-commit", title = "Plotroom: Push an empty commit to the selected PR's branch so its checks run again", label = "Push empty commit…", run = prEmptyCommit },
 	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
+	{ id = "ignore-check", title = "Plotroom: Ignore a failing check of the selected PR", label = "Ignore this check…", run = ignoreCheck },
 	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
 	{
 		id = "usage-report",

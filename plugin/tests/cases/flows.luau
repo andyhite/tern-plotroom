@@ -1020,6 +1020,25 @@ windowCase("window flows: rerun-failed offers every failed run, plans the picked
 	eq(#requestsSent(w), sent + 1, "a cancelled run picker sends nothing more")
 end)
 
+windowCase("window flows: Ignore this check… offers the failing checks the host names, plans the picked one, and sends nothing when cancelled", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	w.window.choose = "lint"
+	w.command("ignore-check")
+	w.flush()
+	st.reply("act", { checks = { "approval", "lint" } })
+	same(flowRows(w.window.picks[1]), { "approval", "lint" }, "every failing check the host named")
+	local again = st.reply("act", { token = "i1", confirm = { head = "Ignore lint in o/r?", label = "Ignore check", lines = { "x" } } })
+	eq(again.name, "ignore-check", "the same action")
+	eq(again.check, "lint", "with the picked check")
+	w.window.choose = nil
+	local sent = #requestsSent(w)
+	w.command("ignore-check")
+	w.flush()
+	st.reply("act", { checks = { "approval", "lint" } })
+	eq(#requestsSent(w), sent + 1, "a cancelled check picker sends nothing more")
+end)
+
 windowCase("window flows: Esc on the draft title prompt returns to the review with the earlier values", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

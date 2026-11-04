@@ -1068,6 +1068,54 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, "Rerunning the failed jobs of run " .. run .. " of " .. target)
 			end)
 		end)
+	elseif name == "ignore-check" then
+		if not prs then
+			return no("Checks are ignored on pull requests.")
+		end
+		local failing: { string } = {}
+		for _, r in engine.runsOf(state, item) do
+			if r.status == "failure" and not engine.ignored(state, item, r) and not table.find(failing, r.name) then
+				table.insert(failing, r.name)
+			end
+		end
+		local check: any = q.check
+		if check == nil and #failing == 1 then
+			check = failing[1]
+		end
+		if check == nil then
+			if #failing == 0 then
+				return no("No failing check of this pull request is left to ignore. Its checks may still be loading.")
+			end
+			return reply(state, id, { checks = M.strings(failing) })
+		elseif type(check) ~= "string" or not table.find(failing, check) then
+			return no("That check is no longer failing on this pull request; nothing was saved.")
+		end
+		local picked: string = check
+		local repo = item.repo
+		return M.offer(state, id, item, {
+			head = "Ignore " .. clip(printable(picked), 100) .. " in " .. repo .. "?",
+			label = "Ignore check",
+			lines = {
+				"A pull request of " .. repo .. " whose only failing checks are ignored ones is not Blocked",
+				"The check still shows failing, marked Ignored, and keeps it out of Ready to merge",
+				"Remove it in Settings › Repositories",
+			},
+		}, function(done)
+			local err = storage.editIgnored(repo, function(list: { string })
+				if not table.find(list, picked) then
+					table.insert(list, picked)
+				end
+			end)
+			if err then
+				return done({ problem = err })
+			end
+			if alive(state) then
+				storage.loadAll(state)
+				state.cx:render()
+			end
+			engine.propagate(state)
+			done({ ok = true, message = "Ignoring " .. clip(printable(picked), 100) .. " in " .. repo })
+		end)
 	elseif name == "issue-close" or name == "issue-reopen" then
 		if prs or item.tracker ~= "github" then
 			return no("Closing and reopening works on GitHub issues.")
@@ -1367,6 +1415,12 @@ function M.commands(state: State): { { id: string, group: string? } }
 	if snap.kind == "prs" then
 		if engine.rerunnable(state, item) then
 			add("rerun-failed")
+		end
+		for _, r in engine.runsOf(state, item) do
+			if r.status == "failure" and not engine.ignored(state, item, r) then
+				add("ignore-check")
+				break
+			end
 		end
 		if item.state == "open" then
 			add(if item.draft then "pr-ready" else "pr-draft")

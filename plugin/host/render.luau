@@ -435,14 +435,16 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local groups: { [string]: { Node } } = { required = {}, runs = {} }
 	for i, r in runs do
 		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
+		-- An ignored failing check still shows failing; its value says Ignored (it blocks nothing).
+		local ignored = r.status == "failure" and engine.ignored(state, pr, r)
 		local mark = if marks and r.status == "failure" and r.url then marks[r.url] else nil
 		local flaky = if mark then "Likely flaky · " .. mark.reason else nil
-		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if flaky then " — " .. flaky else "")
+		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "") .. (if flaky then " — " .. flaky else "")
 		local props: { [string]: any } = {
 			key = "run" .. i,
 			label = job or r.name,
 			detail = if flaky and workflow then flaky .. " · " .. workflow else flaky or workflow,
-			value = r.took,
+			value = if ignored then "Ignored" else r.took,
 			icon = RUN_ICON[r.status],
 			tone = RUN_TONE[r.status],
 			title = what,
