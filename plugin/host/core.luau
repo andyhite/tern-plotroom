@@ -16,6 +16,8 @@ M.COST_GUESS = 10
 M.DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
 M.DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
 M.DETAIL_RETRY_MAX_S = 300
+M.SUMMARY_REST_MS = 1000 -- the cursor must rest this long on an item before its Summary is made
+M.SUMMARY_TIMEOUT_MS = 90 * 1000 -- a Summary's omp call that runs longer is given up
 M.NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
 M.NAME_CAP = 120 -- characters of an action's or view's name
 M.STATUS_CAP = 100 -- bytes of an action's target status name
@@ -262,6 +264,7 @@ export type State = {
 	ciLogs: { [string]: CiLog }, -- failing checks' logs by head commit and check link, read once each (engine.failures)
 	ciBusy: { [string]: { (CiLog) -> () } }, -- log reads running, with who waits for them
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
+	summaryWait: { key: string, ready: boolean, timer: TimerHandle? }?, -- the item (key) whose rest before a Summary is timed; ready once it has rested
 	flaky: { [string]: Flaky }, -- item key -> its Likely flaky marks, judged once per head commit
 	flakyBusy: { [string]: boolean }, -- item keys whose evidence is being read
 	notes: { [string]: Note }, -- worktree cards by item key

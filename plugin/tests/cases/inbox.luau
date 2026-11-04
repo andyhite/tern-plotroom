@@ -90,7 +90,7 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 	scopes = pickerOf(b).scopes
 	same(whys(b), {
 		"no_2fr_233 Agent needs input",
-		"no_2fr_231 Blocked: changes requested",
+		"no_2fr_231 Blocked",
 		"no_2fr_234 Review requested",
 		"no_2fr_235 Review requested",
 		"no_2fr_232 Ready to merge",
@@ -101,7 +101,10 @@ case("now: a new block opens on Now, first in the sidebar, which ranks what need
 	}, "agents that need input, your blocked PRs, reviews oldest first, your PRs ready to merge, notifications not already listed, then New items assigned to you; o/r#3 has nothing else and o/r#2's thread is not listed twice")
 	for _, row in pickerOf(b).items do
 		if row.id == "no_2fr_231" then
-			eq(h.detailText(row), "#1 · o/r", "a Now row names its repository (Now spans them all) and leaves what blocks it to its first badge")
+			eq(h.detailText(row), "#1 · o/r · Changes requested", "a Now row names its repository (Now spans them all), then the first chip's detail")
+			eq(row.badges[2].text, "Address changes", "and its chips follow the Blocked badge, naming each job")
+		elseif row.id == "no_2fr_234" then
+			eq(#row.badges, 1, "a row listed for another reason carries no chips")
 		end
 	end
 	eq(pickerOf(b).selected, "no_2fr_231", "the selection stays on its row as rows arrive above it")
@@ -682,7 +685,8 @@ case("now: your pull request failing only an ignored check is not listed as Bloc
 		}
 		s.gh.checks["o/r#1"], s.gh.checks["o/r#2"] = only, more
 	end)
-	same(whys(b), { "no_2fr_232 Blocked: checks failing" }, "only the PR another check blocks needs you")
+	same(whys(b), { "no_2fr_232 Blocked" }, "only the PR another check blocks needs you")
+	eq(pickerOf(b).items[1].badges[2].text, "Fix checks · 1/2 failing", "and its chip counts only the check not ignored")
 end)
 
 case("now: a login switched off is neither searched nor asked for notifications; a login that signs in later is on", function(w: World)

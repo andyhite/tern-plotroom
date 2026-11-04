@@ -31,7 +31,9 @@ export type Issue = {
 export type Event = { at: number, by: string?, to: string? }
 export type Linked = { ref: string, title: string, url: string, state: string, relation: string?, status: { text: string, tone: string }? } -- state "open"|"draft"|"merged"|"closed"|"done"; relation (Jira) "blocks", "is blocked by", "subtask", ...; status (Jira) its workflow status as a badge
 export type Field = { label: string, value: string? } -- nil value: shown as None
-export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number? }
+-- One of an item's newest comments, as a Summary reads it: its author and its text (both untrusted, cut short).
+export type Comment = { author: string, body: string }
+export type IssueDetail = { body: string, fields: { Field }, linked: { Linked }, comments: number?, created: number?, updated: number?, recent: { Comment }? }
 export type IssueResult = { issues: { Issue }, total: number, complete: boolean, note: string? }
 
 -- Name formats (Settings › Repositories): an issue's new branch (a default, or per repository), and the folder name of a PR's or an issue's worktree.

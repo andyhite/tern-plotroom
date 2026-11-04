@@ -3392,7 +3392,7 @@ case("host stage: badge colours follow DESIGN.md's Color Meaning Rule: your turn
 	same(toned("no_2fr_232"), { "Agent working/pending", "New/accent" }, "an agent working is pending; unseen is your turn")
 	same(toned("no_2fr_233"), { "Merged/success", "Working/pending", "New/accent" }, "merged is done")
 	same(toned("no_2fr_234"), { "Closed/muted", "New/accent" }, "closed unmerged is no meaning")
-	same(toned("no_2fr_235"), { "Blocked/error", "New/accent" }, "blocked needs fixing")
+	same(toned("no_2fr_235"), { "Blocked/error", "Address changes/error", "New/accent" }, "blocked and its chips need fixing")
 	same(toned("no_2fr_236"), { "Ready to merge/success", "Idle/muted", "New/accent" }, "ready to merge is done; an idle agent is neutral")
 	same(toned("no_2fr_237"), { "PR open/muted", "New/accent", "Draft/muted" }, "an open PR and a draft are neutral")
 	same(hx.offPalette(b.view().layer), {}, "nothing in the queue or its preview is coloured outside the rule")

@@ -47,15 +47,28 @@ export type Pr = {
 	-- hides it; read `reviews(author:)` if that misleads.
 	yourReview: string?,
 	newCommits: boolean?,
+	-- Unresolved review threads among the last 100; nil when the search did not say. ponytail: the search reads no
+	-- thread's author (a comment per thread costs a GraphQL point per 100 threads), so every unresolved one counts.
+	unresolved: number?,
+	-- Each reviewer's latest review (as Review.state, `at` when it was submitted); nil when the search did not say.
+	latest: { Latest }?,
 }
+export type Latest = { login: string, state: string, at: number }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note: string? }
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
-export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string } }
+-- An unresolved review thread as its first comment shows it: who wrote it, where, its first line and its page.
+export type Thread = { by: string, path: string?, line: number?, text: string, url: string }
+-- `files`: the changed paths (first 100), for the failing checks' log excerpts; `paths`: their first PATHS and `recent`:
+-- the newest RECENT comments, oldest first (both for a Summary); `threads`: the unresolved review threads (the preview's).
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string }, paths: { string }, recent: { tracker.Comment }, threads: { Thread } }
 
 local GH_TIMEOUT_MS = 30 * 1000
+local PATHS = 30 -- changed files a PR's detail load names (a Summary's input)
+local RECENT = 5 -- newest comments an item's detail load reads (a Summary's input)
+local RECENT_CHARS = 1000 -- each one cut to this many characters
 local CAP = 1000
 local SEARCH_PAGES = 10 -- CAP results at 100 a page
 local RATE_S = 300
@@ -71,8 +84,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt}]}"
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -206,6 +219,10 @@ local function took(s: number): string
 end
 
 local field, nonEmpty = tracker.field, tracker.nonEmpty
+
+local function login(v: any): string?
+	return if type(v) == "string" and #v <= 64 and string.match(v, "^[%w][%w%-_%.%[%]]*$") then v else nil
+end
 
 function M.stamp(v: any): number?
 	return if type(v) == "string" then M.epoch(v) else nil
@@ -371,6 +388,17 @@ function M.normalize(item: any): (Pr?, string?)
 	local headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil
 	local yours = if type(item.yours) == "string" then VERDICT[item.yours] else nil
 	local runs = M.runs(item.runs)
+	local latest: { Latest }? = nil
+	if type(item.latest) == "table" then
+		local list: { Latest } = {}
+		for _, v in item.latest do
+			local who, verdict, at = login(field(v, "login")), VERDICT[if type(field(v, "state")) == "string" then field(v, "state") else ""], M.stamp(field(v, "at"))
+			if who and verdict and at and #list < REVIEWERS then
+				table.insert(list, { login = who, state = verdict, at = at })
+			end
+		end
+		latest = list
+	end
 	return {
 		key = M.identity(o, r, n),
 		repo = o .. "/" .. r,
@@ -400,6 +428,8 @@ function M.normalize(item: any): (Pr?, string?)
 		teams = names(item.teams, "^[%w%-_]+/[%w%-_%.]+$"),
 		yourReview = yours,
 		newCommits = yours == "approved" and state == "open" and headSha ~= nil and type(item.yoursAt) == "string" and string.lower(item.yoursAt) ~= headSha,
+		unresolved = if type(item.unresolved) == "number" and item.unresolved >= 0 then math.floor(item.unresolved) else nil,
+		latest = latest,
 	}, nil
 end
 
@@ -834,6 +864,21 @@ local function flatPr(n: any): any
 		mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
 		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
 	}
+	local threads = field(n, "reviewThreads", "nodes")
+	if type(threads) == "table" then
+		local open = 0
+		for _, t in threads do
+			open += if field(t, "isResolved") == false then 1 else 0
+		end
+		flat.unresolved = open
+	end
+	local latest = field(n, "latestReviews", "nodes")
+	if type(latest) == "table" then
+		flat.latest = {}
+		for _, r in latest do
+			table.insert(flat.latest, { login = field(r, "author", "login"), state = field(r, "state"), at = field(r, "submittedAt") })
+		end
+	end
 	local asked = field(n, "reviewRequests", "nodes")
 	if type(asked) == "table" then
 		flat.reviewers, flat.teams = {}, {}
@@ -1030,23 +1075,23 @@ function M.issues(
 	end)
 end
 
--- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau).
+-- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau) and a Summary;
+-- the unresolved review threads (among the last 50, each by its first comment) are the preview's.
 local ABOUT_FIELDS = "mergeable mergeStateStatus body headRefOid files(first: 100) { nodes { path } } latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
-	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } }"
+	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } }"
+	.. " reviewThreads(last: 50) { nodes { isResolved path line originalLine comments(first: 1) { nodes { author { login } body url } } } }"
 local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { repository(owner: $o, name: $r) { pullRequest(number: $n) { "
 	.. ABOUT_FIELDS
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // []),recent:[(.comments.nodes // [])[] | {login:.author.login,body}],threads:[(.reviewThreads.nodes // [])[] | select(.isResolved == false) | {path,line:(.line // .originalLine),by:.comments.nodes[0].author.login,body:.comments.nodes[0].body,url:.comments.nodes[0].url}]})}"
 local CHECK_PAGES = 3
-
-local function login(v: any): string?
-	return if type(v) == "string" and #v <= 64 and string.match(v, "^[%w][%w%-_%.%[%]]*$") then v else nil
-end
 
 -- A PR or issue body as the sidebar shows it: bot summaries stripped, cut to BODY_CHARS.
 local function cleanBody(raw: any): string
@@ -1055,6 +1100,19 @@ local function cleanBody(raw: any): string
 	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
 	body = tracker.clip(body, BODY_CHARS, "\n\n…")
 	return body
+end
+
+-- An item's newest comments as the detail jq prints them ({login, body}), each cut to RECENT_CHARS; malformed ones are
+-- left out and a deleted author reads as "ghost".
+function M.recent(raw: any): { tracker.Comment }
+	local out: { tracker.Comment } = {}
+	for _, c in (if type(raw) == "table" then raw else {}) :: { any } do
+		local body = field(c, "body")
+		if type(body) == "string" and string.find(body, "%S") and #out < RECENT then
+			table.insert(out, { author = login(field(c, "login")) or "ghost", body = tracker.clip(body, RECENT_CHARS, "…") })
+		end
+	end
+	return out
 end
 
 -- The `about` part of a checks page as CHECKS_JQ prints it; whatever is missing or malformed reads as unknown/empty.
@@ -1088,15 +1146,34 @@ function M.about(raw: any): About
 			table.insert(closing, { ref = tostring(num), title = title, url = url, state = if field(n, "state") == "CLOSED" then "closed" else "open" })
 		end
 	end
-	-- The head commit and changed paths only feed the failing checks' log excerpts: malformed ones are left out.
+	-- Unresolved review threads: each needs its page on github.com; its first line is cleaned and cut.
+	local threads: { Thread } = {}
+	for _, n in (if type(t.threads) == "table" then t.threads else {}) :: { any } do
+		local url, path, line, body = field(n, "url"), field(n, "path"), field(n, "line"), field(n, "body")
+		if type(url) == "string" and string.sub(url, 1, 19) == "https://github.com/" and #url <= 400 and not string.find(url, "[%c%s]") then
+			local first = if type(body) == "string" then string.match(body, "^%s*([^\n]*)") or "" else ""
+			table.insert(threads, {
+				by = login(field(n, "by")) or "ghost",
+				path = if type(path) == "string" and path ~= "" and #path <= 400 then input.clean(path) else nil,
+				line = if type(line) == "number" and line >= 1 then math.floor(line) else nil,
+				text = tracker.clip(input.clean(first), 120, "…"),
+				url = url,
+			})
+		end
+	end
+	-- The head commit and changed paths feed the failing checks' log excerpts and a Summary: malformed ones are left out.
 	local head = if type(t.head) == "string" and string.match(t.head, "^%x+$") and #t.head <= 64 then string.lower(t.head) else nil
 	local files: { string } = {}
+	local paths: { string } = {}
 	for _, p in (if type(t.files) == "table" then t.files else {}) :: { any } do
 		if type(p) == "string" and p ~= "" and #p <= 400 then
 			table.insert(files, p)
+			if #p <= 300 and #paths < PATHS then
+				table.insert(paths, p)
+			end
 		end
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files }
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files, paths = paths, recent = M.recent(t.recent), threads = threads }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -1169,8 +1246,10 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	fetch(nil, 1)
 end
 
-local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
-local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}]}"
+local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } } } } }"
+local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}], recent: [(.comments.nodes // [])[] | {login: .author.login, body}]}"
 
 -- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
 -- the rate-limit pause behave as in M.checks. done never runs before this call returns.
@@ -1222,6 +1301,7 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 			body = cleanBody(data.body),
 			fields = { { label = "Milestone", value = if type(milestone) == "string" and milestone ~= "" then milestone else nil } },
 			linked = linked,
+			recent = M.recent(data.recent),
 		}, nil)
 	end, account)
 end

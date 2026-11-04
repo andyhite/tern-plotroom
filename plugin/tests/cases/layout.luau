@@ -58,7 +58,7 @@ case("layout: a view's Layout (Settings › Views) saves Board with the view, wh
 	eq(selected, "layer.queue.board.lanes.needs.list.no_2fr_231", "the selection stays on the view's selected item")
 	same(listed(b), {}, "the picker lists nothing of its own")
 	local card: any = findKey(pickerNode(b), "no_2fr_231", "item")
-	eq(card.p.value[1].t, "Changes requested", "a card says what blocks it")
+	eq(card.p.value[1].t, "Address changes", "a card says what blocks it, by its most severe chip")
 	eq(card.p.detail[1].t, "o/r#1", "and names its item")
 	local fold: any = findKey(pickerNode(b), "fold", "item")
 	eq(fold.p.label, "Show Not started 0 · Worktree 0 · Merged or closed 1", "the merged item is in the fold's Merged or closed")

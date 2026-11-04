@@ -11,7 +11,7 @@ Words on screen come from [PRODUCT.md › Glossary](PRODUCT.md#glossary). Behavi
 | Meaning | Tone (Tern) | Draws as | Where today |
 | --- | --- | --- | --- |
 | Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading |
-| Needs fixing | `error` | `--bad` | **Blocked**, Conflicts, Changes requested, Checks failing, a failed check run, Report: stuck, a worktree that could not be made or is missing, a load or read that failed, a security alert |
+| Needs fixing | `error` | `--bad` | **Blocked** and its chips (Address changes, Reply, Fix checks, Re-run, Resolve conflicts), Conflicts, Changes requested, Checks failing, a failed check run, Report: stuck, a worktree that could not be made or is missing, a load or read that failed, a security alert |
 | Done | `success` | `--ok` | **Ready to merge**, **Merged**, Approved, Verified, Checked, Passing, Done or Completed issues, a done Get started line |
 | Agent working | `pending` | `--live` | **Agent working**, Working, the filled cells of a working agent's bar |
 | Checks running | `warning` | `--warn` | a pending check run and Pending checks |
@@ -55,15 +55,19 @@ Each is built from Tern kinds; `plotroom.css` touches only what no kind or prop 
 
 ### Rows
 
-A picker `item` per pull request, issue, Now entry, agent or worktree. Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, a Blocked PR's one reason in `error`). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
+A picker `item` per pull request, issue, Now entry, agent or worktree. Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
 
 ### Badges
 
-Tern's `badge` (picker rows: the item's `badges`). One word or a short phrase, title case, the reason in its tooltip. The stage badge leads; agent state, checked outcome, checker verdict, New / Changed / Snoozed, Worktree and Draft follow. Tone by the Color Meaning Rule; a badge that is no meaning is `muted`.
+Tern's `badge` (picker rows: the item's `badges`). One word or a short phrase, title case, the reason in its tooltip. The stage badge leads, a Blocked PR's chips next; agent state, checked outcome, checker verdict, New / Changed / Snoozed, Worktree and Draft follow. Tone by the Color Meaning Rule; a badge that is no meaning is `muted`.
+
+### Status chips
+
+A Blocked pull request's reasons, one Tern `badge` each, right after the Blocked badge, most severe first: **Address changes**, **Reply · N unresolved**, **Fix checks · N/T failing** (or **Re-run · likely flaky**), **Resolve conflicts**. Each names the job that clears it, not the state; tone `error` (needs fixing); the tooltip says who or what. The Blocked badge says no reason, and the row's detail line says the first chip's who or what in plain text, so no fact shows twice. The preview's status `kv` lists each as **Blocked by** (the chip in `error`, then its detail). A Board card has room for one: the first chip. No keys, no click: a chip names a job, the Next move does it.
 
 ### Preview card
 
-The picker's preview, in one order for every item (docs/reference.md › Finer points › Preview): the Next button and links row; the head (`#N` or key, the integration tag, Copy link and Open icons, the state badge at the right); the title; the status `kv` (Stage first, then what needs you); the properties `kv`; then sections (checks, reviewers, linked items, description, the worktree card). The description is a folded `card` with Tern's clamp and "N more lines".
+The picker's preview, in one order for every item (docs/reference.md › Finer points › Preview): the Next button and links row; the head (`#N` or key, the integration tag, Copy link and Open icons, the state badge at the right); the title; the status `kv` (Stage first, then what needs you); the properties `kv`; then sections (checks, reviewers, unresolved threads, linked items, description, the worktree card). The description is a folded `card` with Tern's clamp and "N more lines".
 
 ### Buttons and links
 

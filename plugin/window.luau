@@ -38,8 +38,8 @@ local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
 local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
--- The lists a check row can sit in (required, the others); ".run<i>" follows.
-local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
+-- The lists a GitHub page row can sit in (required checks, the other checks, unresolved review threads); ".run<i>" follows.
+local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.threads" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE
@@ -1280,17 +1280,23 @@ local function pickJira(cx: WindowCx, pane: number)
 	end)
 end
 
--- plotroom://model/<kind>:<id>: Settings › Actions › Model of that action. The block's host lists omp's role aliases
--- and models (by provider); typing filters them. The pick goes back to that block as the row's change, omp's default as
--- its reset. A saved model omp no longer lists stays the current one, marked so.
+-- plotroom://model/<kind>:<id>: Settings › Actions › Model of that action, or `summary:model` for Settings › General ›
+-- Summary model. The block's host lists omp's role aliases and models (by provider); typing filters them. The pick goes
+-- back to that block as the row's change, the default (omp's, or @smol for Summaries) as its reset. A saved model omp
+-- no longer lists stays the current one, marked so.
 local function pickModel(cx: WindowCx, pane: number, qid: string)
+	local forSummary = qid == "summary:model"
 	ask(cx, pane, "models", { prompt = qid }, MENU_MS, function(a: any, cx2: WindowCx)
 		if type(a.problem) == "string" then
 			return cx2:toast("error", "omp's models are not listed", a.problem)
 		end
 		local current = if type(a.current) == "string" then a.current else nil
 		local listed = if type(a.listed) == "string" then a.listed else nil
-		local items: { PickItem } = { { label = "omp's default", detail = "The model omp runs with no --model", group = "Default", current = current == nil } }
+		local items: { PickItem } = {
+			if forSummary
+				then { label = "Summary default", detail = "@smol: omp's small model", group = "Default", current = current == nil }
+				else { label = "omp's default", detail = "The model omp runs with no --model", group = "Default", current = current == nil },
+		}
 		if current and not listed then
 			table.insert(items, { label = current, detail = "Not in omp's list", group = "Default", current = true, model = current })
 		end
@@ -1307,9 +1313,10 @@ local function pickModel(cx: WindowCx, pane: number, qid: string)
 				table.insert(items, { label = id, group = provider, current = sel == listed, model = sel })
 			end
 		end
-		cx2:pick({ items = items, placeholder = "Model for this action…", icon = "merge", action = "choose" }):next(function(item, _, cx3)
+		local placeholder = if forSummary then "Model for Summaries…" else "Model for this action…"
+		cx2:pick({ items = items, placeholder = placeholder, icon = "merge", action = "choose" }):next(function(item, _, cx3)
 			if item and cx3 then
-				cx3.session:event(pane, { ev = "change", id = "layer.settings", item = "pmodel:" .. qid, value = item.model })
+				cx3.session:event(pane, { ev = "change", id = "layer.settings", item = if forSummary then qid else "pmodel:" .. qid, value = item.model })
 			end
 		end)
 	end)

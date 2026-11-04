@@ -1052,6 +1052,8 @@ local function newWorld(instantiate: Loader, context: string): World
 	-- The Get started checklist is dismissed, so previews show only the item; a case about it drops this
 	-- (`w.kv.store["get-started"] = nil :: any`).
 	kvStore["get-started"] = jsonEncode({ dismissed = true })
+	-- Summaries are off, so a preview spawns no omp; a case about Summaries drops this (`w.kv.store.summary = nil :: any`).
+	kvStore.summary = jsonEncode({ off = true })
 
 	-- fs: absolute paths only; failures raise. Plotroom's omp extension is installed (tern.plugin.dir below); a case
 	-- about it missing removes it before the host loads.
