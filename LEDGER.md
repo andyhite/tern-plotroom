@@ -45,6 +45,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 | Now: which reasons and logins it lists | Settings › Views › Now | New | 2 | Approved | Switches per reason (Blocked, Review requested, Ready to merge, Notifications, Assigned), team review requests, per `gh` login and Jira; never the queries. A switch that is off is not read |
 | Review recency: "New commits since you approved" on a row; a dismissed review counts as review requested | Queue rows, Now, Next move | New | 2 | Approved | From GitHub each time (your latest review's commit vs the head; your dismissed review); nothing stored. Adopted from tern-pr-guide |
+| Next in Now: one key walks Now from the most urgent item to the next; Now's heading reads `N left`, or `n of N` while walking | Queue key, Commands › Now, Now's heading | New | 2 | Approved | Unbound by default; the one-key set binds `n`. A hand move or a change of the list stops the walk, which resumes from the selected item. Adopted from tern-pr-guide (Next up bar) |
 
 ## Dispatch
 
@@ -78,6 +79,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
+| A working agent's clock and estimated progress bar | Agents list, Now, previews | New | 2 | Approved | Elapsed m:ss; the bar eases toward the median of the action's finished runs in the run log (at least 5), never full before the run ends; redrawn once a second. Adopted from tern-pr-guide |
 
 ## Land
 

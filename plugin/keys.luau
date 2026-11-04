@@ -16,6 +16,7 @@ M.ACTIONS = {
 	{ id = "down", label = "Move down", default = "", preset = "j" },
 	{ id = "up", label = "Move up", default = "", preset = "k" },
 	{ id = "next", label = "Next move", default = "", preset = "x" },
+	{ id = "nownext", label = "Next in Now", default = "", preset = "n" },
 	{ id = "worktree", label = "Worktree", default = "", preset = "w" },
 	{ id = "goto", label = "Go to tab", default = "", preset = "g" },
 	{ id = "agent", label = "Agent picker", default = "", preset = "a" },
