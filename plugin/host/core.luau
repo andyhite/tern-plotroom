@@ -370,6 +370,20 @@ function M.withToken(href: string): string
 	return href .. "?k=" .. M.TOKEN
 end
 
+-- Where this host keeps Plotroom's omp extension and data directory, as the hidden `main.omp` node publishes them:
+-- the window starts every agent with them (docs/reference.md › Dispatch). `ext` is left out when the file is not
+-- there, so the agent starts without it. Read at the first render: a plugin reload reads it again.
+local omp: string? = nil
+function M.omp(): string
+	if omp == nil then
+		local p = tern.plugin
+		local ext = p.dir .. "/omp/plotroom.ts"
+		local ok, here = pcall(tern.fs.exists, ext)
+		omp = tern.json.encode({ ext = if ok and here then ext else nil, data = p.data })
+	end
+	return omp :: string
+end
+
 -- The link of action `act` (open | worktree | goto | agent) on `item`: a pull request's carries its repository and
 -- number; an issue's open carries the percent-encoded URL (the window compares it with the one shown), the others the
 -- repository and the issue's ref.

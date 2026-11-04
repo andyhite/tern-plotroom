@@ -13,6 +13,13 @@ local jsonEncode, lacks, linkQueue, listPr, prLink, prefsOf = h.jsonEncode, h.la
 local pressCard, promptOf, promptPicks, request, requestsSent, runLink = h.pressCard, h.promptOf, h.promptPicks, h.request, h.requestsSent, h.runLink
 local same, savePrompts, scene, sha, windowCase, yes = h.same, h.savePrompts, h.scene, h.sha, h.windowCase, h.yes
 
+-- What an agent was started with, its run id written as <run>. OMP is the command line of one started with Plotroom's
+-- omp extension, which the harness installs (tern.plugin.dir) on the block's host.
+local OMP = "PLOTROOM_RUN=<run> PLOTROOM_DATA=/data/plotroom omp -e /plugins/plotroom/omp/plotroom.ts"
+local function commandOf(agent: any): string?
+	return if type(agent.command) == "string" then (string.gsub(agent.command, "^PLOTROOM_RUN=%d+%-%x%x%x%x%x%x ", "PLOTROOM_RUN=<run> ")) else nil
+end
+
 windowCase("window: the Add repository picker offers the saved repositories and each gh login, whose repositories it lists next; a pick or a typed one is saved and its checkout row opens", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
@@ -127,7 +134,7 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	eq(items[3].group, "For My PRs", "so does the next")
 	eq(#w.window.picks, 1, "nothing but the picker is asked")
 	eq(#w.window.agents, 1, "one agent")
-	eq(w.window.agents[1].command, nil, "a prompt without a model runs the agent setting's command")
+	eq(commandOf(w.window.agents[1]), OMP, "a prompt without a model runs omp with Plotroom's extension")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5\nthen summarise", "the pick runs with {url} replaced by the PR's link")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
 	eq(s.git.config["branch.feature.merge"], "refs/heads/feature", "its branch tracks the PR's head branch, so git pull and gh there find the PR")
@@ -309,13 +316,13 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	eq(#w.window.agents, 1, "the agent starts")
 	eq(w.window.agents[1].prompt, "Review https://github.com/o/r/pull/5\nthen summarise https://github.com/o/r/pull/5", "with every {url} replaced by the PR's link")
 	eq(w.window.agents[1].cwd, s.target, "in the PR's worktree")
-	eq(w.window.agents[1].command, "omp --model @slow", "as omp with the prompt's model, a role alias here")
+	eq(commandOf(w.window.agents[1]), OMP .. " --model @slow", "as omp with the extension and the prompt's model, a role alias here")
 	savePrompts(w, { promptOf("p1", "Review", "Review quickly: {url}") })
 	w.window.choose = "Start Review anyway" -- the first agent still works on the item
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
 	eq(w.window.agents[2].prompt, "Review quickly: https://github.com/o/r/pull/5", "a prompt edited since the card was drawn runs as it is saved now")
-	eq(w.window.agents[2].command, nil, "its model removed, the agent setting's command runs it")
+	eq(commandOf(w.window.agents[2]), OMP, "its model removed, omp's default model runs it")
 	local bad = promptOf("p1", "Review", "Review {url}")
 	bad.model = "opus; rm -rf ~"
 	savePrompts(w, { bad })
@@ -326,7 +333,7 @@ windowCase("window: a card button's run link runs its prompt with every {url} re
 	eq(w.toasts[#w.toasts].level, "error", "the user is told")
 end)
 
-windowCase("window: an action's effort starts its agent as omp --thinking <level>, after its model; with no model, alone", function(w: World)
+windowCase("window: an action's effort starts its agent with --thinking <level>, after its model; with no model, alone", function(w: World)
 	local _, b = agentScene(w)
 	local review = promptOf("p1", "Review", "Review {url}")
 	review.model, review.effort = "@slow", "high"
@@ -337,11 +344,11 @@ windowCase("window: an action's effort starts its agent as omp --thinking <level
 	cardSurface(w, b)
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
-	eq(w.window.agents[1].command, "omp --model @slow --thinking high", "the model, then the effort")
+	eq(commandOf(w.window.agents[1]), OMP .. " --model @slow --thinking high", "the model, then the effort")
 	w.window.choose = "Start Quick anyway"
 	w.click(runLink("o/r", 5, "p2"))
 	w.flush()
-	eq(w.window.agents[2].command, "omp --thinking low", "an effort on omp's default model")
+	eq(commandOf(w.window.agents[2]), OMP .. " --thinking low", "an effort on omp's default model")
 end)
 
 windowCase("window: Settings' Model button opens a picker of omp's default, the roles and the models by provider; the pick is saved on that action", function(w: World)
@@ -448,10 +455,60 @@ windowCase("window: the default Quick review starts beside the queue as omp --mo
 	end
 	w.click(runLink("o/r", 5, "p2"))
 	w.flush()
-	eq(w.window.agents[1].command, "omp --model @slow", "with the default's model")
+	eq(commandOf(w.window.agents[1]), OMP .. " --model @slow", "with the default's model")
 	eq(w.window.agents[1].cwd, s.root, "in the main checkout")
 	eq(w.window.panes[agent :: number].tab, w.window.panes[1].tab, "as a block in the queue's tab")
 	eq(w.toasts[#w.toasts].sub, "Quick review", "the default Quick review")
+end)
+
+windowCase("window: every agent starts with Plotroom's omp extension from the block host's plugin folder, quoted for the shell, with its own run id saved on its link", function(w: World)
+	w.sdk.plugin.dir, w.sdk.plugin.data = "/Users/me/Application Support/Tern/plugins/plotroom", "/Users/me/it's data"
+	w.fs.files["/Users/me/Application Support/Tern/plugins/plotroom/omp/plotroom.ts"] = "// extension\n"
+	local _s, b = agentScene(w)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(commandOf(w.window.agents[1]), "PLOTROOM_RUN=<run> PLOTROOM_DATA='/Users/me/it'\\''s data' omp -e '/Users/me/Application Support/Tern/plugins/plotroom/omp/plotroom.ts'", "paths with spaces and quotes are one shell word each")
+	local first = string.match(w.window.agents[1].command, "^PLOTROOM_RUN=(%S+) ")
+	eq(w.kv.get("agent-links")[1].run, first, "the run id is saved on the agent's link")
+	w.window.choose = "Start Review anyway"
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	local second = string.match(w.window.agents[2].command, "^PLOTROOM_RUN=(%S+) ")
+	yes(second ~= nil and second ~= first, "a second agent on the same item gets a run of its own")
+	eq(w.kv.get("agent-links")[1].run, second, "and its link names it")
+	for _, t in w.toasts do
+		lacks(t.text, "without Plotroom's omp extension", "nothing is said about the extension when it loads")
+	end
+end)
+
+windowCase("window: without Plotroom's omp extension on the block's host, the agent starts as before and the toast says why", function(w: World)
+	w.fs.files["/plugins/plotroom/omp/plotroom.ts"] = nil
+	local _s, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.model = "@slow"
+	savePrompts(w, { review, promptOf("p2", "Triage", "Triage {url}") })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(w.window.agents[1].command, "omp --model @slow", "omp with the action's model, no extension")
+	local said = false
+	for _, t in w.toasts do
+		if t.text == "Agent started without Plotroom's omp extension" then
+			said = true
+			has(t.sub, "not in Plotroom's folder on the block's host", "the toast says why")
+			eq(t.level, "info", "as information: the agent runs")
+		end
+	end
+	yes(said, "the user is told")
+	eq(w.kv.get("agent-links")[1].run, nil, "the link names no run: there is no Draft review folder")
+	w.window.choose = "Start Triage anyway"
+	w.click(runLink("o/r", 5, "p2"))
+	w.flush()
+	eq(w.window.agents[2].command, nil, "an action with no model runs the agent setting's command")
 end)
 
 -- Split tree `t` as text, panes named by `names` (e.g. "right(q,down(a1,a2))").

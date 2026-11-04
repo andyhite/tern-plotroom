@@ -366,6 +366,8 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 		ui.node("text", { key = "usage", text = usage.published(), hidden = true }),
 		-- The block's size in cells, `<cols>x<rows>`: the window's agent placement derives the tab's shape from it.
 		ui.node("text", { key = "size", text = state.cx.cols .. "x" .. state.cx.rows, hidden = true }),
+		-- Plotroom's omp extension and data directory on this host (core.omp), for the agents the window starts.
+		ui.node("text", { key = "omp", text = core.omp(), hidden = true }),
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))

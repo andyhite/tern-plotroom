@@ -38,7 +38,7 @@ Invariants (keep when editing):
 
 ## Key Directories
 
-- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`.
+- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, and `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled or checked by `check.py`; the host publishes its path as the hidden `main.omp` node).
 - `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
 - `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.8.d.luau` (pinned SDK type snapshot, sha256-checked).
 - `docs/` — `reference.md` (the user-facing behavior spec) and `images/` (README screenshots; not shipped).
