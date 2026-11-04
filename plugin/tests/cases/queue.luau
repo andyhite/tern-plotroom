@@ -1983,18 +1983,18 @@ case("host: the default actions set each action's model, Opens in and Next actio
 	w.kv.put("prompts-issues", nil)
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
-	-- Each default as Settings shows it: name, model, Opens in and Next action.
+	-- Each default as Settings shows it: name, model (the picker's button), Opens in and Next action.
 	local function shown(kind: string): { string }
 		local out: { string } = {}
 		for i = 1, 4 do
 			local qid = kind .. ":p" .. i
 			expand(b, "popen:" .. qid)
-			table.insert(out, table.concat({ rowIn(b, "popen:" .. qid).label, rowIn(b, "pmodel:" .. qid).control.value, rowIn(b, "psplit:" .. qid).control.value, rowIn(b, "pnext:" .. qid).control.value }, "|"))
+			table.insert(out, table.concat({ rowIn(b, "popen:" .. qid).label, rowIn(b, "pmodel:" .. qid).control.label, rowIn(b, "psplit:" .. qid).control.value, rowIn(b, "pnext:" .. qid).control.value }, "|"))
 		end
 		return out
 	end
-	same(shown("prs"), { "Review|@slow|tab|none", "Quick review|@slow|split|none", "Address feedback||tab|none", "Watch||tab|none" }, "the pull request defaults")
-	same(shown("issues"), { "Implement||tab|prs:p4", "Fix||tab|prs:p4", "Plan|@plan|tab|none", "Check|@slow|tab|none" }, "the issue defaults")
+	same(shown("prs"), { "Review|@slow|tab|none", "Quick review|@slow|split|none", "Address feedback|omp's default|tab|none", "Watch|omp's default|tab|none" }, "the pull request defaults")
+	same(shown("issues"), { "Implement|omp's default|tab|prs:p4", "Fix|omp's default|tab|prs:p4", "Plan|@plan|tab|none", "Check|@slow|tab|none" }, "the issue defaults")
 	has(rowIn(b, "popen:prs:p1").hint, " · @slow", "the summary names the model")
 	expand(b, "popen:issues:p1")
 	local label: string? = nil
@@ -2052,7 +2052,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "poutcome:prs:p1", "pnext:prs:p1", "pchecker:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model, where it runs and opens, its outcome, its next action and its checker: no shortcut")
+	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "peffort:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "poutcome:prs:p1", "pnext:prs:p1", "pchecker:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model and effort, where it runs and opens, its outcome, its next action and its checker: no shortcut")
 	goToSettings(b, "general")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Review", "the Keys page has a row for the saved action, named for it")
@@ -2226,13 +2226,18 @@ case("host: a key changed in one block reaches the other live blocks, and a clos
 	eq(hx.palette(w, c).keys.worktree, "", "Reset reaches it too: back to no key")
 end)
 
-case("host: a prompt's model is a model pattern or omp role: the row refuses anything else, the menu sends it, reset clears it", function(w: World)
+case("host: while omp lists no models, a prompt's model is a text field: a model pattern or omp role, nothing else; the menu sends it, reset clears it", function(w: World)
 	hostScene(w, 3)
+	w.respond(function(call: h.Call): Reply?
+		local a = call.argv
+		return if a[1] == "omp" and a[2] == "models" then { status = 1, stderr = "no providers\n" } else nil
+	end)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
 	local b = openQueue(w)
 	goToSettings(b, "prompts")
+	w.flush()
 	expand(b, "popen:prs:p1")
-	eq(rowIn(b, "pmodel:prs:p1").control.value, "", "empty while the prompt has none")
+	eq(rowIn(b, "pmodel:prs:p1").control.value, "", "a text field, empty while the prompt has none")
 	b.event({ ev = "select", id = "layer.settings", item = "pmodel:prs:p1" })
 	local function try(text: string): string?
 		if prefsOf(b).editing == nil then
@@ -2261,6 +2266,64 @@ case("host: a prompt's model is a model pattern or omp role: the row refuses any
 	b.event({ ev = "change", id = "layer.settings", item = "pmodel:prs:p1", value = nil })
 	eq(w.kv.get("prompts-prs").items[1].model, nil, "reset clears it")
 	eq(try(""), nil, "an empty model is accepted")
+	request(b, "m2", { op = "models", prompt = "prs:p1" })
+	has(answerOf(b, "m2").problem, "no providers", "the window's picker is told why there is no list")
+end)
+
+case("host: a prompt's Model is picked from omp's models and roles; one omp no longer lists stays, marked; Effort is saved and sent", function(w: World)
+	hostScene(w, 3)
+	local gone = promptOf("p2", "Old", "Old {url}")
+	gone.model = "retired/model-x"
+	local suffixed = promptOf("p3", "Deep", "Deep {url}")
+	suffixed.model = "openai/gpt-5.2:high"
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.model = "@slow"
+	savePrompts(w, { review, gone, suffixed })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	w.flush()
+	expand(b, "popen:prs:p1")
+	local row = rowIn(b, "pmodel:prs:p1")
+	same({ row.control.k, row.control.act, row.control.label, row.hint }, { "action", "pick-model", "@slow" } :: { any }, "a button naming the model, unmarked: a role omp knows")
+	request(b, "q1", { op = "models", prompt = "prs:p1" })
+	local a = answerOf(b, "q1")
+	same(a.models, { "anthropic/claude-opus-4-5", "anthropic/claude-haiku-4-5", "openai/gpt-5.2" }, "omp's chat models, grouped by provider in omp's order")
+	local roles: { string } = {}
+	for _, r in a.roles do
+		table.insert(roles, r.name .. "=" .. r.model)
+	end
+	same(roles, { "plan=", "review=openai/gpt-5.2:high", "slow=anthropic/claude-opus-4-5:max", "smol=" }, "omp's own roles and the config's, minus default, each with the model it names")
+	same({ a.current, a.listed }, { "@slow", "@slow" }, "the saved model, found in the list")
+	b.event({ ev = "action", id = "layer.settings", act = "pick-model", value = "pmodel:prs:p1" })
+	eq(w.opened[#w.opened], "plotroom://model/prs:p1", "the button asks the window's picker, naming the action")
+	expand(b, "popen:prs:p2")
+	same({ rowIn(b, "pmodel:prs:p2").control.label, rowIn(b, "pmodel:prs:p2").hint }, { "retired/model-x", "Not in omp's list" }, "a model omp no longer lists stays selected, marked")
+	request(b, "q2", { op = "models", prompt = "prs:p2" })
+	same({ answerOf(b, "q2").current, answerOf(b, "q2").listed }, { "retired/model-x" } :: { any }, "the picker is told it is not listed")
+	expand(b, "popen:prs:p3")
+	eq(rowIn(b, "pmodel:prs:p3").hint, nil, "a listed model with an effort suffix is in the list")
+	request(b, "q3", { op = "models", prompt = "prs:p3" })
+	eq(answerOf(b, "q3").listed, "openai/gpt-5.2", "as the model it names")
+	-- The picker's choice comes back as the row's change.
+	b.event({ ev = "change", id = "layer.settings", item = "pmodel:prs:p3", value = "anthropic/claude-haiku-4-5" })
+	eq(w.kv.get("prompts-prs").items[3].model, "anthropic/claude-haiku-4-5", "a pick is saved")
+	b.event({ ev = "change", id = "layer.settings", item = "pmodel:prs:p3", value = "x; rm -rf ~" })
+	eq(w.kv.get("prompts-prs").items[3].model, "anthropic/claude-haiku-4-5", "a value omp would not take is not")
+	b.event({ ev = "change", id = "layer.settings", item = "pmodel:prs:p3", value = nil })
+	eq(w.kv.get("prompts-prs").items[3].model, nil, "omp's default resets it")
+	-- Effort: omp's default, then the levels omp --thinking takes.
+	local effort = rowIn(b, "peffort:prs:p3")
+	same({ effort.label, effort.control.style, effort.control.value }, { "Effort", "segmented", "default" }, "a segmented Effort row, on omp's default")
+	same(asks.hx.options(b, "peffort:prs:p3"), { "default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto" }, "with omp's levels")
+	b.event({ ev = "change", id = "layer.settings", item = "peffort:prs:p3", value = "high" })
+	eq(w.kv.get("prompts-prs").items[3].effort, "high", "a level is saved")
+	b.event({ ev = "change", id = "layer.settings", item = "peffort:prs:p3", value = "bogus" })
+	eq(w.kv.get("prompts-prs").items[3].effort, "high", "a level omp does not take is not")
+	request(b, "m1", { op = "menu" })
+	eq(answerOf(b, "m1").items[3].effort, "high", "the menu sends it")
+	has(rowIn(b, "popen:prs:p1").hint, "@slow", "the summary still names the model")
+	b.event({ ev = "change", id = "layer.settings", item = "peffort:prs:p3", value = "default" })
+	eq(w.kv.get("prompts-prs").items[3].effort, nil, "omp's default clears it")
 end)
 
 case("host: ? adds a row for each prompt offered under the view that has a key, in the queue only", function(w: World)
