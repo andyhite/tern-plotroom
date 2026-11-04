@@ -214,6 +214,10 @@ local function pageContent(state: State): ({ any }, { Node })
 		local function switch(on: boolean): { [string]: any }
 			return { k = "choice", style = "segmented", value = if on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) }
 		end
+		-- List or Board, for Now and for each view (engine.lanesShown).
+		local function layout(board: boolean): { [string]: any }
+			return { k = "choice", style = "segmented", value = if board then "board" else "list", options = tern.json.array({ { value = "list", label = "List" }, { value = "board", label = "Board" } }) }
+		end
 		section("now")
 		if not summary("nopen:", "now", "Now", function()
 			local listed: { string } = {}
@@ -222,8 +226,9 @@ local function pageContent(state: State): ({ any }, { Node })
 					table.insert(listed, r.label)
 				end
 			end
-			return if #listed > 0 then table.concat(listed, " · ") else "Only agents"
+			return (if #listed > 0 then table.concat(listed, " · ") else "Only agents") .. (if prefs.board then " · Board" else "")
 		end) then
+			row({ id = "now:layout", label = "Layout", hint = "A narrow block shows the List", disabled = unreadable, control = layout(prefs.board) })
 			for _, r in core.NOW_REASONS do
 				row({ id = "now:" .. r.id, label = r.label, disabled = unreadable, control = switch(not prefs.off[r.id]) })
 				if r.id == "review" then
@@ -298,7 +303,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				local locked = state.locked[v.kind]
 				local name = v.name .. (if v.id == state.activeId then " · active" else "")
 				if summary("vopen:", v.id, name, function()
-					return kind.label .. " · " .. v.query
+					return kind.label .. " · " .. v.query .. (if v.layout == "board" then " · Board" else "")
 				end) then
 					continue
 				end
@@ -345,6 +350,7 @@ local function pageContent(state: State): ({ any }, { Node })
 						control = { k = "choice", style = "menu", value = v.sort or "default", options = tern.json.array(sortOptions) },
 					})
 				end
+				row({ id = "vlayout:" .. v.id, label = "Layout", disabled = locked, control = layout(v.layout == "board") })
 				local promptOptions: { any } = {}
 				for _, p in list do
 					table.insert(promptOptions, { value = p.id, label = p.name })
@@ -915,6 +921,38 @@ function M.cycleSort(state: State)
 	state.cx:toast("info", "Sorted: " .. sorting.label(nextSort), v.name)
 end
 
+-- Saves Now's layout (Settings › Views › Now › Layout): an error message or nil. Every block draws it at once.
+function M.nowLayout(state: State, board: boolean): string?
+	local err = storage.editNow(function(p)
+		p.board = board
+	end)
+	if not err then
+		engine.nowPrefsChanged(state, true)
+	end
+	return err
+end
+
+-- Commands › Show as Board / Show as List: the other layout for Now or the active view, saved where Settings › Views
+-- saves it. A pinned item is no saved view and has none.
+function M.toggleLayout(state: State): boolean
+	local err: string?
+	if state.nowOn then
+		err = M.nowLayout(state, not state.now.prefs.board)
+	else
+		local v = activeView(state)
+		if not v or engine.isPin(v.id) then
+			return false
+		end
+		err = updateView(state, v.id, function(t: View)
+			t.layout = if t.layout == "board" then nil else "board"
+		end)
+	end
+	if err then
+		state.cx:toast("error", "Layout not saved", err)
+	end
+	return true
+end
+
 -- Adds a view from a group's Add row `row` ("vadd:<integration>:<login>", the login empty for Jira) and opens its form
 -- on the name: a view of that integration running as that login, of the active kind where the integration has it, else
 -- an issue view.
@@ -1101,7 +1139,12 @@ function M.setValue(state: State, row: string, value: any)
 	if not kind or not id then
 		return
 	end
-	if kind == "now" then
+	if kind == "now" and id == "layout" then
+		if choice ~= "list" and choice ~= "board" then
+			return
+		end
+		s.errors[row] = M.nowLayout(state, choice == "board")
+	elseif kind == "now" then
 		-- One of Now's switches (Settings › Views › Now): a reason, team review requests, a gh login or Jira.
 		local who = string.match(id, "^login:([%w%-_]+)$")
 		local reason = false
@@ -1239,6 +1282,7 @@ function M.setValue(state: State, row: string, value: any)
 				sort = if old.sort and sorting.valid(to.id, old.integration, old.sort) then old.sort else nil,
 				group = if groupKnown(to, old.integration, old.group) then old.group else "none",
 				prompts = {},
+				layout = old.layout,
 			}
 			dst.nextId += 1
 			table.insert(dst.items, moved)
@@ -1283,6 +1327,13 @@ function M.setValue(state: State, row: string, value: any)
 		end
 		s.errors[row] = updateView(state, id, function(v: View)
 			v.sort = if choice == "default" then nil else choice
+		end)
+	elseif kind == "vlayout" then
+		if choice ~= "list" and choice ~= "board" or not viewOf(state, id) then
+			return
+		end
+		s.errors[row] = updateView(state, id, function(v: View)
+			v.layout = if choice == "board" then "board" else nil
 		end)
 	elseif kind == "vprompts" then
 		local view = viewOf(state, id)

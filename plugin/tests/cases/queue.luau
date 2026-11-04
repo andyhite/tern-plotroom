@@ -525,14 +525,14 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local b = openQueue(w)
 	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
 	local p = hx.palette(w, b)
-	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh", "nownext" }
+	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "layout", "snoozed", "sort", "search", "refresh", "nownext" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expectedIds, "scope:" .. scope.id)
 	end
 	table.insert(expectedIds, "settings")
 	table.insert(expectedIds, "help")
 	same(p.ids, expectedIds, "the selected item's, then the view's, Next in Now, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
-	eq(p.ids[13], "scope:now", "Now is the first scope")
+	eq(p.ids[14], "scope:now", "Now is the first scope")
 	eq(p.ids[#p.ids - 3], "scope:worktrees", "the Worktrees list is the last scope but one")
 	eq(p.ids[#p.ids - 2], "scope:agents", "the Agents list the last")
 	eq(p.labels.open, "Open", "Open, whatever the integration")

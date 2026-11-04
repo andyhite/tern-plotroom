@@ -915,29 +915,7 @@ case("github: a gh login read from a list cache older than its TTL is still answ
 	eq(#requestsOf(s.gh, "accounts"), 2, "and the list is read again")
 end)
 
--- Now's Board, if drawn: each column as "<column id>: <row ids>", lanes then fold, and the selected card's node id.
-local function board(b: h.Block): ({ string }?, string?)
-	local node = h.findKey(h.pickerNode(b), "board", "col")
-	if not node then
-		return nil, nil
-	end
-	local cols: { string } = {}
-	local selected: string? = nil
-	for _, group in node.c do
-		if group.p.key == "lanes" or group.p.key == "fold" then
-			for _, col in group.c do
-				local list = h.findKey(col, "list", "list")
-				local ids: { string } = {}
-				for _, card in list.c do
-					table.insert(ids, card.p.key)
-				end
-				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = list.p.selected or selected
-			end
-		end
-	end
-	return cols, selected
-end
+local board = h.hx.board
 
 -- A Now with one row in each column but Worktree: o/r#1 Blocked, o/r#5 under a working agent, o/r#4 a review asked of you
 -- (PR open), o/r#2 Ready to merge and issue o/r#12 assigned to you and Not started.
@@ -957,8 +935,8 @@ end
 case("now: Show Now as Board lays Now out in columns by stage, the fold closed; Show Now as List goes back", function(w: World)
 	local b = boardScene(w)
 	eq((board(b)), nil, "Now is a List until asked")
-	eq(h.hx.palette(w, b).labels["now-layout"], "Show Now as Board", "Commands offers the Board")
-	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	eq(h.hx.palette(w, b).labels.layout, "Show Now as Board", "Commands offers the Board")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
 	local cols, selected = board(b)
 	same(cols, { "needs: no_2fr_231", "working: no_2fr_235", "waiting: no_2fr_234", "ready: no_2fr_232" }, "Needs you (Blocked), Agent working, Waiting (PR open), Ready to merge; the fold's columns are not drawn")
 	eq(selected, "layer.queue.board.lanes.needs.list.no_2fr_231", "the selection stays on Now's top row")
@@ -971,15 +949,15 @@ case("now: Show Now as Board lays Now out in columns by stage, the fold closed; 
 	local opened = board(b) or {}
 	eq(opened[5], "none: no_2fr_2312", "it opens the fold: Not started")
 	eq(opened[6], "worktree: ", "and Worktree")
-	eq(h.hx.palette(w, b).labels["now-layout"], "Show Now as List", "Commands now offers the List")
-	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	eq(h.hx.palette(w, b).labels.layout, "Show Now as List", "Commands now offers the List")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
 	eq((board(b)), nil, "which goes back")
 	eq(#listed(b), 5, "listing Now's rows again")
 end)
 
 case("now: on the Board the arrows and h/j/k/l move in and across columns, into the fold, which opens", function(w: World)
 	local b = boardScene(w)
-	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
 	local function at(): string
 		local _, selected = board(b)
 		return string.match(selected or "", "board%.%a+%.(.*)$") or "none"
@@ -1007,10 +985,10 @@ case("now: on the Board the arrows and h/j/k/l move in and across columns, into 
 	eq(b.state().nowOn, false, "Enter shows its item, as in the List")
 end)
 
-case("now: below 80 columns the Board shows as the List; the choice is saved with the block", function(w: World)
+case("now: below 80 columns the Board shows as the List; the choice is Now's Layout, which every block shows", function(w: World)
 	local b = boardScene(w)
-	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
-	eq(b.saved().nowBoard, true, "the choice is saved")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
+	eq(w.kv.get("now").board, true, "the choice is saved as Now's Layout")
 	b.cx.cols = 79
 	b.render()
 	eq((board(b)), nil, "a narrow block shows the List")
@@ -1022,7 +1000,30 @@ case("now: below 80 columns the Board shows as the List; the choice is saved wit
 	yes(board(b) ~= nil, "wide enough again, the Board")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
-	yes(board(again) ~= nil, "a restored block opens on the Board")
+	yes(board(again) ~= nil, "another block opens on the Board")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
+	w.flush()
+	eq((board(again)), nil, "and goes back to the List with it")
+end)
+
+case("now: Settings › Views › Now › Layout saves Now's List or Board; a store without it is the List, and a malformed one is never written over", function(w: World)
+	local b = boardScene(w)
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	local row = rowIn(b, "now:layout")
+	eq(row.label, "Layout", "Now's card has a Layout row")
+	eq(row.control.value, "list", "an older store without one is the List")
+	b.event({ ev = "change", id = "layer.settings", item = "now:layout", value = "board" })
+	eq(w.kv.get("now").board, true, "Board is saved with Now's switches")
+	yes(board(b) ~= nil, "and Now shows as a Board")
+	eq(h.hx.palette(w, b).labels.layout, "Show Now as List", "which Commands knows")
+	b.event({ ev = "change", id = "layer.settings", item = "now:layout", value = "list" })
+	eq(w.kv.get("now").board, false, "List saves it off")
+	eq((board(b)), nil, "and Now is a List again")
+	w.kv.put("now", { off = "review" })
+	b.event({ ev = "change", id = "layer.settings", item = "now:layout", value = "board" })
+	eq(w.kv.get("now").off, "review", "a malformed store is not written over")
+	eq((board(b)), nil, "and Now stays a List")
 end)
 
 return {}

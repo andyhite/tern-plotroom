@@ -1986,6 +1986,7 @@ def sc_now_settings(s: Smoke) -> None:
     s.wait_text("Now's card summarizes its reasons", "Blocked · Review requested · Ready to merge · Notifications · Assigned")
     s.ctl_ok("click", ".btn.sm")  # the first Edit: Now's
     s.wait_text("a switch under Review requested", "Include team review requests")
+    s.wait_text("and Now's Layout", "A narrow block shows the List")
     s.wait_text("and the accounts", "Accounts")
     s.shot("settings-now")
     s.ctl_ok("key", "Escape")
@@ -2203,6 +2204,75 @@ def sc_now_board(s: Smoke) -> None:
     s.wait_until("Show Now as List goes back", lambda: len(s.matches(lane)) == 0)
 
 
+def sc_view_board(s: Smoke) -> None:
+    """A view as a Board in real Tern: Commands › Show as Board lays the first view out in columns by stage in the picker's place, its search field
+    still shown; typing narrows the Board to what matches, Right crosses columns, Settings › Views says the view is a Board, a block narrower than
+    80 columns shows the List, and Show as List goes back. Shots in light and dark, and while searching."""
+    stamp = "2026-01-01T00:00:00Z"
+
+    def pr(n: int, title: str, **facts: object) -> Dict[str, object]:
+        return dict({"number": n, "title": title, "url": "https://github.com/f/low/pull/%d" % n, "author": "smoke", "state": "OPEN", "isDraft": False,
+                     "updatedAt": stamp, "createdAt": stamp, "head": "view-%d" % n, "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1,
+                     "comments": 0, "labels": [], "checks": "SUCCESS", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": [], "runTotal": 0}, **facts)
+
+    prs = [pr(80, "Blocked view card with a title long enough to wrap onto a second line", review="CHANGES_REQUESTED"),
+           pr(81, "Ready view card", review="APPROVED", merge="CLEAN")]
+    prs += [pr(n, "Waiting view card %d" % n) for n in range(82, 92)]
+    (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
+    (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
+    scope = "[data-surface='plugin.plotroom.prs'] "
+    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    cards = scope + ".sf-list[data-role='plotroom.lane'] .sf-item"
+
+    def command(label: str) -> None:
+        s.ctl_ok("key", ".")
+        s.wait_text("the palette", "Refresh")
+        s.ctl_ok("type", json.dumps(label))
+        time.sleep(0.5)
+        s.ctl_ok("key", "Enter")
+
+    s.ctl_ok("resize", "2200", "1000")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("flow"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.leave_now()
+    s.wait_text("the view lists the pull requests", "Waiting view card 91")
+    command("Show as Board")
+    s.wait_until("the view's Board columns are drawn", lambda: len(s.matches(lane)) == 4)
+    s.wait_until("its selected item's card is selected", lambda: len(s.matches(chosen)) == 1)
+    s.eq("the picker's own rows are hidden", [], s.selection())
+    s.ctl_ok("appearance", "light")
+    s.shot("view-board-light")
+    s.ctl_ok("appearance", "dark")
+    s.shot("view-board-dark")
+    command("Search")
+    s.ctl_ok("type", json.dumps("Ready view"))
+    s.wait_until("the search narrows the Board to the matching card", lambda: [t for t in s.matches(cards)] != [] and all("Ready view card" in t for t in s.matches(cards)))
+    s.wait_until("the search field still shows what was typed, above the Board", lambda: any(t.strip() == "Ready view" for t in s.texts()))
+    s.shot("view-board-search")
+    s.ctl_ok("key", "Escape")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("clearing the search lays every card out again", lambda: len(s.matches(cards)) == 12)
+    s.wait_until("the searched card stays selected", lambda: any("Ready view card" in t for t in s.matches(chosen)))
+    s.ctl_ok("key", "Left")
+    s.wait_until("Left crosses from Ready to merge to Waiting", lambda: any("Waiting view card 82" in t for t in s.matches(chosen)))
+    s.ctl_ok("key", "Right")
+    s.wait_until("and Right back (nothing to its right holds cards)", lambda: any("Ready view card" in t for t in s.matches(chosen)))
+    command("Settings")
+    s.wait_text("Settings opens", "Repositories")
+    s.ctl_ok("click", ".nav-row:nth-child(1)")  # Views
+    s.wait_text("the view's summary says it is a Board", " · Board")
+    s.shot("view-board-settings")
+    s.ctl_ok("key", "Escape")
+    s.ctl_ok("resize", "900", "800")
+    s.wait_until("a narrow block shows the List", lambda: len(s.matches(lane)) == 0 and bool(s.selection()))
+    s.ctl_ok("resize", "2200", "1000")
+    s.wait_until("wide again, the Board", lambda: len(s.matches(lane)) == 4)
+    command("Show as List")
+    s.wait_until("Show as List goes back", lambda: len(s.matches(lane)) == 0 and bool(s.selection()))
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -2233,6 +2303,7 @@ SCENARIOS = [
     ("buttons and links", sc_controls),
     ("every preview in one order", sc_previews),
     ("Now as a Board", sc_now_board),
+    ("a view as a Board", sc_view_board),
 ]
 
 
