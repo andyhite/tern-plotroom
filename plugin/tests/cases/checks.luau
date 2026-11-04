@@ -21,7 +21,7 @@ local pickerNode, pickerOf, porcelain, prLink, prefsOf, pressCard = h.pickerNode
 local promptOf, refreshNow, request, requestsOf, rowIn, same = h.promptOf, h.refreshNow, h.request, h.requestsOf, h.rowIn, h.same
 local saveIssuePrompts, savePrompts, searchItem, sectionIn, sha, show = h.saveIssuePrompts, h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.show
 local showPr, snapshot, windowCase, yes = h.showPr, h.snapshot, h.windowCase, h.yes
-local viewSearchesOf = h.viewSearchesOf
+local asks, viewSearchesOf = h.asks, h.viewSearchesOf
 
 -- The worktree card's buttons as "key:label", in order; none for a failed attempt.
 local function buttonsOf(b: Block): { string }
@@ -1854,6 +1854,90 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	eq(factOf(b, "Stage"), "Blocked", "the preview's status part leads with the stage")
 	eq(factOf(b, "Blocked by"), "Changes requested", "and says what blocks it")
 	eq(findKey(pickerNode(b), "about").c[1].p.key, "branch", "the facts start with the branch: the stage is not repeated there")
+end)
+
+case("host stage: a pull request failing only ignored checks of its repository is not Blocked, stays out of Ready to merge, and its preview marks the check Ignored", function(w: World)
+	local s = hostScene(w, 0)
+	local done = "2026-01-01T00:00:00Z"
+	w.kv.put("ignored-checks", { ["o/r"] = array({ "approval" }) })
+	local only = { checkRun("approval", "COMPLETED", "FAILURE", done, { id = "A" }), checkRun("test", "COMPLETED", "SUCCESS", done, { id = "B" }) }
+	local more = { checkRun("approval", "COMPLETED", "FAILURE", done, { id = "C" }), checkRun("build", "COMPLETED", "FAILURE", done, { id = "D" }) }
+	local ok = { review = "APPROVED", mergeable = "MERGEABLE", merge = "BLOCKED", checks = "FAILURE" }
+	local function with(runs: { any }, total: number): { [string]: any }
+		local out = table.clone(ok)
+		out.runs, out.runTotal = array(runs), total
+		return out
+	end
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, with(only, 2)),
+		searchItem(2, "o/r", EPOCH - 120, with(more, 2)),
+		searchItem(3, "o/r", EPOCH - 180, with(only, 30)),
+		searchItem(4, "x/y", EPOCH - 240, with(only, 2)),
+	}
+	s.gh.checks["o/r#1"], s.gh.checks["o/r#2"], s.gh.checks["x/y#4"] = only, more, only
+	local b = openQueue(w)
+	w.advance(300)
+	local function stage(id: string): string
+		return asks.hx.stage(b, id)
+	end
+	eq(stage("no_2fr_231"), "PR open", "only an ignored check fails: not Blocked, and not Ready to merge")
+	eq(stage("no_2fr_232"), "Blocked", "another check fails too")
+	eq(stage("no_2fr_233"), "Blocked", "checks the search did not list may fail: the failure still counts")
+	eq(stage("nx_2fy_234"), "Blocked", "the check is ignored only in its own repository")
+	local run: any = findKey(pickerNode(b), "run1", "item")
+	eq(run.p.label, "approval", "the ignored check is still listed")
+	eq(run.p.value, "Ignored", "marked Ignored")
+	has(run.p.title, "Failed", "still failing")
+	has(run.p.title, "(ignored)", "and says it is ignored")
+	eq(hx.palette(w, b).next, nil, "no Next move: nothing blocks it")
+end)
+
+case("host: Ignore this check… picks among the failing checks, saves the pick after the confirm, and Settings › Repositories removes it; a malformed store is never written over", function(w: World)
+	local s = hostScene(w, 0)
+	local done = "2026-01-01T00:00:00Z"
+	local checks = {
+		checkRun("approval", "COMPLETED", "FAILURE", done, { id = "A" }),
+		checkRun("lint", "COMPLETED", "FAILURE", done, { id = "B" }),
+		checkRun("test", "COMPLETED", "SUCCESS", done, { id = "C" }),
+	}
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { review = "APPROVED", mergeable = "MERGEABLE", merge = "BLOCKED", checks = "FAILURE", runs = array(checks), runTotal = 3 }) }
+	s.gh.checks["o/r#1"] = checks
+	local b = openQueue(w)
+	w.advance(300)
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).commands, "ignore-check") ~= nil
+	end
+	yes(offered(), "a failing check offers Ignore this check…")
+	same(asks.hx.ask(w, b, { op = "act", name = "ignore-check" }).checks, { "approval", "lint" }, "the failing checks are the choices")
+	has(asks.hx.ask(w, b, { op = "act", name = "ignore-check", check = "test" }).problem, "no longer failing", "a passing check is refused")
+	local p = asks.hx.ask(w, b, { op = "act", name = "ignore-check", check = "approval" })
+	eq(p.confirm.head, "Ignore approval in o/r?", "the confirm names the check and the repository")
+	eq(p.confirm.label, "Ignore check", "the confirming choice")
+	eq(w.kv.get("ignored-checks"), nil, "a plan saves nothing")
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	same(w.kv.get("ignored-checks")["o/r"], { "approval" }, "saved under the repository")
+	eq(asks.hx.stage(b, "no_2fr_231"), "Blocked", "lint still blocks")
+	p = asks.hx.ask(w, b, { op = "act", name = "ignore-check" })
+	eq(p.confirm.head, "Ignore lint in o/r?", "the one failing check left needs no pick")
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	same(w.kv.get("ignored-checks")["o/r"], { "approval", "lint" }, "both are saved")
+	eq(asks.hx.stage(b, "no_2fr_231"), "PR open", "no longer Blocked")
+	yes(not offered(), "and nothing is left to ignore")
+	goToSettings(b, "repos")
+	eq(sectionIn(b, "unignore:o/r:lint").title, "Ignored checks", "Settings › Repositories lists them")
+	yes(rowIn(b, "unignore:o/r:approval") ~= nil, "each on its own row")
+	b.event({ ev = "action", id = "layer.settings", act = "unignore", value = "unignore:o/r:lint" })
+	same(w.kv.get("ignored-checks")["o/r"], { "approval" }, "Remove takes it out of the store")
+	eq(rowIn(b, "unignore:o/r:lint"), nil, "and off the page")
+	b.press("escape")
+	eq(asks.hx.stage(b, "no_2fr_231"), "Blocked", "the PR is Blocked by it again")
+	w.kv.put("ignored-checks", { ["o/r"] = "approval" })
+	goToSettings(b, "repos")
+	has(rowIn(b, "ignored").warning, "malformed", "a malformed store says so")
+	b.press("escape")
+	p = asks.hx.ask(w, b, { op = "act", name = "ignore-check", check = "lint" })
+	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "malformed", "and refuses to save")
+	eq(w.kv.get("ignored-checks")["o/r"], "approval", "it is not written over")
 end)
 
 local JOB = "https://github.com/o/r/actions/runs/1/job/"
