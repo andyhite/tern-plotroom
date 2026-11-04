@@ -1495,7 +1495,13 @@ local function nowProps(state: State, props: { [string]: any })
 	if state.showSnoozed then
 		table.insert(sub, ui.span((if #sub > 0 then " · " else "") .. "Snoozed shown", "muted"))
 	end
-	props.icon, props.title, props.noun = "inbox", { ui.span("Now", "strong") }, "items"
+	-- How many are listed: "N left" at rest, "n of N" while Next in Now walks them.
+	local title: { any } = { ui.span("Now", "strong") }
+	if now.loaded or #rows > 0 then
+		local walking = engine.nowWalking(state)
+		table.insert(title, ui.span(" · " .. (if walking then walking .. " of " .. #rows else #rows .. " left"), "muted"))
+	end
+	props.icon, props.title, props.noun = "inbox", title, "items"
 	props.subtitle = if #sub > 0 then sub else nil
 	props.placeholder = "Now is not searched"
 	props.state = if not now.loaded and #rows == 0 then "loading" else "ready"

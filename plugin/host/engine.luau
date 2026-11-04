@@ -2932,18 +2932,77 @@ function M.nowEnsure(state: State)
 end
 nowEnsure = M.nowEnsure
 
--- Moves the previewed row `delta` rows, clamped to the list.
+-- Moves the previewed row `delta` rows, clamped to the list. A hand move: it stops Next in Now's walk.
 function M.nowMove(state: State, delta: number)
 	local rows = M.nowRows(state)
 	if #rows > 0 then
 		local _, at = M.nowSelected(state)
 		state.nowAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].id
 	end
+	M.nowStop(state)
 end
 
--- Shows Now instead of a view, and reads it.
+-- Stops Next in Now's walk (the selection was moved by hand); its next step resumes from the selected row.
+function M.nowStop(state: State)
+	if state.nowWalk then
+		state.nowWalk.at = nil
+	end
+end
+
+-- Now's list as its row ids in order: a walk stops when it changes.
+local function nowSig(rows: { any }): string
+	local ids: { string } = {}
+	for _, row in rows do
+		table.insert(ids, row.id)
+	end
+	return table.concat(ids, "\n")
+end
+
+-- The selected row's place in Now while Next in Now walks on it, else nil. The walk stops for good once the selection
+-- left the row it selected or the list changed under it.
+function M.nowWalking(state: State): number?
+	local walk = state.nowWalk
+	if not walk or not walk.at or not state.nowOn then
+		return nil
+	end
+	local rows = M.nowRows(state)
+	local _, at = M.nowSelected(state)
+	if walk.at ~= state.nowAt or at == 0 or walk.sig ~= nowSig(rows) then
+		walk.at = nil
+		return nil
+	end
+	return at
+end
+
+-- Next in Now: shows Now, then selects its first row, then each following one in its ranking; a stopped walk resumes
+-- after the selected row. Past the last row it stays there and says so.
+function M.nowNext(state: State): boolean
+	if not state.nowOn then
+		M.openNow(state)
+	end
+	state.focus = "list"
+	local rows = M.nowRows(state)
+	if #rows == 0 then
+		if state.now.loaded then
+			state.cx:toast("info", "Nothing needs you", "Now lists nothing right now.")
+		end
+		return true
+	end
+	local _, at = M.nowSelected(state)
+	local to = if state.nowWalk == nil then 1 else at + 1
+	if to > #rows then
+		to = #rows
+		state.cx:toast("info", "Last in Now", "Nothing comes after it.")
+	end
+	state.nowAt = rows[to].id
+	state.nowWalk = { at = state.nowAt, sig = nowSig(rows) }
+	return true
+end
+
+-- Shows Now instead of a view, and reads it. A walk of Next in Now starts over.
 function M.openNow(state: State)
 	state.nowOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"
+	state.nowWalk = nil
 	M.nowEnsure(state)
 	M.nowRead(state)
 end

@@ -45,6 +45,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 | Now: which reasons and logins it lists | Settings › Views › Now | New | 2 | Approved | Switches per reason (Blocked, Review requested, Ready to merge, Notifications, Assigned), team review requests, per `gh` login and Jira; never the queries. A switch that is off is not read |
 | Review recency: "New commits since you approved" on a row; a dismissed review counts as review requested | Queue rows, Now, Next move | New | 2 | Approved | From GitHub each time (your latest review's commit vs the head; your dismissed review); nothing stored. Adopted from tern-pr-guide |
+| Next in Now: one key walks Now from the most urgent item to the next; Now's heading reads `N left`, or `n of N` while walking | Queue key, Commands › Now, Now's heading | New | 2 | Approved | Unbound by default; the one-key set binds `n`. A hand move or a change of the list stops the walk, which resumes from the selected item. Adopted from tern-pr-guide (Next up bar) |
 
 ## Dispatch
 

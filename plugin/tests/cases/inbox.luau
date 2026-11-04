@@ -752,6 +752,107 @@ case("now: a switch changed in one block applies at once to every other block", 
 	same(listed(c), {}, "from its list too")
 end)
 
+-- Now's heading as text: "Now · 3 left", "Now · 2 of 3".
+local function heading(b: h.Block): string
+	local out: { string } = {}
+	for _, span in pickerOf(b).title do
+		table.insert(out, if type(span) == "string" then span else span.t)
+	end
+	return table.concat(out)
+end
+
+-- Binds Next in Now to `n` beside the keys the case already has.
+local function bindNext(w: World)
+	local saved: { [string]: string } = {}
+	for id, key in w.kv.get("keys") :: any do
+		saved[id] = key
+	end
+	saved.nownext = "n"
+	w.kv.put("keys", saved)
+end
+
+case("now: Next in Now shows Now from a view and walks it top first; the heading reads n of N while walking, N left at rest", function(w: World)
+	local _, b = nowScene(w)
+	bindNext(w)
+	local rows = listed(b)
+	same(rows, { "no_2fr_232", "no_2fr_237", "t13" }, "three rows")
+	eq(heading(b), "Now · 3 left", "at rest the heading says how many are left")
+	pickScope(b, "prs:v1")
+	w.flush()
+	b.typeText("n")
+	eq(pickerOf(b).scope, "now", "the key shows Now from a view")
+	eq(pickerOf(b).selected, rows[1], "on its first item")
+	eq(heading(b), "Now · 1 of 3", "walking")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[2], "then the next one")
+	eq(heading(b), "Now · 2 of 3", "counted")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[3], "then the last")
+	eq(heading(b), "Now · 3 of 3", "counted")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[3], "nothing comes after the last: it stays")
+	eq(w.toasts[#w.toasts].text, "Last in Now", "and says so")
+	eq(heading(b), "Now · 3 of 3", "still walking")
+	pickScope(b, "prs:v1")
+	w.flush()
+	pickScope(b, "now")
+	w.flush()
+	eq(heading(b), "Now · 3 left", "showing Now again is at rest")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[1], "and a new walk starts at the top")
+end)
+
+case("now: a hand move or a change of the list stops Next in Now's walk, and the next step resumes from the selected item", function(w: World)
+	local s, b = nowScene(w)
+	bindNext(w)
+	local rows = listed(b)
+	b.typeText("n")
+	b.typeText("n")
+	eq(heading(b), "Now · 2 of 3", "walking on the second")
+	b.typeText("j")
+	eq(pickerOf(b).selected, rows[3], "moved by hand")
+	eq(heading(b), "Now · 3 left", "the walk stopped")
+	b.typeText("k")
+	eq(heading(b), "Now · 3 left", "and moving back onto its row does not restart it")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[3], "it resumes after the selected item")
+	eq(heading(b), "Now · 3 of 3", "walking again")
+	b.event({ ev = "select", id = "layer.queue", item = rows[1] })
+	eq(heading(b), "Now · 3 left", "a click stops it too")
+	b.typeText("n")
+	eq(pickerOf(b).selected, rows[2], "and the walk resumes after the clicked item")
+	eq(heading(b), "Now · 2 of 3", "walking")
+	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 60) }
+	refreshNow(w, b)
+	same(listed(b), { "no_2fr_234", "no_2fr_232", "no_2fr_237", "t13" }, "a review request arrives above")
+	eq(pickerOf(b).selected, rows[2], "the selection stays on its item")
+	eq(heading(b), "Now · 4 left", "the list changed under the walk: it stopped")
+	b.typeText("n")
+	eq(pickerOf(b).selected, "t13", "it resumes after the selected item")
+	eq(heading(b), "Now · 4 of 4", "in the new list")
+end)
+
+case("now: Next in Now has no key until bound, is a Commands row under Now and a row of the ? list", function(w: World)
+	local _, b = nowScene(w)
+	eq(b.press("n", nil, "n"), false, "unbound, n is the pane's")
+	local p = h.hx.palette(w, b)
+	eq(p.labels.nownext, "Next in Now", "Commands offers it")
+	eq(p.groups.nownext, "Now", "under Now")
+	eq(p.keys.nownext, "", "with no key")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "nownext" })
+	eq(heading(b), "Now · 1 of 3", "its row walks as the key does")
+	bindNext(w)
+	b.typeText("n")
+	eq(heading(b), "Now · 2 of 3", "once bound, n walks on")
+	eq(h.hx.palette(w, b).keys.nownext, "n", "and Commands shows the key")
+	b.typeText("?")
+	local found = false
+	for _, r in h.helpRows(b.view().layer) do
+		found = found or (r.keys == "n" and string.find(r.text, "Next in Now", 1, true) ~= nil)
+	end
+	yes(found, "and in the ? list")
+end)
+
 case("github: parseNotices keeps a pull request's and an issue's page, drops malformed threads and cleans untrusted text", function(w: World)
 	local github = w.load("github") :: any
 	local notices = github.parseNotices(h.array({

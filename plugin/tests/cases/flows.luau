@@ -2539,13 +2539,13 @@ case("host agents: the palette on the Agents list offers Go to agent, the views,
 	pickScope(b, "agents")
 	w.flush()
 	local p = hx.palette(w, b)
-	local expected: { string } = { "agentgo", "agentint", "agentstop", "agentmsg" }
+	local expected: { string } = { "agentgo", "agentint", "agentstop", "agentmsg", "nownext" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expected, "scope:" .. scope.id)
 	end
 	table.insert(expected, "settings")
 	table.insert(expected, "help")
-	same(p.ids, expected, "Go to agent and the agent commands, then every scope, Settings and help")
+	same(p.ids, expected, "Go to agent and the agent commands, Next in Now, then every scope, Settings and help")
 	eq(p.groups.agentgo, "Agents", "Go to agent is the Agents group")
 	eq(p.groups.agentstop, "Agents", "so are the agent commands")
 	for _, id in { "snooze", "snoozed", "sort", "search", "refresh", "seen" } do
