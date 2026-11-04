@@ -1799,6 +1799,95 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	ignored("no pull request", "x")
 end)
 
+-- The key footer under the queue, each entry "<key> <what it does>" with its key drawn as a keycap; nil without one.
+local function footerOf(b: Block): { string }?
+	local view: any = b.view()
+	local bar = findKey(view.layer, "keybar", "row")
+	if not bar then
+		return nil
+	end
+	local out: { string } = {}
+	for _, n in bar.c do
+		eq(n.p.spans[1].s, "key", "a footer key is a keycap")
+		table.insert(out, n.p.spans[1].t .. n.p.spans[2].t)
+	end
+	return out
+end
+
+case("host keys footer: Commands and Shortcut list first, then the selection's keys by use, at most 5, and only bound ones", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" })
+	local b = openQueue(w)
+	same(footerOf(b), { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	has(pickerOf(b).role, ".keys", "the picker ends above the footer")
+	for _ = 1, 3 do
+		b.typeText("r")
+		w.flush()
+	end
+	b.typeText("o")
+	same(footerOf(b), { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
+	local saved: any = w.kv.get("keys")
+	saved.next = "x"
+	w.kv.put("keys", saved)
+	b.press("down")
+	b.press("up")
+	w.flush()
+	local bar = footerOf(b) or {}
+	eq(#bar, 5, "still at most 5")
+	eq(string.sub(bar[3], 1, 2), "x ", "a bound Next move comes right after Shortcut list, named as the move")
+	eq(bar[3], "x " .. hx.palette(w, b).labels.next, "named as Commands names it")
+	b.typeText("s")
+	w.flush()
+	eq(footerOf(b), nil, "Settings takes the keys: no footer under it")
+end)
+
+case("host keys footer: with the default keys only Commands shows, an unbound Commands too leaves no footer", function(w: World)
+	hostScene(w, 3)
+	w.kv.store.keys = nil :: any
+	local b = openQueue(w)
+	same(footerOf(b), { ". Commands" }, "only . is bound by default: Shortcut list and the rest have no key, so are not listed")
+	w.kv.put("keys", { more = "" })
+	b.press("down")
+	eq(footerOf(b), nil, "no key bound: no footer")
+	lacks(pickerOf(b).role, ".keys", "and the picker reaches the bottom")
+end)
+
+case("host keys footer: a saved action's key shows the action where it beats the built-in key, and the built-in where that wins", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Mine", "Review {url}", "m"), promptOf("p2", "Hand edited", "The queue's own key wins", "w"), promptOf("p3", "Extra", "Extra {url}", "e") })
+	w.kv.put("views-prs", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "My PRs", integration = "github", query = "is:open author:@me", group = "none", prompts = array({ "p1", "p2", "p3" }) },
+	}) })
+	local b = openQueue(w)
+	local bar = footerOf(b) or {}
+	same(bar, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	local saved: any = w.kv.get("keys")
+	saved.agent = ""
+	w.kv.put("keys", saved)
+	b.press("down")
+	b.press("up")
+	has(table.concat(footerOf(b) or {}, "|"), "w Worktree", "w stays the queue's Worktree")
+	local opened = #w.opened
+	b.typeText("m")
+	eq(w.opened[opened + 1], runLink("o/r", 1, "p1"), "and m does run the saved action, as the footer says")
+end)
+
+case("host: the preview's Unsnooze button wears the snooze key, which ends the snooze", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("triage", { version = 1, items = { ["o/r#1"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
+	local b = openQueue(w)
+	b.typeText("Z")
+	w.flush()
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	local button: any = findKey(pickerNode(b), "unsnooze", "item")
+	same(button and button.p.hint, { "z" }, "Unsnooze shows z")
+	w.kv.put("keys", { snooze = "" })
+	b.press("down")
+	b.press("up")
+	button = findKey(pickerNode(b), "unsnooze", "item")
+	eq(button and button.p.hint, nil, "no keycap once the key is removed")
+end)
+
 case("host: Settings > Actions' Next action row offers the other actions, refuses a loop, and deleting an action drops it as a next", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Fix", "Fix {url}"), promptOf("p3", "Ship", "Ship {url}") })
