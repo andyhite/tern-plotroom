@@ -471,7 +471,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	eq(detailText(row(2)), "ABC-13 · Task", "the same for an unassigned issue")
 	eq(row(1).facts, nil, "the rows carry no facts column: no assignee, no comment count")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
-	eq(badges(1), "Not started/muted In Progress/warning", "the stage, then the workflow status toned by its category; the labels are the preview's; no integration badge")
+	eq(badges(1), "Not started/muted In Progress/muted", "the stage, then the workflow status (only Done is coloured); the labels are the preview's; no integration badge")
 	eq(badges(2), "Closed/muted Done/success", "a done issue is Closed and says Done")
 	eq(findKey(findKey(pickerNode(b), "head"), "open", "icon").p.title, "Open", "the preview head's Open icon is named Open")
 	b.typeText("?")
@@ -684,7 +684,7 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	local head: any = findKey(pickerNode(b), "head")
 	yes(head ~= nil, "the preview has a head row")
 	eq(findKey(head, "integration").p.text, "Jira", "naming the tracker")
-	eq(findKey(head, "integration").p.tone, "accent", "accent for Jira")
+	eq(findKey(head, "integration").p.tone, "muted", "neutral, as GitHub's")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row no longer carries it")
 	-- a format saved for the repository applies, with its {project}
 	w.kv.put("branch-formats", { ["o/r"] = "{project}/{key}" })
@@ -727,7 +727,7 @@ case("host: an issue filter shows the card of an issue's worktree that git lists
 	eq(countLog(s.git, "config"), 0, "no remote is read: only a pull request's branch needs one")
 	w.advance(300)
 	same(chipsOf(b), { "Uncommitted changes" }, "its changes are read once the cursor has rested")
-	eq(badgeOf(b).tone, "warning", "and the row follows")
+	eq(badgeOf(b).tone, nil, "and the row follows, uncoloured")
 	table.remove(s.git.worktrees, 2)
 	w.fs.dirs[path] = nil
 	table.remove(s.git.worktrees, 2)
@@ -804,7 +804,7 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(findKey(head, "copy", "icon").p.href, "https://acme.atlassian.net/browse/ABC-12", "the head's copy icon takes the browse link")
 	eq(findKey(head, "copy", "icon").p.aria, "Copy link to issue ABC-12", "which names the key")
 	eq(findKey(head, "state", "badge").p.text, "In Progress", "the head's badge is the workflow status")
-	eq(findKey(head, "state", "badge").p.tone, "warning", "toned by its category")
+	eq(findKey(head, "state", "badge").p.tone, "muted", "neutral: only Done is coloured")
 	eq(findKey(findKey(preview, "branch"), "v").p.spans[1].t, "octocat/ABC-12-fix-login", "the branch Worktree would make: the default format over gh's active login")
 	eq(findKey(findKey(preview, "description", "card"), "body", "md").p.text, "Login fails.", "the description from Jira's document format, as Markdown")
 	-- The linked section as lines: each relation's heading, then its rows.
@@ -826,13 +826,14 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	same(linked(), {
 		"Blocks · 2",
 		"  Login API | ABC-3 | list-checks | muted | ABC-3 · To Do",
-		"  Review copy | ABC-5 | list-checks | warning | ABC-5 · In Review",
+		"  Review copy | ABC-5 | list-checks | muted | ABC-5 · In Review",
 		"Relates to · 1",
 		"  Old notes | ABC-6 | list-checks | muted | ABC-6 · Backlog",
 		"Subtasks · 1",
 		"  Add test | ABC-14 | check | success | ABC-14 · Done",
 	}, "linked issues under one heading per relation, in the order Jira first names it; the icon and tone are the status category, the key at the right, the status in the tooltip")
 	same(hx.miscued(b.view().layer), {}, "Jira's linked rows open nothing, so they are neither buttons nor links")
+	same(hx.offPalette(b.view().layer), {}, "nor coloured outside DESIGN.md's Color Meaning Rule")
 	-- an issue whose details cannot be read says why
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)
@@ -923,7 +924,7 @@ windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotr
 	eq(s.git.refs["refs/heads/octocat/12-fix-login"], sha("b"), "the branch starts at the base picked, named after the gh login")
 	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main:refs/remotes/origin/main"), 1, "which was fetched once")
 	eq(countCalls(w, "omp worktree add -q -C /work/r -b octocat/12-fix-login " .. target .. " " .. sha("b")), 1, "and the worktree added through omp")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	has(cardText(b), target, "and the card says where the worktree is")
 	w.click(issueLink("worktree", "o/r", "12"))
 	w.flush()
@@ -976,7 +977,7 @@ windowCase("window: Worktree on a Jira issue opens a tab named \"ABC-12\"", func
 	end
 	eq(named, "ABC-12", "tab name")
 	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main:refs/remotes/origin/main"), 1, "the base is fetched into its remote-tracking ref")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 end)
 
 windowCase("window: Jira issue picks its repository: asked when none is mapped, among several, never with one", function(w: World)
@@ -1002,7 +1003,7 @@ windowCase("window: Jira issue picks its repository: asked when none is mapped, 
 	eq(requestsSent(w)[4].target, "o/r", "which the base's answer keeps")
 	eq(requestsSent(w)[4].base, "main", "with the base")
 	eq(w.window.launches[1].cwd, target, "the tab opens in the worktree of the picked repository")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	-- one mapped: no question at all
 	local asked, sent = #w.window.picks, #requestsSent(w)
 	w.click(issueLink("worktree", "ABC", "ABC-12"))
@@ -1489,7 +1490,7 @@ case("host: with both CLIs on, Settings has four pages: Views, Actions, Reposito
 	yes(rowIn(b, "fmt:branch") ~= nil and rowIn(b, "ropen:o/r") ~= nil and rowIn(b, "jopen:ABC") ~= nil, "with their rows")
 	b.press("escape")
 	goToSettings(b, "general")
-	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Refresh, then Reset")
+	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Refresh, then Reset")
 	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
 	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
 end)
@@ -2471,7 +2472,7 @@ windowCase("window: Worktree on an issue with exactly one linked PR needs no que
 	eq(s.git.config["branch.fix-login.merge"], "refs/heads/fix-login", "and to the head branch")
 	eq(countCalls(w, "omp worktree add -q -C /work/r -b fix-login " .. target .. " " .. sha("c")), 1, "the worktree was added through omp at the pull request's head")
 	eq(countLog(s.git, "ls-remote"), 0, "no base branch was listed")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	has(cardText(b), target, "and the card says where the worktree is")
 end)
 

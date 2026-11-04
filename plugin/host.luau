@@ -118,6 +118,12 @@ local function runQueueAction(state: State, act: string): boolean
 		engine.mark(state, act)
 	elseif act == "snoozed" then
 		engine.toggle(state, act)
+	elseif act == "now-layout" then
+		-- Now as a Board or as the List (the Board shows only in a wide enough block: engine.nowBoardShown)
+		if not state.nowOn then
+			return false
+		end
+		state.nowBoard = not state.nowBoard
 	elseif act == "sort" then
 		settings.cycleSort(state)
 	elseif string.sub(act, 1, 3) == "wt-" then
@@ -551,6 +557,7 @@ local function blockDef(): BlockDef<State>
 				ciLogs = {},
 				ciBusy = {},
 				round = 0,
+				summaryWait = nil,
 				flaky = {},
 				flakyBusy = {},
 				notes = {},
@@ -571,6 +578,8 @@ local function blockDef(): BlockDef<State>
 				-- A new block opens on Now, unless it was launched to show one item; a restored one on the scope it saved.
 				nowOn = if mine then saved.now == true else pins[1] == nil,
 				nowAt = nil,
+				nowBoard = mine and saved.nowBoard == true,
+				nowFold = false,
 				nowWalk = nil,
 				now = { mine = {}, review = {}, assigned = {}, finder = {}, notices = {}, yours = {}, teams = {}, problems = {}, prefs = nowPrefs, prefsProblem = nowProblem, busy = false, loaded = false, gen = 0, seq = 0, cost = 0, rows = nil, rowsKey = nil },
 				agents = {},
@@ -841,9 +850,22 @@ local function blockDef(): BlockDef<State>
 				end)
 			end
 			if state.nowOn then
-				-- Now: Enter goes to the agent or shows the item.
+				-- Now: Enter goes to the agent or shows the item. As a Board, Up and Down move in the column and Left
+				-- and Right across the columns.
+				local laid = engine.nowBoardShown(state)
+				if laid and state.focus ~= "scopes" then
+					local lact = if plain then keys.action((keys.load()), k) else nil
+					if name == "left" or lact == "left" or name == "right" or lact == "right" then
+						engine.nowBoardMove(state, if name == "left" or lact == "left" then -1 else 1, 0)
+						return true
+					end
+				end
 				return listKeys(function(d)
-					engine.nowMove(state, d)
+					if laid then
+						engine.nowBoardMove(state, 0, d)
+					else
+						engine.nowMove(state, d)
+					end
 				end, function()
 					openNowRow(state)
 				end, function(a)
@@ -991,6 +1013,19 @@ local function blockDef(): BlockDef<State>
 				engine.openBoard(state)
 			elseif act == "open-now" then
 				engine.openNow(state)
+			elseif act == "now-fold" then
+				state.nowFold = not state.nowFold
+			elseif (ev.ev == "select" or ev.ev == "activate") and item and state.nowOn and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." then
+				-- A Board card: its node id ends in Now's row id.
+				local id = string.match(item, "([^%.]+)$")
+				for _, r in engine.nowRows(state) do
+					if r.id == id then
+						state.nowAt, state.focus = r.id, "list"
+						if ev.ev == "activate" then
+							openNowRow(state)
+						end
+					end
+				end
 			elseif act and string.sub(act, 1, 3) == "wt-" then
 				engine.boardAct(state, act)
 			elseif act == "add-repo" and ev.id ~= SETTINGS_ID then
@@ -1225,6 +1260,7 @@ local function blockDef(): BlockDef<State>
 				activeLogin = state.activeLogin,
 				pause = pause,
 				now = if state.nowOn then true else nil,
+				nowBoard = if state.nowBoard then true else nil,
 				snoozed = if state.showSnoozed then true else nil,
 				pins = requests.pinUrls(state),
 			}

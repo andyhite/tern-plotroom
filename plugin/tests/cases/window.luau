@@ -79,8 +79,8 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 	has(w.toasts[4].sub, "Clean", "without local changes")
 	eq(#w.window.picks, 0, "the Worktree key asks nothing")
 	yes(cardAtTab ~= nil, "the block showed its worktree card when the tab was opened")
-	eq(cardAtTab.p.tone, "success", "a ready one")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(cardAtTab.p.tone, nil, "a ready one: not failed")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	has(cardText(b), s.target, "and the card says where the worktree is")
 	same(w.window.switches, { 1 }, "the source session is switched to")
 	eq(#w.window.launches, 1, "one tab: the repeated click opened none")
@@ -395,6 +395,25 @@ windowCase("window: Settings' Model button opens a picker of omp's default, the 
 	eq(w.kv.get("prompts-prs").items[1].model, nil, "omp's default resets it")
 	w.click("plotroom://model/prs:p1; rm")
 	eq(w.toasts[#w.toasts].text, "Plotroom: malformed link", "a malformed link asks nothing")
+end)
+
+windowCase("window: Settings' Summary model button opens the same picker, with the Summary default first; the pick is saved as the Summary model", function(w: World)
+	local _, b = agentScene(w)
+	h.goToSettings(b, "general")
+	w.flush()
+	w.window.choose = "claude-haiku-4-5"
+	w.click("plotroom://model/summary:model")
+	w.flush()
+	local pick = w.window.picks[#w.window.picks]
+	local first = pick.items[1]
+	same({ first.group, first.label, first.detail, first.current }, { "Default", "Summary default", "@smol: omp's small model", true } :: { any }, "the default is @smol, current while none is saved")
+	eq(pick.items[#pick.items].label, "gpt-5.2", "then the roles and omp's models")
+	eq(w.kv.get("summary").model, "anthropic/claude-haiku-4-5", "the pick is saved as the Summary model")
+	w.window.choose = "Summary default"
+	w.click("plotroom://model/summary:model")
+	w.flush()
+	eq(w.window.picks[#w.window.picks].items[1].current, false, "the picker had the saved model current, not the default")
+	eq(w.kv.get("summary").model, nil, "the default resets it")
 end)
 
 windowCase("window: a PR prompt set to the main checkout starts its agent in a new tab at the checkout, with the PR's details and no worktree", function(w: World)
@@ -867,7 +886,7 @@ windowCase("window: a failing mkdir reports the failure, releases the PR, and th
 	w.flush()
 	eq(w.toasts[4].level, "success", "the retry succeeds: the PR was released, not 'already being prepared'")
 	has(w.toasts[4].text, "o/r#5", "names the pull request")
-	eq(cardOf(b).p.tone, "success", "and the card follows")
+	eq(cardOf(b).p.tone, nil, "and the card follows: no longer failed")
 end)
 
 windowCase("window: a tab that cannot open keeps the worktree path visible, the block noting it first", function(w: World)

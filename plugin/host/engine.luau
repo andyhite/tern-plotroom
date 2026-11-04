@@ -8,6 +8,7 @@ local jira = require("../jira")
 local logs = require("../logs")
 local process = require("../process")
 local sorting = require("../sorting")
+local summary = require("../summary")
 local tracker = require("../tracker")
 local triage = require("../triage")
 local worktree = require("../worktree")
@@ -77,6 +78,7 @@ function M.retire(state: State)
 		state.boardTimer = nil
 	end
 	dropDetails(state)
+	M.cancelSummary(state)
 	state.inflight = nil
 	state.snap, state.vis = nil, nil
 	state.snaps = {}
@@ -348,9 +350,9 @@ function M.needsYou(state: State, key: string): boolean
 end
 
 -- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents, needsYou), its
--- worktree (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. `why` says what
--- blocks a PR. A fact GitHub did not give (merge state unknown) never makes Ready to merge.
-function M.stage(state: State, kind: string, item: any): (string, string?)
+-- worktree (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. A Blocked PR also
+-- returns what blocks it (M.blockers). A fact GitHub did not give (merge state unknown) never makes Ready to merge.
+function M.stage(state: State, kind: string, item: any): (string, { Blocker }?)
 	if item.state == "merged" or item.state == "closed" then
 		return item.state
 	end
@@ -361,12 +363,9 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 	end
 	if kind == "prs" then
 		local pr: github.Pr = item
-		-- ponytail: the search cannot ask which checks are required; GitHub's merge state saying only optional checks
-		-- fail (unstable) or none (ready) clears a failing rollup. Read the detail runs' `required` if that misleads.
-		-- A failure only of ignored checks (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
-		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr)
-		if pr.review == "changes" or pr.merge == "conflicts" or failing then
-			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" elseif M.allFlaky(state, pr) then "Checks failing (likely flaky)" else "Checks failing"
+		local blockers = M.blockers(state, pr)
+		if #blockers > 0 then
+			return "blocked", blockers
 		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
 			return "ready"
 		end
@@ -458,6 +457,61 @@ function M.allFlaky(state: State, pr: any): boolean
 	return #failing > 0
 end
 
+-- One thing that blocks a pull request: its chip names the job that clears it, `detail` who or what (nil when unknown).
+export type Blocker = { chip: string, detail: string? }
+
+-- What blocks `pr`, most severe first, each named by its job (PRODUCT.md › Glossary › Chip): Address changes (changes
+-- requested), Reply · N unresolved (unresolved review threads, unless it is approved: leftover threads on an approved
+-- PR are nits), Fix checks · N/T failing (or Re-run · likely flaky when every failing check is Likely flaky), Resolve
+-- conflicts. Empty when nothing does. ponytail: the search does not say which checks are required; GitHub's merge state
+-- saying only optional checks fail (unstable) or none (ready) clears a failing rollup. A failure only of ignored checks
+-- (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
+function M.blockers(state: State, pr: github.Pr): { Blocker }
+	local out: { Blocker } = {}
+	-- "@login <verb> 4h ago" of the newest latest review in state `want` by someone other than the author.
+	local function by(want: string, verb: string): string?
+		local best: github.Latest? = nil
+		for _, r in (pr.latest or {}) :: { github.Latest } do
+			if r.state == want and string.lower(r.login) ~= string.lower(pr.author) and (not best or r.at > best.at) then
+				best = r
+			end
+		end
+		return if best then "@" .. best.login .. " " .. verb .. " " .. github.age(best.at) .. " ago" else nil
+	end
+	if pr.review == "changes" then
+		table.insert(out, { chip = "Address changes", detail = by("changes", "asked") or "Changes requested" })
+	end
+	local open = pr.unresolved or 0
+	if open > 0 and pr.review ~= "approved" then
+		table.insert(out, { chip = "Reply · " .. open .. " unresolved", detail = by("commented", "commented") })
+	end
+	if pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr) then
+		local failing: { github.Run } = {}
+		for _, r in M.failing(state, pr) do
+			if not M.ignored(state, pr, r) then
+				table.insert(failing, r)
+			end
+		end
+		local marks = M.flakyMarks(state, pr)
+		local first = failing[1]
+		if first and marks and M.allFlaky(state, pr) then
+			local mark = if first.url then marks[first.url] else nil
+			table.insert(out, { chip = "Re-run · likely flaky", detail = if mark then first.name .. " " .. mark.reason else nil })
+		elseif first then
+			local d = state.details[M.detailKey(state, pr)]
+			local total = if d then d.total else pr.runTotal
+			local more = if #failing > 1 then " and " .. (#failing - 1) .. " more" else ""
+			table.insert(out, { chip = "Fix checks · " .. #failing .. "/" .. total .. " failing", detail = first.name .. more .. " failing" })
+		else
+			table.insert(out, { chip = "Fix checks" })
+		end
+	end
+	if pr.merge == "conflicts" then
+		table.insert(out, { chip = "Resolve conflicts", detail = "Conflicts with " .. (if pr.base ~= "" then pr.base else "its base") })
+	end
+	return out
+end
+
 -- `{flaky}` of a pull request action: the item's Likely flaky checks with why and the head commit they were judged
 -- at ("build (failed 3 of the last 20 runs on main) at head 1a2b3c4"), or "none" when no check of it is marked.
 function M.flakyText(state: State, key: string): string
@@ -524,7 +578,9 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	local me = if who then string.lower(who) else nil
 	local mine = me ~= nil and string.lower(pr.author) == me
 	if stage == "blocked" then
-		local fix = if mine and pr.review == "changes" then action("Address feedback") else nil
+		-- Feedback to act on (Address changes or Reply) comes before the checks, as the chips do.
+		local feedback = pr.review == "changes" or ((pr.unresolved or 0) > 0 and pr.review ~= "approved")
+		local fix = if mine and feedback then action("Address feedback") else nil
 		if fix or #M.failing(state, pr) == 0 then
 			return fix
 		elseif M.allFlaky(state, pr) and M.rerunnable(state, pr) then
@@ -1889,7 +1945,7 @@ function M.boardItems(state: State): ({ any }, { any })
 		local detail: { any } = { ui.span(row.path, "mono") }
 		if row.key or row.number then
 			table.insert(detail, " · ")
-			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "num"))
+			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "mono"))
 		end
 		local id = M.pickerId("w", row.id)
 		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = board.badges(row, open[row.path] == true) })
@@ -2291,6 +2347,146 @@ function M.wantDetails(state: State, item: any)
 	elseif fail.retryAt then
 		armDetails(state, key, math.max(0, fail.retryAt - os.time()) * 1000)
 	end
+end
+
+-- Summaries (the top of a queue preview). The omp calls running, by summary key -> the item key, and why one could not
+-- be made, by summary key: shared by every block, so two never summarize the same facts and a failure is not retried
+-- until the item's facts change.
+local summarizing: { [string]: string } = {}
+local summaryFailed: { [string]: string } = {}
+local summaryFailures = 0
+
+-- The key a Summary of `item` is cached under, the item and the facts it was made from: a PR's head commit (its update
+-- time when GitHub did not name one), an issue's update time (a Jira issue's comes with its details); nil until known.
+local function summaryKey(item: any, d: core.Detail?, pr: boolean): string?
+	if pr then
+		return item.key .. "@" .. (item.headSha or ("t" .. item.updated))
+	end
+	local updated = if item.updated > 0 then item.updated elseif d and d.issue then d.issue.updated else nil
+	return if updated then item.key .. "@t" .. updated else nil
+end
+
+-- What the Summary of `item` reads, from its loaded details; nil until they are loaded.
+local function summaryInput(item: any, d: core.Detail?, pr: boolean): summary.Input?
+	if pr then
+		local about = if d then d.about else nil
+		if not about then
+			return nil
+		end
+		return {
+			kind = "pull request",
+			title = item.title,
+			author = item.author,
+			body = about.body,
+			size = "+" .. item.additions .. " −" .. item.deletions .. " in " .. item.files .. (if item.files == 1 then " file" else " files"),
+			paths = about.paths,
+			comments = about.recent,
+		}
+	end
+	local issue = if d then d.issue else nil
+	if not issue then
+		return nil
+	end
+	return { kind = "issue", title = item.title, author = item.author, body = issue.body, comments = issue.recent or {} }
+end
+
+-- Stops timing the rest before a Summary.
+function M.cancelSummary(state: State)
+	local wait = state.summaryWait
+	if wait then
+		state.summaryWait = nil
+		if wait.timer then
+			wait.timer:cancel()
+		end
+	end
+end
+
+-- Runs the one omp call of summary key `key` and caches its answer. Whatever item is selected when it lands, every block
+-- showing `itemKey` draws it; one showing another item draws only that item's own Summary.
+local function startSummary(key: string, itemKey: string, item: summary.Input, model: string)
+	local argv = summary.argv(model, summary.prompt(item))
+	if not argv then
+		summaryFailed[key] = "The Summary model is not one omp takes: " .. model
+		return
+	end
+	summarizing[key] = itemKey
+	process.run(argv, { timeout_ms = core.SUMMARY_TIMEOUT_MS }, function(result, problem)
+		summarizing[key] = nil
+		local text = if result and result.status == 0 and not result.timed_out then summary.parse(result.stdout) else nil
+		if text then
+			storage.keepSummary(key, text) -- kept in memory even when the store cannot take it
+		else
+			-- ponytail: failures are forgotten all at once past 100; a failed Summary is tried again then.
+			summaryFailures += 1
+			if summaryFailures > 100 then
+				summaryFailed, summaryFailures = {}, 1
+			end
+			summaryFailed[key] = if problem then problem
+				elseif not result then "omp did not answer."
+				elseif result.timed_out then "omp did not answer within " .. core.SUMMARY_TIMEOUT_MS // 1000 .. " seconds."
+				elseif result.status ~= 0 then "omp failed (exit " .. result.status .. ")" .. (if string.find(result.stderr, "%S") then ": " .. clip(printable(github.firstLines(result.stderr, 1)), 200) else ".")
+				else "omp's answer was not a Summary: empty, or longer than a few sentences."
+		end
+		for _, s in running do
+			local at = M.selected(s)
+			if at and at.key == itemKey and M.alive(s) then
+				s.cx:render()
+			end
+		end
+	end)
+end
+
+-- The Summary of the selected `item` (`pr`: a pull request), as its preview shows it: "off" (Summaries are off),
+-- "none" (not shown yet: the cursor has not rested, or the details could not load), "busy" (being made), "done" with
+-- the text, or "failed" with why. Idempotent: every render calls it. A cached Summary shows at once; else, once the
+-- cursor has rested SUMMARY_REST_MS on the item and its details have loaded, one omp call makes it.
+function M.wantSummary(state: State, item: any, pr: boolean): (string, string?)
+	local prefs = storage.readSummary()
+	if not prefs.on then
+		M.cancelSummary(state)
+		return "off"
+	end
+	local dkey = M.detailKey(state, item)
+	local d = state.details[dkey]
+	local key = summaryKey(item, d, pr)
+	if key then
+		local hit = storage.summaryOf(key)
+		if hit then
+			return "done", hit
+		elseif summarizing[key] then
+			return "busy"
+		elseif summaryFailed[key] then
+			return "failed", summaryFailed[key]
+		end
+	end
+	local wait = state.summaryWait
+	if not wait or wait.key ~= item.key then
+		M.cancelSummary(state)
+		local w = { key = item.key, ready = false, timer = nil :: TimerHandle? }
+		state.summaryWait = w
+		w.timer = tern.timer(core.SUMMARY_REST_MS, function()
+			if state.summaryWait == w then
+				w.ready, w.timer = true, nil
+				if M.alive(state) then
+					state.cx:render()
+				end
+			end
+		end)
+		return "none"
+	end
+	if not wait.ready then
+		return "none"
+	end
+	local it = summaryInput(item, d, pr)
+	if not it or not key then
+		-- The details are still loading (the Summary follows them), or they came without what a Summary reads.
+		return if d or state.detailFail[dkey] then "none" else "busy"
+	end
+	startSummary(key, item.key, it, prefs.model or summary.MODEL)
+	if summaryFailed[key] then
+		return "failed", summaryFailed[key]
+	end
+	return "busy"
 end
 
 -- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike
@@ -3080,8 +3276,8 @@ local function ownChange(now: any, store: triage.Store, issue: any): boolean
 end
 
 -- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, waiting?, title, url?, snoozed }.
--- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` says by
--- what), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
+-- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` lists its
+-- chips, M.blockers), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
 -- request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you is New or Changed
 -- (`why`). A reason switched off in Settings › Views › Now lists nothing. An item is listed once, at its highest rank; a
 -- snoozed one only while snoozed items are shown (an agent that needs you is always listed, as in the views).
@@ -3149,10 +3345,14 @@ function M.nowRows(state: State): { any }
 	local ready: { any } = {}
 	local why: { [string]: string } = {}
 	for _, pr in now.mine do
-		local stage, because = M.stage(state, "prs", pr)
+		local stage, blockers = M.stage(state, "prs", pr)
 		if stage == "blocked" then
 			table.insert(blocked, pr)
-			why[pr.key] = because or "Blocked"
+			local jobs: { string } = {}
+			for _, b in (blockers or {}) :: { Blocker } do
+				table.insert(jobs, b.chip)
+			end
+			why[pr.key] = table.concat(jobs, ", ")
 		elseif stage == "ready" then
 			table.insert(ready, pr)
 		end
@@ -3277,6 +3477,93 @@ function M.nowMove(state: State, delta: number)
 		state.nowAt = rows[math.clamp(math.max(at, 1) + delta, 1, #rows)].id
 	end
 	M.nowStop(state)
+end
+
+-- Now as a Board: its columns in order, each listing Now's rows (nowRows' order kept) by their item's stage. The last
+-- two are the fold. A row with no item (an agent or a notification Now holds no item for) is in Needs you: Now lists it
+-- because it needs you.
+M.NOW_COLUMNS = {
+	{ id = "needs", label = "Needs you" },
+	{ id = "working", label = "Agent working" },
+	{ id = "waiting", label = "Waiting" },
+	{ id = "ready", label = "Ready to merge" },
+	{ id = "none", label = "Not started", fold = true },
+	{ id = "worktree", label = "Worktree", fold = true },
+}
+local COLUMN_OF: { [string]: string } = { needs = "needs", blocked = "needs", working = "working", pr = "waiting", ready = "ready", none = "none", worktree = "worktree" }
+-- The narrowest block, in terminal columns, that lays Now out as a Board; a narrower one shows the List. Measured in
+-- real Tern (c226): below about 80 columns a card's number and why it is listed no longer fit its column.
+M.BOARD_MIN_COLS = 80
+
+-- The Board's columns, { id, label, fold?, rows }, built once per nowRows answer.
+function M.nowColumns(state: State): { any }
+	local now = state.now
+	local rows = M.nowRows(state)
+	if now.cols and now.colsOf == rows then
+		return now.cols :: { any }
+	end
+	local cols: { any } = {}
+	local at: { [string]: any } = {}
+	for _, c in M.NOW_COLUMNS do
+		local col = { id = c.id, label = c.label, fold = c.fold, rows = {} }
+		table.insert(cols, col)
+		at[c.id] = col
+	end
+	for _, row in rows do
+		local stage = if row.item and row.kind then (M.stage(state, row.kind, row.item)) else nil
+		table.insert(at[COLUMN_OF[stage or ""] or "needs"].rows, row)
+	end
+	now.cols, now.colsOf = cols, rows
+	return cols
+end
+
+-- Whether Now shows as a Board: chosen, and the block wide enough.
+function M.nowBoardShown(state: State): boolean
+	return state.nowOn and state.nowBoard and state.cx.cols >= M.BOARD_MIN_COLS
+end
+
+-- The selected row's column and place in it (0, 0 when none is selected).
+function M.nowBoardAt(state: State): (number, number)
+	for c, col in M.nowColumns(state) do
+		for i, row in col.rows do
+			if row.id == state.nowAt then
+				return c, i
+			end
+		end
+	end
+	return 0, 0
+end
+
+-- Moves the Board's selection `dy` rows in its column, or `dx` columns across to the nearest column with rows, at the
+-- same place or its last row. A move into the fold opens it.
+function M.nowBoardMove(state: State, dx: number, dy: number)
+	local cols = M.nowColumns(state)
+	local c, i = M.nowBoardAt(state)
+	if c == 0 then
+		M.nowEnsure(state)
+		c, i = M.nowBoardAt(state)
+		if c == 0 then
+			return
+		end
+	end
+	if dy ~= 0 then
+		local list = cols[c].rows
+		i = math.clamp(i + dy, 1, #list)
+	end
+	if dx ~= 0 then
+		local step = if dx < 0 then -1 else 1
+		local to = c + step
+		while cols[to] and #cols[to].rows == 0 do
+			to += step
+		end
+		if cols[to] then
+			c, i = to, math.min(i, #cols[to].rows)
+		end
+	end
+	state.nowAt = cols[c].rows[i].id
+	if cols[c].fold then
+		state.nowFold = true
+	end
 end
 
 -- Stops Next in Now's walk (the selection was moved by hand); its next step resumes from the selected row.

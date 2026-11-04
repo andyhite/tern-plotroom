@@ -207,7 +207,7 @@ case("host: the preview shimmers while the detail loads, then shows the merge st
 		eq(item.p.value, nil, "no status word: the icon is the verdict")
 		table.insert(rows, item.p.title .. " " .. item.p.icon .. " " .. item.p.tone)
 	end
-	same(rows, { "@ann — Approved check success", "@bob — Requested clock warning" }, "each reviewer with a verdict, then those still asked; the tooltip spells it out")
+	same(rows, { "@ann — Approved check success", "@bob — Requested clock muted" }, "each reviewer with a verdict, then those still asked (no colour: waiting on someone else); the tooltip spells it out")
 	eq(findKey(pickerNode(b), "reviewers-loading"), nil, "the shimmer is gone")
 	eq(findKey(pickerNode(b), "runs-loading"), nil, "from the checks too")
 	local function card(): any
@@ -481,22 +481,22 @@ case("host: a worktree request becomes a badge and a card with its status, place
 	eq(named.refused, nil, "with no refusal")
 	eq(named.why, nil, "and no reason")
 	yes(badgeOf(b) ~= nil, "a worktree puts a badge on the row")
-	eq(badgeOf(b).tone, "success", "a current, clean worktree is a success")
-	eq(cardOf(b).p.tone, "success", "and a card in the preview")
+	eq(badgeOf(b).tone, nil, "a current, clean worktree has no colour: it is none of the colour meanings")
+	eq(cardOf(b).p.tone, nil, "and a card in the preview, uncoloured")
 	has(cardText(b), target, "that says where it is")
 	s.git.dirty[target] = " M src/a.lua\n"
 	ask(1)
-	eq(badgeOf(b).tone, "warning", "local changes deserve a look")
+	eq(badgeOf(b).tone, nil, "local changes are no colour meaning: the card's badges say them")
 	s.git.dirty[target] = nil
 	s.gh.meta["o/r#1"].sha = sha("c")
 	ask(1)
-	eq(badgeOf(b).tone, "warning", "so does a worktree behind its PR")
+	eq(badgeOf(b).tone, nil, "nor is a worktree behind its PR")
 	local ran = #w.calls
 	eq(commandsOf(b, "update"), "git -C " .. target .. " pull --ff-only", "the update command too")
 	eq(#w.calls, ran, "showing them ran nothing")
 	s.gh.meta["o/r#1"].sha = sha("b")
 	ask(1)
-	eq(badgeOf(b).tone, "success", "caught up with its PR, the worktree is a success again")
+	eq(badgeOf(b).tone, nil, "caught up with its PR, the worktree stays uncoloured")
 	eq(commandsOf(b, "update"), nil, "no update commands to show")
 	s.gh.meta["o/r#1"] = nil
 	yes(type(ask(1).problem) == "string", "a PR that cannot be read is answered with the reason")
@@ -527,7 +527,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	end
 	ask()
 	same(chipsOf(b), { "Up to date", "Clean" }, "at the PR head and clean: two badges")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "success", "a good state")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "a good state, neutral")
 	has(findKey(cardOf(b), "sync", "badge").p.title, "Created", "with the one-line summary of the attempt as the tooltip")
 	for _, gone in { "summary", "never", "facts" } do
 		eq(findKey(cardOf(b), gone), nil, "no " .. gone .. " line: the summary sentence, the footer and the kv are gone")
@@ -547,7 +547,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
 	eq(open.p.actions.click, "worktree", "and is the Worktree button")
 	local remove: any = findKey(cardOf(b), "remove", "item")
-	eq(remove.p.tone, "error", "Remove is red")
+	eq(remove.p.tone, nil, "Remove wears no colour: its confirm guards it")
 	eq(remove.p.icon, "trash", "with a trash can")
 	eq(remove.p.hint, nil, "and no key")
 	pressCard(b, "open")
@@ -563,9 +563,9 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	s.git.dirty[target] = " M src/a.lua\n"
 	ask()
 	same(chipsOf(b), { "Not at PR head", "Uncommitted changes" }, "behind its PR and modified")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "both are warnings")
-	eq(findKey(cardOf(b), "changes", "badge").p.tone, "warning", "")
-	eq(cardOf(b).p.tone, "warning", "and so is the card")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "both are neutral: the text says what")
+	eq(findKey(cardOf(b), "changes", "badge").p.tone, "muted", "")
+	eq(cardOf(b).p.tone, nil, "and so is the card")
 	eq(findKey(cardOf(b), "update", "section").p.collapsed, true, "the update commands are folded away")
 	eq(commandsOf(b, "update"), "git -C " .. target .. " pull --ff-only", "and complete")
 	s.gh.meta["o/r#1"].sha = sha("b")
@@ -831,7 +831,7 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	local target = "/wt/plotroom-o_r-pr-1"
 	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
 	w.flush()
-	eq(badgeOf(b).tone, "success", "a clean worktree starts as a success")
+	eq(badgeOf(b).tone, nil, "a clean worktree starts uncoloured, not failed")
 	s.git.dirty[target] = " M src/a.lua\n"
 	local before = snapshot(s.git)
 	local mark = #s.git.log
@@ -853,8 +853,8 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	yes(cardOf(b) ~= nil, "the card stays")
 	has(cardText(b), "Not removed. It has uncommitted changes; commit, stash or remove it yourself.", "and says why")
 	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "with what git found")
-	eq(cardOf(b).p.tone, "warning", "so it is a warning now")
-	eq(badgeOf(b).tone, "warning", "and so is the row's badge")
+	eq(cardOf(b).p.tone, nil, "neutral: the badges say it")
+	eq(badgeOf(b).tone, nil, "and so is the row's badge")
 	eq(w.toasts[#w.toasts].level, "error", "the refusal is toasted too")
 	eq(w.toasts[#w.toasts].text, "Worktree not removed", "")
 	eq(w.toasts[#w.toasts].sub, "It has uncommitted changes; commit, stash or remove it yourself.", "with the same reason")
@@ -947,8 +947,8 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(countLog(s.git, "worktree add"), 0, "nothing was made")
 	w.advance(300)
 	same(chipsOf(b), { "Up to date", "Clean" }, "the selected PR's changes are read once the cursor has rested on it")
-	eq(badgeOf(b).tone, "success", "and the row follows")
-	eq(cardOf(b).p.tone, "success", "and the card")
+	eq(badgeOf(b).tone, nil, "and the row follows, uncoloured")
+	eq(cardOf(b).p.tone, nil, "and the card")
 	eq(countLog(s.git, "status"), 1, "by one status")
 	eq(countLog(s.git, "worktree list"), 1, "the status read lists nothing again, nor does the preview")
 	eq(#w.toasts, 0, "nothing was said")
@@ -1026,8 +1026,8 @@ case("host: the card says Up to date or Not at PR head by the head the last refr
 	head(sha("c"))
 	refreshNow(w, b)
 	same(chipsOf(b), { "Not at PR head", "Changes unchecked" }, "the PR moved on: the worktree is behind it")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "a warning")
-	eq(badgeOf(b).tone, "warning", "as is the row's badge")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "neutral: the text says it")
+	eq(badgeOf(b).tone, nil, "as is the row's badge")
 	eq(findKey(cardOf(b), "sync", "badge").p.title, "Reused · Different (local bbbbbbb, PR head ccccccc on branch-1; not updated) · Changes unchecked", "the tooltip says how")
 	eq(commandsOf(b, "update"), "git -C " .. path .. " pull --ff-only", "and the command to catch up is one pull: the branch tracks the PR's head branch")
 	local ran = #w.calls
@@ -1062,7 +1062,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(1)
 	eq(countLog(s.git, "status"), 1, "then the selected PR's worktree is read")
 	same(chipsOf(b), { "Up to date", "Clean" }, "and its card says what git found")
-	eq(badgeOf(b, 1).tone, "success", "its row too")
+	eq(badgeOf(b, 1).tone, nil, "its row too, uncoloured")
 	eq(badgeOf(b, 2).tone, nil, "the others are not read: their badges have no tone yet")
 	eq(badgeOf(b, 3).tone, nil, "")
 	showPr(b, 2)
@@ -1078,7 +1078,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(1)
 	eq(countLog(s.git, "status"), 2, "...on a worktree reads it")
 	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "its card shows the changes")
-	eq(badgeOf(b, 2).tone, "warning", "and its row")
+	eq(badgeOf(b, 2).tone, nil, "and its row stays uncoloured")
 	showPr(b, 4)
 	w.advance(1000)
 	eq(countLog(s.git, "status"), 2, "an item with no worktree has nothing to read")
@@ -1096,7 +1096,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(300)
 	eq(countLog(s.git, "status", mark), 1, "it reads the selected worktree again once the cursor rests")
 	same(chipsOf(b), { "Up to date", "Clean" }, "and shows what changed")
-	eq(badgeOf(b, 2).tone, "success", "in its row too")
+	eq(badgeOf(b, 2).tone, nil, "in its row too")
 end)
 
 case("host: a scan that began before a worktree attempt or a removal ended cannot undo it", function(w: World)
@@ -1312,18 +1312,17 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(#w.window.agents, 1, "the agent starts")
-	eq(toneAtStart, "success", "after the block showed its worktree")
-	eq(cardOf(b).p.tone, "success", "the card now says the worktree is ready")
+	eq(toneAtStart, nil, "after the block showed its worktree (uncoloured, not failed)")
+	eq(cardOf(b).p.tone, nil, "the card now says the worktree is ready, no longer failed")
 	lacks(cardText(b), "permission denied", "the failure is gone")
 	has(cardText(b), s.target, "and the card shows where the worktree is")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "feature", "and the worktree's branch")
 	s.gh.meta["o/r#5"].sha = sha("c")
 	s.git.served["refs/pull/5/head"] = sha("c")
 	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	eq(badgeOf(b).tone, "warning", "a reused worktree behind its pull request is flagged")
 	eq(commandsOf(b, "update"), "git -C /wt/plotroom-o_r-pr-5 pull --ff-only", "with the command that brings it up to date")
 	w.cx.agents.start = function(_self: any, _opts: any): number
 		error("no agent program", 0)
@@ -1661,7 +1660,7 @@ case("host: an issue row names its number, the repository only when the view spa
 	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
 	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
-	eq(badges(2), "Closed/muted Completed/accent", "a completed issue")
+	eq(badges(2), "Closed/muted Completed/success", "a completed issue")
 	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
 	eq(badges(4), "Closed/muted Duplicate/muted", "a duplicate")
 	eq(badges(5), "Closed/muted", "and a closed one with no reason: the stage says it once")
@@ -1725,9 +1724,9 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 		table.insert(linked, item.p.label .. " | " .. item.p.value .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title)
 	end
 	same(linked, {
-		"Fix the login redirect | #45 | merge | success | #45 · Open",
+		"Fix the login redirect | #45 | merge | muted | #45 · Open",
 		"A first try | #44 | merge | muted | #44 · Draft",
-		"An older fix | #43 | merge | accent | #43 · Merged",
+		"An older fix | #43 | merge | success | #43 · Merged",
 	}, "each linked pull request: its title, its number at the right, the icon toned by its state, which the tooltip names")
 	eq(findKey(preview, "linked-head1"), nil, "pull requests have no relation heading")
 	has(b.text(), "12-fix-login", "the branch is on screen")
@@ -1845,16 +1844,107 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the one thing that blocks it")
-	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with its base", "conflicts outrank the rest")
-	eq(detailText(rows.no_2fr_236), "#6 · Checks failing", "failing checks, with no ratio")
+	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the first chip's who or what")
+	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with main", "conflicts name the base branch")
+	eq(detailText(rows.no_2fr_236), "#6", "failing checks the search listed none of: no detail")
 	eq(rows.no_2fr_235.badges[1].title, nil, "the Blocked badge does not say it again")
+	eq(rows.no_2fr_235.badges[2].text, "Resolve conflicts", "its chip names the job")
+	eq(rows.no_2fr_236.badges[2].text, "Fix checks", "a failing rollup with no failing check listed has no ratio")
 	eq(detailText(rows.no_2fr_239), "#9", "a review still required blocks nothing: no review text")
 	eq(detailText(rows.no_2fr_238), "#8", "nor do running checks")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
 	eq(factOf(b, "Stage"), "Blocked", "the preview's status part leads with the stage")
-	eq(factOf(b, "Blocked by"), "Changes requested", "and says what blocks it")
+	eq(factOf(b, "Blocked by"), "Address changes — Changes requested", "and says what blocks it: the job, then who or what")
 	eq(findKey(pickerNode(b), "about").c[1].p.key, "branch", "the facts start with the branch: the stage is not repeated there")
+end)
+
+case("host stage: a Blocked pull request shows one chip per reason, most severe first, each naming its job; the first one's who or what follows its number; the preview lists every reason and the unresolved threads", function(w: World)
+	local s = hostScene(w, 0)
+	local done = "2026-01-01T00:00:00Z"
+	local checks = {
+		checkRun("build", "COMPLETED", "FAILURE", done, { id = "A" }),
+		checkRun("test", "COMPLETED", "SUCCESS", done, { id = "B" }),
+		checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "C" }),
+	}
+	s.gh.checks["o/r#1"] = checks
+	local runs = array(checks)
+	local latest = array({
+		{ login = "octo", state = "COMMENTED", at = h.iso(EPOCH - 60) }, -- the author's own review never names who asked
+		{ login = "maria-k", state = "CHANGES_REQUESTED", at = h.iso(EPOCH - 4 * 3600) },
+		{ login = "devon", state = "COMMENTED", at = h.iso(EPOCH - 2 * 3600) },
+	})
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED", unresolved = 2, latest = latest, checks = "FAILURE", mergeable = "CONFLICTING", merge = "DIRTY", runs = runs, runTotal = 3 }),
+		searchItem(2, "o/r", EPOCH - 120, { review = "REVIEW_REQUIRED", unresolved = 1, latest = latest, merge = "BLOCKED", checks = "SUCCESS" }),
+		searchItem(3, "o/r", EPOCH - 180, { review = "APPROVED", unresolved = 3, mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }),
+		searchItem(4, "o/r", EPOCH - 240, { review = "REVIEW_REQUIRED", unresolved = 0, merge = "BLOCKED", checks = "SUCCESS" }),
+	}
+	s.gh.about["o/r#1"] = {
+		mergeable = "CONFLICTING",
+		merge = "DIRTY",
+		threads = array({
+			{ path = "src/a.lua", line = 12, by = "maria-k", body = "Rename this\nand the caller too", url = "https://github.com/o/r/pull/1#discussion_r1" },
+			{ path = NULL, line = NULL, by = "devon", body = "", url = "https://github.com/o/r/pull/1#discussion_r2" },
+			{ path = "x", line = 1, by = "eve", body = "a page elsewhere", url = "https://evil.example/x" },
+		}),
+	}
+	local b = openQueue(w)
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	local function badges(id: string): { string }
+		local out: { string } = {}
+		for _, x in rows[id].badges do
+			table.insert(out, x.text .. "/" .. (x.tone or ""))
+		end
+		return out
+	end
+	same(badges("no_2fr_231"), {
+		"Blocked/error",
+		"Address changes/error",
+		"Reply · 2 unresolved/error",
+		"Fix checks · 1/3 failing/error",
+		"Resolve conflicts/error",
+	}, "every reason, most severe first, each as the job that clears it; the Blocked badge repeats none")
+	eq(rows.no_2fr_231.badges[1].title, nil, "nor does its tooltip")
+	eq(detailText(rows.no_2fr_231), "#1 · @maria-k asked 4h ago", "the first chip's detail in plain text: who asked for changes, when")
+	eq(type(rows.no_2fr_231.detail[2]), "string", "not coloured: the chips carry the colour")
+	eq(h.asks.hx.stage(b, "no_2fr_232"), "Blocked", "unresolved threads alone block a pull request not approved")
+	same(badges("no_2fr_232"), { "Blocked/error", "Reply · 1 unresolved/error", "New/accent" }, "as Reply")
+	eq(detailText(rows.no_2fr_232), "#2 · @devon commented 2h ago", "naming the newest reviewer who commented, never the author")
+	eq(h.asks.hx.stage(b, "no_2fr_233"), "Ready to merge", "an approved pull request's leftover threads block nothing")
+	eq(h.asks.hx.stage(b, "no_2fr_234"), "PR open", "nor do no threads")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	w.advance(300)
+	local preview = pickerNode(b)
+	local reasons: { string } = {}
+	for _, item in findKey(preview, "stage", "kv").p.items do
+		if item.k == "Blocked by" then
+			local parts: { string } = {}
+			for _, sp in item.v do
+				table.insert(parts, sp.t)
+			end
+			table.insert(reasons, table.concat(parts))
+		end
+	end
+	same(reasons, {
+		"Address changes — @maria-k asked 4h ago",
+		"Reply · 2 unresolved — @devon commented 2h ago",
+		"Fix checks · 1/3 failing — build failing",
+		"Resolve conflicts — Conflicts with main",
+	}, "the preview lists every reason: its job, then who or what")
+	local list: any = findKey(preview, "threads", "list")
+	yes(list ~= nil, "the unresolved threads are listed")
+	eq(#list.c, 2, "a thread whose link is not on github.com is left out")
+	local first = list.c[1].p
+	eq(first.label, "Rename this", "a thread shows its first line")
+	eq(first.detail[1].t, "@maria-k · src/a.lua:12", "who started it and where")
+	eq(first.href, "plotroom://github/check/1/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1%23discussion_r1", "and links to it")
+	eq(list.c[2].p.label, "(no text)", "an empty first comment says so")
+	eq(list.c[2].p.detail[1].t, "@devon", "a thread on no line names only who")
+	same(hx.miscued(b.view().layer), {}, "every chip and thread row has its look: the threads are links, the chips neither")
+	same(hx.offPalette(b.view().layer), {}, "and the chips wear only the needs-fixing colour")
 end)
 
 case("host stage: a pull request failing only ignored checks of its repository is not Blocked, stays out of Ready to merge, and its preview marks the check Ignored", function(w: World)
@@ -1998,10 +2088,17 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_231), "#1 · Checks failing", "one failing check is Likely flaky, the other is not: no mark on the row")
-	eq(detailText(rows.no_2fr_232), "#2 · Checks failing (likely flaky)", "every failing check is Likely flaky")
-	eq(detailText(rows.no_2fr_233), "#3 · Checks failing", "2 of 20 failures on the base branch is not enough")
-	eq(detailText(rows.no_2fr_234), "#4 · Checks failing (likely flaky)", "an earlier attempt passed on the same head")
+	local function chip(row: any): string
+		return row.badges[2].text
+	end
+	eq(detailText(rows.no_2fr_231), "#1 · build and 1 more failing", "one failing check is Likely flaky, the other is not: no mark on the row")
+	eq(chip(rows.no_2fr_231), "Fix checks · 2/2 failing", "its chip counts the failing checks of all")
+	eq(detailText(rows.no_2fr_232), "#2 · build failed 3 of the last 20 runs on main", "every failing check is Likely flaky: the detail says why")
+	eq(chip(rows.no_2fr_232), "Re-run · likely flaky", "and the chip's job is a re-run")
+	eq(detailText(rows.no_2fr_233), "#3 · lint failing", "2 of 20 failures on the base branch is not enough")
+	eq(chip(rows.no_2fr_233), "Fix checks · 1/1 failing", "so it is a fix")
+	eq(detailText(rows.no_2fr_234), "#4 · e2e passed earlier on this commit", "an earlier attempt passed on the same head")
+	eq(chip(rows.no_2fr_234), "Re-run · likely flaky", "a re-run too")
 	local function show(id: string): (any, any)
 		b.event({ ev = "select", id = "layer.queue", item = id })
 		w.advance(300)
@@ -2043,7 +2140,8 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_232), "#2 · Checks failing", "the new head's failure is not flaky")
+	eq(detailText(rows.no_2fr_232), "#2 · build failing", "the new head's failure is not flaky")
+	eq(chip(rows.no_2fr_232), "Fix checks · 1/1 failing", "its chip is a fix again")
 	move = show("no_2fr_232")
 	eq(move, "Watch", "so your PR goes to Watch")
 end)
@@ -2066,7 +2164,7 @@ case("host likely flaky: at most 10 pull requests are judged a refresh, each onc
 	s.gh.items.octocat = { failingPr(s, 13, "octo", sha("d"), { "build:13" }) }
 	s.gh.evidence["o/r#13"] = { head = sha("e"), files = array({}), runs = array({ attempt("CI", "build", "SUCCESS", "12"), attempt("CI", "build", "FAILURE", "13") }) }
 	refreshNow(w, b)
-	eq(detailText(pickerOf(b).items[1]), "#13 · Checks failing", "evidence read at another head marks nothing")
+	eq(detailText(pickerOf(b).items[1]), "#13 · build failing", "evidence read at another head marks nothing")
 	eq(#requestsOf(s.gh, "history"), 0, "and reads no base history")
 end)
 
@@ -2247,8 +2345,8 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	eq(countLog(s.git, "worktree add -b octocat/12-fix-login " .. target .. " " .. sha("b")), 1, "made once")
 	eq(w.opened[#w.opened], "plotroom://rpc/a1", "the window is told to read it")
 	yes(badgeOf(b) ~= nil, "a worktree puts a badge on the row")
-	eq(badgeOf(b).tone, "success", "a current, clean worktree is a success")
-	eq(cardOf(b).p.tone, "success", "and a card in the preview")
+	eq(badgeOf(b).tone, nil, "a current, clean worktree has no colour, so not failed")
+	eq(cardOf(b).p.tone, nil, "and a card in the preview, uncoloured")
 	has(cardText(b), target, "that says where it is")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "octocat/12-fix-login", "the card shows its branch")
 	same(chipsOf(b), { "Clean" }, "and one badge: an issue has no pull request head to be at")
@@ -2265,7 +2363,7 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	request(b, "a4", freshAsk("o/r", "12"))
 	w.flush()
 	eq(answerOf(b, "a4").summary, "Reused · octocat/12-fix-login at bbbbbbb · Modified (uncommitted changes kept)", "local changes are reported")
-	eq(badgeOf(b).tone, "warning", "and deserve a look")
+	eq(badgeOf(b).tone, nil, "and stay uncoloured: the card says them")
 	s.git.dirty[target] = nil
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.fs.denyMkdir["/wt"] = "mkdir denied"
@@ -2961,9 +3059,11 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	eq(findKey(findKey(preview, "head"), "open", "icon").p.role, "plotroom.link", "and its Open a link")
 	yes(findKey(preview, "less", "item") ~= nil and cardOf(b) ~= nil, "Show less and the worktree card are on screen")
 	same(hx.miscued(b.view().layer), {}, "the pull request preview: every click and link has its look, nothing else does")
+	same(hx.offPalette(b.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "the removal asks first")
 	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
+	same(hx.offPalette(confirmOf(b)), {}, "neither wears a colour")
 	b.press("escape")
 	eq(confirmOf(b), nil, "Escape keeps the worktree")
 	b.typeText("z")
@@ -2984,6 +3084,7 @@ case("host: everything clickable in an issue preview and the shortcut list is a 
 	w.advance(300)
 	eq(findKey(pickerNode(ib), "pr1", "item").p.role, "plotroom.link", "an issue's linked pull request is a link")
 	same(hx.miscued(ib.view().layer), {}, "the issue preview: every click and link has its look, nothing else does")
+	same(hx.offPalette(ib.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	ib.typeText("?")
 	yes(findKey(ib.view().layer, "help", "overlay") ~= nil, "the shortcut list is open")
 	same(hx.miscued(ib.view().layer), {}, "its Close is a button; its keycaps are neither")

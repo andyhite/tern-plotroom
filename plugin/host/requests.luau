@@ -1850,18 +1850,28 @@ function M.rpc(state: State, raw: any)
 	elseif q.op == "menu" then
 		menu(state, id, if type(q.only) == "string" then q.only else nil)
 	elseif q.op == "models" and type(q.prompt) == "string" and #q.prompt <= 80 then
-		-- Settings › Actions › Model's picker: omp's role aliases and models (settings.loadModels) and the action's saved
-		-- model: `current`, `listed` (what of the list it names; nil with `current`: omp no longer lists it).
-		local kind, pid = storage.kindAndId(q.prompt)
-		if not kind then
-			return
+		-- Settings › Actions › Model's picker (and General › Summary model's, as `summary:model`): omp's role aliases and
+		-- models (settings.loadModels) and the saved model: `current`, `listed` (what of the list it names; nil with
+		-- `current`: omp no longer lists it).
+		local current: string?
+		if q.prompt == "summary:model" then
+			local sp, sproblem = storage.readSummary()
+			if sproblem then
+				return reply(state, id, { problem = sproblem })
+			end
+			current = sp.model
+		else
+			local kind, pid = storage.kindAndId(q.prompt)
+			if not kind then
+				return
+			end
+			local store, why = loadPrompts(kind)
+			local p = if store then promptById(store, pid) else nil
+			if not p then
+				return reply(state, id, { problem = why or "That action no longer exists." })
+			end
+			current = p.model
 		end
-		local store, why = loadPrompts(kind)
-		local p = if store then promptById(store, pid) else nil
-		if not p then
-			return reply(state, id, { problem = why or "That action no longer exists." })
-		end
-		local current = p.model
 		local function answer()
 			local o = settings.omp
 			if o.failed or not o.models then
@@ -2120,6 +2130,8 @@ function M.paletteActions(state: State): { QueueAction }
 			end
 			add("agentgo", "Now")
 		end
+		labels["now-layout"] = if state.nowBoard then "Show Now as List" else "Show Now as Board"
+		add("now-layout", "Filter & Sort")
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
 		add("nownext", "Now")

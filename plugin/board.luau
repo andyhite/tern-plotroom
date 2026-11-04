@@ -659,12 +659,12 @@ end
 function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, title: string? } }
 	local out: { { text: string, tone: string, title: string? } } = {}
 	if openTab then
-		table.insert(out, { text = "In tab", tone = "accent", title = "A tab works in this worktree" })
+		table.insert(out, { text = "In tab", tone = "muted", title = "A tab works in this worktree" })
 	end
 	if row.dirty == true then
-		table.insert(out, { text = "Changes", tone = "warning", title = "Uncommitted changes" })
+		table.insert(out, { text = "Changes", tone = "muted", title = "Uncommitted changes" })
 	elseif row.dirty == false then
-		table.insert(out, { text = "Clean", tone = "success", title = nil })
+		table.insert(out, { text = "Clean", tone = "muted", title = nil })
 	elseif row.scannedAt and not row.missing then
 		table.insert(out, { text = "Unknown", tone = "muted", title = "Changes could not be read" })
 	end
@@ -672,7 +672,7 @@ function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, t
 		local c: string = row.candidate
 		table.insert(out, {
 			text = if c == "merged" then "Merged" else "Closed",
-			tone = "warning",
+			tone = if c == "merged" then "success" else "muted",
 			title = "Cleanup candidate: its pull request or issue is " .. c,
 		})
 	end
