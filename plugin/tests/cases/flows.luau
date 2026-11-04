@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -145,7 +145,7 @@ windowCase("window flows: an agent started from a block is linked in kv and the 
 	eq(w.window.agentStates[links[1].agent], "working", "to the agent block the start made")
 	local status = statusEvents(w)
 	eq(#status, 1, "the block was told at once")
-	same(status[1].map, { ["o/r#5"] = { state = "working", action = "Review", branch = "fix-5", title = "Fix the thing" } }, "the state of the key with what the link recorded")
+	same(status[1].map, { ["o/r#5"] = { state = "working", action = "Review", branch = "fix-5", title = "Fix the thing", since = tostring(links[1].started) } }, "the state of the key with what the link recorded, and since when it works")
 	eq(links[1].action, "Review", "the action's name is kept on the link")
 	eq(links[1].branch, "fix-5", "and the branch")
 	eq(links[1].title, "Fix the thing", "and the item's title")
@@ -161,6 +161,41 @@ windowCase("window flows: an agent started from a block is linked in kv and the 
 	same(statusEvents(w)[3].map, { ["o/r#5"] = { state = "exited" } }, "a closed agent pane is exited, with no texts")
 	w.advance(12000)
 	eq(#statusEvents(w), 3, "and then it is quiet")
+end)
+
+windowCase("window flows: a working agent is told since when its run works and, once its action has 5 finished runs, their median; a later turn only since it was seen working", function(w: World)
+	w.load("window")
+	local runs: { any } = {}
+	for i, d in { 60, 300, 120, 240 } do
+		table.insert(runs, { key = "o/r#" .. i, action = "Review", started = EPOCH - 5000, ended = EPOCH - 5000 + d, result = "done" })
+	end
+	table.insert(runs, { key = "o/r#9", action = "Watch", started = EPOCH - 5000, ended = EPOCH - 4000, result = "done" })
+	w.kv.put("runs", runs)
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local link: any = (w.kv.get("agent-links") :: any)[1]
+	local told: any = statusEvents(w)[1].map["o/r#5"]
+	eq(told.since, tostring(link.started), "since its run started")
+	eq(told.expected, nil, "4 runs of Review: nothing to expect")
+	w.advance(200 * 1000)
+	w.window.agentStates[link.agent] = "idle"
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local idle: any = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
+	same({ idle.state, idle.since or "-", idle.expected or "-" }, { "idle", "-", "-" }, "an idle agent has no clock")
+	w.window.agentStates[link.agent] = "working"
+	local before = w.seconds()
+	w.advance(4000)
+	local again = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
+	yes(tonumber(again.since) :: number >= before, "a later turn works since it was first seen working, not since its run started")
+	eq(again.expected, nil, "and expects nothing: the run log times first turns")
+	w.window.panes[link.agent] = nil
+	w.advance(4000)
+	startAgentOn(w, st)
+	local second: any = (w.kv.get("agent-links") :: any)[1]
+	yes(second.agent ~= link.agent, "a second agent started")
+	local fifth = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
+	same({ fifth.since, fifth.expected }, { tostring(second.started), "200" }, "the first run made 5: the median of 60, 120, 200, 240 and 300 seconds")
 end)
 
 windowCase("window status: agents needing input are counted in the one need-you count on every pane, toast once, and the mismatch warning stays", function(w: World)
@@ -1140,6 +1175,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 			{ id = "pr-approve", group = "GitHub - PR" },
 			{ id = "pr-request-changes", group = "GitHub - PR" },
 			{ id = "pr-update-branch", group = "GitHub - PR" },
+			{ id = "pr-empty-commit", group = "GitHub - PR" },
 			{ id = "comment", group = "GitHub - PR" },
 			{ id = "draft-pr", group = "GitHub - Issue" },
 			{ id = "open-url" },
@@ -1150,7 +1186,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		},
 	}
 	listed = palette(nil, every)
-	same(listed, { "Type a prompt…", "Review", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Re-run failed checks", "Draft PR…", "Open item by URL…", "Copy usage report", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
+	same(listed, { "Type a prompt…", "Review", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Push empty commit…", "Re-run failed checks", "Draft PR…", "Open item by URL…", "Copy usage report", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
 	palette("Mark seen", issue)
 	same(last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
 	palette("Assign to me", issue)
@@ -1271,7 +1307,7 @@ windowCase("window flows: Mark read… asks the host to plan Now's threads and c
 	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
 end)
 
-windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch plans; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
+windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch and Push empty commit plan; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local function lastAsk(): any
@@ -1321,6 +1357,12 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	eq(lastAsk().name, "pr-update-branch", "Update branch asks for its plan")
 	st.reply("act", { token = "t-update", confirm = { head = "Update the branch of o/r#7?", label = "Update branch", lines = lines } })
 	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Update branch", "o/r#7: Fix login", "Account: @octocat" }, "Update branch is Cancel first")
+	w.window.typed = nil
+	w.command("pr-empty-commit")
+	w.flush()
+	eq(lastAsk().name, "pr-empty-commit", "Push empty commit asks for its plan")
+	st.reply("act", { token = "t-empty", confirm = { head = "Push an empty commit to o/r#7?", label = "Push empty commit", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Push empty commit", "o/r#7: Fix login", "Account: @octocat" }, "Push empty commit is Cancel first")
 	for _, op in st.ops() do
 		yes(op ~= "commit", "Cancel committed nothing")
 	end
@@ -2539,13 +2581,13 @@ case("host agents: the palette on the Agents list offers Go to agent, the views,
 	pickScope(b, "agents")
 	w.flush()
 	local p = hx.palette(w, b)
-	local expected: { string } = { "agentgo", "agentint", "agentstop", "agentmsg" }
+	local expected: { string } = { "agentgo", "agentint", "agentstop", "agentmsg", "nownext" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expected, "scope:" .. scope.id)
 	end
 	table.insert(expected, "settings")
 	table.insert(expected, "help")
-	same(p.ids, expected, "Go to agent and the agent commands, then every scope, Settings and help")
+	same(p.ids, expected, "Go to agent and the agent commands, Next in Now, then every scope, Settings and help")
 	eq(p.groups.agentgo, "Agents", "Go to agent is the Agents group")
 	eq(p.groups.agentstop, "Agents", "so are the agent commands")
 	for _, id in { "snooze", "snoozed", "sort", "search", "refresh", "seen" } do
@@ -3131,16 +3173,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working|||||||||||||||;o/r#2=idle|||||||||||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working|||||||||||||||||;o/r#2=idle|||||||||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input|||||||||||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input|||||||||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
 	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet", stop = "3 failed checks" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks;", "the recorded texts are part of it")
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks||;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -3636,6 +3678,75 @@ case("host agents: the Agents list shows the last message, delivery error and la
 	same(b.state().agentInfo["o/r#1"], {}, "texts that are not clean strings are dropped")
 end)
 
+case("host agents: a working agent shows its clock, and its estimated bar once its action expects a duration, in the Agents list, its preview and the item's preview, drawn again once a second", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local now = w.seconds()
+	-- The bar's cells as "filled/all": the accent span is how far along the run probably is.
+	local function bar(spans: { any }): string
+		local filled, all = 0, 0
+		for _, s in spans do
+			if type(s) == "table" and string.find(s.t, "━", 1, true) then
+				local n = utf8.len(s.t) :: number
+				all += n
+				filled += if s.s == "accent" then n else 0
+			end
+		end
+		return filled .. "/" .. all
+	end
+	local function fact(key: string): { any }?
+		for _, part in { "stage", "agent" } do
+			local facts: any = findKey(pickerNode(b), part, "kv")
+			for _, item in if facts then facts.p.items else {} do
+				if item.k == key then
+					return item.v
+				end
+			end
+		end
+		return nil
+	end
+	asks.hx.agents(b, {
+		["o/r#1"] = { state = "working", action = "Review", title = "Fix one", since = tostring(now - 67), expected = "100" },
+		["o/r#2"] = { state = "working", action = "Watch", title = "Fix two", since = tostring(now - 5) },
+		["o/r#3"] = { state = "idle", action = "Fix", title = "Fix three", since = tostring(now - 5), expected = "100" },
+	})
+	has(h.factOf(b, "Working") :: string, "1:07", "the item's preview shows the clock")
+	eq(bar(fact("Working") :: any), "7/10", "and the bar at 1 - e^(-2.3 * 67 / 100), 79%")
+	b.typeText("j")
+	eq(h.factOf(b, "Working"), "0:05", "an action with too few runs to expect a duration: the clock alone")
+	b.typeText("j")
+	eq(h.factOf(b, "Working"), nil, "an idle agent: no clock")
+	pickScope(b, "agents")
+	w.flush()
+	local rows: { string } = {}
+	for _, item in pickerOf(b).items do
+		table.insert(rows, detailText(item) .. " " .. bar(item.detail))
+	end
+	same(rows, { "━━━━━━━━━━ 1:07 · Review 7/10", "0:05 · Watch 0/0", "Fix 0/0" }, "the Agents rows lead with the bar and clock of a working agent")
+	has(h.factOf(b, "Working") :: string, "1:07", "and so does its preview")
+	local drawn = b.renders()
+	w.advance(1000)
+	eq(b.renders(), drawn + 1, "a second later the view is drawn again")
+	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 1:08", "with the clock moved on")
+	w.advance(3000)
+	eq(b.renders(), drawn + 4, "once a second")
+	b.press("down")
+	eq(b.renders(), drawn + 5, "a key press draws it once")
+	w.advance(1000)
+	eq(b.renders(), drawn + 6, "and adds no redraw of its own")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = tostring(w.seconds() - 100), expected = "100" } })
+	eq(bar(fact("Working") :: any), "8/10", "at the expected duration the bar is at 90%")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = tostring(now - 100000), expected = "100" } })
+	eq(bar(fact("Working") :: any), "9/10", "and it is never full before the run ends")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = "soon", expected = "-5" } })
+	eq(h.factOf(b, "Working"), nil, "a start that is not digits is dropped")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Review" } })
+	w.advance(1000)
+	drawn = b.renders()
+	w.advance(5000)
+	eq(b.renders(), drawn, "no working agent shown: nothing is drawn again")
+end)
+
 case("host agents: a run's checked outcome shows on its row, the preview and the Agents list; Not verified or a stuck report is Needs you while the agent is idle", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
@@ -3677,6 +3788,28 @@ case("host agents: a run's checked outcome shows on its row, the preview and the
 	has(table.concat(out, "|"), "PR opened: Verified", "and so does its preview")
 	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", outcome = "pr", verdict = "maybe" } })
 	same(badges("go_2fr_231"), { "Idle" }, "a verdict that is none of the three shows nothing")
+end)
+
+case("usage: medians expect a duration only of an action with 5 timed runs, the middle one or the mean of the middle two", function(w: World)
+	local usage: any = w.load("usage")
+	local runs: { any } = {}
+	local function add(action: string, d: number?, started: number?)
+		table.insert(runs, { key = "o/r#1", action = action, started = started or (if d then EPOCH else nil), ended = EPOCH + (d or 0), result = "done" })
+	end
+	for _, d in { 50, 10, 60, 30, 20, 40 } do
+		add("Six", d)
+	end
+	for _, d in { 10, 20, 30, 40 } do
+		add("Four", d)
+	end
+	add("Four", nil) -- an old run with no start is not timed
+	add("Four", 5, EPOCH + 10) -- nor one that ended before it started
+	for _, d in { 1, 2, 3, 4, 5 } do
+		add("", d)
+	end
+	same(usage.medians(runs), { Six = 35 }, "6 runs: the mean of the middle two; 4 timed runs and an unnamed action expect nothing")
+	add("Four", 90)
+	same(usage.medians(runs), { Six = 35, Four = 30 }, "a fifth timed run: its middle one")
 end)
 
 case("host outcome: the block answers an outcome check with GitHub's verdict, and a malformed one is Unchecked without asking", function(w: World)
