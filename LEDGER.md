@@ -96,7 +96,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | --- | --- | --- | --- | --- | --- |
 | Merge… (including auto-merge); Approve…; Request changes…; Update branch… | Commands | Keep | — | Approved | The core of landing |
 | Push empty commit… (a new head through GitHub's git database API, no checkout, so checks run again; open PR not behind and without conflicts, never a fork's branch) | Commands | New | — | Approved | tern-plotroom#bcd7, adopted from tern-pr-guide; Update branch… covers a branch behind its base |
-| Review block: a Draft review on its diff beside the agent that proposed it; keep, edit or drop each comment, pick the verdict, Send to agent | Block beside the agent | New | 6 | Approved | From tern-pr-guide's review page; PRODUCT.md › Principles 5 |
+| Review block: a Draft review on its diff beside the agent that proposed it; keep, edit or drop each comment, pick the verdict, Send to agent | Block beside the agent | New | 6 | Approved | From tern-pr-guide's review page; PRODUCT.md › Principles 5. tern-plotroom#hf2x: the second block (`review`, title Draft review), opened at a turn end on a newer Draft review file (rpc `review`), Copy when the agent is gone |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |

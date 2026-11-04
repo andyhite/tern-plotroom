@@ -1427,7 +1427,10 @@ function M.reviewSend(cx: WindowCx, pane: number)
 		cx.agents:ask(agent, o.text)
 	end)
 	if not sent then
-		return answer("gone", "The agent could not take the message: " .. tostring(err))
+		-- Tern's error, without the Luau prefix and traceback: "agent already has a pending prompt".
+		local why = string.gsub(string.match(tostring(err), "^[^\n]*") or "", "^runtime error: ", "")
+		why = string.gsub(why, "%s*stack traceback:.*$", "")
+		return answer("gone", "The agent could not take the message: " .. why .. ".")
 	end
 	answer("sent")
 	cx:toast("success", "Sent your Draft review to the agent of " .. link.key)

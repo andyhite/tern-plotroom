@@ -418,11 +418,8 @@ local function cardNode(state: State, i: number, card: Card): Node
 		}),
 	}
 	if card.excerpt then
-		local d = ui.diff(card.excerpt, c.path)
-		local props: { [string]: any } = d.p or {}
-		props.key = "diff"
-		d.p = props
-		table.insert(kids, d)
+		-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
+		table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
 	end
 	if selected and state.editing then
 		table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
@@ -492,21 +489,23 @@ local function view(state: State): BlockView
 		}))
 	end
 	table.insert(main, ui.node("card", { key = "summary", tone = if state.at == 0 then "accent" else nil }, summary))
-	-- The comments, grouped by file, then those not on a changed line.
-	local section: { Node }? = nil
-	local sectionPath: string? = nil
+	-- The comments, grouped by file, then those not on a changed line. A node takes its children when it is made, so
+	-- each section's cards are collected first.
+	local files: { { key: string, path: string, cards: { Node } } } = {}
 	local off: { Node } = {}
 	for i, card in state.cards do
 		if not card.excerpt and not state.loading and not state.diffProblem then
 			table.insert(off, cardNode(state, i, card))
 		else
-			if sectionPath ~= card.c.path then
-				section = {}
-				sectionPath = card.c.path
-				table.insert(main, ui.node("section", { key = "f" .. i, head = { ui.span(card.c.path, "mono") } }, section :: { Node }))
+			local f = files[#files]
+			if not f or f.path ~= card.c.path then
+				table.insert(files, { key = "f" .. i, path = card.c.path, cards = {} })
 			end
-			table.insert(section :: { Node }, cardNode(state, i, card))
+			table.insert(files[#files].cards, cardNode(state, i, card))
 		end
+	end
+	for _, f in files do
+		table.insert(main, ui.node("section", { key = f.key, head = { ui.span(f.path, "mono") } }, f.cards))
 	end
 	if #off > 0 then
 		table.insert(off, 1, textNode("why", "GitHub refuses a comment outside the pull request's diff, so these cannot be kept.", "muted"))
@@ -606,6 +605,10 @@ function M.define()
 					return true
 				end
 				local m = modelAt(state)
+				if name == "enter" and not m.multi then
+					state.editing = false
+					return true
+				end
 				return input.key(m, key, function(s: string)
 					state.cx:copy(s)
 				end)

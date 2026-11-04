@@ -117,10 +117,11 @@ case("review: the block shows the Draft review on its diff, comments grouped by 
 	local main = b.view().main
 	eq(findKey(main, "run", "text").p.text, "r1", "the run is published for the window")
 	same(cardIds(b), { "c1", "c4", "c2", "c3" }, "grouped by file in the order the proposal names them, the comment off the diff last")
-	local d = findKey(findKey(main, "c1", "card"), "diff", "diff")
+	local d = findKey(findKey(main, "c1", "card"), "diff", "col").c[1]
+	eq(d.k, "diff", "Tern's diff node")
 	eq(d.p.text, "--- a/src/a.lua\n+++ b/src/a.lua\n@@ -1,4 +1,5 @@\n local x = 1\n-local y = 2\n+local y = 3\n+local z = 4\n return x\n -- end\n", "the card's diff is Tern's diff node of the rows around its line")
 	eq(d.p.path, "src/a.lua", "highlighted as its file")
-	yes(findKey(findKey(main, "c2", "card"), "diff", "diff"), "a LEFT comment on a removed line is on the diff too")
+	yes(findKey(findKey(main, "c2", "card"), "diff", "col"), "a LEFT comment on a removed line is on the diff too")
 	local f1 = findKey(main, "f1", "section")
 	same({ f1.p.head[1].t, findKey(f1, "c1", "card") ~= nil, findKey(f1, "c2", "card") ~= nil, findKey(f1, "c3", "card") } :: { any }, { "src/a.lua", true, true, nil } :: { any }, "src/a.lua's section holds c1 and c4")
 	local off = findKey(main, "off", "section")
