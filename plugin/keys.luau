@@ -34,6 +34,10 @@ M.ACTIONS = {
 	{ id = "help", label = "Shortcut list", default = "", preset = "?" },
 } :: { Action }
 
+-- The built-in shortcuts a saved action's own key beats while that action is offered for the selected item: it was
+-- that key's first. Every other built-in key wins over a saved action's.
+M.YIELDS = { agentgo = true, seen = true, snooze = true, snoozed = true, sort = true, more = true, next = true, nownext = true }
+
 local function actionOf(id: string): Action?
 	for _, a in M.ACTIONS do
 		if a.id == id then
