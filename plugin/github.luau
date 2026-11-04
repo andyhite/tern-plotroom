@@ -53,7 +53,7 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
-export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked } }
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string } }
 
 local GH_TIMEOUT_MS = 30 * 1000
 local CAP = 1000
@@ -1030,7 +1030,8 @@ function M.issues(
 	end)
 end
 
-local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
+-- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau).
+local ABOUT_FIELDS = "mergeable mergeStateStatus body headRefOid files(first: 100) { nodes { path } } latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
@@ -1040,7 +1041,7 @@ local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { 
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
 local CHECK_PAGES = 3
 
 local function login(v: any): string?
@@ -1087,7 +1088,15 @@ function M.about(raw: any): About
 			table.insert(closing, { ref = tostring(num), title = title, url = url, state = if field(n, "state") == "CLOSED" then "closed" else "open" })
 		end
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing }
+	-- The head commit and changed paths only feed the failing checks' log excerpts: malformed ones are left out.
+	local head = if type(t.head) == "string" and string.match(t.head, "^%x+$") and #t.head <= 64 then string.lower(t.head) else nil
+	local files: { string } = {}
+	for _, p in (if type(t.files) == "table" then t.files else {}) :: { any } do
+		if type(p) == "string" and p ~= "" and #p <= 400 then
+			table.insert(files, p)
+		end
+	end
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -1676,6 +1685,33 @@ end
 function M.runIdOf(url: any): string?
 	local id = if type(url) == "string" then string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)/") or string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/(%d+)$") else nil
 	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
+end
+
+-- The Actions job id in a check's link (`.../actions/runs/<run>/job/<job>`); nil when the link names none.
+function M.jobIdOf(url: any): string?
+	local id = if type(url) == "string" then string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/%d+/job/(%d+)") else nil
+	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
+end
+
+local LOG_MS = 60 * 1000
+
+-- The failed steps' log of workflow run `runId` of `repo` (only job `jobId`'s when given), as
+-- `gh run view --log-failed` prints it; done(stdout, problem). Ids are validated digit strings.
+function M.failedLog(repo: string, runId: string, jobId: string?, account: string?, done: (string?, Problem?) -> ())
+	local target = repoArg(repo)
+	if not target or not string.match(runId, "^%d+$") or (jobId and not string.match(jobId, "^%d+$")) then
+		return later(function()
+			done(nil, bad("Unexpected workflow run."))
+		end)
+	end
+	local args = { "run", "view", runId, "--repo", target, "--log-failed" }
+	if jobId then
+		table.insert(args, "--job")
+		table.insert(args, jobId)
+	end
+	M.gh(args, function(out, problem)
+		done(out, problem)
+	end, account, LOG_MS)
 end
 
 -- ---------------------------------------------------------------- confirmed item and run operations

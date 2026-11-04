@@ -5,6 +5,7 @@ local board = require("../board")
 local github = require("../github")
 local input = require("../input")
 local jira = require("../jira")
+local logs = require("../logs")
 local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
@@ -2037,6 +2038,108 @@ local function upToDate(state: State, key: string): boolean
 	return d ~= nil and d.round == state.round
 end
 
+local LOG_CHECKS = 5 -- failing checks whose logs one head commit reads
+local LOG_RETRY_S = 300 -- a log that could not be read is read again after this
+local LOG_KEEP = 64 -- logs kept per block: past it the cache starts over
+-- ponytail: the cache starts over when full rather than evicting the oldest; an LRU if blocks watch many failing PRs.
+
+-- The key of check `r`'s log at head commit `head`; nil for a check that is not a GitHub Actions run.
+local function logKey(head: string, r: github.Run): string?
+	return if r.runId and r.url then head .. "\0" .. r.url else nil
+end
+
+-- The log of check `r` at `head` as last read; nil while it is unread, or failed long enough ago to read again.
+function M.ciLog(state: State, head: string, r: github.Run): core.CiLog?
+	local key = logKey(head, r)
+	local log = if key then state.ciLogs[key] else nil
+	if log and log.problem and os.time() - log.at >= LOG_RETRY_S then
+		return nil
+	end
+	return log
+end
+
+-- Reads check `r`'s failed log (`gh run view <run> --log-failed --job <job>`), cuts it (logs.parse), finds the lines of
+-- `files` it names and keeps that as its CiLog; a read already running for it is waited on, not repeated.
+local function readLog(state: State, repo: string, r: github.Run, key: string, files: { string }, done: (core.CiLog) -> ())
+	local waiting = state.ciBusy[key]
+	if waiting then
+		table.insert(waiting, done)
+		return
+	end
+	state.ciBusy[key] = { done }
+	github.failedLog(repo, r.runId or "", github.jobIdOf(r.url), M.login(state), function(out, problem)
+		local log: core.CiLog = { refs = {}, at = os.time() }
+		local lines: { string } = {}
+		local parts: { logs.Excerpt } = if out then logs.parse(out) else {}
+		for _, ex in parts do
+			if #parts > 1 then
+				table.insert(lines, "== " .. ex.job .. " ==")
+			end
+			log.first = log.first or ex.first
+			table.move(ex.lines, 1, #ex.lines, #lines + 1, lines)
+		end
+		if #lines > 0 then
+			log.lines, log.refs = lines, logs.refs(lines, files)
+		else
+			local why = if problem then problem.message elseif out then "gh printed no failed step" else "gh printed nothing"
+			log.problem = clip(printable((string.gsub(string.match(why, "^[^\n]*") or why, "[%.%s]+$", ""))), 200)
+		end
+		local count = 0
+		for _ in state.ciLogs do
+			count += 1
+		end
+		if count >= LOG_KEEP then
+			state.ciLogs = {}
+		end
+		state.ciLogs[key] = log
+		local waiters: { (core.CiLog) -> () } = state.ciBusy[key] or {}
+		state.ciBusy[key] = nil
+		for _, w in waiters do
+			w(log)
+		end
+	end)
+end
+
+-- The checks of `runs` failing at `head` (at most LOG_CHECKS), each with its excerpt and the changed-file lines it names,
+-- or why it has none; done(failures, read) once every log not read yet for this head is in (`read`: some were read,
+-- so done ran later). Only an Actions check has a log Plotroom reads.
+function M.failures(state: State, repo: string, head: string, runs: { github.Run }, files: { string }, done: ({ logs.Failure }, boolean) -> ())
+	local list: { logs.Failure } = {}
+	local pending = 0
+	local function fill(f: logs.Failure, log: core.CiLog)
+		if log.lines then
+			f.lines, f.refs = log.lines, log.refs
+		else
+			f.problem = "Its log could not be read: " .. (log.problem or "") .. "."
+		end
+	end
+	for _, r in runs do
+		if r.status == "failure" and #list < LOG_CHECKS then
+			local f: logs.Failure = { name = r.name, url = r.url }
+			table.insert(list, f)
+			local key = logKey(head, r)
+			local log = M.ciLog(state, head, r)
+			if not key then
+				f.problem = "Not a GitHub Actions check: Plotroom read no log."
+			elseif log then
+				fill(f, log)
+			else
+				pending += 1
+				readLog(state, repo, r, key, files, function(l)
+					fill(f, l)
+					pending -= 1
+					if pending == 0 then
+						done(list, true)
+					end
+				end)
+			end
+		end
+	end
+	if pending == 0 then
+		done(list, false)
+	end
+end
+
 loadDetails = function(state: State, key: string)
 	local item = M.selected(state)
 	if not item or M.detailKey(state, item) ~= key or upToDate(state, key) or state.detailBusy[key] then
@@ -2109,6 +2212,14 @@ loadDetails = function(state: State, key: string)
 			return land(problem, nil, "The checks could not be read.")
 		end
 		local loaded: core.Detail = { runs = runs, total = total, round = round, about = about }
+		-- The failing checks' logs for the preview: read once per check and head commit, so a refresh reads none again.
+		if about and about.head then
+			M.failures(state, pr.repo, about.head, runs, about.files, function(_, read)
+				if read and M.alive(state) then
+					state.cx:render()
+				end
+			end)
+		end
 		-- The issue Plotroom noted for the worktree on this head branch, as the last worktree scan knew it (a checkout
 		-- not scanned yet shows none; the next refresh's scan fills it). Two on one branch: the first noted wins.
 		local checkout = storage.checkoutOf(pr.repo)

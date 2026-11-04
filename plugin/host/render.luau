@@ -465,6 +465,27 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		end
 		table.insert(out, ui.node("list", { key = "runs" }, groups.runs))
 	end
+	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
+	-- engine.failures). No log viewer: the check's row above opens its page.
+	local sha = if d and d.about then d.about.head else nil
+	for i, r in runs do
+		local log = if r.status == "failure" and sha then engine.ciLog(state, sha, r) else nil
+		if log and log.lines then
+			local line = log.first or "No error line: its last lines are kept"
+			local text = table.concat(log.lines, "\n")
+			local fence = "```"
+			while string.find(text, fence, 1, true) do
+				fence ..= "`"
+			end
+			local body = { ui.node("md", { key = "log", text = fence .. "text\n" .. text .. "\n" .. fence }) }
+			if #log.refs > 0 then
+				table.insert(body, 1, ui.node("text", { key = "refs", spans = { ui.span("Changed files it names: ", "muted"), ui.span(table.concat(log.refs, ", "), "code") } }))
+			end
+			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") }, collapsible = true, collapsed = true }, body))
+		elseif log and log.problem then
+			table.insert(out, ui.node("text", { key = "fail" .. i, spans = { ui.span(r.name .. ": log not read: " .. log.problem, "muted") } }))
+		end
+	end
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
 	end
