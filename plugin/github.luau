@@ -1886,6 +1886,53 @@ function M.updatePrBranch(repo: string, number: number, account: string?, done: 
 	end, done)
 end
 
+local MOVED = "The branch moved; refresh and try again."
+
+-- Gives the open pull request's branch a new head so its checks run again, with no checkout: through GitHub's git
+-- database API it reads head commit `sha`'s tree, creates a commit with that tree and `sha` as its only parent, then
+-- moves the branch to it with force=false. A head other than `sha`, or a ref update that is no fast forward, is MOVED.
+-- Only a branch of `repo` itself: a fork's branch is not in `repo`'s git database.
+function M.emptyCommit(repo: string, number: number, branch: string, sha: string, account: string?, done: (Problem?) -> ())
+	local planned = if type(sha) == "string" and #sha == 40 and string.match(sha, "^%x+$") then string.lower(sha) else nil
+	if not repoArg(repo) or not whole32(number) or not planned then
+		return later(function()
+			done(bad("Unexpected empty commit request."))
+		end)
+	end
+	local base = "repos/" .. repo .. "/git/"
+	M.pr(repo, number, account, function(meta, problem)
+		if not meta then
+			return done(problem)
+		elseif meta.state ~= "open" then
+			return done(bad("Pull request #" .. number .. " is not open."))
+		elseif meta.fork or string.lower(meta.base) ~= string.lower(repo) then
+			return done(bad("Pull request #" .. number .. "'s branch is in a fork; nothing was pushed."))
+		elseif meta.ref ~= branch or meta.sha ~= planned then
+			return done(bad(MOVED))
+		end
+		M.gh({ "api", "--hostname", "github.com", base .. "commits/" .. planned, "--jq", ".tree.sha" }, function(tree, p1)
+			tree = if tree then string.match(tree, "^%s*(%x+)%s*$") else nil
+			if not tree or #tree ~= 40 then
+				return done(p1 or { kind = "failed", message = "gh printed an unexpected commit." })
+			end
+			local make = { "api", "--hostname", "github.com", "--method", "POST", base .. "commits", "-f", "message=Empty commit to re-run checks", "-f", "tree=" .. tree, "-f", "parents[]=" .. planned, "--jq", ".sha" }
+			M.gh(make, function(made, p2)
+				made = if made then string.match(made, "^%s*(%x+)%s*$") else nil
+				if not made or #made ~= 40 then
+					return done(p2 or { kind = "failed", message = "gh printed an unexpected commit." })
+				end
+				local move = { "api", "--hostname", "github.com", "--method", "PATCH", base .. "refs/heads/" .. branch, "-f", "sha=" .. made, "-F", "force=false" }
+				M.gh(move, function(_, p3)
+					if p3 and string.find(string.lower(p3.message), "fast forward", 1, true) then
+						return done(bad(MOVED))
+					end
+					done(p3)
+				end, account)
+			end, account)
+		end, account)
+	end)
+end
+
 -- Adds `text` (M.commentText) to an existing issue or pull request of `repo`, any state.
 function M.comment(repo: string, number: number, text: string, account: string?, done: (Problem?) -> ())
 	local body = M.commentText(text)
