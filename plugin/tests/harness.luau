@@ -500,6 +500,15 @@ local function tspOf(node: any, id: string): any
 	return out
 end
 
+-- `omp models --json` as newWorld answers it: two providers, their models interleaved as no catalog promises not to,
+-- and an image model that Settings leaves out (only chat models run agents).
+M.OMP_MODELS = '{"models":['
+	.. '{"provider":"anthropic","kind":"chat","id":"claude-opus-4-5","selector":"anthropic/claude-opus-4-5","thinking":["low","high"]},'
+	.. '{"provider":"openai","kind":"chat","id":"gpt-5.2","selector":"openai/gpt-5.2"},'
+	.. '{"provider":"anthropic","kind":"chat","id":"claude-haiku-4-5","selector":"anthropic/claude-haiku-4-5"},'
+	.. '{"provider":"openai","kind":"image","id":"gpt-image-1","selector":"openai/gpt-image-1"}'
+	.. "]}\n"
+
 -- The host token of the latest world: what `M.tokened` appends, as host/core's `withToken` does.
 local linkToken = ""
 
@@ -521,13 +530,21 @@ local function newWorld(instantiate: Loader, context: string): World
 	local calls: { Call } = {}
 	-- gh, acli and omp start unless a model of them says otherwise (newGh, newAcli answer first): a block asks gh and acli
 	-- for their --version before it lists any view (the Get started checklist asks omp's), and once acli starts, whether
-	-- the Jira site has sprints (it has). Without a Jira model acli is signed out, so Now's Jira read (every refresh)
+	-- the Jira site has sprints (it has). Settings › Actions asks omp for its models (two providers) and its configured
+	-- roles (`slow` and a `review` of its own).
+	-- Without a Jira model acli is signed out, so Now's Jira read (every refresh)
 	-- fails quietly into Now's problems.
 	local responders: { Responder } = {
 		function(call: Call): Reply?
 			local argv = call.argv
 			if (argv[1] == "gh" or argv[1] == "acli" or argv[1] == "omp") and argv[2] == "--version" and #argv == 2 then
 				return { stdout = argv[1] .. " version 1.0.0\n" }
+			end
+			if argv[1] == "omp" and argv[2] == "models" and argv[3] == "--json" then
+				return { stdout = M.OMP_MODELS }
+			end
+			if argv[1] == "omp" and argv[2] == "config" and argv[3] == "get" and argv[4] == "modelRoles" then
+				return { stdout = '{"key":"modelRoles","value":{"default":"anthropic/claude-opus-4-5","slow":"anthropic/claude-opus-4-5:max","review":"openai/gpt-5.2:high"},"type":"record"}\n' }
 			end
 			if argv[1] == "acli" and argv[4] == "search" and argv[#argv] == "--count" then
 				return { stdout = "✓ Number of work items in the search: 0\n" }

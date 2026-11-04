@@ -1932,7 +1932,18 @@ def sc_outcome(s: Smoke) -> None:
     s.wait_text("Review's form has an Outcome row", "Outcome")
     s.wait_text("reading its default", "Review posted")
     s.wait_text("and a Checked by row", "Checked by")
+    s.wait_text("an Effort row", "Effort")
+    s.wait_text("on omp's default", "omp's default")
+    s.wait_text("and Model names Review's model", "@slow")
     s.shot("action-outcome")
+    # Model's button (Edit focused Name; Down twice is Model, Enter presses it): the window asks the block's host for
+    # omp's list (real omp) and shows Tern's picker.
+    s.ctl_ok("key", "Down")
+    s.ctl_ok("key", "Down")
+    s.ctl_ok("key", "Enter")
+    s.wait_text("the model picker, listing omp's roles", "@smol")
+    s.shot("action-model-picker")
+    s.ctl_ok("picker", "esc")
     s.ctl_ok("key", "Escape")
 
 
