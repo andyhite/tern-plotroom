@@ -53,7 +53,8 @@ M.TRACKERS = TRACKERS
 -- as (none: gh's active account; with several, the view is one sidebar scope under each login, running as it),
 -- `group` how the list is grouped ("none" or a GROUPS value) and `prompts` the ids of the prompts offered under it, in
 -- its kind's prompt store (none: every prompt).
-export type View = { id: string, kind: string, name: string, integration: string, query: string, logins: { string }, group: string, prompts: { string }, sort: string? }
+-- `layout` "board": shown as a Board (engine.lanesShown); nil: as the List.
+export type View = { id: string, kind: string, name: string, integration: string, query: string, logins: { string }, group: string, prompts: { string }, sort: string?, layout: string? }
 export type Views = { version: number, nextId: number, items: { View } }
 -- An agent prompt from Settings › Actions; the views list which of them they offer. `key` runs it on the selected
 -- item from the queue. `worktree` (nil means true) says where it runs: in the item's worktree, or in the repository's
@@ -212,13 +213,12 @@ export type Now = {
 	cost: number,
 	rows: { any }?,
 	rowsKey: string?,
-	cols: { any }?, -- the Board's columns (engine.nowColumns) of `colsOf`, the rows they were built from
-	colsOf: { any }?,
 }
 
 -- Which reasons and accounts feed Now (Settings › Views › Now, kv "now"): the reasons switched off (NOW_REASONS ids),
--- the gh logins switched off (lowercase), Jira's switch, and whether review requests of your teams count.
-export type NowPrefs = { off: { [string]: boolean }, logins: { [string]: boolean }, jira: boolean, teams: boolean }
+-- the gh logins switched off (lowercase), Jira's switch, whether review requests of your teams count, and whether Now
+-- is laid out as a Board.
+export type NowPrefs = { off: { [string]: boolean }, logins: { [string]: boolean }, jira: boolean, teams: boolean, board: boolean }
 
 -- Now's reasons in Now's order, as Settings › Views › Now switches them.
 M.NOW_REASONS = {
@@ -288,8 +288,8 @@ export type State = {
 	showSnoozed: boolean, -- snoozed items are listed (marked) instead of hidden
 	nowOn: boolean, -- Now is shown instead of a view
 	nowAt: string?, -- the picker id of the Now row previewed
-	nowBoard: boolean, -- Now is laid out as a Board (engine.nowBoardShown says whether the pane is wide enough to)
-	nowFold: boolean, -- the Board's fold (Not started, Worktree) is open
+	lanesFold: boolean, -- a Board's fold (Not started, Worktree, Merged or closed) is open
+	lanes: { of: { any }, seq: number, rows: { any }, cols: { any } }?, -- a Board's rows and columns (engine.laneColumns), made from `of` (Now's rows or a view's visible items) at noteSeq `seq`
 	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)

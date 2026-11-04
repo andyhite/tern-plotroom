@@ -3014,7 +3014,7 @@ case("host: a collapsed view is one summary row; Edit expands its form, another'
 	for _, r in sectionOf("vopen:prs:v1").rows do
 		table.insert(form, r.id)
 	end
-	same(form, { "vopen:prs:v1", "delete:prs:v1", "name:prs:v1", "vkind:prs:v1", "query:prs:v1", "vgroup:prs:v1", "vsort:prs:v1", "vprompts:prs:v1" }, "Done on top, then Delete, which the sheet draws beside Done")
+	same(form, { "vopen:prs:v1", "delete:prs:v1", "name:prs:v1", "vkind:prs:v1", "query:prs:v1", "vgroup:prs:v1", "vsort:prs:v1", "vlayout:prs:v1", "vprompts:prs:v1" }, "Done on top, then Delete, which the sheet draws beside Done")
 	eq(sectionOf("vopen:prs:v1").id, "form:prs:v1", "the group's first view, open, takes over the group's card")
 	eq(sectionOf("vopen:prs:v1").title, "GitHub - octocat", "title and all")
 	eq(sectionOf("vopen:prs:v2").id, "after:prs:v1", "the group's later views go on in a section after the form")

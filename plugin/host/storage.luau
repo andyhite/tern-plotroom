@@ -70,6 +70,7 @@ local function validViews(kind: Kind, v: any): Views?
 			or (f.login ~= nil and (type(f.login) ~= "string" or not string.match(f.login, "^[%w%-_]+$")))
 			or type(f.group) ~= "string"
 			or (f.sort ~= nil and type(f.sort) ~= "string")
+			or (f.layout ~= nil and type(f.layout) ~= "string")
 			or not isTable(f.prompts)
 		then
 			return nil
@@ -96,7 +97,9 @@ local function validViews(kind: Kind, v: any): Views?
 		end
 		-- A sort this version does not know (a newer one saved it) is dropped: the view keeps the default order.
 		local sort: string? = if f.sort ~= nil and sorting.valid(kind.id, f.integration, f.sort) then f.sort else nil
-		table.insert(items, { id = kind.id .. ":" .. f.id, kind = kind.id, name = f.name, integration = f.integration, query = f.query, logins = logins, group = f.group, prompts = prompts, sort = sort })
+		-- Likewise a layout: an older store has none, and a view without one is a List.
+		local layout: string? = if f.layout == "board" then "board" else nil
+		table.insert(items, { id = kind.id .. ":" .. f.id, kind = kind.id, name = f.name, integration = f.integration, query = f.query, logins = logins, group = f.group, prompts = prompts, sort = sort, layout = layout })
 	end
 	return { version = 1, nextId = v.nextId, items = items }
 end
@@ -116,7 +119,7 @@ end
 function M.writeViews(kind: Kind, store: Views): string?
 	local items: { any } = {}
 	for _, v in store.items do
-		table.insert(items, { id = string.sub(v.id, #kind.id + 2), name = v.name, integration = v.integration, query = v.query, logins = tern.json.array(v.logins), group = v.group, prompts = tern.json.array(v.prompts), sort = v.sort })
+		table.insert(items, { id = string.sub(v.id, #kind.id + 2), name = v.name, integration = v.integration, query = v.query, logins = tern.json.array(v.logins), group = v.group, prompts = tern.json.array(v.prompts), sort = v.sort, layout = v.layout })
 	end
 	return kvSet(kind.viewsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 end
@@ -627,11 +630,11 @@ function formats.prDir(repo: string, n: number, title: string, snap: { [string]:
 	return tracker.render(formats.of("prdir", snap), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
 end
 
--- Now's switches as saved (kv "now": { off = {reason...}, logins = {off...}, jira = bool, teams = bool }), and why they
--- could not be read. An absent store, and one that cannot be read or is malformed, gives the defaults (every reason,
--- login and Jira on, team review requests off); editNow never writes over the last two.
+-- Now's switches as saved (kv "now": { off = {reason...}, logins = {off...}, jira = bool, teams = bool, board = bool }),
+-- and why they could not be read. An absent store, and one that cannot be read or is malformed, gives the defaults
+-- (every reason, login and Jira on, team review requests off, the List); editNow never writes over the last two.
 function M.readNow(): (core.NowPrefs, string?)
-	local prefs: core.NowPrefs = { off = {}, logins = {}, jira = true, teams = false }
+	local prefs: core.NowPrefs = { off = {}, logins = {}, jira = true, teams = false, board = false }
 	local ok, v = pcall(tern.kv.get, "now")
 	if not ok then
 		return prefs, "Now's saved switches could not be read: " .. tostring(v)
@@ -654,10 +657,10 @@ function M.readNow(): (core.NowPrefs, string?)
 		return true
 	end
 	local off, logins = {}, {}
-	if not isTable(v) or (v.jira ~= nil and type(v.jira) ~= "boolean") or (v.teams ~= nil and type(v.teams) ~= "boolean") or not list(v.off, off) or not list(v.logins, logins) then
+	if not isTable(v) or (v.jira ~= nil and type(v.jira) ~= "boolean") or (v.teams ~= nil and type(v.teams) ~= "boolean") or (v.board ~= nil and type(v.board) ~= "boolean") or not list(v.off, off) or not list(v.logins, logins) then
 		return prefs, "Now's saved switches are malformed; not overwriting them."
 	end
-	return { off = off, logins = logins, jira = v.jira ~= false, teams = v.teams == true }, nil
+	return { off = off, logins = logins, jira = v.jira ~= false, teams = v.teams == true, board = v.board == true }, nil
 end
 
 -- Rereads Now's switches, lets `fn` change them and saves them; an error message or nil. A store that cannot be read
@@ -678,7 +681,7 @@ function M.editNow(fn: (core.NowPrefs) -> ()): string?
 		table.sort(out)
 		return tern.json.array(out)
 	end
-	local werr = kvSet("now", { off = keys(prefs.off), logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams })
+	local werr = kvSet("now", { off = keys(prefs.off), logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams, board = prefs.board })
 	return if werr then "Could not save: " .. werr else nil
 end
 

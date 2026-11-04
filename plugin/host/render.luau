@@ -1673,36 +1673,62 @@ local function nowProps(state: State, props: { [string]: any })
 	props.columns, props.query, props.cursor = {}, nil, nil
 end
 
--- Now as a Board (engine.nowColumns): a row of columns, each a heading and a native list of its rows as items, the
--- fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps its
--- height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
-local function nowBoardNode(state: State, bar: boolean?): Node
-	local cols = engine.nowColumns(state)
-	local at = engine.nowBoardAt(state)
-	local open = state.nowFold or (at > 0 and cols[at].fold == true)
+-- A Board (engine.laneColumns, Now's or a view's): a row of columns, each a heading and a native list of its rows as
+-- items, the fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps
+-- its height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
+local function boardNode(state: State, bar: boolean?): Node
+	local cols = engine.laneColumns(state)
+	local at = engine.laneAt(state)
+	local chosen = engine.laneSelected(state)
+	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
 	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
 	-- 6px, about three quarters of a cell row, under the picker's head, the column headings, the fold's button and,
 	-- with `bar`, the key footer (32px, about two cell rows).
 	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.75))
+	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
+	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
+	-- lists them all).
+	local function card(row: any): Node
+		local badge: { text: string, tone: string, title: string? }? = nil
+		local snoozed = row.snoozed
+		if state.nowOn then
+			local why = nowWhy(row)
+			badge = why
+			if row.rank == 2 and row.item and row.kind then
+				local _, blockers = engine.stage(state, row.kind, row.item)
+				local first = if blockers then blockers[1] else nil
+				if first then
+					badge = { text = first.chip, tone = "error", title = why.title }
+				end
+			end
+		else
+			local _, blockers = engine.stage(state, row.kind, row.item)
+			local st = engine.status(state, row.kind, row.item)
+			snoozed = st and st.snoozed
+			local chips: { string } = {}
+			if blockers then
+				for _, b in blockers do
+					table.insert(chips, b.chip)
+				end
+			end
+			badge = if #chips > 0 then { text = chips[1], tone = "error", title = table.concat(chips, " · ") }
+				elseif st and st.fresh == "new" then { text = "New", tone = "accent", title = "Not marked seen yet" }
+				elseif st and st.fresh == "changed" then { text = "Changed", tone = "accent", title = "Changed since you marked it seen" }
+				else nil
+		end
+		local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
+		local detail: { any } = { ui.span(ref, "mono") }
+		if snoozed then
+			table.insert(detail, ui.span(" · Snoozed", "muted"))
+		end
+		return ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = if badge then { ui.span(badge.text, badge.tone) } else nil, title = if badge then badge.title else nil })
+	end
 	local function column(group: string, col: any): Node
 		local cards: { Node } = {}
 		local selected: string? = nil
 		for _, row in col.rows do
-			local badge = nowWhy(row)
-			-- A Blocked card has room for one value: its most severe chip (the tooltip lists them all).
-			local first: engine.Blocker? = nil
-			if row.rank == 2 and row.item and row.kind then
-				local _, blockers = engine.stage(state, row.kind, row.item)
-				first = if blockers then blockers[1] else nil
-			end
-			local value = if first then ui.span(first.chip, "error") else ui.span(badge.text, badge.tone)
-			local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
-			local detail: { any } = { ui.span(ref, "mono") }
-			if row.snoozed then
-				table.insert(detail, ui.span(" · Snoozed", "muted"))
-			end
-			table.insert(cards, ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = { value }, title = badge.title }))
-			if row.id == state.nowAt then
+			table.insert(cards, card(row))
+			if row.id == chosen then
 				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
 			end
 		end
@@ -1725,7 +1751,7 @@ local function nowBoardNode(state: State, bar: boolean?): Node
 	local kids: { Node } = {
 		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
 		buttonRow("foldbar", {
-			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "now-fold" } }),
+			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "lanes-fold" } }),
 		}),
 	}
 	if open then
@@ -1966,19 +1992,21 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		cancelDetails(state)
 		preview = agentsPreview(state)
 		agentsProps(state, props)
-	elseif state.nowOn then
+	elseif state.nowOn and not (engine.lanesShown(state) and #engine.nowRows(state) > 0) then
 		cancelDetails(state)
 		nowProps(state, props)
-		if engine.nowBoardShown(state) and #engine.nowRows(state) > 0 then
-			-- The Board takes the picker's place: its list is emptied and hidden (plotroom.css), the Board drawn in the
-			-- preview pane, which then spans the picker.
-			laid = true
-			preview = { nowBoardNode(state, bar) }
-			props.role ..= ".board"
-			props.items, props.order, props.selected = tern.json.array({}), tern.json.array({}), nil
-		else
-			preview = nowPreview(state)
+		preview = nowPreview(state)
+	elseif engine.lanesShown(state) and (state.nowOn or (vis ~= nil and #vis.items > 0)) then
+		-- The Board takes the picker's place: its list is emptied and hidden (plotroom.css), the Board drawn in the
+		-- preview pane, which then spans the picker. The search field stays: the Board lays out what it lets through.
+		cancelDetails(state)
+		if state.nowOn then
+			nowProps(state, props)
 		end
+		laid = true
+		preview = { boardNode(state, bar) }
+		props.role ..= ".board"
+		props.items, props.order, props.selected, props.hits = tern.json.array({}), tern.json.array({}), nil, nil
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
 	end

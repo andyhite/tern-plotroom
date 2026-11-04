@@ -2619,6 +2619,31 @@ M.pickerOf = pickerOf
 local hx = {}
 M.hx = hx
 
+-- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
+-- nil, nil when the block shows no Board.
+function hx.board(b: Block): ({ string }?, string?)
+	local node = findKey(pickerNode(b), "board", "col")
+	if not node then
+		return nil, nil
+	end
+	local cols: { string } = {}
+	local selected: string? = nil
+	for _, group in node.c do
+		if group.p.key == "lanes" or group.p.key == "fold" then
+			for _, col in group.c do
+				local list = findKey(col, "list", "list")
+				local ids: { string } = {}
+				for _, card in list.c do
+					table.insert(ids, card.p.key)
+				end
+				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
+				selected = list.p.selected or selected
+			end
+		end
+	end
+	return cols, selected
+end
+
 -- The settings view's page props: the side sheet in the layer, after the queue's picker.
 local function prefsOf(b: Block): any
 	local view: any = b.view()

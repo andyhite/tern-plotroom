@@ -20,6 +20,7 @@ require("./cases/setup")
 require("./cases/preview")
 require("./cases/summary")
 require("./cases/failures")
+require("./cases/layout")
 
 type Loader = h.Loader
 
@@ -118,7 +119,7 @@ function M.bench(instantiate: Loader)
 	end)
 	-- Now as a Board over the same 1000 rows: drawn, moved in a column and across, and rebuilt (rows regrouped, as a
 	-- search keystroke on a view's Board would) each step.
-	b.event({ ev = "action", act = "queue", value = "now-layout" })
+	b.event({ ev = "action", act = "queue", value = "layout" })
 	w.flush()
 	if not findKey(pickerNode(b), "board", "col") then
 		error("the benchmark expected Now's Board", 0)
@@ -138,8 +139,28 @@ function M.bench(instantiate: Loader)
 	end)
 	local boardPayload = jsonEncode(b.view())
 	print(string.format("BENCH payload-board bytes=%d items=%d", #boardPayload, #b.state().now.rows))
-	b.event({ ev = "action", act = "queue", value = "now-layout" })
+	b.event({ ev = "action", act = "queue", value = "layout" })
 	b.event({ ev = "action", act = "queue", value = "scope:prs:v1" })
+	w.flush()
+	-- The view as a Board over its 1000 items: drawn, moved in a column, and regrouped (a search keystroke or refresh).
+	b.event({ ev = "action", act = "queue", value = "layout" })
+	w.flush()
+	if not findKey(pickerNode(b), "board", "col") then
+		error("the benchmark expected the view's Board", 0)
+	end
+	timed("view-board-render", 20, function(_i: number)
+		b.render()
+	end)
+	timed("view-board-down", 20, function(_i: number)
+		b.press("down")
+	end)
+	timed("view-board-rebuild", 20, function(_i: number)
+		b.state().rev += 1
+		b.state().vis = nil
+		b.render()
+	end)
+	print(string.format("BENCH payload-view-board bytes=%d items=%d", #jsonEncode(b.view()), #b.state().snap.items))
+	b.event({ ev = "action", act = "queue", value = "layout" })
 	w.flush()
 	-- A scan builds what each of the 1000 items' worktree is known by: formats and Jira map are read once, not per item.
 	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
