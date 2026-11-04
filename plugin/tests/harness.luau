@@ -1657,7 +1657,7 @@ export type Gh = {
 	pulls: { [string]: { [string]: any } }, -- PR URL -> the item `resource(url:)` finds there; any other URL finds none
 	issueDetail: { [string]: { [string]: any } }, -- "owner/repo#N" -> the detail ISSUE_DETAIL_JQ prints
 	total: { [string]: number }, -- login -> issueCount when it differs from #items
-	meta: { [string]: { base: string, sha: string, ref: string, headRepo: string?, headOwner: string?, state: string, baseRef: string?, title: string?, author: string? } }, -- "owner/repo#N" -> pulls/N as PR_JQ prints it; no headRepo: the head's repository was deleted
+	meta: { [string]: { base: string, sha: string, ref: string, headRepo: string?, headOwner: string?, state: string, baseRef: string?, title: string?, author: string?, conflicts: boolean? } }, -- "owner/repo#N" -> pulls/N as PR_JQ prints it; no headRepo: the head's repository was deleted
 	checks: { [string]: { any } }, -- "owner/repo#N" -> check nodes of its latest commit
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints

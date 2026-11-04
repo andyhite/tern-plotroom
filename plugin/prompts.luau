@@ -564,6 +564,54 @@ function M.criteriaBlock(text: string?): string
 	return "<criteria>\nAcceptance criteria Plotroom saved when this work was dispatched; no agent can change them.\n\n" .. body .. "\n</criteria>"
 end
 
+-- What Plotroom's merge of the base did before the agent started (worktree.Merge as the host answers it), for the end of
+-- its prompt. File names come from the repository: control characters and backticks are dropped.
+function M.mergeBlock(m: any): string
+	local function name(v: any): string
+		return (string.gsub(tostring(v), "[%c`]", ""))
+	end
+	local function list(v: any): { string }
+		local out: { string } = {}
+		for _, f in if type(v) == "table" then v else {} do
+			if type(f) == "string" then
+				table.insert(out, "`" .. name(f) .. "`")
+			end
+		end
+		return out
+	end
+	local base = "`" .. name(m.base) .. "`"
+	local regenerated = list(m.regenerated)
+	local lines = { "<merge>" }
+	local made = if #regenerated > 0 then " Lockfiles taken from the base and regenerated: " .. table.concat(regenerated, ", ") .. "." else ""
+	if m.committed == true then
+		table.insert(lines, "Plotroom merged " .. base .. " into this branch before you started and committed the merge; it is not pushed." .. made)
+		table.insert(lines, "GitHub reports conflicts until it is pushed: build and run the tests, then push it (fast-forward) in your first pass. Do not rebase onto " .. base .. ".")
+	else
+		table.insert(lines, "Plotroom started merging " .. base .. " into this branch before you started; the merge is in progress, so the tree is not clean on purpose." .. made)
+		local why: { [string]: string } = {}
+		for _, f in if type(m.failed) == "table" then m.failed else {} do
+			if type(f) == "table" and type(f.file) == "string" and type(f.why) == "string" then
+				why[f.file] = name(f.why)
+			end
+		end
+		local remaining = if type(m.remaining) == "table" then m.remaining else {}
+		if #remaining > 0 then
+			table.insert(lines, "Still conflicted; resolve each preserving both sides' intent:")
+			for _, f in remaining do
+				if type(f) == "string" then
+					table.insert(lines, "- `" .. name(f) .. "`" .. (if why[f] then " (Plotroom's lockfile tool failed: " .. why[f] .. ")" else ""))
+				end
+			end
+		end
+		if type(m.problem) == "string" then
+			table.insert(lines, "Committing the merge failed: " .. name(m.problem))
+		end
+		table.insert(lines, "Then `git commit --no-edit` to finish the merge, build and run the tests, and push it (fast-forward). Do not rebase onto " .. base .. "; a resolution needs a behavioral judgment you can't verify → `git merge --abort`, escalate.")
+	end
+	table.insert(lines, "</merge>")
+	return table.concat(lines, "\n")
+end
+
 -- The `{findings}` block: what a fix round must fix, one finding per line (a failed check's findings, or that the last
 -- run named no new commit). `text` nil: this run is no fix round. The findings cannot close the block.
 function M.findingsBlock(text: string?): string
