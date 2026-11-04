@@ -111,7 +111,7 @@ end
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
-local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,headRepo:.head.repo.full_name,headOwner:.head.user.login,state:.state,baseRef:.base.ref,title:.title,author:.user.login}"
+local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,headRepo:.head.repo.full_name,headOwner:.head.user.login,state:.state,baseRef:.base.ref,title:.title,author:.user.login,conflicts:(.mergeable_state == \"dirty\")}"
 local MERGE: { [string]: string } =
 	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
 local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
@@ -1255,8 +1255,9 @@ end
 
 -- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read. `fork` is the
 -- owner of the repository the head branch lives in when that is not `base` (a fork), and `forkRepo` that repository
--- ("owner/name"; nil when it was deleted).
-export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string, fork: string?, forkRepo: string? }
+-- ("owner/name"; nil when it was deleted). `conflicts`: GitHub reports the PR conflicts with its base (false while it
+-- has not computed it).
+export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string, fork: string?, forkRepo: string?, conflicts: boolean }
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
@@ -1301,6 +1302,7 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 			author = text(data.author),
 			fork = if fork ~= "" then fork else nil,
 			forkRepo = forkRepo,
+			conflicts = data.conflicts == true,
 		}, nil, cx)
 	end, account)
 end
