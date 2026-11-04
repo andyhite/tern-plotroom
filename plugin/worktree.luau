@@ -619,8 +619,9 @@ function M.worktreesDir(done: (string?, string?, WindowCx?) -> ())
 	end)
 end
 
--- `s` as one shell word on a single line, for the commands shown to the user (Plotroom never runs them): bare when
--- plain, else single-quoted, else ANSI-C quoted (bash, zsh) when it holds control characters such as a newline.
+-- `s` as one shell word on a single line, for the commands shown to the user and the agent command line the window
+-- starts: bare when plain, else single-quoted, else ANSI-C quoted (bash, zsh) when it holds control characters such
+-- as a newline.
 local function shellWord(s: string): string
 	if string.match(s, "^[%w%-_%./%+=:,@%%]+$") then
 		return s
@@ -633,6 +634,7 @@ local function shellWord(s: string): string
 	end
 	return "'" .. string.gsub(s, "'", "'\\''") .. "'"
 end
+M.shellWord = shellWord
 
 local function short(sha: string): string
 	return string.sub(sha, 1, 7)

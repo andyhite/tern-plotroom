@@ -147,6 +147,18 @@ with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
 sys.exit(2)
 '''
 
+# Fake omp: the agent program the window starts instead of omp under PLOTROOM_SELFTEST (PLOTROOM_SMOKE_OMP; Tern starts agents with the user's login
+# PATH, so a fake on smoke's PATH is never the `omp` they run). It only records its argv and its PLOTROOM_RUN and PLOTROOM_DATA in agents.jsonl,
+# prints and sleeps: no model, no network. Header is prepended.
+FAKE_OMP = r'''
+import json, os, sys, time
+a = sys.argv[1:]
+with open(os.path.join(SMOKE, "agents.jsonl"), "a") as log:
+    log.write(json.dumps({"argv": a, "run": os.environ.get("PLOTROOM_RUN"), "data": os.environ.get("PLOTROOM_DATA")}) + "\n")
+print("smoke agent: no model is called", flush=True)
+time.sleep(3600)
+'''
+
 # Fake acli, installed only by the last scenario (the ones before run without Jira): `--version`, a signed-in `auth status` on acme.atlassian.net, empty
 # searches and counts, an empty project list, and `workitem view <KEY>` from jira.json (none: Jira's not-found error). Header is prepended.
 FAKE_ACLI = r'''
@@ -225,7 +237,7 @@ class Smoke:
         (self.cwd / "goldens").mkdir(parents=True)
         shutil.copytree(PLUGIN, self.fixtures / "plotroom")
         header = "#!%s\nSMOKE = %r\nGIT = %r\n" % (sys.executable, str(self.smoke), git)
-        for path, body in ((tmp / "bin" / "gh", FAKE_GH), (tmp / "gitssh" / "ssh", FAKE_SSH)):
+        for path, body in ((tmp / "bin" / "gh", FAKE_GH), (tmp / "gitssh" / "ssh", FAKE_SSH), (tmp / "fake-omp", FAKE_OMP)):
             path.write_text(header + body, encoding="utf-8")
             path.chmod(0o755)
         paths = [str(tmp / "bin")] + SYSTEM_PATH
@@ -252,6 +264,7 @@ class Smoke:
             PLOTROOM_SELFTEST="1",
             PLOTROOM_SMOKE_DIR=str(self.smoke),
             OMP_WORKTREE_DIR=str(tmp / "omp-wt"),
+            PLOTROOM_SMOKE_OMP=str(tmp / "fake-omp"),
         )
         # A private HOME keeps the user's ~/.gitconfig out of fixtures too.
         self.genv = dict(base, **iso)
@@ -1661,19 +1674,16 @@ def sc_prompts(s: Smoke) -> None:
 
 
 def sc_agent(s: Smoke) -> None:
-    """An agent started from a pull request's row, with the agent setting pointed at a local script that only prints and sleeps (no omp, no model, no
-    network): the PR's worktree is made, the agent's pane starts in it and is linked to the PR, `agent-go` focuses exactly that pane, and asking again
-    offers the running agent first (Go to agent) before Start another; dismissing that offer starts nothing."""
+    """An agent started from a pull request's row, run by the fake omp (PLOTROOM_SMOKE_OMP; no model, no network): the PR's worktree is made, the agent's pane starts in it
+    as `omp -e <the installed plugin's omp/plotroom.ts>` with PLOTROOM_RUN (saved on its link) and PLOTROOM_DATA (the plugin's data directory) set,
+    and is linked to the PR, `agent-go` focuses exactly that pane, and asking again offers the running agent first (Go to agent) before Start
+    another; dismissing that offer starts nothing."""
     root, wt = s.checkout("agent"), s.wt("a/gent", 1)
-    fake = s.tmp / "fake-agent.sh"
-    fake.write_text("#!/bin/sh\necho 'smoke agent: no model is called'\nexec sleep 3600\n", encoding="utf-8")
-    fake.chmod(0o755)
     stamp = "2026-01-01T00:00:00Z"
     pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
           "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
           "labels": [], "runs": [], "runTotal": 0}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
-    s.ctl_ok("agent-command", str(fake))
     s.ctl_ok("tab", "new")  # a real shell: the focused pane before this one is an earlier scenario's Plotroom block
     s.ctl_ok("ready")
     queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
@@ -1695,6 +1705,17 @@ def sc_agent(s: Smoke) -> None:
         return os.path.realpath(str(s.state()["focused"].get("cwd") or "")) == os.path.realpath(str(wt))  # type: ignore[union-attr]
 
     s.wait_until("the agent's pane is focused in the worktree", agent_focused)
+    started = s.smoke / "agents.jsonl"
+    s.wait_until("the fake omp ran the agent", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
+    agent = json.loads(started.read_text(encoding="utf-8").splitlines()[-1])
+    s.eq("omp loads only Plotroom's extension (a typed prompt has no model)", 2, len(agent["argv"]))
+    s.eq("its -e names the installed plugin's extension, which is there", (True, True), (agent["argv"][1].endswith("/omp/plotroom.ts"), os.path.isfile(agent["argv"][1])))
+    s.eq("PLOTROOM_RUN is a run id: %r" % agent["run"], True, re.match(r"^\d+-[0-9a-f]{6}$", agent["run"] or "") is not None)
+    stores = [p for p in s.tmp.rglob("kv.json") if "agent-links" in p.read_text(encoding="utf-8")]
+    s.eq("one Plotroom kv.json with agent links: %r" % stores, 1, len(stores))
+    s.eq("PLOTROOM_DATA is the plugin's data directory (it holds kv.json)", os.path.realpath(str(stores[0].parent)), os.path.realpath(agent["data"] or ""))
+    links = json.loads(stores[0].read_text(encoding="utf-8"))["agent-links"]
+    s.eq("the agent's link names its run", agent["run"], next(l.get("run") for l in links if l["key"] == "a/gent#1"))
     tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
 
     def back_to_queue() -> None:
@@ -1825,7 +1846,7 @@ def sc_agent(s: Smoke) -> None:
 def sc_placement(s: Smoke) -> None:
     """Five agents started Beside the queue in the 2200x1000 window, through the action picker and the duplicate offer: no start opens a tab, the queue
     keeps the width of its first split (within one cell) and every agent's pane is at least 270x470 px. The one pull request action, saved straight into
-    the plugin's kv.json, opens beside the queue with no model, so the agent setting's fake agent (sc_agent's) runs it: no omp, no model, no network.
+    the plugin's kv.json, opens beside the queue with no model, so the fake omp (sc_agent's) runs it: no model, no network.
     The pull request actions are put back as they were afterwards."""
     stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
     s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
@@ -1890,7 +1911,7 @@ def placed(s: Smoke) -> None:
     time.sleep(1.0)  # let the last split settle
     s.shot("placement-5")
     shown = rects()
-    s.contains("the newest agent (focused) runs the fake agent, not omp", "fake-agent.sh", json.dumps(s.state()["focused"]))  # type: ignore[index]
+    s.contains("the newest agent (focused) runs Plotroom's command line (the fake omp, not the agent setting)", "PLOTROOM_RUN=", json.dumps(s.state()["focused"]))  # type: ignore[index]
     cols = next(p["cols"] for p in s.state()["panes"] if p["id"] == queue)  # type: ignore[union-attr]
     cell = shown[0][2] / max(1, cols)
     s.eq("the queue keeps its first split's width (%.0f px, one cell %.1f px): %r" % (first, cell, shown), True, abs(shown[0][2] - first) <= cell + 0.5)
