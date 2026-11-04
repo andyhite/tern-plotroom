@@ -294,7 +294,7 @@ You: @{github.user}
    - Verify each claim at HEAD.
    - Clear, valid, in scope, and no reviewer disagrees → minimal fix, tests when behavior changes, a commit referencing the feedback. Already addressed → note where, for the reply.
    - Ambiguous, intent-dependent, design-level, contested, incorrect, or out of scope → no code, no reply; escalate with your assessment.
-4. Checks, completed ones only. Read each failure's logs (`gh run view <run id> --log-failed`) and classify:
+4. Checks, completed ones only. Plotroom's Likely flaky marks when you started: {flaky}. A check marked there, still failing at that head, is flaky without re-checking `{base}`: `gh run rerun <run id> --failed` once per head SHA; fails again → classify it below. Read each other failure's logs (`gh run view <run id> --log-failed`) and classify:
    - Caused by the PR or your rebase → fix and commit.
    - Also failing on `{base}`'s latest run → escalate; never fix unrelated breakage.
    - Infra or flaky (runner errors, network, timeouts; unrelated to the diff; passes on `{base}`) → `gh run rerun <run id> --failed` once per head SHA; fails again → escalate.

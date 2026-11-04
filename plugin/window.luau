@@ -735,14 +735,16 @@ end
 local VAR = "{([%a%.]+)}"
 
 -- `{name}` variables a prompt may use, from the PR's coordinates and the host's fresh read of it; others stay as typed.
+-- `{flaky}` reads "none" from a host older than protocol 39, which does not send it.
 local function fill(prompt: string, owner: string, repo: string, n: number, a: any): string
 	local vars: { [string]: string } = {
 		url = "https://github.com/" .. owner .. "/" .. repo .. "/pull/" .. n,
 		owner = owner,
 		repo = repo,
 		number = tostring(n),
+		flaky = "none",
 	}
-	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings" } do
+	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings", "flaky" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end

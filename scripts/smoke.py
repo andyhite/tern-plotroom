@@ -66,7 +66,8 @@ SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
 # Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
 # answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
-# answers with the canned list in search.json (none: empty), a checks load with checks/<owner>__<name>__<n>.json (none: no checks), `auth status` with one
+# answers with the canned list in search.json (none: empty), a checks load with checks/<owner>__<name>__<n>.json (none: no checks), a Likely flaky
+# read with flaky.json and a workflow's base-branch runs with base-runs.json (none: nothing), `auth status` with one
 # signed-in login (the repository picker's list, warmed after a search), `auth token` for that login, and Now's notifications read
 # with notifications.json (none: no thread). Header is prepended.
 FAKE_GH = r'''
@@ -93,6 +94,11 @@ if a[:2] == ["api", "graphql"]:
             items = [i for i in items if str(i.get("number")) == pinned.group(1)]
         sys.stdout.write(json.dumps({"total": len(items), "next": None, "cost": 1, "items": items}))
         sys.exit(0)
+    if "checkType: ALL" in fields.get("query", ""):  # a pull request's Likely flaky evidence, "<owner>/<name>#<n>"; none: no files, no runs
+        f = os.path.join(SMOKE, "flaky.json")
+        canned = (json.load(open(f)) if os.path.exists(f) else {}).get("%s/%s#%s" % (fields["o"], fields.get("r"), fields.get("n")))
+        sys.stdout.write(json.dumps(canned or {"head": None, "files": [], "runs": []}))
+        sys.exit(0)
     if "o" in fields:
         if "first: 25" in fields.get("query", ""):  # the pull requests that close an issue (the --jq answer is a list): none
             sys.stdout.write("[]")
@@ -104,6 +110,12 @@ if a[:2] == ["api", "graphql"]:
         canned = (json.load(open(f)) if os.path.exists(f) else {}).get(key)
         sys.stdout.write(json.dumps(canned if canned is not None else {"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
+if a[:2] == ["run", "list"] and "--repo" in a:  # a workflow's last runs on a branch, "<owner>/<name>@<branch>@<workflow>"; none: no runs
+    opt = dict(x[2:].split("=", 1) for x in a if x.startswith("--") and "=" in x)
+    f = os.path.join(SMOKE, "base-runs.json")
+    key = "%s@%s@%s" % (a[a.index("--repo") + 1].replace("github.com/", "", 1), opt.get("branch"), opt.get("workflow"))
+    sys.stdout.write(json.dumps((json.load(open(f)) if os.path.exists(f) else {}).get(key, [])))
+    sys.exit(0)
 if a[:2] == ["pr", "list"] and any(x.startswith("--head=") for x in a):  # the pull request on an issue's worktree branch: none
     sys.stdout.write("[]")
     sys.exit(0)
@@ -1948,9 +1960,10 @@ def sc_now_settings(s: Smoke) -> None:
 
 
 def sc_controls(s: Smoke) -> None:
-    """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run previews its Next move, Re-run failed checks, as a
-    button (role plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is
-    clicked: the shot shows them."""
+    """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
+    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as a button (role
+    plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
+    the shot shows them."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -1960,10 +1973,17 @@ def sc_controls(s: Smoke) -> None:
     runs = [run("build", "FAILURE", "https://github.com/a/gent/actions/runs/123/job/9"), run("lint", "SUCCESS", None)]
     pr = {"number": 7, "title": "Controls PR 7", "url": "https://github.com/a/gent/pull/7", "author": "octo", "state": "OPEN", "isDraft": False,
           "updatedAt": stamp, "createdAt": stamp, "head": "feature-7", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
-          "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs)}
+          "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs), "headSha": "1" * 40}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
     about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": []}
     (s.smoke / "checks.json").write_text(json.dumps({"a/gent#7": {"total": len(runs), "next": None, "nodes": runs, "about": about}}), encoding="utf-8")
+    job = "https://github.com/a/gent/actions/runs/123/job/9"
+    (s.smoke / "flaky.json").write_text(json.dumps({"a/gent#7": {"head": "1" * 40, "files": ["src/app.py"], "runs": [
+        {"workflow": "CI", "name": "build", "conclusion": "FAILURE", "url": job, "paths": []},
+        {"workflow": "CI", "name": "lint", "conclusion": "SUCCESS", "url": None, "paths": []},
+    ]}}), encoding="utf-8")
+    base = [{"status": "completed", "conclusion": "failure" if i < 3 else "success"} for i in range(20)]
+    (s.smoke / "base-runs.json").write_text(json.dumps({"a/gent@main@CI": base}), encoding="utf-8")
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -1971,7 +1991,9 @@ def sc_controls(s: Smoke) -> None:
     s.leave_now()
     s.wait_text("the pull request", "Controls PR 7")
     s.wait_until("its native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
-    s.wait_text("the Next move of a failed run", "Re-run failed checks")
+    s.wait_text("the row says every failing check is Likely flaky", "Checks failing (likely flaky)")
+    s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
+    s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
     button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))

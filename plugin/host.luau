@@ -545,6 +545,8 @@ local function blockDef(): BlockDef<State>
 				detailBusy = {},
 				detailAttempt = nil,
 				round = 0,
+				flaky = {},
+				flakyBusy = {},
 				notes = {},
 				descOpen = nil,
 				removing = nil,

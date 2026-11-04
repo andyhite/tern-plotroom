@@ -117,6 +117,9 @@ end
 export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
+-- The Likely flaky marks of one PR's failing checks (engine.gatherFlaky): the head commit they were judged at, and per
+-- check link the check's name and why it is likely flaky. A check with no mark is not.
+export type Flaky = { sha: string, marks: { [string]: { name: string, reason: string } } }
 -- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
 export type Attempt = { key: string, timer: TimerHandle? }
 -- What the worktree card and the row's badge say of an item's worktree. Nothing is saved: git is the source, so a fresh
@@ -248,6 +251,8 @@ export type State = {
 	detailBusy: { [string]: boolean }, -- checks loads running
 	detailAttempt: Attempt?,
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
+	flaky: { [string]: Flaky }, -- item key -> its Likely flaky marks, judged once per head commit
+	flakyBusy: { [string]: boolean }, -- item keys whose evidence is being read
 	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
 	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
@@ -562,6 +567,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch (none for a pull request)" },
 			{ k = { ui.span("{findings}", "code") }, v = "In a fix round, what the checker found (or that the last run named no new commit); else says none" },
+			{ k = { ui.span("{flaky}", "code") }, v = "Its failing checks Plotroom marks Likely flaky, with why and the head commit, when the agent starts; else says none" },
 		},
 		prompts = prompts.prs,
 	},
