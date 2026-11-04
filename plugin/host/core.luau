@@ -99,6 +99,7 @@ export type Snap = {
 	rowsRev: number?,
 	rowsMin: number?,
 	rowsState: number?,
+	stages: { [string]: string }?, -- each item's stage (item key -> engine.stage id) when last noted (engine.arrive)
 }
 -- What the local search lets through: computed once per snapshot and search text.
 export type Visible = { snap: Snap, needle: string, group: string, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }
@@ -310,6 +311,10 @@ export type State = {
 	found: { [string]: string | false }?, -- lowercase repository without a checkout -> the folder detection found for it (false: none), as last asked
 	setupAt: number?, -- when the checklist's facts and detection were last asked (os.time)
 	setupAsking: boolean?, -- they are being asked
+	acted: { [string]: boolean }, -- item keys a mutation was committed for in this block since the last refresh landed: not an arrival
+	rings: { [string]: string }, -- item key -> the tone its row is ringed in, for engine.RING_MS after it arrived in a stage
+	ringTimer: TimerHandle?, -- the end of the rings shown
+	agentsHeard: boolean?, -- the window sent this block an agent map: a later one that moves an item into Needs you rings it
 }
 
 M.running = {} :: { [number]: State }

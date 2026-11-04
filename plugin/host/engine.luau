@@ -512,6 +512,70 @@ function M.blockers(state: State, pr: github.Pr): { Blocker }
 	return out
 end
 
+-- The tone a row is ringed in when its item arrives in a stage (DESIGN.md's Color Meaning Rule: your turn, needs fixing,
+-- done); other stages ring nothing.
+local ARRIVE_TONE: { [string]: string } = { needs = "accent", blocked = "error", ready = "success" }
+M.RING_MS = 1400
+
+-- Notes the stage of every item of `snap` (snap.stages) against `before`, each item's stage when last noted (nil: a first
+-- listing, which rings nothing). An item that moved into Needs you, Blocked or Ready to merge from another stage, unless
+-- this block committed a mutation for it since the last refresh (state.acted), has its row ringed in that stage's tone
+-- for RING_MS. `loud` (a refresh landed): one error toast names the one arrival in Needs you or Blocked and why (the
+-- first chip that is not Resolve conflicts: conflicts arrive in bursts), or counts several; the acted marks are spent.
+-- Not loud (the window's agent states changed): only a move into Needs you rings, and nothing toasts (the window already
+-- says an agent needs input).
+function M.arrive(state: State, snap: Snap, before: { [string]: string }?, loud: boolean)
+	local stages: { [string]: string } = {}
+	local rings: { [string]: string } = {}
+	local rung = false
+	local said: { string } = {}
+	for _, item in snap.items do
+		local stage, blockers = M.stage(state, snap.kind, item)
+		stages[item.key] = stage
+		local was = if before then before[item.key] else nil
+		local tone = ARRIVE_TONE[stage]
+		if was and was ~= stage and tone and not state.acted[item.key] and (loud or stage == "needs") then
+			rings[item.key], rung = tone, true
+			local why: string? = if stage == "needs" then "Needs you" else nil
+			for _, b in (blockers or {}) :: { Blocker } do
+				if b.chip ~= "Resolve conflicts" then
+					why = b.chip
+					break
+				end
+			end
+			if why then
+				local name = if snap.kind == "prs" then item.repo .. "#" .. item.number elseif item.tracker == "jira" then item.ref else item.repo .. "#" .. item.ref
+				table.insert(said, name .. ": " .. why)
+			end
+		end
+	end
+	snap.stages = stages
+	if loud then
+		state.acted = {}
+		if #said == 1 then
+			state.cx:toast("error", said[1])
+		elseif #said > 1 then
+			state.cx:toast("error", #said .. " items need you or are Blocked", said[1] .. " and " .. (#said - 1) .. " more")
+		end
+	end
+	if not rung then
+		return
+	end
+	state.rings = rings
+	state.rev += 1
+	if state.ringTimer then
+		state.ringTimer:cancel()
+	end
+	state.ringTimer = tern.timer(M.RING_MS, function()
+		state.ringTimer = nil
+		if M.alive(state) then
+			state.rings = {}
+			state.rev += 1
+			state.cx:render()
+		end
+	end)
+end
+
 -- `{flaky}` of a pull request action: the item's Likely flaky checks with why and the head commit they were judged
 -- at ("build (failed 3 of the last 20 runs on main) at head 1a2b3c4"), or "none" when no check of it is marked.
 function M.flakyText(state: State, key: string): string
@@ -1486,6 +1550,7 @@ function M.refresh(state: State)
 				tracker.byStatus(result.issues)
 			end
 			local snap: Snap = { kind = kind, items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, note = result.note, fetched = os.time() }
+			local was = state.snaps[key]
 			state.snaps[key] = snap
 			state.snap = snap
 			state.round += 1 -- every loaded checks list is older than this result now
@@ -1493,6 +1558,7 @@ function M.refresh(state: State)
 			M.ensureCursor(state)
 			prune(state)
 			M.gatherFlaky(state)
+			M.arrive(state, snap, if was and was.kind == kind then was.stages else nil, true)
 			if integration == "github" then
 				-- Warms the repository picker's list of gh logins (window.luau's pickRepo), so it opens without waiting on gh.
 				ghActive.note(state)
@@ -2886,11 +2952,14 @@ function M.agentStatus(state: State, raw: any)
 		state.vis = nil
 		if state.snap then
 			M.ensureCursor(state)
+			-- The first map a block hears restores its agents (a reload): their stages are noted, not arrivals.
+			M.arrive(state, state.snap, if state.agentsHeard then state.snap.stages else nil, false)
 		end
 		M.agentEnsure(state)
 		M.nowEnsure(state)
 		state.cx:render()
 	end
+	state.agentsHeard = true
 end
 
 -- How long the agent of item `key` has worked (seconds; nil: it is not working, or the window gave no start) and how

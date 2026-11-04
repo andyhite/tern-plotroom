@@ -591,6 +591,8 @@ local function blockDef(): BlockDef<State>
 				boardOn = false,
 				boardRemoving = nil,
 				boardBusy = false,
+				acted = {},
+				rings = {},
 			}
 			loadAll(state)
 			if state.activeId == "pin" then

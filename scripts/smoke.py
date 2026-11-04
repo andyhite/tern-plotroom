@@ -2265,6 +2265,45 @@ def sc_now_board(s: Smoke) -> None:
     s.wait_until("Show Now as List goes back", lambda: len(s.matches(lane)) == 0)
 
 
+def sc_arrival(s: Smoke) -> None:
+    """The arrival ring in real Tern: a refresh that moves a pull request of My PRs into Blocked rings its row in the needs-fixing tone and toasts why,
+    then the ring ends; Tern draws plotroom.css's ring without a stylesheet error (checked once at the end). Shot while ringed."""
+    stamp = "2026-01-01T00:00:00Z"
+
+    def pr(checks: str) -> List[Dict[str, object]]:
+        return [{"number": 70, "title": "Arriving PR 70", "url": "https://github.com/f/low/pull/70", "author": "smoke", "state": "OPEN", "isDraft": False,
+                 "updatedAt": stamp, "createdAt": stamp, "head": "arrive-70", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1,
+                 "comments": 0, "labels": [], "checks": checks, "merge": "BLOCKED", "mergeable": "MERGEABLE", "review": "REVIEW_REQUIRED", "runs": [], "runTotal": 0}]
+
+    (s.smoke / "search.json").write_text(json.dumps(pr("SUCCESS")), encoding="utf-8")
+    (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
+    ringed = "[data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue'] .pk-row[data-tone='error']"
+    s.ctl_ok("resize", "1600", "900")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("flow"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_text("the new block lists the pull request", "Arriving PR 70")
+
+    def palette(row: str) -> None:
+        s.ctl_ok("key", ".")
+        s.wait_text("the palette", "Refresh")
+        s.ctl_ok("type", json.dumps(row))
+        time.sleep(0.5)
+        s.ctl_ok("key", "Enter")
+
+    palette("My PRs")
+    s.wait_until("My PRs lists the pull request", lambda: any(t.endswith(": My PRs") for t in s.texts()) and any("Arriving PR 70" in t for t in s.texts()))
+    s.eq("nothing is ringed on the first listing", [], s.matches(ringed))
+    (s.smoke / "search.json").write_text(json.dumps(pr("FAILURE")), encoding="utf-8")
+    palette("Refresh")
+    s.wait_until("the row that moved into Blocked is ringed", lambda: any("Arriving PR 70" in t for t in s.matches(ringed)))
+    s.wait_text("the arrival's toast", "f/low#70: Fix checks")
+    s.shot("arrival-ring")
+    s.wait_until("the ring ends", lambda: s.matches(ringed) == [])
+
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -2295,6 +2334,7 @@ SCENARIOS = [
     ("buttons and links", sc_controls),
     ("every preview in one order", sc_previews),
     ("Now as a Board", sc_now_board),
+    ("arrival ring", sc_arrival),
 ]
 
 

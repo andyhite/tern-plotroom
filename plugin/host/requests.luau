@@ -844,6 +844,9 @@ function M.commit(state: State, id: string, token: any)
 	elseif plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or not here then
 		return reply(state, id, { problem = "The selection or the view changed since you were asked; nothing was sent." })
 	end
+	if plan.key ~= NOW_KEY then
+		state.acted[plan.key] = true -- what the mutation does to its stage is yours, not an arrival (engine.arrive)
+	end
 	plan.run(function(body: any)
 		reply(state, id, body)
 	end)
