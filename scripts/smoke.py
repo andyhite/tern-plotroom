@@ -2171,6 +2171,10 @@ def sc_now_board(s: Smoke) -> None:
         nodes = [n for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
         return [float(v) for v in nodes[0]["rect"]] if nodes else []
 
+    fold, foot = rect(scope + "[data-id='layer.queue.board.foldbar.fold']"), rect(scope + "[data-role='plotroom.keys']")
+    s.eq("the fold's button %r sits above the key footer %r, within the 1000 px window" % (fold, foot), True,
+         bool(fold) and fold[1] + fold[3] <= (foot[1] + 1 if foot else 1000))
+
     # Now lists reviews oldest first, then by key: Waiting runs 100, 101, 62, 63, … 99.
     s.ctl_ok("key", "Right")
     s.wait_until("Right crosses to Waiting (Agent working is empty)", lambda: any("Waiting 100: " in t for t in s.matches(chosen)))

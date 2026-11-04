@@ -1598,13 +1598,14 @@ end
 -- Now as a Board (engine.nowColumns): a row of columns, each a heading and a native list of its rows as items, the
 -- fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps its
 -- height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
-local function nowBoardNode(state: State): Node
+local function nowBoardNode(state: State, bar: boolean?): Node
 	local cols = engine.nowColumns(state)
 	local at = engine.nowBoardAt(state)
 	local open = state.nowFold or (at > 0 and cols[at].fold == true)
 	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
-	-- 6px, about three quarters of a cell row, under the picker's head, the column headings and the fold's button.
-	local lines = math.max(4, math.floor((state.cx.rows - 8) * 0.75))
+	-- 6px, about three quarters of a cell row, under the picker's head, the column headings, the fold's button and,
+	-- with `bar`, the key footer (32px, about two cell rows).
+	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.75))
 	local function column(group: string, col: any): Node
 		local cards: { Node } = {}
 		local selected: string? = nil
@@ -1887,7 +1888,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 			-- The Board takes the picker's place: its list is emptied and hidden (plotroom.css), the Board drawn in the
 			-- preview pane, which then spans the picker.
 			laid = true
-			preview = { nowBoardNode(state) }
+			preview = { nowBoardNode(state, bar) }
 			props.role ..= ".board"
 			props.items, props.order, props.selected = tern.json.array({}), tern.json.array({}), nil
 		else
