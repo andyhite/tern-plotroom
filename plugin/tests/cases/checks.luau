@@ -1844,16 +1844,107 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the one thing that blocks it")
-	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with its base", "conflicts outrank the rest")
-	eq(detailText(rows.no_2fr_236), "#6 · Checks failing", "failing checks, with no ratio")
+	eq(detailText(rows.no_2fr_234), "#4 · Changes requested", "a Blocked row's detail says the first chip's who or what")
+	eq(detailText(rows.no_2fr_235), "#5 · Conflicts with main", "conflicts name the base branch")
+	eq(detailText(rows.no_2fr_236), "#6", "failing checks the search listed none of: no detail")
 	eq(rows.no_2fr_235.badges[1].title, nil, "the Blocked badge does not say it again")
+	eq(rows.no_2fr_235.badges[2].text, "Resolve conflicts", "its chip names the job")
+	eq(rows.no_2fr_236.badges[2].text, "Fix checks", "a failing rollup with no failing check listed has no ratio")
 	eq(detailText(rows.no_2fr_239), "#9", "a review still required blocks nothing: no review text")
 	eq(detailText(rows.no_2fr_238), "#8", "nor do running checks")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
 	eq(factOf(b, "Stage"), "Blocked", "the preview's status part leads with the stage")
-	eq(factOf(b, "Blocked by"), "Changes requested", "and says what blocks it")
+	eq(factOf(b, "Blocked by"), "Address changes — Changes requested", "and says what blocks it: the job, then who or what")
 	eq(findKey(pickerNode(b), "about").c[1].p.key, "branch", "the facts start with the branch: the stage is not repeated there")
+end)
+
+case("host stage: a Blocked pull request shows one chip per reason, most severe first, each naming its job; the first one's who or what follows its number; the preview lists every reason and the unresolved threads", function(w: World)
+	local s = hostScene(w, 0)
+	local done = "2026-01-01T00:00:00Z"
+	local checks = {
+		checkRun("build", "COMPLETED", "FAILURE", done, { id = "A" }),
+		checkRun("test", "COMPLETED", "SUCCESS", done, { id = "B" }),
+		checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "C" }),
+	}
+	s.gh.checks["o/r#1"] = checks
+	local runs = array(checks)
+	local latest = array({
+		{ login = "octo", state = "COMMENTED", at = h.iso(EPOCH - 60) }, -- the author's own review never names who asked
+		{ login = "maria-k", state = "CHANGES_REQUESTED", at = h.iso(EPOCH - 4 * 3600) },
+		{ login = "devon", state = "COMMENTED", at = h.iso(EPOCH - 2 * 3600) },
+	})
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED", unresolved = 2, latest = latest, checks = "FAILURE", mergeable = "CONFLICTING", merge = "DIRTY", runs = runs, runTotal = 3 }),
+		searchItem(2, "o/r", EPOCH - 120, { review = "REVIEW_REQUIRED", unresolved = 1, latest = latest, merge = "BLOCKED", checks = "SUCCESS" }),
+		searchItem(3, "o/r", EPOCH - 180, { review = "APPROVED", unresolved = 3, mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }),
+		searchItem(4, "o/r", EPOCH - 240, { review = "REVIEW_REQUIRED", unresolved = 0, merge = "BLOCKED", checks = "SUCCESS" }),
+	}
+	s.gh.about["o/r#1"] = {
+		mergeable = "CONFLICTING",
+		merge = "DIRTY",
+		threads = array({
+			{ path = "src/a.lua", line = 12, by = "maria-k", body = "Rename this\nand the caller too", url = "https://github.com/o/r/pull/1#discussion_r1" },
+			{ path = NULL, line = NULL, by = "devon", body = "", url = "https://github.com/o/r/pull/1#discussion_r2" },
+			{ path = "x", line = 1, by = "eve", body = "a page elsewhere", url = "https://evil.example/x" },
+		}),
+	}
+	local b = openQueue(w)
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	local function badges(id: string): { string }
+		local out: { string } = {}
+		for _, x in rows[id].badges do
+			table.insert(out, x.text .. "/" .. (x.tone or ""))
+		end
+		return out
+	end
+	same(badges("no_2fr_231"), {
+		"Blocked/error",
+		"Address changes/error",
+		"Reply · 2 unresolved/error",
+		"Fix checks · 1/3 failing/error",
+		"Resolve conflicts/error",
+	}, "every reason, most severe first, each as the job that clears it; the Blocked badge repeats none")
+	eq(rows.no_2fr_231.badges[1].title, nil, "nor does its tooltip")
+	eq(detailText(rows.no_2fr_231), "#1 · @maria-k asked 4h ago", "the first chip's detail in plain text: who asked for changes, when")
+	eq(type(rows.no_2fr_231.detail[2]), "string", "not coloured: the chips carry the colour")
+	eq(h.asks.hx.stage(b, "no_2fr_232"), "Blocked", "unresolved threads alone block a pull request not approved")
+	same(badges("no_2fr_232"), { "Blocked/error", "Reply · 1 unresolved/error", "New/accent" }, "as Reply")
+	eq(detailText(rows.no_2fr_232), "#2 · @devon commented 2h ago", "naming the newest reviewer who commented, never the author")
+	eq(h.asks.hx.stage(b, "no_2fr_233"), "Ready to merge", "an approved pull request's leftover threads block nothing")
+	eq(h.asks.hx.stage(b, "no_2fr_234"), "PR open", "nor do no threads")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	w.advance(300)
+	local preview = pickerNode(b)
+	local reasons: { string } = {}
+	for _, item in findKey(preview, "stage", "kv").p.items do
+		if item.k == "Blocked by" then
+			local parts: { string } = {}
+			for _, sp in item.v do
+				table.insert(parts, sp.t)
+			end
+			table.insert(reasons, table.concat(parts))
+		end
+	end
+	same(reasons, {
+		"Address changes — @maria-k asked 4h ago",
+		"Reply · 2 unresolved — @devon commented 2h ago",
+		"Fix checks · 1/3 failing — build failing",
+		"Resolve conflicts — Conflicts with main",
+	}, "the preview lists every reason: its job, then who or what")
+	local list: any = findKey(preview, "threads", "list")
+	yes(list ~= nil, "the unresolved threads are listed")
+	eq(#list.c, 2, "a thread whose link is not on github.com is left out")
+	local first = list.c[1].p
+	eq(first.label, "Rename this", "a thread shows its first line")
+	eq(first.detail[1].t, "@maria-k · src/a.lua:12", "who started it and where")
+	eq(first.href, "plotroom://github/check/1/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1%23discussion_r1", "and links to it")
+	eq(list.c[2].p.label, "(no text)", "an empty first comment says so")
+	eq(list.c[2].p.detail[1].t, "@devon", "a thread on no line names only who")
+	same(hx.miscued(b.view().layer), {}, "every chip and thread row has its look: the threads are links, the chips neither")
+	same(hx.offPalette(b.view().layer), {}, "and the chips wear only the needs-fixing colour")
 end)
 
 case("host stage: a pull request failing only ignored checks of its repository is not Blocked, stays out of Ready to merge, and its preview marks the check Ignored", function(w: World)
@@ -1997,10 +2088,17 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_231), "#1 · Checks failing", "one failing check is Likely flaky, the other is not: no mark on the row")
-	eq(detailText(rows.no_2fr_232), "#2 · Checks failing (likely flaky)", "every failing check is Likely flaky")
-	eq(detailText(rows.no_2fr_233), "#3 · Checks failing", "2 of 20 failures on the base branch is not enough")
-	eq(detailText(rows.no_2fr_234), "#4 · Checks failing (likely flaky)", "an earlier attempt passed on the same head")
+	local function chip(row: any): string
+		return row.badges[2].text
+	end
+	eq(detailText(rows.no_2fr_231), "#1 · build and 1 more failing", "one failing check is Likely flaky, the other is not: no mark on the row")
+	eq(chip(rows.no_2fr_231), "Fix checks · 2/2 failing", "its chip counts the failing checks of all")
+	eq(detailText(rows.no_2fr_232), "#2 · build failed 3 of the last 20 runs on main", "every failing check is Likely flaky: the detail says why")
+	eq(chip(rows.no_2fr_232), "Re-run · likely flaky", "and the chip's job is a re-run")
+	eq(detailText(rows.no_2fr_233), "#3 · lint failing", "2 of 20 failures on the base branch is not enough")
+	eq(chip(rows.no_2fr_233), "Fix checks · 1/1 failing", "so it is a fix")
+	eq(detailText(rows.no_2fr_234), "#4 · e2e passed earlier on this commit", "an earlier attempt passed on the same head")
+	eq(chip(rows.no_2fr_234), "Re-run · likely flaky", "a re-run too")
 	local function show(id: string): (any, any)
 		b.event({ ev = "select", id = "layer.queue", item = id })
 		w.advance(300)
@@ -2042,7 +2140,8 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
 	end
-	eq(detailText(rows.no_2fr_232), "#2 · Checks failing", "the new head's failure is not flaky")
+	eq(detailText(rows.no_2fr_232), "#2 · build failing", "the new head's failure is not flaky")
+	eq(chip(rows.no_2fr_232), "Fix checks · 1/1 failing", "its chip is a fix again")
 	move = show("no_2fr_232")
 	eq(move, "Watch", "so your PR goes to Watch")
 end)
@@ -2065,7 +2164,7 @@ case("host likely flaky: at most 10 pull requests are judged a refresh, each onc
 	s.gh.items.octocat = { failingPr(s, 13, "octo", sha("d"), { "build:13" }) }
 	s.gh.evidence["o/r#13"] = { head = sha("e"), files = array({}), runs = array({ attempt("CI", "build", "SUCCESS", "12"), attempt("CI", "build", "FAILURE", "13") }) }
 	refreshNow(w, b)
-	eq(detailText(pickerOf(b).items[1]), "#13 · Checks failing", "evidence read at another head marks nothing")
+	eq(detailText(pickerOf(b).items[1]), "#13 · build failing", "evidence read at another head marks nothing")
 	eq(#requestsOf(s.gh, "history"), 0, "and reads no base history")
 end)
 

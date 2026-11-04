@@ -348,9 +348,9 @@ function M.needsYou(state: State, key: string): boolean
 end
 
 -- `item`'s stage, a core.STAGE id, from facts already here: the search's fields, its agent (state.agents, needsYou), its
--- worktree (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. `why` says what
--- blocks a PR. A fact GitHub did not give (merge state unknown) never makes Ready to merge.
-function M.stage(state: State, kind: string, item: any): (string, string?)
+-- worktree (state.notes) and, for an issue, the PR of its worktree's branch once the details loaded. A Blocked PR also
+-- returns what blocks it (M.blockers). A fact GitHub did not give (merge state unknown) never makes Ready to merge.
+function M.stage(state: State, kind: string, item: any): (string, { Blocker }?)
 	if item.state == "merged" or item.state == "closed" then
 		return item.state
 	end
@@ -361,12 +361,9 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 	end
 	if kind == "prs" then
 		local pr: github.Pr = item
-		-- ponytail: the search cannot ask which checks are required; GitHub's merge state saying only optional checks
-		-- fail (unstable) or none (ready) clears a failing rollup. Read the detail runs' `required` if that misleads.
-		-- A failure only of ignored checks (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
-		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr)
-		if pr.review == "changes" or pr.merge == "conflicts" or failing then
-			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" elseif M.allFlaky(state, pr) then "Checks failing (likely flaky)" else "Checks failing"
+		local blockers = M.blockers(state, pr)
+		if #blockers > 0 then
+			return "blocked", blockers
 		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
 			return "ready"
 		end
@@ -458,6 +455,61 @@ function M.allFlaky(state: State, pr: any): boolean
 	return #failing > 0
 end
 
+-- One thing that blocks a pull request: its chip names the job that clears it, `detail` who or what (nil when unknown).
+export type Blocker = { chip: string, detail: string? }
+
+-- What blocks `pr`, most severe first, each named by its job (PRODUCT.md › Glossary › Chip): Address changes (changes
+-- requested), Reply · N unresolved (unresolved review threads, unless it is approved: leftover threads on an approved
+-- PR are nits), Fix checks · N/T failing (or Re-run · likely flaky when every failing check is Likely flaky), Resolve
+-- conflicts. Empty when nothing does. ponytail: the search does not say which checks are required; GitHub's merge state
+-- saying only optional checks fail (unstable) or none (ready) clears a failing rollup. A failure only of ignored checks
+-- (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
+function M.blockers(state: State, pr: github.Pr): { Blocker }
+	local out: { Blocker } = {}
+	-- "@login <verb> 4h ago" of the newest latest review in state `want` by someone other than the author.
+	local function by(want: string, verb: string): string?
+		local best: github.Latest? = nil
+		for _, r in (pr.latest or {}) :: { github.Latest } do
+			if r.state == want and string.lower(r.login) ~= string.lower(pr.author) and (not best or r.at > best.at) then
+				best = r
+			end
+		end
+		return if best then "@" .. best.login .. " " .. verb .. " " .. github.age(best.at) .. " ago" else nil
+	end
+	if pr.review == "changes" then
+		table.insert(out, { chip = "Address changes", detail = by("changes", "asked") or "Changes requested" })
+	end
+	local open = pr.unresolved or 0
+	if open > 0 and pr.review ~= "approved" then
+		table.insert(out, { chip = "Reply · " .. open .. " unresolved", detail = by("commented", "commented") })
+	end
+	if pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr) then
+		local failing: { github.Run } = {}
+		for _, r in M.failing(state, pr) do
+			if not M.ignored(state, pr, r) then
+				table.insert(failing, r)
+			end
+		end
+		local marks = M.flakyMarks(state, pr)
+		local first = failing[1]
+		if first and marks and M.allFlaky(state, pr) then
+			local mark = if first.url then marks[first.url] else nil
+			table.insert(out, { chip = "Re-run · likely flaky", detail = if mark then first.name .. " " .. mark.reason else nil })
+		elseif first then
+			local d = state.details[M.detailKey(state, pr)]
+			local total = if d then d.total else pr.runTotal
+			local more = if #failing > 1 then " and " .. (#failing - 1) .. " more" else ""
+			table.insert(out, { chip = "Fix checks · " .. #failing .. "/" .. total .. " failing", detail = first.name .. more .. " failing" })
+		else
+			table.insert(out, { chip = "Fix checks" })
+		end
+	end
+	if pr.merge == "conflicts" then
+		table.insert(out, { chip = "Resolve conflicts", detail = "Conflicts with " .. (if pr.base ~= "" then pr.base else "its base") })
+	end
+	return out
+end
+
 -- `{flaky}` of a pull request action: the item's Likely flaky checks with why and the head commit they were judged
 -- at ("build (failed 3 of the last 20 runs on main) at head 1a2b3c4"), or "none" when no check of it is marked.
 function M.flakyText(state: State, key: string): string
@@ -524,7 +576,9 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	local me = if who then string.lower(who) else nil
 	local mine = me ~= nil and string.lower(pr.author) == me
 	if stage == "blocked" then
-		local fix = if mine and pr.review == "changes" then action("Address feedback") else nil
+		-- Feedback to act on (Address changes or Reply) comes before the checks, as the chips do.
+		local feedback = pr.review == "changes" or ((pr.unresolved or 0) > 0 and pr.review ~= "approved")
+		local fix = if mine and feedback then action("Address feedback") else nil
 		if fix or #M.failing(state, pr) == 0 then
 			return fix
 		elseif M.allFlaky(state, pr) and M.rerunnable(state, pr) then
@@ -3080,8 +3134,8 @@ local function ownChange(now: any, store: triage.Store, issue: any): boolean
 end
 
 -- Now's rows, top first; each is { id, key?, rank, why?, kind?, item?, notice?, agent?, waiting?, title, url?, snoozed }.
--- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` says by
--- what), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
+-- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` lists its
+-- chips, M.blockers), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
 -- request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you is New or Changed
 -- (`why`). A reason switched off in Settings › Views › Now lists nothing. An item is listed once, at its highest rank; a
 -- snoozed one only while snoozed items are shown (an agent that needs you is always listed, as in the views).
@@ -3149,10 +3203,14 @@ function M.nowRows(state: State): { any }
 	local ready: { any } = {}
 	local why: { [string]: string } = {}
 	for _, pr in now.mine do
-		local stage, because = M.stage(state, "prs", pr)
+		local stage, blockers = M.stage(state, "prs", pr)
 		if stage == "blocked" then
 			table.insert(blocked, pr)
-			why[pr.key] = because or "Blocked"
+			local jobs: { string } = {}
+			for _, b in (blockers or {}) :: { Blocker } do
+				table.insert(jobs, b.chip)
+			end
+			why[pr.key] = table.concat(jobs, ", ")
 		elseif stage == "ready" then
 			table.insert(ready, pr)
 		end

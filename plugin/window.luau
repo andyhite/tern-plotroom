@@ -38,8 +38,8 @@ local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
 local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
--- The lists a check row can sit in (required, the others); ".run<i>" follows.
-local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs" }
+-- The lists a GitHub page row can sit in (required checks, the other checks, unresolved review threads); ".run<i>" follows.
+local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.threads" }
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE

@@ -202,7 +202,7 @@ case("preview: your blocked pull request leads with what blocks it; a review ask
 	w.advance(300)
 	local status: any = findKey(pickerNode(b), "stage", "kv")
 	eq(status.p.items[1].k .. "/" .. status.p.items[2].k, "Stage/Blocked by", "the status part: the stage, then what blocks it")
-	eq(factOf(b, "Blocked by"), "Changes requested", "the blocking reason")
+	eq(factOf(b, "Blocked by"), "Address changes — Changes requested", "the blocking reason, as its job and what")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
 	w.advance(300)
 	local asked: any = findKey(pickerNode(b), "stage", "kv")

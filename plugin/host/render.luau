@@ -80,13 +80,23 @@ local function noteTitle(note: Note): string
 	return (note.summary or "Worktree ready") .. (if note.path then " · " .. note.path else "")
 end
 
--- The badge of stage `id` (engine.stage); a Worktree stage takes its worktree's tone and summary, a Blocked one says why.
-local function stageBadge(id: string, why: string?, note: Note?): { text: string, tone: string?, title: string? }
+-- The badge of stage `id` (engine.stage); a Worktree stage takes its worktree's tone and summary. A Blocked one says no
+-- reason: its chips do.
+local function stageBadge(id: string, note: Note?): { text: string, tone: string?, title: string? }
 	if id == "worktree" and note then
 		return { text = STAGE.worktree.text, tone = noteTone(note), title = noteTitle(note) }
 	end
-	local b = STAGE[id]
-	return if why then { text = b.text, tone = b.tone, title = why } else b
+	return STAGE[id]
+end
+
+-- A Blocked pull request's chips (DESIGN.md › Status chips): one badge per engine.blockers reason, most severe first,
+-- each naming its job; its detail is the tooltip.
+local function chipBadges(blockers: { engine.Blocker }?): { any }
+	local out: { any } = {}
+	for _, b in (blockers or {}) :: { engine.Blocker } do
+		table.insert(out, { text = b.chip, tone = "error", title = b.detail })
+	end
+	return out
 end
 
 -- The Worktree badge an item's row starts with, left to the stage badge when that says Worktree.
@@ -121,17 +131,18 @@ local function refDetail(ref: string, repo: string?, repos: boolean): { any }
 	return detail
 end
 
--- A pull request's picker row: "#N · repo · <what blocks it>", or "New commits since you approved" when its head moved
--- after your approval; its stage says Merged or Closed, so only Draft is left of its state.
-local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string?, repos: boolean): { [string]: any }
+-- A pull request's picker row: "#N · repo · <who or what blocks it>" (the first chip's detail, plain: the chips name
+-- the jobs), or "New commits since you approved" when its head moved after your approval; its stage says Merged or
+-- Closed, so only Draft is left of its state.
+local function pickerItem(pr: github.Pr, note: Note?, stage: string, blockers: { engine.Blocker }?, repos: boolean): { [string]: any }
 	local badges = worktreeBadges(note, stage)
 	if stateKind(pr) == "draft" then
 		table.insert(badges, STATE_BADGE.draft)
 	end
 	local detail = refDetail("#" .. pr.number, pr.repo, repos)
+	local why = if blockers and blockers[1] then blockers[1].detail else nil
 	if why then
-		table.insert(detail, " · ")
-		table.insert(detail, ui.span(why, "error"))
+		table.insert(detail, " · " .. why)
 	elseif pr.newCommits then
 		table.insert(detail, " · ")
 		table.insert(detail, "New commits since you approved")
@@ -199,10 +210,13 @@ local function checkBadge(info: { check: string? }?): { text: string, tone: stri
 	return if info then CHECK_BADGE[info.check or ""] else nil
 end
 
--- Puts the stage, the agent's state (when the stage does not already say it) and the triage mark (New, Changed,
--- Snoozed) in front of `row`'s badges. The stage badge carries no reason: a Blocked row's detail says what blocks it.
-local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string)
-	local extra: { any } = { stageBadge(stage, nil, state.notes[item.key]) }
+-- Puts the stage, a Blocked PR's chips, the agent's state (when the stage does not already say it) and the triage mark
+-- (New, Changed, Snoozed) in front of `row`'s badges. The stage badge carries no reason: the chips name each.
+local function decorate(state: State, kind: string, item: any, row: { [string]: any }, stage: string, blockers: { engine.Blocker }?)
+	local extra: { any } = { stageBadge(stage, state.notes[item.key]) }
+	for _, c in chipBadges(blockers) do
+		table.insert(extra, c)
+	end
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
@@ -272,11 +286,12 @@ end
 -- and what its checker found (a failed check lists
 -- its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author).
 local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): Node
-	local id, why = engine.stage(state, kind, item)
-	local b = stageBadge(id, why, state.notes[item.key])
+	local id, blockers = engine.stage(state, kind, item)
+	local b = stageBadge(id, state.notes[item.key])
 	local items: { { [string]: any } } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
-	if id == "blocked" and why then
-		table.insert(items, { k = "Blocked by", v = { ui.span(why, "error") } })
+	-- Each reason a Blocked PR has, most severe first: its job, then who or what.
+	for _, r in (blockers or {}) :: { engine.Blocker } do
+		table.insert(items, { k = "Blocked by", v = if r.detail then { ui.span(r.chip, "error"), ui.span(" — " .. r.detail) } else { ui.span(r.chip, "error") } })
 	end
 	table.insert(items, { k = "Working", v = agentClock(state, item.key) })
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
@@ -320,9 +335,9 @@ local function rowsOf(state: State, snap: Snap): { any }
 	local rows: { any } = {}
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
-		local stage, why = engine.stage(state, snap.kind, item)
-		local row = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, why, repos)
-		decorate(state, snap.kind, item, row, stage)
+		local stage, blockers = engine.stage(state, snap.kind, item)
+		local row = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, blockers, repos)
+		decorate(state, snap.kind, item, row, stage, blockers)
 		table.insert(rows, row)
 	end
 	tern.json.array(rows)
@@ -890,6 +905,31 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		end
 	end
 	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load))
+	-- Unresolved review threads, read-only: who started each, where, its first line; each opens its thread on GitHub
+	-- through the check link route (window.luau's CHECK_LISTS). Nothing when none is open.
+	local threads: { Node } = {}
+	for i, t in (if about then about.threads else {}) :: { github.Thread } do
+		local where = if t.path then printable(t.path) .. (if t.line then ":" .. t.line else "") else nil
+		local by = "@" .. t.by .. (if where then " · " .. where else "")
+		local text = if t.text ~= "" then printable(t.text) else "(no text)"
+		table.insert(threads, ui.node("item", {
+			key = "run" .. i,
+			role = LINK,
+			label = text,
+			detail = { ui.span(by, "muted") },
+			icon = "message",
+			title = by .. " — " .. text,
+			aria = "Thread by " .. by .. ": " .. text,
+			href = "plotroom://github/check/" .. i .. "/" .. pct(t.url),
+			actions = { click = "open" },
+		}))
+	end
+	if #threads > 0 then
+		addPart(out, "threads", {
+			ui.node("text", { key = "threads-head", spans = { ui.span("Unresolved threads · " .. #threads, "strong") } }),
+			ui.node("list", { key = "threads" }, threads),
+		})
+	end
 	addPart(out, "checks", checksNodes(state, pr))
 	return out
 end
@@ -1418,7 +1458,8 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		end
 		return { text = verdict or "Not verified", tone = "accent", title = "GitHub does not show what its run must leave behind" }, "GitHub does not show what its run must leave behind: " .. (verdict or "Not verified")
 	elseif row.rank == 2 then
-		return { text = "Blocked: " .. string.lower(row.why or ""), tone = "error", title = "Your pull request is blocked" }, "Your pull request is blocked: " .. string.lower(row.why or "")
+		-- The chips after it name each job (`why` lists them), so the badge says only Blocked.
+		return { text = "Blocked", tone = "error", title = "Your pull request is blocked: " .. (row.why or "") }, "Your pull request is blocked: " .. (row.why or "")
 	elseif row.rank == 3 then
 		local asked = if row.why
 			then "Your team's review is requested: " .. printable(row.why)
@@ -1447,8 +1488,7 @@ local function nowPreview(state: State): { Node }
 	local item, n, agent = row.item, row.notice, row.agent
 	local stage: { text: string, tone: string? }? = nil
 	if item and row.kind then
-		local id, why = engine.stage(state, row.kind, item)
-		stage = stageBadge(id, why, state.notes[item.key])
+		stage = stageBadge((engine.stage(state, row.kind, item)), state.notes[item.key])
 	end
 	local go = if row.rank == 1 and row.key then engine.agentHref(row.key) else nil
 	local reply = if go and row.waiting then engine.agentHref(row.key, "agentreply") else nil
@@ -1507,11 +1547,15 @@ local function nowProps(state: State, props: { [string]: any })
 	for _, row in rows do
 		local badge = nowWhy(row)
 		local item: { [string]: any }
+		local chips: { any } = {}
 		if row.item and row.kind then
-			local stage = engine.stage(state, row.kind, row.item)
+			local stage, blockers = engine.stage(state, row.kind, row.item)
 			local note = state.notes[row.key]
-			-- Now spans every repository; its first badge already says what blocks a PR.
-			item = if row.kind == "issues" then issueRow(row.item, note, stage, true) else pickerItem(row.item, note, stage, nil, true)
+			-- Only a row listed as Blocked carries its chips and the first one's detail: elsewhere its first badge says why
+			-- Now lists it.
+			local mine = if row.rank == 2 then blockers else nil
+			chips = chipBadges(mine)
+			item = if row.kind == "issues" then issueRow(row.item, note, stage, true) else pickerItem(row.item, note, stage, mine, true)
 		else
 			local detail: { any } = {}
 			if row.notice then
@@ -1542,6 +1586,9 @@ local function nowProps(state: State, props: { [string]: any })
 			end
 		end
 		local badges: { any } = { badge }
+		for _, c in chips do
+			table.insert(badges, c)
+		end
 		if row.snoozed then
 			table.insert(badges, { text = "Snoozed", tone = "muted", title = "Snoozed until 08:00" })
 		end
@@ -1605,12 +1652,19 @@ local function nowBoardNode(state: State): Node
 		local selected: string? = nil
 		for _, row in col.rows do
 			local badge = nowWhy(row)
+			-- A Blocked card has room for one value: its most severe chip (the tooltip lists them all).
+			local first: engine.Blocker? = nil
+			if row.rank == 2 and row.item and row.kind then
+				local _, blockers = engine.stage(state, row.kind, row.item)
+				first = if blockers then blockers[1] else nil
+			end
+			local value = if first then ui.span(first.chip, "error") else ui.span(badge.text, badge.tone)
 			local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
 			local detail: { any } = { ui.span(ref, "mono") }
 			if row.snoozed then
 				table.insert(detail, ui.span(" · Snoozed", "muted"))
 			end
-			table.insert(cards, ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = { ui.span(badge.text, badge.tone) }, title = badge.title }))
+			table.insert(cards, ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = { value }, title = badge.title }))
 			if row.id == state.nowAt then
 				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
 			end

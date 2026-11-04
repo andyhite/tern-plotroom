@@ -2007,7 +2007,8 @@ def sc_controls(s: Smoke) -> None:
           "updatedAt": stamp, "createdAt": stamp, "head": "feature-7", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
           "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs), "headSha": "1" * 40}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
-    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": []}
+    thread = {"path": "src/app.py", "line": 12, "by": "maria-k", "body": "Rename this helper", "url": "https://github.com/a/gent/pull/7#discussion_r1"}
+    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": [], "threads": [thread]}
     (s.smoke / "checks.json").write_text(json.dumps({"a/gent#7": {"total": len(runs), "next": None, "nodes": runs, "about": about}}), encoding="utf-8")
     job = "https://github.com/a/gent/actions/runs/123/job/9"
     (s.smoke / "flaky.json").write_text(json.dumps({"a/gent#7": {"head": "1" * 40, "files": ["src/app.py"], "runs": [
@@ -2023,7 +2024,8 @@ def sc_controls(s: Smoke) -> None:
     s.leave_now()
     s.wait_text("the pull request", "Controls PR 7")
     s.wait_until("its native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
-    s.wait_text("the row says every failing check is Likely flaky", "Checks failing (likely flaky)")
+    s.wait_text("the row's chip says every failing check is Likely flaky", "Re-run · likely flaky")
+    s.wait_text("the row's detail says why, in plain text", "build failed 3 of the last 20 runs on main")
     s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
     s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
@@ -2031,6 +2033,8 @@ def sc_controls(s: Smoke) -> None:
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
     s.shot("controls")
     s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))
+    s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
+    s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
     s.shot("controls-loaded")
     s.eq("the check without a page is neither", False, any("lint" in t for t in s.matches(button + ", " + link)))
     s.ctl_ok("key", "Escape")
