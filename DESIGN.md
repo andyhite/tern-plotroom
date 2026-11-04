@@ -65,6 +65,10 @@ Tern's `badge` (picker rows: the item's `badges`). One word or a short phrase, t
 
 A Blocked pull request's reasons, one Tern `badge` each, right after the Blocked badge, most severe first: **Address changes**, **Reply · N unresolved**, **Fix checks · N/T failing** (or **Re-run · likely flaky**), **Resolve conflicts**. Each names the job that clears it, not the state; tone `error` (needs fixing); the tooltip says who or what. The Blocked badge says no reason, and the row's detail line says the first chip's who or what in plain text, so no fact shows twice. The preview's status `kv` lists each as **Blocked by** (the chip in `error`, then its detail). A Board card has room for one: the first chip. No keys, no click: a chip names a job, the Next move does it.
 
+### Arrival ring
+
+A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level.
+
 ### Preview card
 
 The picker's preview, in one order for every item (docs/reference.md › Finer points › Preview): the Next button and links row; the head (`#N` or key, the integration tag, Copy link and Open icons, the state badge at the right); the title; the status `kv` (Stage first, then what needs you); the properties `kv`; then sections (checks, reviewers, unresolved threads, linked items, description, the worktree card). The description is a folded `card` with Tern's clamp and "N more lines".

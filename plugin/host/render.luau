@@ -336,8 +336,9 @@ local function rowsOf(state: State, snap: Snap): { any }
 	local issues = snap.kind == "issues"
 	for _, item in snap.items do
 		local stage, blockers = engine.stage(state, snap.kind, item)
-		local row = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, blockers, repos)
+		local row: { [string]: any } = if issues then issueRow(item, state.notes[item.key], stage, repos) else pickerItem(item, state.notes[item.key], stage, blockers, repos)
 		decorate(state, snap.kind, item, row, stage, blockers)
+		row.tone = state.rings[item.key] -- an arrival (engine.arrive): plotroom.css rings the row in this tone
 		table.insert(rows, row)
 	end
 	tern.json.array(rows)
