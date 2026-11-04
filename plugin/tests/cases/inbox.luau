@@ -135,6 +135,18 @@ case("now: snoozed items leave Now and its count until Show or hide snoozed list
 	eq(pickerOf(b).items[1].badges[1].text, "Agent needs input", "first")
 end)
 
+case("now: an item whose agent works shows the agent's bar and clock on its Now row and in its preview", function(w: World)
+	local _, b = nowScene(w, {}, function(s: h.HostScene)
+		s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
+	end)
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", since = tostring(w.seconds() - 125), expected = "100" } })
+	eq(h.detailText(pickerOf(b).items[1]), "#4 · o/r · ━━━━━━━━━━ 2:05", "its row ends with the bar and the clock")
+	eq(h.detailText(pickerOf(b).items[2]), "#5 · o/r", "a row with no working agent has neither")
+	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 2:05", "and so does its preview")
+	w.advance(1000)
+	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 2:06", "a second later the clock moved on")
+end)
+
 case("now: an empty Now says nothing needs you, and the view's own filters are gone", function(w: World)
 	local _, b = nowScene(w, {})
 	same(listed(b), {}, "nothing")

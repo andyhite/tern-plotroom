@@ -168,7 +168,9 @@ export type Settings = {
 -- and what checking it on GitHub found (`verdict`: verified | not | unchecked; nil: none checked yet). A checker's agent
 -- also has its verdict on the run it checked (`check`: pass | fail) and, on a fail, its `findings` joined by " · ".
 -- `stop`: why the item's chain stopped at Needs you (3 failed checks, 3 runs without progress, 3 failed starts).
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
+-- While it works: `since`, when its run or turn began (seconds since the epoch, on the window's clock), and `expected`,
+-- the median seconds of its action's finished runs (nil: fewer than 5, or a later turn); both digits as text.
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`, each GitHub one with the login
@@ -272,6 +274,8 @@ export type State = {
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view
 	agentAt: string?, -- the item key of the Agents row previewed
+	clocked: boolean?, -- the view being drawn shows a working agent's clock (render's agentClock)
+	clockTimer: TimerHandle?, -- the redraw that moves the shown clocks on, at most one a second
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)

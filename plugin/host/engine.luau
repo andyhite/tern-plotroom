@@ -2319,9 +2319,11 @@ tern.on("command_finished", function(ev: any, _cx: any)
 	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop? }): replaces what the rows
--- show. An optional text that is not a clean string within its cap is dropped, never trusted.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40 }
+-- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected? }):
+-- replaces what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted,
+-- and so are `since` and `expected` unless digits.
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40, since = 12, expected = 12 }
+local DIGITS: { [string]: boolean } = { since = true, expected = true }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then
 		return
@@ -2341,7 +2343,7 @@ function M.agentStatus(state: State, raw: any)
 			local info: { [string]: string } = {}
 			for field, cap in INFO_CAPS do
 				local text: any = (value :: any)[field]
-				if type(text) == "string" and text ~= "" and #text <= cap and not string.find(text, "%c") then
+				if type(text) == "string" and text ~= "" and #text <= cap and not string.find(text, "%c") and not (DIGITS[field] and not string.match(text, "^%d+$")) then
 					info[field] = text
 				end
 			end
@@ -2373,6 +2375,21 @@ function M.agentStatus(state: State, raw: any)
 		M.nowEnsure(state)
 		state.cx:render()
 	end
+end
+
+-- How long the agent of item `key` has worked (seconds; nil: it is not working, or the window gave no start) and how
+-- far along it probably is, 0 to 0.95 (nil: its action has too few finished runs to expect a duration): the bar eases
+-- toward 90% at the expected duration, then creeps, never full before the run ends. ponytail: the start is on the
+-- window's clock, so a remote host whose clock is off shows the difference; send an age instead if that matters.
+function M.agentClock(state: State, key: string): (number?, number?)
+	local info = state.agentInfo[key]
+	local since = if state.agents[key] == "working" and info and info.since then tonumber(info.since) else nil
+	if not since then
+		return nil, nil
+	end
+	local elapsed = math.max(0, os.time() - since)
+	local expected = if info and info.expected then tonumber(info.expected) else nil
+	return elapsed, if expected then math.min(0.95, 1 - math.exp(-2.3 * elapsed / math.max(expected, 1))) else nil
 end
 
 -- The Agents scope's rows: every agent not exited, by repository then item key. `repo` is the part of the key before `#`.
