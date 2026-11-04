@@ -390,6 +390,25 @@ windowCase("window: Settings' Model button opens a picker of omp's default, the 
 	eq(w.toasts[#w.toasts].text, "Plotroom: malformed link", "a malformed link asks nothing")
 end)
 
+windowCase("window: Settings' Summary model button opens the same picker, with the Summary default first; the pick is saved as the Summary model", function(w: World)
+	local _, b = agentScene(w)
+	h.goToSettings(b, "general")
+	w.flush()
+	w.window.choose = "claude-haiku-4-5"
+	w.click("plotroom://model/summary:model")
+	w.flush()
+	local pick = w.window.picks[#w.window.picks]
+	local first = pick.items[1]
+	same({ first.group, first.label, first.detail, first.current }, { "Default", "Summary default", "@smol: omp's small model", true } :: { any }, "the default is @smol, current while none is saved")
+	eq(pick.items[#pick.items].label, "gpt-5.2", "then the roles and omp's models")
+	eq(w.kv.get("summary").model, "anthropic/claude-haiku-4-5", "the pick is saved as the Summary model")
+	w.window.choose = "Summary default"
+	w.click("plotroom://model/summary:model")
+	w.flush()
+	eq(w.window.picks[#w.window.picks].items[1].current, false, "the picker had the saved model current, not the default")
+	eq(w.kv.get("summary").model, nil, "the default resets it")
+end)
+
 windowCase("window: a PR prompt set to the main checkout starts its agent in a new tab at the checkout, with the PR's details and no worktree", function(w: World)
 	local s, b = agentScene(w)
 	local review = promptOf("p1", "Review", "Review {url}: {title} by {author}, {branch} into {base}")

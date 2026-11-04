@@ -675,12 +675,19 @@ local function pageContent(state: State): ({ any }, { Node })
 			disabled = sproblem,
 			control = { k = "choice", style = "segmented", value = if sp.on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) },
 		})
+		-- Picked from omp's list in the window's picker, as an action's Model is; a text field while omp lists no models.
+		local smodel = sp.model
+		local sdefault = require("../summary").MODEL
 		row({
 			id = "summary:model",
 			label = "Summary model",
+			hint = if smodel and omp.known and not M.listedModel(smodel) then "Not in omp's list" else nil,
 			disabled = sproblem,
-			control = { k = "text", value = sp.model or "", placeholder = require("../summary").MODEL .. " (omp's small model)", mono = true },
-			changed = sp.model ~= nil,
+			control = if omp.failed
+				then { k = "text", value = smodel or "", placeholder = sdefault .. " (omp's small model)", mono = true }
+				else { k = "action", act = "pick-model", label = smodel or sdefault },
+			changed = smodel ~= nil,
+			defaultLabel = sdefault .. " (omp's small model)",
 		})
 		local now = os.time()
 		local wait = waitOf(state)
@@ -1150,15 +1157,19 @@ function M.setValue(state: State, row: string, value: any)
 			p.next = to
 			return nil
 		end)
-	elseif kind == "pmodel" then
-		-- The window's model picker: a model or role omp listed (the row's reset is omp's default).
+	elseif kind == "pmodel" or (kind == "summary" and id == "model") then
+		-- The window's model picker: a model or role omp listed (the row's reset is omp's default, or @smol for Summaries).
 		if not (choice and worktree.validModel(choice)) then
 			return
 		end
-		s.errors[row] = editPrompt(state, id, function(_, p)
-			p.model = choice
-			return nil
-		end)
+		s.errors[row] = if kind == "summary"
+			then storage.editSummary(function(p)
+				p.model = choice
+			end)
+			else editPrompt(state, id, function(_, p)
+				p.model = choice
+				return nil
+			end)
 	elseif kind == "peffort" then
 		if not (choice and (choice == "default" or worktree.validEffort(choice))) then
 			return
@@ -1542,7 +1553,7 @@ function M.runAction(state: State, act: string, row: string)
 		state.cx:open("plotroom://repos")
 	elseif act == "pick-model" then
 		-- The window's picker (window.luau's `pickModel`) asks this block for omp's list; its pick comes back as the row's change.
-		local id = string.match(row, "^pmodel:(%a+:[%w]+)$")
+		local id = string.match(row, "^pmodel:(%a+:[%w]+)$") or (if row == "summary:model" then row else nil)
 		if id then
 			state.cx:open("plotroom://model/" .. id)
 		end
@@ -1814,7 +1825,7 @@ end
 
 -- Opens Settings page `page` with nothing focused or being edited. Views learns the signed-in gh logins (a group each);
 -- a setup page asks again whether the CLIs start, so one installed meanwhile turns its integration on; Actions asks
--- omp again for the models its Model rows offer.
+-- omp again for the models its Model rows offer, as General does for Summary model.
 function M.showPage(state: State, s: Settings, page: string)
 	M.discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
@@ -1823,7 +1834,7 @@ function M.showPage(state: State, s: Settings, page: string)
 		ghActive.note(state, true)
 	elseif string.find(page, "^setup%-") then
 		engine.probeClis(true)
-	elseif page == "prompts" then
+	elseif page == "prompts" or page == "general" then
 		M.loadModels(state)
 	end
 end

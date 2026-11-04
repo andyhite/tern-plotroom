@@ -11,7 +11,7 @@ type World = h.World
 
 local EPOCH, NULL, array, case, eq, findKey, goToSettings, has = h.EPOCH, h.NULL, h.array, h.case, h.eq, h.findKey, h.goToSettings, h.has
 local hostScene, issueHost, jiraHost, lacks, openIssues, openQueue = h.hostScene, h.issueHost, h.jiraHost, h.lacks, h.openIssues, h.openQueue
-local pickerNode, prefsOf, rowIn, same, searchItem, sha, yes = h.pickerNode, h.prefsOf, h.rowIn, h.same, h.searchItem, h.sha, h.yes
+local pickerNode, prefsOf, request, answerOf, rowIn, same, searchItem, sha, yes = h.pickerNode, h.prefsOf, h.request, h.answerOf, h.rowIn, h.same, h.searchItem, h.sha, h.yes
 
 local FLAGS = { "omp", "-p", "--no-tools", "--no-session", "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--system-prompt" }
 
@@ -191,15 +191,70 @@ case("summary: the cache keeps at most 200 Summaries, dropping the oldest", func
 	yes(kept["x/y#2@t1"] ~= nil and kept["o/r#1@" .. sha("a")] ~= nil, "the rest and the new one stay")
 end)
 
-case("summary: Settings › General switches Summaries off and sets the model, refusing what omp cannot take as a model", function(w: World)
+case("summary: Settings › General picks the Summary model from omp's list in the window's picker and switches Summaries off", function(w: World)
 	local calls = summaries(w, function()
 		return { stdout = "Done." }
 	end)
 	prScene(w, sha("a"))
 	local b = openQueue(w)
 	goToSettings(b, "general")
+	w.flush()
 	eq(rowIn(b, "summary:on").control.value, "on", "on by default")
-	eq(rowIn(b, "summary:model").control.value, "", "with omp's small model")
+	local row = rowIn(b, "summary:model")
+	same({ row.control.k, row.control.act, row.control.label, row.changed, row.hint }, { "action", "pick-model", "@smol", false } :: { any }, "a button naming omp's small model, unchanged")
+	has(row.defaultLabel or "", "@smol", "and reset says it goes back to @smol")
+	b.event({ ev = "action", id = "layer.settings", act = "pick-model", value = "summary:model" })
+	eq(w.opened[#w.opened], "plotroom://model/summary:model", "the button asks the window's picker the actions use")
+	request(b, "q1", { op = "models", prompt = "summary:model" })
+	local a = answerOf(b, "q1")
+	same(a.models, { "anthropic/claude-opus-4-5", "anthropic/claude-haiku-4-5", "openai/gpt-5.2" }, "the picker gets omp's models")
+	yes(#a.roles > 0, "and its roles")
+	same({ a.current, a.listed }, {} :: { any }, "no saved model: the default is current")
+	-- The picker's choice comes back as the row's change.
+	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = "x; rm -rf ~" })
+	eq(w.kv.get("summary"), nil, "a value omp would not take as a model is not saved")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = "anthropic/claude-haiku-4-5" })
+	eq(w.kv.get("summary").model, "anthropic/claude-haiku-4-5", "a pick is saved")
+	same({ rowIn(b, "summary:model").control.label, rowIn(b, "summary:model").changed }, { "anthropic/claude-haiku-4-5", true } :: { any }, "the button names it and offers a reset")
+	request(b, "q2", { op = "models", prompt = "summary:model" })
+	same({ answerOf(b, "q2").current, answerOf(b, "q2").listed }, { "anthropic/claude-haiku-4-5", "anthropic/claude-haiku-4-5" }, "the picker marks it current")
+	b.press("escape")
+	w.advance(1000)
+	w.flush()
+	eq(calls[1].argv[13], "anthropic/claude-haiku-4-5", "the call uses it")
+	goToSettings(b, "general")
+	w.flush()
+	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = "retired/model-x" })
+	same({ rowIn(b, "summary:model").control.label, rowIn(b, "summary:model").hint }, { "retired/model-x", "Not in omp's list" }, "a model omp no longer lists stays selected, marked")
+	request(b, "q3", { op = "models", prompt = "summary:model" })
+	same({ answerOf(b, "q3").current, answerOf(b, "q3").listed }, { "retired/model-x" } :: { any }, "the picker is told it is not listed")
+	goToSettings(b, "general")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = nil })
+	eq(w.kv.get("summary").model, nil, "reset goes back to the default")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = "off" })
+	eq(w.kv.get("summary").off, true, "switched off")
+	b.press("escape")
+	b.press("down")
+	w.advance(5000)
+	eq(#calls, 1, "off: no call")
+	eq(shown(b), nil, "and no Summary part")
+	b.press("up")
+	eq(shown(b), nil, "not even a cached one")
+end)
+
+case("summary: while omp lists no models, Summary model is a text field refusing what omp cannot take as a model", function(w: World)
+	summaries(w, function()
+		return { stdout = "Done." }
+	end)
+	w.respond(function(call: Call): any
+		local a = call.argv
+		return if a[1] == "omp" and a[2] == "models" then { status = 1, stderr = "no providers\n" } else nil
+	end)
+	prScene(w, sha("a"))
+	local b = openQueue(w)
+	goToSettings(b, "general")
+	w.flush()
+	eq(rowIn(b, "summary:model").control.value, "", "a text field, empty with omp's small model")
 	has(rowIn(b, "summary:model").control.placeholder, "@smol", "named in the placeholder")
 	b.event({ ev = "select", id = "layer.settings", item = "summary:model" })
 	local function try(text: string): string?
@@ -217,23 +272,8 @@ case("summary: Settings › General switches Summaries off and sets the model, r
 	eq(w.kv.get("summary"), nil, "nothing was saved")
 	eq(try("anthropic/claude-haiku-4-5"), nil, "a provider/model is accepted")
 	eq(w.kv.get("summary").model, "anthropic/claude-haiku-4-5", "and saved")
-	eq(rowIn(b, "summary:model").changed, true, "the row offers a reset")
-	b.press("escape")
-	w.advance(1000)
-	w.flush()
-	eq(calls[1].argv[13], "anthropic/claude-haiku-4-5", "the call uses it")
-	goToSettings(b, "general")
-	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = nil })
-	eq(w.kv.get("summary").model, nil, "reset goes back to the default")
-	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = "off" })
-	eq(w.kv.get("summary").off, true, "switched off")
-	b.press("escape")
-	b.press("down")
-	w.advance(5000)
-	eq(#calls, 1, "off: no call")
-	eq(shown(b), nil, "and no Summary part")
-	b.press("up")
-	eq(shown(b), nil, "not even a cached one")
+	request(b, "q1", { op = "models", prompt = "summary:model" })
+	has(answerOf(b, "q1").problem, "no providers", "the window's picker is told why there is no list")
 end)
 
 case("summary: unreadable Summary settings lock their rows and are never written over", function(w: World)
