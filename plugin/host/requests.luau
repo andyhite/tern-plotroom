@@ -328,8 +328,10 @@ end
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- and `failures` the `{failures}` block, for the prompt that runs there.
-local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean)
+-- and `failures` the `{failures}` block, for the prompt that runs there. `premerge`: an agent will resolve conflicts
+-- there, so a clean worktree of a PR GitHub reports conflicting first gets its base merged (worktree.premerge), and the
+-- answer carries what that did (`merge`).
+local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
 	if wt and preparing[key] then
@@ -381,36 +383,49 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					noteWorktree(state, key, "prs", nil, why)
 					return reply(state, id, { problem = why })
 				end
-				local current = r.head == r.prHead
-				local summary = worktree.describe(r)
-				noteWorktree(state, key, "prs", {
-					root = r.root,
-					repo = repo,
-					path = r.path,
-					branch = r.branch,
-					ref = r.ref,
-					current = current,
-					dirty = r.dirty,
-					ahead = r.ahead,
-					summary = summary,
-					update = worktree.update(r),
-				}, nil)
-				reply(state, id, {
-					path = r.path,
-					created = r.created,
-					current = current,
-					dirty = r.dirty,
-					ahead = r.ahead,
-					summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
-					setup = if r.created and not r.fork then setupLine(repo) else nil,
-					remote = r.remote,
-					branch = r.prRef,
-					base = r.prBase,
-					title = r.title,
-					author = r.author,
-					["github.user"] = found["github.user"],
-					failures = failed,
-				})
+				local function answer(merge: worktree.Merge?)
+					local current = r.head == r.prHead
+					local summary = worktree.describe(r)
+					noteWorktree(state, key, "prs", {
+						root = r.root,
+						repo = repo,
+						path = r.path,
+						branch = r.branch,
+						ref = r.ref,
+						current = current,
+						dirty = r.dirty,
+						ahead = r.ahead,
+						summary = summary,
+						update = worktree.update(r),
+					}, nil)
+					reply(state, id, {
+						path = r.path,
+						created = r.created,
+						current = current,
+						dirty = r.dirty,
+						ahead = r.ahead,
+						summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
+						setup = if r.created and not r.fork then setupLine(repo) else nil,
+						remote = r.remote,
+						branch = r.prRef,
+						base = r.prBase,
+						title = r.title,
+						author = r.author,
+						["github.user"] = found["github.user"],
+						failures = failed,
+						merge = merge,
+					})
+				end
+				if not (premerge and r.conflicts and r.dirty == false and r.prBase ~= "") then
+					return answer(nil)
+				end
+				preparing[key] = true -- a second request waits for the merge, as for the worktree
+				worktree.premerge(r.path, r.remote, r.prBase, function(merge)
+					preparing[key] = nil
+					if alive(state) then
+						answer(merge)
+					end
+				end)
 			end)
 		end)
 	end
@@ -1792,7 +1807,7 @@ function M.rpc(state: State, raw: any)
 		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
 			return
 		end
-		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true)
+		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true, q.premerge == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
