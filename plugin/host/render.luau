@@ -1505,6 +1505,59 @@ local function nowProps(state: State, props: { [string]: any })
 	props.columns, props.query, props.cursor = {}, nil, nil
 end
 
+-- Now as a Board (engine.nowColumns): a row of columns, each a heading and a native list of its rows as items, the
+-- fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps its
+-- height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
+local function nowBoardNode(state: State): Node
+	local cols = engine.nowColumns(state)
+	local at = engine.nowBoardAt(state)
+	local open = state.nowFold or (at > 0 and cols[at].fold == true)
+	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
+	-- 6px, about three quarters of a cell row, under the picker's head, the column headings and the fold's button.
+	local lines = math.max(4, math.floor((state.cx.rows - 8) * 0.75))
+	local function column(group: string, col: any): Node
+		local cards: { Node } = {}
+		local selected: string? = nil
+		for _, row in col.rows do
+			local badge = nowWhy(row)
+			local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
+			local detail: { any } = { ui.span(ref, "mono") }
+			if row.snoozed then
+				table.insert(detail, ui.span(" · Snoozed", "muted"))
+			end
+			table.insert(cards, ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = { ui.span(badge.text, badge.tone) }, title = badge.title }))
+			if row.id == state.nowAt then
+				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
+			end
+		end
+		return ui.node("col", { key = col.id, grow = 1, basis = 0, gap = "xs" }, {
+			ui.node("text", { key = "head", spans = { ui.span(col.label, "strong"), ui.span("  " .. #col.rows, "muted") } }),
+			ui.node("list", { key = "list", role = "plotroom.lane", selected = selected, max = { lines = lines }, empty = { ui.span("None", "muted") } }, cards),
+		})
+	end
+	local lanes: { Node } = {}
+	local folded: { Node } = {}
+	local hidden: { string } = {}
+	for _, col in cols do
+		if col.fold then
+			table.insert(folded, column("fold", col))
+			table.insert(hidden, col.label .. " " .. #col.rows)
+		else
+			table.insert(lanes, column("lanes", col))
+		end
+	end
+	local kids: { Node } = {
+		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
+		buttonRow("foldbar", {
+			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "now-fold" } }),
+		}),
+	}
+	if open then
+		table.insert(kids, ui.node("row", { key = "fold", gap = "md", align = "start" }, folded))
+	end
+	return ui.node("col", { key = "board", role = "plotroom.board", gap = "sm" }, kids)
+end
+
 -- The one-key shortcuts as the checklist decided them ("use" | "no"), "set" when none is left to bind, else nil.
 local function shortcutsChoice(saved: { [string]: any }?): string?
 	local chosen = if saved then saved.shortcuts else nil
@@ -1725,6 +1778,7 @@ function M.queuePicker(state: State): Node
 		props.message = spans(ui.span(headOf(state, problem.kind) or "Plotroom", "strong"), "  ", problem.message, "  ", ui.span(helpOf(state, problem.kind) or "", "muted"))
 	end
 	local preview: { Node }
+	local laid = false -- Now is drawn as a Board
 	if state.boardOn then
 		cancelDetails(state) -- no checks load for a queue preview that is not shown
 		preview = boardPreview(state)
@@ -1735,8 +1789,17 @@ function M.queuePicker(state: State): Node
 		agentsProps(state, props)
 	elseif state.nowOn then
 		cancelDetails(state)
-		preview = nowPreview(state)
 		nowProps(state, props)
+		if engine.nowBoardShown(state) and #engine.nowRows(state) > 0 then
+			-- The Board takes the picker's place: its list is emptied and hidden (plotroom.css), the Board drawn in the
+			-- preview pane, which then spans the picker.
+			laid = true
+			preview = { nowBoardNode(state) }
+			props.role ..= ".board"
+			props.items, props.order, props.selected = tern.json.array({}), tern.json.array({}), nil
+		else
+			preview = nowPreview(state)
+		end
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
 	end
@@ -1748,12 +1811,13 @@ function M.queuePicker(state: State): Node
 		end
 		props.title = if #rest > 0 then rest else nil
 	end
-	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane.
-	local guide = checklist(state)
+	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane. The Board
+	-- fills the pane: Get started stays with the List.
+	local guide = if laid then nil else checklist(state)
 	if guide then
 		table.insert(preview, 1, guide)
 	end
-	local shown = props.selected ~= nil or guide ~= nil
+	local shown = props.selected ~= nil or guide ~= nil or laid
 	props.preview = if shown then "side" else "none"
 	return ui.node("picker", props, if shown then preview else {})
 end

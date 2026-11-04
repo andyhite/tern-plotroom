@@ -2934,6 +2934,93 @@ function M.nowMove(state: State, delta: number)
 	end
 end
 
+-- Now as a Board: its columns in order, each listing Now's rows (nowRows' order kept) by their item's stage. The last
+-- two are the fold. A row with no item (an agent or a notification Now holds no item for) is in Needs you: Now lists it
+-- because it needs you.
+M.NOW_COLUMNS = {
+	{ id = "needs", label = "Needs you" },
+	{ id = "working", label = "Agent working" },
+	{ id = "waiting", label = "Waiting" },
+	{ id = "ready", label = "Ready to merge" },
+	{ id = "none", label = "Not started", fold = true },
+	{ id = "worktree", label = "Worktree", fold = true },
+}
+local COLUMN_OF: { [string]: string } = { needs = "needs", blocked = "needs", working = "working", pr = "waiting", ready = "ready", none = "none", worktree = "worktree" }
+-- The narrowest block, in terminal columns, that lays Now out as a Board; a narrower one shows the List. Measured in
+-- real Tern (c226): below about 80 columns a card's number and why it is listed no longer fit its column.
+M.BOARD_MIN_COLS = 80
+
+-- The Board's columns, { id, label, fold?, rows }, built once per nowRows answer.
+function M.nowColumns(state: State): { any }
+	local now = state.now
+	local rows = M.nowRows(state)
+	if now.cols and now.colsOf == rows then
+		return now.cols :: { any }
+	end
+	local cols: { any } = {}
+	local at: { [string]: any } = {}
+	for _, c in M.NOW_COLUMNS do
+		local col = { id = c.id, label = c.label, fold = c.fold, rows = {} }
+		table.insert(cols, col)
+		at[c.id] = col
+	end
+	for _, row in rows do
+		local stage = if row.item and row.kind then (M.stage(state, row.kind, row.item)) else nil
+		table.insert(at[COLUMN_OF[stage or ""] or "needs"].rows, row)
+	end
+	now.cols, now.colsOf = cols, rows
+	return cols
+end
+
+-- Whether Now shows as a Board: chosen, and the block wide enough.
+function M.nowBoardShown(state: State): boolean
+	return state.nowOn and state.nowBoard and state.cx.cols >= M.BOARD_MIN_COLS
+end
+
+-- The selected row's column and place in it (0, 0 when none is selected).
+function M.nowBoardAt(state: State): (number, number)
+	for c, col in M.nowColumns(state) do
+		for i, row in col.rows do
+			if row.id == state.nowAt then
+				return c, i
+			end
+		end
+	end
+	return 0, 0
+end
+
+-- Moves the Board's selection `dy` rows in its column, or `dx` columns across to the nearest column with rows, at the
+-- same place or its last row. A move into the fold opens it.
+function M.nowBoardMove(state: State, dx: number, dy: number)
+	local cols = M.nowColumns(state)
+	local c, i = M.nowBoardAt(state)
+	if c == 0 then
+		M.nowEnsure(state)
+		c, i = M.nowBoardAt(state)
+		if c == 0 then
+			return
+		end
+	end
+	if dy ~= 0 then
+		local list = cols[c].rows
+		i = math.clamp(i + dy, 1, #list)
+	end
+	if dx ~= 0 then
+		local step = if dx < 0 then -1 else 1
+		local to = c + step
+		while cols[to] and #cols[to].rows == 0 do
+			to += step
+		end
+		if cols[to] then
+			c, i = to, math.min(i, #cols[to].rows)
+		end
+	end
+	state.nowAt = cols[c].rows[i].id
+	if cols[c].fold then
+		state.nowFold = true
+	end
+end
+
 -- Shows Now instead of a view, and reads it.
 function M.openNow(state: State)
 	state.nowOn, state.agentsOn, state.boardOn, state.focus = true, false, false, "list"

@@ -767,4 +767,114 @@ case("github: a gh login read from a list cache older than its TTL is still answ
 	eq(#requestsOf(s.gh, "accounts"), 2, "and the list is read again")
 end)
 
+-- Now's Board, if drawn: each column as "<column id>: <row ids>", lanes then fold, and the selected card's node id.
+local function board(b: h.Block): ({ string }?, string?)
+	local node = h.findKey(h.pickerNode(b), "board", "col")
+	if not node then
+		return nil, nil
+	end
+	local cols: { string } = {}
+	local selected: string? = nil
+	for _, group in node.c do
+		if group.p.key == "lanes" or group.p.key == "fold" then
+			for _, col in group.c do
+				local list = h.findKey(col, "list", "list")
+				local ids: { string } = {}
+				for _, card in list.c do
+					table.insert(ids, card.p.key)
+				end
+				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
+				selected = list.p.selected or selected
+			end
+		end
+	end
+	return cols, selected
+end
+
+-- A Now with one row in each column but Worktree: o/r#1 Blocked, o/r#5 under a working agent, o/r#4 a review asked of you
+-- (PR open), o/r#2 Ready to merge and issue o/r#12 assigned to you and Not started.
+local function boardScene(w: World): h.Block
+	local _, b = nowScene(w, {}, function(s: h.HostScene)
+		s.gh.queries[MINE] = {
+			searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED" }),
+			searchItem(2, "o/r", EPOCH - 120, { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }),
+		}
+		s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
+		s.gh.queries[ASSIGNED] = { issueItem(12, "o/r", EPOCH - 300) }
+	end)
+	asks.hx.agents(b, { ["o/r#5"] = "working" })
+	return b
+end
+
+case("now: Show Now as Board lays Now out in columns by stage, the fold closed; Show Now as List goes back", function(w: World)
+	local b = boardScene(w)
+	eq((board(b)), nil, "Now is a List until asked")
+	eq(h.hx.palette(w, b).labels["now-layout"], "Show Now as Board", "Commands offers the Board")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	local cols, selected = board(b)
+	same(cols, { "needs: no_2fr_231", "working: no_2fr_235", "waiting: no_2fr_234", "ready: no_2fr_232" }, "Needs you (Blocked), Agent working, Waiting (PR open), Ready to merge; the fold's columns are not drawn")
+	eq(selected, "layer.queue.board.lanes.needs.list.no_2fr_231", "the selection stays on Now's top row")
+	same(listed(b), {}, "the picker lists nothing of its own")
+	has(pickerOf(b).role, ".board", "and its role says the Board takes its place")
+	local fold: any = h.findKey(h.pickerNode(b), "fold", "item")
+	eq(fold.p.label, "Show Not started 1 · Worktree 0", "the fold's button counts what it hides")
+	eq(fold.p.role, "plotroom.button", "and is drawn as a button")
+	b.event({ ev = "action", id = "layer.queue.board.foldbar.fold", act = fold.p.actions.click })
+	local opened = board(b) or {}
+	eq(opened[5], "none: no_2fr_2312", "it opens the fold: Not started")
+	eq(opened[6], "worktree: ", "and Worktree")
+	eq(h.hx.palette(w, b).labels["now-layout"], "Show Now as List", "Commands now offers the List")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	eq((board(b)), nil, "which goes back")
+	eq(#listed(b), 5, "listing Now's rows again")
+end)
+
+case("now: on the Board the arrows and h/j/k/l move in and across columns, into the fold, which opens", function(w: World)
+	local b = boardScene(w)
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	local function at(): string
+		local _, selected = board(b)
+		return string.match(selected or "", "board%.%a+%.(.*)$") or "none"
+	end
+	b.press("right")
+	eq(at(), "working.list.no_2fr_235", "Right moves to the next column")
+	b.typeText("l")
+	eq(at(), "waiting.list.no_2fr_234", "and so does l")
+	b.press("down")
+	eq(at(), "waiting.list.no_2fr_234", "Down stops at the column's last row")
+	b.typeText("ll")
+	eq(at(), "none.list.no_2fr_2312", "moving past Ready to merge goes into the fold and opens it")
+	b.typeText("l")
+	eq(at(), "none.list.no_2fr_2312", "an empty column (Worktree) is skipped, and there is nothing after it")
+	b.typeText("h")
+	eq(at(), "ready.list.no_2fr_232", "h moves back")
+	b.press("left")
+	b.press("left")
+	b.press("left")
+	b.press("left")
+	eq(at(), "needs.list.no_2fr_231", "and Left stops at the first column")
+	b.event({ ev = "select", id = "layer.queue.board.lanes.waiting.list", item = "layer.queue.board.lanes.waiting.list.no_2fr_234" })
+	eq(at(), "waiting.list.no_2fr_234", "a click on a card selects it")
+	b.press("enter")
+	eq(b.state().nowOn, false, "Enter shows its item, as in the List")
+end)
+
+case("now: below 80 columns the Board shows as the List; the choice is saved with the block", function(w: World)
+	local b = boardScene(w)
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "now-layout" })
+	eq(b.saved().nowBoard, true, "the choice is saved")
+	b.cx.cols = 79
+	b.render()
+	eq((board(b)), nil, "a narrow block shows the List")
+	eq(#listed(b), 5, "with every row")
+	b.press("down")
+	eq(pickerOf(b).selected, "no_2fr_234", "and the List's keys")
+	b.cx.cols = 80
+	b.render()
+	yes(board(b) ~= nil, "wide enough again, the Board")
+	local again = w.open(2, { "/work/r" }, b.saved())
+	w.flush()
+	yes(board(again) ~= nil, "a restored block opens on the Board")
+end)
+
 return {}

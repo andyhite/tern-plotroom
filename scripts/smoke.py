@@ -2075,6 +2075,76 @@ def sc_previews(s: Smoke) -> None:
     s.shot("preview-worktree")
 
 
+def sc_now_board(s: Smoke) -> None:
+    """Now as a Board in real Tern: Show Now as Board (Commands) draws its columns in the picker's place, long titles wrap to two lines in their cards, Down
+    walks a column longer than the pane with its selected card kept in view (the list scrolls itself: plugins get no scroll events), Right
+    and Left cross columns, and a block narrower than 80 columns shows the List. Shots in light and dark."""
+    stamp = "2026-01-01T00:00:00Z"
+    long = "Move the session refresh out of the login redirect so a slow identity provider no longer signs everyone out at once"
+
+    def pr(n: int, title: str, **facts: object) -> Dict[str, object]:
+        return dict({"number": n, "title": title, "url": "https://github.com/f/low/pull/%d" % n, "author": "smoke", "state": "OPEN", "isDraft": False,
+                     "updatedAt": stamp, "createdAt": stamp, "head": "board-%d" % n, "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1,
+                     "comments": 0, "labels": [], "checks": "SUCCESS", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": [], "runTotal": 0}, **facts)
+
+    prs = [pr(60, "Blocked: " + long, review="CHANGES_REQUESTED"), pr(61, "Ready: " + long, review="APPROVED", merge="CLEAN")]
+    prs += [pr(n, "Waiting %d: %s" % (n, long)) for n in range(62, 102)]
+    (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
+    (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
+    scope = "[data-surface='plugin.plotroom.prs'] "
+    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    s.ctl_ok("resize", "2200", "1000")
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    s.cd(s.checkout("flow"))
+    s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+    s.wait_until("the new block opens on Now", s.on_now)
+    s.wait_text("Now lists the waiting pull requests", "Waiting 101: ")
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Show Now as Board"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_until("the Board's columns are drawn", lambda: len(s.matches(lane)) == 4)
+    s.wait_until("its first card is selected", lambda: any("Blocked: " in t for t in s.matches(chosen)))
+    s.eq("the picker's own rows are hidden", [], s.selection())
+    s.ctl_ok("appearance", "light")
+    s.shot("now-board-light")
+    s.ctl_ok("appearance", "dark")
+    s.shot("now-board-dark")
+
+    def rect(sel: str) -> List[float]:
+        nodes = [n for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
+        return [float(v) for v in nodes[0]["rect"]] if nodes else []
+
+    # Now lists reviews oldest first, then by key: Waiting runs 100, 101, 62, 63, … 99.
+    s.ctl_ok("key", "Right")
+    s.wait_until("Right crosses to Waiting (Agent working is empty)", lambda: any("Waiting 100: " in t for t in s.matches(chosen)))
+    for _ in range(35):
+        s.ctl_ok("key", "Down")
+    s.wait_until("Down walks the column", lambda: any("Waiting 95: " in t for t in s.matches(chosen)))
+    time.sleep(0.5)
+    card, box = rect(chosen), rect(scope + "[data-id='layer.queue.board.lanes.waiting.list'] .sf-list-scroll")
+    s.eq("the selected card %r sits inside its column's scroller %r, within the 1000 px window" % (card, box), True,
+         bool(card and box) and card[1] >= box[1] - 1 and card[1] + card[3] <= box[1] + box[3] + 1 and card[1] + card[3] <= 1000)
+    s.shot("now-board-scrolled")
+    s.ctl_ok("key", "Right")
+    s.wait_until("Right crosses to Ready to merge", lambda: any("Ready: " in t for t in s.matches(chosen)))
+    s.ctl_ok("key", "Left")
+    s.wait_until("Left comes back to Waiting, at the place it can keep (Ready to merge has one row)", lambda: any("Waiting 100: " in t for t in s.matches(chosen)))
+    s.ctl_ok("resize", "900", "800")
+    s.wait_until("a narrow block shows the List", lambda: len(s.matches(lane)) == 0 and bool(s.selection()))
+    s.shot("now-board-narrow")
+    s.ctl_ok("resize", "2200", "1000")
+    s.wait_until("wide again, the Board", lambda: len(s.matches(lane)) == 4)
+    s.ctl_ok("key", ".")
+    s.wait_text("the palette", "Refresh")
+    s.ctl_ok("type", json.dumps("Show Now as List"))
+    time.sleep(0.5)
+    s.ctl_ok("key", "Enter")
+    s.wait_until("Show Now as List goes back", lambda: len(s.matches(lane)) == 0)
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -2104,6 +2174,7 @@ SCENARIOS = [
     ("Settings › Views › Now", sc_now_settings),
     ("buttons and links", sc_controls),
     ("every preview in one order", sc_previews),
+    ("Now as a Board", sc_now_board),
 ]
 
 

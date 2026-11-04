@@ -1015,6 +1015,8 @@ local function newWorld(instantiate: Loader, context: string): World
 	kvStore.keys = jsonEncode({
 		down = "j",
 		up = "k",
+		left = "h",
+		right = "l",
 		worktree = "w",
 		goto = "g",
 		agent = "a",
