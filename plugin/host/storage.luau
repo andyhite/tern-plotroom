@@ -482,6 +482,7 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.worktree ~= nil and type(p.worktree) ~= "boolean")
 			or (p.split ~= nil and type(p.split) ~= "boolean")
 			or (p.model ~= nil and type(p.model) ~= "string")
+			or (p.effort ~= nil and type(p.effort) ~= "string")
 			or (p.status ~= nil and type(p.status) ~= "string")
 			or (p.next ~= nil and type(p.next) ~= "string")
 			or (p.outcome ~= nil and type(p.outcome) ~= "string")
@@ -489,9 +490,10 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 		then
 			return nil, PROMPTS_BAD
 		end
-		-- An outcome this version does not know (or none saved: an action from before outcomes) reads as None.
+		-- An outcome or effort this version does not know (or none saved: an action from before them) reads as None.
 		local outcome = if defaults.outcomeLabel(p.outcome) then p.outcome else nil
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = outcome, checker = p.checker })
+		local effort = if p.effort and worktree.validEffort(p.effort) then p.effort else nil
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = effort, status = p.status, next = p.next, outcome = outcome, checker = p.checker })
 	end
 	-- A checker that is the action itself, or no action of the store, reads as none: an action never checks itself.
 	local ids: { [string]: boolean } = {}
@@ -518,7 +520,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = p.effort, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil

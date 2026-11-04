@@ -6,6 +6,7 @@ local jira = require("../jira")
 local keys = require("../keys")
 local defaults = require("../prompts")
 local sorting = require("../sorting")
+local process = require("../process")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
 local core = require("./core")
@@ -62,6 +63,114 @@ local function usable(kind: Kind): boolean
 		end
 	end
 	return false
+end
+
+-- What omp lists for Settings › Actions › Model, asked again each time the Actions page opens: `models`, the chat
+-- models' selectors ("provider/id") in omp's order, grouped by provider; `roles`, the role aliases of omp's config
+-- (minus `default`, which is omp's default) with the model each names; `known`, every selector, bare id and "@role"
+-- (lowercase) a saved model is matched against. `failed`: why omp listed no models, which turns the row into the text
+-- field. Nothing yet: still asking. One list for the host, as it is omp's.
+type OmpModels = { loading: boolean, models: { string }?, roles: { { name: string, model: string } }?, known: { [string]: string }?, failed: string?, waiters: { () -> () } }
+local omp: OmpModels = { loading = false, waiters = {} }
+M.omp = omp
+
+-- Asks omp for its models and role aliases (unless already asking), then runs `done` and draws `state` again.
+function M.loadModels(state: State?, done: (() -> ())?)
+	if done then
+		table.insert(omp.waiters, done)
+	end
+	if omp.loading then
+		return
+	end
+	omp.loading = true
+	local pending = 2
+	local models: { string }, roles: { { name: string, model: string } }, known: { [string]: string } = {}, {}, {}
+	local failed: string? = nil
+	local function finish()
+		pending -= 1
+		if pending > 0 then
+			return
+		end
+		omp.loading, omp.failed = false, failed
+		omp.models, omp.roles, omp.known = if failed then nil else models, if failed then nil else roles, if failed then nil else known
+		local waiters = omp.waiters
+		omp.waiters = {}
+		for _, w in waiters do
+			w()
+		end
+		if state and engine.alive(state) then
+			state.cx:render()
+		end
+	end
+	process.run({ "omp", "models", "--json" }, { timeout_ms = 30000 }, function(res, problem)
+		local ok, data = pcall(tern.json.decode, if res and res.status == 0 and not res.timed_out then res.stdout else "")
+		local list = if ok and isTable(data) and isTable(data.models) then data.models else nil
+		if not list then
+			failed = problem or (if res and res.stderr ~= "" then clip(printable(res.stderr), 200) else "omp did not list its models.")
+			return finish()
+		end
+		-- Grouped by provider, in the order omp names them.
+		local byProvider: { [string]: { string } } = {}
+		local providers: { string } = {}
+		for _, m in list do
+			if isTable(m) and type(m.selector) == "string" and type(m.provider) == "string" and (m.kind == nil or m.kind == "chat") and worktree.validModel(m.selector) then
+				if not byProvider[m.provider] then
+					byProvider[m.provider] = {}
+					table.insert(providers, m.provider)
+				end
+				table.insert(byProvider[m.provider], m.selector)
+				known[string.lower(m.selector)] = m.selector
+				if type(m.id) == "string" then
+					known[string.lower(m.id)] = m.selector
+				end
+			end
+		end
+		for _, p in providers do
+			for _, sel in byProvider[p] do
+				table.insert(models, sel)
+			end
+		end
+		if #models == 0 then
+			failed = "omp lists no models."
+		end
+		finish()
+	end)
+	process.run({ "omp", "config", "get", "modelRoles", "--json" }, { timeout_ms = 30000 }, function(res)
+		-- omp's own roles (its --smol, --slow and --plan) resolve with no config; the config names their models and adds
+		-- roles of its own. Unset, or omp could not say: just omp's roles, with no model named.
+		local named: { [string]: string } = {}
+		local ok, data = pcall(tern.json.decode, if res and res.status == 0 and not res.timed_out then res.stdout else "")
+		if ok and isTable(data) and isTable(data.value) then
+			for name, model in data.value do
+				if type(name) == "string" and name ~= "default" and type(model) == "string" and worktree.validModel("@" .. name) then
+					named[name] = clip(printable(model), 100)
+				end
+			end
+		end
+		for _, name in { "plan", "slow", "smol" } do
+			named[name] = named[name] or ""
+		end
+		for name, model in named do
+			table.insert(roles, { name = name, model = model })
+			known["@" .. string.lower(name)] = "@" .. name
+		end
+		table.sort(roles, function(a, b)
+			return a.name < b.name
+		end)
+		finish()
+	end)
+end
+
+-- What `model` (a saved action's) is in omp's list: the selector or "@role" it names, also with an effort suffix
+-- ("gpt-5.2:high"); nil when omp does not list it. Always nil while the list is not known.
+function M.listedModel(model: string): string?
+	local known = omp.known
+	if not known then
+		return nil
+	end
+	local lower = string.lower(model)
+	local base, level = string.match(lower, "^(.-):(%a+)$")
+	return known[lower] or (if base and worktree.validEffort(level :: string) then known[base] else nil)
 end
 
 -- sections and extra children of the open settings page.
@@ -283,6 +392,9 @@ local function pageContent(state: State): ({ any }, { Node })
 					if p.model then
 						table.insert(parts, p.model)
 					end
+					if p.effort then
+						table.insert(parts, p.effort)
+					end
 					return table.concat(parts, " · ")
 				end) then
 					continue
@@ -295,12 +407,27 @@ local function pageContent(state: State): ({ any }, { Node })
 					hint = if first ~= "" then clip(printable(first), 80) else "Empty",
 					control = { k = "action", act = "edit-prompt", label = "Edit…" },
 				})
+				-- Picked from omp's list in the window's picker; a text field while omp lists no models.
+				local model = p.model
 				row({
 					id = "pmodel:" .. qid,
 					label = "Model",
-					control = { k = "text", value = p.model or "", placeholder = "omp's default", mono = true },
-					changed = p.model ~= nil,
+					hint = if model and omp.known and not M.listedModel(model) then "Not in omp's list" else nil,
+					control = if omp.failed
+						then { k = "text", value = model or "", placeholder = "omp's default", mono = true }
+						else { k = "action", act = "pick-model", label = model or "omp's default" },
+					changed = model ~= nil,
 					defaultLabel = "omp's default",
+				})
+				local efforts: { any } = { { value = "default", label = "omp's default" } }
+				for _, level in worktree.EFFORTS do
+					table.insert(efforts, { value = level, label = if level == "xhigh" then "XHigh" else string.upper(string.sub(level, 1, 1)) .. string.sub(level, 2) })
+				end
+				row({
+					id = "peffort:" .. qid,
+					label = "Effort",
+					hint = "How hard the model thinks (omp --thinking)",
+					control = { k = "choice", style = "segmented", value = p.effort or "default", options = tern.json.array(efforts) },
 				})
 				if kind.id == "issues" then
 					row({
@@ -1015,6 +1142,23 @@ function M.setValue(state: State, row: string, value: any)
 			p.next = to
 			return nil
 		end)
+	elseif kind == "pmodel" then
+		-- The window's model picker: a model or role omp listed (the row's reset is omp's default).
+		if not (choice and worktree.validModel(choice)) then
+			return
+		end
+		s.errors[row] = editPrompt(state, id, function(_, p)
+			p.model = choice
+			return nil
+		end)
+	elseif kind == "peffort" then
+		if not (choice and (choice == "default" or worktree.validEffort(choice))) then
+			return
+		end
+		s.errors[row] = editPrompt(state, id, function(_, p)
+			p.effort = if choice == "default" then nil else choice
+			return nil
+		end)
 	elseif kind == "poutcome" then
 		if not (choice and (choice == "none" or require("../prompts").outcomeLabel(choice))) then
 			return
@@ -1388,6 +1532,12 @@ function M.runAction(state: State, act: string, row: string)
 		retry(state)
 	elseif act == "add-repo" then
 		state.cx:open("plotroom://repos")
+	elseif act == "pick-model" then
+		-- The window's picker (window.luau's `pickModel`) asks this block for omp's list; its pick comes back as the row's change.
+		local id = string.match(row, "^pmodel:(%a+:[%w]+)$")
+		if id then
+			state.cx:open("plotroom://model/" .. id)
+		end
 	elseif act == "add-jira" then
 		state.cx:open("plotroom://jira-projects")
 	elseif act == "guide" then
@@ -1660,7 +1810,8 @@ function M.discardEdit(state: State)
 end
 
 -- Opens Settings page `page` with nothing focused or being edited. Views learns the signed-in gh logins (a group each);
--- a setup page asks again whether the CLIs start, so one installed meanwhile turns its integration on.
+-- a setup page asks again whether the CLIs start, so one installed meanwhile turns its integration on; Actions asks
+-- omp again for the models its Model rows offer.
 function M.showPage(state: State, s: Settings, page: string)
 	M.discardEdit(state)
 	s.page, s.focus, s.pick, s.errors = page, nil, nil, {}
@@ -1669,6 +1820,8 @@ function M.showPage(state: State, s: Settings, page: string)
 		ghActive.note(state, true)
 	elseif string.find(page, "^setup%-") then
 		engine.probeClis(true)
+	elseif page == "prompts" then
+		M.loadModels(state)
 	end
 end
 

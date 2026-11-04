@@ -80,7 +80,8 @@ end
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, title: string? }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
--- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), and
+-- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), its effort
+-- (`omp --thinking`, worktree.EFFORTS; nil: omp's default), and
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
 -- chained before it and `tab` is the tab the previous one ran in, which the next one joins. `outcome` (a saved action's
@@ -90,7 +91,7 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- has `check`, the run it checks: its agent, start, the commit its report named and its action's name. A fix round
 -- has `findings`, what to fix, for `{findings}`. A chain step's job has `from`, the step it starts, and `fail`, called
 -- when its start fails on the way.
-type Job = { text: string, model: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string?, checker: string?, criteria: string?, check: { agent: number, started: number?, commit: string, action: string }?, findings: string?, from: flows.Step?, fail: ((WindowCx) -> ())? }
+type Job = { text: string, model: string?, effort: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string?, checker: string?, criteria: string?, check: { agent: number, started: number?, commit: string, action: string }?, findings: string?, from: flows.Step?, fail: ((WindowCx) -> ())? }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -604,19 +605,31 @@ local function placement(cx: WindowCx, tab: number?, queue: number): (number?, D
 end
 
 -- Starts an agent at `r.path` with `prompt` and the fixed end-of-run report contract (prompts.REPORT) after it, as
--- `omp --model <model>` when the prompt names one. `split`: as a block beside the queue (pane `pane`), in its tab,
+-- `omp --model <model> --thinking <effort>` with what the prompt names. `split`: as a block beside the queue (pane `pane`), in its tab,
 -- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
 -- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
 -- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
 -- shell's `last` status if agents trip over a half-done setup.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
-	local model, split = job.model, job.split == true
+	local model, effort, split = job.model, job.effort, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
 	info.kind, info.model, info.runsIn = t.kind, model, if join then "worktree" else "main checkout"
 	if model and not worktree.validModel(model) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
 		return false
+	elseif effort and not worktree.validEffort(effort) then
+		cx:toast("error", "Agent not started for " .. t.label, "The action's effort is not one omp takes: " .. effort)
+		return false
 	end
+	-- Omitted, the command is the agent setting's (omp); a model or effort needs its own command line.
+	local flags: { string } = {}
+	if model then
+		table.insert(flags, "--model " .. model)
+	end
+	if effort then
+		table.insert(flags, "--thinking " .. effort)
+	end
+	local command = if #flags > 0 then "omp " .. table.concat(flags, " ") else nil
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
@@ -660,8 +673,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		cx.layout:focus(pane)
 	end
 	local ok, agent = pcall(function()
-		-- Omitted, the command is the agent setting's (omp); a model needs its own command line.
-		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = if model then "omp --model " .. model else nil })
+		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
 	end)
 	if not ok or type(agent) ~= "number" then
 		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -1039,7 +1051,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil, checker = if type(it.checker) == "string" then it.checker else nil }
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, effort = if type(it.effort) == "string" then it.effort else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil, checker = if type(it.checker) == "string" then it.checker else nil }
 				local function go(cx3: WindowCx)
 					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
 				end
@@ -1250,6 +1262,41 @@ local function pickJira(cx: WindowCx, pane: number)
 	end)
 end
 
+-- plotroom://model/<kind>:<id>: Settings › Actions › Model of that action. The block's host lists omp's role aliases
+-- and models (by provider); typing filters them. The pick goes back to that block as the row's change, omp's default as
+-- its reset. A saved model omp no longer lists stays the current one, marked so.
+local function pickModel(cx: WindowCx, pane: number, qid: string)
+	ask(cx, pane, "models", { prompt = qid }, MENU_MS, function(a: any, cx2: WindowCx)
+		if type(a.problem) == "string" then
+			return cx2:toast("error", "omp's models are not listed", a.problem)
+		end
+		local current = if type(a.current) == "string" then a.current else nil
+		local listed = if type(a.listed) == "string" then a.listed else nil
+		local items: { PickItem } = { { label = "omp's default", detail = "The model omp runs with no --model", group = "Default", current = current == nil } }
+		if current and not listed then
+			table.insert(items, { label = current, detail = "Not in omp's list", group = "Default", current = true, model = current })
+		end
+		for _, r in if type(a.roles) == "table" then a.roles else {} do
+			if type(r) == "table" and type(r.name) == "string" then
+				local alias = "@" .. r.name
+				local model = if type(r.model) == "string" and r.model ~= "" then r.model else nil
+				table.insert(items, { label = alias, detail = model, group = "Roles", current = alias == listed, model = alias })
+			end
+		end
+		for _, sel in if type(a.models) == "table" then a.models else {} do
+			local provider, id = string.match(if type(sel) == "string" then sel else "", "^([^/]+)/(.+)$")
+			if provider and id then
+				table.insert(items, { label = id, group = provider, current = sel == listed, model = sel })
+			end
+		end
+		cx2:pick({ items = items, placeholder = "Model for this action…", icon = "merge", action = "choose" }):next(function(item, _, cx3)
+			if item and cx3 then
+				cx3.session:event(pane, { ev = "change", id = "layer.settings", item = "pmodel:" .. qid, value = item.model })
+			end
+		end)
+	end)
+end
+
 -- plotroom://confirm: asks in the palette before the Plotroom block in `pane` deletes what its hidden `main.confirm`
 -- node names (host/render's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
 -- which acts only on the row it asked about.
@@ -1438,6 +1485,17 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			pickJira(cx, pane)
 		else
 			confirmDelete(cx, pane)
+		end
+		return true
+	end
+	if string.sub(url, 1, 17) == "plotroom://model/" then
+		local qid = string.match(url, "^plotroom://model/(%a+:[%w]+)$")
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif not qid then
+			cx:toast("error", "Plotroom: malformed link")
+		else
+			pickModel(cx, pane, qid)
 		end
 		return true
 	end
@@ -1858,6 +1916,7 @@ local function startStep(cx: WindowCx, s: flows.Step)
 		prepareTarget(cx2, s.block, target, {
 			text = a.send,
 			model = if type(a.model) == "string" then a.model else nil,
+			effort = if type(a.effort) == "string" then a.effort else nil,
 			split = a.split == true,
 			status = if not check and type(a.status) == "string" then a.status else nil,
 			id = id,
