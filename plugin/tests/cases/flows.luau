@@ -3701,14 +3701,14 @@ case("host agents: a working agent shows its clock, and its estimated bar once i
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local now = w.seconds()
-	-- The bar's cells as "filled/all": the accent span is how far along the run probably is.
+	-- The bar's cells as "filled/all": the pending span (agent working) is how far along the run probably is.
 	local function bar(spans: { any }): string
 		local filled, all = 0, 0
 		for _, s in spans do
 			if type(s) == "table" and string.find(s.t, "━", 1, true) then
 				local n = utf8.len(s.t) :: number
 				all += n
-				filled += if s.s == "accent" then n else 0
+				filled += if s.s == "pending" then n else 0
 			end
 		end
 		return filled .. "/" .. all

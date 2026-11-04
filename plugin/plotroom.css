@@ -82,8 +82,9 @@
 }
 
 /* What a click does shows on the node (host/render's BUTTON and LINK roles): an action is a button, sized to its label
-   with a button's ring (items: Tern has no button kind in 0.9.8); what opens something is a link, its label in the
-   accent, underlined under the pointer. Tern's own .sf-act already gives both the pointing hand. */
+   with a button's ring (items: Tern has no button kind in 0.9.8); what opens something is a link, its label underlined
+   in a hairline that darkens under the pointer. Links stay neutral: colour is for DESIGN.md's Color Meaning Rule only.
+   Tern's own .sf-act already gives both the pointing hand. */
 [data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'] {
 	border: 1px solid var(--l3);
 	border-radius: var(--r-ctl);
@@ -97,13 +98,13 @@
 	padding: 2px;
 }
 
-[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.link'] .sf-item-label,
-[data-surface='plugin.plotroom.prs'] .sf-icon[data-role='plotroom.link'] {
-	color: var(--accent);
+[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.link'] .sf-item-label {
+	text-decoration: underline;
+	text-decoration-color: var(--l3);
 }
 
 [data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.link']:hover .sf-item-label {
-	text-decoration: underline;
+	text-decoration-color: currentColor;
 }
 
 /* Identifiers (author, branch) are set like Tern's preview kv values, 12px --mono, wherever they show: Branch and Base
@@ -193,14 +194,6 @@
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='key:'] .pf-reset,
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-row[data-row^='pkey:'] .pf-reset {
 	position: static;
-}
-
-/* Delete and Remove are the sheet's only destructive buttons; prefs has no danger tone, so color them. */
-[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='delete:'] .pf-ctl .btn,
-[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='pdelete:'] .pf-ctl .btn,
-[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='rremove:'] .pf-ctl .btn,
-[data-surface='plugin.plotroom.prs'] .pf-row[data-row^='jremove:'] .pf-ctl .btn {
-	color: var(--bad);
 }
 
 /* An open item's Delete (a view's or action's) or Remove (a repository's or Jira project's) sits left of its Done.

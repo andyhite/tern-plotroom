@@ -3363,6 +3363,41 @@ case("host stage: a pull request's stage leads its row, Merged or Closed before 
 	eq(asks.hx.stage(b, "no_2fr_231"), "Blocked", "an agent that is gone leaves the stage to GitHub on the next render")
 end)
 
+case("host stage: badge colours follow DESIGN.md's Color Meaning Rule: your turn, needs fixing, done, agent working; the rest neutral", function(w: World)
+	local s = hostScene(w, 0)
+	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS" }
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { review = "CHANGES_REQUESTED" }),
+		searchItem(2, "o/r", EPOCH - 120, ready),
+		searchItem(3, "o/r", EPOCH - 180, { state = "MERGED" }),
+		searchItem(4, "o/r", EPOCH - 240, { state = "CLOSED" }),
+		searchItem(5, "o/r", EPOCH - 300, { review = "CHANGES_REQUESTED" }),
+		searchItem(6, "o/r", EPOCH - 360, ready),
+		searchItem(7, "o/r", EPOCH - 420, { isDraft = true }),
+	}
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = "waiting_input", ["o/r#2"] = "working", ["o/r#3"] = "working", ["o/r#6"] = "idle" })
+	local function toned(id: string): { string }
+		local out: { string } = {}
+		for _, row in pickerOf(b).items do
+			if row.id == id then
+				for _, badge in row.badges or {} do
+					table.insert(out, badge.text .. "/" .. tostring(badge.tone))
+				end
+			end
+		end
+		return out
+	end
+	same(toned("no_2fr_231"), { "Needs you/accent" }, "your turn is accent")
+	same(toned("no_2fr_232"), { "Agent working/pending", "New/accent" }, "an agent working is pending; unseen is your turn")
+	same(toned("no_2fr_233"), { "Merged/success", "Working/pending", "New/accent" }, "merged is done")
+	same(toned("no_2fr_234"), { "Closed/muted", "New/accent" }, "closed unmerged is no meaning")
+	same(toned("no_2fr_235"), { "Blocked/error", "New/accent" }, "blocked needs fixing")
+	same(toned("no_2fr_236"), { "Ready to merge/success", "Idle/muted", "New/accent" }, "ready to merge is done; an idle agent is neutral")
+	same(toned("no_2fr_237"), { "PR open/muted", "New/accent", "Draft/muted" }, "an open PR and a draft are neutral")
+	same(hx.offPalette(b.view().layer), {}, "nothing in the queue or its preview is coloured outside the rule")
+end)
+
 case("host stage: an issue is Not started, then Worktree, then PR open once its worktree branch has an open PR; its agent outranks those, Closed outranks all", function(w: World)
 	local s = h.issueHost(w)
 	local b = h.openIssues(w)
@@ -3523,6 +3558,9 @@ case("host review recency: a PR you approved whose head moved says New commits s
 		return out
 	end
 	same(details(), { "#1 · New commits since you approved", "#2", "#3", "#4 · New commits since you approved", "#5" }, "only an open PR whose head is not the commit you approved says so")
+	for _, part in pickerOf(b).items[1].detail do
+		yes(type(part) == "string" or part.s == "mono", "it asks nothing of you, so it wears no colour (DESIGN.md's Color Meaning Rule)")
+	end
 	eq(nextOf(w, b, "no_2fr_231").row, nil, "approved, nothing asked again: no move, even with new commits")
 	eq(nextOf(w, b, "no_2fr_233").row, "Review", "your review was dismissed: Review")
 	eq(nextOf(w, b, "no_2fr_234").row, "Review", "asked again after you approved: Review")

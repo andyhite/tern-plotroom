@@ -295,6 +295,11 @@ def check_css() -> None:
     for bad in (r"\d(rem|ch)\b", r":has\(", r"\b(margin|padding|border|inset)-(inline|block)\b", r"\binset-(inline|block)\b"):
         for found in re.finditer(bad, text):
             problems.append("unsupported CSS %r" % found.group(0))
+    # DESIGN.md: colours are Tern variables (no hex or literal rgb/hsl), and a meaning colour comes from a node's tone,
+    # never from this file.
+    for bad in (r"#[0-9a-fA-F]{3,8}\b", r"\b(rgba?|hsla?)\(\s*[\d.]", r"var\(--(bad|ok|warn|live|sf-bad|sf-ok|sf-warn|sf-info)\)"):
+        for found in re.finditer(bad, text):
+            problems.append("colour outside DESIGN.md %r" % found.group(0))
     if problems:
         raise GateError("plugin/plotroom.css: " + "; ".join(problems[:5]))
 
