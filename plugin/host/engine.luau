@@ -366,7 +366,7 @@ function M.stage(state: State, kind: string, item: any): (string, string?)
 		-- A failure only of ignored checks (Ignore this check…) blocks nothing; it still keeps the PR out of Ready to merge.
 		local failing = pr.checks == "failure" and pr.merge ~= "unstable" and pr.merge ~= "ready" and not M.onlyIgnoredFail(state, pr)
 		if pr.review == "changes" or pr.merge == "conflicts" or failing then
-			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" else "Checks failing"
+			return "blocked", if pr.merge == "conflicts" then "Conflicts with its base" elseif pr.review == "changes" then "Changes requested" elseif M.allFlaky(state, pr) then "Checks failing (likely flaky)" else "Checks failing"
 		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
 			return "ready"
 		end
@@ -426,6 +426,56 @@ function M.rerunnable(state: State, item: any): boolean
 	return false
 end
 
+-- The failing checks of `item` (a pull request), as the preview lists them.
+function M.failing(state: State, item: any): { github.Run }
+	local out: { github.Run } = {}
+	for _, r in M.runsOf(state, item) do
+		if r.status == "failure" then
+			table.insert(out, r)
+		end
+	end
+	return out
+end
+
+-- `pr`'s Likely flaky marks by check link while they were judged at its current head; nil otherwise (a new head drops them).
+function M.flakyMarks(state: State, pr: any): { [string]: { name: string, reason: string } }?
+	local f = state.flaky[pr.key]
+	return if f and pr.headSha and f.sha == pr.headSha then f.marks else nil
+end
+
+-- Whether `pr` has a failing check and every failing check is Likely flaky.
+function M.allFlaky(state: State, pr: any): boolean
+	local marks = M.flakyMarks(state, pr)
+	if not marks then
+		return false
+	end
+	local failing = M.failing(state, pr)
+	for _, r in failing do
+		if not (r.url and marks[r.url]) then
+			return false
+		end
+	end
+	return #failing > 0
+end
+
+-- `{flaky}` of a pull request action: the item's Likely flaky checks with why and the head commit they were judged
+-- at ("build (failed 3 of the last 20 runs on main) at head 1a2b3c4"), or "none" when no check of it is marked.
+function M.flakyText(state: State, key: string): string
+	local f = state.flaky[key]
+	if not f then
+		return "none"
+	end
+	local parts: { string } = {}
+	for _, m in f.marks do
+		table.insert(parts, m.name .. " (" .. m.reason .. ")")
+	end
+	if #parts == 0 then
+		return "none"
+	end
+	table.sort(parts)
+	return table.concat(parts, "; ") .. " at head " .. string.sub(f.sha, 1, 7)
+end
+
 -- Whether `pr` is someone else's open pull request that asks for the review of the login the view runs as (by name; a
 -- team request does not count), as its loaded details say. Your dismissed review asks for it again.
 function M.reviewAsked(state: State, pr: github.Pr): boolean
@@ -446,7 +496,8 @@ end
 -- The suggested next move for `item` (the selected one) in its stage, or nil when none applies: `id` is a queue action
 -- (`worktree`, `agentgo`), `remove` (the worktree card's Remove worktree…), `cmd:<flows.COMMANDS id>` or
 -- `run:<saved action id>`, each offered only where its own command is. A saved action is the one offered here under
--- that name (Review, Address feedback). "Yours" is a PR whose author is the login the view runs as.
+-- that name (Review, Address feedback, Watch). "Yours" is a PR whose author is the login the view runs as. A Blocked
+-- PR with failing checks is re-run only when every failing check is Likely flaky; else yours goes to Watch.
 function M.nextMove(state: State, kind: string, item: any): { id: string, label: string }?
 	local stage = M.stage(state, kind, item)
 	local note = state.notes[item.key]
@@ -474,7 +525,12 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	local mine = me ~= nil and string.lower(pr.author) == me
 	if stage == "blocked" then
 		local fix = if mine and pr.review == "changes" then action("Address feedback") else nil
-		return fix or (if M.rerunnable(state, pr) then { id = "cmd:rerun-failed", label = "Re-run failed checks" } else nil)
+		if fix or #M.failing(state, pr) == 0 then
+			return fix
+		elseif M.allFlaky(state, pr) and M.rerunnable(state, pr) then
+			return { id = "cmd:rerun-failed", label = "Re-run failed checks" }
+		end
+		return if mine then action("Watch") else nil
 	elseif stage == "ready" then
 		return if pr.headSha then { id = "cmd:pr-merge", label = "Merge…" } else nil
 	elseif pr.state ~= "open" then
@@ -1079,12 +1135,20 @@ local function schedule(state: State, ms: number)
 	end)
 end
 
--- Checks, failures and folds of PRs that no cached snapshot lists any more (or lists with a newer update) cannot be shown again.
+-- Checks, failures and folds of PRs that no cached snapshot lists any more (or lists with a newer update) cannot be
+-- shown again; nor can the Likely flaky marks of a PR no snapshot lists.
 local function prune(state: State)
 	local keep: { [string]: boolean } = {}
+	local listed: { [string]: boolean } = {}
 	for _, snap in state.snaps do
 		for _, item in snap.items do
 			keep[M.detailKey(state, item)] = true
+			listed[item.key] = true
+		end
+	end
+	for key in state.flaky do
+		if not listed[key] then
+			state.flaky[key] = nil
 		end
 	end
 	for key in state.details do
@@ -1191,6 +1255,120 @@ function M.fetchPin(state: State, v: View, live: () -> boolean, landed: (any, gi
 	end
 end
 
+-- Likely flaky (tern-plotroom#zaq6). A failing check of `pr` is Likely flaky when, in order: no FAILURE annotation
+-- of it names a file the PR changes (one that does says the PR broke it); and it failed at least FLAKY_FAILS of the
+-- last 20 runs of its workflow on the PR's base branch, or an earlier attempt of it passed on the same head commit.
+-- done(marks by check link, problem). A check that is not a workflow run's has no base history.
+local FLAKY_FAILS = 3
+local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: string?, done: ({ [string]: { name: string, reason: string } }?, github.Problem?) -> ())
+	github.evidence(pr.repo, pr.number, account, function(ev: github.Evidence?, problem: github.Problem?)
+		if not ev then
+			return done(nil, problem)
+		end
+		local marks: { [string]: { name: string, reason: string } } = {}
+		if ev.head ~= pr.headSha then
+			return done(marks, nil) -- the head moved since the search: the next refresh judges the new one
+		end
+		local at: { [string]: github.Attempted } = {}
+		local passed: { [string]: boolean } = {}
+		for _, r in ev.runs do
+			if r.url then
+				at[r.url] = r
+			end
+			if r.conclusion == "SUCCESS" then
+				passed[(r.workflow or "") .. "\0" .. r.name] = true
+			end
+		end
+		local open: { { url: string, name: string, run: github.Attempted } } = {}
+		local workflows: { string } = {}
+		local listed: { [string]: boolean } = {}
+		for _, check in failing do
+			local url = check.url
+			local run = if url then at[url] else nil
+			local blamed = false
+			if run then
+				for _, p in run.paths do
+					blamed = blamed or ev.files[p] == true
+				end
+			end
+			if url and run and not blamed then
+				table.insert(open, { url = url, name = check.name, run = run })
+				local wf = run.workflow
+				if wf and not listed[wf] then
+					listed[wf] = true
+					table.insert(workflows, wf)
+				end
+			end
+		end
+		local history: { [string]: github.History } = {}
+		local function decide()
+			for _, o in open do
+				local h = if o.run.workflow then history[o.run.workflow] else nil
+				local reason = if h and h.failed >= FLAKY_FAILS
+					then "failed " .. h.failed .. " of the last " .. h.total .. " runs on " .. pr.base
+					elseif passed[(o.run.workflow or "") .. "\0" .. o.run.name] then "passed earlier on this commit"
+					else nil
+				if reason then
+					marks[o.url] = { name = o.name, reason = reason }
+				end
+			end
+			done(marks, nil)
+		end
+		local left = #workflows
+		if left == 0 then
+			return decide()
+		end
+		for _, wf in workflows do
+			github.baseHistory(pr.repo, pr.base, wf, account, function(h: github.History?)
+				if h then
+					history[wf] = h
+				end
+				left -= 1
+				if left == 0 then
+					decide()
+				end
+			end)
+		end
+	end)
+end
+
+-- Judges Likely flaky for the shown list's Blocked pull requests with failing checks: at most FLAKY_ITEMS a refresh,
+-- each at most once per head commit (a read the quota held back is tried again at the next refresh).
+local FLAKY_ITEMS = 10
+function M.gatherFlaky(state: State)
+	local snap = state.snap
+	if not snap or snap.kind ~= "prs" then
+		return
+	end
+	local account = M.login(state)
+	local started = 0
+	for _, pr: github.Pr in snap.items do
+		if started >= FLAKY_ITEMS then
+			break
+		end
+		local key, sha = pr.key, pr.headSha
+		local known = state.flaky[key]
+		if sha and not state.flakyBusy[key] and not (known and known.sha == sha) and M.stage(state, "prs", pr) == "blocked" then
+			local failing = M.failing(state, pr)
+			if #failing > 0 then
+				started += 1
+				state.flakyBusy[key] = true
+				judgeFlaky(pr, failing, account, function(marks, problem)
+					if not M.alive(state) then
+						return
+					end
+					state.flakyBusy[key] = nil
+					if marks or (problem and problem.kind ~= "rate-limit") then
+						state.flaky[key] = { sha = sha, marks = marks or {} }
+						state.rev += 1
+						state.cx:render()
+					end
+				end)
+			end
+		end
+	end
+end
+
 function M.refresh(state: State)
 	if not M.alive(state) then
 		return
@@ -1258,6 +1436,7 @@ function M.refresh(state: State)
 			state.problem = nil
 			M.ensureCursor(state)
 			prune(state)
+			M.gatherFlaky(state)
 			if integration == "github" then
 				-- Warms the repository picker's list of gh logins (window.luau's pickRepo), so it opens without waiting on gh.
 				ghActive.note(state)

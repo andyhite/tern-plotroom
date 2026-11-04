@@ -1941,6 +1941,135 @@ case("host: Ignore this check… picks among the failing checks, saves the pick 
 	eq(w.kv.get("ignored-checks")["o/r"], "approval", "it is not written over")
 end)
 
+local JOB = "https://github.com/o/r/actions/runs/1/job/"
+
+-- One check run attempt of a PR's head commit as EVIDENCE_JQ prints it.
+local function attempt(workflow: string, name: string, conclusion: string, job: string, paths: { string }?): any
+	return { workflow = workflow, name = name, conclusion = conclusion, url = JOB .. job, paths = array(paths or {}) }
+end
+
+-- `n` finished runs of a workflow on the base branch, the first `failed` of them failed, as `gh run list` prints them.
+local function baseRuns(failed: number, n: number): { any }
+	local out: { any } = {}
+	for i = 1, n do
+		table.insert(out, { status = "completed", conclusion = if i <= failed then "failure" else "success" })
+	end
+	table.insert(out, { status = "in_progress", conclusion = "" }) -- a run still going is not counted
+	return out
+end
+
+-- A Blocked pull request `n` of o/r by `author` at head `head` whose failing checks are `names` (each "name:job"),
+-- listed by the search and by its details load alike.
+local function failingPr(s: HostScene, n: number, author: string, head: string, names: { string }): any
+	local checks: { any } = {}
+	for _, spec in names do
+		local name, job = string.match(spec, "^(.-):(.+)$")
+		table.insert(checks, checkRun(name :: string, "COMPLETED", "FAILURE", "2026-01-01T00:00:00Z", { id = spec, detailsUrl = JOB .. (job :: string) }))
+	end
+	s.gh.checks["o/r#" .. n] = checks
+	return searchItem(n, "o/r", EPOCH - n * 60, { author = author, checks = "FAILURE", merge = "BLOCKED", runs = array(checks), runTotal = #checks, headSha = head })
+end
+
+case("host likely flaky: a failing check that failed 3 of the last 20 base runs or passed earlier on its head is marked, one a changed file's annotation blames is not; the Blocked detail and the Next move follow every failing check", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		failingPr(s, 1, "octo", sha("1"), { "build:11", "test:12" }),
+		failingPr(s, 2, "octocat", sha("2"), { "build:21" }),
+		failingPr(s, 3, "octocat", sha("3"), { "lint:31" }),
+		failingPr(s, 4, "octocat", sha("4"), { "e2e:41" }),
+	}
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({ "src/a.lua" }), runs = array({
+		attempt("CI", "build", "FAILURE", "11", { "docs/x.md" }),
+		attempt("CI", "test", "FAILURE", "12", { "src/a.lua" }),
+	}) }
+	s.gh.evidence["o/r#2"] = { head = sha("2"), files = array({ "src/a.lua" }), runs = array({ attempt("CI", "build", "FAILURE", "21") }) }
+	s.gh.evidence["o/r#3"] = { head = sha("3"), files = array({}), runs = array({ attempt("Lint", "lint", "FAILURE", "31") }) }
+	s.gh.evidence["o/r#4"] = { head = sha("4"), files = array({}), runs = array({ attempt("E2E", "e2e", "SUCCESS", "40"), attempt("E2E", "e2e", "FAILURE", "41") }) }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	s.gh.history["o/r@main@Lint"] = baseRuns(2, 20)
+	s.gh.history["o/r@main@E2E"] = baseRuns(0, 5)
+	local b = openQueue(w)
+	w.flush()
+	eq(#requestsOf(s.gh, "flaky"), 4, "each Blocked pull request with failing checks is judged")
+	local lists = requestsOf(s.gh, "history")
+	eq(#lists, 3, "the base history of each workflow is read once: CI serves two pull requests")
+	eq(table.concat(lists[1].call.argv, " "), "gh run list --repo github.com/o/r --branch=main --workflow=CI --limit 20 --json conclusion,status", "the base branch's last 20 runs of the same workflow, as argv")
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	eq(detailText(rows.no_2fr_231), "#1 · Checks failing", "one failing check is Likely flaky, the other is not: no mark on the row")
+	eq(detailText(rows.no_2fr_232), "#2 · Checks failing (likely flaky)", "every failing check is Likely flaky")
+	eq(detailText(rows.no_2fr_233), "#3 · Checks failing", "2 of 20 failures on the base branch is not enough")
+	eq(detailText(rows.no_2fr_234), "#4 · Checks failing (likely flaky)", "an earlier attempt passed on the same head")
+	local function show(id: string): (any, any)
+		b.event({ ev = "select", id = "layer.queue", item = id })
+		w.advance(300)
+		local preview = pickerNode(b)
+		local move: any = findKey(preview, "next", "item")
+		return (if move then move.p.label else nil), preview
+	end
+	local move, preview = show("no_2fr_231")
+	local build, test = findKey(preview, "run1", "item").p, findKey(preview, "run2", "item").p
+	eq(build.detail, "Likely flaky · failed 3 of the last 20 runs on main", "the check shows the mark and its reason")
+	has(build.title, "Likely flaky · failed 3 of the last 20 runs on main", "and its tooltip says it")
+	eq(test.detail, nil, "a failure an annotation puts on a file the PR changed is not flaky, whatever the base branch does")
+	eq(move, nil, "someone else's PR with a failure that is not flaky: no move")
+	move = show("no_2fr_232")
+	eq(move, "Re-run failed checks", "every failing check Likely flaky: re-run them")
+	eq(hx.palette(w, b).next, "rerun-failed", "the window's own command")
+	move = show("no_2fr_233")
+	eq(move, "Watch", "your own PR with a failure that is not flaky goes to Watch, which fixes checks")
+	move, preview = show("no_2fr_234")
+	eq(findKey(preview, "run1", "item").p.detail, "Likely flaky · passed earlier on this commit", "the reason names the earlier pass")
+	eq(move, "Re-run failed checks", "and it is re-run")
+	-- what an action starting on the PR gets as `{flaky}` (the default Watch's checks step reads it)
+	for n, c in { [3] = "c", [4] = "d" } do
+		s.git.served["refs/pull/" .. n .. "/head"] = sha(c)
+		s.gh.meta["o/r#" .. n] = { base = "o/r", sha = sha(c), ref = "feature-" .. n, headRepo = "o/r", headOwner = "o", state = "open" }
+		request(b, "wt" .. n, { op = "worktree", repo = "o/r", number = n })
+		w.flush()
+	end
+	eq(answerOf(b, "wt4").flaky, "e2e (passed earlier on this commit) at head 4444444", "the marked checks, why, and the head they were judged at")
+	eq(answerOf(b, "wt3").flaky, "none", "none when no check is marked")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 4, "a refresh at the same heads judges nothing again")
+	-- PR 2 gets a new head: its old mark is dropped, and the new head's failure is blamed on the PR
+	s.gh.items.octocat[2] = failingPr(s, 2, "octocat", sha("5"), { "build:22" })
+	s.gh.evidence["o/r#2"] = { head = sha("5"), files = array({ "src/a.lua" }), runs = array({ attempt("CI", "build", "FAILURE", "22", { "src/a.lua" }) }) }
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 5, "the new head is judged")
+	rows = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	eq(detailText(rows.no_2fr_232), "#2 · Checks failing", "the new head's failure is not flaky")
+	move = show("no_2fr_232")
+	eq(move, "Watch", "so your PR goes to Watch")
+end)
+
+case("host likely flaky: at most 10 pull requests are judged a refresh, each once per head commit; a mark from an older head is not shown", function(w: World)
+	local s = hostScene(w, 0)
+	local items: { any } = {}
+	for n = 1, 12 do
+		table.insert(items, failingPr(s, n, "octo", string.format("%040x", n), { "build:" .. n }))
+	end
+	s.gh.items.octocat = items
+	local b = openQueue(w)
+	w.flush()
+	eq(#requestsOf(s.gh, "flaky"), 10, "ten on the first refresh")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 12, "the other two on the next")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 12, "and none again at the same heads")
+	-- an answer for a head the PR has left marks nothing
+	s.gh.items.octocat = { failingPr(s, 13, "octo", sha("d"), { "build:13" }) }
+	s.gh.evidence["o/r#13"] = { head = sha("e"), files = array({}), runs = array({ attempt("CI", "build", "SUCCESS", "12"), attempt("CI", "build", "FAILURE", "13") }) }
+	refreshNow(w, b)
+	eq(detailText(pickerOf(b).items[1]), "#13 · Checks failing", "evidence read at another head marks nothing")
+	eq(#requestsOf(s.gh, "history"), 0, "and reads no base history")
+end)
+
 -- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted
 -- issue 12 on `bob/12-fix-login`, the head branch of fork PR 1 (a fork's worktree is on <owner>/<branch>).
 local function notedScene(w: World): (HostScene, Block)
@@ -2806,7 +2935,12 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 		checkRun("build", "COMPLETED", "FAILURE", done, { id = "A", detailsUrl = base .. "/actions/runs/123/job/9" }),
 		checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "B" }),
 	}
-	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE", runs = array(checks), runTotal = 2 }) }
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE", runs = array(checks), runTotal = 2, headSha = sha("c") }) }
+	-- an earlier attempt of build passed on this head: Likely flaky, so its Next move re-runs it
+	s.gh.evidence["o/r#1"] = { head = sha("c"), files = array({}), runs = array({
+		{ workflow = "CI", name = "build", conclusion = "FAILURE", url = base .. "/actions/runs/123/job/9", paths = array({}) },
+		{ workflow = "CI", name = "build", conclusion = "SUCCESS", url = base .. "/actions/runs/122/job/8", paths = array({}) },
+	}) }
 	s.gh.checks["o/r#1"] = checks
 	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "## Why\nBecause.", reviews = array({ { login = "ann", state = "APPROVED" } }), requested = array({}) }
 	s.git.served["refs/pull/1/head"] = sha("b")
