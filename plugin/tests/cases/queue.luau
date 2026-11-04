@@ -280,7 +280,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:nownext", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
@@ -363,6 +363,7 @@ case("host: Use one-key shortcuts binds the classic set to actions with no key, 
 	eq(saved.up, "k", "a free action gets its preset key")
 	eq(saved.agentgo, "G", "uppercase keys too")
 	eq(saved["wt-remove"], "d", "and the Worktrees list's")
+	eq(saved.nownext, "n", "and Next in Now's")
 	eq(saved.more, nil, "an action with a default is not saved")
 	local toast = w.toasts[#w.toasts]
 	eq(toast.text, "One-key shortcuts set", "the toast says it is done")
@@ -524,14 +525,14 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local b = openQueue(w)
 	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
 	local p = hx.palette(w, b)
-	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh" }
+	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh", "nownext" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expectedIds, "scope:" .. scope.id)
 	end
 	table.insert(expectedIds, "settings")
 	table.insert(expectedIds, "help")
-	same(p.ids, expectedIds, "the selected item's, then the view's, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
-	eq(p.ids[12], "scope:now", "Now is the first scope")
+	same(p.ids, expectedIds, "the selected item's, then the view's, Next in Now, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
+	eq(p.ids[13], "scope:now", "Now is the first scope")
 	eq(p.ids[#p.ids - 3], "scope:worktrees", "the Worktrees list is the last scope but one")
 	eq(p.ids[#p.ids - 2], "scope:agents", "the Agents list the last")
 	eq(p.labels.open, "Open", "Open, whatever the integration")

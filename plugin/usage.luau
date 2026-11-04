@@ -463,6 +463,39 @@ function M.strikes(runs: { Run }, key: string): Strikes
 	return out
 end
 
+-- The median of `t` (sorted in place); nil for none.
+local function median(t: { number }): number?
+	if #t == 0 then
+		return nil
+	end
+	table.sort(t)
+	local mid = (#t + 1) // 2
+	return if #t % 2 == 1 then t[mid] else (t[mid] + t[mid + 1]) / 2
+end
+
+-- How many timed runs of an action its expected duration needs (M.medians).
+M.EXPECTED_RUNS = 5
+
+-- Action name -> the median duration in seconds of its finished runs in `runs`, for each named action with at least
+-- EXPECTED_RUNS of them: what a working agent's progress bar expects (flows' agentSync).
+function M.medians(runs: { Run }): { [string]: number }
+	local times: { [string]: { number } } = {}
+	for _, r in runs do
+		if r.action ~= "" and r.started and r.ended >= r.started then
+			local t = times[r.action] or {}
+			times[r.action] = t
+			table.insert(t, r.ended - r.started)
+		end
+	end
+	local out: { [string]: number } = {}
+	for name, t in times do
+		if #t >= M.EXPECTED_RUNS then
+			out[name] = median(t) :: number
+		end
+	end
+	return out
+end
+
 local function day(t: number): string
 	return os.date("%Y-%m-%d", t) :: string
 end
@@ -600,14 +633,8 @@ function M.report(i: Inputs): string
 		for _, o in others do
 			table.insert(parts, o)
 		end
-		local median = "unknown"
-		local t = g.times
-		if #t > 0 then
-			table.sort(t)
-			local mid = (#t + 1) // 2
-			median = duration(if #t % 2 == 1 then t[mid] else (t[mid] + t[mid + 1]) / 2)
-		end
-		table.insert(out, name .. " · " .. g.n .. (if g.n == 1 then " run" else " runs") .. " · " .. table.concat(parts, ", ") .. " · median " .. median)
+		local m = median(g.times)
+		table.insert(out, name .. " · " .. g.n .. (if g.n == 1 then " run" else " runs") .. " · " .. table.concat(parts, ", ") .. " · median " .. (if m then duration(m) else "unknown"))
 		local labels: { string } = {}
 		for label in g.outcomes do
 			table.insert(labels, label)
