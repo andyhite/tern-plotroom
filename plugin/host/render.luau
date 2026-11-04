@@ -235,6 +235,32 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
+local BAR_CELLS = 10
+
+-- A working agent's thin bar of how far along it probably is (engine.agentClock; only when its action has runs enough to
+-- expect a duration) and its clock, m:ss; nil when the agent of item `key` is not working. The view redraws itself
+-- a second later (queuePicker), and nothing on it animates.
+local function agentClock(state: State, key: string): { any }?
+	local elapsed, fraction = engine.agentClock(state, key)
+	if not elapsed then
+		return nil
+	end
+	state.clocked = true
+	local out: { any } = {}
+	if fraction then
+		local filled = math.floor(fraction * BAR_CELLS) -- 95% is 9 of 10: never a full bar before the run ends
+		if filled > 0 then
+			table.insert(out, ui.span(string.rep("━", filled), "accent"))
+		end
+		if filled < BAR_CELLS then
+			table.insert(out, ui.span(string.rep("━", BAR_CELLS - filled), "muted"))
+		end
+		table.insert(out, " ")
+	end
+	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "num"))
+	return out
+end
+
 -- The facts that have a value; a row without one is not shown.
 local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 	local out = {}
@@ -247,7 +273,8 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 end
 
 -- The status part of a PR's or issue's preview (what blocks it or needs you), under its next move: the item's stage,
--- toned as its row badge, what blocks it, its agent's checked outcome and what its checker found (a failed check lists
+-- toned as its row badge, what blocks it, how long its agent has worked (while it works), its agent's checked outcome
+-- and what its checker found (a failed check lists
 -- its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author).
 local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): Node
 	local id, why = engine.stage(state, kind, item)
@@ -256,6 +283,7 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	if id == "blocked" and why then
 		table.insert(items, { k = "Blocked by", v = { ui.span(why, "error") } })
 	end
+	table.insert(items, { k = "Working", v = agentClock(state, item.key) })
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil
 	if verdictBadge(info) then
@@ -307,7 +335,7 @@ local function rowsOf(state: State, snap: Snap): { any }
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -319,7 +347,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -1224,6 +1252,7 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
 	local agent = withValue({
+		{ k = "Working", v = agentClock(state, row.key) },
 		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
@@ -1263,6 +1292,12 @@ local function agentsProps(state: State, props: { [string]: any })
 		end
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
+		end
+		local clock = agentClock(state, row.key)
+		if clock then
+			table.insert(clock, " · ")
+			table.move(detail, 1, #detail, #clock + 1, clock)
+			detail = clock
 		end
 		local report = REPORT_BADGE[row.attention or ""]
 		if row.err then
@@ -1425,7 +1460,12 @@ local function nowPreview(state: State): { Node }
 			}),
 		}),
 	})
-	addPart(kids, "agent", if agent and agent.action then { ui.node("kv", { key = "agent", items = { { k = "Action", v = { ui.span(printable(agent.action)) } } } }) } else {})
+	local working = if row.key then agentClock(state, row.key) else nil
+	local agentFacts = withValue({
+		{ k = "Working", v = working },
+		{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
+	})
+	addPart(kids, "agent", if #agentFacts > 0 then { ui.node("kv", { key = "agent", items = agentFacts }) } else {})
 	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } } } }) } else {})
 	table.insert(kids, ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }))
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
@@ -1467,6 +1507,14 @@ local function nowProps(state: State, props: { [string]: any })
 		if row.rank == 1 and row.agent and row.agent.last then
 			table.insert(item.detail, " · ")
 			table.insert(item.detail, ui.span(printable(row.agent.last), "muted"))
+		end
+		-- How long the item's agent has worked, while it works.
+		local clock = if row.key then agentClock(state, row.key) else nil
+		if clock then
+			table.insert(item.detail, " · ")
+			for _, s in clock do
+				table.insert(item.detail, s)
+			end
 		end
 		local badges: { any } = { badge }
 		if row.snoozed then
@@ -1629,6 +1677,7 @@ end
 
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
 function M.queuePicker(state: State): Node
+	state.clocked = false -- agentClock marks it again while a working agent's clock is drawn
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
 	local open = openItems(state)
@@ -1767,6 +1816,15 @@ function M.queuePicker(state: State): Node
 	end
 	local shown = props.selected ~= nil or guide ~= nil
 	props.preview = if shown then "side" else "none"
+	-- A working agent's clock is shown: draw again a second from now, once (a key press redraws it no sooner).
+	if state.clocked and not state.clockTimer then
+		state.clockTimer = tern.timer(1000, function()
+			state.clockTimer = nil
+			if engine.alive(state) then
+				state.cx:render()
+			end
+		end)
+	end
 	return ui.node("picker", props, if shown then preview else {})
 end
 

@@ -79,6 +79,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
+| A working agent's clock and estimated progress bar | Agents list, Now, previews | New | 2 | Approved | Elapsed m:ss; the bar eases toward the median of the action's finished runs in the run log (at least 5), never full before the run ends; redrawn once a second. Adopted from tern-pr-guide |
 
 ## Land
 
