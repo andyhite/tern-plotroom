@@ -1194,6 +1194,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 			{ id = "pr-approve", group = "GitHub - PR" },
 			{ id = "pr-request-changes", group = "GitHub - PR" },
 			{ id = "pr-update-branch", group = "GitHub - PR" },
+			{ id = "pr-empty-commit", group = "GitHub - PR" },
 			{ id = "comment", group = "GitHub - PR" },
 			{ id = "draft-pr", group = "GitHub - Issue" },
 			{ id = "open-url" },
@@ -1204,7 +1205,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		},
 	}
 	listed = palette(nil, every)
-	same(listed, { "Type a prompt…", "Review", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Re-run failed checks", "Draft PR…", "Open item by URL…", "Copy usage report", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
+	same(listed, { "Type a prompt…", "Review", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Push empty commit…", "Re-run failed checks", "Draft PR…", "Open item by URL…", "Copy usage report", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
 	palette("Mark seen", issue)
 	same(last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
 	palette("Assign to me", issue)
@@ -1325,7 +1326,7 @@ windowCase("window flows: Mark read… asks the host to plan Now's threads and c
 	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
 end)
 
-windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch plans; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
+windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch and Push empty commit plan; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local function lastAsk(): any
@@ -1375,6 +1376,12 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	eq(lastAsk().name, "pr-update-branch", "Update branch asks for its plan")
 	st.reply("act", { token = "t-update", confirm = { head = "Update the branch of o/r#7?", label = "Update branch", lines = lines } })
 	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Update branch", "o/r#7: Fix login", "Account: @octocat" }, "Update branch is Cancel first")
+	w.window.typed = nil
+	w.command("pr-empty-commit")
+	w.flush()
+	eq(lastAsk().name, "pr-empty-commit", "Push empty commit asks for its plan")
+	st.reply("act", { token = "t-empty", confirm = { head = "Push an empty commit to o/r#7?", label = "Push empty commit", lines = lines } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Push empty commit", "o/r#7: Fix login", "Account: @octocat" }, "Push empty commit is Cancel first")
 	for _, op in st.ops() do
 		yes(op ~= "commit", "Cancel committed nothing")
 	end

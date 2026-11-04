@@ -760,6 +760,14 @@ local function mergesNow(state: State, item: any): boolean
 	return merge == "ready" or merge == "unstable"
 end
 
+-- Push empty commit… applies: an open PR of the repository itself (not a fork's branch) with a known head whose preview
+-- shows the branch neither behind its base (Update branch… covers that) nor in conflict, nor its merge state unknown.
+local function emptyCommits(state: State, item: any): boolean
+	local d = state.details[detailKey(state, item)]
+	local merge = if d and d.about then d.about.merge else nil
+	return item.state == "open" and item.fork == nil and type(item.headSha) == "string" and merge ~= nil and merge ~= "behind" and merge ~= "conflicts" and merge ~= "unknown"
+end
+
 -- Every notification thread Now read, while Now is shown and its Notifications reason is on: also those whose item Now
 -- lists for a higher reason, a second thread on one item and a snoozed item's, so Mark all notifications read… leaves none unread.
 local function unread(state: State): { github.Notice }
@@ -1135,6 +1143,32 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, "Updated the branch of " .. target)
 			end)
 		end)
+	elseif name == "pr-empty-commit" then
+		if not prs then
+			return no("Empty commits are for pull requests.")
+		elseif not emptyCommits(state, item) then
+			return no("That pull request is not open with its own branch up to date and free of conflicts; Update branch… covers a branch behind its base.")
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		local sha: string = item.headSha
+		return M.offer(state, id, item, {
+			head = "Push an empty commit to " .. target .. "?",
+			label = "Push empty commit",
+			lines = {
+				target .. ": " .. printable(item.title),
+				"Account: @" .. account,
+				"Branch: " .. printable(item.head),
+				"Head: " .. string.sub(sha, 1, 7) .. "; the new commit has its tree and it as parent, so checks run again",
+				"Refused if the branch moved since",
+			},
+		}, function(done)
+			github.emptyCommit(item.repo, item.number, item.head, sha, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, "Pushed an empty commit to " .. target)
+			end)
+		end)
 	elseif name == "comment" then
 		local body = github.commentText(q.text)
 		if not body then
@@ -1262,6 +1296,9 @@ function M.commands(state: State): { { id: string, group: string? } }
 			local d = state.details[detailKey(state, item)]
 			if d and d.about and d.about.merge == "behind" then
 				add("pr-update-branch")
+			end
+			if emptyCommits(state, item) then
+				add("pr-empty-commit")
 			end
 		end
 		add("comment")

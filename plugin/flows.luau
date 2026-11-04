@@ -1683,6 +1683,10 @@ local function prUpdateBranch(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Branch not updated", { name = "pr-update-branch" })
 end
 
+local function prEmptyCommit(cx: WindowCx, pane: number)
+	planAct(cx, pane, "No empty commit pushed", { name = "pr-empty-commit" })
+end
+
 -- One-line prompt; the host validates the text and shows exactly what it will post when it asks for the confirmation.
 local function comment(cx: WindowCx, pane: number)
 	cx:prompt({ placeholder = "Comment to add to the selected item", icon = "merge", action = "review" }):next(function(text, _, cx2)
@@ -1940,6 +1944,7 @@ M.COMMANDS = {
 	{ id = "pr-approve", title = "Plotroom: Approve the selected PR", label = "Approve…", run = prApprove },
 	{ id = "pr-request-changes", title = "Plotroom: Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
 	{ id = "pr-update-branch", title = "Plotroom: Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
+	{ id = "pr-empty-commit", title = "Plotroom: Push an empty commit to the selected PR's branch so its checks run again", label = "Push empty commit…", run = prEmptyCommit },
 	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
 	{ id = "ignore-check", title = "Plotroom: Ignore a failing check of the selected PR", label = "Ignore this check…", run = ignoreCheck },
 	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
