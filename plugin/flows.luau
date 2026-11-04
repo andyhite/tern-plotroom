@@ -48,8 +48,9 @@ type Chain = { action: string, name: string, next: string?, kind: string, repo: 
 -- `gate`: where a run of a chained or checked action stands in its chain (GATES); `gateFindings` the findings a fix
 -- round gets as `{findings}`, one per line. `stop`: why its item's chain stopped at Needs you (a limit; on the item's
 -- newest link, so a later run clears it).
--- `run`: as on AgentInfo.
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string?, run: string? }
+-- `run`: as on AgentInfo. `reviewed`: when the newest Draft review file of that run opened in the review block was
+-- written (its `at`), so a turn end opens it only for a newer one.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string?, run: string?, reviewed: string? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
 -- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
@@ -198,7 +199,7 @@ local function linkOf(row: any): Link?
 	end
 	-- A link saved before the texts were recorded has none; one with a text that is no string is malformed.
 	local texts: { [string]: string } = {}
-	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings", "gate", "gateFindings", "stop", "run" } do
+	for _, field in { "action", "branch", "title", "result", "ended", "cwd", "kind", "model", "runsIn", "attention", "reason", "blocker", "outcome", "verdict", "login", "ghRepo", "commit", "criteria", "checkedCommit", "check", "findings", "gate", "gateFindings", "stop", "run", "reviewed" } do
 		local v = row[field]
 		if v ~= nil and type(v) ~= "string" then
 			return nil
@@ -246,6 +247,7 @@ local function linkOf(row: any): Link?
 		gateFindings = usage.text(texts.gateFindings, FIX_CAP),
 		stop = clip(texts.stop, STOP_CAP),
 		run = clip(texts.run, ACTION_CAP),
+		reviewed = clip(texts.reviewed, ACTION_CAP),
 	}
 end
 
@@ -275,7 +277,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop, run = l.run })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop, run = l.run, reviewed = l.reviewed })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -1322,6 +1324,113 @@ local function sendTo(cx: WindowCx, agent: number, key: string, body: string)
 	else
 		cx:toast("error", "Could not message the agent for " .. key, tostring(err))
 	end
+end
+
+-- ---------------------------------------------------------------- Draft review
+
+local REVIEW_BLOCK = "plotroom.review"
+
+-- Whether `pane` runs the Draft review block.
+local function isReview(cx: WindowCx, pane: number): boolean
+	local info = cx.session:pane(pane)
+	local block = if info then info.block else nil
+	return type(block) == "string" and string.sub(block, -#REVIEW_BLOCK) == REVIEW_BLOCK
+end
+
+-- The Draft review block open for run `run` (its hidden `main.run`), if any.
+local function reviewPane(cx: WindowCx, run: string): number?
+	for _, p in cx.session:panes() do
+		if isReview(cx, p.pane) and e().nodeProp(e().readNode(cx, p.pane, "main.run"), "text") == run then
+			return p.pane
+		end
+	end
+	return nil
+end
+
+-- A turn of `agent` ended: when its run (Link.run) has a Draft review file newer than the last one opened (`reviewed`),
+-- the Draft review block opens beside the agent, or the one open for that run reloads. The file is on the agent's
+-- host, so a Plotroom block there is asked (rpc `review`); with none open there, or an older host, nothing opens.
+function M.reviewAfter(cx: WindowCx, agent: number)
+	local host = hostOf(cx, agent)
+	local link: Link? = nil
+	for _, l in (readLinks()) do
+		if host and l.agent == agent and hostSame(l.host, host) then
+			link = l
+			break
+		end
+	end
+	local run = if link then link.run else nil
+	local block = if host and run then blockOn(cx, host) else nil
+	if not host or not run or not block then
+		return
+	end
+	e().ask(cx, block, "review", { run = run }, ACT_MS, function(a: any, cx2: WindowCx)
+		local at = if type(a.at) == "string" and #a.at <= ACTION_CAP then a.at else nil
+		local links, healthy = readLinks()
+		if not at or not healthy then
+			return
+		end
+		for _, l in links do
+			if l.agent == agent and hostSame(l.host, host) and l.run == run then
+				if l.reviewed and l.reviewed >= at then
+					return
+				end
+				l.reviewed = at
+				writeLinks(links)
+				local open = reviewPane(cx2, run)
+				if open then
+					pcall(function()
+						cx2.session:event(open, { ev = "action", act = "reload" })
+					end)
+					return
+				end
+				local ok, pane = pcall(function()
+					return cx2:new_block(REVIEW_BLOCK, { run, l.cwd or "", l.login or "" }, "split", { target = agent, dir = "right" })
+				end)
+				if not ok or not pane then
+					cx2:toast("error", "The Draft review for " .. l.key .. " did not open", if ok then "Tern opened no block." else tostring(pane))
+				end
+				return
+			end
+		end
+	end, true)
+end
+
+-- plotroom://review/send from Draft review block `pane`: its message (hidden `main.send`) goes to the agent of its run by
+-- `agents:ask`, and the block is told `sent`, or `gone` with why (it then offers Copy).
+function M.reviewSend(cx: WindowCx, pane: number)
+	if not isReview(cx, pane) then
+		return cx:toast("error", "Plotroom: link did not come from a Draft review block")
+	end
+	local function answer(act: string, why: string?)
+		pcall(function()
+			cx.session:event(pane, { ev = "action", act = act, value = why })
+		end)
+	end
+	local ok, o = pcall(tern.json.decode, tostring(e().nodeProp(e().readNode(cx, pane, "main.send"), "text")))
+	if not ok or type(o) ~= "table" or type(o.run) ~= "string" or type(o.text) ~= "string" or o.text == "" then
+		return answer("gone", "The message could not be read.")
+	end
+	local host = hostOf(cx, pane)
+	local link: Link? = nil
+	for _, l in (readLinks()) do
+		if host and l.run == o.run and hostSame(l.host, host) then
+			link = l
+			break
+		end
+	end
+	if not link or not agentLive(cx, link.agent) then
+		return answer("gone", "The agent that proposed this review is gone.")
+	end
+	local agent = link.agent
+	local sent, err = pcall(function()
+		cx.agents:ask(agent, o.text)
+	end)
+	if not sent then
+		return answer("gone", "The agent could not take the message: " .. tostring(err))
+	end
+	answer("sent")
+	cx:toast("success", "Sent your Draft review to the agent of " .. link.key)
 end
 
 -- The review of a message for `agent`: the picker lists, Cancel first, Send, a one-line note the user types (the prompt

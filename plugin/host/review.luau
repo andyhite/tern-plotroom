@@ -1,0 +1,670 @@
+--!strict
+-- The Draft review block (manifest block `review`, title Draft review; docs/reference.md › Land › Draft review): the
+-- review an agent Plotroom started proposed (`plugin/omp/plotroom.ts` writes it to `runs/<run>/review.json` in
+-- Plotroom's data directory), shown on its pull request's diff beside that agent. You keep, edit or drop each comment,
+-- edit the summary, pick the verdict and send your choices back; the window hands them to the agent
+-- (`plotroom://review/send`). Nothing here posts to GitHub. Outside the host layer chain, like lens: requires core and
+-- render (its button), and requests asks it for a run's file (`fileAt`).
+local github = require("../github")
+local input = require("../input")
+local worktree = require("../worktree")
+local core = require("./core")
+local render = require("./render")
+
+local ui = tern.ui
+local button = render.button
+
+local M = {}
+
+local FILE_BYTES = 2 * 1000 * 1000 -- the tool caps a proposal well under this
+local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comments are listed without their lines)
+local CONTEXT = 8 -- rows of diff a comment's card shows around its line
+
+M.VERDICTS = { "comment", "approve", "request_changes" }
+local VERDICT_LABEL: { [string]: string } = { comment = "Comment", approve = "Approve", request_changes = "Request changes" }
+local KIND_LABEL: { [string]: { text: string, tone: string } } = {
+	problem = { text = "Problem", tone = "error" },
+	question = { text = "Question", tone = "accent" },
+	suggestion = { text = "Suggestion", tone = "success" },
+	nit = { text = "Nit", tone = "muted" },
+}
+
+export type Comment = { id: string, path: string, line: number, startLine: number?, side: string, kind: string, body: string, suggestion: string? }
+-- A Draft review file as the omp extension writes it (plotroom.ts › validate): `at` tells a revised proposal apart.
+export type Proposal = { at: string, repo: string, number: number, head: string, summary: string, verdict: string, comments: { Comment } }
+-- One diff row: `t` is " ", "+" or "-"; `o` and `n` its old and new line numbers (on a "+" row `o` is the old line
+-- that would come next, on a "-" row `n` the new one), as a hunk header counts them.
+type Row = { t: string, text: string, o: number, n: number }
+export type Diff = { [string]: { { Row } } } -- a file's path (its old one when deleted) -> its hunks
+-- A comment's card: `model` its body as edited, `excerpt` the diff around its line (nil: not on a changed line, so
+-- GitHub refuses it and it cannot be kept).
+type Card = { c: Comment, model: input.Model, keep: boolean, excerpt: string? }
+type State = {
+	cx: BlockCx,
+	run: string,
+	cwd: string,
+	login: string?,
+	gen: number,
+	p: Proposal?,
+	problem: string?, -- the file could not be read
+	diffProblem: string?, -- the diff could not be read: every comment is listed, none placed
+	loading: boolean,
+	cards: { Card },
+	summary: input.Model,
+	note: input.Model, -- the line of instructions sent with your choices
+	verdict: string,
+	at: number, -- 0 the summary, 1..#cards a comment, #cards + 1 the instructions
+	editing: boolean,
+	head: string?, -- the pull request's head now; differs from p.head when it moved since the review
+	sending: boolean,
+	sent: boolean,
+	gone: string?, -- why Send could not reach the agent: Copy is offered
+	message: string?, -- what Send hands the agent (hidden `main.send`)
+}
+
+local function isTable(v: any): boolean
+	return type(v) == "table"
+end
+
+local function text(v: any, cap: number): string?
+	return if type(v) == "string" and #v <= cap and utf8.len(v) ~= nil then v else nil
+end
+
+local function whole(v: any): number?
+	return if type(v) == "number" and v >= 1 and v <= 10000000 and v == math.floor(v) then v else nil
+end
+
+-- The Draft review file's text as a Proposal, or nil and why. The extension validated it; this checks the shape again,
+-- since anything on disk may have changed.
+function M.parse(raw: string): (Proposal?, string?)
+	local ok, o = pcall(tern.json.decode, raw)
+	if not ok or not isTable(o) or o.version ~= 1 then
+		return nil, "The Draft review file is not one Plotroom reads (version 1)."
+	end
+	local repo, head, at = text(o.repo, 200), text(o.head, 64), text(o.at, 64)
+	local number, summary = whole(o.number), text(o.summary, 40000)
+	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not head or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
+		return nil, "The Draft review file is malformed."
+	end
+	local comments: { Comment } = {}
+	for i, c in o.comments do
+		local id, path, body = if isTable(c) then text(c.id, 64) else nil, if isTable(c) then text(c.path, 1000) else nil, if isTable(c) then text(c.body, 20000) else nil
+		local line = if isTable(c) then whole(c.line) else nil
+		local start = if isTable(c) and c.startLine ~= nil then whole(c.startLine) else nil
+		local suggestion = if isTable(c) and c.suggestion ~= nil then text(c.suggestion, 20000) else nil
+		if
+			not id
+			or not string.match(id, "^[%w_%-]+$")
+			or not path
+			or not line
+			or not body
+			or (c.startLine ~= nil and (not start or start > line))
+			or (c.suggestion ~= nil and not suggestion)
+			or (c.side ~= "RIGHT" and c.side ~= "LEFT")
+			or not KIND_LABEL[c.kind]
+			or i > 100
+		then
+			return nil, "Comment " .. i .. " of the Draft review file is malformed."
+		end
+		table.insert(comments, { id = id, path = path, line = line, startLine = start, side = c.side :: string, kind = c.kind, body = body, suggestion = suggestion })
+	end
+	return { at = at, repo = repo, number = number, head = string.lower(head), summary = summary, verdict = o.verdict, comments = comments }, nil
+end
+
+-- A unified diff (`git diff`, a/ and b/ prefixes) by file. ponytail: a path git quotes (special characters) is kept
+-- quoted, so comments on it are not placed; unquote C-style escapes if that shows up.
+function M.parseDiff(raw: string): Diff
+	local files: Diff = {}
+	local old: string?, new: string? = nil, nil
+	local hunks: { { Row } }? = nil
+	local hunk: { Row }? = nil
+	local o, n = 0, 0
+	for line in string.gmatch(raw, "([^\n]*)\n?") do
+		local c = string.sub(line, 1, 1)
+		if string.sub(line, 1, 11) == "diff --git " then
+			old, new, hunks, hunk = nil, nil, nil, nil
+		elseif not hunk and string.sub(line, 1, 4) == "--- " then
+			old = if line == "--- /dev/null" then nil else string.match(line, "^%-%-%- a/(.*)$")
+		elseif not hunk and string.sub(line, 1, 4) == "+++ " then
+			new = if line == "+++ /dev/null" then nil else string.match(line, "^%+%+%+ b/(.*)$")
+			local path = new or old
+			if path then
+				local list = files[path] or {}
+				files[path] = list
+				hunks = list
+			end
+		elseif string.sub(line, 1, 3) == "@@ " and hunks then
+			local a, b = string.match(line, "^@@ %-(%d+),?%d* %+(%d+),?%d* @@")
+			if a and b then
+				o, n = tonumber(a) :: number, tonumber(b) :: number
+				hunk = {}
+				table.insert(hunks, hunk :: { Row })
+			end
+		elseif hunk and (c == " " or c == "+" or c == "-") then
+			table.insert(hunk, { t = c :: string, text = string.sub(line, 2), o = o, n = n })
+			if c ~= "+" then
+				o += 1
+			end
+			if c ~= "-" then
+				n += 1
+			end
+		elseif hunk and c ~= "\\" then
+			hunk = nil -- the next file's header (or the end)
+		end
+	end
+	return files
+end
+
+-- Where comment `c` sits in `diff`: its hunk and the row of its (last) line, when that line, and the first of its range,
+-- are lines of one hunk on its side (GitHub takes a comment only there).
+local function locate(diff: Diff, c: Comment): ({ Row }?, number?)
+	local right = c.side == "RIGHT"
+	local function rowOf(h: { Row }, line: number): number?
+		for i, r in h do
+			if (right and r.t ~= "-" and r.n == line) or (not right and r.t ~= "+" and r.o == line) then
+				return i
+			end
+		end
+		return nil
+	end
+	for _, h in diff[c.path] or ({} :: { { Row } }) do
+		local at = rowOf(h, c.line)
+		if at and (not c.startLine or rowOf(h, c.startLine :: number)) then
+			return h, at
+		end
+	end
+	return nil, nil
+end
+
+-- The unified diff of CONTEXT rows of hunk `h` around row `at`, for Tern's `diff` node; nil when `c` is not on a line of `diff`.
+function M.excerpt(diff: Diff, c: Comment): string?
+	local h, at = locate(diff, c)
+	if not h or not at then
+		return nil
+	end
+	local last = math.min(#h, at + CONTEXT // 2)
+	local first = math.max(1, last - CONTEXT + 1)
+	last = math.min(#h, first + CONTEXT - 1)
+	local olds, news = 0, 0
+	local out: { string } = {}
+	for i = first, last do
+		local r = h[i]
+		olds += if r.t ~= "+" then 1 else 0
+		news += if r.t ~= "-" then 1 else 0
+		table.insert(out, r.t .. r.text)
+	end
+	local head = "--- a/" .. c.path .. "\n+++ b/" .. c.path .. "\n@@ -" .. h[first].o .. "," .. olds .. " +" .. h[first].n .. "," .. news .. " @@\n"
+	return head .. table.concat(out, "\n") .. "\n"
+end
+
+-- What Send hands the agent: your choices as one JSON object (the kept comments exactly as edited, the dropped ids, the
+-- verdict and the summary), the line of instructions you typed, and, when the pull request's head moved since the
+-- review (`head` now), a request to check the new commits first.
+function M.message(p: Proposal, kept: { Comment }, dropped: { string }, verdict: string, summary: string, note: string, head: string?): string
+	local comments: { any } = {}
+	for _, c in kept do
+		table.insert(comments, { id = c.id, path = c.path, line = c.line, startLine = c.startLine, side = c.side, body = c.body, suggestion = c.suggestion })
+	end
+	local choices = tern.json.encode({
+		repo = p.repo,
+		number = p.number,
+		head = p.head,
+		verdict = verdict,
+		summary = summary,
+		comments = tern.json.array(comments),
+		dropped = tern.json.array(dropped),
+	})
+	local lines = {
+		"My choices for your Draft review of " .. p.repo .. "#" .. p.number .. " (head " .. string.sub(p.head, 1, 12) .. "), sent from Plotroom's review block.",
+	}
+	if head and head ~= p.head then
+		table.insert(lines, "The pull request's head moved to " .. string.sub(head, 1, 12) .. " since your review: check the new commits first. If they change your findings, propose the review again instead of posting.")
+	end
+	table.insert(lines, "Post exactly these choices as one review: the kept comments as written (path, line, startLine, side, body; a suggestion as a suggestion block), the summary as its body and the verdict. Post nothing that is not here; the dropped comment ids are not posted.")
+	local typed = input.trim(note)
+	if typed ~= "" then
+		table.insert(lines, "My instructions: " .. typed)
+	end
+	table.insert(lines, "")
+	table.insert(lines, "```json")
+	table.insert(lines, choices)
+	table.insert(lines, "```")
+	return table.concat(lines, "\n")
+end
+
+-- The Draft review file of run `run` on this host (`<data directory>/runs/<run>/review.json`).
+function M.fileOf(run: string): string
+	return tern.plugin.data .. "/runs/" .. run .. "/review.json"
+end
+
+function M.validRun(run: any): boolean
+	return type(run) == "string" and #run <= 64 and string.match(run, "^[%w_%-]+$") ~= nil
+end
+
+-- When run `run`'s Draft review file was written (its `at`), nil when there is none it can read: the window's
+-- `review` request, which opens the block on a newer one.
+function M.fileAt(run: string): string?
+	local ok, raw = pcall(tern.fs.read, M.fileOf(run), FILE_BYTES)
+	local p = if ok then M.parse(raw) else nil
+	return if p then p.at else nil
+end
+
+local function alive(state: State, gen: number): boolean
+	return state.gen == gen
+end
+
+-- Places the comments on `diff` (nil: unread, every comment listed and keepable), on-diff ones grouped by file in the
+-- order the proposal first names each file, those not on a changed line last.
+local function place(state: State, p: Proposal, diff: Diff?)
+	local order: { string } = {}
+	local byFile: { [string]: { Card } } = {}
+	local off: { Card } = {}
+	for _, c in p.comments do
+		local excerpt = if diff then M.excerpt(diff, c) else nil
+		local card: Card = { c = c, model = input.new(c.body, true), keep = diff == nil or excerpt ~= nil, excerpt = excerpt }
+		if diff and not excerpt then
+			table.insert(off, card)
+		else
+			if not byFile[c.path] then
+				byFile[c.path] = {}
+				table.insert(order, c.path)
+			end
+			table.insert(byFile[c.path], card)
+		end
+	end
+	local cards: { Card } = {}
+	for _, path in order do
+		for _, card in byFile[path] do
+			table.insert(cards, card)
+		end
+	end
+	for _, card in off do
+		table.insert(cards, card)
+	end
+	state.cards = cards
+end
+
+-- Reads the run's Draft review file again: a new proposal (another `at`) starts over; the same one keeps your edits.
+-- Then the pull request's head and base (gh) and the diff the review is about (git, where the agent worked).
+local function load(state: State)
+	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), FILE_BYTES)
+	local p, why = if ok then M.parse(raw) else nil, if ok then nil else "There is no Draft review for this run on this host."
+	if not p then
+		state.problem = why
+		return
+	end
+	local cur = state.p
+	if cur and cur.at == p.at then
+		return
+	end
+	state.gen += 1
+	local gen = state.gen
+	state.p, state.problem, state.diffProblem, state.head = p, nil, nil, nil
+	state.summary, state.note, state.verdict = input.new(p.summary, true), input.new("", false), p.verdict
+	state.at, state.editing, state.sending, state.sent, state.gone, state.message = 0, false, false, false, nil, nil
+	state.loading = true
+	place(state, p, nil)
+	local function diffFailed(problem: string)
+		state.loading, state.diffProblem = false, problem
+		state.cx:render()
+	end
+	github.pr(p.repo, p.number, state.login, function(meta, problem)
+		if not alive(state, gen) then
+			return
+		elseif not meta then
+			return diffFailed("The pull request could not be read: " .. (if problem then problem.message else "gh gave no answer."))
+		end
+		state.head = meta.sha
+		worktree.reviewDiff(state.cwd, p.repo, p.number, meta.baseRef, p.head, function(out, problem2)
+			if not alive(state, gen) then
+				return
+			elseif not out then
+				return diffFailed("The diff could not be read: " .. (problem2 or "git gave no answer."))
+			elseif #out > DIFF_BYTES then
+				return diffFailed("The diff is too large to show.")
+			end
+			state.loading = false
+			place(state, p, M.parseDiff(out))
+			state.cx:render()
+		end)
+	end)
+end
+
+local function last(state: State): number
+	return #state.cards + 1
+end
+
+-- The text model the selection edits.
+local function modelAt(state: State): input.Model
+	if state.at == 0 then
+		return state.summary
+	elseif state.at > #state.cards then
+		return state.note
+	end
+	return state.cards[state.at].model
+end
+
+-- The message of your choices now (M.message).
+local function messageOf(state: State): string?
+	local p = state.p
+	if not p then
+		return nil
+	end
+	local kept: { Comment } = {}
+	local dropped: { string } = {}
+	for _, card in state.cards do
+		if card.keep then
+			local c = table.clone(card.c)
+			c.body = card.model.text
+			table.insert(kept, c)
+		else
+			table.insert(dropped, card.c.id)
+		end
+	end
+	return M.message(p, kept, dropped, state.verdict, state.summary.text, state.note.text, state.head)
+end
+
+-- Send: the message is rendered (hidden `main.send`) before the window is told to read it; it answers `sent` or `gone`.
+local function send(state: State)
+	if not state.p or state.sent or state.sending or state.loading then
+		return
+	end
+	state.editing, state.sending, state.gone = false, true, nil
+	state.message = messageOf(state)
+	state.cx:render()
+	state.cx:open(core.withToken("plotroom://review/send"))
+end
+
+local function toggle(state: State, i: number)
+	local card = state.cards[i]
+	if not card or state.sent then
+		return
+	elseif not card.excerpt and state.diffProblem == nil and not state.loading then
+		return state.cx:toast("info", "Not on a changed line", "GitHub refuses a comment outside the pull request's diff, so it cannot be kept.")
+	end
+	card.keep = not card.keep
+end
+
+local function edit(state: State, i: number)
+	if state.sent or not state.p then
+		return
+	end
+	state.at, state.editing = i, true
+end
+
+local function caps(k: string): { string }
+	return { k }
+end
+
+local function textNode(key: string, s: string, tone: string?): Node
+	return ui.node("text", { key = key, spans = { ui.span(s, tone) } })
+end
+
+local function editorOf(key: string, m: input.Model, aria: string, lines: number): Node
+	local p = input.props(m)
+	return ui.node("editor", { key = key, text = p.text, cursor = p.cursor, anchor = p.anchor, maxLines = lines, aria = aria })
+end
+
+local function cardNode(state: State, i: number, card: Card): Node
+	local c = card.c
+	local kind = KIND_LABEL[c.kind]
+	local selected = state.at == i
+	local where = (if c.startLine and c.startLine ~= c.line then "lines " .. c.startLine .. "–" .. c.line else "line " .. c.line) .. (if c.side == "LEFT" then " (old)" else "")
+	local kids: { Node } = {
+		ui.node("row", { key = "head", gap = "xs", align = "center", wrap = true }, {
+			ui.node("badge", { key = "kind", text = kind.text, tone = kind.tone }),
+			textNode("where", c.path .. " · " .. where, "muted"),
+			ui.node("badge", { key = "keep", text = if card.keep then "Kept" else "Dropped", tone = if card.keep then "success" else "muted" }),
+		}),
+	}
+	if card.excerpt then
+		local d = ui.diff(card.excerpt, c.path)
+		local props: { [string]: any } = d.p or {}
+		props.key = "diff"
+		d.p = props
+		table.insert(kids, d)
+	end
+	if selected and state.editing then
+		table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
+	else
+		table.insert(kids, ui.node("text", { key = "body", spans = { ui.span(core.printable(card.model.text)) } }))
+	end
+	if c.suggestion then
+		table.insert(kids, ui.node("section", { key = "suggestion", head = { ui.span("Suggested change", "muted") }, collapsible = true, collapsed = true }, {
+			ui.node("md", { key = "text", text = "````text\n" .. c.suggestion .. "\n````" }),
+		}))
+	end
+	if not state.sent then
+		local buttons: { Node } = {}
+		if card.excerpt or state.diffProblem or state.loading then
+			table.insert(buttons, button({ key = "keep", label = if card.keep then "Drop" else "Keep", icon = if card.keep then "x" else "check", hint = if selected then caps("Space") else nil, aria = (if card.keep then "Drop" else "Keep") .. " comment " .. c.id, actions = { click = "keep=" .. i } }))
+		end
+		table.insert(buttons, button({ key = "edit", label = "Edit", icon = "pencil", hint = if selected then caps("e") else nil, aria = "Edit comment " .. c.id, actions = { click = "edit=" .. i } }))
+		table.insert(kids, ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons))
+	end
+	return ui.node("card", { key = "c" .. i, tone = if selected then "accent" else nil }, kids)
+end
+
+local function view(state: State): BlockView
+	local p = state.p
+	local main: { Node } = {
+		ui.node("text", { key = "run", text = state.run, hidden = true }),
+	}
+	if state.message then
+		table.insert(main, ui.node("text", { key = "send", text = tern.json.encode({ run = state.run, text = state.message }), hidden = true }))
+	end
+	if not p then
+		table.insert(main, textNode("problem", state.problem or "Reading the Draft review…", if state.problem then "error" else "muted"))
+		return { main = ui.col(main) }
+	end
+	local head: { Node } = {
+		ui.text({ ui.span(p.repo .. "#" .. p.number, "num") }),
+		textNode("reviewed", "Draft review of " .. string.sub(p.head, 1, 7), "muted"),
+	}
+	if state.sent then
+		table.insert(head, ui.node("badge", { key = "sent", text = "Sent", tone = "success" }))
+	end
+	table.insert(main, ui.node("row", { key = "head", gap = "xs", align = "center", wrap = true }, head))
+	if state.head and state.head ~= p.head then
+		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "warning"))
+	end
+	if state.loading then
+		table.insert(main, ui.node("row", { key = "loading", gap = "xs", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
+	elseif state.diffProblem then
+		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
+	end
+	-- The summary and the verdict.
+	local summary: { Node } = { textNode("label", "Summary", "strong") }
+	if state.at == 0 and state.editing then
+		table.insert(summary, editorOf("text", state.summary, "Summary", 10))
+	else
+		table.insert(summary, ui.node("text", { key = "text", spans = { ui.span(if state.summary.text ~= "" then core.printable(state.summary.text) else "(no summary)", if state.summary.text ~= "" then nil else "muted") } }))
+	end
+	local verdicts: { Node } = {}
+	for i, v in M.VERDICTS do
+		local on = state.verdict == v
+		table.insert(verdicts, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, tone = if on then "accent" else "muted", hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = if state.sent then nil else { click = "verdict=" .. v } }))
+	end
+	table.insert(summary, ui.node("row", { key = "verdict", gap = "sm", wrap = true, align = "center" }, verdicts))
+	if not state.sent then
+		table.insert(summary, ui.node("row", { key = "buttons", gap = "sm", align = "center" }, {
+			button({ key = "edit", label = "Edit summary", icon = "pencil", hint = if state.at == 0 then caps("e") else nil, aria = "Edit the summary", actions = { click = "edit=0" } }),
+		}))
+	end
+	table.insert(main, ui.node("card", { key = "summary", tone = if state.at == 0 then "accent" else nil }, summary))
+	-- The comments, grouped by file, then those not on a changed line.
+	local section: { Node }? = nil
+	local sectionPath: string? = nil
+	local off: { Node } = {}
+	for i, card in state.cards do
+		if not card.excerpt and not state.loading and not state.diffProblem then
+			table.insert(off, cardNode(state, i, card))
+		else
+			if sectionPath ~= card.c.path then
+				section = {}
+				sectionPath = card.c.path
+				table.insert(main, ui.node("section", { key = "f" .. i, head = { ui.span(card.c.path, "mono") } }, section :: { Node }))
+			end
+			table.insert(section :: { Node }, cardNode(state, i, card))
+		end
+	end
+	if #off > 0 then
+		table.insert(off, 1, textNode("why", "GitHub refuses a comment outside the pull request's diff, so these cannot be kept.", "muted"))
+		table.insert(main, ui.node("section", { key = "off", head = { ui.span("Not on a changed line", "strong") } }, off))
+	end
+	if #state.cards == 0 then
+		table.insert(main, textNode("none", "No comments: only the summary and the verdict.", "muted"))
+	end
+	-- Instructions, Send, and Copy when the agent could not be reached.
+	local n = last(state)
+	local foot: { Node } = { textNode("label", "Instructions for the agent (optional)", "strong") }
+	if state.at == n and state.editing then
+		table.insert(foot, editorOf("note", state.note, "Instructions for the agent", 1))
+	else
+		table.insert(foot, ui.node("text", { key = "note", spans = { ui.span(if state.note.text ~= "" then state.note.text else "Press e to add a line, such as “tone down c3”", if state.note.text ~= "" then nil else "muted") } }))
+	end
+	local buttons: { Node } = {}
+	if state.sent then
+		table.insert(foot, textNode("sent", "Sent to the agent. It posts the review; a revised proposal opens here again.", "success"))
+	else
+		table.insert(buttons, button({ key = "send", label = if state.sending then "Sending…" else "Send to agent", icon = "arrow-right", tone = "accent", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
+	end
+	if state.gone then
+		table.insert(foot, textNode("gone", state.gone, "error"))
+		table.insert(buttons, button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }))
+	end
+	if #buttons > 0 then
+		table.insert(foot, ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons))
+	end
+	table.insert(main, ui.node("card", { key = "send-card", tone = if state.at == n then "accent" else nil }, foot))
+	return { main = ui.col(main) }
+end
+
+local function copy(state: State)
+	local m = state.message or messageOf(state)
+	if m then
+		state.cx:copy(m)
+		state.cx:toast("success", "Copied the message for the agent")
+	end
+end
+
+function M.define()
+	tern.block.define("review", {
+		init = function(cx: BlockCx, args: { string }, saved: any): State
+			local a: any = args
+			if (not a or not a[1]) and isTable(saved) and saved.version == 1 then
+				a = { saved.run, saved.cwd, saved.login }
+			end
+			local run, cwd, login = if a then a[1] else nil, if a then a[2] else nil, if a then a[3] else nil
+			local state: State = {
+				cx = cx,
+				run = if M.validRun(run) then run else "",
+				cwd = if type(cwd) == "string" and string.sub(cwd, 1, 1) == "/" and #cwd <= 4096 and not string.find(cwd, "%c") then cwd else "",
+				login = if type(login) == "string" and string.match(login, "^[%w%-]+$") then login else nil,
+				gen = 0,
+				loading = false,
+				cards = {},
+				summary = input.new("", true),
+				note = input.new("", false),
+				verdict = "comment",
+				at = 0,
+				editing = false,
+				sending = false,
+				sent = false,
+			}
+			if state.run == "" or state.cwd == "" then
+				state.problem = "This block was opened without a run and its folder."
+			else
+				load(state)
+				-- A block restored after a restart keeps that it was sent (edits are not saved).
+				-- ponytail: edits are lost on a restart; save the cards' text if that ever hurts.
+				local p = state.p
+				if p and isTable(saved) and saved.sent == p.at then
+					state.sent = true
+				end
+			end
+			return state
+		end,
+
+		title = function(state: State): string?
+			local p = state.p
+			return if p then "Draft review · " .. p.repo .. "#" .. p.number else "Draft review"
+		end,
+
+		view = function(state: State, _cx: BlockCx): BlockView
+			return view(state)
+		end,
+
+		key = function(state: State, key: Key, _cx: BlockCx): boolean?
+			local name = key.name
+			if state.editing then
+				if name == "escape" then
+					state.editing = false
+					return true
+				elseif name == "enter" and (key.meta or key.ctrl) then
+					send(state)
+					return true
+				end
+				local m = modelAt(state)
+				return input.key(m, key, function(s: string)
+					state.cx:copy(s)
+				end)
+			end
+			local ch = key.text or name
+			if name == "down" or ch == "j" then
+				state.at = math.min(state.at + 1, last(state))
+			elseif name == "up" or ch == "k" then
+				state.at = math.max(state.at - 1, 0)
+			elseif name == "space" then
+				toggle(state, state.at)
+			elseif ch == "e" or (name == "enter" and not key.meta and not key.ctrl) then
+				edit(state, state.at)
+			elseif name == "enter" then
+				send(state)
+			elseif (ch == "1" or ch == "2" or ch == "3") and not state.sent then
+				state.verdict = M.VERDICTS[tonumber(ch) :: number]
+			elseif ch == "c" and state.gone then
+				copy(state)
+			else
+				return false
+			end
+			return true
+		end,
+
+		event = function(state: State, ev: UiEvent, _cx: BlockCx)
+			if ev.ev ~= "action" then
+				return
+			end
+			local act, value = ev.act, ev.value
+			if act == "reload" then
+				load(state)
+			elseif act == "sent" then
+				state.sending, state.sent, state.gone = false, true, nil
+			elseif act == "gone" then
+				state.sending = false
+				state.gone = (if type(value) == "string" then string.sub(value, 1, 300) else "The agent could not take the message.") .. " Copy the message and give it to the agent yourself."
+			elseif act == "send" then
+				send(state)
+			elseif act == "copy" then
+				copy(state)
+			elseif act == "verdict" and VERDICT_LABEL[value] and not state.sent then
+				state.verdict = value
+			elseif act == "keep" and tonumber(value) then
+				state.at = tonumber(value) :: number
+				toggle(state, state.at)
+			elseif act == "edit" and tonumber(value) then
+				local i = tonumber(value) :: number
+				if i >= 0 and i <= last(state) then
+					edit(state, i)
+				end
+			end
+		end,
+
+		save = function(state: State): any
+			local p = state.p
+			return { version = 1, run = state.run, cwd = state.cwd, login = state.login, sent = if p and state.sent then p.at else nil }
+		end,
+	})
+end
+
+return M

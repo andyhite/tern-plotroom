@@ -13,6 +13,7 @@ local render = require("./host/render")
 local settings = require("./host/settings")
 local requests = require("./host/requests")
 local lens = require("./host/lens")
+local review = require("./host/review")
 
 type Note = core.Note
 type Prompt = core.Prompt
@@ -1233,3 +1234,4 @@ end
 
 tern.block.define("prs", blockDef())
 lens.define()
+review.define()

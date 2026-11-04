@@ -388,6 +388,7 @@ local function button(p: { [string]: any }): Node
 	p.role, p.basis = BUTTON, "content"
 	return ui.node("item", p)
 end
+M.button = button
 
 -- Buttons side by side, wrapping when the preview is narrow (a list would stretch each ring across the row).
 local function buttonRow(key: string, buttons: { Node }): Node

@@ -1494,6 +1494,10 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		end
 		return true
 	end
+	if url == "plotroom://review/send" then
+		flows.reviewSend(cx, pane)
+		return true
+	end
 	if url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
@@ -1990,6 +1994,7 @@ end
 tern.on("agent_finished", function(ev: any, cx: WindowCx)
 	if type(ev) == "table" and type(ev.pane) == "number" and type(ev.result) == "string" then
 		flows.recordResult(cx, ev.pane, ev.result)
+		flows.reviewAfter(cx, ev.pane)
 	end
 	flows.agentSync(cx)
 	drive(cx)

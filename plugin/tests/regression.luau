@@ -19,6 +19,7 @@ require("./cases/inbox")
 require("./cases/setup")
 require("./cases/preview")
 require("./cases/failures")
+require("./cases/review")
 
 type Loader = h.Loader
 
