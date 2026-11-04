@@ -24,7 +24,7 @@ require("./cases/failures")
 type Loader = h.Loader
 
 local EPOCH, array, cases, hostScene, jsonEncode, newWorld = h.EPOCH, h.array, h.cases, h.hostScene, h.jsonEncode, h.newWorld
-local openQueue, pickerOf, searchItem = h.openQueue, h.pickerOf, h.searchItem
+local findKey, openQueue, pickerNode, pickerOf, searchItem = h.findKey, h.openQueue, h.pickerNode, h.pickerOf, h.searchItem
 
 function M.run(instantiate: Loader)
 	local failed = 0
@@ -116,6 +116,29 @@ function M.bench(instantiate: Loader)
 	timed("now-render", 20, function(_i: number)
 		b.render()
 	end)
+	-- Now as a Board over the same 1000 rows: drawn, moved in a column and across, and rebuilt (rows regrouped, as a
+	-- search keystroke on a view's Board would) each step.
+	b.event({ ev = "action", act = "queue", value = "now-layout" })
+	w.flush()
+	if not findKey(pickerNode(b), "board", "col") then
+		error("the benchmark expected Now's Board", 0)
+	end
+	timed("now-board-render", 20, function(_i: number)
+		b.render()
+	end)
+	timed("now-board-down", 20, function(_i: number)
+		b.press("down")
+	end)
+	timed("now-board-across", 20, function(i: number)
+		b.press(if i % 2 == 0 then "left" else "right")
+	end)
+	timed("now-board-rebuild", 20, function(_i: number)
+		b.state().rev += 1
+		b.render()
+	end)
+	local boardPayload = jsonEncode(b.view())
+	print(string.format("BENCH payload-board bytes=%d items=%d", #boardPayload, #b.state().now.rows))
+	b.event({ ev = "action", act = "queue", value = "now-layout" })
 	b.event({ ev = "action", act = "queue", value = "scope:prs:v1" })
 	w.flush()
 	-- A scan builds what each of the 1000 items' worktree is known by: formats and Jira map are read once, not per item.

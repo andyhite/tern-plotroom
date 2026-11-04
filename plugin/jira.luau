@@ -19,7 +19,7 @@ local PAGE = 100 -- what one acli search returns without --paginate
 -- The only fields acli's search accepts; a work item's dates and comment count come with its details.
 local SEARCH_FIELDS = "key,summary,status,issuetype,priority,assignee,reporter,labels"
 local BODY_CHARS = 20000
-local TONE: { [string]: string } = { new = "muted", indeterminate = "warning", done = "success" }
+local TONE: { [string]: string } = { new = "muted", indeterminate = "muted", done = "success" }
 local KEY = "^[A-Z][A-Z0-9_]*%-%d+$"
 
 local field, nonEmpty = tracker.field, tracker.nonEmpty

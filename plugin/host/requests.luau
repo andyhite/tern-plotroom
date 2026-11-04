@@ -2126,6 +2126,8 @@ function M.paletteActions(state: State): { QueueAction }
 			end
 			add("agentgo", "Now")
 		end
+		labels["now-layout"] = if state.nowBoard then "Show Now as List" else "Show Now as Board"
+		add("now-layout", "Filter & Sort")
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
 		add("nownext", "Now")

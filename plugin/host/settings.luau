@@ -2010,7 +2010,7 @@ function M.settingsView(state: State, palette: Node): BlockView
 		table.insert(
 			kids,
 			ui.node("row", { key = "buttons", role = "omp.actions" }, {
-				ui.node("row", { key = "save", role = "omp.btn", tone = "accent", gap = "xs", align = "center", actions = { click = "save-prompt" } }, {
+				ui.node("row", { key = "save", role = "omp.btn", gap = "xs", align = "center", actions = { click = "save-prompt" } }, {
 					ui.node("icon", { key = "i", name = "save" }),
 					ui.text({ ui.span("Save") }),
 				}),

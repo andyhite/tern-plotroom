@@ -207,7 +207,7 @@ case("host: the preview shimmers while the detail loads, then shows the merge st
 		eq(item.p.value, nil, "no status word: the icon is the verdict")
 		table.insert(rows, item.p.title .. " " .. item.p.icon .. " " .. item.p.tone)
 	end
-	same(rows, { "@ann — Approved check success", "@bob — Requested clock warning" }, "each reviewer with a verdict, then those still asked; the tooltip spells it out")
+	same(rows, { "@ann — Approved check success", "@bob — Requested clock muted" }, "each reviewer with a verdict, then those still asked (no colour: waiting on someone else); the tooltip spells it out")
 	eq(findKey(pickerNode(b), "reviewers-loading"), nil, "the shimmer is gone")
 	eq(findKey(pickerNode(b), "runs-loading"), nil, "from the checks too")
 	local function card(): any
@@ -481,22 +481,22 @@ case("host: a worktree request becomes a badge and a card with its status, place
 	eq(named.refused, nil, "with no refusal")
 	eq(named.why, nil, "and no reason")
 	yes(badgeOf(b) ~= nil, "a worktree puts a badge on the row")
-	eq(badgeOf(b).tone, "success", "a current, clean worktree is a success")
-	eq(cardOf(b).p.tone, "success", "and a card in the preview")
+	eq(badgeOf(b).tone, nil, "a current, clean worktree has no colour: it is none of the colour meanings")
+	eq(cardOf(b).p.tone, nil, "and a card in the preview, uncoloured")
 	has(cardText(b), target, "that says where it is")
 	s.git.dirty[target] = " M src/a.lua\n"
 	ask(1)
-	eq(badgeOf(b).tone, "warning", "local changes deserve a look")
+	eq(badgeOf(b).tone, nil, "local changes are no colour meaning: the card's badges say them")
 	s.git.dirty[target] = nil
 	s.gh.meta["o/r#1"].sha = sha("c")
 	ask(1)
-	eq(badgeOf(b).tone, "warning", "so does a worktree behind its PR")
+	eq(badgeOf(b).tone, nil, "nor is a worktree behind its PR")
 	local ran = #w.calls
 	eq(commandsOf(b, "update"), "git -C " .. target .. " pull --ff-only", "the update command too")
 	eq(#w.calls, ran, "showing them ran nothing")
 	s.gh.meta["o/r#1"].sha = sha("b")
 	ask(1)
-	eq(badgeOf(b).tone, "success", "caught up with its PR, the worktree is a success again")
+	eq(badgeOf(b).tone, nil, "caught up with its PR, the worktree stays uncoloured")
 	eq(commandsOf(b, "update"), nil, "no update commands to show")
 	s.gh.meta["o/r#1"] = nil
 	yes(type(ask(1).problem) == "string", "a PR that cannot be read is answered with the reason")
@@ -527,7 +527,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	end
 	ask()
 	same(chipsOf(b), { "Up to date", "Clean" }, "at the PR head and clean: two badges")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "success", "a good state")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "a good state, neutral")
 	has(findKey(cardOf(b), "sync", "badge").p.title, "Created", "with the one-line summary of the attempt as the tooltip")
 	for _, gone in { "summary", "never", "facts" } do
 		eq(findKey(cardOf(b), gone), nil, "no " .. gone .. " line: the summary sentence, the footer and the kv are gone")
@@ -547,7 +547,7 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
 	eq(open.p.actions.click, "worktree", "and is the Worktree button")
 	local remove: any = findKey(cardOf(b), "remove", "item")
-	eq(remove.p.tone, "error", "Remove is red")
+	eq(remove.p.tone, nil, "Remove wears no colour: its confirm guards it")
 	eq(remove.p.icon, "trash", "with a trash can")
 	eq(remove.p.hint, nil, "and no key")
 	pressCard(b, "open")
@@ -563,9 +563,9 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	s.git.dirty[target] = " M src/a.lua\n"
 	ask()
 	same(chipsOf(b), { "Not at PR head", "Uncommitted changes" }, "behind its PR and modified")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "both are warnings")
-	eq(findKey(cardOf(b), "changes", "badge").p.tone, "warning", "")
-	eq(cardOf(b).p.tone, "warning", "and so is the card")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "both are neutral: the text says what")
+	eq(findKey(cardOf(b), "changes", "badge").p.tone, "muted", "")
+	eq(cardOf(b).p.tone, nil, "and so is the card")
 	eq(findKey(cardOf(b), "update", "section").p.collapsed, true, "the update commands are folded away")
 	eq(commandsOf(b, "update"), "git -C " .. target .. " pull --ff-only", "and complete")
 	s.gh.meta["o/r#1"].sha = sha("b")
@@ -831,7 +831,7 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	local target = "/wt/plotroom-o_r-pr-1"
 	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
 	w.flush()
-	eq(badgeOf(b).tone, "success", "a clean worktree starts as a success")
+	eq(badgeOf(b).tone, nil, "a clean worktree starts uncoloured, not failed")
 	s.git.dirty[target] = " M src/a.lua\n"
 	local before = snapshot(s.git)
 	local mark = #s.git.log
@@ -853,8 +853,8 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	yes(cardOf(b) ~= nil, "the card stays")
 	has(cardText(b), "Not removed. It has uncommitted changes; commit, stash or remove it yourself.", "and says why")
 	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "with what git found")
-	eq(cardOf(b).p.tone, "warning", "so it is a warning now")
-	eq(badgeOf(b).tone, "warning", "and so is the row's badge")
+	eq(cardOf(b).p.tone, nil, "neutral: the badges say it")
+	eq(badgeOf(b).tone, nil, "and so is the row's badge")
 	eq(w.toasts[#w.toasts].level, "error", "the refusal is toasted too")
 	eq(w.toasts[#w.toasts].text, "Worktree not removed", "")
 	eq(w.toasts[#w.toasts].sub, "It has uncommitted changes; commit, stash or remove it yourself.", "with the same reason")
@@ -947,8 +947,8 @@ case("host: a fresh block shows the card and the row badge of a worktree its che
 	eq(countLog(s.git, "worktree add"), 0, "nothing was made")
 	w.advance(300)
 	same(chipsOf(b), { "Up to date", "Clean" }, "the selected PR's changes are read once the cursor has rested on it")
-	eq(badgeOf(b).tone, "success", "and the row follows")
-	eq(cardOf(b).p.tone, "success", "and the card")
+	eq(badgeOf(b).tone, nil, "and the row follows, uncoloured")
+	eq(cardOf(b).p.tone, nil, "and the card")
 	eq(countLog(s.git, "status"), 1, "by one status")
 	eq(countLog(s.git, "worktree list"), 1, "the status read lists nothing again, nor does the preview")
 	eq(#w.toasts, 0, "nothing was said")
@@ -1026,8 +1026,8 @@ case("host: the card says Up to date or Not at PR head by the head the last refr
 	head(sha("c"))
 	refreshNow(w, b)
 	same(chipsOf(b), { "Not at PR head", "Changes unchecked" }, "the PR moved on: the worktree is behind it")
-	eq(findKey(cardOf(b), "sync", "badge").p.tone, "warning", "a warning")
-	eq(badgeOf(b).tone, "warning", "as is the row's badge")
+	eq(findKey(cardOf(b), "sync", "badge").p.tone, "muted", "neutral: the text says it")
+	eq(badgeOf(b).tone, nil, "as is the row's badge")
 	eq(findKey(cardOf(b), "sync", "badge").p.title, "Reused · Different (local bbbbbbb, PR head ccccccc on branch-1; not updated) · Changes unchecked", "the tooltip says how")
 	eq(commandsOf(b, "update"), "git -C " .. path .. " pull --ff-only", "and the command to catch up is one pull: the branch tracks the PR's head branch")
 	local ran = #w.calls
@@ -1062,7 +1062,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(1)
 	eq(countLog(s.git, "status"), 1, "then the selected PR's worktree is read")
 	same(chipsOf(b), { "Up to date", "Clean" }, "and its card says what git found")
-	eq(badgeOf(b, 1).tone, "success", "its row too")
+	eq(badgeOf(b, 1).tone, nil, "its row too, uncoloured")
 	eq(badgeOf(b, 2).tone, nil, "the others are not read: their badges have no tone yet")
 	eq(badgeOf(b, 3).tone, nil, "")
 	showPr(b, 2)
@@ -1078,7 +1078,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(1)
 	eq(countLog(s.git, "status"), 2, "...on a worktree reads it")
 	same(chipsOf(b), { "Up to date", "Uncommitted changes" }, "its card shows the changes")
-	eq(badgeOf(b, 2).tone, "warning", "and its row")
+	eq(badgeOf(b, 2).tone, nil, "and its row stays uncoloured")
 	showPr(b, 4)
 	w.advance(1000)
 	eq(countLog(s.git, "status"), 2, "an item with no worktree has nothing to read")
@@ -1096,7 +1096,7 @@ case("host: a worktree's changes are read for the selected item only, once the c
 	w.advance(300)
 	eq(countLog(s.git, "status", mark), 1, "it reads the selected worktree again once the cursor rests")
 	same(chipsOf(b), { "Up to date", "Clean" }, "and shows what changed")
-	eq(badgeOf(b, 2).tone, "success", "in its row too")
+	eq(badgeOf(b, 2).tone, nil, "in its row too")
 end)
 
 case("host: a scan that began before a worktree attempt or a removal ended cannot undo it", function(w: World)
@@ -1312,18 +1312,17 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	eq(#w.window.agents, 1, "the agent starts")
-	eq(toneAtStart, "success", "after the block showed its worktree")
-	eq(cardOf(b).p.tone, "success", "the card now says the worktree is ready")
+	eq(toneAtStart, nil, "after the block showed its worktree (uncoloured, not failed)")
+	eq(cardOf(b).p.tone, nil, "the card now says the worktree is ready, no longer failed")
 	lacks(cardText(b), "permission denied", "the failure is gone")
 	has(cardText(b), s.target, "and the card shows where the worktree is")
-	eq(badgeOf(b).tone, "success", "the row has its Worktree badge")
+	eq(badgeOf(b).text, "Worktree", "the row has its Worktree badge")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "feature", "and the worktree's branch")
 	s.gh.meta["o/r#5"].sha = sha("c")
 	s.git.served["refs/pull/5/head"] = sha("c")
 	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
-	eq(badgeOf(b).tone, "warning", "a reused worktree behind its pull request is flagged")
 	eq(commandsOf(b, "update"), "git -C /wt/plotroom-o_r-pr-5 pull --ff-only", "with the command that brings it up to date")
 	w.cx.agents.start = function(_self: any, _opts: any): number
 		error("no agent program", 0)
@@ -1661,7 +1660,7 @@ case("host: an issue row names its number, the repository only when the view spa
 	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
 	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
 	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
-	eq(badges(2), "Closed/muted Completed/accent", "a completed issue")
+	eq(badges(2), "Closed/muted Completed/success", "a completed issue")
 	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
 	eq(badges(4), "Closed/muted Duplicate/muted", "a duplicate")
 	eq(badges(5), "Closed/muted", "and a closed one with no reason: the stage says it once")
@@ -1725,9 +1724,9 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 		table.insert(linked, item.p.label .. " | " .. item.p.value .. " | " .. item.p.icon .. " | " .. item.p.tone .. " | " .. item.p.title)
 	end
 	same(linked, {
-		"Fix the login redirect | #45 | merge | success | #45 · Open",
+		"Fix the login redirect | #45 | merge | muted | #45 · Open",
 		"A first try | #44 | merge | muted | #44 · Draft",
-		"An older fix | #43 | merge | accent | #43 · Merged",
+		"An older fix | #43 | merge | success | #43 · Merged",
 	}, "each linked pull request: its title, its number at the right, the icon toned by its state, which the tooltip names")
 	eq(findKey(preview, "linked-head1"), nil, "pull requests have no relation heading")
 	has(b.text(), "12-fix-login", "the branch is on screen")
@@ -2247,8 +2246,8 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	eq(countLog(s.git, "worktree add -b octocat/12-fix-login " .. target .. " " .. sha("b")), 1, "made once")
 	eq(w.opened[#w.opened], "plotroom://rpc/a1", "the window is told to read it")
 	yes(badgeOf(b) ~= nil, "a worktree puts a badge on the row")
-	eq(badgeOf(b).tone, "success", "a current, clean worktree is a success")
-	eq(cardOf(b).p.tone, "success", "and a card in the preview")
+	eq(badgeOf(b).tone, nil, "a current, clean worktree has no colour, so not failed")
+	eq(cardOf(b).p.tone, nil, "and a card in the preview, uncoloured")
 	has(cardText(b), target, "that says where it is")
 	eq(findKey(findKey(cardOf(b), "wbranch"), "v").p.spans[1].t, "octocat/12-fix-login", "the card shows its branch")
 	same(chipsOf(b), { "Clean" }, "and one badge: an issue has no pull request head to be at")
@@ -2265,7 +2264,7 @@ case("host: an issue request makes its worktree once, notes it on the block, and
 	request(b, "a4", freshAsk("o/r", "12"))
 	w.flush()
 	eq(answerOf(b, "a4").summary, "Reused · octocat/12-fix-login at bbbbbbb · Modified (uncommitted changes kept)", "local changes are reported")
-	eq(badgeOf(b).tone, "warning", "and deserve a look")
+	eq(badgeOf(b).tone, nil, "and stay uncoloured: the card says them")
 	s.git.dirty[target] = nil
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.fs.denyMkdir["/wt"] = "mkdir denied"
@@ -2961,9 +2960,11 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	eq(findKey(findKey(preview, "head"), "open", "icon").p.role, "plotroom.link", "and its Open a link")
 	yes(findKey(preview, "less", "item") ~= nil and cardOf(b) ~= nil, "Show less and the worktree card are on screen")
 	same(hx.miscued(b.view().layer), {}, "the pull request preview: every click and link has its look, nothing else does")
+	same(hx.offPalette(b.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "the removal asks first")
 	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
+	same(hx.offPalette(confirmOf(b)), {}, "neither wears a colour")
 	b.press("escape")
 	eq(confirmOf(b), nil, "Escape keeps the worktree")
 	b.typeText("z")
@@ -2984,6 +2985,7 @@ case("host: everything clickable in an issue preview and the shortcut list is a 
 	w.advance(300)
 	eq(findKey(pickerNode(ib), "pr1", "item").p.role, "plotroom.link", "an issue's linked pull request is a link")
 	same(hx.miscued(ib.view().layer), {}, "the issue preview: every click and link has its look, nothing else does")
+	same(hx.offPalette(ib.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	ib.typeText("?")
 	yes(findKey(ib.view().layer, "help", "overlay") ~= nil, "the shortcut list is open")
 	same(hx.miscued(ib.view().layer), {}, "its Close is a button; its keycaps are neither")

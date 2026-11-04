@@ -1032,6 +1032,8 @@ local function newWorld(instantiate: Loader, context: string): World
 	kvStore.keys = jsonEncode({
 		down = "j",
 		up = "k",
+		left = "h",
+		right = "l",
 		worktree = "w",
 		goto = "g",
 		agent = "a",
@@ -3121,6 +3123,44 @@ function hx.miscued(node: any): { string }
 		end
 	end
 	walk(node, "")
+	return out
+end
+
+-- What under `node` breaks DESIGN.md's Color Meaning Rule, as "<tone or style>: <text>": a tone other than the five
+-- meaning colours (accent, error, success, pending, warning) or neutral ones (muted, neutral), a span style that colours
+-- text outside those (num, ins, del, info, link), or a button wearing a meaning colour. Walks every table, so picker
+-- rows' badges and spans count as nodes do.
+local MEANING_TONES = { accent = true, error = true, success = true, pending = true, warning = true }
+local NEUTRAL_TONES = { muted = true, neutral = true }
+local OFF_STYLES = { num = true, ins = true, del = true, info = true, link = true, user = true }
+function hx.offPalette(node: any): { string }
+	local out: { string } = {}
+	local seen: { [any]: boolean } = {}
+	local function walk(n: any)
+		if type(n) ~= "table" or seen[n] then
+			return
+		end
+		seen[n] = true
+		local p: any = if type(n.p) == "table" then n.p else n
+		local text = tostring(p.text or p.label or p.title or n.t or "")
+		local tone = p.tone
+		if type(tone) == "string" and not MEANING_TONES[tone] and not NEUTRAL_TONES[tone] then
+			table.insert(out, tone .. ": " .. text)
+		elseif type(tone) == "string" and MEANING_TONES[tone] and p.role == "plotroom.button" then
+			table.insert(out, "button " .. tone .. ": " .. text)
+		end
+		if type(n.t) == "string" and type(n.s) == "string" and OFF_STYLES[n.s] then
+			table.insert(out, n.s .. ": " .. n.t)
+		end
+		if type(n.token) == "string" and (OFF_STYLES[n.token] or n.token == "error") then
+			table.insert(out, "meter " .. n.token .. ": " .. tostring(n.label))
+		end
+		for _, v in n do
+			walk(v)
+		end
+	end
+	walk(node)
+	table.sort(out)
 	return out
 end
 
