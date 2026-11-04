@@ -134,7 +134,7 @@ local function pickerItem(pr: github.Pr, note: Note?, stage: string, why: string
 		table.insert(detail, ui.span(why, "error"))
 	elseif pr.newCommits then
 		table.insert(detail, " · ")
-		table.insert(detail, ui.span("New commits since you approved", "warning"))
+		table.insert(detail, "New commits since you approved")
 	end
 	return finishRow(pr.key, pr.title, pr.author, detail, badges)
 end
@@ -245,7 +245,7 @@ local function agentClock(state: State, key: string): { any }?
 	if fraction then
 		local filled = math.floor(fraction * BAR_CELLS) -- 95% is 9 of 10: never a full bar before the run ends
 		if filled > 0 then
-			table.insert(out, ui.span(string.rep("━", filled), "accent"))
+			table.insert(out, ui.span(string.rep("━", filled), "pending"))
 		end
 		if filled < BAR_CELLS then
 			table.insert(out, ui.span(string.rep("━", BAR_CELLS - filled), "muted"))

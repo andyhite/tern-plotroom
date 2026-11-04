@@ -3407,6 +3407,9 @@ case("host review recency: a PR you approved whose head moved says New commits s
 		return out
 	end
 	same(details(), { "#1 · New commits since you approved", "#2", "#3", "#4 · New commits since you approved", "#5" }, "only an open PR whose head is not the commit you approved says so")
+	for _, part in pickerOf(b).items[1].detail do
+		yes(type(part) == "string" or part.s == "mono", "it asks nothing of you, so it wears no colour (DESIGN.md's Color Meaning Rule)")
+	end
 	eq(nextOf(w, b, "no_2fr_231").row, nil, "approved, nothing asked again: no move, even with new commits")
 	eq(nextOf(w, b, "no_2fr_233").row, "Review", "your review was dismissed: Review")
 	eq(nextOf(w, b, "no_2fr_234").row, "Review", "asked again after you approved: Review")
