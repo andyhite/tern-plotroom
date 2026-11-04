@@ -168,7 +168,9 @@ export type Settings = {
 -- and what checking it on GitHub found (`verdict`: verified | not | unchecked; nil: none checked yet). A checker's agent
 -- also has its verdict on the run it checked (`check`: pass | fail) and, on a fail, its `findings` joined by " · ".
 -- `stop`: why the item's chain stopped at Needs you (3 failed checks, 3 runs without progress, 3 failed starts).
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
+-- While it works: `since`, when its run or turn began (seconds since the epoch, on the window's clock), and `expected`,
+-- the median seconds of its action's finished runs (nil: fewer than 5, or a later turn); both digits as text.
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`, each GitHub one with the login
@@ -267,12 +269,15 @@ export type State = {
 	showSnoozed: boolean, -- snoozed items are listed (marked) instead of hidden
 	nowOn: boolean, -- Now is shown instead of a view
 	nowAt: string?, -- the picker id of the Now row previewed
+	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)
 	agents: { [string]: string }, -- item key -> its agent's state as the window last reported it (working | waiting_input | idle | exited)
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view
 	agentAt: string?, -- the item key of the Agents row previewed
+	clocked: boolean?, -- the view being drawn shows a working agent's clock (render's agentClock)
+	clockTimer: TimerHandle?, -- the redraw that moves the shown clocks on, at most one a second
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
@@ -534,6 +539,7 @@ local KINDS: { [string]: Kind } = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the pull requests (Page Up/Down jump ten, Home/End the ends)" },
 			{ keys = { "Enter" }, text = "Open the selected pull request in a Browser block beside this one" },
 			{ keys = {}, actions = { "next" }, text = "Run the selected pull request's suggested next move for its stage (Merge…, Ready for review…, Review, Address feedback, Re-run failed checks, Go to agent, Remove worktree…)" },
+			{ keys = {}, actions = { "nownext" }, text = "Next in Now: show Now and select its most urgent item, then each next one (Now's heading reads n of N while walking, N left at rest)" },
 			{ keys = {}, actions = { "worktree" }, text = "Check it out in a worktree and open that in a new tab (Plotroom asks for the repository's checkout the first time)" },
 			{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected pull request's worktree" },
 			{ keys = {}, actions = { "agent" }, text = "Pick an action, or type a prompt, and run it on the selected pull request in its worktree" },
@@ -588,6 +594,7 @@ local KINDS: { [string]: Kind } = {
 			{ keys = { "↑", "↓" }, actions = { "down", "up" }, text = "Move through the issues (Page Up/Down jump ten, Home/End the ends)" },
 			{ keys = { "Enter" }, text = "Open the selected issue in a Browser block beside this one" },
 			{ keys = {}, actions = { "next" }, text = "Run the selected issue's suggested next move for its stage (Worktree, Draft PR…, Go to agent, Remove worktree…)" },
+			{ keys = {}, actions = { "nownext" }, text = "Next in Now: show Now and select its most urgent item, then each next one (Now's heading reads n of N while walking, N left at rest)" },
 			{ keys = {}, actions = { "worktree" }, text = "Create or reuse the selected issue's worktree and open it in a new tab: on its linked pull request's branch (Plotroom asks which when several have one), else on a new branch from the base you pick (Plotroom asks for the repository, and its checkout, the first time)" },
 			{ keys = {}, actions = { "goto" }, text = "Go to the tab working in the selected issue's worktree" },
 			{ keys = {}, actions = { "agent" }, text = "Pick an action, or type a prompt, and run it on the selected issue (typed prompts run in its worktree)" },
