@@ -63,10 +63,10 @@ local function serveChecks(s: HostScene, rollup: string, list: { any })
 	s.gh.checks["o/r#1"] = list
 end
 
--- The preview's check rows as "name — detail", in the order shown: required, then the others.
+-- The preview's check rows as "name — detail", in the order shown: failing, running, queued, then passed and skipped.
 local function runRows(b: Block): { string }
 	local out: { string } = {}
-	for _, key in { "required", "runs" } do
+	for _, key in { "failing", "running", "queued", "passed", "skipped" } do
 		local list: any = findKey(pickerNode(b), key)
 		if list then
 			for _, row in list.c do
@@ -140,29 +140,42 @@ case("host: jobs that move on while the rollup stays pending replace the list th
 	same(runRows(b), { "lint — In progress", "build — Passed", "test — Passed" }, "the third job's progress is only in the full list, and it is shown")
 end)
 
-case("host: a check row is its job, its workflow dim, the time it took and a toned icon; required ones apart, every check listed", function(w: World)
+case("host: the preview groups checks as Failing, Running and Queued with counts, then Passed and Skipped folded; each row its job, CI and duration", function(w: World)
 	local s = hostScene(w, 0)
 	local build = job("ci / build", "failed")
-	build.completedAt = "2026-01-01T00:00:03Z"
+	build.completedAt = "2026-01-01T00:00:45Z"
 	build.isRequired = true
 	local gate = job("gate", "passed")
 	gate.isRequired = true
-	serveChecks(s, "FAILURE", { build, gate, job("test", "running"), job("lint", "passed"), job("docs", "passed") })
+	gate.completedAt = "2026-01-01T01:05:00Z"
+	local test = job("test", "running")
+	test.startedAt = h.iso(EPOCH - 384)
+	test.checkSuite = { id = "S1", workflowRun = { workflow = { name = "CI" } } }
+	local skipped = checkRun("deploy", "COMPLETED", "SKIPPED", "2026-01-01T00:00:00Z", { id = "deploy", checkSuite = { id = "S2", app = { name = "Vercel" } } })
+	local status = { context = "ci/circleci", state = "EXPECTED", targetUrl = "https://circleci.com/gh/o/r/1", id = "ctx" }
+	serveChecks(s, "FAILURE", { build, gate, test, job("lint", "queued"), status, job("docs", "passed"), skipped })
 	local b = openQueue(w)
 	w.advance(300)
 	local function rows(list: any): { string }
 		local out: { string } = {}
 		for _, row in list.c do
 			eq(row.k, "item", "only rows in a list: other kinds get no row behaviour")
-			table.insert(out, table.concat({ row.p.label, row.p.detail or "-", row.p.value or "-", row.p.icon, row.p.tone }, " "))
+			table.insert(out, table.concat({ row.p.label, row.p.detail or "-", row.p.value or "-", row.p.icon, row.p.tone }, " | "))
 		end
 		return out
 	end
 	local preview = pickerNode(b)
-	eq(findKey(preview, "required-head").p.spans[1].t, "Required · 2", "required checks under their own heading")
-	same(rows(findKey(preview, "required", "list")), { "build ci 3s x error", "gate - - check success" }, "the job, its workflow, its time and its status as an icon, worst first")
-	eq(findKey(preview, "optional-head").p.spans[1].t, "Optional · 3", "the rest under theirs")
-	same(rows(findKey(preview, "runs", "list")), { "test - - clock warning", "lint - - check success", "docs - - check success" }, "passed ones are listed too; a running check has no time and no status word")
+	eq(findKey(preview, "failing-head").p.spans[1].t, "Failing 1", "each group headed with its count")
+	same(rows(findKey(preview, "failing", "list")), { "build | Required · ci | 45s | x | error" }, "the job, Required, its CI, how long it ran, its status as an icon")
+	eq(findKey(preview, "running-head").p.spans[1].t, "Running 1", "running next")
+	same(rows(findKey(preview, "running", "list")), { "test | CI | 6m 24s | clock | warning" }, "a running check says how long it has been running, and its workflow")
+	eq(findKey(preview, "queued-head").p.spans[1].t, "Queued 2", "then queued")
+	same(rows(findKey(preview, "queued", "list")), { "lint | - | - | clock | warning", "ci/circleci | circleci.com | - | clock | warning" }, "a commit status's CI is its target's host")
+	local fold: any = findKey(preview, "done", "section")
+	same({ fold.p.head[1].t, fold.p.collapsible, fold.p.collapsed }, { "Passed 2 · Skipped 1", true, true } :: { any }, "passed and skipped fold by default, the fold's head counting both")
+	same(rows(findKey(fold, "passed", "list")), { "gate | Required | 1h 05m | check | success", "docs | - | - | check | success" }, "passed ones are listed in the fold")
+	same(rows(findKey(fold, "skipped", "list")), { "deploy | Vercel | - | minus | muted" }, "skipped after them, with the app that ran it")
+	eq(findKey(preview, "failing", "list") ~= nil and findKey(fold, "failing") == nil, true, "only passed and skipped are folded")
 	local many: { any } = {}
 	for i = 1, 30 do
 		table.insert(many, job("job" .. i, "passed"))
@@ -170,10 +183,51 @@ case("host: a check row is its job, its workflow dim, the time it took and a ton
 	serveChecks(s, "SUCCESS", many)
 	w.advance(62000)
 	preview = pickerNode(b)
-	local all: any = findKey(preview, "runs", "list")
+	local all: any = findKey(preview, "passed", "list")
 	eq(#all.c, 30, "thirty: every one is a row")
 	eq(all.p.max, nil, "in the preview's own scroll, not a list of its own")
-	eq(findKey(preview, "optional-head"), nil, "with no required checks there are no headings")
+	eq(findKey(preview, "done", "section").p.head[1].t, "Passed 30", "no Skipped when none is")
+	eq(findKey(preview, "failing-head"), nil, "an empty group has no heading")
+end)
+
+case("host: while a check is unfinished the previewed PR's checks are read every 30 s, until nothing is pending", function(w: World)
+	local s = hostScene(w, 0)
+	serveChecks(s, "PENDING", { job("build", "running"), job("lint", "queued") })
+	local b = openQueue(w)
+	w.advance(300)
+	eq(#requestsOf(s.gh, "checks"), 1, "the first read")
+	w.advance(29500)
+	eq(#requestsOf(s.gh, "checks"), 1, "nothing before 30 s")
+	serveChecks(s, "PENDING", { job("build", "passed"), job("lint", "running") })
+	w.advance(1000)
+	eq(#requestsOf(s.gh, "checks"), 2, "read again at 30 s, before the next refresh")
+	same(runRows(b), { "lint — In progress", "build — Passed" }, "and the preview shows what moved")
+	serveChecks(s, "PENDING", { job("build", "passed"), job("lint", "passed") })
+	w.advance(30000)
+	same(runRows(b), { "build — Passed", "lint — Passed" }, "the next read finds them done")
+	local done, searched = #requestsOf(s.gh, "checks"), #viewSearchesOf(s.gh, "search")
+	w.advance(10 * 60 * 1000)
+	yes(#requestsOf(s.gh, "checks") - done <= #viewSearchesOf(s.gh, "search") - searched, "with nothing pending the timer stops: only refreshes read them")
+end)
+
+case("host: the 30 s checks read stops when the selection moves", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { checks = "PENDING" }),
+		searchItem(2, "o/r", EPOCH - 120, { checks = "SUCCESS" }),
+	}
+	s.gh.checks["o/r#1"] = { job("build", "running") }
+	s.gh.checks["o/r#2"] = nodes(1)
+	local b = openQueue(w)
+	w.advance(300)
+	eq(#requestsOf(s.gh, "checks"), 1, "the running PR's checks are read")
+	b.press("down")
+	w.advance(300)
+	eq(requestsOf(s.gh, "checks")[2].fields.n, "2", "the other PR loads")
+	w.advance(45000)
+	local sent = requestsOf(s.gh, "checks")
+	eq(#sent, 2, "the first PR's 30 s read never came: the selection moved")
+	b.close()
 end)
 
 case("host: the preview shimmers while the detail loads, then shows the merge state, each reviewer's verdict and the description, folded and foldable again", function(w: World)

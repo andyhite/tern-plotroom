@@ -12,8 +12,10 @@ local M = {}
 -- superseded (the caller cancelled the request).
 export type Problem = { kind: string, message: string }
 -- status: failure | pending | success | neutral; detail spells it out ("Passed · 3s"); took is the bare duration of a
--- finished check run, when GitHub gives one.
-export type Run = { name: string, status: string, detail: string, required: boolean, url: string?, took: string?, runId: string? }
+-- finished check run, when GitHub gives one. phase is the preview's group: failing | running | queued | passed | skipped
+-- (a cancelled, neutral or stale check is skipped); started is when a running check run started (os.time); ci is the
+-- workflow or app that ran it, or a commit status's target host.
+export type Run = { name: string, status: string, detail: string, required: boolean, url: string?, took: string?, runId: string?, phase: string, started: number?, ci: string? }
 export type Pr = {
 	key: string,
 	repo: string,
@@ -200,23 +202,26 @@ local CONCLUSION: { [string]: { string } } = {
 	STALE = { "neutral", "Stale" },
 }
 local CONTEXT_STATE: { [string]: { string } } = {
-	SUCCESS = { "success", "Passed" },
-	FAILURE = { "failure", "Failed" },
-	ERROR = { "failure", "Error" },
-	PENDING = { "pending", "Pending" },
-	EXPECTED = { "pending", "Expected" },
+	SUCCESS = { "success", "Passed", "passed" },
+	FAILURE = { "failure", "Failed", "failing" },
+	ERROR = { "failure", "Error", "failing" },
+	PENDING = { "pending", "Pending", "running" },
+	EXPECTED = { "pending", "Expected", "queued" },
 }
 local RUN_RANK: { [string]: number } = { failure = 1, pending = 2, success = 3, neutral = 4 }
+local PHASE: { [string]: string } = { failure = "failing", success = "passed", neutral = "skipped" }
 
--- `2m 31s` for a duration in seconds.
-local function took(s: number): string
+-- `45s`, `6m 24s`, `1h 05m` for a duration in seconds.
+function M.took(s: number): string
+	s = math.max(0, math.floor(s))
 	if s >= 3600 then
-		return string.format("%dh %dm", s // 3600, s % 3600 // 60)
+		return string.format("%dh %02dm", s // 3600, s % 3600 // 60)
 	elseif s >= 60 then
 		return string.format("%dm %ds", s // 60, s % 60)
 	end
 	return s .. "s"
 end
+local took = M.took
 
 local field, nonEmpty = tracker.field, tracker.nonEmpty
 
@@ -249,6 +254,8 @@ function M.runs(raw: any): { Run }
 			local status: string? = nil
 			local detail: string? = nil
 			local spent: string? = nil
+			local phase: string? = nil
+			local since: number? = nil
 			local at = 0
 			local suite: string? = nil
 			local label: string? = nil
@@ -265,10 +272,12 @@ function M.runs(raw: any): { Run }
 						spent = d
 						word = word .. " · " .. d
 					end
-					status, detail = c[1], word
+					status, detail, phase = c[1], word, PHASE[c[1]]
 					at = started or finished or 0
 				else
-					status, detail = "pending", if field(n, "status") == "IN_PROGRESS" then "In progress" else "Queued"
+					local running = field(n, "status") == "IN_PROGRESS"
+					status, detail, phase = "pending", if running then "In progress" else "Queued", if running then "running" else "queued"
+					since = if running then started else nil
 					at = started or math.huge
 				end
 				name = checkName
@@ -278,20 +287,24 @@ function M.runs(raw: any): { Run }
 				local state = field(n, "state")
 				local c = if type(state) == "string" then CONTEXT_STATE[state] else nil
 				if c then
-					name, status, detail = context, c[1], c[2]
+					name, status, detail, phase = context, c[1], c[2], c[3]
 				end
 			end
-			if name and status and detail then
+			if name and status and detail and phase then
 				local d, t = field(n, "detailsUrl"), field(n, "targetUrl")
 				local link = if type(d) == "string" then d elseif type(t) == "string" then t else nil
+				local url = if link and string.sub(link, 1, 8) == "https://" and not string.find(link, "[%c%s]") then link else nil
 				local run: Run = {
 					name = name,
 					status = status,
 					detail = detail,
 					required = field(n, "isRequired") == true,
-					url = if link and string.sub(link, 1, 8) == "https://" and not string.find(link, "[%c%s]") then link else nil,
+					url = url,
 					took = spent,
 					runId = M.runIdOf(link),
+					phase = phase,
+					started = since,
+					ci = label or (if url and type(context) == "string" then string.match(url, "^https://([^/:]+)") else nil),
 				}
 				local id = nonEmpty(field(n, "id"))
 				local key = if suite then "suite\0" .. suite .. "\0" .. name elseif id then "id\0" .. id else nil

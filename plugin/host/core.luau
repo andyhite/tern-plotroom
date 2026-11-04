@@ -16,6 +16,7 @@ M.COST_GUESS = 10
 M.DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
 M.DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S
 M.DETAIL_RETRY_MAX_S = 300
+M.CHECKS_POLL_S = 30 -- while the previewed PR has a running or queued check, its checks are read again after this long
 M.SUMMARY_REST_MS = 1000 -- the cursor must rest this long on an item before its Summary is made
 M.SUMMARY_TIMEOUT_MS = 90 * 1000 -- a Summary's omp call that runs longer is given up
 M.NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
@@ -113,12 +114,13 @@ function M.groupsOf(kindId: string, integration: string): { Group }
 	local list: { Group } = GROUPS[kindId][integration] or {}
 	return list
 end
--- `round` is the State.round it was loaded in: an older list is still shown while it loads again.
+-- `round` is the State.round it was loaded in: an older list is still shown while it loads again. `at` is when a PR's
+-- checks were read (os.time): one still running or queued is read again CHECKS_POLL_S later (engine.wantDetails).
 -- `about` is the PR's merge state, reviewers and description, nil when gh did not print them. `issue` is an issue's
 -- body, milestone and linked pull requests (a PR's `runs` and `total` are then empty). `headPr` is the PR whose head is
 -- the branch of the issue's worktree (`headLinked`: it is among the issue's linked PRs too), `noted` the issue Plotroom
 -- noted for the PR's head branch's worktree; each nil when there is none (or the lookup failed: it is best effort).
-export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
+export type Detail = { runs: { github.Run }, total: number, round: number, at: number?, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The Likely flaky marks of one PR's failing checks (engine.gatherFlaky): the head commit they were judged at, and per
@@ -127,8 +129,9 @@ export type Flaky = { sha: string, marks: { [string]: { name: string, reason: st
 -- One failing check's log as read for one head commit: its excerpt (logs.parse, jobs one after another), its first error
 -- line and the changed-file lines it names, or why it could not be read; `at` is when, so a failed read is tried again.
 export type CiLog = { lines: { string }?, first: string?, refs: { string }, problem: string?, at: number }
--- The one checks load waiting out its debounce or retry delay. Its identity is the table: only the owner may clear it.
-export type Attempt = { key: string, timer: TimerHandle? }
+-- The one checks load waiting out its debounce, retry delay or (`poll`) the next read of an unfinished check. Its
+-- identity is the table: only the owner may clear it.
+export type Attempt = { key: string, timer: TimerHandle?, poll: boolean? }
 -- What the worktree card and the row's badge say of an item's worktree. Nothing is saved: git is the source, so a fresh
 -- block (or one after a plugin reload) shows the worktrees that exist. Every scan of the listed items' checkouts (`git
 -- worktree list`, after each refresh, Worktree attempt and removal) gives a worktree its `root`, `path`, `branch`, `ref`
