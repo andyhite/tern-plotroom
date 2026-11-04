@@ -538,6 +538,23 @@ local function pageContent(state: State): ({ any }, { Node })
 				row({ id = "pkey:" .. kind.id .. ":" .. p.id, label = p.name, control = { k = "text", value = p.key or "", placeholder = "None" } })
 			end
 		end
+		-- Summaries at the top of a preview: on or off, and the model omp writes them with.
+		local sp, sproblem = storage.readSummary()
+		section("summary", "Summary")
+		row({
+			id = "summary:on",
+			label = "Summaries",
+			hint = sproblem or "A few sentences about the selected item, written by a small model",
+			disabled = sproblem,
+			control = { k = "choice", style = "segmented", value = if sp.on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) },
+		})
+		row({
+			id = "summary:model",
+			label = "Summary model",
+			disabled = sproblem,
+			control = { k = "text", value = sp.model or "", placeholder = require("../summary").MODEL .. " (omp's small model)", mono = true },
+			changed = sp.model ~= nil,
+		})
 		local now = os.time()
 		local wait = waitOf(state)
 		table.insert(sections, {
@@ -979,6 +996,16 @@ function M.setValue(state: State, row: string, value: any)
 		end)
 		if not s.errors[row] then
 			engine.nowPrefsChanged(state)
+		end
+	elseif kind == "summary" and id == "on" then
+		if choice ~= "on" and choice ~= "off" then
+			return
+		end
+		s.errors[row] = storage.editSummary(function(p)
+			p.on = choice == "on"
+		end)
+		if not s.errors[row] then
+			propagate(state)
 		end
 	elseif kind == "pnext" then
 		if not choice then
@@ -1470,6 +1497,16 @@ function M.commitEdit(state: State)
 			end)
 		end
 		settle(s, row, err)
+	elseif kind == "summary" and id == "model" then
+		local err: string? = nil
+		if text ~= "" and not worktree.validModel(text) then
+			err = "A model such as haiku or provider/model-id, or a role such as @smol."
+		else
+			err = storage.editSummary(function(p)
+				p.model = if text ~= "" then text else nil
+			end)
+		end
+		settle(s, row, err)
 	elseif kind == "pkey" and id then
 		local err: string? = keys.shape(text)
 		if not err and keys.action((keys.load()), text) then
@@ -1666,6 +1703,10 @@ function M.resetRow(state: State, row: string)
 			end
 			return nil
 		end, true)
+	elseif kind == "summary" and id == "model" then
+		err = storage.editSummary(function(p)
+			p.model = nil
+		end)
 	elseif kind == "key" and id then
 		err = keys.save(id, nil)
 		if not err then

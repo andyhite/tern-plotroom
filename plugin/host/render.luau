@@ -640,6 +640,21 @@ local function descNodes(state: State, key: string, body: string?): { Node }
 	return nodes
 end
 
+-- The Summary part of the selected `item` (`pr`: a pull request), engine.wantSummary's: plain text, never markdown or a
+-- link, since a model wrote it from untrusted text. Nothing while Summaries are off or the cursor has not rested yet.
+local function summaryNodes(state: State, item: any, pr: boolean): { Node }
+	local status, text = engine.wantSummary(state, item, pr)
+	local head = ui.node("text", { key = "summary-head", spans = { ui.span("Summary", "strong") } })
+	if status == "done" then
+		return { head, ui.node("text", { key = "summary", spans = { ui.span(text or "") } }) }
+	elseif status == "busy" then
+		return { head, ui.node("shimmer", { key = "summary-loading", text = "Summarizing…" }) }
+	elseif status == "failed" then
+		return { head, ui.node("text", { key = "summary-state", spans = { ui.span("Summary not made: " .. brief(text or ""), "muted") } }) }
+	end
+	return {}
+end
+
 -- The pull request whose head is an issue's worktree branch, a row that shows it in this block (window.luau's `showPr`;
 -- the list keyed "headpr", which window.luau reads); nil without one. `repo` is where the PR is.
 local function headPrList(repo: string?, pr: github.HeadPr?): Node?
@@ -803,6 +818,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	if controls then
 		table.insert(out, controls)
 	end
+	addPart(out, "summary", summaryNodes(state, pr, true))
 	local status: { Node } = { stageFact(state, "prs", pr, if asked then { author } else nil) }
 	if asked and diff then
 		table.insert(status, diff)
@@ -960,6 +976,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	if controls then
 		table.insert(out, controls)
 	end
+	addPart(out, "summary", summaryNodes(state, issue, false))
 	addPart(out, "status", { stageFact(state, "issues", issue) })
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil))

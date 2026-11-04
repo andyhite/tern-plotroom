@@ -369,7 +369,7 @@ end
 -- Work state stays: triage (seen, snooze), usage, runs, agent links and recent agents.
 M.SETTINGS_KEYS = {
 	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
-	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now",
+	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now", "summary",
 } :: { string }
 
 -- Deletes every settings key, going on past a failure; the keys that could not be deleted. A store that cannot be read
@@ -613,6 +613,104 @@ function M.editNow(fn: (core.NowPrefs) -> ()): string?
 		return tern.json.array(out)
 	end
 	local werr = kvSet("now", { off = keys(prefs.off), logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams })
+	return if werr then "Could not save: " .. werr else nil
+end
+
+-- Summaries' switch and model as saved (kv "summary": { off = bool, model = string }), and why they could not be read.
+-- Absent: on, with summary.MODEL. One that cannot be read or is malformed gives those defaults and is never written over.
+export type SummaryPrefs = { on: boolean, model: string? } -- model nil: summary.MODEL
+function M.readSummary(): (SummaryPrefs, string?)
+	local ok, v = pcall(tern.kv.get, "summary")
+	if not ok then
+		return { on = true }, "Summary settings could not be read: " .. tostring(v)
+	end
+	if v == nil then
+		return { on = true }, nil
+	end
+	if not isTable(v) or (v.off ~= nil and type(v.off) ~= "boolean") or (v.model ~= nil and (type(v.model) ~= "string" or not worktree.validModel(v.model))) then
+		return { on = true }, "Summary settings are malformed; not overwriting them."
+	end
+	return { on = v.off ~= true, model = v.model }, nil
+end
+
+-- Rereads the Summary settings, lets `fn` change them and saves them; an error message or nil.
+function M.editSummary(fn: (SummaryPrefs) -> ()): string?
+	local prefs, err = M.readSummary()
+	if err then
+		return err
+	end
+	fn(prefs)
+	local werr = kvSet("summary", { off = if prefs.on then nil else true, model = prefs.model })
+	return if werr then "Could not save: " .. werr else nil
+end
+
+-- Summaries made, by cache key (engine.summaryKey: the item and the facts it was made from), in kv "summaries":
+-- { version = 1, items = { [key] = { text, at } } }, at most SUMMARY_CAP, the oldest dropped first. Kept in memory once
+-- read; a store that cannot be read or is malformed is never written over (summaries then live in memory only).
+-- ponytail: another host's writes are seen only at this host's next write; reread on a miss if that ever matters.
+M.SUMMARY_CAP = 200
+type Cached = { text: string, at: number }
+type Summaries = { items: { [string]: Cached }, problem: string? }
+local summaries: Summaries? = nil
+
+local function readSummaries(): Summaries
+	local ok, v = pcall(tern.kv.get, "summaries")
+	if not ok then
+		return { items = {}, problem = "Summaries could not be read: " .. tostring(v) }
+	elseif v == nil then
+		return { items = {} }
+	end
+	local items: { [string]: Cached } = {}
+	if not isTable(v) or v.version ~= 1 or not isTable(v.items) then
+		return { items = items, problem = "Summaries are malformed; not overwriting them." }
+	end
+	for k, e in v.items do
+		if type(k) ~= "string" or not isTable(e) or type(e.text) ~= "string" or type(e.at) ~= "number" then
+			return { items = {}, problem = "Summaries are malformed; not overwriting them." }
+		end
+		items[k] = { text = e.text, at = e.at }
+	end
+	return { items = items }
+end
+
+-- The Summary cached under `key`, or nil.
+function M.summaryOf(key: string): string?
+	local mem: Summaries = summaries or readSummaries()
+	summaries = mem
+	local hit = mem.items[key]
+	return if hit then hit.text else nil
+end
+
+-- Caches `text` under `key` (the store is reread first, so other writers' entries stay); an error message or nil.
+function M.keepSummary(key: string, text: string): string?
+	local fresh = readSummaries()
+	if fresh.problem then
+		local mem: Summaries = summaries or fresh
+		mem.items[key] = { text = text, at = os.time() }
+		summaries = mem
+		return fresh.problem
+	end
+	local items = fresh.items
+	items[key] = { text = text, at = os.time() }
+	local count = 0
+	for _ in items do
+		count += 1
+	end
+	while count > M.SUMMARY_CAP do
+		local oldest: string? = nil
+		for k, e in items do
+			if k ~= key and (not oldest or e.at < items[oldest].at or (e.at == items[oldest].at and k < oldest)) then
+				oldest = k
+			end
+		end
+		if not oldest then
+			break
+		end
+		items[oldest] = nil
+		count -= 1
+	end
+	summaries = { items = items }
+	local werr = kvSet("summaries", { version = 1, items = items })
 	return if werr then "Could not save: " .. werr else nil
 end
 

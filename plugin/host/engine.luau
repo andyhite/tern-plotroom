@@ -7,6 +7,7 @@ local input = require("../input")
 local jira = require("../jira")
 local process = require("../process")
 local sorting = require("../sorting")
+local summary = require("../summary")
 local tracker = require("../tracker")
 local triage = require("../triage")
 local worktree = require("../worktree")
@@ -76,6 +77,7 @@ function M.retire(state: State)
 		state.boardTimer = nil
 	end
 	dropDetails(state)
+	M.cancelSummary(state)
 	state.inflight = nil
 	state.snap, state.vis = nil, nil
 	state.snaps = {}
@@ -1971,6 +1973,146 @@ function M.wantDetails(state: State, item: any)
 	elseif fail.retryAt then
 		armDetails(state, key, math.max(0, fail.retryAt - os.time()) * 1000)
 	end
+end
+
+-- Summaries (the top of a queue preview). The omp calls running, by summary key -> the item key, and why one could not
+-- be made, by summary key: shared by every block, so two never summarize the same facts and a failure is not retried
+-- until the item's facts change.
+local summarizing: { [string]: string } = {}
+local summaryFailed: { [string]: string } = {}
+local summaryFailures = 0
+
+-- The key a Summary of `item` is cached under, the item and the facts it was made from: a PR's head commit (its update
+-- time when GitHub did not name one), an issue's update time (a Jira issue's comes with its details); nil until known.
+local function summaryKey(item: any, d: core.Detail?, pr: boolean): string?
+	if pr then
+		return item.key .. "@" .. (item.headSha or ("t" .. item.updated))
+	end
+	local updated = if item.updated > 0 then item.updated elseif d and d.issue then d.issue.updated else nil
+	return if updated then item.key .. "@t" .. updated else nil
+end
+
+-- What the Summary of `item` reads, from its loaded details; nil until they are loaded.
+local function summaryInput(item: any, d: core.Detail?, pr: boolean): summary.Input?
+	if pr then
+		local about = if d then d.about else nil
+		if not about then
+			return nil
+		end
+		return {
+			kind = "pull request",
+			title = item.title,
+			author = item.author,
+			body = about.body,
+			size = "+" .. item.additions .. " −" .. item.deletions .. " in " .. item.files .. (if item.files == 1 then " file" else " files"),
+			paths = about.paths,
+			comments = about.recent,
+		}
+	end
+	local issue = if d then d.issue else nil
+	if not issue then
+		return nil
+	end
+	return { kind = "issue", title = item.title, author = item.author, body = issue.body, comments = issue.recent or {} }
+end
+
+-- Stops timing the rest before a Summary.
+function M.cancelSummary(state: State)
+	local wait = state.summaryWait
+	if wait then
+		state.summaryWait = nil
+		if wait.timer then
+			wait.timer:cancel()
+		end
+	end
+end
+
+-- Runs the one omp call of summary key `key` and caches its answer. Whatever item is selected when it lands, every block
+-- showing `itemKey` draws it; one showing another item draws only that item's own Summary.
+local function startSummary(key: string, itemKey: string, item: summary.Input, model: string)
+	local argv = summary.argv(model, summary.prompt(item))
+	if not argv then
+		summaryFailed[key] = "The Summary model is not one omp takes: " .. model
+		return
+	end
+	summarizing[key] = itemKey
+	process.run(argv, { timeout_ms = core.SUMMARY_TIMEOUT_MS }, function(result, problem)
+		summarizing[key] = nil
+		local text = if result and result.status == 0 and not result.timed_out then summary.parse(result.stdout) else nil
+		if text then
+			storage.keepSummary(key, text) -- kept in memory even when the store cannot take it
+		else
+			-- ponytail: failures are forgotten all at once past 100; a failed Summary is tried again then.
+			summaryFailures += 1
+			if summaryFailures > 100 then
+				summaryFailed, summaryFailures = {}, 1
+			end
+			summaryFailed[key] = if problem then problem
+				elseif not result then "omp did not answer."
+				elseif result.timed_out then "omp did not answer within " .. core.SUMMARY_TIMEOUT_MS // 1000 .. " seconds."
+				elseif result.status ~= 0 then "omp failed (exit " .. result.status .. ")" .. (if string.find(result.stderr, "%S") then ": " .. clip(printable(github.firstLines(result.stderr, 1)), 200) else ".")
+				else "omp's answer was not a Summary: empty, or longer than a few sentences."
+		end
+		for _, s in running do
+			local at = M.selected(s)
+			if at and at.key == itemKey and M.alive(s) then
+				s.cx:render()
+			end
+		end
+	end)
+end
+
+-- The Summary of the selected `item` (`pr`: a pull request), as its preview shows it: "off" (Summaries are off),
+-- "none" (not shown yet: the cursor has not rested, or the details could not load), "busy" (being made), "done" with
+-- the text, or "failed" with why. Idempotent: every render calls it. A cached Summary shows at once; else, once the
+-- cursor has rested SUMMARY_REST_MS on the item and its details have loaded, one omp call makes it.
+function M.wantSummary(state: State, item: any, pr: boolean): (string, string?)
+	local prefs = storage.readSummary()
+	if not prefs.on then
+		M.cancelSummary(state)
+		return "off"
+	end
+	local dkey = M.detailKey(state, item)
+	local d = state.details[dkey]
+	local key = summaryKey(item, d, pr)
+	if key then
+		local hit = storage.summaryOf(key)
+		if hit then
+			return "done", hit
+		elseif summarizing[key] then
+			return "busy"
+		elseif summaryFailed[key] then
+			return "failed", summaryFailed[key]
+		end
+	end
+	local wait = state.summaryWait
+	if not wait or wait.key ~= item.key then
+		M.cancelSummary(state)
+		local w = { key = item.key, ready = false, timer = nil :: TimerHandle? }
+		state.summaryWait = w
+		w.timer = tern.timer(core.SUMMARY_REST_MS, function()
+			if state.summaryWait == w then
+				w.ready, w.timer = true, nil
+				if M.alive(state) then
+					state.cx:render()
+				end
+			end
+		end)
+		return "none"
+	end
+	if not wait.ready then
+		return "none"
+	end
+	local it = summaryInput(item, d, pr)
+	if not it or not key then
+		-- The details are still loading (the Summary follows them), or they came without what a Summary reads.
+		return if d or state.detailFail[dkey] then "none" else "busy"
+	end
+	startSummary(key, item.key, it, prefs.model or summary.MODEL)
+	if summaryFailed[key] then
+		return "failed", summaryFailed[key]
+	end
+	return "busy"
 end
 
 -- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike

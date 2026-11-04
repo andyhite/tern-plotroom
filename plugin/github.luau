@@ -53,9 +53,13 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
-export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked } }
+-- `paths`: the first PATHS changed files; `recent`: the newest RECENT comments, oldest first (both for a Summary).
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, paths: { string }, recent: { tracker.Comment } }
 
 local GH_TIMEOUT_MS = 30 * 1000
+local PATHS = 30 -- changed files a PR's detail load names (a Summary's input)
+local RECENT = 5 -- newest comments an item's detail load reads (a Summary's input)
+local RECENT_CHARS = 1000 -- each one cut to this many characters
 local CAP = 1000
 local SEARCH_PAGES = 10 -- CAP results at 100 a page
 local RATE_S = 300
@@ -1034,13 +1038,17 @@ local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
-	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } }"
+	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } } files(first: "
+	.. PATHS
+	.. ") { nodes { path } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } }"
 local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { repository(owner: $o, name: $r) { pullRequest(number: $n) { "
 	.. ABOUT_FIELDS
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // []),paths:[(.files.nodes // [])[] | .path],recent:[(.comments.nodes // [])[] | {login:.author.login,body}]})}"
 local CHECK_PAGES = 3
 
 local function login(v: any): string?
@@ -1054,6 +1062,19 @@ local function cleanBody(raw: any): string
 	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
 	body = tracker.clip(body, BODY_CHARS, "\n\n…")
 	return body
+end
+
+-- An item's newest comments as the detail jq prints them ({login, body}), each cut to RECENT_CHARS; malformed ones are
+-- left out and a deleted author reads as "ghost".
+function M.recent(raw: any): { tracker.Comment }
+	local out: { tracker.Comment } = {}
+	for _, c in (if type(raw) == "table" then raw else {}) :: { any } do
+		local body = field(c, "body")
+		if type(body) == "string" and string.find(body, "%S") and #out < RECENT then
+			table.insert(out, { author = login(field(c, "login")) or "ghost", body = tracker.clip(body, RECENT_CHARS, "…") })
+		end
+	end
+	return out
 end
 
 -- The `about` part of a checks page as CHECKS_JQ prints it; whatever is missing or malformed reads as unknown/empty.
@@ -1087,7 +1108,13 @@ function M.about(raw: any): About
 			table.insert(closing, { ref = tostring(num), title = title, url = url, state = if field(n, "state") == "CLOSED" then "closed" else "open" })
 		end
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing }
+	local paths: { string } = {}
+	for _, p in (if type(t.paths) == "table" then t.paths else {}) :: { any } do
+		if type(p) == "string" and #p <= 300 and #paths < PATHS then
+			table.insert(paths, p)
+		end
+	end
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, paths = paths, recent = M.recent(t.recent) }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -1160,8 +1187,10 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	fetch(nil, 1)
 end
 
-local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
-local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}]}"
+local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } } } } }"
+local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}], recent: [(.comments.nodes // [])[] | {login: .author.login, body}]}"
 
 -- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
 -- the rate-limit pause behave as in M.checks. done never runs before this call returns.
@@ -1213,6 +1242,7 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 			body = cleanBody(data.body),
 			fields = { { label = "Milestone", value = if type(milestone) == "string" and milestone ~= "" then milestone else nil } },
 			linked = linked,
+			recent = M.recent(data.recent),
 		}, nil)
 	end, account)
 end
