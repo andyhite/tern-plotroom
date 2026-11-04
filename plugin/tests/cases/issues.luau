@@ -3149,6 +3149,77 @@ case("host mutations: update branch is offered and planned only while the previe
 	eq(writesOf(seen, "update-branch")[1], "gh pr update-branch 1 --repo github.com/o/r", "GitHub's default update, nothing else")
 end)
 
+case("host mutations: push empty commit is offered for an up-to-date own branch, plans target, account, branch and head, and commits through the git database bound to the planned head", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { headSha = sha("a") }),
+		searchItem(2, "o/r", EPOCH - 120, { headSha = sha("b") }),
+		searchItem(3, "o/r", EPOCH - 180, { headSha = sha("c"), fork = "someone" }),
+		searchItem(4, "o/r", EPOCH - 240, { headSha = sha("d") }),
+	}
+	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array({}) }
+	s.gh.about["o/r#2"] = { mergeable = "MERGEABLE", merge = "BEHIND", body = "", reviews = array({}), requested = array({}) }
+	s.gh.about["o/r#3"] = { mergeable = "MERGEABLE", merge = "CLEAN", body = "", reviews = array({}), requested = array({}) }
+	s.gh.about["o/r#4"] = { mergeable = "CONFLICTING", merge = "DIRTY", body = "", reviews = array({}), requested = array({}) }
+	local meta: { [string]: any } = { base = "o/r", sha = sha("a"), ref = "branch-1", headRepo = "o/r", headOwner = "o", state = "open", baseRef = "main", title = "PR 1", author = "octo" }
+	s.gh.meta["o/r#1"] = meta
+	local seen: { string } = {}
+	local refReply: any = nil
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.override = function(req: GhReq): Reply?
+		local line = table.concat(req.call.argv, " ")
+		if not string.find(line, "/git/", 1, true) then
+			return nil
+		end
+		table.insert(seen, line)
+		eq(req.login, "octocat", "every git database call runs as the planned account")
+		if string.find(line, "--method POST", 1, true) then
+			return { stdout = sha("e") .. "\n" }
+		elseif string.find(line, "--method PATCH", 1, true) then
+			return refReply or { stdout = "{}" }
+		end
+		return { stdout = sha("f") .. "\n" }
+	end
+	local b = openQueue(w)
+	w.advance(300)
+	local offered = function(): boolean
+		return table.find(hx.palette(w, b).commands, "pr-empty-commit") ~= nil
+	end
+	yes(offered(), "offered for an open PR of the repository whose branch is up to date")
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
+	eq(p.confirm.head, "Push an empty commit to o/r#1?", "the question")
+	eq(p.confirm.label, "Push empty commit", "the confirming row")
+	same({ p.confirm.lines[1], p.confirm.lines[2], p.confirm.lines[3] }, { "o/r#1: PR 1", "Account: @octocat", "Branch: branch-1" }, "the target, the account and the branch")
+	has(p.confirm.lines[4], "Head: " .. string.sub(sha("a"), 1, 7), "and the head SHA")
+	for _, n in { 2, 3, 4 } do
+		b.typeText("j")
+		w.advance(300)
+		eq(offered(), false, "not offered for #" .. n .. " (behind, a fork's branch, conflicts)")
+		has(asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" }).problem, "not open with its own branch", "and refused for #" .. n)
+	end
+	b.typeText("k")
+	b.typeText("k")
+	b.typeText("k")
+	w.advance(300)
+	eq(#seen, 0, "planning sent nothing")
+	meta.sha = sha("9")
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "The branch moved; refresh and try again.", "a head that moved since the plan is refused")
+	eq(#seen, 0, "and nothing was written")
+	meta.sha = sha("a")
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
+	refReply = { status = 1, stderr = "gh: Update is not a fast forward (HTTP 422)\n" }
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "The branch moved; refresh and try again.", "a branch that moves between the read and the ref update is refused too")
+	refReply = nil
+	table.clear(seen)
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	same(seen, {
+		"gh api --hostname github.com repos/o/r/git/commits/" .. sha("a") .. " --jq .tree.sha",
+		"gh api --hostname github.com --method POST repos/o/r/git/commits -f message=Empty commit to re-run checks -f tree=" .. sha("f") .. " -f parents[]=" .. sha("a") .. " --jq .sha",
+		"gh api --hostname github.com --method PATCH repos/o/r/git/refs/heads/branch-1 -f sha=" .. sha("e") .. " -F force=false",
+	}, "the head's tree, a commit with that tree and the head as parent, then the branch moved to it without force")
+end)
+
 case("host: a Jira project entry that is no list of strings is never rewritten by a change to another project", function(w: World)
 	local s = jiraHost(w)
 	s.acli.projects = { { key = "ABC", name = "Alpha" } }

@@ -456,6 +456,27 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		end
 		table.insert(out, ui.node("list", { key = "runs" }, groups.runs))
 	end
+	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
+	-- engine.failures). No log viewer: the check's row above opens its page.
+	local sha = if d and d.about then d.about.head else nil
+	for i, r in runs do
+		local log = if r.status == "failure" and sha then engine.ciLog(state, sha, r) else nil
+		if log and log.lines then
+			local line = log.first or "No error line: its last lines are kept"
+			local text = table.concat(log.lines, "\n")
+			local fence = "```"
+			while string.find(text, fence, 1, true) do
+				fence ..= "`"
+			end
+			local body = { ui.node("md", { key = "log", text = fence .. "text\n" .. text .. "\n" .. fence }) }
+			if #log.refs > 0 then
+				table.insert(body, 1, ui.node("text", { key = "refs", spans = { ui.span("Changed files it names: ", "muted"), ui.span(table.concat(log.refs, ", "), "code") } }))
+			end
+			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") }, collapsible = true, collapsed = true }, body))
+		elseif log and log.problem then
+			table.insert(out, ui.node("text", { key = "fail" .. i, spans = { ui.span(r.name .. ": log not read: " .. log.problem, "muted") } }))
+		end
+	end
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
 	end
@@ -727,9 +748,9 @@ end
 -- Next move queue action), then Unpin while the item is pinned, Unsnooze while it is snoozed (nil when there is none).
 local function previewControls(state: State, item: any): Node?
 	local rows: { Node } = {}
+	local map = keys.load()
 	local move = engine.nextMove(state, state.kind.id, item)
 	if move then
-		local map = keys.load()
 		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	if engine.pinFor(state.pins, item.key) then
@@ -737,7 +758,8 @@ local function previewControls(state: State, item: any): Node?
 	end
 	local st = if state.snap then engine.status(state, state.snap.kind, item) else nil
 	if st and st.snoozed then
-		table.insert(rows, button({ key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
+		-- Snooze until tomorrow on a snoozed item ends its snooze (engine.mark), so its key is this button's.
+		table.insert(rows, button({ key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", hint = keys.caps(map, "snooze"), aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
 	end
 	if #rows > 0 then
 		return buttonRow("controls", rows)
@@ -1670,8 +1692,9 @@ local function checklist(state: State): Node?
 	})
 end
 
--- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret).
-function M.queuePicker(state: State): Node
+-- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret). `bar`: the
+-- key footer sits under it.
+function M.queuePicker(state: State, bar: boolean?): Node
 	state.clocked = false -- agentClock marks it again while a working agent's clock is drawn
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
@@ -1741,8 +1764,9 @@ function M.queuePicker(state: State): Node
 	local props: { [string]: any } = {
 		key = "queue",
 		-- plotroom.css narrows the queue by the Settings sheet's width (`.aside`), so the sheet sits beside it, not over it,
-		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width).
-		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else ""),
+		-- and folds the scope rail into its dropdown at 127 columns or fewer (`.narrow`: the block's own width), and
+		-- ends above the key footer (`.keys`).
+		role = "plotroom.queue" .. (if state.settings then ".aside" else "") .. (if dropdown then ".narrow" else "") .. (if bar then ".keys" else ""),
 		size = "screen",
 		layout = "cards",
 		preview = "none",
@@ -1886,8 +1910,12 @@ local function finishedConfirm(state: State): Node
 	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
-function M.queueView(state: State, palette: Node): BlockView
-	local layer: { Node } = { M.queuePicker(state) }
+-- `bar`: requests' keyBar, the key footer pinned under the picker (plotroom.css lifts the picker's bottom for it).
+function M.queueView(state: State, palette: Node, bar: Node?): BlockView
+	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
+	if bar then
+		table.insert(layer, bar)
+	end
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then

@@ -742,7 +742,7 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 		repo = repo,
 		number = tostring(n),
 	}
-	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings" } do
+	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings", "failures" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end
@@ -952,7 +952,11 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				if t.kind == "pr" then
 					local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
 					a.criteria, a.findings = block, found
-					started = finishAgent(cx3, pane, t, ready, fill(text, owner or "", name or "", tonumber(t.ref) :: number, a), job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
+					local filled = fill(text, owner or "", name or "", tonumber(t.ref) :: number, a)
+					if type(a.merge) == "table" then
+						filled ..= "\n\n" .. prompts.mergeBlock(a.merge)
+					end
+					started = finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
 				else
 					local vars: any = a.vars
 					if type(vars) == "table" then
@@ -987,9 +991,11 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one, or its outcome
 	-- is checked as the GitHub login it runs as.
 	local users = prompt ~= nil and (prompt.outcome ~= nil or string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
+	-- An action that resolves conflicts (its prompt says so, as Watch's does) has the host merge the base first.
+	local premerge = prompt ~= nil and wt and string.find(string.lower(prompt.text), "conflict", 1, true) ~= nil
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
-		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users }, PREPARE_MS, done)
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil, premerge = premerge }, PREPARE_MS, done)
 		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done)
 	if not sent then
 		failed(cx)

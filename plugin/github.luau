@@ -53,7 +53,7 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
 -- unknown (GitHub computes it lazily). Review state: approved | changes | commented | dismissed | requested.
 export type Review = { login: string, state: string }
-export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked } }
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string } }
 
 local GH_TIMEOUT_MS = 30 * 1000
 local CAP = 1000
@@ -106,7 +106,7 @@ end
 local REVIEW: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", REVIEW_REQUIRED = "required" }
 local CHECKS: { [string]: string } =
 	{ SUCCESS = "success", FAILURE = "failure", ERROR = "failure", PENDING = "pending", EXPECTED = "pending" }
-local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,headRepo:.head.repo.full_name,headOwner:.head.user.login,state:.state,baseRef:.base.ref,title:.title,author:.user.login}"
+local PR_JQ = "{base:.base.repo.full_name,sha:.head.sha,ref:.head.ref,headRepo:.head.repo.full_name,headOwner:.head.user.login,state:.state,baseRef:.base.ref,title:.title,author:.user.login,conflicts:(.mergeable_state == \"dirty\")}"
 local MERGE: { [string]: string } =
 	{ DIRTY = "conflicts", BEHIND = "behind", BLOCKED = "blocked", UNSTABLE = "unstable", CLEAN = "ready", HAS_HOOKS = "ready", DRAFT = "draft" }
 local VERDICT: { [string]: string } = { APPROVED = "approved", CHANGES_REQUESTED = "changes", COMMENTED = "commented", DISMISSED = "dismissed" }
@@ -1030,7 +1030,8 @@ function M.issues(
 	end)
 end
 
-local ABOUT_FIELDS = "mergeable mergeStateStatus body latestReviews(first: "
+-- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau).
+local ABOUT_FIELDS = "mergeable mergeStateStatus body headRefOid files(first: 100) { nodes { path } } latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
@@ -1040,7 +1041,7 @@ local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { 
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // [])})}"
 local CHECK_PAGES = 3
 
 local function login(v: any): string?
@@ -1087,7 +1088,15 @@ function M.about(raw: any): About
 			table.insert(closing, { ref = tostring(num), title = title, url = url, state = if field(n, "state") == "CLOSED" then "closed" else "open" })
 		end
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing }
+	-- The head commit and changed paths only feed the failing checks' log excerpts: malformed ones are left out.
+	local head = if type(t.head) == "string" and string.match(t.head, "^%x+$") and #t.head <= 64 then string.lower(t.head) else nil
+	local files: { string } = {}
+	for _, p in (if type(t.files) == "table" then t.files else {}) :: { any } do
+		if type(p) == "string" and p ~= "" and #p <= 400 then
+			table.insert(files, p)
+		end
+	end
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -1219,8 +1228,9 @@ end
 
 -- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read. `fork` is the
 -- owner of the repository the head branch lives in when that is not `base` (a fork), and `forkRepo` that repository
--- ("owner/name"; nil when it was deleted).
-export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string, fork: string?, forkRepo: string? }
+-- ("owner/name"; nil when it was deleted). `conflicts`: GitHub reports the PR conflicts with its base (false while it
+-- has not computed it).
+export type PrMeta = { base: string, sha: string, ref: string, state: string, baseRef: string, title: string, author: string, fork: string?, forkRepo: string?, conflicts: boolean }
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
@@ -1265,6 +1275,7 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 			author = text(data.author),
 			fork = if fork ~= "" then fork else nil,
 			forkRepo = forkRepo,
+			conflicts = data.conflicts == true,
 		}, nil, cx)
 	end, account)
 end
@@ -1678,6 +1689,33 @@ function M.runIdOf(url: any): string?
 	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
 end
 
+-- The Actions job id in a check's link (`.../actions/runs/<run>/job/<job>`); nil when the link names none.
+function M.jobIdOf(url: any): string?
+	local id = if type(url) == "string" then string.match(url, "^https://github%.com/[%w%-_%.]+/[%w%-_%.]+/actions/runs/%d+/job/(%d+)") else nil
+	return if id and #id <= 15 and tonumber(id) ~= 0 then id else nil
+end
+
+local LOG_MS = 60 * 1000
+
+-- The failed steps' log of workflow run `runId` of `repo` (only job `jobId`'s when given), as
+-- `gh run view --log-failed` prints it; done(stdout, problem). Ids are validated digit strings.
+function M.failedLog(repo: string, runId: string, jobId: string?, account: string?, done: (string?, Problem?) -> ())
+	local target = repoArg(repo)
+	if not target or not string.match(runId, "^%d+$") or (jobId and not string.match(jobId, "^%d+$")) then
+		return later(function()
+			done(nil, bad("Unexpected workflow run."))
+		end)
+	end
+	local args = { "run", "view", runId, "--repo", target, "--log-failed" }
+	if jobId then
+		table.insert(args, "--job")
+		table.insert(args, jobId)
+	end
+	M.gh(args, function(out, problem)
+		done(out, problem)
+	end, account, LOG_MS)
+end
+
 -- ---------------------------------------------------------------- confirmed item and run operations
 -- The host confirms first. Every operation re-reads the live state as `account`, rejects a target in the wrong state
 -- and only then changes it; argv arrays only, `--body=` keeps comment text from being read as a flag.
@@ -1884,6 +1922,53 @@ function M.updatePrBranch(repo: string, number: number, account: string?, done: 
 	end, function(_, id)
 		return { "pr", "update-branch", id, "--repo", repoArg(repo) or "" }
 	end, done)
+end
+
+local MOVED = "The branch moved; refresh and try again."
+
+-- Gives the open pull request's branch a new head so its checks run again, with no checkout: through GitHub's git
+-- database API it reads head commit `sha`'s tree, creates a commit with that tree and `sha` as its only parent, then
+-- moves the branch to it with force=false. A head other than `sha`, or a ref update that is no fast forward, is MOVED.
+-- Only a branch of `repo` itself: a fork's branch is not in `repo`'s git database.
+function M.emptyCommit(repo: string, number: number, branch: string, sha: string, account: string?, done: (Problem?) -> ())
+	local planned = if type(sha) == "string" and #sha == 40 and string.match(sha, "^%x+$") then string.lower(sha) else nil
+	if not repoArg(repo) or not whole32(number) or not planned then
+		return later(function()
+			done(bad("Unexpected empty commit request."))
+		end)
+	end
+	local base = "repos/" .. repo .. "/git/"
+	M.pr(repo, number, account, function(meta, problem)
+		if not meta then
+			return done(problem)
+		elseif meta.state ~= "open" then
+			return done(bad("Pull request #" .. number .. " is not open."))
+		elseif meta.fork or string.lower(meta.base) ~= string.lower(repo) then
+			return done(bad("Pull request #" .. number .. "'s branch is in a fork; nothing was pushed."))
+		elseif meta.ref ~= branch or meta.sha ~= planned then
+			return done(bad(MOVED))
+		end
+		M.gh({ "api", "--hostname", "github.com", base .. "commits/" .. planned, "--jq", ".tree.sha" }, function(tree, p1)
+			tree = if tree then string.match(tree, "^%s*(%x+)%s*$") else nil
+			if not tree or #tree ~= 40 then
+				return done(p1 or { kind = "failed", message = "gh printed an unexpected commit." })
+			end
+			local make = { "api", "--hostname", "github.com", "--method", "POST", base .. "commits", "-f", "message=Empty commit to re-run checks", "-f", "tree=" .. tree, "-f", "parents[]=" .. planned, "--jq", ".sha" }
+			M.gh(make, function(made, p2)
+				made = if made then string.match(made, "^%s*(%x+)%s*$") else nil
+				if not made or #made ~= 40 then
+					return done(p2 or { kind = "failed", message = "gh printed an unexpected commit." })
+				end
+				local move = { "api", "--hostname", "github.com", "--method", "PATCH", base .. "refs/heads/" .. branch, "-f", "sha=" .. made, "-F", "force=false" }
+				M.gh(move, function(_, p3)
+					if p3 and string.find(string.lower(p3.message), "fast forward", 1, true) then
+						return done(bad(MOVED))
+					end
+					done(p3)
+				end, account)
+			end, account)
+		end, account)
+	end)
 end
 
 -- Adds `text` (M.commentText) to an existing issue or pull request of `repo`, any state.

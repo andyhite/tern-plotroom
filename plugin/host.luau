@@ -546,6 +546,8 @@ local function blockDef(): BlockDef<State>
 				detailFail = {},
 				detailBusy = {},
 				detailAttempt = nil,
+				ciLogs = {},
+				ciBusy = {},
 				round = 0,
 				notes = {},
 				descOpen = nil,
@@ -635,8 +637,9 @@ local function blockDef(): BlockDef<State>
 			engine.autoSeen(state)
 			scanWorktrees(state)
 			inspectSelected(state)
-			local palette = requests.paletteNode(state)
-			return if state.settings then settingsView(state, palette) else queueView(state, palette)
+			local queue = requests.paletteActions(state)
+			local palette = requests.paletteNode(state, queue)
+			return if state.settings then settingsView(state, palette) else queueView(state, palette, requests.keyBar(state, queue))
 		end,
 
 		key = function(state: State, key: Key, cx: BlockCx): boolean?
@@ -854,7 +857,7 @@ local function blockDef(): BlockDef<State>
 			-- The queue action the key is (Settings › General). While searching it is text, and with ctrl, alt or meta it is no shortcut.
 			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
-			if act == "agentgo" or act == "seen" or act == "snooze" or act == "snoozed" or act == "sort" or act == "more" or act == "next" or act == "nownext" then
+			if act and keys.YIELDS[act] then
 				local owned: { { prompt: Prompt, here: boolean } } = {}
 				local here = false
 				if selected(state) then
