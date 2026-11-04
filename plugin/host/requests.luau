@@ -14,6 +14,7 @@ local process = require("../process")
 local sorting = require("../sorting")
 local tracker = require("../tracker")
 local worktree = require("../worktree")
+local logs = require("../logs")
 
 local core = require("./core")
 local storage = require("./storage")
@@ -225,11 +226,27 @@ local function readUsers(state: State, key: string, wt: boolean, jira: boolean, 
 	end)
 end
 
+-- The `{failures}` block of `repo`#`n`: its checks read fresh, then each failing check's log, read once per head commit
+-- (engine.failures); a checks read that fails says so in the block.
+local function readFailures(state: State, repo: string, n: number, go: (string) -> ())
+	github.checks(repo, n, login(state), function(runs, _, problem, about)
+		local head = if about then about.head else nil
+		if not runs or not about or not head then
+			local why = if problem then problem.message else "GitHub named no head commit."
+			return go("<failures>\nPlotroom could not read the checks: " .. clip(printable(why), 300) .. "\n</failures>")
+		end
+		engine.failures(state, repo, head, runs, about.files, function(list)
+			go(logs.block(head, list, storage.PROMPT_CAP))
+		end)
+	end)
+end
+
 -- Creates or reuses the worktree of `repo`#`n` on the PR's own branch, in the folder the PR folder format names, and
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
--- for the prompt that runs there.
-local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean)
+-- and `failures` the `{failures}` block, for the prompt that runs there.
+local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean)
+	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
 	if wt and preparing[key] then
 		return reply(state, id, { busy = true })
@@ -258,6 +275,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 				title = meta.title,
 				author = meta.author,
 				["github.user"] = found["github.user"],
+				failures = failed,
 			})
 		end)
 	end
@@ -307,15 +325,31 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					title = r.title,
 					author = r.author,
 					["github.user"] = found["github.user"],
+					failures = failed,
 				})
 			end)
 		end)
 	end
 	local go: ({ [string]: string }) -> () = if wt then open else main
-	if not users then
-		return go({})
+	local function start(found: { [string]: string })
+		if not failures then
+			return go(found)
+		end
+		readFailures(state, repo, n, function(text)
+			if not alive(state) then
+				if wt then
+					preparing[key] = nil
+				end
+				return
+			end
+			failed = text
+			go(found)
+		end)
 	end
-	readUsers(state, key, wt, false, go)
+	if not users then
+		return start({})
+	end
+	readUsers(state, key, wt, false, start)
 end
 
 -- How the window answered an issue worktree's questions: a linked PR to check out, or a new branch (`fresh`) from `base`.
@@ -1728,7 +1762,7 @@ function M.rpc(state: State, raw: any)
 		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
 			return
 		end
-		prepare(state, id, repo, n, q.worktree ~= false, q.users == true)
+		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
