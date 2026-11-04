@@ -44,6 +44,10 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Picker rows: one field per Triage question. Keep: title (what is it?), author mark (mine to land or theirs to review?), number or Jira key (which one?), repository only when the view spans several (which codebase?), one blocking reason on a Blocked PR (what stops it?), stage (where does it stand?), agent state when the stage does not say it (is an agent on it?), outcome and checker verdict (did the run do what it claims?), New/Changed/Snoozed (has it changed since I looked?), Worktree (already started?), Draft (ready for review?), Jira status or closed reason (where in the team's workflow / done or dropped?), Jira type (bug or feature?). Cut to the preview: `@author` in the detail (the mark says it), age, review text, check counts, labels, In tab | Queue rows | Cut | 2 | Approved | Every field earns its place; no fact twice in a row (tern-plotroom#yxak) |
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 | Now: which reasons and logins it lists | Settings › Views › Now | New | 2 | Approved | Switches per reason (Blocked, Review requested, Ready to merge, Notifications, Assigned), team review requests, per `gh` login and Jira; never the queries. A switch that is off is not read |
+| Review recency: "New commits since you approved" on a row; a dismissed review counts as review requested | Queue rows, Now, Next move | New | 2 | Approved | From GitHub each time (your latest review's commit vs the head; your dismissed review); nothing stored. Adopted from tern-pr-guide |
+| Next in Now: one key walks Now from the most urgent item to the next; Now's heading reads `N left`, or `n of N` while walking | Queue key, Commands › Now, Now's heading | New | 2 | Approved | Unbound by default; the one-key set binds `n`. A hand move or a change of the list stops the walk, which resumes from the selected item. Adopted from tern-pr-guide (Next up bar) |
+| Board: a view laid out in columns by stage (Needs you, Agent working, Waiting, Ready to merge; Not started and Worktree folded), chosen per view as List or Board | Queue, Settings › Views | New | 6 | Approved | A spike on Now comes first: keyboard movement, narrow panes and the 1000-item bench budget decide whether views get the choice. From tern-pr-guide's board |
+| Summary at the top of the preview | Preview, Settings › General | New | 6 | Approved | Made on select by omp's `@smol` role with no tools, cached by item and head SHA or updated time. From tern-pr-guide's feedback summary |
 
 ## Dispatch
 
@@ -62,6 +66,8 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | "An agent already works on it" guard | Commands | Keep | — | Approved | |
 | Checker actions, fixed end-of-run report, outcomes, three-strike limits | Settings › Actions, run log | New | 3 | Approved | PRODUCT.md › Roadmap › Phase 3. Done: the fixed end-of-run report, read into the run log and shown in Agents; outcomes per action, checked on GitHub into Verified, Not verified or Unchecked on the run log, the row, Agents and Now; checker actions (Checked by, the default Check) run by a fresh agent against the acceptance criteria saved at dispatch, Checked or Check failed on the run log, the row, Agents and Now; chains that advance only on a Verified run or a passing check, fix rounds with `{findings}`, and the three-strike limits (3 failed checks, 3 runs without progress, 3 failed starts) counted on the run log and shown in Now; Disagree with check… (Commands) on the run log, and checker agreement (agreed by merge or after 7 days, over the last 20 decided runs) in the usage report (Metrics row 6) |
 | Autopilot | One opted-in view | New | 5 | Approved | Gated by PRODUCT.md › Metrics row 6 |
+| Plotroom's omp extension: tools Plotroom's agents load with `-e`, starting with Propose a Draft review | Agents Plotroom starts | New | 6 | Approved | Agents hand structured work back instead of text Plotroom parses |
+| Review and Quick review end in a Draft review; the agent posts only what you send back | Settings › Actions (default prompts) | New | 6 | Approved | PRODUCT.md › Principles 3 and 5 |
 
 ## Supervise
 
@@ -77,6 +83,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
+| A working agent's clock and estimated progress bar | Agents list, Now, previews | New | 2 | Approved | Elapsed m:ss; the bar eases toward the median of the action's finished runs in the run log (at least 5), never full before the run ends; redrawn once a second. Adopted from tern-pr-guide |
 
 ## Land
 
@@ -84,6 +91,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | --- | --- | --- | --- | --- | --- |
 | Merge… (including auto-merge); Approve…; Request changes…; Update branch… | Commands | Keep | — | Approved | The core of landing |
 | Push empty commit… (a new head through GitHub's git database API, no checkout, so checks run again; open PR not behind and without conflicts, never a fork's branch) | Commands | New | — | Approved | tern-plotroom#bcd7, adopted from tern-pr-guide; Update branch… covers a branch behind its base |
+| Review block: a Draft review on its diff beside the agent that proposed it; keep, edit or drop each comment, pick the verdict, Send to agent | Block beside the agent | New | 6 | Approved | From tern-pr-guide's review page; PRODUCT.md › Principles 5 |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |

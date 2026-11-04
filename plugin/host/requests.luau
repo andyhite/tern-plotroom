@@ -1779,7 +1779,7 @@ end
 -- (`scope:<id>`, shown by engine.goScope) and the configuration's. Only what applies is listed. The Worktrees list offers
 -- its own rows' actions, Refresh, the scopes, Settings and the shortcut list; the Agents list Go to agent, the scopes,
 -- Settings and the shortcut list; Now Reply… and Go to agent (while its row's agent needs input), Show or hide snoozed,
--- Refresh, the scopes, Settings and the shortcut list.
+-- Refresh, the scopes, Settings and the shortcut list. Next in Now is offered everywhere.
 function M.paletteActions(state: State): { { id: string, label: string, key: string, group: string, detail: string? } }
 	local map = keys.load()
 	local labels: { [string]: string } = { unpin = "Unpin" }
@@ -1851,6 +1851,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			add("agentgo", "Agents")
 			addAgentCommands("Agents")
 		end
+		add("nownext", "Now")
 		views()
 		add("settings", "Configuration")
 		add("help", "Configuration")
@@ -1871,6 +1872,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		add("wt-cleanup", "Worktree")
 		add("wt-remove-finished", "Worktree")
 		add("refresh", "Filter & Sort")
+		add("nownext", "Now")
 		views()
 		add("settings", "Configuration")
 		add("help", "Configuration")
@@ -1887,6 +1889,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 		end
 		add("snoozed", "Filter & Sort")
 		add("refresh", "Filter & Sort")
+		add("nownext", "Now")
 		views()
 		add("settings", "Configuration")
 		add("help", "Configuration")
@@ -1898,6 +1901,7 @@ function M.paletteActions(state: State): { { id: string, label: string, key: str
 			add(id, "Filter & Sort")
 		end
 	end
+	add("nownext", "Now")
 	views()
 	add("settings", "Configuration")
 	add("help", "Configuration")

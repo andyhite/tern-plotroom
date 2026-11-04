@@ -280,7 +280,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:nownext", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
@@ -363,6 +363,7 @@ case("host: Use one-key shortcuts binds the classic set to actions with no key, 
 	eq(saved.up, "k", "a free action gets its preset key")
 	eq(saved.agentgo, "G", "uppercase keys too")
 	eq(saved["wt-remove"], "d", "and the Worktrees list's")
+	eq(saved.nownext, "n", "and Next in Now's")
 	eq(saved.more, nil, "an action with a default is not saved")
 	local toast = w.toasts[#w.toasts]
 	eq(toast.text, "One-key shortcuts set", "the toast says it is done")
@@ -524,14 +525,14 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local b = openQueue(w)
 	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
 	local p = hx.palette(w, b)
-	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh" }
+	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "snoozed", "sort", "search", "refresh", "nownext" }
 	for _, scope in pickerOf(b).scopes do
 		table.insert(expectedIds, "scope:" .. scope.id)
 	end
 	table.insert(expectedIds, "settings")
 	table.insert(expectedIds, "help")
-	same(p.ids, expectedIds, "the selected item's, then the view's, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
-	eq(p.ids[12], "scope:now", "Now is the first scope")
+	same(p.ids, expectedIds, "the selected item's, then the view's, Next in Now, every sidebar scope in the sidebar's order and the configuration's: no Go to tab or Go to agent without a tab or an agent, no Unpin without a pin, and no agent picker")
+	eq(p.ids[13], "scope:now", "Now is the first scope")
 	eq(p.ids[#p.ids - 3], "scope:worktrees", "the Worktrees list is the last scope but one")
 	eq(p.ids[#p.ids - 2], "scope:agents", "the Agents list the last")
 	eq(p.labels.open, "Open", "Open, whatever the integration")
@@ -3337,6 +3338,58 @@ case("host next move: each pull request stage maps to its move, shown first in C
 	b.press("x", nil, "x")
 	w.flush()
 	has(findKey(b.view().layer, "confirm", "overlay").p.head, "Remove worktree", "which asks first, as the card's Remove worktree does")
+end)
+
+case("host review recency: a PR you approved whose head moved says New commits since you approved (and is Changed); your dismissed review or a request after your approval makes Review its next move", function(w: World)
+	local s = hostScene(w, 0)
+	local function approved(n: number, at: string, extra: { [string]: any }?): { [string]: any }
+		local item = searchItem(n, "o/r", EPOCH - n * 60, { yours = "APPROVED", yoursAt = at, headSha = sha("a") })
+		for k, v in (extra or {}) :: { [string]: any } do
+			item[k] = v
+		end
+		return item
+	end
+	s.gh.items.octocat = {
+		approved(1, string.upper(sha("b"))), -- approved an older head
+		approved(2, sha("a")), -- approved this head
+		searchItem(3, "o/r", EPOCH - 180, { yours = "DISMISSED", yoursAt = sha("b"), headSha = sha("a") }),
+		approved(4, sha("b")), -- the author asked again
+		approved(5, sha("b"), { state = "MERGED" }),
+	}
+	local function about(reviews: { any }, requested: { string }): { [string]: any }
+		return { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array(reviews), requested = array(requested) }
+	end
+	s.gh.about["o/r#1"] = about({ { login = "octocat", state = "APPROVED" } }, {})
+	s.gh.about["o/r#2"] = about({ { login = "octocat", state = "APPROVED" } }, {})
+	s.gh.about["o/r#3"] = about({ { login = "octocat", state = "DISMISSED" } }, {})
+	s.gh.about["o/r#4"] = about({ { login = "octocat", state = "APPROVED" } }, { "octocat" })
+	local b = openQueue(w)
+	local function details(): { string }
+		local out: { string } = {}
+		for _, row in pickerOf(b).items do
+			table.insert(out, h.detailText(row))
+		end
+		return out
+	end
+	same(details(), { "#1 · New commits since you approved", "#2", "#3", "#4 · New commits since you approved", "#5" }, "only an open PR whose head is not the commit you approved says so")
+	eq(nextOf(w, b, "no_2fr_231").row, nil, "approved, nothing asked again: no move, even with new commits")
+	eq(nextOf(w, b, "no_2fr_233").row, "Review", "your review was dismissed: Review")
+	eq(nextOf(w, b, "no_2fr_234").row, "Review", "asked again after you approved: Review")
+	eq(nextOf(w, b, "no_2fr_231").row, nil, "and back on the first, still none")
+	same(asks.hx.marks(b), { "-", "New", "-", "-", "New" }, "the rows read are seen")
+	s.gh.items.octocat[1] = approved(1, sha("a"))
+	s.gh.items.octocat[2] = approved(2, sha("a"), { headSha = sha("c") })
+	refreshNow(w, b)
+	same(details(), { "#1", "#2 · New commits since you approved", "#3", "#4 · New commits since you approved", "#5" }, "derived again on every refresh: approving the head clears it, a push raises it")
+	eq(asks.hx.marks(b)[2], "New", "an unseen row stays New")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
+	w.advance(300)
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	w.advance(300)
+	s.gh.items.octocat[2] = approved(2, sha("a"), { headSha = sha("d") })
+	refreshNow(w, b)
+	eq(asks.hx.marks(b)[2], "Changed", "a push after you saw it is Changed too")
+	eq(h.detailText(pickerOf(b).items[2]), "#2 · New commits since you approved", "and still says why")
 end)
 
 case("host next move: an issue goes Worktree, then Draft PR…, a closed one with a worktree Remove worktree…, an unrelated closed one nothing", function(w: World)

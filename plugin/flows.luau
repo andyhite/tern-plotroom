@@ -54,7 +54,9 @@ type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain
 -- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
 -- `criteria`, `checkAgent` and `checkStarted` as on Link. `from`: the chain step this agent was started for.
 export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number?, from: Step? }
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string? }
+-- `since` and `expected` (whole seconds as text) only while the agent is working: when its run or turn began on this
+-- machine's clock, and the median of its action's finished runs (usage.medians; nil: too few, or a later turn).
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
 -- A chain step due to start (dueSteps), from the run of `agent` (its link's `host` and `started`) on item `key`:
 -- `step` "check" (checker `chain.checker` on `commit`), "next" (`chain.next`) or "fix" (`chain.action` again, with
 -- `findings`), at chain `depth`, from Plotroom block `block`, with the run's saved `criteria`.
@@ -82,6 +84,7 @@ local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
 local COMMIT_MS = 3 * 60 * 1000
+local EXPECTED_S = 300 -- the run log's medians are read again at most this often, and after every run it gains
 local DRAFT_MS = 3 * 60 * 1000 -- the host's ls-remote/fetch may take 120 s
 local OPEN_URL_TRIES = 20 -- of 500 ms: a launched block has 10 seconds to say its protocol
 local OPEN_URL_STEP_MS = 500
@@ -322,9 +325,24 @@ local function plotroomPanes(cx: WindowCx): { number }
 	return out
 end
 
+-- When each linked agent pane was first seen working in its current turn (os.time); cleared once it is not.
+local workingSince: { [number]: number } = {}
+-- The run log's medians (usage.medians) as last read, and when; nil: read again when next needed.
+local medians: { [string]: number }? = nil
+local mediansAt = 0
+
+local function expectedOf(name: string): number?
+	if not medians or os.time() - mediansAt >= EXPECTED_S then
+		medians, mediansAt = usage.medians(usage.readRuns() or {}), os.time()
+	end
+	return (medians :: { [string]: number })[name]
+end
+
 -- key -> state (and what the link recorded about the agent) for the links recorded on `host` (the newest link of a key
 -- counts); an agent pane no longer listed is exited. An exited agent carries no text but its checker verdict (`check`,
--- for Disagree with check…): its row is not shown, and the report stays small. ponytail: the texts stop at INFO_BYTES of
+-- for Disagree with check…): its row is not shown, and the report stays small. A working agent's run (its first turn)
+-- started when its link says and expects its action's median; a later turn started when it was first seen working
+-- and expects nothing (the run log times first turns only). ponytail: the texts stop at INFO_BYTES of
 -- JSON-encoded size (escapes count: the host's cap is on the encoded report), so a report of many live agents stays
 -- under its 40000-byte cap with state and verdict only for the rest; raise the host's cap with the count of agents if
 -- that is ever too few.
@@ -338,6 +356,13 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state, check = l.check }
 			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil, stop = l.stop }
+			if state == "working" then
+				local first = l.result == nil and l.started ~= nil
+				local since = if first then l.started else workingSince[l.agent]
+				local expected = if first then expectedOf(if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "") else nil
+				full.since = if since then tostring(since) else nil
+				full.expected = if expected then tostring(math.floor(expected + 0.5)) else nil
+			end
 			local size = #tern.json.encode({ [l.key] = full }) + 1
 			if state ~= "exited" and bytes + size <= INFO_BYTES then
 				row = full
@@ -350,8 +375,8 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop;" per key
--- in order: host/render's `agentSig` spells it the same.
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
+-- per key in order: host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
 	for k in map do
@@ -361,7 +386,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -508,6 +533,17 @@ function M.agentSync(cx: WindowCx)
 	local states, notes, cwds = agentStates(cx)
 	if not states then
 		return
+	end
+	local now = os.time()
+	for pane in workingSince do
+		if states[pane] ~= "working" then
+			workingSince[pane] = nil
+		end
+	end
+	for pane, st in states do
+		if st == "working" and not workingSince[pane] then
+			workingSince[pane] = now
+		end
 	end
 	local covered: { Link } = {} -- the newest link per key on each Plotroom pane's host, as statusMap picks
 	for _, pane in panes do
@@ -1011,6 +1047,7 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 					depth = if l.chain then l.chain.depth else nil,
 					checking = if l.checkAgent then true else nil,
 				})
+				medians = nil -- the next working agent expects the log's new median
 			elseif report and report.commit then
 				usage.setCommit(l.key, l.started, report.commit)
 			end
