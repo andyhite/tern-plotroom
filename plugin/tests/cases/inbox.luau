@@ -14,6 +14,7 @@ local EPOCH = h.EPOCH
 
 -- Now's fixed searches, as the gh model tells them apart.
 local MINE, REVIEW, ASSIGNED = "author:@me archived:false", "user-review-requested:@me", "assignee:@me archived:false"
+local DISMISSED = "reviewed-by:@me -author:@me"
 
 -- One notification thread as GitHub's API answers it; `n` its pull request (or issue, `issue`) number, none for a thread
 -- that is about neither (CI).
@@ -592,7 +593,7 @@ local function nowPrefs(w: World, prefs: { [string]: any })
 	w.kv.put("now", prefs)
 end
 
--- What Now asked GitHub since request number `from`, as "<login> <source>" (mine, review, teams, assigned, notices),
+-- What Now asked GitHub since request number `from`, as "<login> <source>" (mine, review, teams, dismissed, assigned, notices),
 -- sorted and once each.
 local function nowAsks(s: h.HostScene, from: number): { string }
 	local out: { string } = {}
@@ -603,6 +604,7 @@ local function nowAsks(s: h.HostScene, from: number): { string }
 			then "notices"
 			elseif string.find(q, REVIEW, 1, true) then "review"
 			elseif string.find(q, "is:open review-requested:@me", 1, true) then "teams"
+			elseif string.find(q, DISMISSED, 1, true) then "dismissed"
 			elseif string.find(q, MINE, 1, true) then "mine"
 			elseif string.find(q, ASSIGNED, 1, true) then "assigned"
 			else nil
@@ -638,7 +640,7 @@ case("now: a reason switched off is not read, and its rows, heading part and cou
 	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "and its row")
 	eq(pickerOf(b).scopes[1].count, 3, "the sidebar does not count it")
 	refreshNow(w, b)
-	same(nowAsks(s, from), { "octocat assigned", "octocat mine" }, "its search is not sent (the inbox is not due again yet)")
+	same(nowAsks(s, from), { "octocat assigned", "octocat mine" }, "its searches (requests and dismissed reviews) are not sent (the inbox is not due again yet)")
 end)
 
 case("now: with Blocked off and Ready to merge on, your pull requests are still searched and only the ready ones listed", function(w: World)
@@ -652,7 +654,7 @@ case("now: with Blocked off and Ready to merge on, your pull requests are still 
 	local from = #s.gh.requests
 	flip(w, b, "ready", "off")
 	refreshNow(w, b)
-	same(nowAsks(s, from), { "octocat assigned", "octocat review" }, "with both off, they are not")
+	same(nowAsks(s, from), { "octocat assigned", "octocat dismissed", "octocat review" }, "with both off, they are not")
 	same(listed(b), {}, "and nothing of theirs is listed")
 end)
 
@@ -663,7 +665,7 @@ case("now: a login switched off is neither searched nor asked for notifications;
 		nowPrefs(w, { logins = h.array({ "work" }) })
 	end)
 	refreshNow(w, b)
-	same(nowAsks(s, 0), { "octocat assigned", "octocat mine", "octocat notices", "octocat review" }, "work is asked nothing")
+	same(nowAsks(s, 0), { "octocat assigned", "octocat dismissed", "octocat mine", "octocat notices", "octocat review" }, "work is asked nothing")
 	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "and its thread is not listed")
 	s.gh.tokens.later = "tok-later"
 	w.advance(11 * 60 * 1000) -- the signed-in logins are read again
@@ -699,7 +701,7 @@ case("now: with team review requests on, a request asked only of your team is li
 	local from = #s.gh.requests
 	flip(w, b, "teams", "on")
 	eq(w.kv.get("now").teams, true, "saved")
-	same(nowAsks(s, from), { "octocat assigned", "octocat mine", "octocat teams" }, "the review search asks for your teams' requests too")
+	same(nowAsks(s, from), { "octocat assigned", "octocat dismissed", "octocat mine", "octocat teams" }, "the review search asks for your teams' requests too")
 	same(whys(b), { "no_2fr_234 Review requested", "no_2fr_236 Review requested" }, "the team's request is listed under Review requested")
 	b.press("escape")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_236" })
@@ -708,6 +710,24 @@ case("now: with team review requests on, a request asked only of your team is li
 	has(textOf(h.pickerNode(b)), "Your review is requested", "one asked of you too says so")
 	flip(w, b, "teams", "off")
 	same(listed(b), { "no_2fr_234" }, "off again: the team's request is gone")
+end)
+
+case("now: an open pull request whose review of yours was dismissed is Review requested; one you approved is not, and a re-request is listed once", function(w: World)
+	local s, b = nowScene(w, {}, function(s: h.HostScene)
+		local again = searchItem(4, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 600), yours = "DISMISSED" })
+		s.gh.queries[REVIEW] = { again }
+		s.gh.queries[DISMISSED] = {
+			searchItem(8, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 6000), yours = "DISMISSED" }),
+			searchItem(9, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 9000), yours = "APPROVED" }),
+			searchItem(10, "o/r", EPOCH - 60, { createdAt = h.iso(EPOCH - 9000), yours = "COMMENTED" }),
+			again,
+		}
+	end)
+	has(table.concat(nowAsks(s, 0), ","), "octocat dismissed", "your reviewed pull requests are searched")
+	same(whys(b), { "no_2fr_238 Review requested", "no_2fr_234 Review requested" }, "the dismissed ones, oldest first, each once; approved and commented ones are not listed")
+	eq(b.title(), "Plotroom · Now · 2 reviews requested", "and counted as reviews requested")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_238" })
+	has(textOf(h.pickerNode(b)), "Your review was dismissed, so it is requested again", "its Why line says why")
 end)
 
 case("now: with every reason off Now reads nothing and lists only agents that need you, and says so", function(w: World)
