@@ -28,7 +28,7 @@ type State = core.State
 type View = core.View
 type Visible = core.Visible
 
-local DETAIL_DEBOUNCE_MS, DETAIL_RETRY_MAX_S, DETAIL_RETRY_S = core.DETAIL_DEBOUNCE_MS, core.DETAIL_RETRY_MAX_S, core.DETAIL_RETRY_S
+local CHECKS_POLL_S, DETAIL_DEBOUNCE_MS, DETAIL_RETRY_MAX_S, DETAIL_RETRY_S = core.CHECKS_POLL_S, core.DETAIL_DEBOUNCE_MS, core.DETAIL_RETRY_MAX_S, core.DETAIL_RETRY_S
 local INTEGRATIONS, KINDS, NOTE_CAP, POLL_MS, TRACKERS = core.INTEGRATIONS, core.KINDS, core.NOTE_CAP, core.POLL_MS, core.TRACKERS
 local clip, hrefOf, printable, running, splitRepo, cli = core.clip, core.hrefOf, core.printable, core.running, core.splitRepo, core.cli
 local isTable, jiraReposOf, livePrompts, loadAll, loadPrompts, readCheckouts, formats =
@@ -2087,9 +2087,9 @@ end
 local loadDetails: (State, string) -> ()
 
 -- Loads the checks of `key` after `ms`. One attempt waits at a time; a new one replaces it.
-local function armDetails(state: State, key: string, ms: number)
+local function armDetails(state: State, key: string, ms: number, poll: boolean?)
 	M.cancelDetails(state)
-	local attempt: Attempt = { key = key, timer = nil }
+	local attempt: Attempt = { key = key, timer = nil, poll = poll }
 	state.detailAttempt = attempt
 	attempt.timer = tern.timer(ms, function()
 		if state.detailAttempt ~= attempt then
@@ -2118,10 +2118,25 @@ local function failDetails(state: State, key: string, problem: github.Problem)
 	state.detailFail[key] = { problem = problem, tries = tries, retryAt = retryAt }
 end
 
--- Whether the checks of `key` were loaded after the latest search (an older list is shown, but loads again).
+-- When the checks of `d` are read again because one is unfinished (os.time), or nil when none is.
+local function pollAt(d: core.Detail): number?
+	for _, r in d.runs do
+		if r.phase == "running" or r.phase == "queued" then
+			return (d.at or 0) + CHECKS_POLL_S
+		end
+	end
+	return nil
+end
+
+-- Whether the checks of `key` were loaded after the latest search (an older list is shown, but loads again), and, with
+-- an unfinished check, less than CHECKS_POLL_S ago.
 local function upToDate(state: State, key: string): boolean
 	local d = state.details[key]
-	return d ~= nil and d.round == state.round
+	if d == nil or d.round ~= state.round then
+		return false
+	end
+	local due = pollAt(d)
+	return due == nil or os.time() < due
 end
 
 local LOG_CHECKS = 5 -- failing checks whose logs one head commit reads
@@ -2297,7 +2312,7 @@ loadDetails = function(state: State, key: string)
 		if not runs then
 			return land(problem, nil, "The checks could not be read.")
 		end
-		local loaded: core.Detail = { runs = runs, total = total, round = round, about = about }
+		local loaded: core.Detail = { runs = runs, total = total, round = round, at = os.time(), about = about }
 		-- The failing checks' logs for the preview: read once per check and head commit, so a refresh reads none again.
 		if about and about.head then
 			M.failures(state, pr.repo, about.head, runs, about.files, function(_, read)
@@ -2330,15 +2345,25 @@ end
 -- Once the cursor rests on a PR with checks, loads all of them with their required flags (the search carries the first
 -- 25, unflagged, and shows them meanwhile; checks loaded before the latest search show meanwhile too, and load again).
 -- Once it rests on an issue, loads its body, milestone and linked pull requests. Idempotent: every render calls it. A
--- load waits out a debounce and a failed one its retry delay; moving to another item cancels the wait.
+-- load waits out a debounce, a failed one its retry delay and one with a running or queued check CHECKS_POLL_S before
+-- it is read again; moving to another item (or a preview that is not shown: render's cancelDetails) cancels the wait.
 function M.wantDetails(state: State, item: any)
 	local key = M.detailKey(state, item)
 	local waiting = state.detailAttempt
-	if waiting and waiting.key ~= key then
+	-- Another item's wait is cancelled; so is this item's next read of an unfinished check once a refresh outdated it.
+	if waiting and (waiting.key ~= key or (waiting.poll and not upToDate(state, key))) then
 		M.cancelDetails(state)
 		waiting = nil
 	end
-	if not key or waiting or upToDate(state, key) or state.detailBusy[key] then
+	if not key or waiting or state.detailBusy[key] then
+		return
+	end
+	if upToDate(state, key) then
+		-- An unfinished check: read again once CHECKS_POLL_S has passed, while the cursor rests here (moving cancels it).
+		local due = pollAt(state.details[key])
+		if due then
+			armDetails(state, key, math.max(0, due - os.time()) * 1000, true)
+		end
 		return
 	end
 	local fail = state.detailFail[key]

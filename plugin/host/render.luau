@@ -437,24 +437,37 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local runs: { github.Run } = if d then d.runs else pr.runs
 	local total = if d then d.total else pr.runTotal
 
-	-- Every check, required ones apart, each group worst first (github.runs' order). The icon and its tone are the
-	-- status (the tooltip spells it out), so the value is only how long it took. A `workflow / job` name shows the job,
-	-- with the workflow dim after it and cut first; a Likely flaky check says so and why before it. Only `item` rows go
-	-- in a list: other kinds get no row behaviour.
+	-- Every check, grouped by state: Failing, Running and Queued, each headed with its count, then Passed and Skipped in
+	-- one fold, folded ("Passed 12 · Skipped 1"); required first within a group (github.runs' order). The icon and its
+	-- tone are the status (the tooltip spells it out), the value how long it ran or has been running. A `workflow / job`
+	-- name shows the job; the detail is Required, a Likely flaky mark and why, then the CI that ran it. Only `item`
+	-- rows go in a list: other kinds get no row behaviour.
 	local marks = engine.flakyMarks(state, pr)
-	local groups: { [string]: { Node } } = { required = {}, runs = {} }
+	local groups: { [string]: { Node } } = { failing = {}, running = {}, queued = {}, passed = {}, skipped = {} }
+	local now = os.time()
 	for i, r in runs do
 		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
 		-- An ignored failing check still shows failing; its value says Ignored (it blocks nothing).
 		local ignored = r.status == "failure" and engine.ignored(state, pr, r)
 		local mark = if marks and r.status == "failure" and r.url then marks[r.url] else nil
 		local flaky = if mark then "Likely flaky · " .. mark.reason else nil
-		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "") .. (if flaky then " — " .. flaky else "")
+		local ci = r.ci or workflow
+		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "") .. (if flaky then " — " .. flaky else "") .. (if ci then " · " .. ci else "")
+		local detail: { string } = {}
+		if r.required then
+			table.insert(detail, "Required")
+		end
+		if flaky then
+			table.insert(detail, flaky)
+		end
+		if ci then
+			table.insert(detail, ci)
+		end
 		local props: { [string]: any } = {
 			key = "run" .. i,
 			label = job or r.name,
-			detail = if flaky and workflow then flaky .. " · " .. workflow else flaky or workflow,
-			value = if ignored then "Ignored" else r.took,
+			detail = if #detail > 0 then table.concat(detail, " · ") else nil,
+			value = if ignored then "Ignored" elseif r.started then github.took(now - r.started) else r.took,
 			icon = RUN_ICON[r.status],
 			tone = RUN_TONE[r.status],
 			title = what,
@@ -464,20 +477,26 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 			props.href = "plotroom://github/check/" .. i .. "/" .. pct(r.url)
 			props.actions, props.role = { click = "open" }, LINK
 		end
-		table.insert(groups[if r.required then "required" else "runs"], ui.node("item", props))
+		table.insert(groups[r.phase] or groups.skipped, ui.node("item", props))
 	end
-	local function head(key: string, text: string)
-		table.insert(out, ui.node("text", { key = key, spans = { ui.span(text, "muted") } }))
-	end
-	if #groups.required > 0 then
-		head("required-head", "Required · " .. #groups.required)
-		table.insert(out, ui.node("list", { key = "required" }, groups.required))
-	end
-	if #groups.runs > 0 then
-		if #groups.required > 0 then
-			head("optional-head", "Optional · " .. #groups.runs)
+	for _, g in { { "failing", "Failing" }, { "running", "Running" }, { "queued", "Queued" } } do
+		local list = groups[g[1]]
+		if #list > 0 then
+			table.insert(out, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #list, "muted") } }))
+			table.insert(out, ui.node("list", { key = g[1] }, list))
 		end
-		table.insert(out, ui.node("list", { key = "runs" }, groups.runs))
+	end
+	local done: { Node } = {}
+	local count: { string } = {}
+	for _, g in { { "passed", "Passed" }, { "skipped", "Skipped" } } do
+		local list = groups[g[1]]
+		if #list > 0 then
+			table.insert(count, g[2] .. " " .. #list)
+			table.insert(done, ui.node("list", { key = g[1] }, list))
+		end
+	end
+	if #done > 0 then
+		table.insert(out, ui.node("section", { key = "done", head = { ui.span(table.concat(count, " · "), "muted") }, collapsible = true, collapsed = true }, done))
 	end
 	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
 	-- engine.failures). No log viewer: the check's row above opens its page.
