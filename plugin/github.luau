@@ -61,9 +61,14 @@ export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note
 export type Review = { login: string, state: string }
 -- An unresolved review thread as its first comment shows it: who wrote it, where, its first line and its page.
 export type Thread = { by: string, path: string?, line: number?, text: string, url: string }
-export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string }, threads: { Thread } }
+-- `files`: the changed paths (first 100), for the failing checks' log excerpts; `paths`: their first PATHS and `recent`:
+-- the newest RECENT comments, oldest first (both for a Summary); `threads`: the unresolved review threads (the preview's).
+export type About = { merge: string, reviews: { Review }, body: string, closing: { tracker.Linked }, head: string?, files: { string }, paths: { string }, recent: { tracker.Comment }, threads: { Thread } }
 
 local GH_TIMEOUT_MS = 30 * 1000
+local PATHS = 30 -- changed files a PR's detail load names (a Summary's input)
+local RECENT = 5 -- newest comments an item's detail load reads (a Summary's input)
+local RECENT_CHARS = 1000 -- each one cut to this many characters
 local CAP = 1000
 local SEARCH_PAGES = 10 -- CAP results at 100 a page
 local RATE_S = 300
@@ -1070,20 +1075,22 @@ function M.issues(
 	end)
 end
 
--- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau); the
--- unresolved review threads (among the last 50, each by its first comment) are the preview's.
+-- `headRefOid` and `files` (the changed paths, first 100) feed the failing checks' log excerpts (logs.luau) and a Summary;
+-- the unresolved review threads (among the last 50, each by its first comment) are the preview's.
 local ABOUT_FIELDS = "mergeable mergeStateStatus body headRefOid files(first: 100) { nodes { path } } latestReviews(first: "
 	.. REVIEWERS
 	.. ") { nodes { author { login } state } } reviewRequests(first: "
 	.. REVIEWERS
-	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } }"
+	.. ") { nodes { requestedReviewer { ... on User { login } ... on Team { slug } ... on Mannequin { login } ... on Bot { login } } } } closingIssuesReferences(first: 10) { nodes { number title url state } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } }"
 	.. " reviewThreads(last: 50) { nodes { isResolved path line originalLine comments(first: 1) { nodes { author { login } body url } } } }"
 local CHECKS_GQL = "query($o: String!, $r: String!, $n: Int!, $after: String) { repository(owner: $o, name: $r) { pullRequest(number: $n) { "
 	.. ABOUT_FIELDS
 	.. " commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { totalCount pageInfo { hasNextPage endCursor } "
 	.. checkNodes(" isRequired(pullRequestNumber: $n)")
 	.. " } } } } } } } }"
-local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // []),threads:[(.reviewThreads.nodes // [])[] | select(.isResolved == false) | {path,line:(.line // .originalLine),by:.comments.nodes[0].author.login,body:.comments.nodes[0].body,url:.comments.nodes[0].url}]})}"
+local CHECKS_JQ = "(.data.repository.pullRequest // {}) as $p | ($p.commits.nodes[0].commit.statusCheckRollup.contexts // {}) | {total:(.totalCount // 0),next:(if .pageInfo.hasNextPage then .pageInfo.endCursor else null end),nodes:(.nodes // []),about:($p | {mergeable,merge:.mergeStateStatus,body,head:.headRefOid,files:[(.files.nodes // [])[] | .path],reviews:[(.latestReviews.nodes // [])[] | {login:.author.login,state}],requested:[(.reviewRequests.nodes // [])[] | (.requestedReviewer.login // .requestedReviewer.slug)],closing:(.closingIssuesReferences.nodes // []),recent:[(.comments.nodes // [])[] | {login:.author.login,body}],threads:[(.reviewThreads.nodes // [])[] | select(.isResolved == false) | {path,line:(.line // .originalLine),by:.comments.nodes[0].author.login,body:.comments.nodes[0].body,url:.comments.nodes[0].url}]})}"
 local CHECK_PAGES = 3
 
 -- A PR or issue body as the sidebar shows it: bot summaries stripped, cut to BODY_CHARS.
@@ -1093,6 +1100,19 @@ local function cleanBody(raw: any): string
 	body = string.gsub(body, "<!%-%-%s*CURSOR_SUMMARY%s*%-%->.-<!%-%-%s*/CURSOR_SUMMARY%s*%-%->", "")
 	body = tracker.clip(body, BODY_CHARS, "\n\n…")
 	return body
+end
+
+-- An item's newest comments as the detail jq prints them ({login, body}), each cut to RECENT_CHARS; malformed ones are
+-- left out and a deleted author reads as "ghost".
+function M.recent(raw: any): { tracker.Comment }
+	local out: { tracker.Comment } = {}
+	for _, c in (if type(raw) == "table" then raw else {}) :: { any } do
+		local body = field(c, "body")
+		if type(body) == "string" and string.find(body, "%S") and #out < RECENT then
+			table.insert(out, { author = login(field(c, "login")) or "ghost", body = tracker.clip(body, RECENT_CHARS, "…") })
+		end
+	end
+	return out
 end
 
 -- The `about` part of a checks page as CHECKS_JQ prints it; whatever is missing or malformed reads as unknown/empty.
@@ -1141,15 +1161,19 @@ function M.about(raw: any): About
 			})
 		end
 	end
-	-- The head commit and changed paths only feed the failing checks' log excerpts: malformed ones are left out.
+	-- The head commit and changed paths feed the failing checks' log excerpts and a Summary: malformed ones are left out.
 	local head = if type(t.head) == "string" and string.match(t.head, "^%x+$") and #t.head <= 64 then string.lower(t.head) else nil
 	local files: { string } = {}
+	local paths: { string } = {}
 	for _, p in (if type(t.files) == "table" then t.files else {}) :: { any } do
 		if type(p) == "string" and p ~= "" and #p <= 400 then
 			table.insert(files, p)
+			if #p <= 300 and #paths < PATHS then
+				table.insert(paths, p)
+			end
 		end
 	end
-	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files, threads = threads }
+	return { merge = merge, reviews = reviews, body = cleanBody(t.body), closing = closing, head = head, files = files, paths = paths, recent = M.recent(t.recent), threads = threads }
 end
 
 -- Every check of one PR's latest commit (up to CHECK_PAGES * 100), required ones flagged, and what the first page
@@ -1222,8 +1246,10 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	fetch(nil, 1)
 end
 
-local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } } } }"
-local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}]}"
+local ISSUE_DETAIL_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) { body milestone { title } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title url state isDraft } } comments(last: "
+	.. RECENT
+	.. ") { nodes { author { login } body } } } } }"
+local ISSUE_DETAIL_JQ = "(.data.repository.issue // {}) | {body, milestone: .milestone.title, linked: [(.closedByPullRequestsReferences.nodes // [])[] | {number, title, url, state, isDraft}], recent: [(.comments.nodes // [])[] | {login: .author.login, body}]}"
 
 -- One issue's body, milestone and the pull requests that close it; done(detail, problem). Refusals, superseding and
 -- the rate-limit pause behave as in M.checks. done never runs before this call returns.
@@ -1275,6 +1301,7 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 			body = cleanBody(data.body),
 			fields = { { label = "Milestone", value = if type(milestone) == "string" and milestone ~= "" then milestone else nil } },
 			linked = linked,
+			recent = M.recent(data.recent),
 		}, nil)
 	end, account)
 end

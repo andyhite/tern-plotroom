@@ -570,6 +570,16 @@ local function detailOf(fields: any, base: string): tracker.IssueDetail
 		add(s, "subtask")
 	end
 	local total = field(fields, "comment", "total")
+	-- The newest comments (Jira lists them oldest first), as github.recent shapes GitHub's: for a Summary.
+	local all: { tracker.Comment } = {}
+	for _, c in list(field(fields, "comment", "comments")) do
+		local text = field(c, "body")
+		local body = if type(text) == "table" then M.adf(text) elseif type(text) == "string" then text else ""
+		if string.find(body, "%S") then
+			table.insert(all, { author = nonEmpty(field(c, "author", "displayName")) or "someone", body = tracker.clip(body, 1000, "…") })
+		end
+	end
+	local recent = table.move(all, math.max(1, #all - 4), #all, 1, {})
 	return {
 		body = bodyOf(field(fields, "description")),
 		fields = rows,
@@ -577,6 +587,7 @@ local function detailOf(fields: any, base: string): tracker.IssueDetail
 		comments = if type(total) == "number" and total >= 0 then total else nil,
 		created = stamp(field(fields, "created")),
 		updated = stamp(field(fields, "updated")),
+		recent = recent,
 	}
 end
 

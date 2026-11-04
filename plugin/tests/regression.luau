@@ -18,6 +18,7 @@ require("./cases/flows")
 require("./cases/inbox")
 require("./cases/setup")
 require("./cases/preview")
+require("./cases/summary")
 require("./cases/failures")
 
 type Loader = h.Loader

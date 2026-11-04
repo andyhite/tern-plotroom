@@ -707,6 +707,21 @@ local function descNodes(state: State, key: string, body: string?): { Node }
 	return nodes
 end
 
+-- The Summary part of the selected `item` (`pr`: a pull request), engine.wantSummary's: plain text, never markdown or a
+-- link, since a model wrote it from untrusted text. Nothing while Summaries are off or the cursor has not rested yet.
+local function summaryNodes(state: State, item: any, pr: boolean): { Node }
+	local status, text = engine.wantSummary(state, item, pr)
+	local head = ui.node("text", { key = "summary-head", spans = { ui.span("Summary", "strong") } })
+	if status == "done" then
+		return { head, ui.node("text", { key = "summary", spans = { ui.span(text or "") } }) }
+	elseif status == "busy" then
+		return { head, ui.node("shimmer", { key = "summary-loading", text = "Summarizing…" }) }
+	elseif status == "failed" then
+		return { head, ui.node("text", { key = "summary-state", spans = { ui.span("Summary not made: " .. brief(text or ""), "muted") } }) }
+	end
+	return {}
+end
+
 -- The pull request whose head is an issue's worktree branch, a row that shows it in this block (window.luau's `showPr`;
 -- the list keyed "headpr", which window.luau reads); nil without one. `repo` is where the PR is.
 local function headPrList(repo: string?, pr: github.HeadPr?): Node?
@@ -871,6 +886,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	if controls then
 		table.insert(out, controls)
 	end
+	addPart(out, "summary", summaryNodes(state, pr, true))
 	local status: { Node } = { stageFact(state, "prs", pr, if asked then { author } else nil) }
 	if asked and diff then
 		table.insert(status, diff)
@@ -1053,6 +1069,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	if controls then
 		table.insert(out, controls)
 	end
+	addPart(out, "summary", summaryNodes(state, issue, false))
 	addPart(out, "status", { stageFact(state, "issues", issue) })
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil))
@@ -1640,13 +1657,14 @@ end
 -- Now as a Board (engine.nowColumns): a row of columns, each a heading and a native list of its rows as items, the
 -- fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps its
 -- height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
-local function nowBoardNode(state: State): Node
+local function nowBoardNode(state: State, bar: boolean?): Node
 	local cols = engine.nowColumns(state)
 	local at = engine.nowBoardAt(state)
 	local open = state.nowFold or (at > 0 and cols[at].fold == true)
 	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
-	-- 6px, about three quarters of a cell row, under the picker's head, the column headings and the fold's button.
-	local lines = math.max(4, math.floor((state.cx.rows - 8) * 0.75))
+	-- 6px, about three quarters of a cell row, under the picker's head, the column headings, the fold's button and,
+	-- with `bar`, the key footer (32px, about two cell rows).
+	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.75))
 	local function column(group: string, col: any): Node
 		local cards: { Node } = {}
 		local selected: string? = nil
@@ -1936,7 +1954,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 			-- The Board takes the picker's place: its list is emptied and hidden (plotroom.css), the Board drawn in the
 			-- preview pane, which then spans the picker.
 			laid = true
-			preview = { nowBoardNode(state) }
+			preview = { nowBoardNode(state, bar) }
 			props.role ..= ".board"
 			props.items, props.order, props.selected = tern.json.array({}), tern.json.array({}), nil
 		else
