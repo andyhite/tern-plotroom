@@ -45,6 +45,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Now | Sidebar (default view), status bar | New | 2 | Approved | Replaces Inbox, the attention filter and the two counts; its heading says what needs you by reason |
 | Now: which reasons and logins it lists | Settings › Views › Now | New | 2 | Approved | Switches per reason (Blocked, Review requested, Ready to merge, Notifications, Assigned), team review requests, per `gh` login and Jira; never the queries. A switch that is off is not read |
 | Ignored checks: a named check per repository that does not make a PR Blocked | Commands (Ignore this check…), Settings › Repositories, preview | New | 2 | Approved | Adopted from tern-pr-guide (tern-plotroom#fkqe): a check that fails until someone acts (an approval check) otherwise keeps a PR Blocked and in Now. The check still shows failing, marked Ignored, and still keeps the PR out of Ready to merge |
+| Review recency: "New commits since you approved" on a row; a dismissed review counts as review requested | Queue rows, Now, Next move | New | 2 | Approved | From GitHub each time (your latest review's commit vs the head; your dismissed review); nothing stored. Adopted from tern-pr-guide |
 
 ## Dispatch
 
