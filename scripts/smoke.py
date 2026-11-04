@@ -1573,7 +1573,7 @@ def sc_workflow(s: Smoke) -> None:
     listed = sorted(t for t in s.palette_rows() if t.startswith("Plotroom: "))
     s.shot("tern-palette")
     s.eq("Tern's palette lists only Open, Open item by URL, Message an agent and, while something needs you, Now",
-         ["Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Show what needs you (Now)", "Plotroom: Worktree smoke"], listed)
+         ["Plotroom: Draft review smoke", "Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Show what needs you (Now)", "Plotroom: Worktree smoke"], listed)
     s.ctl_ok("key", "Escape")
     s.wait_until("Tern's palette is closed", lambda: not s.palette_rows())
     s.eq("Tern's palette left the selection alone", chosen, s.selection())
@@ -1763,7 +1763,9 @@ def sc_agent(s: Smoke) -> None:
     s.eq("the worktree was made for it", True, wt.is_dir())
 
     def agent_focused() -> bool:
-        return os.path.realpath(str(s.state()["focused"].get("cwd") or "")) == os.path.realpath(str(wt))  # type: ignore[union-attr]
+        """The agent's pane is focused (the Draft review block beside it shares its folder, so it is told apart by its title)."""
+        focused: Dict[str, Any] = s.state()["focused"]  # type: ignore[assignment]
+        return os.path.realpath(str(focused.get("cwd") or "")) == os.path.realpath(str(wt)) and not str(focused.get("label") or "").startswith("Draft review")
 
     s.wait_until("the agent's pane is focused in the worktree", agent_focused)
     started = s.smoke / "agents.jsonl"
@@ -1778,6 +1780,7 @@ def sc_agent(s: Smoke) -> None:
     links = json.loads(stores[0].read_text(encoding="utf-8"))["agent-links"]
     s.eq("the agent's link names its run", agent["run"], next(l.get("run") for l in links if l["key"] == "a/gent#1"))
     tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
+    draft_review(s, wt, agent)
 
     def back_to_queue() -> None:
         s.ctl_ok("tab", str(queue_tab))
@@ -1788,6 +1791,10 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
     s.wait_until("agent-go focuses the pane the link names", agent_focused)
     s.shot("agent")
+    panes = len(s.state()["panes"])  # type: ignore[arg-type]
+    s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
+    time.sleep(2.0)
+    s.eq("the same Draft review does not open again at the agent's next turn end", panes, len(s.state()["panes"]))  # type: ignore[arg-type]
 
     back_to_queue()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
@@ -1852,6 +1859,10 @@ def sc_agent(s: Smoke) -> None:
     s.wait_until("the agent's pane is focused to close it", agent_focused)
     s.ctl_ok("close")
     s.wait_until("the agent's pane is gone", lambda: not agent_focused())
+    # The Draft review block beside it outlives it (readable, and Copy still works); close it too. (In Tern 0.9.8 `ctl close` on it times out
+    # while the fake agent still runs in its tab, as `ctl alert` does.)
+    s.eq("the Draft review block is focused once its agent is gone", True, str(s.state()["focused"].get("label") or "").startswith("Draft review"))  # type: ignore[union-attr]
+    s.ctl_ok("close")
     back_to_queue()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
     s.wait_text("a closed agent is not offered again: the action picker opens", "Run on ")
@@ -1902,6 +1913,43 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("picker", "esc")
     time.sleep(1.0)
     s.eq("dismissing the review pushed nothing: the remote's refs are as before", refs_before, s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)"))
+
+
+def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
+    """sc_agent's agent proposes a Draft review (its file, as the omp extension writes it, under PLOTROOM_DATA/runs/<run>): what a turn end of the
+    focused agent runs (plugin.plotroom.review-smoke; the fake agent ends no turn) asks the queue block's host for the file and opens the Draft review
+    block beside the agent, on the pull request's diff read by real git in the worktree: the comment on a changed line is shown with its lines and
+    kept, the one off the diff is listed under Not on a changed line; Space drops and keeps it. ⌘↵ sends; the fake agent is not omp, so Tern refuses
+    the message and the block says so and offers Copy. (sc_agent then checks the same file opens nothing more, and closes the block.)"""
+    changed = s.out(wt, "diff", "--name-only", "origin/main...HEAD").split()
+    s.eq("the pull request changes one file", 1, len(changed))
+    head = s.out(wt, "rev-parse", "HEAD")
+    review = {"version": 1, "run": agent["run"], "at": "2026-11-04T10:00:00.000Z", "repo": "a/gent", "number": 1, "head": head, "summary": "Smoke summary.",
+              "verdict": "comment", "comments": [
+                  {"id": "c1", "path": changed[0], "line": 1, "side": "RIGHT", "kind": "problem", "body": "Smoke comment on the diff"},
+                  {"id": "c2", "path": changed[0], "line": 50, "side": "RIGHT", "kind": "nit", "body": "Smoke comment off the diff"}]}
+    folder = Path(agent["data"]) / "runs" / agent["run"]
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "review.json").write_text(json.dumps(review), encoding="utf-8")
+    panes = len(s.state()["panes"])  # type: ignore[arg-type]
+    s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
+    s.wait_text("the Draft review block", "Draft review of " + head[:7])
+    s.wait_text("its comment on the diff", "Smoke comment on the diff")
+    s.wait_text("the diff around it, from git", "pull request 1, commit")
+    s.wait_text("the comment off the diff, apart", "Not on a changed line")
+    s.wait_text("Send, with its key", "Send to agent")
+    s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]
+    s.eq("the block is focused beside the agent", "Draft review · a/gent#1", s.state()["focused"].get("label"))  # type: ignore[union-attr]
+    s.shot("review-block")
+    s.ctl_ok("key", "j")
+    s.ctl_ok("key", "Space")
+    s.wait_until("Space drops the selected comment", lambda: s.texts().count("Dropped") == 2)
+    s.ctl_ok("key", "Space")
+    s.wait_until("and keeps it again", lambda: s.texts().count("Dropped") == 1)
+    s.ctl_ok("key", "Meta+Enter")
+    s.wait_until("Send answers: the fake agent is not omp, so the block says the message was refused and offers Copy",
+                 lambda: any(t.startswith("The agent could not take the message") or t.startswith("The agent that proposed this review is gone") for t in s.texts()) and "Copy" in s.texts())
+    s.shot("review-block-refused")
 
 
 def sc_placement(s: Smoke) -> None:

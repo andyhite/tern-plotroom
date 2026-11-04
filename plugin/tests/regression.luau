@@ -20,6 +20,7 @@ require("./cases/setup")
 require("./cases/preview")
 require("./cases/summary")
 require("./cases/failures")
+require("./cases/review")
 require("./cases/layout")
 
 type Loader = h.Loader

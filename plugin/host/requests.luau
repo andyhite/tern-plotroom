@@ -22,6 +22,7 @@ local storage = require("./storage")
 local engine = require("./engine")
 local render = require("./render")
 local settings = require("./settings")
+local review = require("./review")
 
 local ui = tern.ui
 
@@ -2007,6 +2008,9 @@ function M.rpc(state: State, raw: any)
 		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
+	elseif q.op == "review" and review.validRun(q.run) then
+		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none.
+		reply(state, id, { at = review.fileAt(q.run) })
 	else
 		M.workflowRpc(state, id, q)
 	end
