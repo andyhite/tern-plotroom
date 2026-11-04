@@ -1507,19 +1507,19 @@ function M.outcome(c: OutcomeCheck, done: (string, string?) -> ())
 end
 
 -- What the repository picker lists, read slowly from gh, so kept by `key`: a known value answers at once (one older
--- than LIST_TTL_S is then read again in the background), and callers during a read share it. `read` calls its
--- callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.
+-- than `ttl` seconds, LIST_TTL_S by default, is then read again in the background), and callers during a read share
+-- it. `read` calls its callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.
 local LIST_TTL_S = 10 * 60
 local kept: { [string]: { at: number, value: any } } = {}
 local reading: { [string]: { (any, Problem?) -> () } } = {}
-local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (any, Problem?) -> ())
+local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (any, Problem?) -> (), ttl: number?)
 	local hit = kept[key]
 	if hit then
 		local value, answer = hit.value, done -- `done` is replaced below when the value is old: the timer must keep the caller's
 		later(function()
 			answer(value, nil)
 		end)
-		if os.time() - hit.at < LIST_TTL_S or reading[key] then
+		if os.time() - hit.at < (ttl or LIST_TTL_S) or reading[key] then
 			return
 		end
 		done = function() end
@@ -2056,6 +2056,117 @@ local function branch(v: any, forkOk: boolean): string?
 		return nil
 	end
 	return v
+end
+
+-- What decides Likely flaky for one pull request (host/engine's judgeFlaky): the commit its head is at, the files it
+-- changes (the first 100), and every check run of every attempt on that commit (the first 50 of the first 50 suites):
+-- its workflow (nil for an app's check), GitHub's conclusion (nil while it runs), its link and the files its
+-- FAILURE annotations name (the first 30). ponytail: a PR past 100 files or a check past 30 annotations may miss the
+-- annotation that blames the PR; page `files` and `annotations` if that marks a real failure flaky.
+export type Attempted = { workflow: string?, name: string, conclusion: string?, url: string?, paths: { string } }
+export type Evidence = { head: string?, files: { [string]: boolean }, runs: { Attempted } }
+local EVIDENCE_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) { headRefOid files(first: 100) { nodes { path } } commits(last: 1) { nodes { commit { checkSuites(first: 50) { nodes { workflowRun { workflow { name } } checkRuns(first: 50, filterBy: { checkType: ALL }) { nodes { name conclusion detailsUrl annotations(first: 30) { nodes { path annotationLevel } } } } } } } } } } } }"
+local EVIDENCE_JQ = "(.data.repository.pullRequest // {}) | {head:.headRefOid,files:[(.files.nodes // [])[] | .path],runs:[(.commits.nodes[0].commit.checkSuites.nodes // [])[] | (.workflowRun.workflow.name // null) as $w | (.checkRuns.nodes // [])[] | {workflow:$w,name,conclusion,url:.detailsUrl,paths:[(.annotations.nodes // [])[] | select(.annotationLevel == \"FAILURE\") | .path]}]}"
+
+-- The strings of `v` (a JSON array), others skipped.
+local function strings(v: any): { string }
+	local out: { string } = {}
+	if type(v) == "table" then
+		for _, s in v do
+			if type(s) == "string" then
+				table.insert(out, s)
+			end
+		end
+	end
+	return out
+end
+
+-- One read of `repo`#`number`'s Evidence; done(evidence, problem). Nothing is sent while the account's quota is
+-- paused (kind "rate-limit"). done never runs before this call returns.
+function M.evidence(repo: string, number: number, account: string?, done: (Evidence?, Problem?) -> ())
+	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	if not owner or not name or not whole32(number) then
+		return later(function()
+			done(nil, bad("Unexpected pull request."))
+		end)
+	end
+	local wait = M.wait(os.time(), account)
+	if wait > 0 then
+		return later(function()
+			done(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
+		end)
+	end
+	M.gh({ "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. EVIDENCE_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", EVIDENCE_JQ }, function(out, problem, _, raw)
+		local body = observe(out, raw, problem, account)
+		if not out then
+			return done(nil, problem)
+		end
+		local ok, data = pcall(tern.json.decode, body)
+		if not ok or type(data) ~= "table" then
+			return done(nil, { kind = "failed", message = "gh printed unexpected check data." })
+		end
+		local files: { [string]: boolean } = {}
+		for _, p in strings(data.files) do
+			files[p] = true
+		end
+		local runs: { Attempted } = {}
+		for _, r in if type(data.runs) == "table" then data.runs else {} do
+			local n, c, u = field(r, "name"), field(r, "conclusion"), field(r, "url")
+			if type(n) == "string" then
+				table.insert(runs, {
+					workflow = nonEmpty(field(r, "workflow")),
+					name = n,
+					conclusion = if type(c) == "string" then c else nil,
+					url = if type(u) == "string" then u else nil,
+					paths = strings(field(r, "paths")),
+				})
+			end
+		end
+		local head = field(data, "head")
+		done({ head = if type(head) == "string" then string.lower(head) else nil, files = files, runs = runs }, nil)
+	end, account)
+end
+
+-- How the last runs (up to 20) of workflow `workflow` on branch `base` of `repo` ended: `failed` (failure, timed out
+-- or startup failure) of `total` finished ones. Kept per account, repository, branch and workflow for an hour.
+export type History = { failed: number, total: number }
+local HISTORY_TTL_S = 60 * 60
+function M.baseHistory(repo: string, base: string, workflow: string, account: string?, done: (History?, Problem?) -> ())
+	local target = repoArg(repo)
+	if not target or not branch(base, false) or workflow == "" or #workflow > 255 or string.find(workflow, "%c") then
+		return later(function()
+			done(nil, bad("Unexpected repository, branch or workflow."))
+		end)
+	end
+	cached("history\0" .. (account or "") .. "\0" .. target .. "\0" .. base .. "\0" .. workflow, function(finish)
+		local wait = M.wait(os.time(), account)
+		if wait > 0 then
+			return later(function()
+				finish(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
+			end)
+		end
+		-- `--flag=value` keeps a branch or workflow that starts with a dash from being read as a flag.
+		M.gh({ "run", "list", "--repo", target, "--branch=" .. base, "--workflow=" .. workflow, "--limit", "20", "--json", "conclusion,status" }, function(out, problem)
+			if not out then
+				return finish(nil, problem)
+			end
+			local ok, data = pcall(tern.json.decode, out)
+			if not ok or type(data) ~= "table" then
+				return finish(nil, { kind = "failed", message = "gh printed unexpected run data." })
+			end
+			local failed, total = 0, 0
+			for i = 1, #data do
+				if field(data[i], "status") == "completed" then
+					total += 1
+					local c = field(data[i], "conclusion")
+					if c == "failure" or c == "timed_out" or c == "startup_failure" then
+						failed += 1
+					end
+				end
+			end
+			finish({ failed = failed, total = total }, nil)
+		end, account)
+	end, done, HISTORY_TTL_S)
 end
 
 -- Why `title` and `body` cannot open a pull request (a title of one line, 1 to 256 characters; a body of at most 60000

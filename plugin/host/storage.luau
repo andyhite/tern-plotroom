@@ -166,6 +166,17 @@ function M.loadAll(state: State)
 		end
 	end
 	state.views = all
+	-- Ignored checks as sets per lowercase repository; unreadable or malformed ignores nothing.
+	local ignored: { [string]: { [string]: boolean } } = {}
+	local saved: { [string]: { string } } = (M.readIgnored()) or {}
+	for repo, names in saved do
+		local set: { [string]: boolean } = {}
+		for _, name in names do
+			set[name] = true
+		end
+		ignored[repo] = set
+	end
+	state.ignored = ignored
 	state.rev += 1 -- a view's sort or prompts may have changed: the visible list and the rows are built again
 	state.vis = nil
 end
@@ -312,6 +323,58 @@ function M.editJiraRepos(fn: ({ [string]: any }) -> string?): string?
 	end)
 end
 
+-- Ignored checks (kv "ignored-checks": lowercase "owner/name" to the exact names of the checks ignored there), or nil
+-- and why when the store cannot be read or is malformed: it is then never written over.
+local IGNORED_KEY = "ignored-checks"
+function M.readIgnored(): ({ [string]: { string } }?, string?)
+	local ok, v = pcall(tern.kv.get, IGNORED_KEY)
+	if not ok then
+		return nil, "Saved ignored checks could not be read."
+	end
+	local out: { [string]: { string } } = {}
+	if v == nil then
+		return out, nil
+	end
+	local bad = "Saved ignored checks are malformed; not overwriting them."
+	if not isTable(v) then
+		return nil, bad
+	end
+	for repo, list in v do
+		if type(repo) ~= "string" or not isTable(list) then
+			return nil, bad
+		end
+		local names: { string } = {}
+		for k, name in list do
+			if type(k) ~= "number" or type(name) ~= "string" or name == "" then
+				return nil, bad
+			end
+			table.insert(names, name)
+		end
+		out[repo] = names
+	end
+	return out, nil
+end
+
+-- Rereads the ignored checks, lets `fn` change `repo`'s names and saves them; an error message or nil.
+function M.editIgnored(repo: string, fn: ({ string }) -> ()): string?
+	local map, err = M.readIgnored()
+	if not map then
+		return err
+	end
+	local key = string.lower(repo)
+	local list: { string } = map[key] or {}
+	fn(list)
+	map[key] = list
+	local saved: { [string]: any } = {}
+	for r, names in map do
+		if #names > 0 then
+			saved[r] = tern.json.array(names)
+		end
+	end
+	local werr = kvSet(IGNORED_KEY, saved)
+	return if werr then "Could not save: " .. werr else nil
+end
+
 -- Name formats for every repository (Settings › Repositories): the branch of an issue's worktree, and the
 -- folder names of PR and issue worktrees. Kept under kv formats.KEYS; "" or unset is the default.
 formats.KEYS = { branch = "branch-format", prdir = "pr-dir-format", issuedir = "issue-dir-format" } :: { [string]: string }
@@ -370,6 +433,7 @@ end
 M.SETTINGS_KEYS = {
 	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
 	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now", "summary",
+	IGNORED_KEY,
 } :: { string }
 
 -- Deletes every settings key, going on past a failure; the keys that could not be deleted. A store that cannot be read

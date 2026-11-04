@@ -520,6 +520,7 @@ local function blockDef(): BlockDef<State>
 				activeId = active,
 				views = {},
 				locked = {},
+				ignored = {},
 				-- A block launched to show one item (window.luau's `showPr`) starts on it.
 				pins = pins,
 				snaps = {},
@@ -550,6 +551,8 @@ local function blockDef(): BlockDef<State>
 				ciBusy = {},
 				round = 0,
 				summaryWait = nil,
+				flaky = {},
+				flakyBusy = {},
 				notes = {},
 				descOpen = nil,
 				removing = nil,
@@ -1096,7 +1099,7 @@ local function blockDef(): BlockDef<State>
 					else
 						s.pick = nil -- a click outside an open choice's menu, or away from a text being edited
 					end
-				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "restore-views" or act == "preset-keys" or act == "edit-prompt" or act == "delete" or act == "reset-all" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "pick-model" or act == "guide" or act == "expand" or act == "collapse" then
+				elseif act == "add" or act == "add-prompt" or act == "restore-prompts" or act == "restore-views" or act == "preset-keys" or act == "edit-prompt" or act == "delete" or act == "reset-all" or act == "refresh" or act == "add-repo" or act == "add-jira" or act == "pick-model" or act == "guide" or act == "expand" or act == "collapse" or act == "unignore" then
 					if type(ev.value) == "string" then
 						s.focus = ev.value
 						runAction(state, act, ev.value)

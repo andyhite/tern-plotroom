@@ -68,7 +68,8 @@ SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 
 # Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
 # answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
-# answers with the canned list in search.json (none: empty), a checks load with checks/<owner>__<name>__<n>.json (none: no checks), `auth status` with one
+# answers with the canned list in search.json (none: empty), a checks load with checks/<owner>__<name>__<n>.json (none: no checks), a Likely flaky
+# read with flaky.json and a workflow's base-branch runs with base-runs.json (none: nothing), `auth status` with one
 # signed-in login (the repository picker's list, warmed after a search), `auth token` for that login, and Now's notifications read
 # with notifications.json (none: no thread). Header is prepended.
 FAKE_GH = r'''
@@ -95,6 +96,11 @@ if a[:2] == ["api", "graphql"]:
             items = [i for i in items if str(i.get("number")) == pinned.group(1)]
         sys.stdout.write(json.dumps({"total": len(items), "next": None, "cost": 1, "items": items}))
         sys.exit(0)
+    if "checkType: ALL" in fields.get("query", ""):  # a pull request's Likely flaky evidence, "<owner>/<name>#<n>"; none: no files, no runs
+        f = os.path.join(SMOKE, "flaky.json")
+        canned = (json.load(open(f)) if os.path.exists(f) else {}).get("%s/%s#%s" % (fields["o"], fields.get("r"), fields.get("n")))
+        sys.stdout.write(json.dumps(canned or {"head": None, "files": [], "runs": []}))
+        sys.exit(0)
     if "o" in fields:
         if "first: 25" in fields.get("query", ""):  # the pull requests that close an issue (the --jq answer is a list): none
             sys.stdout.write("[]")
@@ -106,6 +112,12 @@ if a[:2] == ["api", "graphql"]:
         canned = (json.load(open(f)) if os.path.exists(f) else {}).get(key)
         sys.stdout.write(json.dumps(canned if canned is not None else {"total": 0, "next": None, "nodes": []}))
         sys.exit(0)
+if a[:2] == ["run", "list"] and "--repo" in a:  # a workflow's last runs on a branch, "<owner>/<name>@<branch>@<workflow>"; none: no runs
+    opt = dict(x[2:].split("=", 1) for x in a if x.startswith("--") and "=" in x)
+    f = os.path.join(SMOKE, "base-runs.json")
+    key = "%s@%s@%s" % (a[a.index("--repo") + 1].replace("github.com/", "", 1), opt.get("branch"), opt.get("workflow"))
+    sys.stdout.write(json.dumps((json.load(open(f)) if os.path.exists(f) else {}).get(key, [])))
+    sys.exit(0)
 if a[:2] == ["pr", "list"] and any(x.startswith("--head=") for x in a):  # the pull request on an issue's worktree branch: none
     sys.stdout.write("[]")
     sys.exit(0)
@@ -147,6 +159,18 @@ if len(w) == 2 and w[0] in ("git-upload-pack", "git-receive-pack") and not w[1].
 with open(os.path.join(SMOKE, "unexpected.log"), "a") as log:
     log.write("ssh %r\n" % (a,))
 sys.exit(2)
+'''
+
+# Fake omp: the agent program the window starts instead of omp under PLOTROOM_SELFTEST (PLOTROOM_SMOKE_OMP; Tern starts agents with the user's login
+# PATH, so a fake on smoke's PATH is never the `omp` they run). It only records its argv and its PLOTROOM_RUN and PLOTROOM_DATA in agents.jsonl,
+# prints and sleeps: no model, no network. Header is prepended.
+FAKE_OMP = r'''
+import json, os, sys, time
+a = sys.argv[1:]
+with open(os.path.join(SMOKE, "agents.jsonl"), "a") as log:
+    log.write(json.dumps({"argv": a, "run": os.environ.get("PLOTROOM_RUN"), "data": os.environ.get("PLOTROOM_DATA")}) + "\n")
+print("smoke agent: no model is called", flush=True)
+time.sleep(3600)
 '''
 
 # Fake acli, installed only by the last scenario (the ones before run without Jira): `--version`, a signed-in `auth status` on acme.atlassian.net, empty
@@ -265,7 +289,7 @@ class Smoke:
         (self.cwd / "goldens").mkdir(parents=True)
         shutil.copytree(PLUGIN, self.fixtures / "plotroom")
         header = "#!%s\nSMOKE = %r\nGIT = %r\n" % (sys.executable, str(self.smoke), git)
-        for path, body in ((tmp / "bin" / "gh", FAKE_GH), (tmp / "gitssh" / "ssh", FAKE_SSH)):
+        for path, body in ((tmp / "bin" / "gh", FAKE_GH), (tmp / "gitssh" / "ssh", FAKE_SSH), (tmp / "fake-omp", FAKE_OMP)):
             path.write_text(header + body, encoding="utf-8")
             path.chmod(0o755)
         # omp's model for a Summary: a provider of omp's own config (a private agent dir) at a local fake, the `@smol` role pointed at it.
@@ -301,6 +325,7 @@ class Smoke:
             PI_CODING_AGENT_DIR=str(tmp / "omp-agent"),
             PI_SMOL_MODEL="smoke/fake",
             SMOKE_LLM_KEY="smoke",
+            PLOTROOM_SMOKE_OMP=str(tmp / "fake-omp"),
         )
         # A private HOME keeps the user's ~/.gitconfig out of fixtures too.
         self.genv = dict(base, **iso)
@@ -1710,19 +1735,16 @@ def sc_prompts(s: Smoke) -> None:
 
 
 def sc_agent(s: Smoke) -> None:
-    """An agent started from a pull request's row, with the agent setting pointed at a local script that only prints and sleeps (no omp, no model, no
-    network): the PR's worktree is made, the agent's pane starts in it and is linked to the PR, `agent-go` focuses exactly that pane, and asking again
-    offers the running agent first (Go to agent) before Start another; dismissing that offer starts nothing."""
+    """An agent started from a pull request's row, run by the fake omp (PLOTROOM_SMOKE_OMP; no model, no network): the PR's worktree is made, the agent's pane starts in it
+    as `omp -e <the installed plugin's omp/plotroom.ts>` with PLOTROOM_RUN (saved on its link) and PLOTROOM_DATA (the plugin's data directory) set,
+    and is linked to the PR, `agent-go` focuses exactly that pane, and asking again offers the running agent first (Go to agent) before Start
+    another; dismissing that offer starts nothing."""
     root, wt = s.checkout("agent"), s.wt("a/gent", 1)
-    fake = s.tmp / "fake-agent.sh"
-    fake.write_text("#!/bin/sh\necho 'smoke agent: no model is called'\nexec sleep 3600\n", encoding="utf-8")
-    fake.chmod(0o755)
     stamp = "2026-01-01T00:00:00Z"
     pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
           "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
           "labels": [], "runs": [], "runTotal": 0}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
-    s.ctl_ok("agent-command", str(fake))
     s.ctl_ok("tab", "new")  # a real shell: the focused pane before this one is an earlier scenario's Plotroom block
     s.ctl_ok("ready")
     queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
@@ -1744,6 +1766,17 @@ def sc_agent(s: Smoke) -> None:
         return os.path.realpath(str(s.state()["focused"].get("cwd") or "")) == os.path.realpath(str(wt))  # type: ignore[union-attr]
 
     s.wait_until("the agent's pane is focused in the worktree", agent_focused)
+    started = s.smoke / "agents.jsonl"
+    s.wait_until("the fake omp ran the agent", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
+    agent = json.loads(started.read_text(encoding="utf-8").splitlines()[-1])
+    s.eq("omp loads only Plotroom's extension (a typed prompt has no model)", 2, len(agent["argv"]))
+    s.eq("its -e names the installed plugin's extension, which is there", (True, True), (agent["argv"][1].endswith("/omp/plotroom.ts"), os.path.isfile(agent["argv"][1])))
+    s.eq("PLOTROOM_RUN is a run id: %r" % agent["run"], True, re.match(r"^\d+-[0-9a-f]{6}$", agent["run"] or "") is not None)
+    stores = [p for p in s.tmp.rglob("kv.json") if "agent-links" in p.read_text(encoding="utf-8")]
+    s.eq("one Plotroom kv.json with agent links: %r" % stores, 1, len(stores))
+    s.eq("PLOTROOM_DATA is the plugin's data directory (it holds kv.json)", os.path.realpath(str(stores[0].parent)), os.path.realpath(agent["data"] or ""))
+    links = json.loads(stores[0].read_text(encoding="utf-8"))["agent-links"]
+    s.eq("the agent's link names its run", agent["run"], next(l.get("run") for l in links if l["key"] == "a/gent#1"))
     tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
 
     def back_to_queue() -> None:
@@ -1874,7 +1907,7 @@ def sc_agent(s: Smoke) -> None:
 def sc_placement(s: Smoke) -> None:
     """Five agents started Beside the queue in the 2200x1000 window, through the action picker and the duplicate offer: no start opens a tab, the queue
     keeps the width of its first split (within one cell) and every agent's pane is at least 270x470 px. The one pull request action, saved straight into
-    the plugin's kv.json, opens beside the queue with no model, so the agent setting's fake agent (sc_agent's) runs it: no omp, no model, no network.
+    the plugin's kv.json, opens beside the queue with no model, so the fake omp (sc_agent's) runs it: no model, no network.
     The pull request actions are put back as they were afterwards."""
     stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
     s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
@@ -1939,7 +1972,7 @@ def placed(s: Smoke) -> None:
     time.sleep(1.0)  # let the last split settle
     s.shot("placement-5")
     shown = rects()
-    s.contains("the newest agent (focused) runs the fake agent, not omp", "fake-agent.sh", json.dumps(s.state()["focused"]))  # type: ignore[index]
+    s.contains("the newest agent (focused) runs Plotroom's command line (the fake omp, not the agent setting)", "PLOTROOM_RUN=", json.dumps(s.state()["focused"]))  # type: ignore[index]
     cols = next(p["cols"] for p in s.state()["panes"] if p["id"] == queue)  # type: ignore[union-attr]
     cell = shown[0][2] / max(1, cols)
     s.eq("the queue keeps its first split's width (%.0f px, one cell %.1f px): %r" % (first, cell, shown), True, abs(shown[0][2] - first) <= cell + 0.5)
@@ -2008,9 +2041,10 @@ def sc_now_settings(s: Smoke) -> None:
 
 
 def sc_controls(s: Smoke) -> None:
-    """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run previews its Next move, Re-run failed checks, as a
-    button (role plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is
-    clicked: the shot shows them."""
+    """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
+    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as a button (role
+    plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
+    the shot shows them."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -2020,10 +2054,17 @@ def sc_controls(s: Smoke) -> None:
     runs = [run("build", "FAILURE", "https://github.com/a/gent/actions/runs/123/job/9"), run("lint", "SUCCESS", None)]
     pr = {"number": 7, "title": "Controls PR 7", "url": "https://github.com/a/gent/pull/7", "author": "octo", "state": "OPEN", "isDraft": False,
           "updatedAt": stamp, "createdAt": stamp, "head": "feature-7", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
-          "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs)}
+          "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs), "headSha": "1" * 40}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
     about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": []}
     (s.smoke / "checks.json").write_text(json.dumps({"a/gent#7": {"total": len(runs), "next": None, "nodes": runs, "about": about}}), encoding="utf-8")
+    job = "https://github.com/a/gent/actions/runs/123/job/9"
+    (s.smoke / "flaky.json").write_text(json.dumps({"a/gent#7": {"head": "1" * 40, "files": ["src/app.py"], "runs": [
+        {"workflow": "CI", "name": "build", "conclusion": "FAILURE", "url": job, "paths": []},
+        {"workflow": "CI", "name": "lint", "conclusion": "SUCCESS", "url": None, "paths": []},
+    ]}}), encoding="utf-8")
+    base = [{"status": "completed", "conclusion": "failure" if i < 3 else "success"} for i in range(20)]
+    (s.smoke / "base-runs.json").write_text(json.dumps({"a/gent@main@CI": base}), encoding="utf-8")
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -2031,7 +2072,9 @@ def sc_controls(s: Smoke) -> None:
     s.leave_now()
     s.wait_text("the pull request", "Controls PR 7")
     s.wait_until("its native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
-    s.wait_text("the Next move of a failed run", "Re-run failed checks")
+    s.wait_text("the row says every failing check is Likely flaky", "Checks failing (likely flaky)")
+    s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
+    s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
     button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))

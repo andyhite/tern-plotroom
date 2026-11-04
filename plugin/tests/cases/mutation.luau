@@ -189,6 +189,55 @@ case("github.rerunFailed: only a finished, failed run of the repository is re-ru
 	eq(#gh.requests > 0, true, "gh was used")
 end)
 
+case("github.baseHistory and evidence: a workflow's last 20 base runs counted and kept an hour, a refused branch never asked; a PR's files, attempts and blamed paths read as printed", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local runs: { any } = {}
+	for _, c in { "failure", "timed_out", "startup_failure", "success", "cancelled" } do
+		table.insert(runs, { status = "completed", conclusion = c })
+	end
+	table.insert(runs, { status = "in_progress", conclusion = "" })
+	gh.history["o/r@main@CI build"] = runs
+	local function read(base: string): (any, any)
+		local got: any, problem: any = nil, nil
+		github.baseHistory("o/r", base, "CI build", nil, function(hist, p)
+			got, problem = hist, p
+		end)
+		w.flush()
+		return got, problem
+	end
+	local hist = read("main")
+	same(hist, { failed = 3, total = 5 }, "failure, timed out and startup failure fail; a run still going is not counted")
+	local lists = requestsOf(gh, "history")
+	eq(#lists, 1, "one read")
+	same(lists[1].call.argv, { "gh", "run", "list", "--repo", "github.com/o/r", "--branch=main", "--workflow=CI build", "--limit", "20", "--json", "conclusion,status" }, "argv only: the workflow's name is one argument")
+	w.advance(59 * 60 * 1000)
+	read("main")
+	eq(#requestsOf(gh, "history"), 1, "kept for an hour")
+	w.advance(2 * 60 * 1000)
+	read("main")
+	eq(#requestsOf(gh, "history"), 2, "then read again")
+	local _, problem = read("-x")
+	eq(problem.kind, "invalid", "a branch that would read as a flag is refused")
+	eq(#requestsOf(gh, "history"), 2, "and never asked")
+	gh.evidence["o/r#5"] = { head = string.upper(sha("a")), files = array({ "src/a.lua" }), runs = array({
+		{ workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = array({ "src/a.lua" }) },
+		{ workflow = h.NULL, name = "app check", conclusion = h.NULL, url = h.NULL, paths = array({}) },
+		{ workflow = "CI", name = 7, conclusion = "SUCCESS", url = "x", paths = array({}) },
+	}) }
+	local ev: any = nil
+	github.evidence("o/r", 5, nil, function(e)
+		ev = e
+	end)
+	w.flush()
+	eq(ev.head, sha("a"), "the head commit, lowercased")
+	same(ev.files, { ["src/a.lua"] = true }, "the changed files")
+	eq(#ev.runs, 2, "a run with no name is skipped")
+	same(ev.runs[1], { workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = { "src/a.lua" } }, "an attempt and the files its failure annotations name")
+	same(ev.runs[2], { name = "app check", paths = {} }, "an app's check has no workflow; a running one no conclusion")
+	has(requestsOf(gh, "flaky")[1].fields.query, "checkType: ALL", "every attempt of every check is asked for")
+end)
+
 case("github.createPr: an exact draft argv, and bad input is refused before gh runs", function(w: World)
 	local github = w.load("github") :: Github
 	local reply = "https://github.com/o/r/pull/9\n"

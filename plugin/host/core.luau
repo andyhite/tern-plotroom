@@ -120,6 +120,9 @@ end
 export type Detail = { runs: { github.Run }, total: number, round: number, about: github.About?, issue: tracker.IssueDetail?, headPr: github.HeadPr?, headLinked: boolean?, noted: tracker.Issue? }
 -- A checks load that failed: why, how often, and when to try again (nil: only an explicit Retry).
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
+-- The Likely flaky marks of one PR's failing checks (engine.gatherFlaky): the head commit they were judged at, and per
+-- check link the check's name and why it is likely flaky. A check with no mark is not.
+export type Flaky = { sha: string, marks: { [string]: { name: string, reason: string } } }
 -- One failing check's log as read for one head commit: its excerpt (logs.parse, jobs one after another), its first error
 -- line and the changed-file lines it names, or why it could not be read; `at` is when, so a failed read is tried again.
 export type CiLog = { lines: { string }?, first: string?, refs: { string }, problem: string?, at: number }
@@ -230,6 +233,7 @@ export type State = {
 	views: { View }, -- every saved view of both kinds, pull request views first (kv views-prs, then views-issues)
 	pins: { View }, -- items pinned by URL (requests.show), each a one-item scope under the sidebar's Pins group, in the order pinned; never saved with the views
 	locked: { [string]: string }, -- kind id -> why its saved views cannot be changed (unreadable, malformed, unwritable); absent: they can
+	ignored: { [string]: { [string]: boolean } }, -- lowercase "owner/name" -> the names of its ignored checks (kv ignored-checks)
 	snaps: { [string]: Snap },
 	snap: Snap?,
 	cursor: string?,
@@ -259,6 +263,8 @@ export type State = {
 	ciBusy: { [string]: { (CiLog) -> () } }, -- log reads running, with who waits for them
 	round: number, -- search results taken so far: checks can finish without moving a PR's update time, so each result makes the loaded checks stale
 	summaryWait: { key: string, ready: boolean, timer: TimerHandle? }?, -- the item (key) whose rest before a Summary is timed; ready once it has rested
+	flaky: { [string]: Flaky }, -- item key -> its Likely flaky marks, judged once per head commit
+	flakyBusy: { [string]: boolean }, -- item keys whose evidence is being read
 	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
 	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
@@ -362,6 +368,20 @@ M.TOKEN = string.format("%06x%06x%06x%06x", math.random(0, 0xFFFFFF), math.rando
 -- `href` with the host's token (the window strips `?k=<token>` before parsing, and compares the whole link).
 function M.withToken(href: string): string
 	return href .. "?k=" .. M.TOKEN
+end
+
+-- Where this host keeps Plotroom's omp extension and data directory, as the hidden `main.omp` node publishes them:
+-- the window starts every agent with them (docs/reference.md › Dispatch). `ext` is left out when the file is not
+-- there, so the agent starts without it. Read at the first render: a plugin reload reads it again.
+local omp: string? = nil
+function M.omp(): string
+	if omp == nil then
+		local p = tern.plugin
+		local ext = p.dir .. "/omp/plotroom.ts"
+		local ok, here = pcall(tern.fs.exists, ext)
+		omp = tern.json.encode({ ext = if ok and here then ext else nil, data = p.data })
+	end
+	return omp :: string
 end
 
 -- The link of action `act` (open | worktree | goto | agent) on `item`: a pull request's carries its repository and
@@ -577,6 +597,7 @@ local KINDS: { [string]: Kind } = {
 			{ k = { ui.span("{github.user}", "code") }, v = "Your GitHub login (the view's account, else gh's active one)" },
 			{ k = { ui.span("{criteria}", "code") }, v = "The acceptance criteria saved on the run at dispatch (none for a pull request)" },
 			{ k = { ui.span("{findings}", "code") }, v = "In a fix round, what the checker found (or that the last run named no new commit); else says none" },
+			{ k = { ui.span("{flaky}", "code") }, v = "Its failing checks Plotroom marks Likely flaky, with why and the head commit, when the agent starts; else says none" },
 			{ k = { ui.span("{failures}", "code") }, v = "Each failing check's log excerpt and the changed-file lines it names (GitHub Actions)" },
 		},
 		prompts = prompts.prs,
