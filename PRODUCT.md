@@ -26,10 +26,10 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 ## Principles
 
 1. **One loop.** Every feature serves a step above. A feature that serves none is cut, however cheap it is.
-2. **Facts, not memory.** Stage, outcome and check state are derived from GitHub, Jira, git and Tern each time. Plotroom stores only what a person edits (views, actions, snoozes, keys) and the run history.
+2. **Facts, not memory.** Stage, outcome and check state are derived from GitHub, Jira, git and Tern each time. Plotroom stores only what a person edits (views, actions, snoozes, keys) and the run history. Text derived from those facts (a Summary) may be cached, keyed by the facts it came from, and is never a source.
 3. **Nothing leaves unconfirmed.** Every write to GitHub or Jira is planned, shown, and committed only after a confirm that lists Cancel first; a saved account that cannot be used fails closed. (These are existing invariants in AGENTS.md.)
 4. **Works before it is configured.** With `gh` and `omp` installed and the repository's checkout open in a Tern tab, a new user reaches a running agent without opening Settings. Settings change defaults; they are not a setup step.
-5. **Tern-native, not a second app.** Use Tern's Browser, tabs, agent blocks, Git view and status bar. Never rebuild what Tern, omp or GitHub already do well: CI, merge queues, notification delivery, the code review UI.
+5. **Tern-native, not a second app.** Use Tern's Browser, tabs, agent blocks, Git view and status bar. Never rebuild what Tern, omp or GitHub already do well: CI, merge queues, notification delivery, GitHub's code review UI. The exception is agent work you must approve before it leaves: a Draft review is shown on its diff in Plotroom, because no other surface lets you edit an agent's findings before they post.
 6. **One word per thing.** The glossary below is the only vocabulary in the UI, README and reference.
 7. **Editable guidance, fixed contract.** (Phase 3) Users edit an action's text. The end-of-run report Plotroom appends to it is fixed, because Plotroom parses it.
 
@@ -66,6 +66,9 @@ The UI, README and reference use these words and no others for these things.
 | **Needs attention** | New or Changed and not snoozed, or its agent needs input. | attention filter |
 | **Snooze** | Hide an item until 08:00 tomorrow. | — |
 | **Refresh** | Read the view again now. | reload, sync |
+| **Draft review** | Findings an agent proposes for a pull request (comments on lines, a summary, a verdict), opened in Plotroom's review block beside that agent. You keep, edit or drop each one and send them back; the agent posts only what you sent. | proposal, suggested review |
+| **Board** | A view laid out in columns by stage instead of as a list. | kanban, columns |
+| **Summary** | A few sentences a small model writes about an item, at the top of its preview. | explanation, TL;DR |
 
 User-facing text never shows internal names: protocol numbers, pane or run ids, kv keys, unfilled `{placeholders}`, or code identifiers.
 
@@ -86,8 +89,9 @@ User-facing text never shows internal names: protocol numbers, pane or run ids, 
 | **3: Checked outcomes** | Know whether agent work actually worked | Fixed end-of-run report; outcomes per action; checker actions with acceptance criteria saved at dispatch; three-strike limits; chains advance only on Verified; recording disagreement with a checker | Default-action runs reach a Verified outcome at least 80% of the time |
 | **4: Beyond the author** | A second, third and fourth user | 3–5 design partners from the Tern and omp community, a listing in the awesome-tern catalog, repository description and topics, a demo recording (`tern shot` `record`). These are the author's tasks, not loop tasks. | 3 partners using it weekly |
 | **5: Autopilot** | Hand off a whole view, not one item | Opt-in view as the work source; Implement → Check → Fix (at most 3 rounds) → PR ready for review; slots, graceful stop, recovery from the run log; everything surfaces in Now. It never pushes to a base branch and never merges. | Gate to start: the checker agrees with you on at least 80% of 20 or more checked runs |
+| **6: Review and layout** | Approve agent work where it happens, and see the queue at a glance | Plotroom's omp extension (tools agents use to hand work back); the review block and Draft reviews; a Board layout per view (after a spike); Summaries | A Review run ends in a Draft review you edit and send without leaving Tern |
 
-Phases 0–3 are queued as kata issues. Each is blocked by its prerequisites until they close, because the build loop otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
+Phases 0–3 and 6 are queued as kata issues. Each is blocked by its prerequisites until they close, because the build loop otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
 
 ## Metrics
 
@@ -112,6 +116,7 @@ All local; nothing is sent anywhere.
 - **2026-11-02.** Cut: Tell Carly and the `plotroom_agents` export, Send a page element to an agent, Re-run all jobs, Cancel running workflow, Add and Remove label, the token-based Jira transition picker, and Export and import. Merged: the floating preview into Open. Hidden from Tern's palette: every command but the entry points and cross-pane commands. See LEDGER.md.
 - **2026-11-02.** Kata is not a dependency. Plotroom adopts its agent conventions (attention `ok` / `stuck` / `needs-human` with a one-line reason; the handoff fields commit, evidence and blocker) for its own end-of-run report.
 - **2026-11-02.** From CuLoRA's build loop, Plotroom ports: a checker that never built the work, a fixed end-of-run report, three-strike limits, an inbox of open questions, and a run log. It skips: merging to `main` itself, the app lock, local-model triage and a separate dashboard. Autopilot comes last, behind the agreement gate. In CuLoRA, the checker passed 18 of 34 rounds, and a rubric that excluded styling let through a UI that missed its designs.
+- **2026-11-04.** From tern-pr-guide: an agent's review is a Draft review shown on its diff beside the agent, and the agent posts only what you send back (principle 5 now allows this). Plotroom ships an omp extension that its agents load, starting with the tool that proposes a Draft review. A Board layout is spiked on Now before any view offers it. Summaries are made on select by omp's `@smol` role and cached. Phase 6 is not gated and may run beside Phase 4.
 
 ## Heritage
 
