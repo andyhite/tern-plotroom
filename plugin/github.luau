@@ -42,6 +42,11 @@ export type Pr = {
 	-- Only from a search with `teams` (Now's review requests): the users (logins) and teams ("org/slug") asked to review.
 	reviewers: { string }?,
 	teams: { string }?,
+	-- The login the search ran as (the viewer): its latest review's verdict (as Review.state), and whether the head moved
+	-- since that review when it is an approval. ponytail: GitHub's viewerLatestReview, so a comment after the approval
+	-- hides it; read `reviews(author:)` if that misleads.
+	yourReview: string?,
+	newCommits: boolean?,
 }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note: string? }
@@ -66,8 +71,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision mergeable mergeStateStatus labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name]}"
 local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -363,6 +368,8 @@ function M.normalize(item: any): (Pr?, string?)
 		end
 		return out
 	end
+	local headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil
+	local yours = if type(item.yours) == "string" then VERDICT[item.yours] else nil
 	local runs = M.runs(item.runs)
 	return {
 		key = M.identity(o, r, n),
@@ -376,7 +383,7 @@ function M.normalize(item: any): (Pr?, string?)
 		updated = M.epoch(str(item.updatedAt)) or 0,
 		created = M.epoch(str(item.createdAt)) or 0,
 		head = str(item.head),
-		headSha = if type(item.headSha) == "string" and #item.headSha == 40 and string.match(item.headSha, "^%x+$") then string.lower(item.headSha) else nil,
+		headSha = headSha,
 		fork = if type(item.fork) == "string" and string.match(item.fork, "^[%w%-_]+$") then item.fork else nil,
 		base = str(item.base),
 		additions = count(item.additions),
@@ -391,6 +398,8 @@ function M.normalize(item: any): (Pr?, string?)
 		labels = labels,
 		reviewers = names(item.reviewers, "^[%w%-_]+$"),
 		teams = names(item.teams, "^[%w%-_]+/[%w%-_%.]+$"),
+		yourReview = yours,
+		newCommits = yours == "approved" and state == "open" and headSha ~= nil and type(item.yoursAt) == "string" and string.lower(item.yoursAt) ~= headSha,
 	}, nil
 end
 
@@ -821,7 +830,8 @@ local function flatPr(n: any): any
 		author = field(n, "author", "login"), head = n.headRefName, headSha = n.headRefOid,
 		fork = if n.isCrossRepository == true then (field(n, "headRepositoryOwner", "login") or field(n, "author", "login")) else nil,
 		base = n.baseRefName, additions = n.additions, deletions = n.deletions, changedFiles = n.changedFiles,
-		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
+		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, yours = field(n, "viewerLatestReview", "state"), yoursAt = field(n, "viewerLatestReview", "commit", "oid"),
+		mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
 		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
 	}
 	local asked = field(n, "reviewRequests", "nodes")
