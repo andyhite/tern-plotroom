@@ -43,6 +43,44 @@
 	display: inline-flex;
 }
 
+/* Now as a Board (host/render's nowBoardNode): the picker's row list is emptied and hidden, and the Board is drawn in its
+   preview pane, which then spans the picker beside the scope rail.
+   ponytail: `.pk-main` and `.pk-pv` are Tern's inner picker classes ("may change"); a picker prop for custom content,
+   or a board kind, would replace these two rules. */
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.board'] .pk-main {
+	display: none;
+}
+[data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.board'] .pk-pv {
+	flex: 1 1 auto;
+	width: auto;
+	max-width: none;
+}
+
+/* A Board card is a native list item; its title wraps to two lines over the whole card instead of truncating to a word
+   in a narrow column, and its number and why it is listed go under it. */
+[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item {
+	flex-wrap: wrap;
+	height: auto;
+	align-items: flex-start;
+	padding-top: 4px;
+	padding-bottom: 4px;
+}
+[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-label {
+	flex: 1 1 100%;
+	white-space: normal;
+	line-clamp: 2;
+	overflow: hidden;
+}
+/* Why it is listed (the item's value, at most 40% of a row by Tern's rule) takes its own line when it doesn't fit beside
+   the number. */
+[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-detail {
+	flex: 0 1 auto;
+}
+[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-value {
+	max-width: 100%;
+	margin-left: auto;
+}
+
 /* What a click does shows on the node (host/render's BUTTON and LINK roles): an action is a button, sized to its label
    with a button's ring (items: Tern has no button kind in 0.9.8); what opens something is a link, its label underlined
    in a hairline that darkens under the pointer. Links stay neutral: colour is for DESIGN.md's Color Meaning Rule only.

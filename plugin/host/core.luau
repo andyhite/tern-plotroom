@@ -207,6 +207,8 @@ export type Now = {
 	cost: number,
 	rows: { any }?,
 	rowsKey: string?,
+	cols: { any }?, -- the Board's columns (engine.nowColumns) of `colsOf`, the rows they were built from
+	colsOf: { any }?,
 }
 
 -- Which reasons and accounts feed Now (Settings › Views › Now, kv "now"): the reasons switched off (NOW_REASONS ids),
@@ -280,6 +282,8 @@ export type State = {
 	showSnoozed: boolean, -- snoozed items are listed (marked) instead of hidden
 	nowOn: boolean, -- Now is shown instead of a view
 	nowAt: string?, -- the picker id of the Now row previewed
+	nowBoard: boolean, -- Now is laid out as a Board (engine.nowBoardShown says whether the pane is wide enough to)
+	nowFold: boolean, -- the Board's fold (Not started, Worktree) is open
 	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)

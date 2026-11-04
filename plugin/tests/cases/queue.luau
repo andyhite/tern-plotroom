@@ -280,7 +280,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
 	end
-	same(ids, { "kpreset", "key:down", "key:up", "key:next", "key:nownext", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
+	same(ids, { "kpreset", "key:down", "key:up", "key:left", "key:right", "key:next", "key:nownext", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
