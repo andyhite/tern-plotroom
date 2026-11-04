@@ -6,12 +6,13 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 40
+M.PROTOCOL = 41
 M.MIN = 35
 -- op → the protocol that added it; an op not listed is known to every host in range. 36: `outcome`, and the actions'
 -- optional `outcome` field. 37: `criteria`, and the actions' optional `checker` field. 38: agent-status's optional
 -- `stop` field (why an item's chain stopped). 39: agent-status's optional `since` and `expected` fields (a working
--- agent's clock and bar). 40: `models` (Settings › Actions › Model's picker), and the actions' optional `effort` field.
-M.SINCE = { outcome = 36, criteria = 37, models = 40 } :: { [string]: number }
+-- agent's clock and bar). 40: worktree's optional `failures` field (the `{failures}` block). 41: `models` (Settings ›
+-- Actions › Model's picker), and the actions' optional `effort` field.
+M.SINCE = { outcome = 36, criteria = 37, models = 41 } :: { [string]: number }
 
 return M

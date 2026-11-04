@@ -754,7 +754,7 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 		repo = repo,
 		number = tostring(n),
 	}
-	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings" } do
+	for _, k in { "title", "author", "branch", "base", "remote", "github.user", "criteria", "findings", "failures" } do
 		if type(a[k]) == "string" then
 			vars[k] = a[k]
 		end
@@ -1001,7 +1001,7 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	local users = prompt ~= nil and (prompt.outcome ~= nil or string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
-		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users }, PREPARE_MS, done)
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil }, PREPARE_MS, done)
 		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done)
 	if not sent then
 		failed(cx)
