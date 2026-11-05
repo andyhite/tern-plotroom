@@ -21,13 +21,9 @@ local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comment
 local CONTEXT = 8 -- rows of diff a comment's card shows around its line
 
 M.VERDICTS = { "comment", "approve", "request_changes" }
+local REGULAR_COLS = 100 -- panes narrower than this stack the navigator above the detail
 local VERDICT_LABEL: { [string]: string } = { comment = "Comment", approve = "Approve", request_changes = "Request changes" }
-local KIND_LABEL: { [string]: { text: string, tone: string } } = {
-	problem = { text = "Problem", tone = "error" },
-	question = { text = "Question", tone = "accent" },
-	suggestion = { text = "Suggestion", tone = "success" },
-	nit = { text = "Nit", tone = "muted" },
-}
+local KIND_LABEL: { [string]: string } = { problem = "Problem", question = "Question", suggestion = "Suggestion", nit = "Nit" }
 
 export type Comment = { id: string, path: string, line: number, startLine: number?, side: string, kind: string, body: string, suggestion: string? }
 -- A Draft review file as the omp extension writes it (plotroom.ts › validate): `at` tells a revised proposal apart.
@@ -377,16 +373,16 @@ end
 
 local function toggle(state: State, i: number)
 	local card = state.cards[i]
-	if not card or state.sent then
+	if not card or state.sent or state.sending or state.loading then
 		return
-	elseif not card.excerpt and state.diffProblem == nil and not state.loading then
+	elseif not card.excerpt and state.diffProblem == nil then
 		return state.cx:toast("info", "Not on a changed line", "GitHub refuses a comment outside the pull request's diff, so it cannot be kept.")
 	end
 	card.keep = not card.keep
 end
 
 local function edit(state: State, i: number)
-	if state.sent or not state.p then
+	if state.sent or state.sending or not state.p or (i >= 1 and i <= #state.cards and state.loading) then
 		return
 	end
 	state.at, state.editing = i, true
@@ -405,41 +401,110 @@ local function editorOf(key: string, m: input.Model, aria: string, lines: number
 	return ui.node("editor", { key = key, text = p.text, cursor = p.cursor, anchor = p.anchor, maxLines = lines, aria = aria })
 end
 
-local function cardNode(state: State, i: number, card: Card): Node
-	local c = card.c
-	local kind = KIND_LABEL[c.kind]
-	local selected = state.at == i
-	local where = (if c.startLine and c.startLine ~= c.line then "lines " .. c.startLine .. "–" .. c.line else "line " .. c.line) .. (if c.side == "LEFT" then " (old)" else "")
-	local kids: { Node } = {
-		ui.node("row", { key = "head", gap = "xs", align = "center", wrap = true }, {
-			ui.node("badge", { key = "kind", text = kind.text, tone = kind.tone }),
-			textNode("where", c.path .. " · " .. where, "muted"),
-			ui.node("badge", { key = "keep", text = if card.keep then "Kept" else "Dropped", tone = if card.keep then "success" else "muted" }),
-		}),
+local function whereOf(c: Comment): string
+	return (if c.startLine and c.startLine ~= c.line then "lines " .. c.startLine .. "–" .. c.line else "line " .. c.line) .. (if c.side == "LEFT" then " (old)" else "")
+end
+-- A finding's first line of feedback, cut short: the navigator's row title.
+local function titleOf(card: Card): string
+	local line = string.match(card.model.text, "[^\n]+") or card.c.id
+	line = string.gsub(line, "^[#>%-%*%s]+", "")
+	if utf8.len(line) :: number > 48 then
+		line = string.sub(line, 1, (utf8.offset(line, 48) :: number) - 1) .. "…"
+	end
+	return line
+end
+
+
+-- The navigator: Summary, each finding in file order, Instructions. `compact` shortens it above the detail.
+local function navNode(state: State, compact: boolean): Node
+	local items: { Node } = {
+		ui.node("item", { key = "n0", label = "Summary" }),
 	}
-	if card.excerpt then
-		-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
-		table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
-	end
-	if selected and state.editing then
-		table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
-	else
-		table.insert(kids, ui.node("text", { key = "body", spans = { ui.span(core.printable(card.model.text)) } }))
-	end
-	if c.suggestion then
-		table.insert(kids, ui.node("section", { key = "suggestion", head = { ui.span("Suggested change", "muted") }, collapsible = true, collapsed = true }, {
-			ui.node("md", { key = "text", text = "````text\n" .. c.suggestion .. "\n````" }),
+	for i, card in state.cards do
+		local c = card.c
+		table.insert(items, ui.node("item", {
+			key = "n" .. i,
+			label = { ui.span((string.match(c.path, "[^/]+$") or c.path) .. ":" .. c.line, "mono") },
+			title = KIND_LABEL[c.kind] .. " · " .. c.path .. ":" .. c.line .. " · " .. titleOf(card),
+			value = { ui.span(if card.keep then "Kept" else "Dropped", "muted") },
 		}))
 	end
-	if not state.sent then
-		local buttons: { Node } = {}
-		if card.excerpt or state.diffProblem or state.loading then
-			table.insert(buttons, button({ key = "keep", label = if card.keep then "Drop" else "Keep", icon = if card.keep then "x" else "check", hint = if selected then caps("Space") else nil, aria = (if card.keep then "Drop" else "Keep") .. " comment " .. c.id, actions = { click = "keep=" .. i } }))
-		end
-		table.insert(buttons, button({ key = "edit", label = "Edit", icon = "pencil", hint = if selected then caps("e") else nil, aria = "Edit comment " .. c.id, actions = { click = "edit=" .. i } }))
-		table.insert(kids, ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons))
+	table.insert(items, ui.node("item", { key = "n" .. last(state), label = "Instructions", value = if state.note.text ~= "" then { ui.span("Added", "muted") } else nil }))
+	local props: { [string]: any } = { key = "nav", selected = "main.body.nav.n" .. state.at }
+	if compact then
+		props.max = { lines = 6 }
+	else
+		props.min, props.max, props.shrink, props.basis = { w = "26ch" }, { w = "32ch", lines = 12 }, 0, "content"
 	end
-	return ui.node("card", { key = "c" .. i, tone = if selected then "accent" else nil }, kids)
+	return ui.node("list", props, items)
+end
+
+-- Edit (or Done) for the selected item, plus Keep/Drop for a finding.
+local function actionsNode(state: State, i: number): Node
+	local buttons: { Node } = {}
+	local card = state.cards[i]
+	local what = if i == 0 then "the summary" elseif card then "comment " .. card.c.id else "the instructions"
+	if card and card.excerpt or (card and state.diffProblem) then
+		table.insert(buttons, button({ key = "keep", label = if card.keep then "Drop" else "Keep", icon = if card.keep then "x" else "check", hint = caps("Space"), aria = (if card.keep then "Drop " else "Keep ") .. what, actions = { click = "keep=" .. i } }))
+	end
+	if state.editing then
+		table.insert(buttons, button({ key = "done", label = "Done", icon = "check", hint = caps("esc"), aria = "Finish editing " .. what, actions = { click = "done" } }))
+	else
+		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pencil", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
+	end
+	return ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons)
+end
+
+-- The selected item's whole detail: heading and location, diff, feedback, suggestion, controls.
+local function detailNode(state: State): Node
+	local i = state.at
+	local card = state.cards[i]
+	local kids: { Node } = {}
+	if i == 0 then
+		table.insert(kids, textNode("label", "Summary", "strong"))
+		if state.editing then
+			table.insert(kids, editorOf("text", state.summary, "Summary", 10))
+		elseif state.summary.text ~= "" then
+			table.insert(kids, ui.node("md", { key = "text", text = input.clean(state.summary.text, true) }))
+		else
+			table.insert(kids, textNode("text", "(no summary)", "muted"))
+		end
+	elseif card then
+		local c = card.c
+		table.insert(kids, ui.node("row", { key = "head", gap = "sm", align = "center", wrap = true }, {
+			ui.node("badge", { key = "kind", text = KIND_LABEL[c.kind], tone = "muted" }),
+			ui.node("text", { key = "where", spans = { ui.span(c.path, "mono"), ui.span(" · " .. whereOf(c), "muted") } }),
+			ui.node("badge", { key = "keep", text = if card.keep then "Kept" else "Dropped", tone = "muted" }),
+		}))
+		if not card.excerpt and not state.loading and not state.diffProblem then
+			table.insert(kids, textNode("why", "Not on a changed line: GitHub refuses a comment outside the pull request's diff, so it cannot be kept.", "muted"))
+		end
+		if card.excerpt then
+			-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
+			table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
+		end
+		if state.editing then
+			table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
+		else
+			table.insert(kids, ui.node("md", { key = "body", text = input.clean(card.model.text, true) }))
+		end
+		if c.suggestion then
+			table.insert(kids, ui.node("section", { key = "suggestion", head = { ui.span("Suggested change", "muted") }, collapsible = true, collapsed = true }, {
+				ui.node("md", { key = "text", text = "````text\n" .. c.suggestion .. "\n````" }),
+			}))
+		end
+	else
+		table.insert(kids, textNode("label", "Instructions for the agent (optional)", "strong"))
+		if state.editing then
+			table.insert(kids, editorOf("note", state.note, "Instructions for the agent", 1))
+		else
+			table.insert(kids, textNode("note", if state.note.text ~= "" then state.note.text else "Press e to add a line, such as “tone down c3”", if state.note.text ~= "" then nil else "muted"))
+		end
+	end
+	if not state.sent and not state.sending and not (card and state.loading) then
+		table.insert(kids, actionsNode(state, i))
+	end
+	return ui.node("col", { key = "detail", grow = 1, basis = 0, gap = "sm" }, kids)
 end
 
 local function view(state: State): BlockView
@@ -454,88 +519,54 @@ local function view(state: State): BlockView
 		table.insert(main, textNode("problem", state.problem or "Reading the Draft review…", if state.problem then "error" else "muted"))
 		return { main = ui.col(main) }
 	end
-	local head: { Node } = {
-		ui.text({ ui.span(p.repo .. "#" .. p.number, "num") }),
-		textNode("reviewed", "Draft review of " .. string.sub(p.head, 1, 7), "muted"),
-	}
-	if state.sent then
-		table.insert(head, ui.node("badge", { key = "sent", text = "Sent", tone = "success" }))
+	table.insert(main, ui.node("text", { key = "head", spans = {
+		ui.span(p.repo .. "#" .. p.number, "mono"),
+		ui.span("  ·  Draft review of " .. string.sub(p.head, 1, 7), "muted"),
+	} }))
+	table.insert(main, ui.node("text", { key = "moves", spans = { ui.span("j/k move  ·  Space keep or drop  ·  e edit", "muted") } }))
+	-- The decision row: verdict, count, then Send (or its status).
+	local kept = 0
+	for _, card in state.cards do
+		kept += if card.keep then 1 else 0
 	end
-	table.insert(main, ui.node("row", { key = "head", gap = "xs", align = "center", wrap = true }, head))
+	local bar: { Node } = {}
+	if state.sent or state.sending then
+		table.insert(bar, textNode("verdict", "Verdict: " .. VERDICT_LABEL[state.verdict], "muted"))
+	else
+		for i, v in M.VERDICTS do
+			local on = state.verdict == v
+			table.insert(bar, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
+		end
+	end
+	table.insert(bar, textNode("count", kept .. " kept · " .. (#state.cards - kept) .. " dropped", "muted"))
+	if state.sent then
+		table.insert(bar, ui.node("badge", { key = "sent", text = "Sent", tone = "muted" }))
+	elseif state.sending then
+		table.insert(bar, ui.node("row", { key = "sending", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Sending…", "muted") }))
+	elseif not state.loading then
+		table.insert(bar, button({ key = "send", label = "Send to agent", icon = "arrow-right", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
+	end
+	table.insert(main, ui.node("row", { key = "bar", gap = "sm", wrap = true, align = "center" }, bar))
+	if state.sent then
+		table.insert(main, textNode("sent", "Sent to the agent. It posts the review; a revised proposal opens here again.", "muted"))
+	end
+	if state.gone then
+		table.insert(main, ui.node("row", { key = "gone", gap = "sm", wrap = true, align = "center" }, {
+			textNode("why", state.gone, "error"),
+			button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }),
+		}))
+	end
 	if state.head and state.head ~= p.head then
-		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "warning"))
+		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "muted"))
 	end
 	if state.loading then
-		table.insert(main, ui.node("row", { key = "loading", gap = "xs", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
+		table.insert(main, ui.node("row", { key = "loading", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
 	elseif state.diffProblem then
 		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
 	end
-	-- The summary and the verdict.
-	local summary: { Node } = { textNode("label", "Summary", "strong") }
-	if state.at == 0 and state.editing then
-		table.insert(summary, editorOf("text", state.summary, "Summary", 10))
-	else
-		table.insert(summary, ui.node("text", { key = "text", spans = { ui.span(if state.summary.text ~= "" then core.printable(state.summary.text) else "(no summary)", if state.summary.text ~= "" then nil else "muted") } }))
-	end
-	local verdicts: { Node } = {}
-	for i, v in M.VERDICTS do
-		local on = state.verdict == v
-		table.insert(verdicts, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, tone = if on then "accent" else "muted", hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = if state.sent then nil else { click = "verdict=" .. v } }))
-	end
-	table.insert(summary, ui.node("row", { key = "verdict", gap = "sm", wrap = true, align = "center" }, verdicts))
-	if not state.sent then
-		table.insert(summary, ui.node("row", { key = "buttons", gap = "sm", align = "center" }, {
-			button({ key = "edit", label = "Edit summary", icon = "pencil", hint = if state.at == 0 then caps("e") else nil, aria = "Edit the summary", actions = { click = "edit=0" } }),
-		}))
-	end
-	table.insert(main, ui.node("card", { key = "summary", tone = if state.at == 0 then "accent" else nil }, summary))
-	-- The comments, grouped by file, then those not on a changed line. A node takes its children when it is made, so
-	-- each section's cards are collected first.
-	local files: { { key: string, path: string, cards: { Node } } } = {}
-	local off: { Node } = {}
-	for i, card in state.cards do
-		if not card.excerpt and not state.loading and not state.diffProblem then
-			table.insert(off, cardNode(state, i, card))
-		else
-			local f = files[#files]
-			if not f or f.path ~= card.c.path then
-				table.insert(files, { key = "f" .. i, path = card.c.path, cards = {} })
-			end
-			table.insert(files[#files].cards, cardNode(state, i, card))
-		end
-	end
-	for _, f in files do
-		table.insert(main, ui.node("section", { key = f.key, head = { ui.span(f.path, "mono") } }, f.cards))
-	end
-	if #off > 0 then
-		table.insert(off, 1, textNode("why", "GitHub refuses a comment outside the pull request's diff, so these cannot be kept.", "muted"))
-		table.insert(main, ui.node("section", { key = "off", head = { ui.span("Not on a changed line", "strong") } }, off))
-	end
-	if #state.cards == 0 then
-		table.insert(main, textNode("none", "No comments: only the summary and the verdict.", "muted"))
-	end
-	-- Instructions, Send, and Copy when the agent could not be reached.
-	local n = last(state)
-	local foot: { Node } = { textNode("label", "Instructions for the agent (optional)", "strong") }
-	if state.at == n and state.editing then
-		table.insert(foot, editorOf("note", state.note, "Instructions for the agent", 1))
-	else
-		table.insert(foot, ui.node("text", { key = "note", spans = { ui.span(if state.note.text ~= "" then state.note.text else "Press e to add a line, such as “tone down c3”", if state.note.text ~= "" then nil else "muted") } }))
-	end
-	local buttons: { Node } = {}
-	if state.sent then
-		table.insert(foot, textNode("sent", "Sent to the agent. It posts the review; a revised proposal opens here again.", "success"))
-	else
-		table.insert(buttons, button({ key = "send", label = if state.sending then "Sending…" else "Send to agent", icon = "arrow-right", tone = "accent", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
-	end
-	if state.gone then
-		table.insert(foot, textNode("gone", state.gone, "error"))
-		table.insert(buttons, button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }))
-	end
-	if #buttons > 0 then
-		table.insert(foot, ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons))
-	end
-	table.insert(main, ui.node("card", { key = "send-card", tone = if state.at == n then "accent" else nil }, foot))
+	-- Regular panes put the navigator beside the detail, compact ones above it.
+	local compact = state.cx.cols < REGULAR_COLS
+	table.insert(main, ui.node(if compact then "col" else "row", { key = "body", gap = "md", align = "start" }, { navNode(state, compact), detailNode(state) }))
 	return { main = ui.col(main) }
 end
 
@@ -624,7 +655,7 @@ function M.define()
 				edit(state, state.at)
 			elseif name == "enter" then
 				send(state)
-			elseif (ch == "1" or ch == "2" or ch == "3") and not state.sent then
+			elseif (ch == "1" or ch == "2" or ch == "3") and not state.sent and not state.sending then
 				state.verdict = M.VERDICTS[tonumber(ch) :: number]
 			elseif ch == "c" and state.gone then
 				copy(state)
@@ -635,7 +666,14 @@ function M.define()
 		end,
 
 		event = function(state: State, ev: UiEvent, _cx: BlockCx)
-			if ev.ev ~= "action" then
+			if ev.ev == "select" then
+				-- A click on the navigator's native list: ev.item is the row's full node id.
+				local i = if ev.id == "main.body.nav" then tonumber(string.match(tostring(ev.item), "^main%.body%.nav%.n(%d+)$")) else nil
+				if i and i <= last(state) then
+					state.at, state.editing = i, false
+				end
+				return
+			elseif ev.ev ~= "action" then
 				return
 			end
 			local act, value = ev.act, ev.value
@@ -650,8 +688,15 @@ function M.define()
 				send(state)
 			elseif act == "copy" then
 				copy(state)
-			elseif act == "verdict" and VERDICT_LABEL[value] and not state.sent then
+			elseif act == "done" then
+				state.editing = false
+			elseif act == "verdict" and VERDICT_LABEL[value] and not state.sent and not state.sending then
 				state.verdict = value
+			elseif act == "select" and tonumber(value) then
+				local i = tonumber(value) :: number
+				if i >= 0 and i <= last(state) then
+					state.at, state.editing = i, false
+				end
 			elseif act == "keep" and tonumber(value) then
 				state.at = tonumber(value) :: number
 				toggle(state, state.at)

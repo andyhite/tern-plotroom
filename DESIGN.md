@@ -89,6 +89,14 @@ A `card` in the preview while the item has a worktree: neutral badges (Up to dat
 
 Tern's `prefs` side sheet in the block's layer, four pages (Views, Actions, Repositories, General) with icon tabs. Each list item opens a form; its Delete or Remove sits beside Done and is neutral like every other button. A prompt is edited in an `editor` card over the sheet (`role = "omp.prefs.editor"`).
 
+### Draft review
+
+The review block is a focused workspace, not a feed of repeated diff cards. A compact header identifies the pull request and reviewed commit. A wrapping decision row holds the three neutral verdict choices (the selected one has a check), the kept/dropped count and **Send to agent**; sending and sent states replace the action, and a failed handoff offers **Copy** alongside its explanation.
+
+A native `list` navigator selects Summary, each finding in file order, then Instructions. Its native selection stays in view; each finding names its filename, line and Kept/Dropped state without using colour as the only cue, with its kind, full path and feedback excerpt in the tooltip. The selected content occupies the remaining width: readable Markdown feedback, its native diff excerpt and local Keep/Drop and Edit controls. Off-diff findings explain why they cannot be kept. Summary and Instructions have explicit Edit controls, with Done while editing.
+
+Use `row`/`col`, `list`/`item`, `md`, `editor`, `diff` and native keycaps. At compact pane widths the navigator becomes a short list above the detail, not a hidden pane. `j`/`k` or arrows move, Space keeps/drops, `e`/Enter edits, `1`/`2`/`3` choose the verdict and ⌘↵ sends. Buttons use the same neutral ring in both Plotroom block surfaces; selection uses the list's native highlight, not a semantic tone. No decorative colour, new font, animation or custom diff renderer.
+
 ## Adding a component
 
 1. Add it here: which Tern kinds, which tones (by the Color Meaning Rule), which keys.

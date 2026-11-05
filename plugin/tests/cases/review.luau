@@ -88,17 +88,6 @@ local function textOf(node: any): string
 	return table.concat(out, "\n")
 end
 
--- The ids of the comment cards in the order they are drawn.
-local function cardIds(b: Block): { string }
-	local out: { string } = {}
-	for i = 1, 10 do
-		local card = findKey(b.view().main, "c" .. i, "card")
-		if card then
-			table.insert(out, string.match(textOf(card), "Edit comment (%S+)") or "?")
-		end
-	end
-	return out
-end
 
 -- The choices the block's last Send carries (hidden main.send): the message's JSON block, decoded, and the text.
 local function sentChoices(b: Block): (any, string)
@@ -109,58 +98,105 @@ local function sentChoices(b: Block): (any, string)
 	return jsonDecode(json :: string), o.text
 end
 
-case("review: the block shows the Draft review on its diff, comments grouped by file, and one off the diff cannot be kept", function(w: World)
+local function navRows(b: Block): { any }
+	return findKey(b.view().main, "nav", "list").c
+end
+
+-- The nav item keys in order, and what row i says it is (Kept/Dropped).
+local function navKeys(b: Block): { string }
+	local out: { string } = {}
+	for _, it in navRows(b) do
+		table.insert(out, it.p.key)
+	end
+	return out
+end
+
+local function navState(b: Block, i: number): string
+	return navRows(b)[i + 1].p.value[1].t
+end
+
+local function selectedOf(b: Block): string
+	return findKey(b.view().main, "nav", "list").p.selected
+end
+
+local function detailText(b: Block): string
+	return textOf(findKey(b.view().main, "detail"))
+end
+
+local function clean(b: Block, why: string)
+	same(h.hx.miscued(b.view().main), {}, why .. ": every click has its button look and nothing else does")
+	same(h.hx.offPalette(b.view().main), {}, why .. ": nothing is coloured outside DESIGN.md")
+end
+
+case("review: the navigator lists the summary, the comments grouped by file, then the instructions; one off the diff cannot be kept", function(w: World)
 	local diffs = reviewScene(w)
 	local b = openReview(w)
 	eq(b.title(), "Draft review · o/r#5", "titled by its pull request")
 	same(diffs, { "git -C /wt/r5 diff --no-color --no-ext-diff -U3 --src-prefix=a/ --dst-prefix=b/ refs/remotes/origin/main..." .. HEAD .. " --" }, "the diff of the reviewed head against the base, where the agent worked, argv only")
 	local main = b.view().main
 	eq(findKey(main, "run", "text").p.text, "r1", "the run is published for the window")
-	same(cardIds(b), { "c1", "c4", "c2", "c3" }, "grouped by file in the order the proposal names them, the comment off the diff last")
-	local d = findKey(findKey(main, "c1", "card"), "diff", "col").c[1]
+	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "summary, four comments, instructions")
+	same({ navState(b, 1), navState(b, 4) }, { "Kept", "Dropped" }, "on the diff starts kept, off it dropped")
+	eq(selectedOf(b), "main.body.nav.n0", "the summary is selected first")
+	-- Only the selected item's detail is drawn.
+	lacks(detailText(b), "z is unused", "the summary's detail holds no comment")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n2" })
+	has(detailText(b), "Keep 2", "the second row is c4: file order")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n4" })
+	has(detailText(b), "Why?", "the last row is the one off the diff")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	local d = findKey(findKey(b.view().main, "detail"), "diff", "col").c[1]
 	eq(d.k, "diff", "Tern's diff node")
-	eq(d.p.text, "--- a/src/a.lua\n+++ b/src/a.lua\n@@ -1,4 +1,5 @@\n local x = 1\n-local y = 2\n+local y = 3\n+local z = 4\n return x\n -- end\n", "the card's diff is Tern's diff node of the rows around its line")
+	eq(d.p.text, "--- a/src/a.lua\n+++ b/src/a.lua\n@@ -1,4 +1,5 @@\n local x = 1\n-local y = 2\n+local y = 3\n+local z = 4\n return x\n -- end\n", "the diff of the rows around the line")
 	eq(d.p.path, "src/a.lua", "highlighted as its file")
-	yes(findKey(findKey(main, "c2", "card"), "diff", "col"), "a LEFT comment on a removed line is on the diff too")
-	local f1 = findKey(main, "f1", "section")
-	same({ f1.p.head[1].t, findKey(f1, "c1", "card") ~= nil, findKey(f1, "c2", "card") ~= nil, findKey(f1, "c3", "card") } :: { any }, { "src/a.lua", true, true, nil } :: { any }, "src/a.lua's section holds c1 and c4")
-	local off = findKey(main, "off", "section")
-	has(textOf(off), "Not on a changed line", "the off-diff section is headed so")
-	has(textOf(off), "Why?", "and holds c3")
-	lacks(textOf(off), "keep=", "with no Keep or Drop button")
-	has(textOf(findKey(main, "c4", "card")), "Dropped", "c3 starts dropped")
-	has(textOf(findKey(main, "c1", "card")), "Kept", "a comment on the diff starts kept")
-	-- j to c3 (the 4th card), Space: refused with why.
-	b.typeText("jjjj")
+	has(detailText(b), "z is unused", "and the comment")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n3" })
+	yes(findKey(findKey(b.view().main, "detail"), "diff", "col"), "a LEFT comment on a removed line is on the diff too")
+	-- j to c3 (the 4th comment), where Space is refused with why.
+	b.typeText("j")
+	has(detailText(b), "Why?", "c3 is selected")
+	has(detailText(b), "Not on a changed line", "and says it cannot be kept")
+	lacks(textOf(findKey(findKey(b.view().main, "detail"), "buttons")), "Keep", "with no Keep button")
 	b.typeText(" ")
 	eq(w.toasts[#w.toasts].text, "Not on a changed line", "Space on it says why it cannot be kept")
-	has(textOf(findKey(b.view().main, "c4", "card")), "Dropped", "and it stays dropped")
+	eq(navState(b, 4), "Dropped", "and it stays dropped")
+	clean(b, "the loaded review")
 	w.finish()
 end)
 
-case("review: keys pick, edit, keep and drop; Send carries the kept comments as edited, the dropped ids, verdict, summary and instructions", function(w: World)
+case("review: keys and clicks pick, edit, keep and drop; Send carries the kept comments as edited, the dropped ids, verdict, summary and instructions", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
-	-- The summary is first: e edits it.
+	-- The summary is first: e edits it, Done leaves.
 	b.typeText("e")
-	yes(findKey(b.view().main, "summary", "card") and findKey(findKey(b.view().main, "summary", "card"), "text", "editor"), "e on the summary opens its editor")
+	yes(findKey(findKey(b.view().main, "detail"), "text", "editor"), "e on the summary opens its editor")
+	clean(b, "editing the summary")
 	b.typeText(" Fix both.")
-	b.press("escape")
+	b.event({ ev = "action", act = "done" })
+	lacks(textOf(findKey(b.view().main, "detail")), "Done", "Done leaves the editor")
 	-- c1: edit its body.
 	b.typeText("j")
-	has(textOf(findKey(findKey(b.view().main, "c1", "card"), "buttons")), "Space", "the selected card shows its keys beside its buttons")
+	eq(selectedOf(b), "main.body.nav.n1", "j moves the selection")
 	b.typeText("e")
 	b.press("backspace")
 	b.typeText("d here")
 	b.press("escape")
-	-- c4: drop it.
-	b.typeText("j ")
-	has(textOf(findKey(b.view().main, "c2", "card")), "Dropped", "Space drops the selected comment")
+	-- c4: drop it with a click on its Drop button.
+	b.typeText("j")
+	b.event({ ev = "action", act = "keep", value = "2" })
+	eq(navState(b, 2), "Dropped", "Drop drops the comment")
+	b.event({ ev = "action", act = "keep", value = "2" })
+	eq(navState(b, 2), "Kept", "and Keep keeps it again")
+	b.typeText(" ")
+	eq(navState(b, 2), "Dropped", "Space drops the selected comment")
 	-- Request changes.
 	b.typeText("3")
-	eq(findKey(b.view().main, "request_changes", "item").p.tone, "accent", "3 picks Request changes")
-	-- The instructions line, last: two more j past c2 and c3.
-	b.typeText("jjje")
+	eq(findKey(b.view().main, "request_changes", "item").p.icon, "check", "3 picks Request changes")
+	eq(findKey(b.view().main, "comment", "item").p.icon, nil, "and only it has the check")
+	has(textOf(findKey(b.view().main, "count")), "2 kept · 2 dropped", "the count follows")
+	-- The instructions are last: Edit instructions opens them.
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n5" })
+	b.event({ ev = "action", act = "edit", value = "5" })
 	b.typeText("tone down c1")
 	b.press("enter", "m")
 	local opened = w.opened[#w.opened]
@@ -173,13 +209,37 @@ case("review: keys pick, edit, keep and drop; Send carries the kept comments as 
 	same({ choices.repo, choices.number, choices.head } :: { any }, { "o/r", 5, HEAD } :: { any }, "for the pull request and head reviewed")
 	has(text, "My instructions: tone down c1", "the typed instructions go with it")
 	lacks(text, "head moved", "the head did not move")
-	has(textOf(findKey(b.view().main, "send-card")), "Sending…", "it shows it is sending")
+	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	b.typeText("3")
+	b.event({ ev = "action", act = "edit", value = "1" })
+	b.event({ ev = "action", act = "verdict", value = "approve" })
+	eq(sentChoices(b).verdict, "request_changes", "while sending the verdict stays")
+	clean(b, "sending")
 	b.event({ ev = "action", act = "sent" })
-	has(textOf(b.view().main), "Sent", "the window's answer: Sent")
-	b.typeText("kkkk ")
-	has(textOf(findKey(b.view().main, "c1", "card")), "Kept", "after Send nothing changes")
-	lacks(textOf(findKey(b.view().main, "send-card")), "Send to agent", "and there is no second Send")
+	yes(findKey(b.view().main, "sent", "badge"), "the window's answer: Sent")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	b.typeText("k ")
+	eq(navState(b, 1), "Kept", "after Send nothing changes")
+	eq(findKey(b.view().main, "send", "item"), nil, "and there is no second Send")
+	clean(b, "sent")
 	eq(b.saved().sent, AT1, "it stays Sent after a restart")
+	w.finish()
+end)
+
+case("review: nothing is edited, kept or sent while the diff loads", function(w: World)
+	reviewScene(w)
+	w.load("host")
+	local b = w.openReview(2, { "r1", "/wt/r5" })
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	b.typeText("e ")
+	lacks(detailText(b), "Done", "a comment cannot be edited yet")
+	eq(navState(b, 1), "Kept", "nor kept or dropped")
+	local before = #w.opened
+	b.press("enter", "m")
+	eq(#w.opened, before, "nor sent")
+	clean(b, "loading")
+	w.flush()
+	eq(navState(b, 1), "Kept", "the loaded review starts as proposed")
 	w.finish()
 end)
 
@@ -199,17 +259,18 @@ case("review: a reload keeps your edits for the same proposal and starts over fo
 	b.typeText("j ")
 	b.event({ ev = "action", act = "reload" })
 	w.flush()
-	has(textOf(findKey(b.view().main, "c1", "card")), "Dropped", "the same file: the choice stays")
+	eq(navState(b, 1), "Dropped", "the same file: the choice stays")
 	local revised = proposal(AT2)
 	revised.summary = "Revised."
 	w.fs.files[FILE] = jsonEncode(revised)
 	b.event({ ev = "action", act = "reload" })
 	w.flush()
-	has(textOf(findKey(b.view().main, "c1", "card")), "Kept", "a revised proposal starts over")
-	has(textOf(findKey(b.view().main, "summary", "card")), "Revised.", "with its summary")
+	eq(navState(b, 1), "Kept", "a revised proposal starts over")
+	has(detailText(b), "Revised.", "with its summary")
 	b.press("enter", "m")
 	b.event({ ev = "action", act = "gone", value = "The agent that proposed this review is gone." })
-	has(textOf(findKey(b.view().main, "send-card")), "The agent that proposed this review is gone.", "the block says why")
+	has(textOf(findKey(b.view().main, "gone")), "The agent that proposed this review is gone.", "the block says why")
+	clean(b, "a gone agent")
 	b.typeText("c")
 	local _, text = sentChoices(b)
 	eq(w.copied[#w.copied], text, "c copies the message for the agent")
@@ -342,7 +403,7 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	b.press("enter", "m")
 	w.flush()
 	eq(#w.window.agentCalls, asked, "nothing goes to a gone agent")
-	has(textOf(findKey(b.view().main, "send-card")), "gone", "the block says so")
+	has(textOf(findKey(b.view().main, "gone")), "gone", "the block says so")
 	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
 	w.finish()
 end)
