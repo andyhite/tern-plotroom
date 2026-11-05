@@ -282,7 +282,7 @@ def luau_banner(luau: Path) -> str:
 
 def check_css() -> None:
     """plotroom.css: scoped selectors, and none of the syntax Tern's engine rejects (docs.stencil.so/tern/styles/css.md)."""
-    scope = "[data-surface='plugin.plotroom.prs']"
+    scopes = ("[data-surface='plugin.plotroom.prs']", "[data-surface='plugin.plotroom.review']")
     text = re.sub(r"/\*.*?\*/", "", (PLUGIN / "plotroom.css").read_text(encoding="utf-8"), flags=re.S)
     problems = []
     for match in re.finditer(r"([^{};]+)\{", text):
@@ -290,7 +290,7 @@ def check_css() -> None:
         if prelude.startswith("@") or re.fullmatch(r"(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*", prelude):
             continue
         for selector in prelude.split(","):
-            if not selector.strip().startswith(scope):
+            if not selector.strip().startswith(scopes):
                 problems.append("selector outside the block's scope: %s" % selector.strip())
     for bad in (r"\d(rem|ch)\b", r":has\(", r"\b(margin|padding|border|inset)-(inline|block)\b", r"\binset-(inline|block)\b"):
         for found in re.finditer(bad, text):
