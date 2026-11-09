@@ -1186,17 +1186,20 @@ local function addRepo(cx: WindowCx, pane: number, repo: string)
 end
 
 -- The repositories gh login `login` can access, listed by the block's host (its heading shows they are loading), to
--- pick the one to add.
+-- pick the one to add. A list cut short by a failed read is still offered, after a toast that says so.
 local function pickProfile(cx: WindowCx, pane: number, login: string)
 	ask(cx, pane, "profile", { login = login }, REPOS_MS, function(a: any, cx2: WindowCx)
-		if type(a.problem) == "string" then
-			return cx2:toast("error", "The repositories of @" .. login .. " are not listed", a.problem)
-		end
 		local items: { PickItem } = {}
 		for _, name in if type(a.repos) == "table" then a.repos else {} do
 			if type(name) == "string" then
 				table.insert(items, { label = name })
 			end
+		end
+		if type(a.problem) == "string" then
+			if #items == 0 then
+				return cx2:toast("error", "The repositories of @" .. login .. " are not listed", a.problem)
+			end
+			cx2:toast("error", "Could not load every repository of @" .. login .. "; open the list again to retry", a.problem)
 		end
 		if #items == 0 then
 			return cx2:toast("info", "@" .. login .. " has no repositories")
