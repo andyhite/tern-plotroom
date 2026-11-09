@@ -132,6 +132,31 @@ case("logs: the {failures} block fits its cap, names each check and cannot be cl
 	eq(logs.block("abc", {}, 8000), "<failures>\nNone: no check is failing at head abc.\n</failures>", "nothing failing says so")
 end)
 
+case("logs: a cut {failures} excerpt ends with the log lines it leaves out, in one gap", function(w: World)
+	local logs = w.load("logs") :: any
+	-- an excerpt as cut makes it: gaps standing for 50 and 200 log lines around L01..L30 (4 bytes a line with its newline)
+	local lines: { string } = { "… 50 lines" }
+	for i = 1, 30 do
+		table.insert(lines, string.format("L%02d", i))
+		if i == 15 then
+			table.insert(lines, "… 200 lines")
+		end
+	end
+	local fixed = #logs.block("h", { { name = "c", lines = {} } }, 8000) -- the block without its excerpt
+	local function excerpt(room: number): string
+		local text: string = logs.block("h", { { name = "c", lines = lines } }, fixed + 13 + #logs.gap(999999999) + room)
+		return string.match(text, "```text\n(.-)\n```") :: string
+	end
+	-- room for the 50-line gap (13 bytes) and L01..L05: L06..L15, 200 and L16..L30 are left out
+	eq(excerpt(33), "… 50 lines\nL01\nL02\nL03\nL04\nL05\n… 225 lines", "the closing gap counts log lines, not entries")
+	-- room through the 200-line gap (14 bytes): it and L16..L30 are one gap
+	local cut = excerpt(87)
+	eq(string.sub(cut, -21), "L14\nL15\n… 215 lines", "a kept gap right before the cut merges into the closing one")
+	lacks(cut, "… 200 lines", "never two gap lines in a row")
+	-- room for nothing: the whole excerpt is one gap
+	eq(excerpt(5), "… 280 lines", "the first gap merges too")
+end)
+
 case("host: the preview shows a failing check's first error line, its excerpt in a fold, read once per check and head commit", function(w: World)
 	local s = hostScene(w, 0)
 	failing(s.gh, 1, true)
