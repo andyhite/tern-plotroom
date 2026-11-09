@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A Draft review comment on a file whose path holds a space is placed on the diff and can be kept, instead of showing as Not on a changed line: the tab git ends such a diff header with is no longer read as part of the path.
 - A chain step whose agent started while the agent links could not be read or saved no longer starts a second agent for the same step (at the next tick, or after the 12-minute start limit as a failed start): the step waits while that unlinked agent runs, and is due again once it exits or its pane closes.
 - Snoozing a Jira issue that is Changed by someone else's comment no longer marks that comment seen: when the snooze ends it is still Changed until you show its preview or Mark seen. Only those mark when you last saw an item; snoozing never moves it.
 - A checked run whose merge check went unanswered (its Plotroom block closed mid-ask, or a slow host) is asked again at the next ten-minute sweep, instead of never again until the window restarts, so its merged work still counts as agreed in the usage report.

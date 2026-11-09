@@ -114,8 +114,9 @@ function M.parse(raw: string): (Proposal?, string?)
 	return { at = at, repo = repo, number = number, head = string.lower(head), summary = summary, verdict = o.verdict, comments = comments }, nil
 end
 
--- A unified diff (`git diff`, a/ and b/ prefixes) by file. ponytail: a path git quotes (special characters) is kept
--- quoted, so comments on it are not placed; unquote C-style escapes if that shows up.
+-- A unified diff (`git diff`, a/ and b/ prefixes) by file. Git ends a ---/+++ path that holds a space with a tab, which
+-- is not part of the path. ponytail: a path git quotes (special characters) is kept quoted, so comments on it are not
+-- placed; unquote C-style escapes if that shows up.
 function M.parseDiff(raw: string): Diff
 	local files: Diff = {}
 	local old: string?, new: string? = nil, nil
@@ -127,9 +128,9 @@ function M.parseDiff(raw: string): Diff
 		if string.sub(line, 1, 11) == "diff --git " then
 			old, new, hunks, hunk = nil, nil, nil, nil
 		elseif not hunk and string.sub(line, 1, 4) == "--- " then
-			old = if line == "--- /dev/null" then nil else string.match(line, "^%-%-%- a/(.*)$")
+			old = if line == "--- /dev/null" then nil else string.match(line, "^%-%-%- a/(.-)\t?$")
 		elseif not hunk and string.sub(line, 1, 4) == "+++ " then
-			new = if line == "+++ /dev/null" then nil else string.match(line, "^%+%+%+ b/(.*)$")
+			new = if line == "+++ /dev/null" then nil else string.match(line, "^%+%+%+ b/(.-)\t?$")
 			local path = new or old
 			if path then
 				local list = files[path] or {}
