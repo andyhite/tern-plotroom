@@ -4,7 +4,8 @@
 
 local M = {}
 
-export type Entry = { seen: string?, snoozeUntil: number?, at: number }
+-- `seenAt` is when markSeen last ran; `at` is when the entry was last written (seen or snoozed), for pruning.
+export type Entry = { seen: string?, seenAt: number?, snoozeUntil: number?, at: number }
 export type Store = { version: number, items: { [string]: Entry } }
 export type Status = { fresh: "new" | "changed" | "seen", snoozed: boolean, snoozeUntil: number? }
 
@@ -100,7 +101,8 @@ local function validate(v: any): string?
 			return BAD
 		end
 		if (e.seen ~= nil and (type(e.seen) ~= "string" or #e.seen > 64))
-			or (e.snoozeUntil ~= nil and type(e.snoozeUntil) ~= "number") then
+			or (e.snoozeUntil ~= nil and type(e.snoozeUntil) ~= "number")
+			or (e.seenAt ~= nil and type(e.seenAt) ~= "number") then
 			return BAD
 		end
 	end
@@ -207,6 +209,7 @@ function M.markSeen(store: Store, kind: string, item: any, now: number)
 	local e = entry(store, item, now)
 	if e then
 		e.seen = M.signature(kind, item)
+		e.seenAt = now
 	end
 end
 

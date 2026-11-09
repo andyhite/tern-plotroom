@@ -329,11 +329,11 @@ function M.store(state: State, again: boolean?): any
 	return state.triage
 end
 
--- When `issue` was last seen (its triage entry's time), nil when it never was (New).
+-- When `issue` was last seen (markSeen's time), nil when it never was (New). Entries written before seenAt existed fall back to `at`.
 local function seenAt(store: triage.Store, issue: any): number?
 	local key = triage.sanitizeKey(issue.key)
 	local e = if key then store.items[key] else nil
-	return if e and e.seen ~= nil then e.at else nil
+	return if e and e.seen ~= nil then e.seenAt or e.at else nil
 end
 
 -- What Jira's answer about `issue` (jira.yours) holds for: the issue as it is now and when it was last seen.

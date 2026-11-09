@@ -589,6 +589,73 @@ case("now: a seen assigned Jira issue someone else comments on is listed as Assi
 	same(whys(b), {}, "and Now no longer lists it")
 end)
 
+case("now: snoozing a comment-Changed Jira issue keeps it Changed after the snooze; Mark seen or its preview clears it", function(w: World)
+	local function changes(updated: number, comments: { any }): any
+		return { key = "x", fields = { updated = h.iso(updated), comment = { comments = h.array(comments) } } }
+	end
+	local function comment(email: string, at: number): any
+		return { author = { emailAddress = email }, created = h.iso(at), updated = h.iso(at) }
+	end
+	local _, b, acli = nowScene(w, {}, function(_, acli: h.Acli)
+		acli.searches[h.JIRA_NOW] = { jiraItem("ABC-5", "Seen") }
+		acli.searches[h.JIRA_ASSIGNED] = { jiraItem("ABC-6", "Other"), jiraItem("ABC-5", "Seen") }
+		acli.changes["ABC-5"] = changes(EPOCH - 600, {})
+	end)
+	local ROW = "nabc_23ABC-5"
+	local function inNow(): { string }
+		pickScope(b, "now")
+		refreshNow(w, b)
+		return whys(b)
+	end
+	-- A view's List shows the selected item's preview, which marks it seen; its Board shows none, so snoozing and
+	-- Mark seen act there on a card nobody has opened. Answers the Board's selected card and ROW's card title.
+	local function onBoard(): (string?, string?)
+		pickScope(b, "issues:v3")
+		w.flush()
+		local _, selected = h.hx.board(b)
+		local card: any = h.findKey(h.pickerNode(b), ROW, "item")
+		return selected and string.match(selected, "[^.]+$"), card and card.p.title
+	end
+	local CHANGED = "Changed since you marked it seen"
+	pickScope(b, "issues:v3")
+	w.flush()
+	b.event({ ev = "select", id = "layer.queue", item = ROW }) -- its preview marks it seen
+	w.flush()
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
+	w.flush()
+	w.advance(60 * 1000)
+	acli.changes["ABC-5"] = changes(EPOCH + 30, { comment("bob@example.com", EPOCH + 30) }) -- after it was seen, before the snooze
+	same(inNow(), { ROW .. " Assigned: changed" }, "Bob's comment lists it as changed")
+	eq((onBoard()), ROW, "its card is selected on the view's Board")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "snooze" })
+	w.flush()
+	yes(w.kv.get("triage").items["abc#ABC-5"].snoozeUntil ~= nil, "it is snoozed")
+	w.advance(2 * 24 * 3600 * 1000) -- past 08:00 tomorrow: the snooze has ended
+	same(inNow(), { ROW .. " Assigned: changed" }, "once the snooze ends it is still changed: snoozing did not see Bob's comment")
+	local at, title = onBoard()
+	eq(title, CHANGED, "and its card on the view's Board is Changed")
+	if at ~= ROW then
+		b.press("down")
+	end
+	eq((onBoard()), ROW, "its card selected")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "seen" })
+	w.flush()
+	w.advance(60 * 1000)
+	same(inNow(), {}, "Mark seen clears it, and Bob's comment, older than that, does not bring it back")
+	yes(select(2, onBoard()) ~= CHANGED, "its card is no longer Changed")
+	local later = EPOCH + 2 * 24 * 3600 + 300
+	acli.changes["ABC-5"] = changes(later, { comment("bob@example.com", EPOCH + 30), comment("bob@example.com", later) })
+	w.advance(600 * 1000) -- its preview below is shown after this comment
+	same(inNow(), { ROW .. " Assigned: changed" }, "a newer comment of Bob's changes it again")
+	eq(select(2, onBoard()), CHANGED, "on the Board too")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" }) -- the List shows its preview
+	w.flush()
+	eq(pickerOf(b).selected, ROW, "the List selects it")
+	eq(asks.hx.mark(b, ROW), "-", "showing its preview clears it")
+	w.advance(60 * 1000)
+	same(inNow(), {}, "and Now no longer lists it")
+end)
+
 -- Whether Now asked acli's search for exactly `jql`.
 local function askedJql(acli: h.Acli, jql: string): boolean
 	for _, req in acli.requests do
