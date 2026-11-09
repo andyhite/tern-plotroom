@@ -91,7 +91,7 @@ local ACT_MS = 30 * 1000
 local COMMIT_MS = 3 * 60 * 1000
 local EXPECTED_S = 300 -- the run log's medians are read again at most this often, and after every run it gains
 local DRAFT_MS = 3 * 60 * 1000 -- the host's ls-remote/fetch may take 120 s
-local OPEN_URL_TRIES = 20 -- of 500 ms: a launched block has 10 seconds to say its protocol
+local OPEN_URL_TRIES = 20 -- of 500 ms: a launched or not yet rendered block has 10 seconds to say its protocol
 local OPEN_URL_STEP_MS = 500
 local MAX_TITLE = 256
 local MAX_BODY = 8000
@@ -2136,7 +2136,8 @@ end
 
 -- ---------------------------------------------------------------- open item by URL
 
--- Sends open-url once the block in `pane` has published its protocol node: a launched block needs a moment.
+-- Sends open-url once the block in `pane` has published its protocol node: a launched block, or an existing one
+-- that has not rendered yet (just launched by another request, or still connecting), needs a moment.
 local function whenReady(cx: WindowCx, pane: number, tries: number, fn: (WindowCx) -> ())
 	if type(e().nodeProp(e().readNode(cx, pane, "main.rpc"), "text")) == "string" then
 		return fn(cx)
@@ -2165,7 +2166,7 @@ end
 local function openIn(cx: WindowCx, pane: number?, url: string)
 	if pane then
 		cx.layout:focus(pane)
-		return whenReady(cx, pane, 0, function(cx3: WindowCx)
+		return whenReady(cx, pane, OPEN_URL_TRIES, function(cx3: WindowCx)
 			sendUrl(cx3, pane :: number, url)
 		end)
 	end

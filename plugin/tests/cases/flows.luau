@@ -1693,6 +1693,43 @@ windowCase("window flows: Open item by URL reuses a Plotroom block, and launches
 	eq(w.toasts[#w.toasts].text, "Plotroom did not start in time", "a block that never answers is given up on")
 end)
 
+windowCase("window flows: Open item by URL waits for an existing Plotroom block that has not rendered yet, and sends at once to a ready one", function(w: World)
+	w.load("window")
+	-- ready: the URL goes out with no timer step
+	local st = flowHost(w)
+	w.window.typed = "https://github.com/o/r/pull/5"
+	w.command("open-url")
+	w.flush()
+	same(st.ops(), { "open-url" }, "a ready block is asked at once")
+	st.reply("open-url", { ok = true, message = "Opened o/r#5" })
+	-- existing but not rendered yet: it says its protocol a few hundred ms later
+	w.window.surfaces[1] = {}
+	local said = #w.toasts
+	w.command("open-url")
+	w.flush()
+	w.advance(700)
+	same(st.ops(), { "open-url" }, "nothing is sent before the block renders")
+	local st2 = flowHost(w)
+	w.advance(500)
+	same(st2.ops(), { "open-url", "open-url" }, "once it renders the URL is sent to it")
+	st2.reply("open-url", { ok = true, message = "Opened o/r#5" })
+	eq(#w.window.launches, 0, "no block is launched")
+	for i = said + 1, #w.toasts do
+		yes(w.toasts[i].text ~= "Plotroom did not start in time", "a block that renders late is not given up on")
+	end
+	eq(w.toasts[#w.toasts].text, "Opened o/r#5", "the item is opened")
+	-- existing and never rendered: the same budget as a launched block, then a toast
+	w.window.surfaces[1] = {}
+	said = #w.toasts
+	w.command("open-url")
+	w.flush()
+	w.advance(9000)
+	eq(#w.toasts, said, "the budget is not spent before ten seconds")
+	w.advance(2000)
+	eq(w.toasts[#w.toasts].text, "Plotroom did not start in time", "a block that never renders is given up on")
+	same(st2.ops(), { "open-url", "open-url" }, "and no URL is sent")
+end)
+
 case("lens: a gh pr create transcript offers to show, copy and open the new pull request; output without its URL stays raw", function(w: World)
 	w.load("host")
 	local def: any = w.lenses["pr-create"]

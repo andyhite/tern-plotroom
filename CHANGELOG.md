@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Open item by URL and the shell lens's Show in Plotroom wait up to 10 s for an open Plotroom block that has not shown yet (one an earlier request just launched, or one still connecting to its host), as for a block they launch, instead of failing at once with "Plotroom did not start in time".
 - A gh login's repository list that a failed page cut short now says so in an error toast and is no longer kept for 10 minutes as if whole: opening the list again asks GitHub again.
 - A name format in Settings › Repositories › Name formats that cannot be read, or is not text, now locks its row saying so and is never written over, instead of showing as the default and being replaced by the next save.
 - A `{failures}` excerpt cut to its share ends with the number of log lines left out, counting the lines each earlier `… N lines` stood for, and a gap just before the cut merges into it instead of standing as a second gap line.
