@@ -677,7 +677,7 @@ local function repos(state: State, id: string)
 end
 
 -- The repository picker's second page: the repositories gh login `login` can access, most recently pushed first, cut
--- to MENU_BUDGET. Without them, `problem` says why.
+-- to MENU_BUDGET. When they are missing or cut short by a failed read, `problem` says why.
 local function profile(state: State, id: string, login: string)
 	state.listing += 1
 	github.repos(login, MENU_BUDGET, function(names, problem)

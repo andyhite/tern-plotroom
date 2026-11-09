@@ -893,6 +893,45 @@ case("host: the project pickers: Jira's list puts saved projects first with thei
 	eq(answerOf(b, "r2").problem, nil, "with no problem")
 end)
 
+case("host: a repository list cut short by a failed page reaches the picker with its problem and is read again; a whole one is kept", function(w: World)
+	local s = jiraHost(w)
+	local gh = s.gh
+	gh.tokens.octocat = "tok-octo"
+	local many: { string } = {}
+	for i = 1, 150 do
+		table.insert(many, "o/r" .. i)
+	end
+	gh.repos.octocat = many
+	local failing = true
+	local prev = gh.override
+	gh.override = function(req: GhReq): Reply?
+		if failing and req.kind == "repos" and req.fields.page == "2" then
+			return { status = 1, stderr = "gh: Not Found (HTTP 404)\n" }
+		end
+		return if prev then prev(req) else nil
+	end
+	local b = openIssues(w)
+	local function profile(id: string): any
+		request(b, id, { op = "profile", login = "octocat" })
+		w.flush()
+		w.advance(5000)
+		return answerOf(b, id)
+	end
+	local cut = profile("r1")
+	eq(#cut.repos, 100, "the names of the first page are listed")
+	yes(type(cut.problem) == "string" and cut.problem ~= "", "with the problem of the failed page")
+	failing = false
+	local asked = #requestsOf(gh, "repos")
+	local whole = profile("r2")
+	eq(#requestsOf(gh, "repos") - asked, 2, "the cut list was not kept: gh is asked again, both pages")
+	eq(#whole.repos, 150, "and the whole list is answered")
+	eq(whole.problem, nil, "with no problem")
+	asked = #requestsOf(gh, "repos")
+	local again = profile("r3")
+	eq(#requestsOf(gh, "repos"), asked, "a whole list is kept: no gh within the TTL")
+	same(again.repos, whole.repos, "the same names")
+end)
+
 windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotroom-o_r-issue-12", function(w: World)
 	local s, b = issueWindow(w)
 	local target = "/wt/plotroom-o_r-issue-12"

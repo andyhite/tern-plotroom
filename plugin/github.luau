@@ -1574,7 +1574,8 @@ end
 
 -- What the repository picker lists, read slowly from gh, so kept by `key`: a known value answers at once (one older
 -- than `ttl` seconds, LIST_TTL_S by default, is then read again in the background), and callers during a read share
--- it. `read` calls its callback once with the value, or nil and why. ponytail: in memory only; changes on GitHub show after the TTL.
+-- it. `read` calls its callback once with the value, or nil and why; a value with a problem (a list cut short) reaches
+-- the callers with it and is never kept, so the next call asks gh again. ponytail: in memory only; changes on GitHub show after the TTL.
 local LIST_TTL_S = 10 * 60
 local kept: { [string]: { at: number, value: any } } = {}
 local reading: { [string]: { (any, Problem?) -> () } } = {}
@@ -1597,13 +1598,13 @@ local function cached(key: string, read: ((any, Problem?) -> ()) -> (), done: (a
 	end
 	reading[key] = { done }
 	read(function(value: any, problem: Problem?)
-		if value ~= nil then
+		if value ~= nil and problem == nil then
 			kept[key] = { at = os.time(), value = value }
 		end
 		local callers: { (any, Problem?) -> () } = reading[key] or {}
 		reading[key] = nil
 		for _, cb in callers do
-			cb(value, if value ~= nil then nil else problem)
+			cb(value, problem)
 		end
 	end)
 end
@@ -1668,7 +1669,7 @@ end
 -- "owner/name" of the repositories gh login `account` can access (owned, collaborator, org member), most recently
 -- pushed first; done(names, problem). Pages of 100 are read one at a time until `budget` bytes of names (a name counts
 -- its length + 3) are listed or the list ends, so a huge account does not outlast the 30 s a page is given. A page that
--- fails after the first leaves the names read so far.
+-- fails after the first leaves the names read so far with the problem, and that cut list is not kept.
 function M.repos(account: string, budget: number, done: ({ string }?, Problem?) -> ())
 	cached("repos:" .. account, function(finish)
 		local names: { string } = {}
