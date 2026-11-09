@@ -329,10 +329,32 @@ function M.store(state: State, again: boolean?): any
 	return state.triage
 end
 
--- Where `item` stands in the triage store (nil without a readable store).
+-- When `issue` was last seen (its triage entry's time), nil when it never was (New).
+local function seenAt(store: triage.Store, issue: any): number?
+	local key = triage.sanitizeKey(issue.key)
+	local e = if key then store.items[key] else nil
+	return if e and e.seen ~= nil then e.at else nil
+end
+
+-- What Jira's answer about `issue` (jira.yours) holds for: the issue as it is now and when it was last seen.
+local function yoursMark(store: triage.Store, issue: any): string
+	return triage.signature("issues", issue) .. "|" .. tostring(seenAt(store, issue))
+end
+
+-- Where `item` stands in the triage store (nil without a readable store). A seen Jira issue that someone else
+-- commented on since (jira.yours, which Now asks for its assigned issues) is Changed: acli's search reads no comments,
+-- so the signature cannot tell. Seeing it again moves its seen time, and the answer no longer holds.
 function M.status(state: State, kind: string, item: any): any
 	local store = M.store(state)
-	return if store then triage.status(store, kind, item, os.time()) else nil
+	if not store then
+		return nil
+	end
+	local st = triage.status(store, kind, item, os.time())
+	local had = if st.fresh == "seen" and item.tracker == "jira" then state.now.yours[item.key] else nil
+	if had and had.yours == false and had.mark == yoursMark(store, item) then
+		st.fresh = "changed"
+	end
+	return st
 end
 
 -- Whether the agent of item `key` needs you: it waits for input; or, idle after its turn, its end-of-run report says
@@ -924,7 +946,7 @@ function M.autoSeen(state: State)
 	if not st or st.fresh == "seen" then
 		return
 	end
-	local sig = item.key .. "\0" .. triage.signature(snap.kind, item)
+	local sig = item.key .. "\0" .. triage.signature(snap.kind, item) .. "\0" .. tostring(seenAt(M.store(state), item))
 	if state.seenTried == sig then
 		return
 	end
@@ -3140,18 +3162,6 @@ local NOW_ASSIGNED = "is:open assignee:@me archived:false"
 local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
 
--- When assigned `issue` was last seen (its triage entry's time), nil when it never was (New).
-local function seenAt(store: triage.Store, issue: any): number?
-	local key = triage.sanitizeKey(issue.key)
-	local e = if key then store.items[key] else nil
-	return if e and e.seen ~= nil then e.at else nil
-end
-
--- What Jira's answer about `issue` (jira.yours) holds for: the issue as it is now and when it was last seen.
-local function yoursMark(store: triage.Store, issue: any): string
-	return triage.signature("issues", issue) .. "|" .. tostring(seenAt(store, issue))
-end
-
 -- Reads Now's sources once, while none is being read. A source that cannot be read keeps its last answer and says why
 -- (`now.problems`); a login GitHub's cooldown holds is not asked. Nothing falls back to another login: a login whose
 -- notifications cannot be read keeps its own last ones. While a sign-in failure or a missing CLI holds the block, Now is
@@ -3210,14 +3220,18 @@ function M.nowRead(state: State)
 		end
 		local store = M.store(state)
 		if not asked and not kept.assigned and store then
-			-- Jira's New or Changed assigned issues: was the newest change your own? A "yours" answer is asked again
-			-- every read (someone may have acted since); any other holds while the issue and its seen time do.
+			-- Jira's assigned issues: was the newest change of a New or Changed one your own, and did someone else comment
+			-- on a seen one since you saw it (M.status)? A "yours" answer, and a seen issue's answer that nobody else
+			-- commented, are asked again every read (someone may have acted since); any other holds while the issue and
+			-- its seen time do.
 			asked = true
 			local clock = os.time()
 			for _, issue in fresh.assigned do
 				local mark = yoursMark(store, issue)
 				local had = now.yours[issue.key]
-				if issue.tracker == "jira" and triage.status(store, "issues", issue, clock).fresh ~= "seen" and not (had and had.mark == mark and had.yours ~= true) then
+				local seen = triage.status(store, "issues", issue, clock).fresh == "seen"
+				local holds = had ~= nil and had.mark == mark and (if seen then had.yours == false else had.yours ~= true)
+				if issue.tracker == "jira" and not holds then
 					pending += 1
 					jira.yours(issue.ref, seenAt(store, issue), function(yours: boolean?)
 						now.yours[issue.key] = { mark = mark, yours = yours }
@@ -3532,7 +3546,7 @@ function M.nowRows(state: State): { any }
 	end
 	local assigned: { any } = {}
 	for _, issue in now.assigned do
-		local st = if store then triage.status(store, "issues", issue, clock) else nil
+		local st = if store then M.status(state, "issues", issue) else nil
 		if st and st.fresh ~= "seen" and not ownChange(now, store :: triage.Store, issue) then
 			why[issue.key] = if st.fresh == "new" then "New" else "Changed"
 			table.insert(assigned, issue)

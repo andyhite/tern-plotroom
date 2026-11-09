@@ -548,6 +548,47 @@ case("now: a Jira issue whose newest change is your own is not listed, until som
 	has(table.concat(listed(b), ","), "nabc_23ABC-1", "Bob's comment lists it again")
 end)
 
+case("now: a seen assigned Jira issue someone else comments on is listed as Assigned: changed and is Changed in a view; your own comment lists nothing", function(w: World)
+	local function changes(updated: number, comments: { any }): any
+		return { key = "x", fields = { updated = h.iso(updated), comment = { comments = h.array(comments) } } }
+	end
+	local function comment(email: string, at: number): any
+		return { author = { emailAddress = email }, created = h.iso(at), updated = h.iso(at) }
+	end
+	local _, b, acli = nowScene(w, {}, function(_, acli: h.Acli)
+		acli.searches[h.JIRA_NOW] = { jiraItem("ABC-5", "Seen") }
+		acli.searches[h.JIRA_ASSIGNED] = { jiraItem("ABC-6", "Other"), jiraItem("ABC-5", "Seen") }
+		acli.changes["ABC-5"] = changes(EPOCH - 600, {})
+	end)
+	local ROW = "nabc_23ABC-5"
+	pickScope(b, "issues:v3")
+	w.flush()
+	b.event({ ev = "select", id = "layer.queue", item = ROW }) -- its preview marks it seen
+	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-6" })
+	w.flush()
+	eq(asks.hx.mark(b, ROW), "-", "seen in the view")
+	pickScope(b, "now")
+	refreshNow(w, b)
+	same(whys(b), {}, "seen and nobody changed it: not listed")
+	acli.changes["ABC-5"] = changes(EPOCH + 60, { comment("ann@example.com", EPOCH + 60) })
+	w.advance(60 * 1000)
+	refreshNow(w, b)
+	same(whys(b), {}, "your own comment lists nothing")
+	acli.changes["ABC-5"] = changes(EPOCH + 120, { comment("ann@example.com", EPOCH + 60), comment("bob@example.com", EPOCH + 120) })
+	w.advance(60 * 1000)
+	refreshNow(w, b)
+	same(whys(b), { ROW .. " Assigned: changed" }, "Bob's comment lists it as changed")
+	pickScope(b, "issues:v3")
+	w.flush()
+	eq(asks.hx.mark(b, ROW), "Changed", "and its view row is Changed")
+	b.event({ ev = "select", id = "layer.queue", item = ROW })
+	w.flush()
+	eq(asks.hx.mark(b, ROW), "-", "seeing it again clears it")
+	pickScope(b, "now")
+	refreshNow(w, b)
+	same(whys(b), {}, "and Now no longer lists it")
+end)
+
 -- Whether Now asked acli's search for exactly `jql`.
 local function askedJql(acli: h.Acli, jql: string): boolean
 	for _, req in acli.requests do

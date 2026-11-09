@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A seen Jira issue assigned to you that someone else comments on is **Changed** again (Now lists it as Assigned: changed, its view rows show Changed): each refresh of Now reads one `acli jira workitem view` per seen assigned Jira issue for its newest comments. Your own comment still lists nothing.
 - Mark seen and Snooze until tomorrow run from a key bind or `tern ctl plugins run` while Now, Worktrees or Agents is shown do nothing, instead of marking or snoozing the hidden view's selected item.
 - Draft review: a send link opened from the block before Send or after Sent (for example one inside the summary or a comment) no longer sends the review to the agent again, and no longer turns the block into "The message could not be read".
 - Likely flaky's "passed earlier on this commit" counts only an earlier attempt of the same workflow run (its check suite): a failing pull_request check whose same-named push check passed on the head commit is no longer marked Likely flaky.
