@@ -92,7 +92,7 @@ User-facing text never shows internal names: protocol numbers, pane or run ids, 
 | **5: Autopilot** | Hand off a whole view, not one item | Opt-in view as the work source; Implement → Check → Fix (at most 3 rounds) → PR ready for review; slots, graceful stop, recovery from the run log; everything surfaces in Now. It never pushes to a base branch and never merges. | Gate to start: the checker agrees with you on at least 80% of 20 or more checked runs |
 | **6: Review and layout** | Approve agent work where it happens, and see the queue at a glance | Plotroom's omp extension (tools agents use to hand work back); the review block and Draft reviews; a Board layout per view (after a spike); Summaries | A Review run ends in a Draft review you edit and send without leaving Tern |
 
-Phases 0–3 and 6 are queued as kata issues. Each is blocked by its prerequisites until they close, because the build loop otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
+Phases 0–3 and 6 are queued as kata issues. Each is blocked by its prerequisites until they close, because roundhouse otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
 
 ## Metrics
 
