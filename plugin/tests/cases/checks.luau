@@ -2087,9 +2087,10 @@ end)
 
 local JOB = "https://github.com/o/r/actions/runs/1/job/"
 
--- One check run attempt of a PR's head commit as EVIDENCE_JQ prints it.
-local function attempt(workflow: string, name: string, conclusion: string, job: string, paths: { string }?): any
-	return { workflow = workflow, name = name, conclusion = conclusion, url = JOB .. job, paths = array(paths or {}) }
+-- One check run attempt of a PR's head commit as EVIDENCE_JQ prints it, in check suite `suite` (default: one suite,
+-- one workflow run, per workflow).
+local function attempt(workflow: string, name: string, conclusion: string, job: string, paths: { string }?, suite: string?): any
+	return { suite = suite or ("suite-" .. workflow), workflow = workflow, name = name, conclusion = conclusion, url = JOB .. job, paths = array(paths or {}) }
 end
 
 -- `n` finished runs of a workflow on the base branch, the first `failed` of them failed, as `gh run list` prints them.
@@ -2113,6 +2114,34 @@ local function failingPr(s: HostScene, n: number, author: string, head: string, 
 	s.gh.checks["o/r#" .. n] = checks
 	return searchItem(n, "o/r", EPOCH - n * 60, { author = author, checks = "FAILURE", merge = "BLOCKED", runs = array(checks), runTotal = #checks, headSha = head })
 end
+
+case("host likely flaky: a same-named check of another run (a push run beside the pull_request run) that passed on the head is not an earlier attempt; one of the same run is", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		failingPr(s, 1, "octocat", sha("1"), { "test:12" }),
+		failingPr(s, 2, "octocat", sha("2"), { "test:22" }),
+	}
+	-- on: [push, pull_request]: the push run passed, the pull_request run (the merge with the base) failed
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({
+		attempt("CI", "test", "SUCCESS", "11", nil, "push-run"),
+		attempt("CI", "test", "FAILURE", "12", nil, "pr-run"),
+	}) }
+	-- the pull_request run's first attempt passed, its re-run failed
+	s.gh.evidence["o/r#2"] = { head = sha("2"), files = array({}), runs = array({
+		attempt("CI", "test", "SUCCESS", "21", nil, "pr-run"),
+		attempt("CI", "test", "FAILURE", "22", nil, "pr-run"),
+	}) }
+	local b = openQueue(w)
+	w.flush()
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	eq(detailText(rows.no_2fr_231), "#1 · test failing", "the push run's pass says nothing of the pull_request run")
+	eq(rows.no_2fr_231.badges[2].text, "Fix checks · 1/1 failing", "so it is a fix")
+	eq(detailText(rows.no_2fr_232), "#2 · test passed earlier on this commit", "an earlier attempt of the same run passed")
+	eq(rows.no_2fr_232.badges[2].text, "Re-run · likely flaky", "a re-run")
+end)
 
 case("host likely flaky: a failing check that failed 3 of the last 20 base runs or passed earlier on its head is marked, one a changed file's annotation blames is not; the Blocked detail and the Next move follow every failing check", function(w: World)
 	local s = hostScene(w, 0)
@@ -3211,8 +3240,8 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE", runs = array(checks), runTotal = 2, headSha = sha("c") }) }
 	-- an earlier attempt of build passed on this head: Likely flaky, so its Next move re-runs it
 	s.gh.evidence["o/r#1"] = { head = sha("c"), files = array({}), runs = array({
-		{ workflow = "CI", name = "build", conclusion = "FAILURE", url = base .. "/actions/runs/123/job/9", paths = array({}) },
-		{ workflow = "CI", name = "build", conclusion = "SUCCESS", url = base .. "/actions/runs/122/job/8", paths = array({}) },
+		{ suite = "CS_1", workflow = "CI", name = "build", conclusion = "FAILURE", url = base .. "/actions/runs/123/job/9", paths = array({}) },
+		{ suite = "CS_1", workflow = "CI", name = "build", conclusion = "SUCCESS", url = base .. "/actions/runs/123/job/8", paths = array({}) },
 	}) }
 	s.gh.checks["o/r#1"] = checks
 	s.gh.about["o/r#1"] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "## Why\nBecause.", reviews = array({ { login = "ann", state = "APPROVED" } }), requested = array({}) }
