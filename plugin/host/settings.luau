@@ -668,7 +668,13 @@ local function pageContent(state: State): ({ any }, { Node })
 	else -- general: the keyboard shortcuts, then Refresh now with the pacing and GitHub's quota
 		local map, unreadable = keys.load()
 		section("keys", "Keyboard shortcuts")
-		row({ id = "kpreset", label = "Use one-key shortcuts", hint = "Binds j k w g a G m z Z n o / r s ? u d to the actions with no key; a shortcut you removed stays removed", disabled = unreadable, control = { k = "action", act = "preset-keys", label = "Use" } })
+		local presets: { string } = {}
+		for _, a in keys.ACTIONS do
+			if a.preset then
+				table.insert(presets, a.preset)
+			end
+		end
+		row({ id = "kpreset", label = "Use one-key shortcuts", hint = "Binds " .. table.concat(presets, " ") .. " to the actions with no key; a shortcut you removed stays removed", disabled = unreadable, control = { k = "action", act = "preset-keys", label = "Use" } })
 		for _, a in keys.ACTIONS do
 			row({
 				id = "key:" .. a.id,
