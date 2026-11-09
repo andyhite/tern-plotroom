@@ -43,7 +43,7 @@ export const VERDICTS = ["comment", "approve", "request_changes"] as const;
 export const SIDES = ["RIGHT", "LEFT"] as const;
 export const KINDS = ["problem", "question", "suggestion", "nit"] as const;
 
-export const DONE = "Plotroom opened this Draft review beside you. End your turn now; the user's choices arrive as the next message.";
+export const DONE = "Plotroom opened this Draft review beside you. Now call plotroom_report with attention needs-human, then end your turn; the user's choices arrive as the next message.";
 
 export const ATTENTION = ["ok", "stuck", "needs-human"] as const;
 export const CHECKS = ["pass", "fail"] as const;
@@ -213,7 +213,7 @@ export default function plotroom(pi: ExtensionAPI) {
 		name: "plotroom_propose_review",
 		label: "Plotroom: propose review",
 		description:
-			"Propose a pull request review to the user instead of posting it. Plotroom shows it as a Draft review beside you, where the user keeps, edits or drops each comment and picks the verdict. Calling it again replaces the proposal. After calling it, end your turn: the user's choices arrive as the next message.",
+			"Propose a pull request review to the user instead of posting it. Plotroom shows it as a Draft review beside you, where the user keeps, edits or drops each comment and picks the verdict. Calling it again replaces the proposal. After calling it, call plotroom_report with attention needs-human, then end your turn: the user's choices arrive as the next message.",
 		parameters: z.object({
 			repo: z.string().describe('The pull request\'s repository, "owner/name"'),
 			number: z.number().describe("The pull request's number"),
