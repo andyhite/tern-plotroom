@@ -2222,6 +2222,59 @@ case("host likely flaky: at most 10 pull requests are judged a refresh, each onc
 	eq(#requestsOf(s.gh, "history"), 0, "and reads no base history")
 end)
 
+-- Answers every `gh run list` (a base-history read) with GitHub's rate limit while `held.on`.
+local function holdHistory(w: World): { on: boolean }
+	local held = { on = true }
+	w.respond(function(call: h.Call): Reply?
+		if held.on and call.argv[1] == "gh" and call.argv[2] == "run" and call.argv[3] == "list" then
+			return { status = 1, stderr = "gh: API rate limit exceeded for user ID 1. (HTTP 429)\n" }
+		end
+		return nil
+	end)
+	return held
+end
+
+case("host likely flaky: a base-history read the rate limit held back stores nothing for the head; the next refresh reads it again and marks the check", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("1"), { "build:11" }) }
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", "11") }) }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	local held = holdHistory(w)
+	local b = openQueue(w)
+	w.flush()
+	eq(#requestsOf(s.gh, "flaky"), 1, "the head is judged")
+	eq(detailText(pickerOf(b).items[1]), "#1 · build failing", "a held-back history marks nothing")
+	held.on = false
+	w.advance(10 * 60 * 1000) -- past the rate-limit pause
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "no result was stored for the head, so the next refresh judges it again")
+	eq(#requestsOf(s.gh, "history"), 1, "and reads the base history again")
+	local row = pickerOf(b).items[1]
+	eq(detailText(row), "#1 · build failed 3 of the last 20 runs on main", "now the check is Likely flaky")
+	eq(row.badges[2].text, "Re-run · likely flaky", "and the chip's job is a re-run")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "a full judgment is kept for the head")
+end)
+
+case("host likely flaky: a check that passed earlier on its head is marked though the base-history read was held back", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("1"), { "e2e:41" }) }
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("E2E", "e2e", "SUCCESS", "40"), attempt("E2E", "e2e", "FAILURE", "41") }) }
+	local held = holdHistory(w)
+	local b = openQueue(w)
+	w.flush()
+	local row = pickerOf(b).items[1]
+	eq(detailText(row), "#1 · e2e passed earlier on this commit", "the mark that needs no history stands")
+	eq(row.badges[2].text, "Re-run · likely flaky", "a re-run")
+	held.on = false
+	w.advance(10 * 60 * 1000)
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "the head is judged again for the history it lacked")
+	eq(detailText(pickerOf(b).items[1]), "#1 · e2e passed earlier on this commit", "and keeps its mark")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "then not again")
+end)
+
 -- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted
 -- issue 12 on `bob/12-fix-login`, the head branch of fork PR 1 (a fork's worktree is on <owner>/<branch>).
 local function notedScene(w: World): (HostScene, Block)
