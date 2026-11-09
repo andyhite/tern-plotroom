@@ -75,6 +75,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - A seen Jira issue assigned to you that someone else comments on is **Changed** again (Now lists it as Assigned: changed, its view rows show Changed): each refresh of Now reads one `acli jira workitem view` per seen assigned Jira issue for its newest comments. Your own comment still lists nothing.
+- Merging the base before conflicts regenerates a conflicted `poetry.lock` on Poetry 2 with `poetry lock` (Poetry 2 removed `--no-update`, so it always failed and left the conflict); Poetry 1 still gets `poetry lock --no-update`.
 - Mark seen and Snooze until tomorrow run from a key bind or `tern ctl plugins run` while Now, Worktrees or Agents is shown do nothing, instead of marking or snoozing the hidden view's selected item.
 - Draft review: a send link opened from the block before Send or after Sent (for example one inside the summary or a comment) no longer sends the review to the agent again, and no longer turns the block into "The message could not be read".
 - Draft review: Send on a remote host no longer fails with "The message could not be read" when the send link arrives before the block shows the message (the window looks for it for up to 3 s), and no longer stays on Sending forever when the link is lost: after 15 s with no answer the block says the message may not have reached the agent and offers Copy.

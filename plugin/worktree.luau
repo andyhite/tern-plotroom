@@ -1485,7 +1485,7 @@ M.LOCKFILES = {
 	["pnpm-lock.yaml"] = { "pnpm", "install", "--lockfile-only", "--ignore-scripts" },
 	["Cargo.lock"] = { "cargo", "update", "--workspace" },
 	["go.sum"] = { "go", "mod", "tidy" },
-	["poetry.lock"] = { "poetry", "lock", "--no-update" },
+	["poetry.lock"] = { "poetry", "lock" }, -- Poetry 1.x gets `--no-update` back (poetryArgv)
 	["uv.lock"] = { "uv", "lock" },
 	["Gemfile.lock"] = { "bundle", "lock" },
 	["composer.lock"] = { "composer", "update", "--lock", "--no-scripts" },
@@ -1493,6 +1493,16 @@ M.LOCKFILES = {
 
 -- Files a lockfile's tool also rewrites, in the lockfile's folder, staged with it: `go mod tidy` edits go.mod too.
 local ALSO_STAGED = { ["go.sum"] = "go.mod" } :: { [string]: string }
+
+-- Poetry 2 dropped `lock --no-update` (not updating is its default), while a bare `poetry lock` on Poetry 1 upgrades
+-- every dependency: so the lock argv carries `--no-update` unless `poetry --version` names a major of 2 or more (a
+-- version it cannot read keeps `--no-update`, which fails on Poetry 2 rather than upgrade on Poetry 1).
+local function poetryArgv(cwd: string, done: ({ string }) -> ())
+	process.run({ "poetry", "--version" }, { cwd = cwd, timeout_ms = LOCAL_MS, env = ENV }, function(r)
+		local major = if r and r.status == 0 then tonumber(string.match(r.stdout, "(%d+)%.%d+")) else nil
+		done(if major and major >= 2 then { "poetry", "lock" } else { "poetry", "lock", "--no-update" })
+	end)
+end
 
 -- What `premerge` did: merged `base` (`<remote>/<branch>`) into the worktree's branch; regenerated these lockfiles;
 -- `failed` lockfiles whose tool failed (left conflicted, `why`); `remaining` files still conflicted (failed ones
@@ -1562,28 +1572,36 @@ function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
 				return failed(err)
 			end
 			local name = string.match(file, "([^/]+)$") or ""
-			local tool = M.LOCKFILES[name]
+			local known = M.LOCKFILES[name]
 			local dir = string.match(file, "^(.*)/[^/]+$")
 			local stage = { "add", "--", file }
 			if ALSO_STAGED[name] then
 				table.insert(stage, if dir then dir .. "/" .. ALSO_STAGED[name] else ALSO_STAGED[name])
 			end
-			process.run(tool, { cwd = if dir then path .. "/" .. dir else path, timeout_ms = NET_MS, env = ENV }, function(r, perr)
-				if not r then
-					return failed(perr or (tool[1] .. " could not be started"))
-				elseif r.timed_out then
-					return failed(tool[1] .. " timed out")
-				elseif r.status ~= 0 then
-					return failed(table.concat(tool, " ") .. " failed: " .. github.firstLines(if r.stderr ~= "" then r.stderr else r.stdout, 1))
-				end
-				git(path, stage, LOCAL_MS, function(_, aerr)
-					if aerr then
-						return failed(aerr)
+			local cwd = if dir then path .. "/" .. dir else path
+			local function run(tool: { string })
+				process.run(tool, { cwd = cwd, timeout_ms = NET_MS, env = ENV }, function(r, perr)
+					if not r then
+						return failed(perr or (tool[1] .. " could not be started"))
+					elseif r.timed_out then
+						return failed(tool[1] .. " timed out")
+					elseif r.status ~= 0 then
+						return failed(table.concat(tool, " ") .. " failed: " .. github.firstLines(if r.stderr ~= "" then r.stderr else r.stdout, 1))
 					end
-					table.insert(m.regenerated, file)
-					regenerate(locks, i + 1)
+					git(path, stage, LOCAL_MS, function(_, aerr)
+						if aerr then
+							return failed(aerr)
+						end
+						table.insert(m.regenerated, file)
+						regenerate(locks, i + 1)
+					end)
 				end)
-			end)
+			end
+			if name == "poetry.lock" then
+				poetryArgv(cwd, run)
+			else
+				run(known)
+			end
 		end)
 	end
 	git(path, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, ferr, cx)
