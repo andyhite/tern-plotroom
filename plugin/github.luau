@@ -2193,8 +2193,8 @@ function M.evidence(repo: string, number: number, account: string?, done: (Evide
 	end, account)
 end
 
--- How the last runs (up to 20) of workflow `workflow` on branch `base` of `repo` ended: `failed` (failure, timed out
--- or startup failure) of `total` finished ones. Kept per account, repository, branch and workflow for an hour.
+-- How the last pushes (up to 20 runs) of workflow `workflow` on branch `base` of `repo` ended: `failed` (failure, timed
+-- out or startup failure) of `total` finished ones. Kept per account, repository, branch and workflow for an hour.
 export type History = { failed: number, total: number }
 local HISTORY_TTL_S = 60 * 60
 function M.baseHistory(repo: string, base: string, workflow: string, account: string?, done: (History?, Problem?) -> ())
@@ -2211,8 +2211,10 @@ function M.baseHistory(repo: string, base: string, workflow: string, account: st
 				finish(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
 			end)
 		end
-		-- `--flag=value` keeps a branch or workflow that starts with a dash from being read as a flag.
-		M.gh({ "run", "list", "--repo", target, "--branch=" .. base, "--workflow=" .. workflow, "--limit", "20", "--json", "conclusion,status" }, function(out, problem)
+		-- `--flag=value` keeps a branch or workflow that starts with a dash from being read as a flag. GitHub's branch
+		-- filter matches a run's head branch, so a fork's pull request from its own `main` is a run "on main": only push
+		-- runs are the base branch's own.
+		M.gh({ "run", "list", "--repo", target, "--branch=" .. base, "--event=push", "--workflow=" .. workflow, "--limit", "20", "--json", "conclusion,status" }, function(out, problem)
 			if not out then
 				return finish(nil, problem)
 			end

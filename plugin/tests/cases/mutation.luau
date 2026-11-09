@@ -210,7 +210,7 @@ case("github.baseHistory and evidence: a workflow's last 20 base runs counted an
 	same(hist, { failed = 3, total = 5 }, "failure, timed out and startup failure fail; a run still going is not counted")
 	local lists = requestsOf(gh, "history")
 	eq(#lists, 1, "one read")
-	same(lists[1].call.argv, { "gh", "run", "list", "--repo", "github.com/o/r", "--branch=main", "--workflow=CI build", "--limit", "20", "--json", "conclusion,status" }, "argv only: the workflow's name is one argument")
+	same(lists[1].call.argv, { "gh", "run", "list", "--repo", "github.com/o/r", "--branch=main", "--event=push", "--workflow=CI build", "--limit", "20", "--json", "conclusion,status" }, "argv only: the workflow's name is one argument; only the base branch's own (push) runs")
 	w.advance(59 * 60 * 1000)
 	read("main")
 	eq(#requestsOf(gh, "history"), 1, "kept for an hour")

@@ -2137,7 +2137,7 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	eq(#requestsOf(s.gh, "flaky"), 4, "each Blocked pull request with failing checks is judged")
 	local lists = requestsOf(s.gh, "history")
 	eq(#lists, 3, "the base history of each workflow is read once: CI serves two pull requests")
-	eq(table.concat(lists[1].call.argv, " "), "gh run list --repo github.com/o/r --branch=main --workflow=CI --limit 20 --json conclusion,status", "the base branch's last 20 runs of the same workflow, as argv")
+	eq(table.concat(lists[1].call.argv, " "), "gh run list --repo github.com/o/r --branch=main --event=push --workflow=CI --limit 20 --json conclusion,status", "the base branch's last 20 push runs of the same workflow, as argv")
 	local rows: { [string]: any } = {}
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row
@@ -2198,6 +2198,41 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	eq(chip(rows.no_2fr_232), "Fix checks · 1/1 failing", "its chip is a fix again")
 	move = show("no_2fr_232")
 	eq(move, "Watch", "so your PR goes to Watch")
+end)
+
+case("host likely flaky: pull_request runs from a head branch named like the base (a fork's main) are not the base's history; its push runs still count", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = {
+		failingPr(s, 1, "octo", sha("1"), { "build:11" }),
+		failingPr(s, 2, "octocat", sha("2"), { "lint:21" }),
+	}
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", "11") }) }
+	s.gh.evidence["o/r#2"] = { head = sha("2"), files = array({}), runs = array({ attempt("Lint", "lint", "FAILURE", "21") }) }
+	-- CI on main: the fork PR's own 3 failed runs from its `main` (event pull_request), then 17 passing pushes
+	local ci: { any } = {}
+	for _ = 1, 3 do
+		table.insert(ci, { status = "completed", conclusion = "failure", event = "pull_request" })
+	end
+	for _ = 1, 17 do
+		table.insert(ci, { status = "completed", conclusion = "success", event = "push" })
+	end
+	s.gh.history["o/r@main@CI"] = ci
+	-- Lint on main: passing pull_request runs from main-named heads, and 3 failed of 20 pushes
+	local lint = baseRuns(3, 20)
+	for _ = 1, 5 do
+		table.insert(lint, 1, { status = "completed", conclusion = "success", event = "pull_request" })
+	end
+	s.gh.history["o/r@main@Lint"] = lint
+	local b = openQueue(w)
+	w.flush()
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	eq(detailText(rows.no_2fr_231), "#1 · build failing", "the fork PR's own failures on main-named heads mark nothing")
+	eq(rows.no_2fr_231.badges[2].text, "Fix checks · 1/1 failing", "so it is a fix, not a re-run")
+	eq(detailText(rows.no_2fr_232), "#2 · lint failed 3 of the last 20 runs on main", "3 failed pushes of 20 still mark it")
+	eq(rows.no_2fr_232.badges[2].text, "Re-run · likely flaky", "and the chip's job is a re-run")
 end)
 
 case("host likely flaky: a check list cut short (more checks than loaded) is never all flaky; a complete one whose failing checks are all marked still re-runs", function(w: World)

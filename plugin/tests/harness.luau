@@ -1700,7 +1700,7 @@ export type Gh = {
 	checkTotal: { [string]: number },
 	about: { [string]: { [string]: any } }, -- "owner/repo#N" -> the `about` part CHECKS_JQ prints
 	evidence: { [string]: { any } }, -- "owner/repo#N" -> {head, files, runs} as EVIDENCE_JQ prints it; none: no files, no runs, head null
-	history: { [string]: { any } }, -- "owner/repo@base@workflow" -> the runs `run list` prints ({conclusion, status}), newest first; none: no runs
+	history: { [string]: { any } }, -- "owner/repo@base@workflow" -> the runs `run list` prints ({conclusion, status, event?}; no event: push), newest first, kept to `--event=`'s; none: no runs
 	linked: { [string]: { any } }, -- "owner/repo#ref" (an issue number or a Jira key) -> the pull requests PR_LINK_JQ prints for it: {number, title, head, branch, base}
 	heads: { [string]: { any } }, -- "owner/repo@branch" -> the pull requests `pr list --head` prints for it: {number, title, state, isDraft, url}
 	limits: { [string]: GhLimit }, -- login -> GraphQL quota, reported in the response headers
@@ -1913,15 +1913,22 @@ local function newGh(w: World): Gh
 			local body = jsonEncode(gh.evidence[id] or { head = NULL, files = array({}), runs = array({}) })
 			return { stdout = headers(lim) .. body }
 		elseif kind == "history" then
-			local repo, branch, workflow = "", "", ""
+			local repo, branch, workflow, event = "", "", "", nil
 			for j = 4, #argv do
 				if argv[j - 1] == "--repo" then
 					repo = (string.gsub(argv[j], "^github%.com/", ""))
 				end
 				branch = string.match(argv[j], "^%-%-branch=(.*)$") or branch
 				workflow = string.match(argv[j], "^%-%-workflow=(.*)$") or workflow
+				event = string.match(argv[j], "^%-%-event=(.*)$") or event
 			end
-			return { stdout = jsonEncode(array(gh.history[repo .. "@" .. branch .. "@" .. workflow] or {})) }
+			local runs: { any } = {}
+			for _, run in (gh.history[repo .. "@" .. branch .. "@" .. workflow] or {}) :: { any } do
+				if event == nil or (run.event or "push") == event then
+					table.insert(runs, run)
+				end
+			end
+			return { stdout = jsonEncode(array(runs)) }
 		elseif kind == "issue-search" then
 			local list = gh.issueItems[key] or {}
 			for text, found in gh.queries do
