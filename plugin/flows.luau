@@ -1056,92 +1056,118 @@ end
 -- gateRun. The caller starts what became due (window's drive).
 -- While the agent's transcript does not show its turn over yet (settled) and the agent is still there (the turn ended
 -- done or failed), this waits: it runs again SETTLE_MS later, at most SETTLE_TRIES times, then records what the
--- transcript shows, and starts what became due itself.
+-- transcript shows, and starts what became due itself. The wait keeps the host and link found at the turn end and the
+-- newest transcript read: when the pane closes during it (no host lists it, or its transcript cannot be read), the turn
+-- is recorded with that read at the next retry, and a turn end of the same pane that arrives during it (closed, exited)
+-- records the waited turn first.
 local SETTLE_MS, SETTLE_TRIES = 1000, 10
-function M.recordResult(cx: WindowCx, agent: number, result: string, tries: number?)
-	local host = hostOf(cx, agent)
+type Wait = { host: HostId, result: string, msgs: { any }?, tries: number }
+local waits: { [number]: Wait } = {} -- agent pane -> its turn end waiting for the transcript
+
+local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string, msgs: { any }?)
+	local first = l.result == nil
+	local report = usage.reportOf(turnReport(msgs))
+	l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
+	if report then
+		l.attention, l.reason, l.blocker = report.attention, clip(report.reason, LAST_CAP), clip(report.blocker, LAST_CAP)
+		l.commit = report.commit or l.commit
+	elseif first then
+		l.attention, l.reason, l.blocker = "none", nil, nil
+	end
+	local verdict: string? = nil
+	local findings: { string } = {}
+	if l.checkAgent and (first or (report and report.check)) then
+		verdict = if report and report.check then report.check else "fail"
+		findings = if report then report.findings else {}
+		if verdict == "fail" and #findings == 0 then
+			findings = { if not report then "The checker ended without a report." elseif not report.check then "The checker gave no pass or fail." else "The checker gave no findings." }
+		end
+		l.check, l.findings = verdict, clip(table.concat(findings, " · "), FINDINGS_CAP)
+	end
+	if first then
+		usage.appendRun({
+			key = l.key,
+			action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
+			kind = l.kind,
+			model = l.model,
+			runsIn = l.runsIn,
+			started = l.started,
+			ended = os.time(),
+			result = result,
+			attention = if report then report.attention else "none",
+			reason = if report then report.reason else nil,
+			commit = if report then report.commit else nil,
+			pr = if report then report.pr else nil,
+			evidence = if report then report.evidence else nil,
+			blocker = if report then report.blocker else nil,
+			outcome = l.outcome,
+			criteria = l.criteria,
+			check = verdict,
+			findings = if verdict then findings else nil,
+			login = l.login,
+			ghRepo = l.ghRepo,
+			number = l.number,
+			branch = l.branch,
+			depth = if l.chain then l.chain.depth else nil,
+			checking = if l.checkAgent then true else nil,
+		})
+		medians = nil -- the next working agent expects the log's new median
+	elseif report and report.commit then
+		usage.setCommit(l.key, l.started, report.commit)
+	end
+	if verdict then
+		usage.setCheck(l.key, l.checkStarted, verdict, findings)
+	end
+	local runs = usage.readRuns()
+	if verdict then
+		settleCheck(cx, links, l, verdict, findings, runs)
+	else
+		gateRun(cx, links, l, result, report, runs)
+	end
+	if writeLinks(links) then
+		checkOutcome(cx, l)
+	end
+end
+
+-- Records (or keeps waiting on) the turn end `wt` of the agent pane `agent`; `final`: record now with the newest read.
+local function settle(cx: WindowCx, agent: number, wt: Wait, final: boolean)
 	local links, healthy = readLinks()
-	if not healthy or not host then
+	if not healthy then
 		return
 	end
 	for _, l in links do
-		if l.agent == agent and hostSame(l.host, host) then
-			local msgs = transcriptOf(cx, agent)
-			local live = result == "done" or result == "failed"
-			if msgs and live and not settled(msgs, l.run ~= nil) and (tries or 0) < SETTLE_TRIES then
+		if l.agent == agent and hostSame(l.host, wt.host) then
+			local gone = wt.tries > 0 and not hostOf(cx, agent)
+			local msgs = if gone then nil else transcriptOf(cx, agent)
+			local live = wt.result == "done" or wt.result == "failed"
+			if not final and msgs and live and not settled(msgs, l.run ~= nil) and wt.tries < SETTLE_TRIES then
+				wt.msgs, wt.tries = msgs, wt.tries + 1
+				waits[agent] = wt
 				tern.timer(SETTLE_MS, function(cx2: WindowCx?)
-					if cx2 then
-						M.recordResult(cx2, agent, result, (tries or 0) + 1)
+					if cx2 and waits[agent] == wt then
+						waits[agent] = nil
+						settle(cx2, agent, wt, false)
 						M.agentSync(cx2)
 						e().drive(cx2)
 					end
 				end)
 				return
 			end
-			local first = l.result == nil
-			local report = usage.reportOf(turnReport(msgs))
-			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
-			if report then
-				l.attention, l.reason, l.blocker = report.attention, clip(report.reason, LAST_CAP), clip(report.blocker, LAST_CAP)
-				l.commit = report.commit or l.commit
-			elseif first then
-				l.attention, l.reason, l.blocker = "none", nil, nil
-			end
-			local verdict: string? = nil
-			local findings: { string } = {}
-			if l.checkAgent and (first or (report and report.check)) then
-				verdict = if report and report.check then report.check else "fail"
-				findings = if report then report.findings else {}
-				if verdict == "fail" and #findings == 0 then
-					findings = { if not report then "The checker ended without a report." elseif not report.check then "The checker gave no pass or fail." else "The checker gave no findings." }
-				end
-				l.check, l.findings = verdict, clip(table.concat(findings, " · "), FINDINGS_CAP)
-			end
-			if first then
-				usage.appendRun({
-					key = l.key,
-					action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
-					kind = l.kind,
-					model = l.model,
-					runsIn = l.runsIn,
-					started = l.started,
-					ended = os.time(),
-					result = result,
-					attention = if report then report.attention else "none",
-					reason = if report then report.reason else nil,
-					commit = if report then report.commit else nil,
-					pr = if report then report.pr else nil,
-					evidence = if report then report.evidence else nil,
-					blocker = if report then report.blocker else nil,
-					outcome = l.outcome,
-					criteria = l.criteria,
-					check = verdict,
-					findings = if verdict then findings else nil,
-					login = l.login,
-					ghRepo = l.ghRepo,
-					number = l.number,
-					branch = l.branch,
-					depth = if l.chain then l.chain.depth else nil,
-					checking = if l.checkAgent then true else nil,
-				})
-				medians = nil -- the next working agent expects the log's new median
-			elseif report and report.commit then
-				usage.setCommit(l.key, l.started, report.commit)
-			end
-			if verdict then
-				usage.setCheck(l.key, l.checkStarted, verdict, findings)
-			end
-			local runs = usage.readRuns()
-			if verdict then
-				settleCheck(cx, links, l, verdict, findings, runs)
-			else
-				gateRun(cx, links, l, result, report, runs)
-			end
-			if writeLinks(links) then
-				checkOutcome(cx, l)
-			end
+			recordTurn(cx, links, l, wt.result, msgs or wt.msgs)
 			return
 		end
+	end
+end
+
+function M.recordResult(cx: WindowCx, agent: number, result: string)
+	local pending = waits[agent]
+	if pending then
+		waits[agent] = nil
+		settle(cx, agent, pending, true)
+	end
+	local host = hostOf(cx, agent)
+	if host then
+		settle(cx, agent, { host = host, result = result, tries = 0 }, false)
 	end
 end
 
