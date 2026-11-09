@@ -93,8 +93,9 @@ local function withSite(done: (string?, Problem?) -> ())
 			return done(nil, { kind = "auth", message = "acli did not name a Jira site; run acli jira auth login." })
 		end
 		site = "https://" .. host
-		user = string.match(out, "Email:%s*([%w%.%-_+]+)@") or ""
-		email = string.match(out, "Email:%s*([%w%.%-_+]+@[%w%.%-]+)") or ""
+		-- The email is the whole token (a local part may hold ' & and more); `{jira.user}` keeps only branch-safe characters of it.
+		email = string.match(out, "Email:%s*(%S+@[%w%.%-]+)") or ""
+		user = string.gsub(string.match(email, "^(.*)@") or "", "[^%w%.%-_+]", "")
 		done(site, nil)
 	end)
 end

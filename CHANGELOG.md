@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A Jira sign-in whose email has characters beyond letters, digits and `. - _ +` before the `@` (such as `pat.o'brien@corp.com`) is read whole: Assign to me and Comment… no longer fail with "acli did not name the signed-in email", and Now hides your own changes again. `{jira.user}` drops those characters, so branch names stay valid.
 - Merging the base before conflicts no longer runs in a fork PR's worktree: no `git merge` or commit (the fork's git hooks could run) and no lockfile tool (`bundle lock`, `pnpm`, `uv`/`poetry` can run the fork's code). Its agent resolves the conflict itself.
 - `plotroom_propose_review` (its description and its answer) now tells the agent to call `plotroom_report` with attention needs-human before ending its turn, instead of ending it at once, so a Review run waiting on its Draft review shows under **Needs you** instead of **No report**.
 - Bare-repository layouts (`repo/.bare` plus a linked worktree you work in): Worktrees no longer lists your saved checkout, Remove worktree refuses it ("That is the checkout; Plotroom never removes it.") instead of running `git worktree remove` on it, and Worktree on a pull request whose head branch it has checked out says so instead of reusing your checkout as the PR's worktree.

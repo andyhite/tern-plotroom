@@ -2262,6 +2262,27 @@ case("host mutations: a Jira assign names the account and site and is refused wh
 	eq(#ran, 0, "and nothing was assigned")
 end)
 
+case("host mutations: a Jira assign works for a signed-in email whose local part has an apostrophe", function(w: World)
+	local s = jiraHost(w)
+	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login")
+	local ran: { string } = {}
+	s.acli.override = function(req: AcliReq): Reply?
+		if req.kind == "auth" then
+			return { stdout = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: pat.o'brien@corp.com\n" }
+		elseif req.kind == "other" then
+			table.insert(ran, table.concat(req.argv, " "))
+			return { stdout = "✓ done\n" }
+		end
+		return nil
+	end
+	local b = openIssues(w)
+	local p = asks.hx.ask(w, b, { op = "act", name = "assign-me" })
+	eq(p.problem, nil, "the sign-in names its email")
+	eq(p.confirm.lines[2], "Jira account: pat.o'brien@corp.com at https://acme.atlassian.net", "the whole email, apostrophe and all")
+	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).message, "Assigned ABC-12 to you", "committed as that account")
+	same(ran, { "acli jira workitem assign --key ABC-12 --assignee @me --yes" }, "acli assigned it")
+end)
+
 case("host mutations: rerun-failed plans the failed runs by their real run ids, runs view then rerun, and refuses a pull request with none", function(w: World)
 	local s = hostScene(w, 0)
 	local base = "https://github.com/o/r"
