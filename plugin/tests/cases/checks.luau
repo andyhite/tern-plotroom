@@ -2225,7 +2225,7 @@ end)
 -- Answers every `gh run list` (a base-history read) with GitHub's rate limit while `held.on`.
 local function holdHistory(w: World): { on: boolean }
 	local held = { on = true }
-	w.respond(function(call: Call): Reply?
+	w.respond(function(call: h.Call): Reply?
 		if held.on and call.argv[1] == "gh" and call.argv[2] == "run" and call.argv[3] == "list" then
 			return { status = 1, stderr = "gh: API rate limit exceeded for user ID 1. (HTTP 429)\n" }
 		end
