@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A name format in Settings › Repositories › Name formats that cannot be read, or is not text, now locks its row saying so and is never written over, instead of showing as the default and being replaced by the next save.
 - Settings › General › Use one-key shortcuts now names every key it binds, `h`, `l` and `x` included.
 - A Draft review comment on a file whose path holds a space is placed on the diff and can be kept, instead of showing as Not on a changed line: the tab git ends such a diff header with is no longer read as part of the path.
 - A Blocked pull request whose only failing check not ignored is Likely flaky now shows **Re-run · likely flaky** and the Next move **Re-run failed checks**: an ignored failing check (Ignore this check…) no longer turns it into **Fix checks** and Watch.

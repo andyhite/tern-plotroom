@@ -527,7 +527,7 @@ local function pageContent(state: State): ({ any }, { Node })
 			if f.id == "prdir" and not cli.on("github") then
 				continue -- pull requests need gh
 			end
-			local saved = formats.saved(f.id)
+			local saved, unreadable = formats.saved(f.id)
 			row({
 				id = "fmt:" .. f.id,
 				label = f.label,
@@ -535,6 +535,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				control = { k = "text", value = saved, placeholder = formats.DEFAULTS[f.id], mono = true },
 				changed = saved ~= "",
 				defaultLabel = formats.DEFAULTS[f.id],
+				disabled = unreadable,
 			})
 		end
 		local checkouts = readCheckouts()

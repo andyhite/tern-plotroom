@@ -383,9 +383,14 @@ end
 formats.KEYS = { branch = "branch-format", prdir = "pr-dir-format", issuedir = "issue-dir-format" } :: { [string]: string }
 formats.DEFAULTS = { branch = tracker.BRANCH_DEFAULT, prdir = tracker.PR_DIR_DEFAULT, issuedir = tracker.ISSUE_DIR_DEFAULT } :: { [string]: string }
 
-function formats.saved(which: string): string
+-- The saved format, "" when unset; and why it could not be read (unreadable or not a string), when the default
+-- applies meanwhile and formats.save never writes over it.
+function formats.saved(which: string): (string, string?)
 	local ok, v = pcall(tern.kv.get, formats.KEYS[which])
-	return if ok and type(v) == "string" then v else ""
+	if not ok or (v ~= nil and type(v) ~= "string") then
+		return "", "Saved name format could not be read."
+	end
+	return v or "", nil
 end
 
 function formats.of(which: string, snap: { [string]: any }?): string
@@ -615,6 +620,10 @@ end
 
 -- Saves name format `which` (a formats.KEYS key; "" is the default).
 function formats.save(which: string, fmt: string): string?
+	local _, problem = formats.saved(which)
+	if problem then
+		return problem
+	end
 	local err = kvSet(formats.KEYS[which], fmt)
 	return if err then "Could not save: " .. err else nil
 end
