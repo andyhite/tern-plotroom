@@ -268,11 +268,11 @@ case("review: a reload keeps your edits for the same proposal and starts over fo
 	eq(navState(b, 1), "Kept", "a revised proposal starts over")
 	has(detailText(b), "Revised.", "with its summary")
 	b.press("enter", "m")
+	local _, text = sentChoices(b)
 	b.event({ ev = "action", act = "gone", value = "The agent that proposed this review is gone." })
 	has(textOf(findKey(b.view().main, "gone")), "The agent that proposed this review is gone.", "the block says why")
 	clean(b, "a gone agent")
 	b.typeText("c")
-	local _, text = sentChoices(b)
 	eq(w.copied[#w.copied], text, "c copies the message for the agent")
 	w.finish()
 end)
@@ -387,9 +387,9 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
 	w.link(b)
 	b.press("enter", "m")
+	local _, text = sentChoices(b)
 	w.flush()
 	local call = w.window.agentCalls[#w.window.agentCalls]
-	local _, text = sentChoices(b)
 	local got: { any } = { call.op, call.pane, call.text }
 	same(got, { "ask", 20, text } :: { any }, "the message goes to the run's agent as is")
 	has(textOf(b.view().main), "Sent", "the block shows Sent")
@@ -405,6 +405,32 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	eq(#w.window.agentCalls, asked, "nothing goes to a gone agent")
 	has(textOf(findKey(b.view().main, "gone")), "gone", "the block says so")
 	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	w.finish()
+end)
+
+windowCase("review: a review/send link from the Draft review pane sends only the user's one Send", function(w: World)
+	w.load("window")
+	reviewScene(w)
+	seedRun(w)
+	local b = openReview(w, 30)
+	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.link(b)
+	-- Before Send: a link (say, in the summary) sends nothing and leaves the block as it was.
+	w.click("plotroom://review/send", 30)
+	w.flush()
+	eq(#w.window.agentCalls, 0, "no Send pressed, nothing goes to the agent")
+	yes(findKey(b.view().main, "send", "item"), "the Send button stays")
+	eq(findKey(b.view().main, "gone"), nil, "and there is no error row")
+	-- After Send: the same link, with and without a token, does not send again.
+	b.press("enter", "m")
+	w.flush()
+	eq(#w.window.agentCalls, 1, "the user's Send goes once")
+	w.click("plotroom://review/send", 30)
+	w.click("plotroom://review/send?k=" .. string.rep("a", 16), 30)
+	w.flush()
+	eq(#w.window.agentCalls, 1, "a replayed link does not send again")
+	yes(findKey(b.view().main, "sent", "badge"), "the block still shows Sent")
+	eq(findKey(b.view().main, "gone"), nil, "with no error row")
 	w.finish()
 end)
 

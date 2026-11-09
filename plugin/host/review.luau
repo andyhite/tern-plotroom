@@ -366,7 +366,8 @@ local function messageOf(state: State): string?
 	return M.message(p, kept, dropped, state.verdict, state.summary.text, state.note.text, state.head)
 end
 
--- Send: the message is rendered (hidden `main.send`) before the window is told to read it; it answers `sent` or `gone`.
+-- Send: the message is rendered (hidden `main.send`, only while sending, so a later or early review/send link from this
+-- pane finds nothing to send) before the window is told to read it; it answers `sent` or `gone`, taken only while sending.
 local function send(state: State)
 	if not state.p or state.sent or state.sending or state.loading then
 		return
@@ -518,7 +519,7 @@ local function view(state: State): BlockView
 	local main: { Node } = {
 		ui.node("text", { key = "run", text = state.run, hidden = true }),
 	}
-	if state.message then
+	if state.sending and state.message then
 		table.insert(main, ui.node("text", { key = "send", text = tern.json.encode({ run = state.run, text = state.message }), hidden = true }))
 	end
 	if not p then
@@ -685,9 +686,9 @@ function M.define()
 			local act, value = ev.act, ev.value
 			if act == "reload" then
 				load(state)
-			elseif act == "sent" then
+			elseif act == "sent" and state.sending then
 				state.sending, state.sent, state.gone = false, true, nil
-			elseif act == "gone" then
+			elseif act == "gone" and state.sending then
 				state.sending = false
 				state.gone = (if type(value) == "string" then string.sub(value, 1, 300) else "The agent could not take the message.") .. " Copy the message and give it to the agent yourself."
 			elseif act == "send" then
