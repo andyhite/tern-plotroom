@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Merging the base before conflicts: a regenerated `go.sum` is staged with the `go.mod` in its folder, which `go mod tidy` also rewrites, so the committed merge carries the tidied `go.mod` and the worktree is left clean instead of with an unstaged `go.mod`.
 - Likely flaky: a base-branch history read GitHub's rate limit held back no longer judges the head commit's failing checks not flaky until the next push; the next refresh reads the history again. A check that passed earlier on the same commit stays marked meanwhile.
 - The Draft review block reads every proposal `plotroom_propose_review` accepts: a long review (100 comments with 10000-character bodies and suggestions) or a non-ASCII one (CJK, emoji) no longer opens nothing or reads as malformed. The tool refuses a text with a broken character (a lone UTF-16 surrogate) and a proposal over 8 MB as written, with the reason.
 - Now's notifications follow GitHub's read state: a thread marked read on github.com leaves Now at the next read (after `X-Poll-Interval`) instead of staying until the host restarts. **Mark read…** is now **Mark all notifications read…** and marks every thread Now read, including those whose item is listed for a higher reason, a second thread on the same item and snoozed items', so none stays unread on GitHub.
