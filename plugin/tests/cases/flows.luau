@@ -451,6 +451,24 @@ windowCase("window flows: a turn end reported before omp's transcript has the tu
 	eq(#(w.kv.get("runs") :: any), 3, "an agent started without the extension has no omp chat to wait for")
 end)
 
+windowCase("window flows: a turn end whose pane closes while its transcript lags is still recorded, with the report read before it closed", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	-- The accepted call is in, the reply is not: unsettled.
+	lastSays(w, link.agent, "", { reportCall(`\{"attention":"needs-human","reason":"Which base?","commit":null,"pr":null,"evidence":[],"blocker":null}`) })
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(w.kv.get("runs"), nil, "nothing is recorded while the transcript lags")
+	w.window.panes[link.agent] = nil
+	w.window.transcripts[link.agent] = nil
+	w.advance(11000)
+	local runs: any = w.kv.get("runs")
+	eq(#runs, 1, "the closed pane's turn is one run")
+	same({ runs[1].result, runs[1].attention, runs[1].reason }, { "done", "needs-human", "Which base?" }, "with the report read before the pane closed")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.result, l.attention, l.reason }, { "done", "needs-human", "Which base?" }, "on the link too")
+end)
+
 windowCase("window flows: a turn with no report call records No report, and a later turn's valid report replaces it without a second run", function(w: World)
 	w.load("window")
 	local link = startReview(w)
@@ -3402,6 +3420,33 @@ windowCase("window flows: a failed, exited or closed agent stops its chain with 
 	eq(w.toasts[#w.toasts].text, "Next action not started after Review for o/r#5", "a next action that was deleted is toasted")
 	eq(w.toasts[#w.toasts].sub, "That action no longer exists.", "with the host's reason")
 	eq(#w.window.agents, 3, "and no agent starts for it")
+end)
+
+windowCase("window flows: a done turn whose pane closes while its transcript lags still records one done run and decides its chain", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	local ok = reportCall(`\{"attention":"ok","reason":"Reviewed","commit":null,"pr":null,"evidence":[],"blocker":null}`)
+	lastSays(w, first.agent, "", { ok })
+	agentFinished(w, first.agent, "done")
+	eq(w.kv.get("runs"), nil, "the turn end waits for the transcript")
+	w.window.panes[first.agent] = nil
+	w.advance(11000)
+	local runs: any = w.kv.get("runs")
+	same({ #runs, runs[1].result }, { 1, "done" }, "one done run")
+	eq((w.kv.get("agent-links") :: any)[1].result, "done", "on the link too")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 1, "the chain is decided: a Verified run asks for the next action")
+	answerAll(st, "action", { problem = "That action no longer exists." })
+	-- Tern reports the closed pane while the turn still waits: the waited turn is recorded first, as done.
+	local second = startChained(w, st)
+	lastSays(w, second.agent, "", { ok })
+	agentFinished(w, second.agent, "done")
+	agentFinished(w, second.agent, "closed")
+	w.window.panes[second.agent] = nil
+	w.advance(11000)
+	runs = w.kv.get("runs")
+	same({ #runs, runs[#runs].result, runs[#runs].reason }, { 2, "done", "Reviewed" }, "one more run, done, with its report")
 end)
 
 windowCase("window flows: Go to agent names the action an agent ran, so the agents of one item can be told apart", function(w: World)
