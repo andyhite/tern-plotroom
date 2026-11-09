@@ -217,7 +217,7 @@ export default function plotroom(pi: ExtensionAPI) {
 		parameters: z.object({
 			repo: z.string().describe('The pull request\'s repository, "owner/name"'),
 			number: z.number().describe("The pull request's number"),
-			head: z.string().describe("The head commit SHA you reviewed"),
+			head: z.string().describe("The head commit SHA you reviewed, full or abbreviated (7 to 64 hex digits)"),
 			summary: z.string().describe("The review's summary (its body); may be empty"),
 			verdict: z.enum(VERDICTS).describe("The verdict you propose"),
 			comments: z
