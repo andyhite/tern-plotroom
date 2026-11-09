@@ -75,6 +75,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - A `{failures}` excerpt cut to its share ends with the number of log lines left out, counting the lines each earlier `… N lines` stood for, and a gap just before the cut merges into it instead of standing as a second gap line.
+- Settings › General › Use one-key shortcuts now names every key it binds, `h`, `l` and `x` included.
 - A Draft review comment on a file whose path holds a space is placed on the diff and can be kept, instead of showing as Not on a changed line: the tab git ends such a diff header with is no longer read as part of the path.
 - A Blocked pull request whose only failing check not ignored is Likely flaky now shows **Re-run · likely flaky** and the Next move **Re-run failed checks**: an ignored failing check (Ignore this check…) no longer turns it into **Fix checks** and Watch.
 - On your own pull request the Draft review block offers only **Comment** (GitHub refuses Approve and Request changes there): a proposed Approve or Request changes opens as Comment with a line saying why, and `2`/`3` cannot pick the others, so Send never hands the agent a verdict it cannot post. Your own is the run's login, or gh's active one when the block has none.

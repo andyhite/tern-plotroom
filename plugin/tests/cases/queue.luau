@@ -282,6 +282,10 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	end
 	same(ids, { "kpreset", "key:down", "key:up", "key:left", "key:right", "key:next", "key:nownext", "key:worktree", "key:goto", "key:agent", "key:agentgo", "key:seen", "key:snooze", "key:snoozed", "key:sort", "key:wt-cleanup", "key:wt-remove", "key:more", "key:search", "key:refresh", "key:settings", "key:help" }, "the one-key set's row, then one row for each action of the queue")
 	eq(prefsOf(b).sections[1].title, "Keyboard shortcuts", "first, under the Keyboard shortcuts title")
+	local hint = rowIn(b, "kpreset").hint
+	for _, k in { "j", "k", "h", "l", "x", "n", "w", "g", "a", "G", "m", "z", "Z", "o", "u", "d", "/", "r", "s", "?" } do
+		yes(string.find(hint, " " .. k .. " ", 1, true) ~= nil, "the one-key set's hint names " .. k)
+	end
 	local row = rowIn(b, "key:worktree")
 	eq(row.label, "Worktree", "named for its action")
 	eq(row.control.value, "", "with no key: only the command palette has one by default")
