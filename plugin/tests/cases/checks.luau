@@ -2200,6 +2200,39 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 	eq(move, "Watch", "so your PR goes to Watch")
 end)
 
+case("host likely flaky: a check list cut short (more checks than loaded) is never all flaky; a complete one whose failing checks are all marked still re-runs", function(w: World)
+	local s = hostScene(w, 0)
+	local short = failingPr(s, 1, "octocat", sha("1"), { "build:11" })
+	local full = failingPr(s, 2, "octocat", sha("2"), { "build:21" })
+	for n, item in { short, full } do
+		local list = s.gh.checks["o/r#" .. n]
+		for i = 2, 25 do
+			table.insert(list, checkRun("pass" .. i, "COMPLETED", "SUCCESS", "2026-01-01T00:00:00Z", { id = n .. ":" .. i }))
+		end
+		item.runs, item.runTotal = array(list), 25
+		s.gh.evidence["o/r#" .. n] = { head = sha(tostring(n)), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", n .. "1") }) }
+	end
+	short.runTotal, s.gh.checkTotal["o/r#1"] = 30, 30 -- 5 checks neither the search nor the details loaded
+	s.gh.items.octocat = { short, full }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	local b = openQueue(w)
+	w.flush()
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	eq(rows.no_2fr_231.badges[2].text, "Fix checks · 1/30 failing", "an unloaded check may fail for real: no re-run chip")
+	eq(rows.no_2fr_232.badges[2].text, "Re-run · likely flaky", "every check loaded and every failing one marked: a re-run")
+	local function move(id: string): string?
+		b.event({ ev = "select", id = "layer.queue", item = id })
+		w.advance(300)
+		local node: any = findKey(pickerNode(b), "next", "item")
+		return if node then node.p.label else nil
+	end
+	eq(move("no_2fr_231"), "Watch", "the details are cut short too: your PR goes to Watch, not Re-run failed checks")
+	eq(move("no_2fr_232"), "Re-run failed checks", "the complete list still re-runs")
+end)
+
 case("host likely flaky: at most 10 pull requests are judged a refresh, each once per head commit; a mark from an older head is not shown", function(w: World)
 	local s = hostScene(w, 0)
 	local items: { any } = {}
