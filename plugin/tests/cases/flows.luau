@@ -3433,7 +3433,8 @@ windowCase("window flows: a done turn whose pane closes while its transcript lag
 	w.window.panes[first.agent] = nil
 	w.advance(11000)
 	local runs: any = w.kv.get("runs")
-	same({ #runs, runs[1].result }, { 1, "done" }, "one done run")
+	eq(#runs, 1, "one run")
+	eq(runs[1].result, "done", "done")
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "on the link too")
 	st.reply("outcome", { verdict = "verified" })
 	eq(countOps(st, "action"), 1, "the chain is decided: a Verified run asks for the next action")
@@ -3446,7 +3447,8 @@ windowCase("window flows: a done turn whose pane closes while its transcript lag
 	w.window.panes[second.agent] = nil
 	w.advance(11000)
 	runs = w.kv.get("runs")
-	same({ #runs, runs[#runs].result, runs[#runs].reason }, { 2, "done", "Reviewed" }, "one more run, done, with its report")
+	eq(#runs, 2, "one more run")
+	same({ runs[2].result, runs[2].reason }, { "done", "Reviewed" }, "done, with its report")
 end)
 
 windowCase("window flows: Go to agent names the action an agent ran, so the agents of one item can be told apart", function(w: World)
