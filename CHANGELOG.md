@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A Blocked pull request whose only failing check not ignored is Likely flaky now shows **Re-run · likely flaky** and the Next move **Re-run failed checks**: an ignored failing check (Ignore this check…) no longer turns it into **Fix checks** and Watch.
 - On your own pull request the Draft review block offers only **Comment** (GitHub refuses Approve and Request changes there): a proposed Approve or Request changes opens as Comment with a line saying why, and `2`/`3` cannot pick the others, so Send never hands the agent a verdict it cannot post. Your own is the run's login, or gh's active one when the block has none.
 - A chain step whose agent started while the agent links could not be read or saved no longer starts a second agent for the same step (at the next tick, or after the 12-minute start limit as a failed start): the step waits while that unlinked agent runs, and is due again once it exits or its pane closes.
 - Snoozing a Jira issue that is Changed by someone else's comment no longer marks that comment seen: when the snooze ends it is still Changed until you show its preview or Mark seen. Only those mark when you last saw an item; snoozing never moves it.

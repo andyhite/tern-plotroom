@@ -2297,6 +2297,52 @@ case("host likely flaky: a check list cut short (more checks than loaded) is nev
 	eq(move("no_2fr_232"), "Re-run failed checks", "the complete list still re-runs")
 end)
 
+case("host likely flaky: an ignored failing check neither stops nor makes a re-run; the chip and the Next move follow the checks that are not ignored", function(w: World)
+	local s = hostScene(w, 0)
+	w.kv.put("ignored-checks", { ["o/r"] = array({ "approval" }) })
+	s.gh.items.octocat = {
+		failingPr(s, 1, "octocat", sha("1"), { "build:11", "approval:12" }),
+		failingPr(s, 2, "octocat", sha("2"), { "approval:21" }),
+		failingPr(s, 3, "octocat", sha("3"), { "approval:31", "build:32", "lint:33" }),
+	}
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", "11"), attempt("Gate", "approval", "FAILURE", "12") }) }
+	s.gh.evidence["o/r#3"] = { head = sha("3"), files = array({}), runs = array({
+		attempt("Gate", "approval", "FAILURE", "31"),
+		attempt("CI", "build", "FAILURE", "32"),
+		attempt("Lint", "lint", "FAILURE", "33"),
+	}) }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	s.gh.history["o/r@main@Gate"] = baseRuns(0, 20)
+	s.gh.history["o/r@main@Lint"] = baseRuns(0, 20)
+	local b = openQueue(w)
+	w.flush()
+	local rows: { [string]: any } = {}
+	for _, row in pickerOf(b).items do
+		rows[row.id] = row
+	end
+	local function chips(row: any): string
+		local out: { string } = {}
+		for _, badge in row.badges or {} do
+			table.insert(out, badge.text)
+		end
+		return table.concat(out, " | ")
+	end
+	local function move(id: string): string?
+		b.event({ ev = "select", id = "layer.queue", item = id })
+		w.advance(300)
+		local node: any = findKey(pickerNode(b), "next", "item")
+		return if node then node.p.label else nil
+	end
+	eq(rows.no_2fr_231.badges[2].text, "Re-run · likely flaky", "the one failing check not ignored is Likely flaky: a re-run")
+	eq(move("no_2fr_231"), "Re-run failed checks", "and the Next move re-runs it")
+	eq(asks.hx.stage(b, "no_2fr_232"), "PR open", "only an ignored check fails: not Blocked")
+	lacks(chips(rows.no_2fr_232), "Fix checks", "so no Fix checks chip")
+	lacks(chips(rows.no_2fr_232), "Re-run", "and no re-run chip")
+	yes(move("no_2fr_232") ~= "Re-run failed checks", "and no Re-run failed checks Next move")
+	eq(rows.no_2fr_233.badges[2].text, "Fix checks · 2/3 failing", "a failing check that is neither ignored nor marked is a fix, counted without the ignored one")
+	eq(move("no_2fr_233"), "Watch", "your own PR goes to Watch")
+end)
+
 case("host likely flaky: at most 10 pull requests are judged a refresh, each once per head commit; a mark from an older head is not shown", function(w: World)
 	local s = hostScene(w, 0)
 	local items: { any } = {}

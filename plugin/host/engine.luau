@@ -464,8 +464,9 @@ function M.flakyMarks(state: State, pr: any): { [string]: { name: string, reason
 	return if f and pr.headSha and f.sha == pr.headSha then f.marks else nil
 end
 
--- Whether `pr` has a failing check and every failing check is Likely flaky. A list cut short (more checks than loaded)
--- may hide a failing check no mark covers, so it never counts as all flaky (as in onlyIgnoredFail).
+-- Whether `pr` has a failing check that is not ignored and every such check is Likely flaky (an ignored check blocks
+-- nothing, as in blockers). A list cut short (more checks than loaded) may hide a failing check no mark covers, so it
+-- never counts as all flaky (as in onlyIgnoredFail).
 function M.allFlaky(state: State, pr: any): boolean
 	local marks = M.flakyMarks(state, pr)
 	if not marks then
@@ -475,13 +476,16 @@ function M.allFlaky(state: State, pr: any): boolean
 	if (if d then d.total else pr.runTotal) > #M.runsOf(state, pr) then
 		return false
 	end
-	local failing = M.failing(state, pr)
-	for _, r in failing do
-		if not (r.url and marks[r.url]) then
-			return false
+	local any = false
+	for _, r in M.failing(state, pr) do
+		if not M.ignored(state, pr, r) then
+			if not (r.url and marks[r.url]) then
+				return false
+			end
+			any = true
 		end
 	end
-	return #failing > 0
+	return any
 end
 
 -- One thing that blocks a pull request: its chip names the job that clears it, `detail` who or what (nil when unknown).
