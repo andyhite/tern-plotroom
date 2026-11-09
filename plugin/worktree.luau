@@ -269,8 +269,10 @@ local function scan(urls: { string }, want: string?, cx: WindowCx?, done: (strin
 end
 
 -- Records of `git worktree list --porcelain -z`: NUL-terminated fields, an
--- extra NUL between records. Paths may hold spaces and newlines.
-function M.parseWorktrees(out: string): { Record }
+-- extra NUL between records. Paths may hold spaces and newlines. The first record is the main worktree, except in a
+-- bare layout (`repo/.bare` plus linked worktrees): given `checkout`, the deepest record holding it replaces the bare
+-- record as the first, so the checkout the user works in is never listed, removed or reused as an item's worktree.
+function M.parseWorktrees(out: string, checkout: string?): { Record }
 	local recs: { Record } = {}
 	local cur: Record? = nil
 	local pos = 1
@@ -301,6 +303,17 @@ function M.parseWorktrees(out: string): { Record }
 					r.prunable = true
 				end
 			end
+		end
+	end
+	if checkout and recs[1] and recs[1].bare then
+		local best: number? = nil
+		for i = 2, #recs do
+			if M.within(checkout, recs[i].path) and (best == nil or #recs[i].path > #recs[best :: number].path) then
+				best = i
+			end
+		end
+		if best then
+			recs[1] = table.remove(recs, best) :: Record
 		end
 	end
 	return recs
@@ -544,7 +557,7 @@ function M.scan(checkout: string, wants: { [string]: Want }, done: (Scan?, strin
 		if not out then
 			return done(nil, err or "git worktree list failed")
 		end
-		local recs = M.parseWorktrees(out)
+		local recs = M.parseWorktrees(out, checkout)
 		local main = recs[1]
 		if not main or string.sub(main.path, 1, 1) ~= "/" then
 			return done(nil, "Could not find this repository's main worktree.")
@@ -789,7 +802,7 @@ function M.inventory(checkout: string, repo: string, done: ({ Entry }?, string?)
 		if not out then
 			return done(nil, err or "git worktree list failed")
 		end
-		local recs = M.parseWorktrees(out)
+		local recs = M.parseWorktrees(out, checkout)
 		local main = recs[1]
 		if not main or string.sub(main.path, 1, 1) ~= "/" then
 			return done(nil, "Could not find this repository's main worktree.")
@@ -1231,7 +1244,7 @@ local function addWorktree<T>(s: Steps<T>, root: string, target: string, branch:
 			-- Another window may have won the race: accept only a full match.
 			git(root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, _, cx6)
 				s.attempt(cx6 or cx5, function()
-					local verdict, what = M.reconcile(if out then M.parseWorktrees(out) else {}, branch, target)
+					local verdict, what = M.reconcile(if out then M.parseWorktrees(out, root) else {}, branch, target)
 					if verdict == "reuse" then
 						return step((what :: Record).path, false, cx6 or cx5)
 					end
@@ -1261,7 +1274,7 @@ local function locate<T>(s: Steps<T>, checkout: string, repo: string, dir: strin
 					return s.finish(nil, why, cx0)
 				end
 				s.run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx1)
-					local recs = M.parseWorktrees(out)
+					local recs = M.parseWorktrees(out, info.root)
 					local main = recs[1]
 					if not main or string.sub(main.path, 1, 1) ~= "/" then
 						return s.finish(nil, "Could not find this repository's main worktree.", cx1)
