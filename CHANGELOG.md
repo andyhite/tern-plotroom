@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- The worktree card's Remove worktree confirm for a locked, prunable or missing worktree now says why removal is refused and offers no `d`, instead of promising a removal that then failed with an error toast.
 - A name format in Settings › Repositories › Name formats that cannot be read, or is not text, now locks its row saying so and is never written over, instead of showing as the default and being replaced by the next save.
 - A `{failures}` excerpt cut to its share ends with the number of log lines left out, counting the lines each earlier `… N lines` stood for, and a gap just before the cut merges into it instead of standing as a second gap line.
 - Settings › General › Use one-key shortcuts now names every key it binds, `h`, `l` and `x` included.

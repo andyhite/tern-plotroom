@@ -66,7 +66,7 @@ local function askRemove(state: State)
 		for _, e in listed do
 			if e.path == path and e.branch == branch then
 				state.removeFate = board.fate(e)
-				refusal = nil
+				refusal = worktree.unusable(e)
 			end
 		end
 		state.removeRefusal = refusal
