@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Bare-repository layouts (`repo/.bare` plus a linked worktree you work in): Worktrees no longer lists your saved checkout, Remove worktree refuses it ("That is the checkout; Plotroom never removes it.") instead of running `git worktree remove` on it, and Worktree on a pull request whose head branch it has checked out says so instead of reusing your checkout as the PR's worktree.
 - Merging the base before conflicts: a regenerated `go.sum` is staged with the `go.mod` in its folder, which `go mod tidy` also rewrites, so the committed merge carries the tidied `go.mod` and the worktree is left clean instead of with an unstaged `go.mod`.
 - Likely flaky: a base-branch history read GitHub's rate limit held back no longer judges the head commit's failing checks not flaky until the next push; the next refresh reads the history again. A check that passed earlier on the same commit stays marked meanwhile.
 - The Draft review block reads every proposal `plotroom_propose_review` accepts: a long review (100 comments with 10000-character bodies and suggestions) or a non-ASCII one (CJK, emoji) no longer opens nothing or reads as malformed. The tool refuses a text with a broken character (a lone UTF-16 surrogate) and a proposal over 8 MB as written, with the reason.
