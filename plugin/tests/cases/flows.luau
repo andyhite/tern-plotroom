@@ -504,7 +504,8 @@ windowCase("window flows: a prompt sent to the agent during the settle wait does
 	w.advance(1000)
 	w.flush()
 	runs = w.kv.get("runs")
-	same({ #runs, runs[1].attention }, { 2, "stuck" }, "recorded at once with its report")
+	eq(#runs, 2, "recorded at once")
+	eq(runs[1].attention, "stuck", "with its report")
 end)
 
 windowCase("window flows: a second turn end during the settle wait yields one run carrying the first turn's report", function(w: World)
