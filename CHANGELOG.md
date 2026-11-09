@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Merging the base before conflicts regenerates a conflicted `poetry.lock` on Poetry 2 with `poetry lock` (Poetry 2 removed `--no-update`, so it always failed and left the conflict); Poetry 1 still gets `poetry lock --no-update`.
 - Likely flaky's "passed earlier on this commit" counts only an earlier attempt of the same workflow run (its check suite): a failing pull_request check whose same-named push check passed on the head commit is no longer marked Likely flaky.
 - A Jira sign-in whose email has characters beyond letters, digits and `. - _ +` before the `@` (such as `pat.o'brien@corp.com`) is read whole: Assign to me and Comment… no longer fail with "acli did not name the signed-in email", and Now hides your own changes again. `{jira.user}` drops those characters, so branch names stay valid.
 - Switching between two saved views with the same query and different sorts shows the new view's order at once, opened on its first item, instead of the previous view's order until its search lands (or for as long as a failed search holds).

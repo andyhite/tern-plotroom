@@ -2107,6 +2107,44 @@ windowCase("worktree.premerge: a regenerated go.sum is staged with its folder's 
 	has(w.window.agents[1].prompt, "committed the merge; it is not pushed. Lockfiles taken from the base and regenerated: `svc/go.sum`.", "the agent is told the merge is done")
 end)
 
+-- A merge stopping on `py/poetry.lock` whose `poetry --version` prints `version`; returns the unmerged set.
+local function poetryMerge(w: World, s: Scene, version: string): { [string]: boolean }
+	local unmerged = mergeModel(w, s, { "py/poetry.lock" }, { poetry = { stdout = "Resolving dependencies...\n" } })
+	w.respond(function(call: Call): Reply?
+		local a = call.argv
+		return if a[1] == "poetry" and a[2] == "--version" then { stdout = "Poetry (version " .. version .. ")\n" } else nil
+	end)
+	return unmerged
+end
+
+windowCase("worktree.premerge: on Poetry 2, which has no lock --no-update, a conflicted poetry.lock is regenerated with poetry lock in its folder, staged, and the merge commits", function(w: World)
+	local s = watchConflicted(w)
+	local unmerged = poetryMerge(w, s, "2.1.3")
+	local from = #w.calls
+	runWatch(w)
+	local git = "git -C " .. s.target .. " "
+	local lock = ranAt(w, from, "poetry lock")
+	yes(lock ~= nil, "poetry lock runs, without --no-update")
+	eq(if lock then lock.cwd else nil, s.target .. "/py", "in poetry.lock's folder")
+	eq(ranAt(w, from, "poetry lock --no-update"), nil, "never with --no-update, which Poetry 2 rejects")
+	yes(ranAt(w, from, git .. "add -- py/poetry.lock") ~= nil, "poetry.lock is staged")
+	eq(next(unmerged), nil, "no conflict remains")
+	yes(ranAt(w, from, git .. "commit --no-edit") ~= nil, "so the merge is committed")
+	local text: string = w.window.agents[1].prompt
+	has(text, "committed the merge; it is not pushed. Lockfiles taken from the base and regenerated: `py/poetry.lock`.", "listed as regenerated")
+	lacks(text, "Plotroom's lockfile tool failed", "not as failed")
+end)
+
+windowCase("worktree.premerge: on Poetry 1, the conflicted poetry.lock is regenerated with poetry lock --no-update, never a bare poetry lock that upgrades every dependency", function(w: World)
+	local s = watchConflicted(w)
+	local unmerged = poetryMerge(w, s, "1.8.3")
+	local from = #w.calls
+	runWatch(w)
+	yes(ranAt(w, from, "poetry lock --no-update") ~= nil, "Poetry 1 keeps --no-update")
+	eq(ranAt(w, from, "poetry lock"), nil, "no bare poetry lock")
+	eq(next(unmerged), nil, "and the merge settles")
+end)
+
 windowCase("worktree.premerge: a conflict Plotroom cannot settle (a source file, a lockfile with no known tool, a failing tool) stays in the in-progress merge and is listed in the agent's prompt", function(w: World)
 	local s = watchConflicted(w)
 	local unmerged = mergeModel(w, s, { "Cargo.lock", "go.sum", "src/app.ts", "yarn.lock" }, {
