@@ -1660,8 +1660,10 @@ end
 
 -- The diff a Draft review is about (host only): `git diff <remote>/<base>...<head>` in the checkout or worktree at `path`
 -- of `repo`, `<remote>` being its remote for `repo`, with three lines of context as GitHub's diff has (the lines a review
--- comment may sit on). When a commit is missing there, the base branch and the pull request's head
--- (`refs/pull/<number>/head`) are fetched once and the diff is read again. done(diff, problem, cx).
+-- comment may sit on). The base branch is fetched first, every time: a stale local base ref would put the merge-base back
+-- before the base commits the pull request merged since, and GitHub's diff is against the base's tip now. When the head
+-- commit is missing there, the pull request's head (`refs/pull/<number>/head`) is fetched once and the diff is read
+-- again. done(diff, problem, cx).
 function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, done: Cb<string>)
 	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
 		return process.later(function(cx)
@@ -1674,16 +1676,20 @@ function M.reviewDiff(path: string, repo: string, number: number, base: string, 
 		end
 		local tracking = "refs/remotes/" .. info.remote .. "/" .. base
 		local args = { "diff", "--no-color", "--no-ext-diff", "-U3", "--src-prefix=a/", "--dst-prefix=b/", tracking .. "..." .. head, "--" }
-		git(info.root, args, LOCAL_MS, function(out, _, cx1)
-			if out then
-				return done(out, nil, cx1)
+		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, berr, cx1)
+			if berr then
+				return done(nil, berr, cx1)
 			end
-			local fetch = { "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking, "refs/pull/" .. number .. "/head" }
-			git(info.root, fetch, NET_MS, function(_, ferr, cx2)
-				if ferr then
-					return done(nil, ferr, cx2)
+			git(info.root, args, LOCAL_MS, function(out, _, cx2)
+				if out then
+					return done(out, nil, cx2)
 				end
-				git(info.root, args, LOCAL_MS, done)
+				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, NET_MS, function(_, ferr, cx3)
+					if ferr then
+						return done(nil, ferr, cx3)
+					end
+					git(info.root, args, LOCAL_MS, done)
+				end)
 			end)
 		end)
 	end)

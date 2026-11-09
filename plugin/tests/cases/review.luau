@@ -56,10 +56,11 @@ local function proposal(at: string?): { [string]: any }
 end
 
 -- The checkout of o/r with the worktree /wt/r5 at HEAD; gh answers the pull request with head `prHead` (HEAD) on base
--- main, and git the diff. Returns the diff commands run.
-local function reviewScene(w: World, prHead: string?): { string }
+-- main, which the remote serves at sha("1"), and git the diff. Returns the diff commands run and the checkout.
+local function reviewScene(w: World, prHead: string?): ({ string }, h.Git)
 	local g = asks.bk.repo(w)
 	asks.bk.tree(w, g, "/wt/r5", "fix-5", HEAD)
+	g.served["refs/heads/main"] = sha("1")
 	local diffs: { string } = {}
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
@@ -72,7 +73,7 @@ local function reviewScene(w: World, prHead: string?): { string }
 		return nil
 	end)
 	w.fs.files[FILE] = jsonEncode(proposal())
-	return diffs
+	return diffs, g
 end
 
 local function openReview(w: World, pane: number?): Block
@@ -161,6 +162,52 @@ case("review: the navigator lists the summary, the comments grouped by file, the
 	eq(w.toasts[#w.toasts].text, "Not on a changed line", "Space on it says why it cannot be kept")
 	eq(navState(b, 4), "Dropped", "and it stays dropped")
 	clean(b, "the loaded review")
+	w.finish()
+end)
+
+case("review: with a stale local base ref the diff is read against the base's tip now, as GitHub's is", function(w: World)
+	local diffs, g = reviewScene(w)
+	local tracking = "refs/remotes/origin/main"
+	-- The checkout last fetched main at sha("0"); the remote's main is sha("1"), which the pull request merged. Against the
+	-- old merge-base the diff also holds the base's newer commit (src/base.lua line 5); against the tip only the PR's own.
+	g.refs[tracking] = sha("0")
+	local stale = DIFF .. table.concat({ "diff --git a/src/base.lua b/src/base.lua", "--- a/src/base.lua", "+++ b/src/base.lua", "@@ -4,2 +4,3 @@", " four", "+five", " six", "" }, "\n")
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" then
+			table.insert(diffs, table.concat(a, " "))
+			return { stdout = if g.refs[tracking] == sha("1") then DIFF else stale }
+		end
+		return nil
+	end)
+	local p = proposal()
+	p.comments = array({
+		{ id = "c1", path = "src/a.lua", line = 3, side = "RIGHT", kind = "problem", body = "z is unused" },
+		{ id = "c5", path = "src/base.lua", line = 5, side = "RIGHT", kind = "nit", body = "Base's own line" },
+	})
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	eq(h.countLog(g, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main:" .. tracking), 1, "the base is fetched")
+	eq(g.refs[tracking], sha("1"), "to the remote's tip")
+	eq(#diffs, 1, "before the one diff is read")
+	same(navKeys(b), { "n0", "n1", "n2", "n3" }, "summary, two comments, instructions")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	has(detailText(b), "z is unused", "the PR's own line is first")
+	eq(navState(b, 1), "Kept", "placed and kept")
+	yes(findKey(findKey(b.view().main, "detail"), "diff", "col"), "with its diff excerpt")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n2" })
+	has(detailText(b), "Base's own line", "the base-only line")
+	has(detailText(b), "Not on a changed line", "is not on the pull request's diff")
+	eq(navState(b, 2), "Dropped", "and cannot be kept")
+	w.finish()
+end)
+
+case("review: a base that cannot be fetched is said, not read stale", function(w: World)
+	local diffs, g = reviewScene(w)
+	g.served["refs/heads/main"] = nil
+	local b = openReview(w)
+	has(textOf(b.view().main), "The diff could not be read", "the block says so")
+	same(diffs, {}, "and reads no diff")
 	w.finish()
 end)
 
