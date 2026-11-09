@@ -221,7 +221,7 @@ case("github.baseHistory and evidence: a workflow's last 20 base runs counted an
 	eq(problem.kind, "invalid", "a branch that would read as a flag is refused")
 	eq(#requestsOf(gh, "history"), 2, "and never asked")
 	gh.evidence["o/r#5"] = { head = string.upper(sha("a")), files = array({ "src/a.lua" }), runs = array({
-		{ workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = array({ "src/a.lua" }) },
+		{ suite = "CS_1", workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = array({ "src/a.lua" }) },
 		{ workflow = h.NULL, name = "app check", conclusion = h.NULL, url = h.NULL, paths = array({}) },
 		{ workflow = "CI", name = 7, conclusion = "SUCCESS", url = "x", paths = array({}) },
 	}) }
@@ -233,7 +233,7 @@ case("github.baseHistory and evidence: a workflow's last 20 base runs counted an
 	eq(ev.head, sha("a"), "the head commit, lowercased")
 	same(ev.files, { ["src/a.lua"] = true }, "the changed files")
 	eq(#ev.runs, 2, "a run with no name is skipped")
-	same(ev.runs[1], { workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = { "src/a.lua" } }, "an attempt and the files its failure annotations name")
+	same(ev.runs[1], { suite = "CS_1", workflow = "CI", name = "build", conclusion = "FAILURE", url = "https://github.com/o/r/actions/runs/1/job/2", paths = { "src/a.lua" } }, "an attempt, its check suite and the files its failure annotations name")
 	same(ev.runs[2], { name = "app check", paths = {} }, "an app's check has no workflow; a running one no conclusion")
 	has(requestsOf(gh, "flaky")[1].fields.query, "checkType: ALL", "every attempt of every check is asked for")
 end)

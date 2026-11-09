@@ -1400,7 +1400,7 @@ end
 
 -- Likely flaky (tern-plotroom#zaq6). A failing check of `pr` is Likely flaky when, in order: no FAILURE annotation
 -- of it names a file the PR changes (one that does says the PR broke it); and it failed at least FLAKY_FAILS of the
--- last 20 runs of its workflow on the PR's base branch, or an earlier attempt of it passed on the same head commit.
+-- last 20 runs of its workflow on the PR's base branch, or an earlier attempt of the same run (its check suite) passed.
 -- done(marks by check link, problem). A check that is not a workflow run's has no base history.
 local FLAKY_FAILS = 3
 local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: string?, done: ({ [string]: { name: string, reason: string } }?, github.Problem?) -> ())
@@ -1418,8 +1418,8 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 			if r.url then
 				at[r.url] = r
 			end
-			if r.conclusion == "SUCCESS" then
-				passed[(r.workflow or "") .. "\0" .. r.name] = true
+			if r.conclusion == "SUCCESS" and r.suite then
+				passed[r.suite .. "\0" .. r.name] = true
 			end
 		end
 		local open: { { url: string, name: string, run: github.Attempted } } = {}
@@ -1450,7 +1450,7 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 				local h = if o.run.workflow then history[o.run.workflow] else nil
 				local reason = if h and h.failed >= FLAKY_FAILS
 					then "failed " .. h.failed .. " of the last " .. h.total .. " runs on " .. pr.base
-					elseif passed[(o.run.workflow or "") .. "\0" .. o.run.name] then "passed earlier on this commit"
+					elseif o.run.suite and passed[o.run.suite .. "\0" .. o.run.name] then "passed earlier on this commit"
 					else nil
 				if reason then
 					marks[o.url] = { name = o.name, reason = reason }

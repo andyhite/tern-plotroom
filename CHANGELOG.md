@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Likely flaky's "passed earlier on this commit" counts only an earlier attempt of the same workflow run (its check suite): a failing pull_request check whose same-named push check passed on the head commit is no longer marked Likely flaky.
 - Switching between two saved views with the same query and different sorts shows the new view's order at once, opened on its first item, instead of the previous view's order until its search lands (or for as long as a failed search holds).
 - Merging the base before conflicts no longer runs in a fork PR's worktree: no `git merge` or commit (the fork's git hooks could run) and no lockfile tool (`bundle lock`, `pnpm`, `uv`/`poetry` can run the fork's code). Its agent resolves the conflict itself.
 - `plotroom_propose_review` (its description and its answer) now tells the agent to call `plotroom_report` with attention needs-human before ending its turn, instead of ending it at once, so a Review run waiting on its Draft review shows under **Needs you** instead of **No report**.

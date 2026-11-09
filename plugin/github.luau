@@ -2126,13 +2126,14 @@ end
 
 -- What decides Likely flaky for one pull request (host/engine's judgeFlaky): the commit its head is at, the files it
 -- changes (the first 100), and every check run of every attempt on that commit (the first 50 of the first 50 suites):
--- its workflow (nil for an app's check), GitHub's conclusion (nil while it runs), its link and the files its
--- FAILURE annotations name (the first 30). ponytail: a PR past 100 files or a check past 30 annotations may miss the
--- annotation that blames the PR; page `files` and `annotations` if that marks a real failure flaky.
-export type Attempted = { workflow: string?, name: string, conclusion: string?, url: string?, paths: { string } }
+-- its check suite (a re-run of a workflow run adds attempts to the same suite; a push run and a pull_request run of
+-- one workflow are two suites), its workflow (nil for an app's check), GitHub's conclusion (nil while it runs), its link
+-- and the files its FAILURE annotations name (the first 30). ponytail: a PR past 100 files or a check past 30
+-- annotations may miss the annotation that blames the PR; page `files` and `annotations` if that marks a real failure flaky.
+export type Attempted = { suite: string?, workflow: string?, name: string, conclusion: string?, url: string?, paths: { string } }
 export type Evidence = { head: string?, files: { [string]: boolean }, runs: { Attempted } }
-local EVIDENCE_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) { headRefOid files(first: 100) { nodes { path } } commits(last: 1) { nodes { commit { checkSuites(first: 50) { nodes { workflowRun { workflow { name } } checkRuns(first: 50, filterBy: { checkType: ALL }) { nodes { name conclusion detailsUrl annotations(first: 30) { nodes { path annotationLevel } } } } } } } } } } } }"
-local EVIDENCE_JQ = "(.data.repository.pullRequest // {}) | {head:.headRefOid,files:[(.files.nodes // [])[] | .path],runs:[(.commits.nodes[0].commit.checkSuites.nodes // [])[] | (.workflowRun.workflow.name // null) as $w | (.checkRuns.nodes // [])[] | {workflow:$w,name,conclusion,url:.detailsUrl,paths:[(.annotations.nodes // [])[] | select(.annotationLevel == \"FAILURE\") | .path]}]}"
+local EVIDENCE_GQL = "query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) { headRefOid files(first: 100) { nodes { path } } commits(last: 1) { nodes { commit { checkSuites(first: 50) { nodes { id workflowRun { workflow { name } } checkRuns(first: 50, filterBy: { checkType: ALL }) { nodes { name conclusion detailsUrl annotations(first: 30) { nodes { path annotationLevel } } } } } } } } } } } }"
+local EVIDENCE_JQ = "(.data.repository.pullRequest // {}) | {head:.headRefOid,files:[(.files.nodes // [])[] | .path],runs:[(.commits.nodes[0].commit.checkSuites.nodes // [])[] | .id as $s | (.workflowRun.workflow.name // null) as $w | (.checkRuns.nodes // [])[] | {suite:$s,workflow:$w,name,conclusion,url:.detailsUrl,paths:[(.annotations.nodes // [])[] | select(.annotationLevel == \"FAILURE\") | .path]}]}"
 
 -- The strings of `v` (a JSON array), others skipped.
 local function strings(v: any): { string }
@@ -2180,6 +2181,7 @@ function M.evidence(repo: string, number: number, account: string?, done: (Evide
 			local n, c, u = field(r, "name"), field(r, "conclusion"), field(r, "url")
 			if type(n) == "string" then
 				table.insert(runs, {
+					suite = nonEmpty(field(r, "suite")),
 					workflow = nonEmpty(field(r, "workflow")),
 					name = n,
 					conclusion = if type(c) == "string" then c else nil,
