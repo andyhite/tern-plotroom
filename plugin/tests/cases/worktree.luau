@@ -2031,7 +2031,9 @@ local function mergeModel(w: World, s: Scene, files: { string }, tools: { [strin
 			elseif sub == "checkout" or sub == "commit" then
 				return {}
 			elseif sub == "add" then
-				unmerged[a[6] or ""] = nil
+				for i = 6, #a do
+					unmerged[a[i]] = nil
+				end
 				return {}
 			end
 			return nil
@@ -2088,6 +2090,21 @@ windowCase("worktree.premerge: before Watch resolves conflicts, Plotroom merges 
 	has(text, "<merge>\nPlotroom merged `origin/main` into this branch before you started and committed the merge; it is not pushed. Lockfiles taken from the base and regenerated: `web/package-lock.json`.", "the agent is told the merge is done")
 	has(text, "Do not rebase onto `origin/main`.", "and not to redo it")
 	lacks(text, "Still conflicted", "no conflict is left for it")
+end)
+
+windowCase("worktree.premerge: a regenerated go.sum is staged with its folder's go.mod, which go mod tidy also rewrites, so the committed merge carries both", function(w: World)
+	local s = watchConflicted(w)
+	local unmerged = mergeModel(w, s, { "svc/go.sum" }, { go = { stdout = "" } })
+	local from = #w.calls
+	runWatch(w)
+	local git = "git -C " .. s.target .. " "
+	local tidy = ranAt(w, from, "go mod tidy")
+	eq(if tidy then tidy.cwd else nil, s.target .. "/svc", "go mod tidy runs in go.sum's folder")
+	yes(ranAt(w, from, git .. "add -- svc/go.sum svc/go.mod") ~= nil, "go.sum and the go.mod beside it are staged together")
+	eq(ranAt(w, from, git .. "add -- svc/go.sum"), nil, "never go.sum alone")
+	eq(next(unmerged), nil, "no conflict remains")
+	yes(ranAt(w, from, git .. "commit --no-edit") ~= nil, "so the merge is committed with both")
+	has(w.window.agents[1].prompt, "committed the merge; it is not pushed. Lockfiles taken from the base and regenerated: `svc/go.sum`.", "the agent is told the merge is done")
 end)
 
 windowCase("worktree.premerge: a conflict Plotroom cannot settle (a source file, a lockfile with no known tool, a failing tool) stays in the in-progress merge and is listed in the agent's prompt", function(w: World)

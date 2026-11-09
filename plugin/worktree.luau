@@ -1491,6 +1491,9 @@ M.LOCKFILES = {
 	["composer.lock"] = { "composer", "update", "--lock", "--no-scripts" },
 } :: { [string]: { string } }
 
+-- Files a lockfile's tool also rewrites, in the lockfile's folder, staged with it: `go mod tidy` edits go.mod too.
+local ALSO_STAGED = { ["go.sum"] = "go.mod" } :: { [string]: string }
+
 -- What `premerge` did: merged `base` (`<remote>/<branch>`) into the worktree's branch; regenerated these lockfiles;
 -- `failed` lockfiles whose tool failed (left conflicted, `why`); `remaining` files still conflicted (failed ones
 -- included). `committed`: no conflict remained and the merge is committed (never pushed); otherwise the merge is left in
@@ -1558,8 +1561,13 @@ function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
 			if err then
 				return failed(err)
 			end
-			local tool = M.LOCKFILES[string.match(file, "([^/]+)$") or ""]
+			local name = string.match(file, "([^/]+)$") or ""
+			local tool = M.LOCKFILES[name]
 			local dir = string.match(file, "^(.*)/[^/]+$")
+			local stage = { "add", "--", file }
+			if ALSO_STAGED[name] then
+				table.insert(stage, if dir then dir .. "/" .. ALSO_STAGED[name] else ALSO_STAGED[name])
+			end
 			process.run(tool, { cwd = if dir then path .. "/" .. dir else path, timeout_ms = NET_MS, env = ENV }, function(r, perr)
 				if not r then
 					return failed(perr or (tool[1] .. " could not be started"))
@@ -1568,7 +1576,7 @@ function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
 				elseif r.status ~= 0 then
 					return failed(table.concat(tool, " ") .. " failed: " .. github.firstLines(if r.stderr ~= "" then r.stderr else r.stdout, 1))
 				end
-				git(path, { "add", "--", file }, LOCAL_MS, function(_, aerr)
+				git(path, stage, LOCAL_MS, function(_, aerr)
 					if aerr then
 						return failed(aerr)
 					end

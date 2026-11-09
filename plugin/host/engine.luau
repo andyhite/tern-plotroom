@@ -442,10 +442,15 @@ function M.flakyMarks(state: State, pr: any): { [string]: { name: string, reason
 	return if f and pr.headSha and f.sha == pr.headSha then f.marks else nil
 end
 
--- Whether `pr` has a failing check and every failing check is Likely flaky.
+-- Whether `pr` has a failing check and every failing check is Likely flaky. A list cut short (more checks than loaded)
+-- may hide a failing check no mark covers, so it never counts as all flaky (as in onlyIgnoredFail).
 function M.allFlaky(state: State, pr: any): boolean
 	local marks = M.flakyMarks(state, pr)
 	if not marks then
+		return false
+	end
+	local d = state.details[M.detailKey(state, pr)]
+	if (if d then d.total else pr.runTotal) > #M.runsOf(state, pr) then
 		return false
 	end
 	local failing = M.failing(state, pr)
