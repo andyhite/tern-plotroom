@@ -45,6 +45,13 @@ function M.gap(n: number): string
 	return "… " .. n .. (if n == 1 then " line" else " lines")
 end
 
+-- The log lines an excerpt entry stands for: a gap line its N, any other line 1.
+-- ponytail: a log line that reads exactly "… N lines" counts as a gap; give Excerpt typed gaps if that ever matters.
+local function weight(line: string): number
+	local n = string.match(line, "^… (%d+) lines?$")
+	return if n then tonumber(n) :: number else 1
+end
+
 -- Keeps BEFORE lines before and AFTER after each error line, or the last TAIL lines when none reads as one; at most
 -- MAX_LINES of them, each run left out marked as a gap.
 local function cut(job: string, lines: { string }, errors: { boolean }): Excerpt
@@ -177,7 +184,7 @@ function M.block(head: string, failures: { Failure }, cap: number): string
 		fixed += #parts[i]
 	end
 	local FRAME = #"\n```text\n" + #"\n```"
-	local room = (cap - fixed) // #failures - FRAME - #M.gap(MAX_LINES * 10) -- per excerpt, with the gap that may end it
+	local room = (cap - fixed) // #failures - FRAME - #M.gap(999999999) -- per excerpt, with the gap that may end it
 	local out = { OPEN, intro }
 	for i, p in parts do
 		table.insert(out, p)
@@ -188,7 +195,16 @@ function M.block(head: string, failures: { Failure }, cap: number): string
 			for n, line in lines do
 				line = string.gsub(escape(line), "```", "'''")
 				if used + #line + 1 > room then
-					table.insert(kept, M.gap(#lines - n + 1))
+					local left = 0
+					for k = n, #lines do
+						left += weight(lines[k])
+					end
+					local last = kept[#kept]
+					if last and string.match(last, "^… %d+ lines?$") then -- one gap, never two in a row
+						left += weight(last)
+						table.remove(kept)
+					end
+					table.insert(kept, M.gap(left))
 					break
 				end
 				used += #line + 1
