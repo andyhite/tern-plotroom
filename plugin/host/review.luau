@@ -86,7 +86,7 @@ function M.parse(raw: string): (Proposal?, string?)
 	end
 	local repo, head, at = text(o.repo, 200), text(o.head, 64), text(o.at, 64)
 	local number, summary = whole(o.number), text(o.summary, SUMMARY_BYTES)
-	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not head or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
+	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not head or #head < 7 or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
 		return nil, "The Draft review file is malformed."
 	end
 	local comments: { Comment } = {}
@@ -200,6 +200,12 @@ function M.excerpt(diff: Diff, c: Comment): string?
 	return head .. table.concat(out, "\n") .. "\n"
 end
 
+-- Whether the pull request's head `now` is not the reviewed one. The review may name its head by an abbreviated SHA
+-- (plotroom.ts › validate takes 7 to 64 hex digits), so a head that starts with it has not moved.
+function M.moved(p: Proposal, now: string?): boolean
+	return now ~= nil and string.sub(string.lower(now), 1, #p.head) ~= p.head
+end
+
 -- What Send hands the agent: your choices as one JSON object (the kept comments exactly as edited, the dropped ids, the
 -- verdict and the summary), the line of instructions you typed, and, when the pull request's head moved since the
 -- review (`head` now), a request to check the new commits first.
@@ -220,7 +226,7 @@ function M.message(p: Proposal, kept: { Comment }, dropped: { string }, verdict:
 	local lines = {
 		"My choices for your Draft review of " .. p.repo .. "#" .. p.number .. " (head " .. string.sub(p.head, 1, 12) .. "), sent from Plotroom's review block.",
 	}
-	if head and head ~= p.head then
+	if head and M.moved(p, head) then
 		table.insert(lines, "The pull request's head moved to " .. string.sub(head, 1, 12) .. " since your review: check the new commits first. If they change your findings, propose the review again instead of posting.")
 	end
 	table.insert(lines, "Post exactly these choices as one review: the kept comments as written (path, line, startLine, side, body; a suggestion as a suggestion block), the summary as its body and the verdict. Post nothing that is not here; the dropped comment ids are not posted.")
@@ -578,7 +584,7 @@ local function view(state: State): BlockView
 			button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }),
 		}))
 	end
-	if state.head and state.head ~= p.head then
+	if state.head and M.moved(p, state.head) then
 		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "muted"))
 	end
 	if state.loading then

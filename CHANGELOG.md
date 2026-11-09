@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A Draft review whose agent named the reviewed head by a short SHA (7 or more hex digits, which `plotroom_propose_review` accepts) no longer says the pull request's head moved, and Send no longer asks the agent to re-check new commits, when the current head starts with it. The block now reads the same 7 to 64 hex heads the tool accepts.
 - Draft review reads the pull request's diff against the base branch's tip now (fetched each time), not a stale local base ref: comments on lines only the base's newer commits changed are Not on a changed line instead of kept and then refused by GitHub.
 - A seen Jira issue assigned to you that someone else comments on is **Changed** again (Now lists it as Assigned: changed, its view rows show Changed): each refresh of Now reads one `acli jira workitem view` per seen assigned Jira issue for its newest comments. Your own comment still lists nothing.
 - Merging the base before conflicts regenerates a conflicted `poetry.lock` on Poetry 2 with `poetry lock` (Poetry 2 removed `--no-update`, so it always failed and left the conflict); Poetry 1 still gets `poetry lock --no-update`.

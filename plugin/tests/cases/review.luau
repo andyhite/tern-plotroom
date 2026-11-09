@@ -300,6 +300,50 @@ case("review: a head that moved since the review is said, and Send asks the agen
 	w.finish()
 end)
 
+case("review: a head named by a short SHA has not moved while the PR's head starts with it", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.head = string.upper(string.sub(HEAD, 1, 7))
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	eq(findKey(b.view().main, "moved", "text"), nil, "the block says nothing about the head moving")
+	b.press("enter", "m")
+	local _, text = sentChoices(b)
+	lacks(text, "head moved", "and Send does not ask to check new commits")
+	w.finish()
+end)
+
+case("review: a short SHA that is not the start of the PR's head has moved", function(w: World)
+	reviewScene(w, sha("e"))
+	local p = proposal()
+	p.head = string.sub(HEAD, 1, 7)
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	has(textOf(findKey(b.view().main, "moved", "text")), "head moved to eeeeeee", "the block says so")
+	b.press("enter", "m")
+	local _, text = sentChoices(b)
+	has(text, "head moved to eeeeeeeeeeee since your review: check the new commits first", "and Send asks for it")
+	w.finish()
+end)
+
+case("review: the block reads the heads plotroom_propose_review accepts, 7 to 64 hex digits, and no others", function(w: World)
+	local review = w.load("host/review") :: any
+	local function read(head: string): (any, string?)
+		local p = proposal()
+		p.head = head
+		return review.parse(jsonEncode(p))
+	end
+	for _, head in { "abc1234", "ABC1234", string.rep("a", 64) } do
+		yes(read(head), "reads head " .. head)
+	end
+	for _, head in { "abc123", string.rep("a", 65), "abc123g" } do
+		local got, why = read(head)
+		eq(got, nil, "refuses head " .. head)
+		eq(why, "The Draft review file is malformed.", "as malformed: " .. head)
+	end
+	w.finish()
+end)
+
 case("review: a reload keeps your edits for the same proposal and starts over for a revised one; a gone agent gets Copy", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
