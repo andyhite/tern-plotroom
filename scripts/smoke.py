@@ -1439,6 +1439,42 @@ def sc_inventory(s: Smoke) -> None:
     s.eq("main still listed first", os.path.realpath(str(root)), os.path.realpath(s.out(root, "worktree", "list", "--porcelain").split("\n")[0][len("worktree "):]))
 
 
+def sc_bare_layout(s: Smoke) -> None:
+    """A bare layout (`lay/.bare` plus the linked worktree `lay/main` the user works in, on PR 1's head branch): git lists the bare record first, yet
+    Plotroom takes `lay/main` as the checkout. Inventory marks it main and lists no bare record, Remove refuses it without touching it, and Worktree on
+    PR 1 says its branch is checked out in your checkout instead of reusing it."""
+    lay = s.work / "barelay"
+    dot, main = lay / ".bare", lay / "main"
+    s.out(s.tmp, "clone", "-q", "--bare", str(s.bare("b/are")), str(dot))
+    s.out(dot, "remote", "set-url", "origin", "git@github.com:b/are.git")
+    s.out(dot, "worktree", "add", "-q", str(main), "feature-1")
+    s.contains("git lists the bare record first", "worktree %s\nbare" % dot, s.out(dot, "worktree", "list", "--porcelain"))
+
+    def call(op: str, **rest: object) -> Dict[str, object]:
+        return s.run_request(dict(rest, op=op, repo="b/are", checkout=str(main)), "%s b/are" % op)
+
+    data = call("inventory")
+    s.eq("inventory ok (problem: %r)" % data.get("problem"), True, data.get("ok"))
+    entries = data.get("data")
+    if not isinstance(entries, list) or not entries:
+        s.fail("inventory", "a list of worktrees", repr(entries))
+    s.same_path("the saved checkout is the main entry", main, entries[0].get("path"))
+    s.eq("main flag", True, entries[0].get("main"))
+    s.eq("nothing else is listed (no bare record, no second main)", [False] * (len(entries) - 1), [e["main"] for e in entries[1:]])
+    s.eq("the bare record is not an entry", [], [e["path"] for e in entries if os.path.realpath(e["path"]) == os.path.realpath(str(dot))])
+
+    refused = call("removeEntry", path=str(main), branch="feature-1")
+    s.eq("remove the checkout: ok (data: %r)" % refused.get("data"), False, refused.get("ok"))
+    s.eq("the refusal", "That is the checkout; Plotroom never removes it.", refused.get("problem"))
+    s.eq("the checkout is still there", True, (main / "README.md").is_file())
+    s.contains("and still listed", "worktree %s\n" % main, s.out(dot, "worktree", "list", "--porcelain"))
+
+    opened = s.open("b/are", 1, main)
+    s.eq("Worktree on PR 1: ok (data: %r)" % opened.get("data"), False, opened.get("ok"))
+    s.contains("its branch is in your checkout", "Branch feature-1 is checked out in your checkout at %s" % main, opened.get("problem"))
+    s.eq("no worktree folder was made", False, s.wt("b/are", 1).exists())
+
+
 def sc_draft_push(s: Smoke) -> None:
     """A draft pull request's preview reads the branch against the base as the local bare remote has it, and writes nothing there; the push sends exactly the
     previewed commit, never force: it is refused once the branch moved after the preview or the remote's branch diverged, and a refused or failed push leaves
@@ -2527,6 +2563,7 @@ SCENARIOS = [
     ("first run: Get started to a worktree", sc_get_started),
     ("remote host", sc_remote_host),
     ("worktree inventory", sc_inventory),
+    ("bare-repository layout", sc_bare_layout),
     ("draft preview and push", sc_draft_push),
     ("triage, sort and worktrees board", sc_workflow),
     ("URL prompts", sc_prompts),
@@ -2570,6 +2607,7 @@ def check_smoke() -> str:
         s.repo("p", "q", "q", (1,))
         s.repo("o", "remote", "remote", (1,))
         s.repo("i", "nv", "inv", ())
+        s.repo("b", "are", "bare-src", (1,))
         s.repo("d", "raft", "draft", ())
         s.repo("f", "low", "flow", (5,))
         s.repo("a", "gent", "agent", (1,))
