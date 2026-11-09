@@ -51,6 +51,14 @@ function M.run()
 	assert(not triage.status(s, "prs", q, now + 100).snoozed)
 	triage.unsnooze(s, "o/r#9")
 	assert(not triage.status(s, "prs", q, now).snoozed)
+	-- snoozing a seen item keeps when it was seen: only markSeen moves seenAt
+	triage.markSeen(s, "prs", q, now)
+	assert(s.items["o/r#9"].seenAt == now)
+	triage.snooze(s, "prs", q, now + 500, now + 50)
+	assert(s.items["o/r#9"].seenAt == now and s.items["o/r#9"].at == now + 50)
+	triage.unsnooze(s, "o/r#9")
+	triage.markSeen(s, "prs", q, now + 60)
+	assert(s.items["o/r#9"].seenAt == now + 60)
 
 	-- tomorrow: next calendar day at local 08:00, strictly later
 	local t = triage.tomorrow(now)
@@ -88,6 +96,9 @@ function M.run()
 	assert(triage.validate({ version = 1, items = { ["a"] = { at = "x" } } }) ~= nil)
 	assert(triage.validate({ version = 1, items = { ["a\n"] = { at = 1 } } }) ~= nil)
 	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = 5 } } }) ~= nil)
+	-- entries written before seenAt existed still load; a malformed seenAt does not
+	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = "s", snoozeUntil = 2 } } }) == nil)
+	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = "s", seenAt = "x" } } }) ~= nil)
 end
 
 return M
