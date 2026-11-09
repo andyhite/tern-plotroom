@@ -2372,6 +2372,86 @@ case("host likely flaky: a check that passed earlier on its head is marked thoug
 	eq(#requestsOf(s.gh, "flaky"), 2, "then not again")
 end)
 
+-- Fails `gh` calls that `pick` matches with `reply` while `fail.on`; `fail.n` counts the calls it failed.
+local function failGh(w: World, pick: (h.Call) -> boolean, reply: Reply): { on: boolean, n: number }
+	local fail = { on = true, n = 0 }
+	w.respond(function(call: h.Call): Reply?
+		if fail.on and call.argv[1] == "gh" and pick(call) then
+			fail.n += 1
+			return reply
+		end
+		return nil
+	end)
+	return fail
+end
+local function isEvidence(call: h.Call): boolean
+	for _, a in call.argv do
+		if string.find(a, "checkType: ALL", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+local function isHistory(call: h.Call): boolean
+	return call.argv[2] == "run" and call.argv[3] == "list"
+end
+
+case("host likely flaky: an evidence read that timed out is read again at the next refresh and marks the check", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("1"), { "build:11" }) }
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", "11") }) }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	local fail = failGh(w, isEvidence, { status = -1, timedOut = true })
+	local b = openQueue(w)
+	w.flush()
+	eq(fail.n, 1, "the evidence read timed out")
+	eq(detailText(pickerOf(b).items[1]), "#1 · build failing", "nothing is marked yet")
+	fail.on = false
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 1, "the next refresh reads the evidence again")
+	local row = pickerOf(b).items[1]
+	eq(detailText(row), "#1 · build failed 3 of the last 20 runs on main", "now the check is Likely flaky")
+	eq(row.badges[2].text, "Re-run · likely flaky", "and the chip's job is a re-run")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 1, "a full judgment is kept for the head")
+end)
+
+case("host likely flaky: a base-history read that failed with a gh error is read again at the next refresh and marks the check", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("1"), { "build:11" }) }
+	s.gh.evidence["o/r#1"] = { head = sha("1"), files = array({}), runs = array({ attempt("CI", "build", "FAILURE", "11") }) }
+	s.gh.history["o/r@main@CI"] = baseRuns(3, 20)
+	local fail = failGh(w, isHistory, { status = 1, stderr = "HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/actions/runs)\n" })
+	local b = openQueue(w)
+	w.flush()
+	eq(fail.n, 1, "the history read failed")
+	eq(detailText(pickerOf(b).items[1]), "#1 · build failing", "nothing is marked yet")
+	fail.on = false
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "the head is judged again")
+	eq(#requestsOf(s.gh, "history"), 1, "and its base history read again")
+	eq(detailText(pickerOf(b).items[1]), "#1 · build failed 3 of the last 20 runs on main", "now the check is Likely flaky")
+	refreshNow(w, b)
+	eq(#requestsOf(s.gh, "flaky"), 2, "then not again")
+end)
+
+case("host likely flaky: an evidence read that keeps failing is tried three times for a head, then no more", function(w: World)
+	local s = hostScene(w, 0)
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("1"), { "build:11" }) }
+	local fail = failGh(w, isEvidence, { status = 1, stderr = "HTTP 502: Bad Gateway (https://api.github.com/graphql)\n" })
+	local b = openQueue(w)
+	w.flush()
+	for _ = 1, 4 do
+		refreshNow(w, b)
+	end
+	eq(fail.n, 3, "three failed reads, then the head is judged no more")
+	eq(detailText(pickerOf(b).items[1]), "#1 · build failing", "and nothing is marked")
+	-- a new head is judged afresh
+	s.gh.items.octocat = { failingPr(s, 1, "octo", sha("2"), { "build:12" }) }
+	refreshNow(w, b)
+	eq(fail.n, 4, "a new head gets its own tries")
+end)
+
 -- A PR's preview takes the issue noted on its worktree's branch from the last scan's notes: the issue list's scan noted
 -- issue 12 on `bob/12-fix-login`, the head branch of fork PR 1 (a fork's worktree is on <owner>/<branch>).
 local function notedScene(w: World): (HostScene, Block)
