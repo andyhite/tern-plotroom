@@ -408,6 +408,32 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	w.finish()
 end)
 
+windowCase("review: Send goes only to the run's agent pane while it is listed in the link's folder, not to a reused pane id", function(w: World)
+	w.load("window")
+	reviewScene(w)
+	seedRun(w)
+	-- After a restart pane 20 is another agent, live, in another worktree.
+	w.window.panes[20].cwd = "/wt/r9"
+	local b = openReview(w, 30)
+	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.link(b)
+	b.press("enter", "m")
+	w.flush()
+	eq(#w.window.agentCalls, 0, "nothing goes to the agent in another folder")
+	has(textOf(findKey(b.view().main, "gone")), "gone", "the block is told the agent is gone")
+	-- The same pane listed in the link's folder: Send delivers there.
+	w.window.panes[20].cwd = "/wt/r5"
+	b.event({ ev = "action", act = "reload" })
+	w.flush()
+	b.press("enter", "m")
+	w.flush()
+	local call = w.window.agentCalls[#w.window.agentCalls]
+	local got: { any } = { #w.window.agentCalls, call and call.op, call and call.pane }
+	same(got, { 1, "ask", 20 } :: { any }, "sent to the run's agent")
+	yes(findKey(b.view().main, "sent", "badge"), "the block shows Sent")
+	w.finish()
+end)
+
 windowCase("review: a review/send link from the Draft review pane sends only the user's one Send", function(w: World)
 	w.load("window")
 	reviewScene(w)

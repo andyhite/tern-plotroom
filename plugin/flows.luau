@@ -1550,7 +1550,9 @@ local function deliver(cx: WindowCx, pane: number, o: { run: string, text: strin
 			break
 		end
 	end
-	if not link or not agentLive(cx, link.agent) then
+	local states, _, cwds = agentStates(cx)
+	local s = if link and states then stateOf(link, states, cwds) else nil
+	if not link or s == nil or s == "exited" then
 		return answer("gone", "The agent that proposed this review is gone.")
 	end
 	local agent = link.agent

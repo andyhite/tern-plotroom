@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A Draft review's Send goes only to its run's agent while that agent is listed in the run's worktree: after a Tern restart, an unrelated agent that now holds the old pane id in another folder no longer gets the message, and the block says the agent is gone and offers Copy.
 - A seen Jira issue assigned to you that someone else comments on is **Changed** again (Now lists it as Assigned: changed, its view rows show Changed): each refresh of Now reads one `acli jira workitem view` per seen assigned Jira issue for its newest comments. Your own comment still lists nothing.
 - Merging the base before conflicts regenerates a conflicted `poetry.lock` on Poetry 2 with `poetry lock` (Poetry 2 removed `--no-update`, so it always failed and left the conflict); Poetry 1 still gets `poetry lock --no-update`.
 - Mark seen and Snooze until tomorrow run from a key bind or `tern ctl plugins run` while Now, Worktrees or Agents is shown do nothing, instead of marking or snoozing the hidden view's selected item.
