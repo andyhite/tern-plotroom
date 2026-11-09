@@ -1540,21 +1540,8 @@ function M.reviewAfter(cx: WindowCx, agent: number)
 	end, true)
 end
 
--- plotroom://review/send from Draft review block `pane`: its message (hidden `main.send`) goes to the agent of its run by
--- `agents:ask`, and the block is told `sent`, or `gone` with why (it then offers Copy).
-function M.reviewSend(cx: WindowCx, pane: number)
-	if not isReview(cx, pane) then
-		return cx:toast("error", "Plotroom: link did not come from a Draft review block")
-	end
-	local function answer(act: string, why: string?)
-		pcall(function()
-			cx.session:event(pane, { ev = "action", act = act, value = why })
-		end)
-	end
-	local ok, o = pcall(tern.json.decode, tostring(e().nodeProp(e().readNode(cx, pane, "main.send"), "text")))
-	if not ok or type(o) ~= "table" or type(o.run) ~= "string" or type(o.text) ~= "string" or o.text == "" then
-		return answer("gone", "The message could not be read.")
-	end
+-- Review/send's message `o`, read off the block in `pane`, goes to its run's agent; `answer` tells the block.
+local function deliver(cx: WindowCx, pane: number, o: { run: string, text: string }, answer: (string, string?) -> ())
 	local host = hostOf(cx, pane)
 	local link: Link? = nil
 	for _, l in (readLinks()) do
@@ -1578,6 +1565,48 @@ function M.reviewSend(cx: WindowCx, pane: number)
 	end
 	answer("sent")
 	cx:toast("success", "Sent your Draft review to the agent of " .. link.key)
+end
+
+-- How long, and how often, review/send looks for the block's message: on a remote host its link can arrive before the
+-- render that shows the message.
+local SEND_READ_MS, SEND_READ_STEP_MS = 3000, 250
+local reading: { [number]: number } = {} -- pane -> its latest review/send link; an older one's wait stops
+
+-- plotroom://review/send from Draft review block `pane`: its message (hidden `main.send`) goes to the agent of its run by
+-- `agents:ask`, and the block is told `sent`, or `gone` with why (it then offers Copy). A message not shown yet is
+-- looked for again for up to SEND_READ_MS; a later link from the pane takes over the wait, so one Send sends once.
+function M.reviewSend(cx: WindowCx, pane: number)
+	if not isReview(cx, pane) then
+		return cx:toast("error", "Plotroom: link did not come from a Draft review block")
+	end
+	local token = (reading[pane] or 0) + 1
+	reading[pane] = token
+	local waited = 0
+	local function try(cx2: WindowCx)
+		if reading[pane] ~= token then
+			return
+		end
+		local function answer(act: string, why: string?)
+			pcall(function()
+				cx2.session:event(pane, { ev = "action", act = act, value = why })
+			end)
+		end
+		local ok, o = pcall(tern.json.decode, tostring(e().nodeProp(e().readNode(cx2, pane, "main.send"), "text")))
+		if not ok or type(o) ~= "table" or type(o.run) ~= "string" or type(o.text) ~= "string" or o.text == "" then
+			if waited < SEND_READ_MS then
+				waited += SEND_READ_STEP_MS
+				tern.timer(SEND_READ_STEP_MS, function(cx3: WindowCx?)
+					if cx3 then
+						try(cx3)
+					end
+				end)
+				return
+			end
+			return answer("gone", "The message could not be read.")
+		end
+		deliver(cx2, pane, o, answer)
+	end
+	try(cx)
 end
 
 -- The review of a message for `agent`: the picker lists, Cancel first, Send, a one-line note the user types (the prompt

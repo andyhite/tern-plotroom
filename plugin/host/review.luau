@@ -22,6 +22,9 @@ local FILE_BYTES = 8 * 1000 * 1000
 local SUMMARY_BYTES, BODY_BYTES, PATH_BYTES = 3 * 20000, 3 * 10000, 3 * 1000
 local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comments are listed without their lines)
 local CONTEXT = 8 -- rows of diff a comment's card shows around its line
+-- How long Sending waits for the window's sent or gone (the window looks for the message for 3 s): a link that never
+-- arrives (a remote host's lost link) then falls back to Copy.
+M.SEND_TIMEOUT_MS = 15 * 1000
 
 M.VERDICTS = { "comment", "approve", "request_changes" }
 local REGULAR_COLS = 100 -- panes narrower than this stack the navigator above the detail
@@ -56,6 +59,7 @@ type State = {
 	editing: boolean,
 	head: string?, -- the pull request's head now; differs from p.head when it moved since the review
 	sending: boolean,
+	sends: number, -- Sends so far: a timeout acts only for the Send that armed it
 	sent: boolean,
 	gone: string?, -- why Send could not reach the agent: Copy is offered
 	message: string?, -- what Send hands the agent (hidden `main.send`)
@@ -374,8 +378,19 @@ local function send(state: State)
 	end
 	state.editing, state.sending, state.gone = false, true, nil
 	state.message = messageOf(state)
+	state.sends += 1
+	local n, gen = state.sends, state.gen
 	state.cx:render()
 	state.cx:open(core.withToken("plotroom://review/send"))
+	tern.timer(M.SEND_TIMEOUT_MS, function()
+		if state.sending and state.sends == n and alive(state, gen) then
+			state.sending = false
+			state.gone = "No answer came back, so the message may not have reached the agent. Copy the message and give it to the agent yourself."
+			pcall(function()
+				state.cx:render()
+			end)
+		end
+	end)
 end
 
 local function toggle(state: State, i: number)
@@ -607,6 +622,7 @@ function M.define()
 				at = 0,
 				editing = false,
 				sending = false,
+				sends = 0,
 				sent = false,
 			}
 			if state.run == "" or state.cwd == "" then
