@@ -408,4 +408,45 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	w.finish()
 end)
 
+-- `unit` repeated to n UTF-16 units, as the tool counts them (a CJK character is one unit, three UTF-8 bytes).
+local function fill(unit: string, n: number): string
+	return string.rep(unit, n // (utf8.len(unit) or 1))
+end
+
+case("review: the largest proposal the tool accepts (100 comments of 10000-unit multi-line bodies and suggestions) is read and every comment listed", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.summary = fill("s\n", 20000)
+	local comments = {}
+	for i = 1, 100 do
+		comments[i] = { id = "c" .. i, path = "src/a.lua", line = 3, side = "RIGHT", kind = "problem", body = fill("x\n", 10000), suggestion = fill("y\n", 10000) }
+	end
+	p.comments = array(comments)
+	w.fs.files[FILE] = jsonEncode(p)
+	yes(#w.fs.files[FILE] > 2 * 1000 * 1000, "over the old 2 MB cap")
+	local review = w.load("host/review") :: any
+	eq(review.fileAt("r1"), AT1, "fileAt reads it, so the window opens the block")
+	local b = openReview(w)
+	eq(#navKeys(b), 102, "the summary, all 100 comments and the instructions")
+	lacks(textOf(b.view().main), "malformed", "nothing is reported malformed")
+	w.finish()
+end)
+
+case("review: a 10000-character CJK body and suggestion the tool accepts is listed, not malformed", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.summary = fill("漢", 20000)
+	p.comments = array({ { id = "c1", path = fill("漢", 1000), line = 3, side = "RIGHT", kind = "problem", body = fill("漢", 10000), suggestion = fill("字", 10000) } })
+	w.fs.files[FILE] = jsonEncode(p)
+	local review = w.load("host/review") :: any
+	local got = review.parse(w.fs.files[FILE])
+	yes(got, "parse returns the proposal")
+	eq(#got.comments[1].body, 30000, "a 30000-byte body")
+	eq(review.fileAt("r1"), AT1, "fileAt reads it")
+	local b = openReview(w)
+	same(navKeys(b), { "n0", "n1", "n2" }, "the comment is listed")
+	lacks(textOf(b.view().main), "malformed", "not reported malformed")
+	w.finish()
+end)
+
 return {}
