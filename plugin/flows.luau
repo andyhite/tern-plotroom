@@ -1016,10 +1016,11 @@ local function checkOutcome(cx: WindowCx, l: Link)
 end
 
 -- How often the checked runs still undecided (usage.agreement) are asked whether their work merged, and which are in
--- flight ("<key>|<started>").
+-- flight ("<key>|<started>" -> when it was asked; like checking, an entry older than twice the ask's timeout went
+-- unanswered, and the next sweep asks again).
 local MERGE_SWEEP_S = 10 * 60
 local sweptAt = 0
-local merging: { [string]: boolean } = {}
+local merging: { [string]: number } = {}
 
 -- Asks the lowest Plotroom block, as each run's login, whether the work of every undecided checked run merged (the
 -- `outcome` op with Merged), and marks those that did. Quiet, like checkOutcome. A run that names no login, repository,
@@ -1030,8 +1031,9 @@ local function checkMerges(cx: WindowCx, now: number)
 	local runs = if block then usage.readRuns() else nil
 	for _, r in runs or {} :: { usage.Run } do
 		local id = r.key .. "|" .. (r.started or 0)
-		if r.checkedAt and not usage.agreement(r, now) and r.login and r.ghRepo and (r.number or r.branch) and not merging[id] then
-			merging[id] = true
+		local asked = merging[id]
+		if r.checkedAt and not usage.agreement(r, now) and r.login and r.ghRepo and (r.number or r.branch) and not (asked and now - asked < OUTCOME_MS // 1000 * 2) then
+			merging[id] = now
 			local key, started = r.key, r.started
 			local args = { outcome = "merged", repo = r.ghRepo, number = r.number, branch = r.branch, since = 0, login = r.login }
 			local sent = e().ask(cx, block :: number, "outcome", args, OUTCOME_MS, function(a: any, _cx2: WindowCx)

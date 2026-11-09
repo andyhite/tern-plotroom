@@ -4941,6 +4941,24 @@ windowCase("window flows: an undecided checked run is asked whether its work mer
 	has(text, "Agreement 66% (2 of the last 3 decided runs) · Autopilot gate 80% over 20 decided runs · not met", "agreement over the decided runs, beside the gate")
 end)
 
+windowCase("window flows: a merge-sweep ask still in flight is not sent twice, and one never answered is asked again at the next sweep", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local now = EPOCH
+	w.kv.put("runs", array({ { key = "o/r#12", action = "Implement", result = "done", started = now - 900, ended = now - 600, check = "pass", checkedAt = now - 300, login = "cat", ghRepo = "o/r", number = 12 } }))
+	w.advance(4100)
+	eq(#outcomeAsks(w), 1, "the first sweep asks")
+	w.advance(80 * 1000)
+	eq(#outcomeAsks(w), 1, "while that ask is in flight, later ticks send no second ask")
+	w.advance(600 * 1000)
+	local asked = outcomeAsks(w)
+	eq(#asked, 2, "the ask went unanswered past its timeout: the next sweep asks again")
+	same({ asked[2].outcome, asked[2].repo, asked[2].number, asked[2].login }, { "merged", "o/r", 12, "cat" } :: { any }, "the same run, Merged, as its login")
+	st.reply("outcome", { verdict = "not" }) -- the first ask's answer, too late: dropped
+	st.reply("outcome", { verdict = "verified" })
+	eq(loggedRun(w, "o/r#12", now - 900).merged, true, "the second ask's answer marks its work merged")
+end)
+
 case("usage: a checked run is agreed once merged or a week after its verdict, disagreed once you said so; agreement is over the last 20 decided runs, beside the Autopilot gate", function(w: World)
 	local usage: any = w.load("usage")
 	local now = EPOCH
