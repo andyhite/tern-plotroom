@@ -103,8 +103,8 @@ export type Snap = {
 	rowsState: number?,
 	stages: { [string]: string }?, -- each item's stage (item key -> engine.stage id) when last noted (engine.arrive)
 }
--- What the local search lets through: computed once per snapshot and search text.
-export type Visible = { snap: Snap, needle: string, group: string, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }
+-- What the local search lets through: computed once per snapshot, search text and view group and sort.
+export type Visible = { snap: Snap, needle: string, group: string, sort: string?, rev: number, items: { any }, order: { any }, hits: { [string]: any }? }
 -- One way to group a list: the view's `group` value, its label in Settings and the group an item falls in. `keep`: the
 -- groups follow the list's order (GitHub state) instead of their labels'. `rank`: the groups go by their items' rank
 -- (Jira status category), then by label.

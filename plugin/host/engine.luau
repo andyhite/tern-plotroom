@@ -709,8 +709,9 @@ function M.hiddenCount(state: State, snap: Snap): number
 	return n
 end
 
--- The items the local search lets through, in snapshot order, with their picker ids and title hits. Recomputed only when
--- the snapshot or the search text changes.
+-- The items the local search lets through, in the active view's order, with their picker ids and title hits. Recomputed
+-- only when the snapshot, the search text, the view's group or sort, or `state.rev` changes (two views with one query
+-- share a snapshot).
 function M.filtered(state: State): Visible?
 	local snap = state.snap
 	if not snap then
@@ -719,8 +720,9 @@ function M.filtered(state: State): Visible?
 	local text = if state.query then state.query.text else ""
 	local view = M.activeView(state)
 	local group = if view then view.group else "none"
+	local sort = if view then view.sort else nil
 	local cached = state.vis
-	if cached and cached.snap == snap and cached.needle == text and cached.group == group and cached.rev == state.rev then
+	if cached and cached.snap == snap and cached.needle == text and cached.group == group and cached.sort == sort and cached.rev == state.rev then
 		return cached
 	end
 	local spec: Group? = nil
@@ -806,7 +808,7 @@ function M.filtered(state: State): Visible?
 			table.insert(order, M.pickerId("n", item.key))
 		end
 	end
-	local out: Visible = { snap = snap, needle = text, group = group, rev = state.rev, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
+	local out: Visible = { snap = snap, needle = text, group = group, sort = sort, rev = state.rev, items = items, order = tern.json.array(order), hits = if hasHits then hits else nil }
 	state.vis = out
 	return out
 end

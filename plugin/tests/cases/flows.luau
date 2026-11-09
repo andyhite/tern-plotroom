@@ -1920,6 +1920,39 @@ case("host sort: Oldest waiting ranks by creation, and Largest changes first by 
 	same(listed(b), { "no_2fr_233", "no_2fr_232", "no_2fr_231" }, "size: 93 lines, then 45, then 2")
 end)
 
+case("host sort: switching to a view with the same query and another sort shows its order and its first item before any search lands", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { additions = 1, deletions = 1 }),
+		searchItem(2, "o/r", EPOCH - 300, { additions = 40, deletions = 5 }),
+		searchItem(3, "o/r", EPOCH - 180, { additions = 3, deletions = 90 }),
+	}
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
+		{ id = "v1", name = "Mine", integration = "github", query = "is:open author:@me", logins = array({}), group = "none", prompts = array({}), sort = "updated" },
+		{ id = "v2", name = "Mine big", integration = "github", query = "is:open author:@me", logins = array({}), group = "none", prompts = array({}), sort = "size" },
+	}) })
+	local b = openQueue(w)
+	same(listed(b), { "no_2fr_231", "no_2fr_233", "no_2fr_232" }, "Mine: recently updated first")
+	eq(pickerOf(b).selected, "no_2fr_231", "on its first item")
+	s.gh.override = function(req: GhReq): Reply?
+		return if req.kind == "search" then { delay = 60 * 1000, status = 1, stderr = "HTTP 502: Bad Gateway\n" } else nil
+	end
+	pickScope(b, "prs:v2")
+	w.flush()
+	eq(pickerOf(b).scope, "prs:v2", "Mine big")
+	same(listed(b), { "no_2fr_233", "no_2fr_232", "no_2fr_231" }, "in its own order while its search has not landed")
+	eq(pickerOf(b).selected, "no_2fr_233", "on the first item of that order")
+	w.advance(1000)
+	local seen: { string } = {}
+	for key, e in w.kv.get("triage").items do
+		if e.seen then
+			table.insert(seen, key)
+		end
+	end
+	table.sort(seen)
+	same(seen, { "o/r#1", "o/r#3" }, "only the item each view opened on was marked seen")
+end)
+
 case("host sort: a Jira view offers priority alone, o turns it on and off, and GitHub issues offer updated and oldest", function(w: World)
 	local s = jiraHost(w)
 	s.acli.searches[JIRA_ASSIGNED] = { jiraItem("ABC-12", "Fix login", { priority = { name = "Low" } }), jiraItem("ABC-13", "Old bug", { priority = { name = "Highest" } }) }
