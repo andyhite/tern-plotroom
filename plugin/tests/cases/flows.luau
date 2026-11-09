@@ -526,6 +526,44 @@ windowCase("window flows: a second turn end during the settle wait yields one ru
 	same({ l.result, l.attention, l.reason }, { "done", "ok", "Turn two" }, "the link shows turn 2's report")
 end)
 
+-- A link started with Plotroom's omp extension (`run` set), whose first turn ended with a needs-human report, recorded.
+local function askedOnce(w: World): any
+	local link = startReview(w)
+	local links: any = w.kv.get("agent-links")
+	links[1].run = "1794245000-abcdef"
+	w.kv.put("agent-links", links)
+	lastSays(w, link.agent, "Which base?", { reportCall(`\{"attention":"needs-human","reason":"Which base?","commit":null,"pr":null,"evidence":[],"blocker":null}`) })
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("agent-links") :: any)[1].attention, "needs-human", "turn 1 is recorded")
+	return link
+end
+
+windowCase("window flows: a later turn end read before its prompt reached the transcript records that turn's report once it shows", function(w: World)
+	w.load("window")
+	local link = askedOnce(w)
+	local turn1 = table.clone(w.window.transcripts[link.agent])
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("agent-links") :: any)[1].result, "done", "nothing new is recorded from turn 1's messages")
+	local commit = string.rep("b", 40)
+	lastSays(w, link.agent, "Done.", { reportCall(`\{"attention":"ok","reason":"Based on main","commit":"{commit}","pr":null,"evidence":["ran it"],"blocker":null}`) }, turn1)
+	w.advance(11000)
+	w.flush()
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.attention, l.reason, l.commit }, { "ok", "Based on main", commit }, "turn 2's report is recorded")
+	eq(#(w.kv.get("runs") :: any), 1, "as no second run")
+end)
+
+windowCase("window flows: a later turn end whose transcript already shows that turn is recorded at once", function(w: World)
+	w.load("window")
+	local link = askedOnce(w)
+	lastSays(w, link.agent, "Done.", { reportCall(`\{"attention":"ok","reason":"Based on main","commit":null,"pr":null,"evidence":[],"blocker":null}`) }, table.clone(w.window.transcripts[link.agent]))
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	same({ (w.kv.get("agent-links") :: any)[1].attention, (w.kv.get("agent-links") :: any)[1].reason }, { "ok", "Based on main" }, "without waiting")
+end)
+
 windowCase("window flows: a turn with no report call records No report, and a later turn's valid report replaces it without a second run", function(w: World)
 	w.load("window")
 	local link = startReview(w)

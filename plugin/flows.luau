@@ -49,8 +49,9 @@ type Chain = { action: string, name: string, next: string?, kind: string, repo: 
 -- round gets as `{findings}`, one per line. `stop`: why its item's chain stopped at Needs you (a limit; on the item's
 -- newest link, so a later run clears it).
 -- `run`: as on AgentInfo. `reviewed`: when the newest Draft review file of that run opened in the review block was
--- written (its `at`), so a turn end opens it only for a newer one.
-type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string?, run: string?, reviewed: string? }
+-- written (its `at`), so a turn end opens it only for a newer one. `turns`: how many prompts its recorded turns covered
+-- (the settle wait's count), so a later turn end of an agent with `run` waits until the transcript shows a newer prompt.
+type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain?, action: string?, branch: string?, title: string?, result: string?, ended: string?, cwd: string?, started: number?, kind: string?, model: string?, runsIn: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, login: string?, ghRepo: string?, number: number?, commit: string?, checked: number?, criteria: string?, checkedCommit: string?, checkAgent: number?, checkStarted: number?, check: string?, findings: string?, gate: string?, gateFindings: string?, stop: string?, run: string?, reviewed: string?, turns: number? }
 -- What a link says about its agent beyond the item key (the action's name, the worktree's branch, the item's title); `code`
 -- (an issue's code repository) is only for its chain. `kind` ("pr"/"issue"), `model` (nil: omp's default) and `runsIn`
 -- ("worktree" or "main checkout") are for the run log; `outcome`, `login`, `ghRepo` and `number` for its outcome check;
@@ -206,7 +207,7 @@ local function linkOf(row: any): Link?
 		end
 		texts[field] = v
 	end
-	for _, field in { "started", "number", "checked", "checkAgent", "checkStarted" } do
+	for _, field in { "started", "number", "checked", "checkAgent", "checkStarted", "turns" } do
 		if row[field] ~= nil and type(row[field]) ~= "number" then
 			return nil
 		end
@@ -248,6 +249,7 @@ local function linkOf(row: any): Link?
 		stop = clip(texts.stop, STOP_CAP),
 		run = clip(texts.run, ACTION_CAP),
 		reviewed = clip(texts.reviewed, ACTION_CAP),
+		turns = row.turns,
 	}
 end
 
@@ -277,7 +279,7 @@ local function writeLinks(links: { Link }): boolean
 	local rows: { any } = {}
 	for i = 1, math.min(#links, LINKS_CAP) do
 		local l = links[i]
-		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop, run = l.run, reviewed = l.reviewed })
+		table.insert(rows, { key = l.key, agent = l.agent, host = { id = l.host.id, name = l.host.name, address = l.host.address }, at = l.at, chain = l.chain, action = l.action, branch = l.branch, title = l.title, result = l.result, ended = l.ended, cwd = l.cwd, started = l.started, kind = l.kind, model = l.model, runsIn = l.runsIn, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = l.verdict, login = l.login, ghRepo = l.ghRepo, number = l.number, commit = l.commit, checked = l.checked, criteria = l.criteria, checkedCommit = l.checkedCommit, checkAgent = l.checkAgent, checkStarted = l.checkStarted, check = l.check, findings = l.findings, gate = l.gate, gateFindings = l.gateFindings, stop = l.stop, run = l.run, reviewed = l.reviewed, turns = l.turns })
 	end
 	return (pcall(tern.kv.set, LINKS_KEY, tern.json.array(rows)))
 end
@@ -1091,6 +1093,8 @@ end
 -- is recorded with that read at the next retry, and a turn end of the same pane that arrives during it (closed, exited)
 -- records the waited turn first. The waited turn is the one the first read ends in (counted by its prompts): every
 -- later read is cut before the next prompt, and a next prompt (a message sent to the agent meanwhile) ends the wait.
+-- For an agent with Plotroom's extension (`run`), a read with no more prompts than its recorded turns covered (`turns`)
+-- does not show the ended turn yet: it waits too, and on giving up records that turn with no report.
 local SETTLE_MS, SETTLE_TRIES = 1000, 10
 type Wait = { host: HostId, result: string, msgs: { any }?, tries: number, turn: number? }
 local waits: { [number]: Wait } = {} -- agent pane -> its turn end waiting for the transcript
@@ -1172,11 +1176,17 @@ local function settle(cx: WindowCx, agent: number, wt: Wait, final: boolean)
 			local read = if gone then nil else transcriptOf(cx, agent)
 			local msgs, newer = nil, false
 			if read then
-				wt.turn = wt.turn or promptsIn(read)
-				msgs, newer = upToTurn(read, wt.turn :: number)
+				local n = promptsIn(read)
+				if wt.turn == nil and not (l.run and (l.turns or 0) > 0 and n <= (l.turns :: number)) then
+					wt.turn = n
+				end
+				if wt.turn then
+					msgs, newer = upToTurn(read, wt.turn :: number)
+				end
 			end
 			local live = wt.result == "done" or wt.result == "failed"
-			if not final and msgs and live and not newer and not settled(msgs, l.run ~= nil) and wt.tries < SETTLE_TRIES then
+			local waiting = if msgs then not newer and not settled(msgs, l.run ~= nil) else read ~= nil
+			if not final and waiting and live and wt.tries < SETTLE_TRIES then
 				wt.msgs, wt.tries = msgs, wt.tries + 1
 				waits[agent] = wt
 				tern.timer(SETTLE_MS, function(cx2: WindowCx?)
@@ -1189,6 +1199,7 @@ local function settle(cx: WindowCx, agent: number, wt: Wait, final: boolean)
 				end)
 				return
 			end
+			l.turns = wt.turn or l.turns
 			recordTurn(cx, links, l, wt.result, msgs or wt.msgs)
 			return
 		end
