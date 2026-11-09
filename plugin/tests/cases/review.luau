@@ -207,6 +207,38 @@ case("review: with a stale local base ref the diff is read against the base's ti
 	w.finish()
 end)
 
+case("review: a comment on a file whose path has a space is placed, though git ends its header lines with a tab", function(w: World)
+	local diffs = reviewScene(w)
+	-- As git writes it: a path holding a space ends its ---/+++ lines with a tab, which is not part of the path.
+	local spaced = DIFF .. table.concat({ "diff --git a/a b.txt b/a b.txt", "new file mode 100644", "index 0000000..587be6b", "--- /dev/null", "+++ b/a b.txt\t", "@@ -0,0 +1 @@", "+x", "" }, "\n")
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" then
+			table.insert(diffs, table.concat(a, " "))
+			return { stdout = spaced }
+		end
+		return nil
+	end)
+	local p = proposal()
+	p.comments = array({ { id = "c1", path = "a b.txt", line = 1, side = "RIGHT", kind = "nit", body = "Say y" } })
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	eq(navState(b, 1), "Kept", "placed and kept")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	local d = findKey(findKey(b.view().main, "detail"), "diff", "col").c[1]
+	eq(d.p.path, "a b.txt", "with its diff excerpt, on the path without the tab")
+	has(d.p.text, "+x", "around its line")
+	local toasts = #w.toasts
+	b.typeText(" ")
+	eq(navState(b, 1), "Dropped", "Space drops it")
+	b.typeText(" ")
+	eq(navState(b, 1), "Kept", "and keeps it again")
+	for i = toasts + 1, #w.toasts do
+		yes(w.toasts[i].text ~= "Not on a changed line", "with no Not on a changed line toast")
+	end
+	w.finish()
+end)
+
 case("review: a base that cannot be fetched is said, not read stale", function(w: World)
 	local diffs, g = reviewScene(w)
 	g.served["refs/heads/main"] = nil
