@@ -1739,6 +1739,21 @@ case("host: a Jira issue's branch can name {jira.user}, the sign-in's email befo
 	eq(a.vars["github.user"], "octocat", "and the gh login")
 end)
 
+case("host: {jira.user} in a branch keeps only branch-safe characters of an email like pat.o'brien@corp.com", function(w: World)
+	local s = jiraHost(w)
+	s.acli.override = function(req: AcliReq): Reply?
+		if req.kind == "auth" then
+			return { stdout = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: pat.o'brien@corp.com\n" }
+		end
+		return nil
+	end
+	w.kv.put("branch-format", "{jira.user}/{key}-{slug}")
+	local b = openIssues(w)
+	local a = hx.ask(w, b, "j1", freshAsk("ABC", "ABC-12"))
+	eq(a.vars.branch, "pat.obrien/ABC-12-fix-login", "the apostrophe is dropped")
+	eq(s.git.refs["refs/heads/pat.obrien/ABC-12-fix-login"], sha("b"), "git made the branch")
+end)
+
 case("host: a branch format naming {jira.user} is refused while the sign-in names no email, and nothing is made", function(w: World)
 	local s = jiraHost(w)
 	-- an API token's sign-in has no email to take the user from
