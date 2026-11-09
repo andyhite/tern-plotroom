@@ -2154,4 +2154,22 @@ windowCase("worktree.premerge: no merge for an action that does not resolve conf
 	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main"), 0, "nor was the base fetched for it")
 end)
 
+windowCase("worktree.premerge: a fork PR is never merged into before its agent starts: no git merge or commit and no lockfile tool run in its worktree", function(w: World)
+	local s = watchConflicted(w)
+	local meta = s.gh.meta["o/r#5"]
+	meta.headRepo, meta.headOwner = "fork/r", "fork"
+	mergeModel(w, s, { "Gemfile.lock", "pnpm-lock.yaml" }, { bundle = { stdout = "" }, pnpm = { stdout = "" } })
+	local from = #w.calls
+	runWatch(w)
+	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, true, "Watch still asks for the merge")
+	for i = from + 1, #w.calls do
+		local a = w.calls[i].argv
+		local line = table.concat(a, " ")
+		yes(a[1] ~= "bundle" and a[1] ~= "pnpm", "no lockfile tool runs: " .. line)
+		yes(not (a[1] == "git" and (a[4] == "merge" or a[4] == "commit")), "no git merge or commit in the fork's worktree: " .. line)
+	end
+	lacks(w.window.agents[1].prompt, "<merge>", "the agent resolves the conflict itself")
+	eq(w.window.agents[1].cwd, s.target, "in the fork's worktree")
+end)
+
 return {}

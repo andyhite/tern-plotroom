@@ -420,7 +420,9 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						merge = merge,
 					})
 				end
-				if not (premerge and r.conflicts and r.dirty == false and r.prBase ~= "") then
+				-- A fork's code is not trusted: its git hooks and lockfile tools (a Gemfile, a .pnpmfile.cjs, a build
+				-- backend) would run here, so a fork PR gets no premerge and its agent resolves the conflict itself.
+				if not (premerge and not r.fork and r.conflicts and r.dirty == false and r.prBase ~= "") then
 					return answer(nil)
 				end
 				preparing[key] = true -- a second request waits for the merge, as for the worktree
