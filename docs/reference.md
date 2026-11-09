@@ -32,6 +32,8 @@ Requires Tern 0.9.8, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my
 
 One Plotroom block holds every saved view in its sidebar: GitHub pull requests and issues, and Jira issues. Opened inside a github.com checkout, it saves that checkout as the one its worktrees come from (Settings › Repositories).
 
+Settings are shared by every Plotroom block on the host: a change saved in one (a view, an action or Add missing defaults, a repository, its checkout, setup commands or branch format, a Jira project or its repositories, a name format, a key, the Summary settings) shows at once in every other open Plotroom block, its Commands and Settings included.
+
 The Files pane's **Open Plotroom** header button opens the same block beside the focused pane, starting in the folder Files shows. If that folder belongs to another host, focus a pane on that host first; Plotroom never interprets one host's path on another.
 
 Update later with the same command plus `--force`.

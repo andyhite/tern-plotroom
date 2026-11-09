@@ -75,6 +75,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - A Draft review whose agent named the reviewed head by a short SHA (7 or more hex digits, which `plotroom_propose_review` accepts) no longer says the pull request's head moved, and Send no longer asks the agent to re-check new commits, when the current head starts with it. The block now reads the same 7 to 64 hex heads the tool accepts.
+- Settings › Actions › Add missing defaults, adding a repository or a Jira project, a Jira project's repositories or removing it, and the Summary model now show at once in every other open Plotroom block (its Commands rows, Next move and Settings), instead of after that block's next refresh.
 - A Draft review's Send goes only to its run's agent while that agent is listed in the run's worktree: after a Tern restart, an unrelated agent that now holds the old pane id in another folder no longer gets the message, and the block says the agent is gone and offers Copy.
 - Draft review reads the pull request's diff against the base branch's tip now (fetched each time), not a stale local base ref: comments on lines only the base's newer commits changed are Not on a changed line instead of kept and then refused by GitHub.
 - A seen Jira issue assigned to you that someone else comments on is **Changed** again (Now lists it as Assigned: changed, its view rows show Changed): each refresh of Now reads one `acli jira workitem view` per seen assigned Jira issue for its newest comments. Your own comment still lists nothing.
