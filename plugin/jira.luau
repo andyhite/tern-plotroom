@@ -797,6 +797,8 @@ function M.yours(key: string, since: number?, done: (boolean?) -> ())
 			end
 			if mine then
 				return done(true)
+			elseif since and updated <= since then
+				return done(nil) -- nothing changed after `since`: no field change to ask about
 			end
 			-- A minute before the update, as JQL counts relative minutes from now.
 			local ago = "-" .. (math.max(0, os.time() - updated) // 60 + 2) .. "m"
