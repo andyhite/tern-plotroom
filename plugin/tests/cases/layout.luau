@@ -169,4 +169,34 @@ case("layout: a stored layout this version does not know loads as the List, and 
 	eq(w.kv.get("views-prs").items[1].layout, "board", "Show as Board saves Board")
 end)
 
+local function triageEvent(b: h.Block, value: string)
+	b.event({ ev = "action", act = "triage", value = value })
+	b.render()
+end
+
+case("layout: the palette's Snooze and Mark seen leave the view's selected item alone while Now, Worktrees or Agents is shown", function(w: World)
+	local b = scene(w, "board") -- a Board marks nothing seen on its own, so kv triage stays empty
+	eq(at(b), "needs.list.no_2fr_231", "the view selects o/r#1")
+	for _, scope in { "scope:now", "scope:worktrees", "scope:agents" } do
+		b.event({ ev = "action", id = "layer.queue", act = "queue", value = scope })
+		w.flush()
+		triageEvent(b, "snooze")
+		triageEvent(b, "seen")
+		local store: any = w.kv.get("triage")
+		eq(store and store.items["o/r#1"], nil, scope .. ": nothing is written for the hidden o/r#1")
+	end
+end)
+
+case("layout: the palette's Snooze and Mark seen act on the selected item in a view, List or Board", function(w: World)
+	local b = scene(w, "board")
+	triageEvent(b, "seen")
+	eq(type(w.kv.get("triage").items["o/r#1"].seen), "string", "Mark seen on a Board marks the selected card")
+	triageEvent(b, "snooze")
+	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, EPOCH + 20 * 3600, "Snooze on a Board snoozes it")
+	layout(b)
+	eq(pickerOf(b).selected, "no_2fr_232", "the List selects the next item")
+	triageEvent(b, "snooze")
+	eq(w.kv.get("triage").items["o/r#2"].snoozeUntil, EPOCH + 20 * 3600, "Snooze in a List snoozes the selected item")
+end)
+
 return {}

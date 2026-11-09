@@ -861,9 +861,10 @@ end
 
 -- `act` ("seen" | "snooze" | "unsnooze") on the selected item, saved to the triage store at once (the store is reread
 -- first and never overwritten when unreadable). The cursor moves to the neighbour when the item leaves the list.
+-- Nothing while Now, Worktrees or Agents is shown: the view's selection behind them is not the row the user sees.
 function M.mark(state: State, act: string)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap then
+	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn then
 		return
 	end
 	local store = M.store(state, true)
@@ -1444,7 +1445,7 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 			end
 		end
 		local history: { [string]: github.History } = {}
-		local held: github.Problem? = nil -- a history read the quota held back: the head is judged again
+		local held: github.Problem? = nil -- a history read that failed or the quota held back: the head is judged again
 		local function decide()
 			for _, o in open do
 				local h = if o.run.workflow then history[o.run.workflow] else nil
@@ -1466,8 +1467,8 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 			github.baseHistory(pr.repo, pr.base, wf, account, function(h: github.History?, problem: github.Problem?)
 				if h then
 					history[wf] = h
-				elseif problem and problem.kind == "rate-limit" then
-					held = problem
+				elseif problem and (problem.kind == "rate-limit" or not held) then
+					held = problem -- a held-back read wins: it does not count as a failed try
 				end
 				left -= 1
 				if left == 0 then
@@ -1479,9 +1480,11 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 end
 
 -- Judges Likely flaky for the shown list's Blocked pull requests with failing checks: at most FLAKY_ITEMS a refresh,
--- each at most once per head commit (a read the quota held back is tried again at the next refresh; marks that needed
--- no held-back read show meanwhile).
+-- each at most once per head commit. A read the quota held back is tried again at the next refresh; one that failed
+-- (timeout, gh error, unexpected output) too, up to FLAKY_TRIES failed reads per head, then the head keeps what it
+-- has. Marks that needed no missing read show meanwhile.
 local FLAKY_ITEMS = 10
+local FLAKY_TRIES = 3
 function M.gatherFlaky(state: State)
 	local snap = state.snap
 	if not snap or snap.kind ~= "prs" then
@@ -1505,9 +1508,17 @@ function M.gatherFlaky(state: State)
 						return
 					end
 					state.flakyBusy[key] = nil
-					local again = problem ~= nil and problem.kind == "rate-limit"
-					if (marks and not (again and next(marks) == nil)) or (problem and not again) then
-						state.flaky[key] = { sha = sha, marks = marks or {}, again = again or nil }
+					local prior = state.flaky[key]
+					local same = prior and prior.sha == sha
+					local tries = if same and prior then prior.tries or 0 else 0
+					local failed = problem ~= nil and problem.kind ~= "rate-limit"
+					if failed then
+						tries += 1
+					end
+					local again = problem ~= nil and (not failed or tries < FLAKY_TRIES)
+					if failed or (marks and not (again and next(marks) == nil)) or (problem and not again) then
+						local kept = marks or (if same and prior then prior.marks else nil) or {}
+						state.flaky[key] = { sha = sha, marks = kept, again = again or nil, tries = if tries > 0 then tries else nil }
 						state.rev += 1
 						state.cx:render()
 					end

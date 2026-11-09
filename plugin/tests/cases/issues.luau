@@ -3235,6 +3235,52 @@ case("host mutations: push empty commit is offered for an up-to-date own branch,
 	}, "the head's tree, a commit with that tree and the head as parent, then the branch moved to it without force")
 end)
 
+case("host mutations: push empty commit refuses a head branch with # or %, writing nothing, so main#x never moves main; feature/x still PATCHes its ref", function(w: World)
+	local s = hostScene(w, 0)
+	local heads = { "main#x", "a%b", "feature/x" }
+	local items = {}
+	for n, head in heads do
+		table.insert(items, searchItem(n, "o/r", EPOCH - n * 60, { headSha = sha("a"), head = head }))
+		s.gh.about["o/r#" .. n] = { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array({}) }
+		s.gh.meta["o/r#" .. n] = { base = "o/r", sha = sha("a"), ref = head, headRepo = "o/r", headOwner = "o", state = "open", baseRef = "main", title = "PR " .. n, author = "octo" }
+	end
+	s.gh.items.octocat = items
+	local writes: { string } = {}
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.override = function(req: GhReq): Reply?
+		local line = table.concat(req.call.argv, " ")
+		if not string.find(line, "/git/", 1, true) then
+			return nil
+		end
+		table.insert(writes, line)
+		if string.find(line, "--method PATCH", 1, true) then
+			return { stdout = "{}" }
+		end
+		return { stdout = (if string.find(line, "--method POST", 1, true) then sha("e") else sha("f")) .. "\n" }
+	end
+	local b = openQueue(w)
+	w.advance(300)
+	local outcomes: { string } = {}
+	for n, head in heads do
+		local p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
+		eq(p.confirm.lines[3], "Branch: " .. head, "the confirm names #" .. n .. "'s branch as it is")
+		local c = asks.hx.ask(w, b, { op = "commit", token = p.token })
+		table.insert(outcomes, if c.ok then "ok" else tostring(c.problem))
+		b.typeText("j")
+		w.advance(300)
+	end
+	same(outcomes, {
+		"The head branch “main#x” has characters Plotroom does not accept in a branch name.",
+		"The head branch “a%b” has characters Plotroom does not accept in a branch name.",
+		"ok",
+	}, "# and % are refused at commit, an ordinary branch commits")
+	same(writes, {
+		"gh api --hostname github.com repos/o/r/git/commits/" .. sha("a") .. " --jq .tree.sha",
+		"gh api --hostname github.com --method POST repos/o/r/git/commits -f message=Empty commit to re-run checks -f tree=" .. sha("f") .. " -f parents[]=" .. sha("a") .. " --jq .sha",
+		"gh api --hostname github.com --method PATCH repos/o/r/git/refs/heads/feature/x -f sha=" .. sha("e") .. " -F force=false",
+	}, "only feature/x reached the git database, and its PATCH names refs/heads/feature/x: no PATCH for main#x or a%b, none of refs/heads/main")
+end)
+
 case("host: a Jira project entry that is no list of strings is never rewritten by a change to another project", function(w: World)
 	local s = jiraHost(w)
 	s.acli.projects = { { key = "ABC", name = "Alpha" } }
