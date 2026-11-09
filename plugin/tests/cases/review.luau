@@ -434,6 +434,48 @@ windowCase("review: a review/send link from the Draft review pane sends only the
 	w.finish()
 end)
 
+windowCase("review: a send link that arrives before the block shows its message still sends it once the message shows", function(w: World)
+	w.load("window")
+	reviewScene(w)
+	seedRun(w)
+	local b = openReview(w, 30)
+	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	-- Not linked yet: the window sees no main.send, as when a remote host's link beats its render.
+	b.press("enter", "m")
+	local _, text = sentChoices(b)
+	w.click(w.opened[#w.opened], 30)
+	w.flush()
+	eq(#w.window.agentCalls, 0, "nothing to read yet, nothing sent")
+	w.advance(300)
+	w.link(b)
+	w.advance(300)
+	eq(#w.window.agentCalls, 1, "the message that showed a few hundred ms later is sent")
+	eq(w.window.agentCalls[1].text, text, "as the block shows it")
+	yes(findKey(b.view().main, "sent", "badge"), "and the block shows Sent")
+	w.advance(10000)
+	eq(#w.window.agentCalls, 1, "once")
+	w.finish()
+end)
+
+case("review: a Send that no answer reaches leaves Sending after a while and offers Copy", function(w: World)
+	reviewScene(w)
+	local review = w.load("host/review") :: any
+	local b = openReview(w)
+	b.press("enter", "m")
+	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	w.advance(review.SEND_TIMEOUT_MS - 1)
+	yes(findKey(b.view().main, "sending"), "still sending just before the timeout")
+	w.advance(1)
+	eq(findKey(b.view().main, "sending"), nil, "no longer sending")
+	has(textOf(findKey(b.view().main, "gone")), "may not have reached the agent", "the block says so")
+	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	b.typeText("c")
+	has(w.copied[#w.copied], "```json", "Copy puts the message on the clipboard")
+	b.event({ ev = "action", act = "sent" })
+	eq(findKey(b.view().main, "sent", "badge"), nil, "a late answer does not take it back to Sent")
+	w.finish()
+end)
+
 -- `unit` repeated to n UTF-16 units, as the tool counts them (a CJK character is one unit, three UTF-8 bytes).
 local function fill(unit: string, n: number): string
 	return string.rep(unit, n // (utf8.len(unit) or 1))
