@@ -41,7 +41,7 @@ local FRESH = [==[- Fresh worktree: Plotroom MAY still be running the repo's set
 ]==]
 local GH = [==[- GitHub: act only as @{github.user}. Prefix every `gh` and networked `git` command with `GH_TOKEN=$(gh auth token --user {github.user})`; networked `git` also takes `-c credential.helper= -c 'credential.helper=!gh auth git-credential'`. NEVER `gh auth switch`. First, `gh api user --jq .login` MUST print `{github.user}`; else stop.
 ]==]
-local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop: end your turn with the plotroom-report block. Only my explicit answer approves; an automatic "Continue" or silence never does.
+local ASK = [==[- Ask through your ask tool (omp: `ask`), then stop: end your turn by calling `plotroom_report`. Only my explicit answer approves; an automatic "Continue" or silence never does.
 ]==]
 -- Review and Quick review's approval step: a Draft review proposed through Plotroom's omp extension
 -- (plugin/omp/plotroom.ts), posted exactly as the review block sends it back; without the tool, one ask whose answers
@@ -634,20 +634,17 @@ end
 -- What Plotroom appends to a checker's prompt, after REPORT: the run under check (its action's name and the commit its
 -- report named) and the two report fields only a check gives. Users cannot edit it: usage.reportOf reads them.
 function M.checkBlock(action: string, commit: string): string
-	return "<plotroom-check>\nYou check the run of " .. action .. " that ended at commit " .. commit .. ". Add two fields to the plotroom-report object below:\n\n"
+	return "<plotroom-check>\nYou check the run of " .. action .. " that ended at commit " .. commit .. ". Add two fields to your plotroom_report call:\n\n"
 		.. "- `check`: `pass` only when every acceptance criterion is met at that commit, else `fail`.\n"
 		.. "- `findings`: what fails or is missing, one string each with its evidence; [] on a pass.\n\n"
 		.. "A report without `check` counts as a fail.\n</plotroom-check>"
 end
 
 -- The fixed end-of-run report Plotroom appends to every action's prompt, typed prompts included (PRODUCT.md › Principles
--- 7). Users cannot edit it: usage.reportOf parses what it asks for, so the two change together.
+-- 7). Users cannot edit it: plugin/omp/plotroom.ts takes what it asks for and usage.reportOf reads it, so they change
+-- together.
 M.REPORT = [==[<plotroom-report>
-End every turn with one fenced code block whose info string is `plotroom-report`, holding one JSON object, as the last thing in your message:
-
-```plotroom-report
-{"attention": "ok", "reason": "One line on why", "commit": null, "pr": null, "evidence": [], "blocker": null}
-```
+End every turn by calling the `plotroom_report` tool once, as the last thing you do, with:
 
 - `attention`: `ok` (nothing blocks you), `stuck` (you cannot go on; `blocker` says why) or `needs-human` (you wait for my answer or review).
 - `reason`: one line on why.
@@ -656,7 +653,7 @@ End every turn with one fenced code block whose info string is `plotroom-report`
 - `evidence`: the commands you ran and what you checked, one string each; [] when none.
 - `blocker`: what blocks you, else null.
 
-Plotroom reads only this block. It is your claim, not proof: it marks nothing done.
+If it refuses the call, fix what it names and call it again. Plotroom reads only this call. It is your claim, not proof: it marks nothing done.
 </plotroom-report>]==]
 
 -- The defaults no saved action in `saved` is named like, in order: what Settings › Actions › Add missing defaults saves

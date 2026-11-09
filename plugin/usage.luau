@@ -15,7 +15,6 @@ local IDS_CAP = 500 -- ids kept; the least recently used goes first
 local ID_CAP = 200
 local TEXT_CAP = 200
 local COMMIT_CAP, PR_CAP, EVIDENCE_N = 64, 500, 20 -- a SHA-256 commit id; a pull request URL; evidence strings kept
-local REPORT_BYTES = 64 * 1024 -- a longer report block is not read
 -- A run's saved acceptance criteria (tracker.CRITERIA_CHARS characters, up to 4 bytes each). ponytail: kept on every
 -- run that has them, so a full log of such runs is ~8 MB; keep them on the newest runs only if kv `runs` gets slow.
 M.CRITERIA_CAP = 8000
@@ -141,22 +140,11 @@ local function strings(v: any): { string }?
 	return if #out == n then out else nil
 end
 
--- The report in the last `plotroom-report` block of `text` (an agent's last message), fields cut to the run log's caps;
--- nil when there is none or it is malformed: not one JSON object, an unknown `attention`, no `reason`, a `commit` that
--- is no full SHA, a `pr` that is no URL, `evidence` that is no list of strings, or a `blocker` that is no string.
-function M.reportOf(text: any): Report?
-	if type(text) ~= "string" then
-		return nil
-	end
-	local body: string? = nil
-	for b in string.gmatch(text .. "\n", "```plotroom%-report[ \t]*\r?\n(.-)\r?\n[ \t]*```[ \t]*\r?\n") do
-		body = b
-	end
-	if not body or #body > REPORT_BYTES then
-		return nil
-	end
-	local ok, r = pcall(tern.json.decode, body)
-	if not ok or type(r) ~= "table" then
+-- The report `r` (the decoded result of the turn's last plotroom_report call, flows.recordResult), fields cut to the
+-- run log's caps; nil when it is malformed: no object, an unknown `attention`, no `reason`, a `commit` that is no full
+-- SHA, a `pr` that is no URL, `evidence` that is no list of strings, or a `blocker` that is no string.
+function M.reportOf(r: any): Report?
+	if type(r) ~= "table" then
 		return nil
 	end
 	local evidence = strings(r.evidence)

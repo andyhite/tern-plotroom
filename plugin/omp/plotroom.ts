@@ -21,6 +21,11 @@
 //     side        "RIGHT" (the head's lines) | "LEFT" (the base's lines)
 //     kind        "problem" | "question" | "suggestion" | "nit"
 //     body        the comment's text; suggestion (optional) replacement text for the lines, without fences
+//
+// Tool `plotroom_report` is the end-of-run report (plugin/prompts.luau REPORT): every agent ends each turn by calling it.
+// It writes nothing: Plotroom's window reads the turn's last call from the agent's transcript (flows.recordResult →
+// usage.reportOf, which applies the same rules and caps). An invalid call is refused with the reason; a valid one
+// returns the normalized report as JSON in its text and in `details`.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -36,6 +41,52 @@ export const SIDES = ["RIGHT", "LEFT"] as const;
 export const KINDS = ["problem", "question", "suggestion", "nit"] as const;
 
 export const DONE = "Plotroom opened this Draft review beside you. End your turn now; the user's choices arrive as the next message.";
+
+export const ATTENTION = ["ok", "stuck", "needs-human"] as const;
+export const CHECKS = ["pass", "fail"] as const;
+const REPORT_LINE = 200; // usage.luau TEXT_CAP: a reason, blocker, evidence or finding line
+const REPORT_LIST = 20; // usage.luau EVIDENCE_N: evidence or findings kept
+const PR_CAP = 500;
+
+export type Report = {
+	attention: (typeof ATTENTION)[number];
+	reason: string;
+	commit: string | null;
+	pr: string | null;
+	evidence: string[];
+	blocker: string | null;
+	check?: (typeof CHECKS)[number];
+	findings?: string[];
+};
+
+// `v` as one line of at most REPORT_LINE characters; "" when it holds no text.
+function line(v: string): string {
+	return v.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, REPORT_LINE).trim();
+}
+
+function lines(v: unknown, what: string): string[] {
+	if (!Array.isArray(v) || v.some(s => typeof s !== "string")) throw new Error(`${what} must be a list of strings`);
+	return (v as string[]).map(line).filter(s => s !== "").slice(0, REPORT_LIST);
+}
+
+// The report as Plotroom keeps it, or an Error naming the first thing wrong: the rules usage.reportOf reads it by.
+export function validateReport(input: unknown): Report {
+	if (typeof input !== "object" || input === null) throw new Error("the input must be an object");
+	const o = input as Record<string, unknown>;
+	const attention = oneOf(o.attention, "attention", ATTENTION);
+	const reason = typeof o.reason === "string" ? line(o.reason) : "";
+	if (reason === "") throw new Error("reason must be one line of text");
+	const commit = o.commit ?? null;
+	if (commit !== null && (typeof commit !== "string" || !/^([0-9a-f]{40}|[0-9a-f]{64})$/i.test(commit))) throw new Error("commit must be a full commit SHA, or null");
+	const pr = o.pr ?? null;
+	if (pr !== null && (typeof pr !== "string" || pr.length > PR_CAP || !/^https?:\/\/\S+$/.test(pr))) throw new Error("pr must be a pull request URL, or null");
+	const blocker = o.blocker ?? null;
+	if (blocker !== null && typeof blocker !== "string") throw new Error("blocker must be a string, or null");
+	const out: Report = { attention, reason, commit: commit === null ? null : commit.toLowerCase(), pr, evidence: lines(o.evidence, "evidence"), blocker: blocker === null ? null : line(blocker) || null };
+	if (o.check !== undefined && o.check !== null) out.check = oneOf(o.check, "check", CHECKS);
+	if (o.findings !== undefined && o.findings !== null) out.findings = lines(o.findings, "findings");
+	return out;
+}
 
 export type Comment = {
 	id: string;
@@ -180,6 +231,32 @@ export default function plotroom(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: `Not proposed: ${e instanceof Error ? e.message : String(e)}. Fix it and call plotroom_propose_review again.` }], isError: true };
 			}
 			return { content: [{ type: "text", text: DONE }] };
+		},
+	});
+	pi.registerTool({
+		name: "plotroom_report",
+		label: "Plotroom: report",
+		description:
+			"End every turn by calling this once, as the last thing you do: your end-of-run report to Plotroom. It is your claim, not proof: it marks nothing done. Calling it again in the same turn replaces the report.",
+		// Only types here: validateReport checks the values.
+		parameters: z.object({
+			attention: z.string().describe('"ok": nothing blocks you; "stuck": you cannot go on (blocker says why); "needs-human": you wait for the user\'s answer or review'),
+			reason: z.string().describe("One line on why"),
+			commit: z.string().nullable().describe("The full SHA of the last commit you made, else null"),
+			pr: z.string().nullable().describe("The URL of the pull request you opened or updated, else null"),
+			evidence: z.array(z.string()).describe("The commands you ran and what you checked, one string each; [] when none"),
+			blocker: z.string().nullable().describe("What blocks you, else null"),
+			check: z.string().optional().describe('Only when you check another run: "pass" only when every acceptance criterion is met, else "fail"'),
+			findings: z.array(z.string()).optional().describe("Only when you check another run: what fails or is missing, one string each with its evidence; [] on a pass"),
+		}),
+		async execute(_id: string, params: unknown) {
+			let report: Report;
+			try {
+				report = validateReport(params);
+			} catch (e) {
+				return { content: [{ type: "text", text: `Not reported: ${e instanceof Error ? e.message : String(e)}. Fix it and call plotroom_report again.` }], isError: true };
+			}
+			return { content: [{ type: "text", text: `${JSON.stringify(report)}\nReported. End your turn now.` }], details: report };
 		},
 	});
 }

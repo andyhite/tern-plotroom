@@ -864,14 +864,59 @@ function M.endStep(s: Step)
 	end
 end
 
--- The text of the agent pane `agent`'s last message when it is the agent's (omp's chat transcript); nil when it cannot
--- be read.
-local function lastReply(cx: WindowCx, agent: number): string?
+-- The agent pane `agent`'s omp chat transcript (its newest TURN_MSGS messages); nil when it cannot be read.
+local REPORT_TOOL, REPORT_TITLE, REPORT_BYTES, TURN_MSGS = "plotroom_report", "Plotroom: report", 64 * 1024, 50
+local function transcriptOf(cx: WindowCx, agent: number): { any }?
 	local ok, msgs = pcall(function()
-		return cx.agents:transcript(agent, { last = 1 })
+		return cx.agents:transcript(agent, { last = TURN_MSGS })
 	end)
-	local m: any = if ok and type(msgs) == "table" then msgs[#msgs] else nil
-	return if type(m) == "table" and m.role == "assistant" and type(m.text) == "string" then m.text else nil
+	return if ok and type(msgs) == "table" then msgs else nil
+end
+
+-- Whether transcript `msgs` shows its turn over: it ends with the agent's reply (text, and no tool call still running).
+-- Tern can report a turn's end before omp's transcript has the turn's last tool calls and reply, or any message at all
+-- (seen with Tern 0.9.13 and omp 18.18: up to a few seconds later), so recordResult waits for it. An empty transcript
+-- is over unless `omp` (an agent started with Plotroom's omp extension): another agent has no omp chat to wait for.
+local function settled(msgs: { any }, omp: boolean): boolean
+	local m: any = msgs[#msgs]
+	if m == nil then
+		return not omp
+	elseif type(m) ~= "table" or m.role ~= "assistant" or type(m.text) ~= "string" or not string.find(m.text, "%S") then
+		return false
+	end
+	for _, t in (if type(m.tools) == "table" then m.tools else {}) :: { any } do
+		if type(t) == "table" and t.status ~= "done" and t.status ~= "error" then
+			return false
+		end
+	end
+	return true
+end
+
+-- The end-of-run report of the turn transcript `msgs` ends with: the result of the turn's last plotroom_report call
+-- (Plotroom's omp extension, plugin/omp/plotroom.ts) that the tool accepted, read back to the turn's prompt, decoded
+-- (usage.reportOf checks it); nil when there is none or it cannot be read. omp names a tool the agent reaches through an
+-- xd:// device by the device's verb ("write") and keeps the tool's label as `title`, so the call is known by either. A
+-- refused call (status "error") is skipped: the corrected one counts. The extension's result text is the report's JSON
+-- on its first line.
+local function turnReport(msgs: { any }?): any
+	for i = #(msgs or {}), 1, -1 do
+		local m: any = (msgs :: { any })[i]
+		if type(m) ~= "table" or m.role ~= "assistant" then
+			return nil
+		end
+		local tools: any = if type(m.tools) == "table" then m.tools else {}
+		for j = #tools, 1, -1 do
+			local t: any = tools[j]
+			if type(t) == "table" and (t.name == REPORT_TOOL or t.title == REPORT_TITLE) and t.status == "done" then
+				if type(t.text) ~= "string" or #t.text > REPORT_BYTES then
+					return nil
+				end
+				local decoded, r = pcall(tern.json.decode, string.match(t.text, "^[^\n]*") :: string)
+				return if decoded then r else nil
+			end
+		end
+	end
+	return nil
 end
 
 -- How long an outcome check may take the block's host (one gh token read and one GraphQL read, 30 s each at most), and
@@ -999,7 +1044,7 @@ function M.recheck(cx: WindowCx)
 end
 
 -- Saves how the agent pane `agent`'s turn ended (done, failed, exited, closed), when (HH:MM) and the end-of-run report
--- in its last message (usage.reportOf) on its link, for the Agents list. The first turn end of a link appends its run,
+-- of that turn (turnReport, usage.reportOf) on its link, for the Agents list. The first turn end of a link appends its run,
 -- with that report, to the run log (kv `runs`): a run ends with its agent's first turn, so later turns of the same
 -- agent add no record. A turn with no valid report records "none" on the first turn and keeps the shown report on a
 -- later one (a prompt typed into the agent carries no contract). Every turn end of a link whose action names an
@@ -1009,7 +1054,11 @@ end
 -- report gives one: the report's `check`, else fail (missing data never passes), with its findings, on its link and
 -- on the checked run in the run log, and settles that run's chain (settleCheck). Any other run's chain is decided by
 -- gateRun. The caller starts what became due (window's drive).
-function M.recordResult(cx: WindowCx, agent: number, result: string)
+-- While the agent's transcript does not show its turn over yet (settled) and the agent is still there (the turn ended
+-- done or failed), this waits: it runs again SETTLE_MS later, at most SETTLE_TRIES times, then records what the
+-- transcript shows, and starts what became due itself.
+local SETTLE_MS, SETTLE_TRIES = 1000, 10
+function M.recordResult(cx: WindowCx, agent: number, result: string, tries: number?)
 	local host = hostOf(cx, agent)
 	local links, healthy = readLinks()
 	if not healthy or not host then
@@ -1017,8 +1066,20 @@ function M.recordResult(cx: WindowCx, agent: number, result: string)
 	end
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, host) then
+			local msgs = transcriptOf(cx, agent)
+			local live = result == "done" or result == "failed"
+			if msgs and live and not settled(msgs, l.run ~= nil) and (tries or 0) < SETTLE_TRIES then
+				tern.timer(SETTLE_MS, function(cx2: WindowCx?)
+					if cx2 then
+						M.recordResult(cx2, agent, result, (tries or 0) + 1)
+						M.agentSync(cx2)
+						e().drive(cx2)
+					end
+				end)
+				return
+			end
 			local first = l.result == nil
-			local report = usage.reportOf(lastReply(cx, agent))
+			local report = usage.reportOf(turnReport(msgs))
 			l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
 			if report then
 				l.attention, l.reason, l.blocker = report.attention, clip(report.reason, LAST_CAP), clip(report.blocker, LAST_CAP)

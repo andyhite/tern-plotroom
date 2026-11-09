@@ -336,26 +336,48 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "while its link still shows the latest turn")
 end)
 
--- `agent`'s chat ends with `text` as its last message, as cx.agents:transcript gives it.
-local function lastSays(w: World, agent: number, text: string)
-	w.window.transcripts[agent] = { { role = "user", text = "go", tools = {} }, { role = "assistant", text = text, tools = {} } }
+-- `agent`'s turn, as cx.agents:transcript gives it: its prompt, one assistant message per tool call in `calls`, then
+-- `text` as its last message. `before`: messages of earlier turns, oldest first.
+local function lastSays(w: World, agent: number, text: string, calls: { any }?, before: { any }?)
+	local msgs: { any } = table.clone(before or {})
+	table.insert(msgs, { role = "user", text = "go", tools = {} })
+	for _, c in calls or {} :: { any } do
+		table.insert(msgs, { role = "assistant", text = "", tools = { c } })
+	end
+	table.insert(msgs, { role = "assistant", text = text, tools = {} })
+	w.window.transcripts[agent] = msgs
 end
 
-local function reportBlock(json: string): string
-	return "All set: the tests pass.\n\n```plotroom-report\n" .. json .. "\n```"
+-- A plotroom_report call as omp's transcript shows it (Tern 0.9.13, omp 18.18): omp names a tool the agent reaches
+-- through its xd:// device "write" and keeps the label as `title`; the extension's result text is the report's JSON,
+-- then a line for the agent. `refused`: a call the extension refused, with omp's error text.
+local function reportCall(json: string, refused: boolean?): any
+	if refused then
+		return { name = "write", title = "Plotroom: report", role = "omp.tool.write", status = "error", tone = "error", text = "Invalid args for xd://plotroom_report: Validation failed\n\nReceived arguments:\n" .. json }
+	end
+	return { name = "write", title = "Plotroom: report", role = "omp.tool.write", status = "done", text = json .. "\nReported. End your turn now." }
 end
 
-windowCase("window flows: a valid end-of-run report goes on the run record and the Agents list, nothing else the agent said is kept, and it never marks work done", function(w: World)
+-- `agent`'s turn ends with one plotroom_report call giving `json`, then a last message.
+local function reports(w: World, agent: number, json: string)
+	lastSays(w, agent, "All set: the tests pass.", { reportCall(json) })
+end
+
+windowCase("window flows: a valid end-of-run report call goes on the run record and the Agents list, nothing else the agent said is kept, and it never marks work done", function(w: World)
 	w.load("window")
 	local link = startReview(w)
 	eq(w.window.agents[1].report, true, "the action's prompt ends with the fixed contract")
 	local commit = string.rep("A1", 20)
-	lastSays(w, link.agent, "A draft:\n```plotroom-report\n{\"attention\": \"ok\", \"reason\": \"draft\", \"evidence\": []}\n```\nThen more work.\n\n" .. reportBlock(`\{"attention": "stuck", "reason": "The migration fails", "commit": "{commit}", "pr": "https://github.com/o/r/pull/9", "evidence": ["luau tests: 3 failed"], "blocker": "No test database"}`))
+	lastSays(w, link.agent, "All set: the tests pass.", {
+		reportCall(`\{"attention":"ok","reason":"draft","commit":null,"pr":null,"evidence":[],"blocker":null}`),
+		{ name = "bash", title = "Bash", status = "done", text = "{\"attention\":\"ok\",\"reason\":\"another tool's output\",\"evidence\":[]}" },
+		reportCall(`\{"attention":"stuck","reason":"The migration fails","commit":"{commit}","pr":"https://github.com/o/r/pull/9","evidence":["luau tests: 3 failed"],"blocker":"No test database"}`),
+	})
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	local run: any = (w.kv.get("runs") :: any)[1]
 	eq(run.result, "done", "the turn's result is Tern's, whatever the report claims")
-	same({ run.attention, run.reason, run.commit, run.pr, run.blocker }, { "stuck", "The migration fails", string.lower(commit), "https://github.com/o/r/pull/9", "No test database" }, "the last block's report is on the run record")
+	same({ run.attention, run.reason, run.commit, run.pr, run.blocker }, { "stuck", "The migration fails", string.lower(commit), "https://github.com/o/r/pull/9", "No test database" }, "the last call's report is on the run record")
 	same(run.evidence, { "luau tests: 3 failed" }, "with its evidence")
 	lacks(jsonEncode(w.kv.get("runs")), "All set", "no other agent output is stored in the run log")
 	lacks(jsonEncode(w.kv.get("agent-links")), "All set", "nor on the link")
@@ -367,17 +389,83 @@ windowCase("window flows: a valid end-of-run report goes on the run record and t
 	eq(row.result, "done", "beside the turn's result")
 end)
 
-windowCase("window flows: a turn with no report records No report, and a later turn's valid report replaces it without a second run", function(w: World)
+windowCase("window flows: a refused report call is not read; the corrected call after it is", function(w: World)
 	w.load("window")
 	local link = startReview(w)
-	lastSays(w, link.agent, "Finished. Nothing to report.")
+	lastSays(w, link.agent, "Done.", {
+		reportCall(`\{"attention":"bogus","reason":"first try","evidence":[]}`, true),
+		reportCall(`\{"attention":"needs-human","reason":"Second call","commit":null,"pr":null,"evidence":["ran it"],"blocker":null}`),
+	})
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	same({ run.attention, run.reason }, { "needs-human", "Second call" }, "the corrected call is recorded")
+	lacks(jsonEncode(w.kv.get("runs")), "bogus", "the refused one is not")
+	w.window.panes[link.agent] = nil
+	local other = startReview(w)
+	lastSays(w, other.agent, "Gave up.", { reportCall(`\{"attention":"ok","reason":"Only try","evidence":[]}`, true) })
+	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((w.kv.get("runs") :: any)[1].attention, "none", "a turn whose only call was refused records No report")
+end)
+
+windowCase("window flows: a turn end reported before omp's transcript has the turn's last calls waits for them, then records the report", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	local refused = reportCall(`\{"attention":"bogus","reason":"first try","evidence":[]}`, true)
+	-- As Tern 0.9.13 reported it: the turn's end while the corrected call was still queued, with no reply yet.
+	w.window.transcripts[link.agent] = {
+		{ role = "user", text = "go", tools = {} },
+		{ role = "assistant", text = "", tools = { refused } },
+		{ role = "assistant", text = "", tools = { { name = "write", title = "queued Plotroom: report", status = "pending", text = "" } } },
+	}
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(w.kv.get("runs"), nil, "nothing is recorded while the transcript lags")
+	lastSays(w, link.agent, "done", { refused, reportCall(`\{"attention":"stuck","reason":"Second call","commit":null,"pr":null,"evidence":["ran it"],"blocker":"No database","check":"fail","findings":["a finding"]}`) })
+	w.advance(1000)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	same({ run.attention, run.reason, run.blocker }, { "stuck", "Second call", "No database" }, "once it has them, the corrected call is recorded")
+	eq(#(w.kv.get("runs") :: any), 1, "as one run")
+	w.window.panes[link.agent] = nil
+	local other = startReview(w)
+	-- An agent started with the extension (its link names a run) whose transcript is still empty: waited on too.
+	local links: any = w.kv.get("agent-links")
+	for _, l in links do
+		if l.agent == other.agent then
+			l.run = "1794245000-abcdef"
+		end
+	end
+	w.kv.put("agent-links", links)
+	w.window.transcripts[other.agent] = {}
+	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
+	w.advance(9000)
+	eq(#(w.kv.get("runs") :: any), 1, "a transcript that never settles is waited on for up to 10 seconds")
+	w.advance(1000)
+	eq((w.kv.get("runs") :: any)[1].attention, "none", "then recorded as it is")
+	w.window.panes[other.agent] = nil
+	local plain = startReview(w)
+	w.window.handlers.agent_finished({ pane = plain.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#(w.kv.get("runs") :: any), 3, "an agent started without the extension has no omp chat to wait for")
+end)
+
+windowCase("window flows: a turn with no report call records No report, and a later turn's valid report replaces it without a second run", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	-- An earlier turn's call (before this turn's prompt) is not this turn's report.
+	lastSays(w, link.agent, "Finished. Nothing to report.", nil, {
+		{ role = "user", text = "earlier", tools = {} },
+		{ role = "assistant", text = "", tools = { reportCall(`\{"attention":"ok","reason":"Earlier turn","evidence":[]}`) } },
+	})
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	local run: any = (w.kv.get("runs") :: any)[1]
 	eq(run.attention, "none", "the run records No report")
 	eq(run.reason, nil, "with no reason")
 	eq((w.kv.get("agent-links") :: any)[1].attention, "none", "and so does the link")
-	lastSays(w, link.agent, reportBlock(`\{"attention": "needs-human", "reason": "Which base?", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, link.agent, `\{"attention": "needs-human", "reason": "Which base?", "commit": null, "pr": null, "evidence": [], "blocker": null}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	local l: any = (w.kv.get("agent-links") :: any)[1]
@@ -390,13 +478,13 @@ windowCase("window flows: a turn with no report records No report, and a later t
 	eq((w.kv.get("agent-links") :: any)[1].attention, "needs-human", "a later turn with no report keeps the one shown")
 end)
 
-windowCase("window flows: a malformed report records No report", function(w: World)
+windowCase("window flows: a fenced plotroom-report block in the agent's message is not read", function(w: World)
 	w.load("window")
 	local link = startReview(w)
-	lastSays(w, link.agent, reportBlock(`\{"attention": "done", "reason": "Shipped", "evidence": []}`))
+	lastSays(w, link.agent, "Done.\n\n```plotroom-report\n{\"attention\": \"ok\", \"reason\": \"Shipped\", \"evidence\": []}\n```")
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	eq((w.kv.get("runs") :: any)[1].attention, "none", "an attention outside ok, stuck and needs-human is no report")
+	eq((w.kv.get("runs") :: any)[1].attention, "none", "only the tool call is a report")
 	lacks(jsonEncode(w.kv.get("runs")), "Shipped", "and none of it is kept")
 end)
 
@@ -431,7 +519,7 @@ windowCase("window flows: an action's outcome is checked as the run's login at e
 	eq(asked.users, true, "the login is asked for even though the prompt names none: the outcome is checked as it")
 	same({ link.outcome, link.login, link.ghRepo, link.number, link.branch }, { "replied", "cat", "o/r", 5, "fix-5" } :: { any }, "the link keeps what the check needs")
 	local commit = sha("a")
-	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Replied and pushed", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, link.agent, `\{"attention": "ok", "reason": "Replied and pushed", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	eq((w.kv.get("runs") :: any)[1].outcome, "replied", "the run records its outcome")
@@ -443,7 +531,7 @@ windowCase("window flows: an action's outcome is checked as the run's login at e
 	w.advance(4100)
 	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
 	same({ row.outcome, row.verdict }, { "replied", "not" }, "and the block is told it")
-	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Done now", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, link.agent, `\{"attention": "ok", "reason": "Done now", "commit": null, "pr": null, "evidence": [], "blocker": null}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	q = st.reply("outcome", { verdict = "verified" })
@@ -509,38 +597,31 @@ windowCase("window flows: an Unchecked run is checked again once a refresh, a Me
 	eq((w.kv.get("agent-links") :: any)[1].verdict, "not", "and stays Not verified")
 end)
 
-case("usage: reportOf takes only a well-formed plotroom-report block", function(w: World)
+case("usage: reportOf takes only a well-formed report object", function(w: World)
 	local usage: any = w.load("usage")
 	local sha = string.rep("f", 40)
-	local function of(json: string): any
-		return usage.reportOf(reportBlock(json))
-	end
-	local ok = of(`\{"attention": "ok", "reason": "Done", "commit": "{sha}", "pr": null, "evidence": ["ran it"], "blocker": null}`)
+	local ok = usage.reportOf({ attention = "ok", reason = "Done", commit = sha, evidence = { "ran it" } })
 	same({ ok.attention, ok.reason, ok.commit }, { "ok", "Done", sha }, "a valid report")
-	eq(ok.pr, nil, "a null pr is absent")
-	eq(ok.blocker, nil, "and so is a null blocker")
+	eq(ok.pr, nil, "a missing pr is absent")
+	eq(ok.blocker, nil, "and so is a missing blocker")
 	same(ok.evidence, { "ran it" }, "evidence is kept")
-	eq(of(`\{"attention": "ok", "reason": "Done", "commit": "{string.rep("f", 64)}", "evidence": []}`).commit, string.rep("f", 64), "a SHA-256 commit is a full SHA too")
-	eq(usage.reportOf("No block here"), nil, "no block")
-	eq(usage.reportOf(nil), nil, "no message")
-	eq(usage.reportOf("```json\n{\"attention\": \"ok\", \"reason\": \"Done\", \"evidence\": []}\n```"), nil, "a block of another kind")
-	eq(of(`\{"attention": "ok", "reason": "Done", "evidence": ["{string.rep("x", 70000)}"]}`), nil, "a block over 64 KB is not read")
-	local bad: { [string]: string } = {
-		["not JSON"] = "{attention: ok}",
-		["not an object"] = "[1, 2]",
-		["no attention"] = `\{"reason": "Done", "evidence": []}`,
-		["an unknown attention"] = `\{"attention": "done", "reason": "Done", "evidence": []}`,
-		["no reason"] = `\{"attention": "ok", "evidence": []}`,
-		["a blank reason"] = `\{"attention": "ok", "reason": "  ", "evidence": []}`,
-		["a short commit"] = `\{"attention": "ok", "reason": "Done", "commit": "abc1234", "evidence": []}`,
-		["a commit that is no hex"] = `\{"attention": "ok", "reason": "Done", "commit": "{string.rep("g", 40)}", "evidence": []}`,
-		["a pr that is no URL"] = `\{"attention": "ok", "reason": "Done", "pr": "#9", "evidence": []}`,
-		["no evidence"] = `\{"attention": "ok", "reason": "Done"}`,
-		["evidence that is no list of strings"] = `\{"attention": "ok", "reason": "Done", "evidence": [1]}`,
-		["a blocker that is no string"] = `\{"attention": "stuck", "reason": "Blocked", "evidence": [], "blocker": 5}`,
+	eq(usage.reportOf({ attention = "ok", reason = "Done", commit = string.rep("f", 64), evidence = {} }).commit, string.rep("f", 64), "a SHA-256 commit is a full SHA too")
+	eq(usage.reportOf(nil), nil, "no report")
+	local bad: { [string]: any } = {
+		["not an object"] = "{\"attention\": \"ok\"}",
+		["no attention"] = { reason = "Done", evidence = {} },
+		["an unknown attention"] = { attention = "done", reason = "Done", evidence = {} },
+		["no reason"] = { attention = "ok", evidence = {} },
+		["a blank reason"] = { attention = "ok", reason = "  ", evidence = {} },
+		["a short commit"] = { attention = "ok", reason = "Done", commit = "abc1234", evidence = {} },
+		["a commit that is no hex"] = { attention = "ok", reason = "Done", commit = string.rep("g", 40), evidence = {} },
+		["a pr that is no URL"] = { attention = "ok", reason = "Done", pr = "#9", evidence = {} },
+		["no evidence"] = { attention = "ok", reason = "Done" },
+		["evidence that is no list of strings"] = { attention = "ok", reason = "Done", evidence = { 1 } },
+		["a blocker that is no string"] = { attention = "stuck", reason = "Blocked", evidence = {}, blocker = 5 },
 	}
-	for why, json in bad do
-		eq(of(json), nil, why)
+	for why, r in bad do
+		eq(usage.reportOf(r), nil, why)
 	end
 end)
 
@@ -551,7 +632,7 @@ windowCase("window flows: an oversized report is cut to the store caps", functio
 	for i = 1, 30 do
 		table.insert(evidence, `"{i}{string.rep("e", 500)}"`)
 	end
-	lastSays(w, link.agent, reportBlock(`\{"attention": "stuck", "reason": "{string.rep("r", 1000)}", "pr": "https://github.com/o/r/pull/{string.rep("9", 900)}", "evidence": [{table.concat(evidence, ",")}], "blocker": "{string.rep("b", 1000)}"}`))
+	reports(w, link.agent, `\{"attention": "stuck", "reason": "{string.rep("r", 1000)}", "pr": "https://github.com/o/r/pull/{string.rep("9", 900)}", "evidence": [{table.concat(evidence, ",")}], "blocker": "{string.rep("b", 1000)}"}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	local run: any = (w.kv.get("runs") :: any)[1]
@@ -4365,7 +4446,7 @@ end
 -- The builder `link` ends its turn with a report naming `commit` (nil: none) and attention `attention` (default ok).
 local function builderEnds(w: World, link: any, commit: string?, attention: string?)
 	local named = if commit then `"{commit}"` else "null"
-	lastSays(w, link.agent, reportBlock(`\{"attention": "{attention or "ok"}", "reason": "Ready to ship", "commit": {named}, "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, link.agent, `\{"attention": "{attention or "ok"}", "reason": "Ready to ship", "commit": {named}, "pr": null, "evidence": [], "blocker": null}`)
 	agentFinished(w, link.agent, "done")
 end
 
@@ -4383,7 +4464,7 @@ end
 -- The checker `link` ends its turn with verdict `check` (nil: none given) and `findings`.
 local function checkSays(w: World, link: any, check: string?, findings: { string }?)
 	local verdict = if check then `, "check": "{check}"` else ""
-	lastSays(w, link.agent, reportBlock(`\{"attention": "ok", "reason": "Checked", "commit": null, "pr": null, "evidence": [], "blocker": null{verdict}, "findings": {jsonEncode(array(findings or {}))}}`))
+	reports(w, link.agent, `\{"attention": "ok", "reason": "Checked", "commit": null, "pr": null, "evidence": [], "blocker": null{verdict}, "findings": {jsonEncode(array(findings or {}))}}`)
 	agentFinished(w, link.agent, "done")
 end
 
@@ -4436,7 +4517,7 @@ windowCase("window flows: a run that ends with a commit starts its checker as a 
 	eq(checker.chain.depth, 1, "and is a step of the chain")
 	agentFinished(w, builder.agent, "done")
 	eq(countOps(st, "action"), 1, "another turn ending at the same commit starts no second check")
-	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "Checked", "commit": "{sha("d")}", "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`))
+	reports(w, checker.agent, `\{"attention": "ok", "reason": "Checked", "commit": "{sha("d")}", "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`)
 	agentFinished(w, checker.agent, "done")
 	eq(countOps(st, "action"), 1, "a passing check of an action with no next action starts nothing")
 end)
@@ -4467,13 +4548,13 @@ windowCase("window flows: a seed Fix on a Jira issue that committed and stops at
 	eq(countOps(st, "action"), 0, "no fix round and no check starts")
 	eq((w.kv.get("agent-links") :: any)[1].gate, "held", "the chain waits for you")
 	-- A report that says ok with no commit, while the agent still shows its ask, waits too.
-	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Asked what to ship", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, builder.agent, `\{"attention": "ok", "reason": "Asked what to ship", "commit": null, "pr": null, "evidence": [], "blocker": null}`)
 	agentFinished(w, builder.agent, "done")
 	eq(countOps(st, "action"), 0, "an agent waiting on its ask starts no fix round")
 	eq((w.kv.get("agent-links") :: any)[1].gate, "held", "and still waits")
 	-- You answer; the agent ships and ends with its report naming the commit it made.
 	w.window.agentStates[builder.agent] = "idle"
-	lastSays(w, builder.agent, reportBlock(`\{"attention": "ok", "reason": "Shipped", "commit": "{sha("c")}", "pr": "https://github.com/o/r/pull/45", "evidence": [], "blocker": null}`))
+	reports(w, builder.agent, `\{"attention": "ok", "reason": "Shipped", "commit": "{sha("c")}", "pr": "https://github.com/o/r/pull/45", "evidence": [], "blocker": null}`)
 	agentFinished(w, builder.agent, "done")
 	local asked = st.reply("action", { label = "Check", send = "Check {key}", worktree = true })
 	eq(asked.pid, "p4", "Check starts for the commit")
@@ -4489,7 +4570,7 @@ windowCase("window flows: a seed Fix on a Jira issue that committed and stops at
 	-- A run whose report names no commit, with nothing waiting on you, still starts a fix round.
 	local again = start()
 	w.window.agentStates[again.agent] = "idle"
-	lastSays(w, again.agent, reportBlock(`\{"attention": "ok", "reason": "Nothing to change", "commit": null, "pr": null, "evidence": [], "blocker": null}`))
+	reports(w, again.agent, `\{"attention": "ok", "reason": "Nothing to change", "commit": null, "pr": null, "evidence": [], "blocker": null}`)
 	agentFinished(w, again.agent, "done")
 	local round = st.reply("action", { label = "Fix", send = "Fix {key}", worktree = true, checker = "p4", next = "prs:p4" })
 	eq(round.pid, "p2", "the fix round runs Fix again")
@@ -4518,7 +4599,7 @@ windowCase("window flows: a passing check marks the checked run Checked; a faili
 	local st = flowHost(w)
 	local builder = startChecked(w, st, "- [ ] Login works")
 	local checker = builderCommits(w, st, builder, sha("c"))
-	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": ["luau tests pass"], "blocker": null, "check": "PASS", "findings": []}`))
+	reports(w, checker.agent, `\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": ["luau tests pass"], "blocker": null, "check": "PASS", "findings": []}`)
 	agentFinished(w, checker.agent, "done")
 	eq(runAt(w, builder.started).check, "pass", "the checked run is Checked")
 	eq(runAt(w, builder.started).criteria, "- [ ] Login works", "and keeps its criteria")
@@ -4566,7 +4647,7 @@ windowCase("window flows: Disagree with check… records a disagreement, with an
 	eq(loggedRun(w, "o/r#12", builder.started), nil, "and nothing is recorded")
 	w.advance(60 * 1000) -- the builder's turn takes a minute: its checker starts later
 	local checker = builderCommits(w, st, builder, sha("c"))
-	lastSays(w, checker.agent, reportBlock(`\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`))
+	reports(w, checker.agent, `\{"attention": "ok", "reason": "All met", "commit": null, "pr": null, "evidence": [], "blocker": null, "check": "pass", "findings": []}`)
 	agentFinished(w, checker.agent, "done")
 	local run = loggedRun(w, "o/r#12", builder.started)
 	eq(type(run.checkedAt), "number", "the builder's run is a checked run from its verdict")
