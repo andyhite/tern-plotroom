@@ -864,13 +864,43 @@ function M.endStep(s: Step)
 	end
 end
 
--- The agent pane `agent`'s omp chat transcript (its newest TURN_MSGS messages); nil when it cannot be read.
-local REPORT_TOOL, REPORT_TITLE, REPORT_BYTES, TURN_MSGS = "plotroom_report", "Plotroom: report", 64 * 1024, 50
+-- The agent pane `agent`'s omp chat transcript, whole (the settle wait counts its prompts from the start); nil when it
+-- cannot be read. ponytail: one full read per settle try (at most SETTLE_TRIES + 1 per turn end); read a window and align
+-- it if long chats make that slow.
+local REPORT_TOOL, REPORT_TITLE, REPORT_BYTES, ALL_MSGS = "plotroom_report", "Plotroom: report", 64 * 1024, 1000000
 local function transcriptOf(cx: WindowCx, agent: number): { any }?
 	local ok, msgs = pcall(function()
-		return cx.agents:transcript(agent, { last = TURN_MSGS })
+		return cx.agents:transcript(agent, { last = ALL_MSGS })
 	end)
 	return if ok and type(msgs) == "table" then msgs else nil
+end
+
+-- How many prompts (user messages) transcript `msgs` has.
+local function promptsIn(msgs: { any }): number
+	local n = 0
+	for _, m in msgs do
+		if type(m) == "table" and m.role == "user" then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- Transcript `msgs` cut before the prompt that follows turn `turn` (the number of prompts up to and including that turn's;
+-- 0: the chat's first turn, whose prompt was not in yet), and whether such a newer prompt was there.
+local function upToTurn(msgs: { any }, turn: number): ({ any }, boolean)
+	local out: { any } = {}
+	local n = 0
+	for _, m in msgs do
+		if type(m) == "table" and m.role == "user" then
+			if n >= math.max(turn, 1) or (turn == 0 and n == 0 and #out > 0) then
+				return out, true
+			end
+			n += 1
+		end
+		table.insert(out, m)
+	end
+	return out, false
 end
 
 -- Whether transcript `msgs` shows its turn over: it ends with the agent's reply (text, and no tool call still running).
@@ -1059,9 +1089,10 @@ end
 -- transcript shows, and starts what became due itself. The wait keeps the host and link found at the turn end and the
 -- newest transcript read: when the pane closes during it (no host lists it, or its transcript cannot be read), the turn
 -- is recorded with that read at the next retry, and a turn end of the same pane that arrives during it (closed, exited)
--- records the waited turn first.
+-- records the waited turn first. The waited turn is the one the first read ends in (counted by its prompts): every
+-- later read is cut before the next prompt, and a next prompt (a message sent to the agent meanwhile) ends the wait.
 local SETTLE_MS, SETTLE_TRIES = 1000, 10
-type Wait = { host: HostId, result: string, msgs: { any }?, tries: number }
+type Wait = { host: HostId, result: string, msgs: { any }?, tries: number, turn: number? }
 local waits: { [number]: Wait } = {} -- agent pane -> its turn end waiting for the transcript
 
 local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string, msgs: { any }?)
@@ -1138,9 +1169,14 @@ local function settle(cx: WindowCx, agent: number, wt: Wait, final: boolean)
 	for _, l in links do
 		if l.agent == agent and hostSame(l.host, wt.host) then
 			local gone = wt.tries > 0 and not hostOf(cx, agent)
-			local msgs = if gone then nil else transcriptOf(cx, agent)
+			local read = if gone then nil else transcriptOf(cx, agent)
+			local msgs, newer = nil, false
+			if read then
+				wt.turn = wt.turn or promptsIn(read)
+				msgs, newer = upToTurn(read, wt.turn :: number)
+			end
 			local live = wt.result == "done" or wt.result == "failed"
-			if not final and msgs and live and not settled(msgs, l.run ~= nil) and wt.tries < SETTLE_TRIES then
+			if not final and msgs and live and not newer and not settled(msgs, l.run ~= nil) and wt.tries < SETTLE_TRIES then
 				wt.msgs, wt.tries = msgs, wt.tries + 1
 				waits[agent] = wt
 				tern.timer(SETTLE_MS, function(cx2: WindowCx?)
