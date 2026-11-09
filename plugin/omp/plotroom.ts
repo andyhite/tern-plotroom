@@ -35,6 +35,9 @@ const BODY_CAP = 10000;
 const PATH_CAP = 1000;
 const COMMENTS_CAP = 100;
 const LINE_CAP = 10_000_000;
+// The largest Draft review file the block reads (plugin/host/review.luau FILE_BYTES). The caps above keep a proposal
+// under it; write() refuses one over it rather than leave a file the block cannot read.
+const FILE_BYTES = 8_000_000;
 
 export const VERDICTS = ["comment", "approve", "request_changes"] as const;
 export const SIDES = ["RIGHT", "LEFT"] as const;
@@ -114,6 +117,8 @@ function text(v: unknown, what: string, cap: number): string {
 	if (typeof v !== "string") throw new Error(`${what} must be a string`);
 	if (v.length > cap) throw new Error(`${what} is longer than ${cap} characters`);
 	if (CONTROL.test(v)) throw new Error(`${what} holds a control character`);
+	// A lone surrogate is written as a \ud8xx escape, which the block cannot read as UTF-8.
+	if (/\p{Surrogate}/u.test(v)) throw new Error(`${what} holds a broken character (a lone UTF-16 surrogate)`);
 	return v;
 }
 
@@ -188,7 +193,9 @@ export function write(data: string, run: string, proposal: Proposal, now: Date =
 	fs.mkdirSync(dir, { recursive: true });
 	const file = path.join(dir, "review.json");
 	const tmp = `${file}.${process.pid}.tmp`;
-	fs.writeFileSync(tmp, `${JSON.stringify({ version: 1, run, at: now.toISOString(), ...proposal }, null, "\t")}\n`);
+	const json = `${JSON.stringify({ version: 1, run, at: now.toISOString(), ...proposal }, null, "\t")}\n`;
+	if (Buffer.byteLength(json) > FILE_BYTES) throw new Error(`the proposal is over ${FILE_BYTES} bytes as written; shorten it`);
+	fs.writeFileSync(tmp, json);
 	fs.renameSync(tmp, file);
 	return file;
 }

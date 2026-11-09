@@ -16,7 +16,10 @@ local button = render.button
 
 local M = {}
 
-local FILE_BYTES = 2 * 1000 * 1000 -- the tool caps a proposal well under this
+-- The tool (plugin/omp/plotroom.ts) caps texts in UTF-16 units and the file at FILE_BYTES; UTF-8 takes at most 3 bytes
+-- per UTF-16 unit, so its largest proposal (100 comments of 10000-unit bodies and suggestions, all CJK) is ~6.4 MB.
+local FILE_BYTES = 8 * 1000 * 1000
+local SUMMARY_BYTES, BODY_BYTES, PATH_BYTES = 3 * 20000, 3 * 10000, 3 * 1000
 local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comments are listed without their lines)
 local CONTEXT = 8 -- rows of diff a comment's card shows around its line
 
@@ -78,16 +81,16 @@ function M.parse(raw: string): (Proposal?, string?)
 		return nil, "The Draft review file is not one Plotroom reads (version 1)."
 	end
 	local repo, head, at = text(o.repo, 200), text(o.head, 64), text(o.at, 64)
-	local number, summary = whole(o.number), text(o.summary, 40000)
+	local number, summary = whole(o.number), text(o.summary, SUMMARY_BYTES)
 	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not head or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
 		return nil, "The Draft review file is malformed."
 	end
 	local comments: { Comment } = {}
 	for i, c in o.comments do
-		local id, path, body = if isTable(c) then text(c.id, 64) else nil, if isTable(c) then text(c.path, 1000) else nil, if isTable(c) then text(c.body, 20000) else nil
+		local id, path, body = if isTable(c) then text(c.id, 64) else nil, if isTable(c) then text(c.path, PATH_BYTES) else nil, if isTable(c) then text(c.body, BODY_BYTES) else nil
 		local line = if isTable(c) then whole(c.line) else nil
 		local start = if isTable(c) and c.startLine ~= nil then whole(c.startLine) else nil
-		local suggestion = if isTable(c) and c.suggestion ~= nil then text(c.suggestion, 20000) else nil
+		local suggestion = if isTable(c) and c.suggestion ~= nil then text(c.suggestion, BODY_BYTES) else nil
 		if
 			not id
 			or not string.match(id, "^[%w_%-]+$")
