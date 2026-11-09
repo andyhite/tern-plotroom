@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- On your own pull request the Draft review block offers only **Comment** (GitHub refuses Approve and Request changes there): a proposed Approve or Request changes opens as Comment with a line saying why, and `2`/`3` cannot pick the others, so Send never hands the agent a verdict it cannot post. Your own is the run's login, or gh's active one when the block has none.
 - Snoozing a Jira issue that is Changed by someone else's comment no longer marks that comment seen: when the snooze ends it is still Changed until you show its preview or Mark seen. Only those mark when you last saw an item; snoozing never moves it.
 - A checked run whose merge check went unanswered (its Plotroom block closed mid-ask, or a slow host) is asked again at the next ten-minute sweep, instead of never again until the window restarts, so its merged work still counts as agreed in the usage report.
 - A Draft review whose agent named the reviewed head by a short SHA (7 or more hex digits, which `plotroom_propose_review` accepts) no longer says the pull request's head moved, and Send no longer asks the agent to re-check new commits, when the current head starts with it. The block now reads the same 7 to 64 hex heads the tool accepts.

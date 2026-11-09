@@ -55,9 +55,10 @@ local function proposal(at: string?): { [string]: any }
 	}
 end
 
--- The checkout of o/r with the worktree /wt/r5 at HEAD; gh answers the pull request with head `prHead` (HEAD) on base
--- main, which the remote serves at sha("1"), and git the diff. Returns the diff commands run and the checkout.
-local function reviewScene(w: World, prHead: string?): ({ string }, h.Git)
+-- The checkout of o/r with the worktree /wt/r5 at HEAD; gh answers the pull request (by octo) with head `prHead` (HEAD)
+-- on base main, which the remote serves at sha("1"), and git the diff; gh's active login is `active` (octocat). Returns
+-- the diff commands run and the checkout.
+local function reviewScene(w: World, prHead: string?, active: string?): ({ string }, h.Git)
 	local g = asks.bk.repo(w)
 	asks.bk.tree(w, g, "/wt/r5", "fix-5", HEAD)
 	g.served["refs/heads/main"] = sha("1")
@@ -66,6 +67,10 @@ local function reviewScene(w: World, prHead: string?): ({ string }, h.Git)
 		local a = call.argv
 		if a[1] == "gh" and table.find(a, "repos/o/r/pulls/5") then
 			return { stdout = jsonEncode({ base = "o/r", sha = prHead or HEAD, ref = "fix-5", headRepo = "o/r", state = "open", baseRef = "main", title = "Fix", author = "octo" }) }
+		elseif a[1] == "gh" and a[2] == "auth" and a[3] == "status" then
+			return { stdout = jsonEncode({ hosts = { ["github.com"] = array({ { login = active or "octocat", active = true, state = "success" } }) } }) }
+		elseif a[1] == "gh" and a[2] == "auth" and a[3] == "token" then
+			return { stdout = "gho_token\n" }
 		elseif a[1] == "git" and a[4] == "diff" then
 			table.insert(diffs, table.concat(a, " "))
 			return { stdout = DIFF }
@@ -76,9 +81,9 @@ local function reviewScene(w: World, prHead: string?): ({ string }, h.Git)
 	return diffs, g
 end
 
-local function openReview(w: World, pane: number?): Block
+local function openReview(w: World, pane: number?, login: string?): Block
 	w.load("host")
-	local b = w.openReview(pane or 2, { "r1", "/wt/r5" })
+	local b = w.openReview(pane or 2, { "r1", "/wt/r5", login :: any })
 	w.flush()
 	return b
 end
@@ -270,6 +275,83 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(findKey(b.view().main, "send", "item"), nil, "and there is no second Send")
 	clean(b, "sent")
 	eq(b.saved().sent, AT1, "it stays Sent after a restart")
+	w.finish()
+end)
+
+-- The verdict buttons the decision row offers, in order, and the one with the check.
+local function verdicts(b: Block): ({ string }, string?)
+	local keys: { string } = {}
+	local on: string? = nil
+	for _, v in { "comment", "approve", "request_changes" } do
+		local node = findKey(findKey(b.view().main, "bar", "row"), v, "item")
+		if node then
+			table.insert(keys, v)
+			on = if node.p.icon == "check" then v else on
+		end
+	end
+	return keys, on
+end
+
+case("review: on your own pull request only Comment is offered, and keys and actions cannot pick another", function(w: World)
+	reviewScene(w)
+	local b = openReview(w, nil, "Octo")
+	local keys, on = verdicts(b)
+	same(keys, { "comment" }, "only Comment is offered on a pull request by the block's login (any case)")
+	eq(on, "comment", "and it is picked")
+	for _, k in { "2", "3" } do
+		b.typeText(k)
+		eq(select(2, verdicts(b)), "comment", k .. " leaves the verdict Comment")
+	end
+	for _, v in { "approve", "request_changes" } do
+		b.event({ ev = "action", act = "verdict", value = v })
+		eq(select(2, verdicts(b)), "comment", "verdict=" .. v .. " leaves the verdict Comment")
+	end
+	clean(b, "own pull request")
+	b.press("enter", "m")
+	eq(sentChoices(b).verdict, "comment", "Send carries Comment")
+	w.finish()
+end)
+
+for _, proposed in { "approve", "request_changes" } do
+	case("review: a proposed " .. proposed .. " on your own pull request opens as Comment, says why and sends Comment", function(w: World)
+		-- with no login the block takes gh's active one
+		reviewScene(w, nil, "octo")
+		local p = proposal()
+		p.verdict = proposed
+		w.fs.files[FILE] = jsonEncode(p)
+		local b = openReview(w)
+		local keys, on = verdicts(b)
+		same(keys, { "comment" }, "only Comment is offered")
+		eq(on, "comment", "Comment is selected")
+		local own = findKey(b.view().main, "own", "text")
+		has(textOf(own), "GitHub refuses Approve and Request changes on it", "a line says why")
+		eq(own.p.spans[1].s, "muted", "muted")
+		b.press("enter", "m")
+		local choices, text = sentChoices(b)
+		eq(choices.verdict, "comment", "Send carries Comment")
+		has(text, '"verdict":"comment"', "the message's JSON says comment")
+		w.finish()
+	end)
+end
+
+case("review: on someone else's pull request all three verdicts are offered and 1/2/3 pick each", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.verdict = "approve"
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w, nil, "octocat")
+	local keys, on = verdicts(b)
+	same(keys, { "comment", "approve", "request_changes" }, "every verdict is offered")
+	eq(on, "approve", "the proposed verdict is picked")
+	eq(findKey(b.view().main, "own"), nil, "and nothing says otherwise")
+	for i, v in { "comment", "approve", "request_changes" } do
+		b.typeText(tostring(i))
+		eq(select(2, verdicts(b)), v, i .. " picks " .. v)
+	end
+	b.event({ ev = "action", act = "verdict", value = "approve" })
+	eq(select(2, verdicts(b)), "approve", "verdict=approve picks Approve")
+	b.press("enter", "m")
+	eq(sentChoices(b).verdict, "approve", "Send carries it")
 	w.finish()
 end)
 
