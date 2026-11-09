@@ -5173,6 +5173,48 @@ windowCase("window flows: a plugin reload mid-chain resumes the due step from th
 	eq(#w.window.agents, 2, "no duplicate agent")
 end)
 
+-- Starts o/r#5's chained next action, failing the agent-links store (`fail`: the kv's failGet or failSet) from the
+-- moment its agent starts until it is recorded; returns that agent's pane.
+local function startUnlinked(w: World, st: FlowStub, fail: { [string]: string }): number
+	local first = startChained(w, st)
+	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
+	local start, pane = w.cx.agents.start, 0
+	w.cx.agents.start = function(self: any, opts: any): number
+		fail["agent-links"] = "store broken"
+		pane = start(self, opts)
+		return pane
+	end
+	st.reply("action", { label = "Fix", send = "Fix {url}", worktree = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Reused", created = false, current = true })
+	fail["agent-links"] = nil
+	w.cx.agents.start = start
+	eq(#w.window.agents, 2, "the step's agent started")
+	return pane
+end
+
+for _, t in { { "saved", "failSet", "The agent links could not be saved." }, { "read", "failGet", "The saved agent links could not be read." } } do
+	windowCase("window flows: a chain step's agent whose links cannot be " .. t[1] .. " is not started again while it runs, nor counted a failed start", function(w: World)
+		w.load("window")
+		local st = flowHost(w)
+		local pane = startUnlinked(w, st, (w.kv :: any)[t[2]])
+		local subs: { string } = {}
+		for _, toast in w.toasts do
+			table.insert(subs, toast.sub or "")
+		end
+		has(table.concat(subs, "\n"), t[3], "the start says it is not linked")
+		w.advance(60 * 1000)
+		eq(countOps(st, "action"), 1, "the next tick starts no second agent for the step")
+		w.advance(13 * 60 * 1000)
+		eq(countOps(st, "action"), 1, "nor does one past the start's time limit")
+		eq(#w.window.agents, 2, "one agent for the step")
+		eq(runAt(w, (w.kv.get("agent-links") :: any)[1].started).starts or 0, 0, "and no failed start is counted")
+		w.window.agentStates[pane] = "exited"
+		w.advance(5 * 1000)
+		eq(countOps(st, "action"), 2, "once that agent exited, the step it never ended is due again")
+	end)
+end
+
 case("host agents: a passing check shows Checked; a failing one is Needs you with its findings in the preview", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
