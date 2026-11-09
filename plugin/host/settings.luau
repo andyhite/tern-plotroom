@@ -1138,13 +1138,14 @@ local function deleteRepo(state: State, s: Settings, repo: string)
 end
 
 -- Removes Jira project `key` and its repositories.
-local function deleteJira(s: Settings, key: string)
+local function deleteJira(state: State, s: Settings, key: string)
 	local err = editJiraRepos(function(map: { [string]: any }): string?
 		map[key] = nil
 		return nil
 	end)
 	s.errors["jopen:" .. key] = err -- the summary row shows why: the Remove row draws no label
 	if not err then
+		propagate(state)
 		s.focus = "jadd"
 	end
 end
@@ -1232,6 +1233,9 @@ function M.setValue(state: State, row: string, value: any)
 				p.model = choice
 				return nil
 			end)
+		if kind == "summary" and not s.errors[row] then
+			propagate(state)
+		end
 	elseif kind == "peffort" then
 		if not (choice and (choice == "default" or worktree.validEffort(choice))) then
 			return
@@ -1405,6 +1409,9 @@ function M.setValue(state: State, row: string, value: any)
 			map[id] = keep
 			return nil
 		end)
+		if not s.errors[row] then
+			propagate(state)
+		end
 	end
 end
 
@@ -1478,7 +1485,7 @@ function M.confirmDelete(state: State)
 	elseif kind == "rremove" then
 		deleteRepo(state, s, id)
 	elseif kind == "jremove" then
-		deleteJira(s, id)
+		deleteJira(state, s, id)
 	elseif kind == "reset" then
 		resetAll(state)
 	end
@@ -1591,6 +1598,7 @@ function M.runAction(state: State, act: string, row: string)
 				return nil
 			end)
 			if not s.errors[row] then
+				propagate(state)
 				s.focus = "padd:" .. kind.id -- the restore button is gone with nothing left to restore
 			end
 		end
@@ -1751,6 +1759,9 @@ function M.commitEdit(state: State)
 			err = storage.editSummary(function(p)
 				p.model = if text ~= "" then text else nil
 			end)
+			if not err then
+				propagate(state)
+			end
 		end
 		settle(s, row, err)
 	elseif kind == "pkey" and id then
@@ -1956,6 +1967,9 @@ function M.resetRow(state: State, row: string)
 		err = storage.editSummary(function(p)
 			p.model = nil
 		end)
+		if not err then
+			propagate(state)
+		end
 	elseif kind == "key" and id then
 		err = keys.save(id, nil)
 		if not err then
@@ -1992,6 +2006,7 @@ function M.addRepo(state: State, raw: any)
 	if err then
 		return state.cx:toast("error", "Repository not saved", err)
 	end
+	propagate(state)
 	M.openSettings(state, "repos", "checkout:" .. string.lower(repo), true)
 end
 
@@ -2009,6 +2024,7 @@ function M.addJira(state: State, raw: any)
 	if err then
 		return state.cx:toast("error", "Jira project not saved", err)
 	end
+	propagate(state)
 	M.openSettings(state, "repos", "jrepos:" .. key, false)
 end
 

@@ -3296,6 +3296,42 @@ case("host: a prompt, format, setup command or checkout saved in one block reach
 	end)
 end)
 
+case("host: Add missing defaults, a repository or a Jira project added in one block reaches the others at once", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Watch", "My own watch") })
+	local a = w.open(1, { "/work/r" })
+	local c = w.open(2, { "/work/r" })
+	w.flush()
+	-- The saved actions the other block's hidden main.palette lists, by label, read straight off its last render.
+	local function labels(): { [string]: boolean }
+		local out: { [string]: boolean } = {}
+		for _, q in jsonDecode(findKey(c.view().main, "palette").p.text).items do
+			out[q.label] = true
+		end
+		return out
+	end
+	eq(labels()["Watch"], true, "the other block's palette lists the saved action")
+	eq(labels()["Review"], nil, "and no Review before")
+	local function reaches(what: string, change: () -> ())
+		local drawn = c.renders()
+		change()
+		yes(c.renders() > drawn, what .. " draws the other block")
+	end
+	goToSettings(a, "prompts")
+	reaches("Add missing defaults", function()
+		a.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:prs" })
+	end)
+	eq(labels()["Review"], true, "and its palette lists the restored action with no refresh")
+	a.press("escape")
+	reaches("adding a repository", function()
+		a.event({ ev = "action", act = "add-repo", value = "o/s" })
+	end)
+	a.press("escape")
+	reaches("adding a Jira project", function()
+		a.event({ ev = "action", act = "add-jira", value = "ABC" })
+	end)
+end)
+
 case("host: a queue action that runs counts once in this host's usage, and the block publishes the counts; a malformed store is left untouched", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
