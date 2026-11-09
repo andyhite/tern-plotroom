@@ -721,6 +721,23 @@ windowCase("window flows: an oversized report is cut to the store caps", functio
 	same({ #l.reason, #l.blocker }, { 200, 200 }, "the link's texts are cut as well")
 end)
 
+windowCase("window flows: a report whose line plotroom_report cut at a non-BMP character is recorded", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	-- The extension's exact result text (plugin/omp/plotroom.ts) for reason "🎉 " .. 196 "a" .. "😀 tail", evidence
+	-- 199 "b" .. "🎉 x" and blocker 199 "c" .. "😀": each 😀/🎉 straddled the 200-unit cut and was dropped whole.
+	local party = "\u{1F389}"
+	reports(w, link.agent, `\{"attention":"stuck","reason":"{party} {string.rep("a", 196)}","commit":null,"pr":null,"evidence":["{string.rep("b", 199)}"],"blocker":"{string.rep("c", 199)}"}`)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local run: any = (w.kv.get("runs") :: any)[1]
+	local reason = `{party} {string.rep("a", 195)}`
+	same({ run.attention, run.reason, run.blocker }, { "stuck", reason, string.rep("c", 199) }, "the run records its attention and reason, cut whole to 200 bytes")
+	same(run.evidence, { string.rep("b", 199) }, "and its evidence")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.attention, l.reason }, { "stuck", reason }, "and so does the link")
+end)
+
 windowCase("window flows: a malformed run log or usage store is never overwritten, and the report says which part is missing", function(w: World)
 	w.load("window")
 	w.kv.put("runs", { { key = 5 } })

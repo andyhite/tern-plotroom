@@ -62,14 +62,18 @@ export type Report = {
 	findings?: string[];
 };
 
-// `v` as one line of at most REPORT_LINE characters; "" when it holds no text.
-function line(v: string): string {
-	return v.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, REPORT_LINE).trim();
+// `v` as one line of at most REPORT_LINE characters; "" when it holds no text. The cut never splits a surrogate pair,
+// and a lone surrogate is refused: JSON.stringify writes it as a \ud8xx escape, which the window cannot decode.
+function line(v: string, what: string): string {
+	if (/\p{Surrogate}/u.test(v)) throw new Error(`${what} holds a broken character (a lone UTF-16 surrogate)`);
+	let s = v.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, REPORT_LINE);
+	if (/[\ud800-\udbff]$/.test(s)) s = s.slice(0, -1);
+	return s.trim();
 }
 
 function lines(v: unknown, what: string): string[] {
 	if (!Array.isArray(v) || v.some(s => typeof s !== "string")) throw new Error(`${what} must be a list of strings`);
-	return (v as string[]).map(line).filter(s => s !== "").slice(0, REPORT_LIST);
+	return (v as string[]).map(s => line(s, what)).filter(s => s !== "").slice(0, REPORT_LIST);
 }
 
 // The report as Plotroom keeps it, or an Error naming the first thing wrong: the rules usage.reportOf reads it by.
@@ -77,7 +81,7 @@ export function validateReport(input: unknown): Report {
 	if (typeof input !== "object" || input === null) throw new Error("the input must be an object");
 	const o = input as Record<string, unknown>;
 	const attention = oneOf(o.attention, "attention", ATTENTION);
-	const reason = typeof o.reason === "string" ? line(o.reason) : "";
+	const reason = typeof o.reason === "string" ? line(o.reason, "reason") : "";
 	if (reason === "") throw new Error("reason must be one line of text");
 	const commit = o.commit ?? null;
 	if (commit !== null && (typeof commit !== "string" || !/^([0-9a-f]{40}|[0-9a-f]{64})$/i.test(commit))) throw new Error("commit must be a full commit SHA, or null");
@@ -85,7 +89,7 @@ export function validateReport(input: unknown): Report {
 	if (pr !== null && (typeof pr !== "string" || pr.length > PR_CAP || !/^https?:\/\/\S+$/.test(pr))) throw new Error("pr must be a pull request URL, or null");
 	const blocker = o.blocker ?? null;
 	if (blocker !== null && typeof blocker !== "string") throw new Error("blocker must be a string, or null");
-	const out: Report = { attention, reason, commit: commit === null ? null : commit.toLowerCase(), pr, evidence: lines(o.evidence, "evidence"), blocker: blocker === null ? null : line(blocker) || null };
+	const out: Report = { attention, reason, commit: commit === null ? null : commit.toLowerCase(), pr, evidence: lines(o.evidence, "evidence"), blocker: blocker === null ? null : line(blocker, "blocker") || null };
 	if (o.check !== undefined && o.check !== null) out.check = oneOf(o.check, "check", CHECKS);
 	if (o.findings !== undefined && o.findings !== null) out.findings = lines(o.findings, "findings");
 	return out;
