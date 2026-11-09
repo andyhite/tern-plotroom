@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- `plotroom_propose_review` (its description and its answer) now tells the agent to call `plotroom_report` with attention needs-human before ending its turn, instead of ending it at once, so a Review run waiting on its Draft review shows under **Needs you** instead of **No report**.
 - Bare-repository layouts (`repo/.bare` plus a linked worktree you work in): Worktrees no longer lists your saved checkout, Remove worktree refuses it ("That is the checkout; Plotroom never removes it.") instead of running `git worktree remove` on it, and Worktree on a pull request whose head branch it has checked out says so instead of reusing your checkout as the PR's worktree.
 - Merging the base before conflicts: a regenerated `go.sum` is staged with the `go.mod` in its folder, which `go mod tidy` also rewrites, so the committed merge carries the tidied `go.mod` and the worktree is left clean instead of with an unstaged `go.mod`.
 - Likely flaky: a base-branch history read GitHub's rate limit held back no longer judges the head commit's failing checks not flaky until the next push; the next refresh reads the history again. A check that passed earlier on the same commit stays marked meanwhile.
