@@ -1437,6 +1437,7 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 			end
 		end
 		local history: { [string]: github.History } = {}
+		local held: github.Problem? = nil -- a history read the quota held back: the head is judged again
 		local function decide()
 			for _, o in open do
 				local h = if o.run.workflow then history[o.run.workflow] else nil
@@ -1448,16 +1449,18 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 					marks[o.url] = { name = o.name, reason = reason }
 				end
 			end
-			done(marks, nil)
+			done(marks, held)
 		end
 		local left = #workflows
 		if left == 0 then
 			return decide()
 		end
 		for _, wf in workflows do
-			github.baseHistory(pr.repo, pr.base, wf, account, function(h: github.History?)
+			github.baseHistory(pr.repo, pr.base, wf, account, function(h: github.History?, problem: github.Problem?)
 				if h then
 					history[wf] = h
+				elseif problem and problem.kind == "rate-limit" then
+					held = problem
 				end
 				left -= 1
 				if left == 0 then
@@ -1469,7 +1472,8 @@ local function judgeFlaky(pr: github.Pr, failing: { github.Run }, account: strin
 end
 
 -- Judges Likely flaky for the shown list's Blocked pull requests with failing checks: at most FLAKY_ITEMS a refresh,
--- each at most once per head commit (a read the quota held back is tried again at the next refresh).
+-- each at most once per head commit (a read the quota held back is tried again at the next refresh; marks that needed
+-- no held-back read show meanwhile).
 local FLAKY_ITEMS = 10
 function M.gatherFlaky(state: State)
 	local snap = state.snap
@@ -1484,7 +1488,7 @@ function M.gatherFlaky(state: State)
 		end
 		local key, sha = pr.key, pr.headSha
 		local known = state.flaky[key]
-		if sha and not state.flakyBusy[key] and not (known and known.sha == sha) and M.stage(state, "prs", pr) == "blocked" then
+		if sha and not state.flakyBusy[key] and not (known and known.sha == sha and not known.again) and M.stage(state, "prs", pr) == "blocked" then
 			local failing = M.failing(state, pr)
 			if #failing > 0 then
 				started += 1
@@ -1494,8 +1498,9 @@ function M.gatherFlaky(state: State)
 						return
 					end
 					state.flakyBusy[key] = nil
-					if marks or (problem and problem.kind ~= "rate-limit") then
-						state.flaky[key] = { sha = sha, marks = marks or {} }
+					local again = problem ~= nil and problem.kind == "rate-limit"
+					if (marks and not (again and next(marks) == nil)) or (problem and not again) then
+						state.flaky[key] = { sha = sha, marks = marks or {}, again = again or nil }
 						state.rev += 1
 						state.cx:render()
 					end

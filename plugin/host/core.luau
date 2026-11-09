@@ -126,7 +126,8 @@ export type Detail = { runs: { github.Run }, total: number, round: number, at: n
 export type DetailFail = { problem: github.Problem, tries: number, retryAt: number? }
 -- The Likely flaky marks of one PR's failing checks (engine.gatherFlaky): the head commit they were judged at, and per
 -- check link the check's name and why it is likely flaky. A check with no mark is not.
-export type Flaky = { sha: string, marks: { [string]: { name: string, reason: string } } }
+-- `again`: a base-history read the quota held back, so the head is judged again at the next refresh.
+export type Flaky = { sha: string, marks: { [string]: { name: string, reason: string } }, again: boolean? }
 -- One failing check's log as read for one head commit: its excerpt (logs.parse, jobs one after another), its first error
 -- line and the changed-file lines it names, or why it could not be read; `at` is when, so a failed read is tried again.
 export type CiLog = { lines: { string }?, first: string?, refs: { string }, problem: string?, at: number }
