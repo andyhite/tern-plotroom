@@ -55,6 +55,7 @@ type State = {
 	summary: input.Model,
 	note: input.Model, -- the line of instructions sent with your choices
 	verdict: string,
+	own: boolean, -- the pull request is the login's own: GitHub refuses Approve and Request changes, so only Comment
 	at: number, -- 0 the summary, 1..#cards a comment, #cards + 1 the instructions
 	editing: boolean,
 	head: string?, -- the pull request's head now; differs from p.head when it moved since the review
@@ -312,7 +313,7 @@ local function load(state: State)
 	end
 	state.gen += 1
 	local gen = state.gen
-	state.p, state.problem, state.diffProblem, state.head = p, nil, nil, nil
+	state.p, state.problem, state.diffProblem, state.head, state.own = p, nil, nil, nil, false
 	state.summary, state.note, state.verdict = input.new(p.summary, true), input.new("", false), p.verdict
 	state.at, state.editing, state.sending, state.sent, state.gone, state.message = 0, false, false, false, nil, nil
 	state.loading = true
@@ -328,19 +329,35 @@ local function load(state: State)
 			return diffFailed("The pull request could not be read: " .. (if problem then problem.message else "gh gave no answer."))
 		end
 		state.head = meta.sha
-		worktree.reviewDiff(state.cwd, p.repo, p.number, meta.baseRef, p.head, function(out, problem2)
+		-- The run's login, or gh's active one when the block has none; unknown, every verdict stays offered.
+		github.login(state.login, function(who)
 			if not alive(state, gen) then
 				return
-			elseif not out then
-				return diffFailed("The diff could not be read: " .. (problem2 or "git gave no answer."))
-			elseif #out > DIFF_BYTES then
-				return diffFailed("The diff is too large to show.")
 			end
-			state.loading = false
-			place(state, p, M.parseDiff(out))
-			state.cx:render()
+			if who and meta.author and string.lower(who) == string.lower(meta.author) then
+				state.own, state.verdict = true, "comment"
+			end
+			worktree.reviewDiff(state.cwd, p.repo, p.number, meta.baseRef, p.head, function(out, problem2)
+				if not alive(state, gen) then
+					return
+				elseif not out then
+					return diffFailed("The diff could not be read: " .. (problem2 or "git gave no answer."))
+				elseif #out > DIFF_BYTES then
+					return diffFailed("The diff is too large to show.")
+				end
+				state.loading = false
+				place(state, p, M.parseDiff(out))
+				state.cx:render()
+			end)
 		end)
 	end)
+end
+
+-- Picks verdict `v` when it may be picked now: not once sending or sent, and only Comment on your own pull request.
+local function pick(state: State, v: string?)
+	if v and VERDICT_LABEL[v] and not state.sent and not state.sending and (v == "comment" or not state.own) then
+		state.verdict = v
+	end
 end
 
 local function last(state: State): number
@@ -563,8 +580,10 @@ local function view(state: State): BlockView
 		table.insert(bar, textNode("verdict", "Verdict: " .. VERDICT_LABEL[state.verdict], "muted"))
 	else
 		for i, v in M.VERDICTS do
-			local on = state.verdict == v
-			table.insert(bar, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
+			if v == "comment" or not state.own then
+				local on = state.verdict == v
+				table.insert(bar, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
+			end
 		end
 	end
 	table.insert(bar, textNode("count", kept .. " kept · " .. (#state.cards - kept) .. " dropped", "muted"))
@@ -576,6 +595,9 @@ local function view(state: State): BlockView
 		table.insert(bar, button({ key = "send", label = "Send to agent", icon = "arrow-right", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
 	end
 	table.insert(main, ui.node("row", { key = "bar", gap = "sm", wrap = true, align = "center" }, bar))
+	if state.own and not state.sent and not state.sending then
+		table.insert(main, textNode("own", "Your own pull request: GitHub refuses Approve and Request changes on it, so the verdict is Comment.", "muted"))
+	end
 	if state.sent then
 		table.insert(main, textNode("sent", "Sent to the agent. It posts the review; a revised proposal opens here again.", "muted"))
 	end
@@ -626,6 +648,7 @@ function M.define()
 				summary = input.new("", true),
 				note = input.new("", false),
 				verdict = "comment",
+				own = false,
 				at = 0,
 				editing = false,
 				sending = false,
@@ -685,8 +708,8 @@ function M.define()
 				edit(state, state.at)
 			elseif name == "enter" then
 				send(state)
-			elseif (ch == "1" or ch == "2" or ch == "3") and not state.sent and not state.sending then
-				state.verdict = M.VERDICTS[tonumber(ch) :: number]
+			elseif ch == "1" or ch == "2" or ch == "3" then
+				pick(state, M.VERDICTS[tonumber(ch) :: number])
 			elseif ch == "c" and state.gone then
 				copy(state)
 			else
@@ -720,8 +743,8 @@ function M.define()
 				copy(state)
 			elseif act == "done" then
 				state.editing = false
-			elseif act == "verdict" and VERDICT_LABEL[value] and not state.sent and not state.sending then
-				state.verdict = value
+			elseif act == "verdict" then
+				pick(state, value)
 			elseif act == "select" and tonumber(value) then
 				local i = tonumber(value) :: number
 				if i >= 0 and i <= last(state) then
