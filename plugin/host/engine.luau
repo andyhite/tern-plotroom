@@ -861,9 +861,10 @@ end
 
 -- `act` ("seen" | "snooze" | "unsnooze") on the selected item, saved to the triage store at once (the store is reread
 -- first and never overwritten when unreadable). The cursor moves to the neighbour when the item leaves the list.
+-- Nothing while Now, Worktrees or Agents is shown: the view's selection behind them is not the row the user sees.
 function M.mark(state: State, act: string)
 	local item, snap = M.selected(state), state.snap
-	if not item or not snap then
+	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn then
 		return
 	end
 	local store = M.store(state, true)
