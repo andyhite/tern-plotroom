@@ -469,6 +469,62 @@ windowCase("window flows: a turn end whose pane closes while its transcript lags
 	same({ l.result, l.attention, l.reason }, { "done", "needs-human", "Which base?" }, "on the link too")
 end)
 
+-- `agent`'s chat as turn 1 (report `stuck`, settled), the user's reply, then turn 2 (report `ok`, settled).
+local function repliedTo(w: World, agent: number)
+	lastSays(w, agent, "Turn 2.", { reportCall(`\{"attention":"ok","reason":"Turn two","commit":null,"pr":null,"evidence":[],"blocker":null}`) }, {
+		{ role = "user", text = "go", tools = {} },
+		{ role = "assistant", text = "", tools = { reportCall(`\{"attention":"stuck","reason":"Turn one","commit":null,"pr":null,"evidence":[],"blocker":"No database"}`) } },
+		{ role = "assistant", text = "Turn 1.", tools = {} },
+	})
+	local msgs = w.window.transcripts[agent]
+	msgs[4].text = "reply"
+end
+
+windowCase("window flows: a prompt sent to the agent during the settle wait does not change which turn's report is recorded", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	lastSays(w, link.agent, "", { reportCall(`\{"attention":"stuck","reason":"Turn one","commit":null,"pr":null,"evidence":[],"blocker":"No database"}`) })
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(w.kv.get("runs"), nil, "the turn end waits for the transcript")
+	repliedTo(w, link.agent)
+	w.advance(1000)
+	w.flush()
+	local runs: any = w.kv.get("runs")
+	eq(#runs, 1, "one run")
+	same({ runs[1].attention, runs[1].reason }, { "stuck", "Turn one" }, "carrying the turn that ended, not the new one")
+	-- The new prompt arrives while turn 1's last reply still lags: the turn is over all the same.
+	w.window.panes[link.agent] = nil
+	local other = startReview(w)
+	lastSays(w, other.agent, "", { reportCall(`\{"attention":"stuck","reason":"Turn one","commit":null,"pr":null,"evidence":[],"blocker":null}`) })
+	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
+	w.flush()
+	local msgs = w.window.transcripts[other.agent]
+	table.insert(msgs, { role = "user", text = "reply", tools = {} })
+	w.advance(1000)
+	w.flush()
+	runs = w.kv.get("runs")
+	same({ #runs, runs[1].attention }, { 2, "stuck" }, "recorded at once with its report")
+end)
+
+windowCase("window flows: a second turn end during the settle wait yields one run carrying the first turn's report", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	lastSays(w, link.agent, "", { reportCall(`\{"attention":"stuck","reason":"Turn one","commit":null,"pr":null,"evidence":[],"blocker":"No database"}`) })
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(w.kv.get("runs"), nil, "the turn end waits for the transcript")
+	repliedTo(w, link.agent)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.advance(11000)
+	w.flush()
+	local runs: any = w.kv.get("runs")
+	eq(#runs, 1, "exactly one run")
+	same({ runs[1].attention, runs[1].reason, runs[1].blocker }, { "stuck", "Turn one", "No database" }, "with turn 1's report")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	same({ l.result, l.attention, l.reason }, { "done", "ok", "Turn two" }, "the link shows turn 2's report")
+end)
+
 windowCase("window flows: a turn with no report call records No report, and a later turn's valid report replaces it without a second run", function(w: World)
 	w.load("window")
 	local link = startReview(w)
