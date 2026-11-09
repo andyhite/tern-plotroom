@@ -450,6 +450,42 @@ case("review: a reload keeps your edits for the same proposal and starts over fo
 	w.finish()
 end)
 
+case("review: a reload onto a file Plotroom cannot read shows why in the error tone and Send sends nothing of the old proposal", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	yes(findKey(b.view().main, "send", "item"), "proposal A is sendable")
+	local wrong = proposal(AT2)
+	wrong.version = 2
+	local bad = proposal(AT2)
+	bad.comments[1].side = nil
+	local files: { { file: { [string]: any }, why: string } } = {
+		{ file = wrong, why = "The Draft review file is not one Plotroom reads (version 1)." },
+		{ file = bad, why = "Comment 1 of the Draft review file is malformed." },
+	}
+	for _, f in files do
+		w.fs.files[FILE] = jsonEncode(f.file)
+		b.event({ ev = "action", act = "reload" })
+		w.flush()
+		local problem: any = findKey(b.view().main, "problem", "text")
+		yes(problem, "the block says why: " .. f.why)
+		eq(problem.p.spans[1].t, f.why, "the file's reason")
+		eq(problem.p.spans[1].s, "error", "in the error tone")
+		eq(findKey(b.view().main, "send", "item"), nil, "no Send button for the old proposal")
+		eq(b.title(), "Draft review", "nor its title")
+		local before = #w.opened
+		b.press("enter", "m")
+		b.event({ ev = "action", act = "send" })
+		w.flush()
+		eq(#w.opened, before, "Send by key or button opens nothing")
+		eq(findKey(b.view().main, "send", "text"), nil, "and publishes no main.send")
+	end
+	w.fs.files[FILE] = jsonEncode(proposal(AT2))
+	b.event({ ev = "action", act = "reload" })
+	w.flush()
+	yes(findKey(b.view().main, "send", "item"), "a readable file again is sendable")
+	w.finish()
+end)
+
 case("review: the window's review request answers when the run's Draft review file was written", function(w: World)
 	h.hostScene(w)
 	local b = h.openQueue(w)
