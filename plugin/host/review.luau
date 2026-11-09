@@ -295,7 +295,8 @@ local function place(state: State, p: Proposal, diff: Diff?)
 	state.cards = cards
 end
 
--- Reads the run's Draft review file again: a new proposal (another `at`) starts over; the same one keeps your edits.
+-- Reads the run's Draft review file again: a new proposal (another `at`) starts over; the same one keeps your edits;
+-- one that cannot be read drops the proposal it replaced (and anything it had in flight), so Send never posts it.
 -- Then the pull request's head and base (gh) and the diff the review is about (git, where the agent worked).
 local function load(state: State)
 	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), FILE_BYTES)
@@ -304,7 +305,8 @@ local function load(state: State)
 		p, why = M.parse(raw)
 	end
 	if not p then
-		state.problem = why
+		state.gen += 1
+		state.p, state.problem, state.loading, state.sending, state.message = nil, why, false, false, nil
 		return
 	end
 	local cur = state.p
