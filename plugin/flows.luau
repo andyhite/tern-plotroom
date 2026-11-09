@@ -625,10 +625,12 @@ function M.ensureSync(cx: WindowCx)
 	end
 end
 
--- Chain steps whose start is in flight in this plugin VM, by stepId -> when it began (dueSteps), and steps whose last
--- start failed -> when they may be tried again (startFailed).
+-- Chain steps whose start is in flight in this plugin VM, by stepId -> when it began (dueSteps), steps whose last
+-- start failed -> when they may be tried again (startFailed), and steps whose agent started but could not be linked
+-- (the links store failed, so the saved gate still starts an agent) -> that agent's link: in flight while it runs.
 local starting: { [string]: number } = {}
 local retryAt: { [string]: number } = {}
+local unlinked: { [string]: Link } = {}
 local RETRY_S = 30
 local function stepId(host: HostId, agent: number, started: number?): string
 	return host.id .. "|" .. host.address .. "|" .. agent .. "|" .. (started or 0)
@@ -642,14 +644,18 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 	if not host or not agentHost or not hostSame(host, agentHost) then
 		return
 	end
-	local links, healthy = readLinks()
-	if not healthy then
-		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
-	end
 	local out: { Link } = { { key = key, agent = agent, host = host, at = math.floor(tern.now()), chain = chain, action = if info then clip(info.action, ACTION_CAP) else nil, branch = if info then clip(info.branch, BRANCH_CAP) else nil, title = if info then clip(info.title, TITLE_CAP) else nil, cwd = if info and info.cwd and #info.cwd <= 4096 then info.cwd else nil, started = os.time(), kind = if info then clip(info.kind, ACTION_CAP) else nil, model = if info then clip(info.model, ACTION_CAP) else nil, runsIn = if info then clip(info.runsIn, ACTION_CAP) else nil, outcome = if info and prompts.outcomeLabel(info.outcome) then info.outcome else nil, login = if info then clip(info.login, ACTION_CAP) else nil, ghRepo = if info then clip(info.ghRepo, TITLE_CAP) else nil, number = if info then info.number else nil, criteria = if info then usage.text(info.criteria, usage.CRITERIA_CAP) else nil, checkAgent = if info then info.checkAgent else nil, checkStarted = if info then info.checkStarted else nil, run = if info then clip(info.run, ACTION_CAP) else nil } }
 	-- The agent of a chain step ends that step on the run it came from (a check now waits for its verdict); one started
 	-- by hand ends every open step of its item, so an older chain never starts an agent beside it.
 	local from = if info then info.from else nil
+	local fromId = if from then stepId(from.host, from.agent, from.started) else nil
+	local links, healthy = readLinks()
+	if not healthy then
+		if fromId then
+			unlinked[fromId] = out[1]
+		end
+		return cx:toast("info", "Agent started, but not linked to " .. key, "The saved agent links could not be read.")
+	end
 	for _, l in links do
 		if l.agent ~= agent and (not (l.key == key and hostSame(l.host, host)) or l.chain ~= nil) then
 			if from and l.agent == from.agent and hostSame(l.host, from.host) and l.started == from.started and l.gate == from.step then
@@ -660,11 +666,14 @@ function M.recordAgent(cx: WindowCx, pane: number, key: string, agent: number, c
 			table.insert(out, l)
 		end
 	end
-	if from then
-		starting[stepId(from.host, from.agent, from.started)] = nil
-	end
 	if not writeLinks(out) then
+		if fromId then
+			unlinked[fromId] = out[1]
+		end
 		return cx:toast("info", "Agent started, but not linked to " .. key, "The agent links could not be saved.")
+	end
+	if fromId then
+		starting[fromId], unlinked[fromId] = nil, nil
 	end
 	M.agentSync(cx)
 	M.ensureSync(cx)
@@ -787,8 +796,10 @@ local START_S = 12 * 60
 
 -- The chain steps due to start now: each link whose gate starts an agent and whose start is not in flight in this
 -- plugin VM (a reload forgets those, so a start a reload cut off is due again; one that got as far as recording its
--- agent ended the gate, so nothing starts twice), with a Plotroom block on its host. A start in flight past START_S
--- counts as failed; LIMIT failed starts on the item stop the chain. Each returned step is marked in flight.
+-- agent ended the gate, so nothing starts twice; one whose agent started but could not be linked stays in flight while
+-- that agent runs, and is due again, not counted as failed, once it exited or closed), with a Plotroom block on its
+-- host. A start in flight past START_S counts as failed; LIMIT failed starts on the item stop the chain. Each returned
+-- step is marked in flight.
 function M.dueSteps(cx: WindowCx): { Step }
 	local due: { Step } = {}
 	local links, healthy = readLinks()
@@ -798,10 +809,23 @@ function M.dueSteps(cx: WindowCx): { Step }
 	local now = os.time()
 	local runs: { usage.Run }? = nil
 	local changed = false
+	local listed, states, cwds = false, nil :: { [number]: string }?, {} :: { [number]: string }
 	for _, l in links do
 		local c = l.chain
 		if c and l.gate and STARTS[l.gate] then
 			local id = stepId(l.host, l.agent, l.started)
+			local held = unlinked[id]
+			if held then
+				if not listed then
+					local read, _, at = agentStates(cx)
+					listed, states, cwds = true, read, at
+				end
+				local s = if states then stateOf(held, states, cwds) else "unread"
+				if s ~= nil and s ~= "exited" then
+					continue -- its unlinked agent still runs (or the agent list cannot be read)
+				end
+				unlinked[id], starting[id] = nil, nil
+			end
 			local at: number? = starting[id]
 			if at and now - at >= START_S then
 				starting[id], at = nil, nil

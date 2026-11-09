@@ -74,6 +74,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- A chain step whose agent started while the agent links could not be read or saved no longer starts a second agent for the same step (at the next tick, or after the 12-minute start limit as a failed start): the step waits while that unlinked agent runs, and is due again once it exits or its pane closes.
 - A checked run whose merge check went unanswered (its Plotroom block closed mid-ask, or a slow host) is asked again at the next ten-minute sweep, instead of never again until the window restarts, so its merged work still counts as agreed in the usage report.
 - A Draft review whose agent named the reviewed head by a short SHA (7 or more hex digits, which `plotroom_propose_review` accepts) no longer says the pull request's head moved, and Send no longer asks the agent to re-check new commits, when the current head starts with it. The block now reads the same 7 to 64 hex heads the tool accepts.
 - Settings › Actions › Add missing defaults, adding a repository or a Jira project, a Jira project's repositories or removing it, and the Summary model now show at once in every other open Plotroom block (its Commands rows, Next move and Settings), instead of after that block's next refresh.
