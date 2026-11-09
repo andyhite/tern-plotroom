@@ -287,7 +287,10 @@ end
 -- Then the pull request's head and base (gh) and the diff the review is about (git, where the agent worked).
 local function load(state: State)
 	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), FILE_BYTES)
-	local p, why = if ok then M.parse(raw) else nil, if ok then nil else "There is no Draft review for this run on this host."
+	local p, why: string? = nil, "There is no Draft review for this run on this host."
+	if ok then
+		p, why = M.parse(raw)
+	end
 	if not p then
 		state.problem = why
 		return

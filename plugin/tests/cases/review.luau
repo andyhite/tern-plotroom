@@ -449,4 +449,26 @@ case("review: a 10000-character CJK body and suggestion the tool accepts is list
 	w.finish()
 end)
 
+case("review: a Draft review file Plotroom cannot read shows why, not Reading the Draft review", function(w: World)
+	local wrong = proposal()
+	wrong.version = 2
+	w.fs.files[FILE] = jsonEncode(wrong)
+	local text = textOf(openReview(w).view().main)
+	has(text, "The Draft review file is not one Plotroom reads (version 1).", "a version 2 file says so")
+	lacks(text, "Reading the Draft review", "not still reading")
+
+	local bad = proposal()
+	bad.comments[1].side = nil
+	w.fs.files[FILE] = jsonEncode(bad)
+	text = textOf(openReview(w, 3).view().main)
+	has(text, "Comment 1 of the Draft review file is malformed.", "the malformed comment is named")
+	lacks(text, "Reading the Draft review", "not still reading")
+
+	w.fs.files[FILE] = nil
+	text = textOf(openReview(w, 4).view().main)
+	has(text, "There is no Draft review for this run on this host.", "no file says so")
+	lacks(text, "Reading the Draft review", "not still reading")
+	w.finish()
+end)
+
 return {}
