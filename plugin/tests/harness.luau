@@ -1923,7 +1923,7 @@ local function newGh(w: World): Gh
 				event = string.match(argv[j], "^%-%-event=(.*)$") or event
 			end
 			local runs: { any } = {}
-			for _, run in gh.history[repo .. "@" .. branch .. "@" .. workflow] or {} do
+			for _, run in (gh.history[repo .. "@" .. branch .. "@" .. workflow] or {}) :: { any } do
 				if event == nil or (run.event or "push") == event then
 					table.insert(runs, run)
 				end
