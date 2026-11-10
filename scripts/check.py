@@ -301,6 +301,21 @@ def check_css() -> None:
     for bad in (r"#[0-9a-fA-F]{3,8}\b", r"\b(rgba?|hsla?)\(\s*[\d.]", r"var\(--(bad|ok|warn|live|sf-bad|sf-ok|sf-warn|sf-info)\)"):
         for found in re.finditer(bad, text):
             problems.append("colour outside DESIGN.md %r" % found.group(0))
+    # Tern's Styling views: a plugin animation stops under .sf-still and pauses under .sf-paused (a hidden pane), so
+    # every rule that runs a named animation has both, on its selector with the state class on the block's scope.
+    rules = [(m.group(1).strip(), m.group(2)) for m in re.finditer(r"([^{};]+)\{([^{}]*)\}", text)]
+    for prelude, body in rules:
+        if not re.search(r"(^|;)\s*animation\s*:\s*(?!none\b)[a-z]", body):
+            continue
+        for selector in prelude.split(","):
+            selector = selector.strip()
+            scope = next((s for s in scopes if selector.startswith(s)), None)
+            if scope is None:
+                continue
+            for state, declaration in (("sf-still", r"animation\s*:\s*none\b"), ("sf-paused", r"animation-play-state\s*:\s*paused\b")):
+                want = scope + "." + state + selector[len(scope):]
+                if not any(want in [s.strip() for s in p.split(",")] and re.search(declaration, b) for p, b in rules):
+                    problems.append("animation without a .%s rule: %s" % (state, selector))
     if problems:
         raise GateError("plugin/plotroom.css: " + "; ".join(problems[:5]))
 

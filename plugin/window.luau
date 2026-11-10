@@ -14,7 +14,8 @@ local prompts = require("./prompts")
 -- Every palette command's title by id, for the usage report (flows.setup).
 local TITLES: { [string]: string } = {}
 
--- tern.command, counting each run in this machine's usage as "palette:<id>".
+-- tern.command, counting each run in this machine's usage as "palette:<id>". Every row sits under Tern's palette group
+-- Plotroom, so titles carry no "Plotroom: " prefix.
 local function command(def: CommandDef)
 	TITLES[def.id] = def.title
 	local run = def.run
@@ -22,6 +23,8 @@ local function command(def: CommandDef)
 		id = def.id,
 		title = def.title,
 		icon = def.icon,
+		group = "Plotroom",
+		keys = def.keys,
 		available = def.available,
 		run = function(cx: WindowCx)
 			usage.bump("palette:" .. def.id)
@@ -332,11 +335,11 @@ arm(0)
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
 	if mismatched and pane.pane == mismatched.pane then
-		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warn", tone = "error" })
 	end
 	local paused = next(pausedHooks)
 	if paused ~= nil then
-		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warn", tone = "error" })
 	end
 	-- One count covers the agents that need input and the rest of Now: a click shows Now.
 	local need = flows.needCount()
@@ -348,7 +351,8 @@ end)
 
 command({
 	id = "agents-waiting",
-	title = "Plotroom: Go to the first agent that needs input",
+	title = "Go to the first agent that needs input",
+	keys = { "ctrl+alt+shift+a" },
 	icon = "merge",
 	available = function(_cx: WindowCx): boolean
 		return flows.waitingCount() > 0
@@ -358,7 +362,8 @@ command({
 
 command({
 	id = "now",
-	title = "Plotroom: Show what needs you (Now)",
+	title = "Show what needs you (Now)",
+	keys = { "ctrl+alt+shift+i" },
 	icon = "inbox",
 	available = function(_cx: WindowCx): boolean
 		return flows.needCount() > 0
@@ -482,10 +487,45 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 end
 
 -- Worktree path -> the title its tab shows (`#123 title`) and the name nameTab gave the tab, so a tab the user renamed
--- keeps theirs. ponytail: in memory, newest TAB_LABELS kept; a plugin reload forgets them and the tab shows its plain name.
+-- keeps theirs. Kept in kv `tab-labels` (oldest first, newest TAB_LABELS), read at load, so restored tabs keep their
+-- titles across a plugin reload; a store that cannot be read, or is not a list of labels, is never written over.
 local TAB_LABELS = 50
-local tabLabels: { [string]: { label: string, name: string } } = {}
+local TAB_LABELS_KEY = "tab-labels"
+type TabLabel = { path: string, label: string, name: string }
+local tabLabels: { [string]: TabLabel } = {}
 local tabLabelOrder: { string } = {}
+local tabLabelsWritable = false
+
+do
+	local ok, v = pcall(tern.kv.get, TAB_LABELS_KEY)
+	tabLabelsWritable = ok and (v == nil or type(v) == "table")
+	if ok and type(v) == "table" then
+		for _, e in v do
+			if type(e) == "table" and type(e.path) == "string" and type(e.label) == "string" and type(e.name) == "string" then
+				if tabLabels[e.path] == nil then
+					table.insert(tabLabelOrder, e.path)
+				end
+				tabLabels[e.path] = { path = e.path, label = e.label, name = e.name }
+			else
+				tabLabelsWritable = false
+			end
+		end
+		while #tabLabelOrder > TAB_LABELS do
+			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
+		end
+	end
+end
+
+local function saveTabLabels()
+	if not tabLabelsWritable then
+		return
+	end
+	local rows: { TabLabel } = {}
+	for _, path in tabLabelOrder do
+		table.insert(rows, tabLabels[path])
+	end
+	pcall(tern.kv.set, TAB_LABELS_KEY, tern.json.array(rows)) -- best effort: a failed write only loses the titles at a reload
+end
 
 local function labelTab(r: Ready, t: Target)
 	if not r.title then
@@ -499,8 +539,25 @@ local function labelTab(r: Ready, t: Target)
 			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
 		end
 	end
-	tabLabels[r.path] = { label = ref .. " " .. title, name = t.tab }
+	tabLabels[r.path] = { path = r.path, label = ref .. " " .. title, name = t.tab }
+	saveTabLabels()
 	tern.chrome.refresh()
+end
+
+-- Drops the labels of worktrees no tab works in any more (a pane or tab closed).
+local function syncTabLabels(cx: WindowCx)
+	local kept: { string } = {}
+	for _, path in tabLabelOrder do
+		if targetPane(cx, path) then
+			table.insert(kept, path)
+		else
+			tabLabels[path] = nil
+		end
+	end
+	if #kept ~= #tabLabelOrder then
+		tabLabelOrder = kept
+		saveTabLabels()
+	end
 end
 
 tern.chrome.tab_title(function(tab: TabInfo): string?
@@ -1728,6 +1785,7 @@ end)
 -- blocks so their "In tab" marks follow (the host renders after any event).
 tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	flows.agentSync(cx)
+	syncTabLabels(cx)
 	for _, p in cx.session:panes() do
 		if isPlotroom(cx, p.pane) then
 			pcall(function()
@@ -1736,6 +1794,10 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 		end
 	end
 	checkProtocol(cx)
+end)
+
+tern.on("tab_closed", function(_ev: any, cx: WindowCx)
+	syncTabLabels(cx)
 end)
 
 -- A Plotroom block beside the focused pane, or in a tab of its own when none is focused; `folder` (the Files pane's
@@ -1796,7 +1858,7 @@ tern.files.button({
 
 command({
 	id = "open",
-	title = "Plotroom: Open",
+	title = "Open",
 	icon = "merge",
 	run = launch,
 })
@@ -1807,6 +1869,33 @@ command({
 local function hidden(_cx: WindowCx): boolean
 	return false
 end
+
+-- Go to Plotroom (its key's command; not listed in Tern's palette, where Open is): the lowest Plotroom block of this
+-- session that is in a tab takes focus, else one opens as Open opens it. On a Plotroom block already, nothing happens.
+command({
+	id = "focus",
+	title = "Go to Plotroom",
+	keys = { "ctrl+alt+shift+q" },
+	icon = "merge",
+	available = hidden,
+	run = function(cx: WindowCx)
+		local focused = cx.session:focused()
+		if focused and isPlotroom(cx, focused) then
+			return
+		end
+		local found: number? = nil
+		for _, p in cx.session:panes() do
+			if p.tab and not p.parked and isPlotroom(cx, p.pane) and (found == nil or p.pane < found) then
+				found = p.pane
+			end
+		end
+		if found then
+			cx.layout:focus(found)
+		else
+			launchPane(cx)
+		end
+	end,
+})
 
 local drive: (WindowCx) -> () -- starts the chain steps due (flows.dueSteps); set below, by startStep
 
@@ -2016,7 +2105,7 @@ end)
 
 command({
 	id = "open-selected",
-	title = "Plotroom: Open the selected PR or issue in Browser",
+	title = "Open the selected PR or issue in Browser",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2026,7 +2115,7 @@ command({
 
 command({
 	id = "worktree-selected",
-	title = "Plotroom: Open the selected PR or issue in a worktree",
+	title = "Open the selected PR or issue in a worktree",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2036,7 +2125,7 @@ command({
 
 command({
 	id = "goto-selected",
-	title = "Plotroom: Go to the selected PR or issue's tab",
+	title = "Go to the selected PR or issue's tab",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2046,7 +2135,7 @@ command({
 
 command({
 	id = "agent-selected",
-	title = "Plotroom: Run an agent on the selected PR or issue",
+	title = "Run an agent on the selected PR or issue",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2057,7 +2146,8 @@ command({
 if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	tern.command({
 		id = "selftest",
-		title = "Plotroom: Self-test",
+		title = "Self-test",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			require("./tests/check").run()
 			cx:toast("success", "Plotroom self-test passed")
@@ -2065,7 +2155,8 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	})
 	tern.command({
 		id = "smoke",
-		title = "Plotroom: Worktree smoke",
+		title = "Worktree smoke",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			require("./tests/runtime").run(cx)
 		end,
@@ -2073,7 +2164,8 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	-- Smoke's fake agent ends no turn: this runs what a turn end of the focused agent runs for its Draft review.
 	tern.command({
 		id = "review-smoke",
-		title = "Plotroom: Draft review smoke",
+		title = "Draft review smoke",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			local pane = cx.session:focused()
 			if pane then

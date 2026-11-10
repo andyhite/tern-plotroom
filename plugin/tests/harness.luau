@@ -456,6 +456,7 @@ export type World = {
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
 	click: (string, number?) -> any,
 	command: (string) -> (),
+	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
 	finish: () -> (),
 }
@@ -1562,6 +1563,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end
 			def.run(windowCx)
 		end,
+		commandDef = function(id: string): any
+			return commands[id]
+		end,
 		-- The ids of the commands Tern's palette lists now (no `available`, or one that answers true), sorted.
 		palette = function(): { string }
 			local out: { string } = {}
@@ -2658,6 +2662,15 @@ M.pickerOf = pickerOf
 local hx = {}
 M.hx = hx
 
+-- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that Plotroom
+-- uses; add one only after finding it in Tern's set (a `<name><svg` entry in the Tern binary).
+local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle", "pen", "warn", "chev", "chev-r" }
+
+-- Whether `name` is an icon Tern draws.
+function hx.ternIcon(name: any): boolean
+	return table.find(TERN_ICONS, name) ~= nil
+end
+
 -- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
@@ -2670,13 +2683,14 @@ function hx.board(b: Block): ({ string }?, string?)
 	for _, group in node.c do
 		if group.p.key == "lanes" or group.p.key == "fold" then
 			for _, col in group.c do
+				-- an empty lane is an `empty` node in the list's place
 				local list = findKey(col, "list", "list")
 				local ids: { string } = {}
-				for _, card in list.c do
+				for _, card in (if list then list.c else {}) :: { any } do
 					table.insert(ids, card.p.key)
 				end
 				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = list.p.selected or selected
+				selected = if list then list.p.selected or selected else selected
 			end
 		end
 	end

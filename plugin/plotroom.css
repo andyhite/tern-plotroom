@@ -288,7 +288,8 @@
 
 /* An arrival (host/engine's arrive): a queue row a refresh just moved into Needs you, Blocked or Ready to merge carries
    that stage's tone for engine.RING_MS (1.4 s). It is ringed in the tone's colour (--tc, set by the tone), held, then
-   faded; under reduced motion it is a plain tint for as long instead. */
+   faded; while Tern hides the pane (.sf-paused) it holds where it was; under reduced motion it is a plain tint for as
+   long instead. */
 @keyframes plotroom-arrive {
 	0% {
 		box-shadow: inset 0 0 0 2px var(--tc);
@@ -304,6 +305,10 @@
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue'] .pk-row[data-tone] {
 	border-radius: var(--r-ctl);
 	animation: plotroom-arrive 1400ms ease-out forwards;
+}
+
+[data-surface='plugin.plotroom.prs'].sf-paused .sf-picker[data-role^='plotroom.queue'] .pk-row[data-tone] {
+	animation-play-state: paused;
 }
 
 [data-surface='plugin.plotroom.prs'].sf-still .sf-picker[data-role^='plotroom.queue'] .pk-row[data-tone] {

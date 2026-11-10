@@ -67,7 +67,7 @@ A Blocked pull request's reasons, one Tern `badge` each, right after the Blocked
 
 ### Arrival ring
 
-A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level.
+A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; while Tern hides the pane (`.sf-paused`) the fade pauses where it was; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level. A new animation in `plotroom.css` gets the same `.sf-still` and `.sf-paused` rules; `scripts/check.py test` fails without them.
 
 ### Preview card
 
@@ -82,6 +82,10 @@ What a click does shows on the node. A **button** does something: an `item` with
 ### Worktree card
 
 A `card` in the preview while the item has a worktree: neutral badges (Up to date or Not at PR head; Clean, Uncommitted changes or Changes unchecked; N unpushed), the branch and path with copy icons, the update commands folded away when behind, then buttons (Open in new tab or Go to tab, Remove worktree, Open Git view). The card takes the `error` tone only when the worktree could not be made, and then shows why and no buttons. It is a cache of git, never the source.
+
+### Loading, empty and error
+
+Tern's four states, in the place of what they stand for and under its key, so the loaded part replaces them without a jump. **Loading:** a `skeleton` (default `shimmer` variant, no tone) shaped like the part: `rows` for a list (Checks 3, Reviewers, Unresolved threads and linked items 2), `text` lines for the Summary, the description and a worktree's linked items, and a `block` 8 lines tall where the Draft review's diff goes. **Empty:** an `empty` with `variant = "inline"`, no tone, its `title` saying what is missing ("No checks", a Board column's "None"). **Error:** the same inline `empty` with `tone = "error"` (needs fixing), `title` `Could not load <what>`, `text` the tool's message and when it is tried again, and one child: a Retry button (render's `button()`, `icon = "redo"`; its row height is Tern's `sm`). The queue picker's own `state = "loading" | "error"` stays.
 
 ### Commands
 

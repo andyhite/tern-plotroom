@@ -29,13 +29,18 @@ local function summaries(w: World, reply: (Call) -> { [string]: any }): { Call }
 	return calls
 end
 
--- What the preview's Summary part shows: its text, "loading" while it is being made, nil without one.
+-- What the preview's Summary part shows: its text, "loading" while its skeleton stands in, "<title>: <why>" for its error
+-- row, nil without one.
 local function shown(b: Block): string?
 	local p = pickerNode(b)
-	if findKey(p, "summary-loading", "shimmer") then
+	if findKey(p, "summary", "skeleton") then
 		return "loading"
 	end
-	local node: any = findKey(p, "summary", "text") or findKey(p, "summary-state", "text")
+	local failed: any = findKey(p, "summary-state", "empty")
+	if failed then
+		return failed.p.title .. ": " .. failed.p.text
+	end
+	local node: any = findKey(p, "summary", "text")
 	return if node then node.p.spans[1].t else nil
 end
 
@@ -54,7 +59,7 @@ local function prScene(w: World, head: string): HostScene
 	return s
 end
 
-case("summary: after a 1 s rest and the details, one omp call with no tools makes it; Summarizing… shows meanwhile, then the text, cached by head commit", function(w: World)
+case("summary: after a 1 s rest and the details, one omp call with no tools makes it; a skeleton shows meanwhile, then the text, cached by head commit", function(w: World)
 	local calls = summaries(w, function()
 		return { stdout = "It fixes login after a redirect.\n\nTests cover it.\n", delay = 500 }
 	end)
@@ -127,20 +132,30 @@ case("summary: a reply for an item no longer selected is cached but never drawn 
 	eq(shown(b), "About the first.", "and shows at once back on the first")
 end)
 
-case("summary: a failed call says why and is not tried again until the item's facts change", function(w: World)
+case("summary: a failed call says why in an error row with Retry, is not tried again until the item's facts change, and Retry makes it again", function(w: World)
+	local fails = true
 	local calls = summaries(w, function()
-		return { status = 1, stderr = "Error: model not found\nmore\n" }
+		return if fails then { status = 1, stderr = "Error: model not found\nmore\n" } else { stdout = "Made at last." }
 	end)
 	prScene(w, sha("a"))
 	local b = openQueue(w)
 	w.advance(1000)
 	w.flush()
 	eq(shown(b), "Summary not made: omp failed (exit 1): Error: model not found", "the preview says why")
+	local failed: any = findKey(pickerNode(b), "summary-state", "empty")
+	eq(failed.p.tone, "error", "in the error tone")
+	local retry: any = findKey(failed, "summary-retry", "item")
+	eq(retry.p.label, "Retry", "with a Retry button")
 	b.press("down")
 	b.press("up")
 	w.advance(5000)
 	eq(#calls, 1, "the same facts are not tried again")
 	eq(w.kv.get("summaries"), nil, "nothing is cached")
+	fails = false
+	b.event({ ev = "action", id = "layer.queue.summary-state.summary-retry", act = retry.p.actions.click })
+	w.flush()
+	eq(#calls, 2, "Retry asks omp again")
+	eq(shown(b), "Made at last.", "and the Summary shows")
 end)
 
 case("summary: an answer that is not a Summary is refused", function(w: World)
@@ -199,7 +214,7 @@ case("summary: Settings › General picks the Summary model from omp's list in t
 	local b = openQueue(w)
 	goToSettings(b, "general")
 	w.flush()
-	eq(rowIn(b, "summary:on").control.value, "on", "on by default")
+	same({ rowIn(b, "summary:on").control.k, rowIn(b, "summary:on").control.on }, { "switch", true } :: { any }, "a switch, on by default")
 	local row = rowIn(b, "summary:model")
 	same({ row.control.k, row.control.act, row.control.label, row.changed, row.hint }, { "action", "pick-model", "@smol", false } :: { any }, "a button naming omp's small model, unchanged")
 	has(row.defaultLabel or "", "@smol", "and reset says it goes back to @smol")
@@ -232,6 +247,8 @@ case("summary: Settings › General picks the Summary model from omp's list in t
 	b.event({ ev = "change", id = "layer.settings", item = "summary:model", value = nil })
 	eq(w.kv.get("summary").model, nil, "reset goes back to the default")
 	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = "off" })
+	eq(w.kv.get("summary").off, nil, "the old segment's string changes nothing: a switch sends a boolean")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = false })
 	eq(w.kv.get("summary").off, true, "switched off")
 	b.press("escape")
 	b.press("down")
@@ -285,7 +302,7 @@ case("summary: unreadable Summary settings lock their rows and are never written
 	local b = openQueue(w)
 	goToSettings(b, "general")
 	has(rowIn(b, "summary:on").disabled or "", "malformed", "the switch says why")
-	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = "off" })
+	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = false })
 	same(w.kv.get("summary"), { off = "maybe" }, "nothing is written over them")
 end)
 

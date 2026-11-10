@@ -20,6 +20,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Default views (My PRs, Review requested, Assigned to me, Created by me, My sprint, Up for grabs, My epics) | First run, Settings › Views | Keep | — | Approved | Trimmed from 14 to 7 on 2026-10-30 |
 | Restore defaults | Settings › Views, Settings › Actions | Keep, renamed **Add missing defaults** | 1 | Approved | It never overwrites edited defaults, and the current label implies it does |
 | Pins: Open item by URL, pasting a URL | Commands, Tern's palette, paste in the queue | Keep | — | Approved | Intake of one-off items |
+| Refresh after your own commands: `git push`, `gh pr`, `gh issue` or `gh run` succeeding in any shell refreshes every queue at once, within the cooldown | Engine (shell hook) | New | — | Approved | tern-plotroom#bgvj: what you just did in a shell shows in the queue without waiting for the timer |
 | Linked pull requests and issues | Preview | Keep | — | Approved | Navigation between the halves of one piece of work |
 | Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark all notifications read… |
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
@@ -87,6 +88,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Message an agent with the selection… | Tern's palette | Keep | — | Approved | Sends context to an agent from any pane |
 | Send a Browser page element to an agent… | Commands, Tern's palette | Cut | 1 | Approved | Rarely in the loop; refused on remote hosts |
 | Worktree tabs named after their item | Tab bar | Keep | — | Approved | |
+| Worktree tab names survive a plugin reload: kept in kv `tab-labels` (newest 50), read at load, a closed tab's name dropped when a tab closes | Tab bar | New | — | Approved | Tern's Lifecycle and Reload: window state that must survive a reload belongs in kv; restored tabs kept losing their `#123 title`. tern-plotroom#vr4v |
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
@@ -135,11 +137,15 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | GitHub and Jira setup pages (when the CLI is missing) | Settings | Keep | — | Approved | |
 | First-run checklist | Queue | New | 1 | Approved | PRODUCT.md › Principles 4 |
 | Reset all settings | Settings › General | New | 1 | Approved | Starting over, and the way out of a corrupted store; keeps triage, usage, runs and agent links |
+| Settings' on/off rows as native switches; each Settings page counts what differs from the defaults | Settings (Views › Now, General › Summaries; every page's nav entry) | New | — | Approved | Setup. tern-plotroom#y47f: Tern's prefs `switch` control and page `changed` count (spike `.evidence/y47f/`); an On/Off segment pair read as two choices, and nothing said where your changes are |
 | Key footer: at most 5 bound keys for the selection (Commands, Shortcut list, Next move, then the most used); actions show their key where they appear | Queue, Commands, preview | New | — | Approved | Trust: a second user finds the keys. Adopted from tern-pr-guide (DESIGN.md › Keycaps); tern-plotroom#4ban |
 | Export and import of views and actions | Commands › Configuration | Cut | 1 | Approved | About 700 lines for a rare move between machines; views and actions are re-created by hand |
 | `Plotroom:` commands in Tern's palette, except Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input (33 of 37 today) | Tern's palette | Hide: they stay in Commands; Tern's palette keeps only entry points and cross-pane commands. Tern-level key binds to hidden commands stop working. | 1 | Approved | Metric 2; Tern's palette is shared with every other plugin |
+| Tern's palette rows under one **Plotroom** group, titles without the `Plotroom:` prefix; default keys ⌃⌥⇧Q Go to Plotroom (focus the block, else open one), ⌃⌥⇧I Show what needs you (Now), ⌃⌥⇧A Go to the first agent that needs input | Tern's palette, keys | New | — | Approved | tern-plotroom#1tyq (Trust: Commands and keys); rows read "Tern Plotroom › Plotroom: Open", and the cross-pane jumps had no key |
 | Protocol mismatch notice | Status bar | Keep; shows only outside the supported protocol range | 0 | Approved | |
 | CHANGELOG; version separate from the protocol; supported protocol range | Repository | New | 0 | Approved | Two-host installs without a reinstall for every change |
 | Polite refresh and rate-limit backoff | Engine | Keep | — | Approved | |
 | Developer commands (`PLOTROOM_SELFTEST=1`) | Tern's palette | Keep | — | Approved | Hidden unless the variable is set |
 | DESIGN.md: one meaning per colour (your turn, needs fixing, done, agent working, checks running), everything else neutral | Every surface | New | 1 | Approved | Trust and coherence: a colour you can read at a glance; adopted from tern-pr-guide |
+| Loading, empty and failed preview sections as Tern's `skeleton` and `empty` kinds; a failed read (or Summary) offers Retry in place; the Draft review's diff loads as a skeleton; an empty Board column is an `empty` | Preview, Board, Draft review | New | — | Approved | Trust: one look for the four states (Tern's Designing Views › The four states); tern-plotroom#eav9 |
+| Arrival ring pauses with its pane: Tern's `.sf-paused` (a hidden pane) holds the ring where it was, and it resumes when the pane shows again | Queue rows | New | — | Approved | Trust (finer points): Tern's Styling views asks every plugin animation to pause under `.sf-paused`; a ring that ran out while the pane was hidden would leave a stage change unnoticed. tern-plotroom#4y4w |

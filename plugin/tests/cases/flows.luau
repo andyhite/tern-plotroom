@@ -898,7 +898,7 @@ windowCase("window flows: Copy usage report lists both machines' counts by name 
 	lacks(text, "Missing", "nothing is missing")
 	w.window.focused = 1
 	w.command("usage-report")
-	has(w.copied[#w.copied], "Tern's palette command · Plotroom: Copy usage report · 1", "the Tern palette command counts by its title")
+	has(w.copied[#w.copied], "Tern's palette command · Copy usage report · 1", "the Tern palette command counts by its title")
 end)
 
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
@@ -3336,7 +3336,7 @@ case("host worktrees board: a preview read that lands while a cleanup runs leave
 	b.typeText("r")
 	w.flush()
 	yes(not b.state().boardBusy, "the reload is over")
-	has(b.text(), "Loading #5…", "and the preview reads pull request 5 again")
+	eq(findKey(pickerNode(b), "pr", "skeleton").p.shape, "text", "and the preview reads pull request 5 again")
 	b.typeText("u")
 	w.flush()
 	yes(b.state().boardBusy, "the cleanup holds the board")
@@ -4450,6 +4450,7 @@ windowCase("window events: a hook paused over budget shows in the status line an
 	eq(w.toasts[toasts + 1].text, "Plotroom paused: timer", "named")
 	eq(w.toasts[toasts + 1].level, "error", "as an error")
 	same(texts(), { "Plotroom paused: timer" }, "and shown on every pane's status line")
+	yes(h.hx.ternIcon(((w.window.status :: any)({ pane = 7 }))[1].icon), "with an icon Tern draws")
 	eq(w.window.refreshes, refreshes + 1, "which was redrawn")
 	w.window.handlers.budget({ hook = "status", state = "paused", ms = 4, paused_ms = 5000 }, w.cx)
 	eq(#w.toasts, toasts + 1, "a second pause adds no toast")
@@ -4550,6 +4551,7 @@ windowCase("window selection: a note is added by one line, a long selection is c
 	w.flush()
 	local review = w.window.picks[#w.window.picks]
 	has(review.items[3].label, "Edit note", "after a note the row offers to edit it")
+	yes(h.hx.ternIcon(review.items[3].icon), "with an icon Tern draws: " .. tostring(review.items[3].icon))
 	eq(review.items[4].label, "see this", "the note is shown first, in its own group")
 	local rows = pickRows(review)
 	eq(rows[#rows], "[clipped: first 40 of 50 lines]", "the cut is a row, so it is explicit")
@@ -4786,6 +4788,74 @@ windowCase("window tabs: a worktree's tab is titled after its item, unless the u
 	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), "#5 Fix the thing", "its own automatic name is replaced")
 	eq(title({ cwd = "/wt/pr5", name = "mine" }), nil, "a name the user chose stays")
 	eq(title({ cwd = "/wt/other" }), nil, "another directory keeps the default")
+end)
+
+-- A worktree's tab for PR 5 at /wt/pr5, titled; returns its pane.
+local function labelledTab(w: World): number
+	local st = flowHost(w)
+	local link = h.prLink("worktree", "o/r", 5)
+	st.link("layer.queue.buttons.worktree", link)
+	w.click(link)
+	w.flush()
+	st.reply("worktree", { path = "/wt/pr5", summary = "ready", created = false, current = true, title = "Fix the thing" })
+	w.flush()
+	for id, p in w.window.panes do
+		if p.cwd == "/wt/pr5" then
+			return id
+		end
+	end
+	error("no tab opened at /wt/pr5")
+end
+
+windowCase("window tabs: a worktree's tab title survives a plugin reload and is dropped once no tab works there", function(w: World)
+	w.load("window")
+	local pane = labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/pr5", label = "#5 Fix the thing", name = "PR #5 · r" } }, "kept in kv")
+	w.reload("window")
+	local title: any = w.window.tabTitle
+	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), "#5 Fix the thing", "the restored tab keeps its title after a reload")
+	w.window.panes[pane] = nil
+	w.window.handlers.pane_closed({ pane = pane }, w.cx)
+	eq(#(w.kv.get("tab-labels") :: any), 0, "its tab closed: the label leaves kv")
+	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), nil, "and the title")
+end)
+
+windowCase("window tabs: kv keeps the newest 50 titles", function(w: World)
+	local rows: { any } = {}
+	for i = 1, 50 do
+		table.insert(rows, { path = "/wt/old" .. i, label = "#" .. i .. " old", name = "PR #" .. i .. " · r" })
+	end
+	w.kv.put("tab-labels", array(rows))
+	w.load("window")
+	labelledTab(w)
+	local stored: any = w.kv.get("tab-labels")
+	eq(#stored, 50, "still 50")
+	eq(stored[1].path, "/wt/old2", "the oldest was dropped")
+	eq(stored[50].path, "/wt/pr5", "the newest is last")
+end)
+
+windowCase("window tabs: a tab-labels store that is not a list is never written over", function(w: World)
+	w.kv.put("tab-labels", "garbage")
+	w.load("window")
+	labelledTab(w)
+	eq(w.kv.get("tab-labels"), "garbage", "the store stays")
+	eq((w.window.tabTitle :: any)({ cwd = "/wt/pr5" }), "#5 Fix the thing", "the tab is still titled for this session")
+end)
+
+windowCase("window tabs: a tab-labels list with a malformed entry is read but never written over", function(w: World)
+	w.kv.put("tab-labels", array({ { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } }))
+	w.load("window")
+	eq((w.window.tabTitle :: any)({ cwd = "/wt/a" }), "#1 a", "the well-formed entries are read")
+	labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } :: any }, "the store stays")
+end)
+
+windowCase("window tabs: an unreadable tab-labels store is never written over", function(w: World)
+	w.kv.put("tab-labels", array({ { path = "/wt/a", label = "#1 a", name = "PR #1 · r" } }))
+	w.kv.failGet["tab-labels"] = "disk offline"
+	w.load("window")
+	labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" } }, "the store stays")
 end)
 
 case("host worktrees board: opening the list again reads git again, and a worktree whose folder is gone is not opened", function(w: World)
