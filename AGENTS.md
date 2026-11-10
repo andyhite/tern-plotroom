@@ -42,7 +42,7 @@ Invariants (keep when editing):
 
 - `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, and `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled or checked by `check.py`; the host publishes its path as the hidden `main.omp` node).
 - `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
-- `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.8.d.luau` (pinned SDK type snapshot, sha256-checked).
+- `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.13.d.luau` (pinned SDK type snapshot of Tern 0.9.13, Plotroom's minimum, sha256-checked).
 - `docs/` — `reference.md` (the user-facing behavior spec) and `images/` (README screenshots; not shipped).
 - `.github/workflows/check.yml` — CI.
 
@@ -69,7 +69,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - Stale-callback guards are mandatory: check `alive(state)` and `state.gen` in host callbacks; the window uses `defer` to fetch a fresh `cx`.
 - Security: every command is an argv array; never build shell strings.
 - **Visual design lives in [DESIGN.md](DESIGN.md)**: tokens, typography, spacing, the components as built, and the Color Meaning Rule (a colour means your turn, needs fixing, done, agent working or checks running; everything else is neutral). Read it before any UI change; a new component is added to DESIGN.md before it is built. `hx.offPalette` checks a view against it.
-- UI: native Tern kinds only (`picker`, `prefs`, `list`/`item`, `overlay`, `kv`, `badge`, `md`, `meter`, `spinner`, `icon`…). The pinned 0.9.8 SDK has no `button` kind (`ui.el("button")` is unstyled HTML), so a button is an `item` with `hint` keycaps and `actions={click=...}`, built by render's `button()` (role `plotroom.button`, ringed by `plotroom.css`). Every node with a click action or an `href` wears `plotroom.button` (it does something) or `plotroom.link` (it opens something), and no other node does; `hx.miscued` checks a view for it. The queue picker has no action bar or strip: every action is a key and a Commands row. Keys must be stable because the window locates nodes by dotted key. Prompt text uses an `editor` node under `role = "omp.prefs.editor"`.
+- UI: native Tern kinds only (`picker`, `prefs`, `list`/`item`, `overlay`, `kv`, `badge`, `md`, `meter`, `spinner`, `icon`…). Plotroom does not use Tern 0.9.13's `tern.ui.button` kind yet (`ui.el("button")` is unstyled HTML), so a button is an `item` with `hint` keycaps and `actions={click=...}`, built by render's `button()` (role `plotroom.button`, ringed by `plotroom.css`). Every node with a click action or an `href` wears `plotroom.button` (it does something) or `plotroom.link` (it opens something), and no other node does; `hx.miscued` checks a view for it. The queue picker has no action bar or strip: every action is a key and a Commands row. Keys must be stable because the window locates nodes by dotted key. Prompt text uses an `editor` node under `role = "omp.prefs.editor"`.
 - CSS (`plotroom.css`): only where no kind or prop covers it; never restyle what a kind draws. Every selector starts with `[data-surface='plugin.plotroom.prs']` (queue) or `[data-surface='plugin.plotroom.review']` (Draft review); shared button/link cues apply to both, layout rules stay scoped to their block. Use Tern tokens; lengths are `px`/`em`/`vw`/`vh`/`%` only (Tern's CSS reference rejects `ch` and `rem`); no logical properties or `:has()`. `scripts/check.py test` lints this.
 - The one exception to both rules is a Board (Now's or a view's, render's `boardNode`): it is native kinds (`row`, `col`, `list` with `selected` and `max`, `item`, `text`) and no `el`, but no kind draws columns of cards, so `plotroom.css` places it in the queue picker's preview pane (hiding `.pk-main`, widening `.pk-pv`) and turns its items into cards (`.sf-item`, `.sf-item-label` clamped to two lines, `.sf-item-detail`, `.sf-item-value`). These are Tern's inner classes ("may change"): add no more of them, keep them under the `.board` role and the `plotroom.lane` lists, and rely on smoke's "Now as a Board" and "a view as a Board" scenarios to catch a Tern update that breaks them. The selection stays in view through the column list's own `selected`/`max` scroll; plugins get no scroll events, so never draw a Board column without `max`.
 - Deliberate shortcuts carry a `ponytail:` comment naming the ceiling and upgrade path.
@@ -90,13 +90,13 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - `plugin/flows.luau` — window workflow flows and `COMMANDS`.
 - `plugin/prompts.luau` — default prompts; every `{var}` one names must be filled where it runs.
 - `scripts/check.py` — pins (SDK sha256, Luau, luau-lsp, Tern), `plugin_files()` (bundles `plugin/**/*.luau`), bundle builder, test/types/bench stages, CLI. `scripts/smoke.py` — the smoke stage.
-- `scripts/tern-0.9.8.d.luau` — tracked SDK snapshot used by `types`; changing it requires updating the sha in `check.py`.
+- `scripts/tern-0.9.13.d.luau` — tracked SDK snapshot used by `types`; changing it requires updating the sha in `check.py`.
 
 ## Runtime/Tooling Preferences
 
-- Luau (Tern's embedded runtime), not Lua 5.x: no `goto`. Type-checked with luau-lsp 1.70.1 against Tern 0.9.8 definitions.
+- Luau (Tern's embedded runtime), not Lua 5.x: no `goto`. Type-checked with luau-lsp 1.70.1 against Tern 0.9.13 definitions (the minimum supported Tern).
 - `scripts/*.py` are Python 3.9+, stdlib only; no pip, package.json or Makefile. Do not add dependencies.
-- Smoke needs real `tern` 0.9.8 or newer (types stay pinned to 0.9.8), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). Smoke generates the installed Tern's SDK types and shows a WARN row (never a failure) when their sha256 differs from the pinned snapshot. CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA, checkout with `persist-credentials: false`.
+- Smoke needs real `tern` 0.9.13 or newer (it refuses an older one; types stay pinned to 0.9.13), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). Smoke generates the installed Tern's SDK types and shows a WARN row (never a failure) when their sha256 differs from the pinned snapshot. CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA, checkout with `persist-credentials: false`.
 - `plugin/tern.d.luau` is gitignored editor output; never commit it or depend on it in checks.
 
 ## Testing & QA
