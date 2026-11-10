@@ -898,7 +898,7 @@ windowCase("window flows: Copy usage report lists both machines' counts by name 
 	lacks(text, "Missing", "nothing is missing")
 	w.window.focused = 1
 	w.command("usage-report")
-	has(w.copied[#w.copied], "Tern's palette command · Plotroom: Copy usage report · 1", "the Tern palette command counts by its title")
+	has(w.copied[#w.copied], "Tern's palette command · Copy usage report · 1", "the Tern palette command counts by its title")
 end)
 
 windowCase("window flows: links survive a plugin VM reboot (kv) and the timer starts again with the window", function(w: World)
