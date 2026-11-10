@@ -4779,7 +4779,7 @@ windowCase("window tabs: a tab-labels list with a malformed entry is read but ne
 	w.load("window")
 	eq((w.window.tabTitle :: any)({ cwd = "/wt/a" }), "#1 a", "the well-formed entries are read")
 	labelledTab(w)
-	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } }, "the store stays")
+	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } :: any }, "the store stays")
 end)
 
 windowCase("window tabs: an unreadable tab-labels store is never written over", function(w: World)
