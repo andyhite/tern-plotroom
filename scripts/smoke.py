@@ -538,6 +538,21 @@ class Smoke:
         """The text of each visible element matching CSS selector `sel`."""
         return [str(n.get("text") or "") for n in json.loads(self.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict)]
 
+    def head_fits(self, title: str) -> None:
+        """The preview's head card draws `title` on one line: the card's end (state, Next move, Copy link, Open) wraps under it rather than squeezing
+        it to a letter per line (plotroom.css). One line of a title of a dozen or more letters is over 3× as wide as tall; wrapped, it is far less."""
+        sel = "[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.head'] [data-id$='.head.top.title']"
+
+        def drawn() -> List[List[float]]:
+            return [[float(v) for v in n["rect"][:4]] for n in json.loads(self.ctl("tree", sel)).get("nodes") or []
+                    if isinstance(n, dict) and n.get("rect") and str(n.get("text") or "") == title]
+
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        while not any(r[3] > 0 and r[2] >= 3 * r[3] for r in drawn()):
+            if time.monotonic() > deadline or not self.alive():
+                self.fail("the head card's title is not squeezed: %r" % title, "drawn on one line, over 3× as wide as tall ([x, y, w, h])", drawn())
+            time.sleep(0.2)
+
     def palette_rows(self) -> List[str]:
         """The option rows of Tern's open command palette (it is drawn outside the UI tree; the accessibility tree has it); empty when it is closed."""
         out: List[str] = []
@@ -2428,6 +2443,7 @@ def sc_controls(s: Smoke) -> None:
     s.wait_until("the head is a card: the title, then the number", lambda: any("Controls PR 7" in t and "#7" in t for t in s.matches(scope + ".sf-card")))
     s.wait_until("the Checks stat counts the failure", lambda: any("1 of 2 failing" in t for t in s.matches(scope + ".sf-stats")))
     s.wait_until("the tabs are drawn, Overview first", lambda: any(t.startswith("Overview") for t in s.matches(scope + ".sf-tab.on")))
+    s.head_fits("Controls PR 7")
     s.shot("controls")
     s.ctl_ok("key", "Tab")
     s.wait_until("Tab shows the Checks tab", lambda: any(t.startswith("Checks") for t in s.matches(scope + ".sf-tab.on")))
@@ -2441,6 +2457,7 @@ def sc_controls(s: Smoke) -> None:
     s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
     s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the excerpt under the checks table
     time.sleep(0.5)
+    s.head_fits("Controls PR 7")
     s.shot("controls-loaded")
     s.ctl_ok("resize", "2200", "1000")
     time.sleep(0.5)
@@ -2529,6 +2546,11 @@ def sc_previews(s: Smoke) -> None:
     s.contains("the prompt carries the changed files", "src/login.ts", json.dumps(asked[0]["messages"][1:]))
     s.contains("and the newest comment", "Please keep the old redirect", json.dumps(asked[0]["messages"][1:]))
     s.wait_text("the issue it closes", "Preview issue 32")
+    s.head_fits("Preview PR 31")
+    strip = [n["rect"] for n in json.loads(s.ctl("tree", "[data-surface='plugin.plotroom.prs'] .sf-tabs[data-role='plotroom.tabs']")).get("nodes") or [] if n.get("rect")]
+    last = [n["rect"] for n in json.loads(s.ctl("tree", "[data-surface='plugin.plotroom.prs'] .sf-tab[data-tab='reviewers']")).get("nodes") or [] if n.get("rect")]
+    s.eq("the Reviewers tab is drawn inside the strip, not clipped at its right edge", True,
+         bool(strip and last) and float(last[0][0]) + float(last[0][2]) <= float(strip[0][0]) + float(strip[0][2]) + 0.5)
     s.shot("preview-pr")
     s.ctl_ok("key", "Tab")
     s.wait_until("Tab shows its checks", lambda: any(t.startswith("Failing 1") for t in s.preview_texts()))
@@ -2542,10 +2564,12 @@ def sc_previews(s: Smoke) -> None:
     pin("https://github.com/f/low/issues/32", "Preview issue 32", "Login fails after the redirect.")
     in_order("a GitHub issue: head card, stats, status, description, facts, linked pull requests",
              ["Preview issue 32", "#32", "Comments", "Stage", "Login fails after the redirect.", "Branch", "Linked pull requests", "Preview PR 31"])
+    s.head_fits("Preview issue 32")
     s.shot("preview-issue")
     pin("https://acme.atlassian.net/browse/ABC-7", "Preview Jira 7", "Sign-in loops")
     in_order("a Jira issue: head card, stats, status, description, facts, linked issues",
              ["Preview Jira 7", "ABC-7", "Comments", "Stage", "Sign-in loops", "Reporter", "Linked issues", "Login API"])
+    s.head_fits("Preview Jira 7")
     s.shot("preview-jira")
     made = s.tmp / "wts" / "flow-preview"
     s.out(root, "worktree", "add", "-q", "-b", "preview-31", str(made))

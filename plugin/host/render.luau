@@ -923,6 +923,8 @@ local function itemHead(state: State, item: any, icon: string, ref: string, wher
 	table.insert(tail, ui.node("icon", { key = "open", name = "globe", role = LINK, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
 	return ui.node("card", {
 		key = "head",
+		-- plotroom.css wraps the end under the title when both do not fit, instead of squeezing the title.
+		role = "plotroom.head",
 		icon = icon,
 		head = core.QUEUE_ID .. ".head.top",
 		["end"] = core.QUEUE_ID .. ".head.end",
@@ -931,8 +933,7 @@ local function itemHead(state: State, item: any, icon: string, ref: string, wher
 			ui.node("text", { key = "title", spans = { ui.span(item.title, "strong") } }),
 			ui.node("text", { key = "meta", spans = { ui.span(ref .. " · " .. where, "mono"), ui.span(" · " .. integration, "muted") } }),
 		}),
-		-- At most half the head, wrapping inside it, so a narrow preview keeps room for the title.
-		ui.node("row", { key = "end", gap = "xs", align = "center", justify = "end", wrap = true, max = { w = 0.5 } }, tail),
+		ui.node("row", { key = "end", gap = "xs", align = "center", justify = "end", wrap = true }, tail),
 	})
 end
 
@@ -1060,6 +1061,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	local tab = state.previewTab or "overview"
 	table.insert(out, ui.node("tabs", {
 		key = "tabs",
+		role = "plotroom.tabs", -- plotroom.css wraps a strip wider than the preview instead of clipping its last tab
 		active = tab,
 		items = {
 			{ id = "overview", label = tabLabel("Overview") },
