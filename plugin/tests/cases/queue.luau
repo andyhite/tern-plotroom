@@ -499,14 +499,17 @@ case("host: the Go to tab Commands row wears the key that goes to the tab, and s
 	end
 end)
 
-case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
+case("host: the preview lists the branch and the base apart, each with a copy button that copies its name", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local refs: { [string]: string } = { branch = "branch-1", base = "main" }
 	for key, name in refs do
-		local icon: any = findKey(findKey(pickerNode(b), key), "copy", "icon")
-		eq(icon.p.href, name, key .. ": Tern's copy action copies the href")
-		eq(icon.p.actions.click, "copy", key .. ": on click")
+		local copy: any = findKey(findKey(pickerNode(b), key), "copy", "button")
+		eq(copy.p.href, name, key .. ": Tern's copy action copies the href")
+		eq(copy.p.actions.click, "copy", key .. ": on click")
+		eq(copy.p.text, "", key .. ": an icon-only button")
+		eq(copy.p.icon, "copy", key .. ": its icon")
+		eq(copy.p.title, "Copy " .. key, key .. ": named by its tooltip")
 	end
 end)
 
@@ -1962,13 +1965,18 @@ case("host: the preview's Unsnooze button wears the snooze key, which ends the s
 	b.typeText("Z")
 	w.flush()
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
-	local button: any = findKey(pickerNode(b), "unsnooze", "item")
-	same(button and button.p.hint, { "z" }, "Unsnooze shows z")
+	local button: any = findKey(pickerNode(b), "unsnooze", "button")
+	same(button and button.p.keys, { "z" }, "Unsnooze shows z")
+	w.kv.put("keys", { snooze = "Q" })
+	b.press("down")
+	b.press("up")
+	button = findKey(pickerNode(b), "unsnooze", "button")
+	same(button and button.p.keys, { "shift", "q" }, "an upper-case key shows as Shift and its letter: a keycap upper-cases every letter")
 	w.kv.put("keys", { snooze = "" })
 	b.press("down")
 	b.press("up")
-	button = findKey(pickerNode(b), "unsnooze", "item")
-	eq(button and button.p.hint, nil, "no keycap once the key is removed")
+	button = findKey(pickerNode(b), "unsnooze", "button")
+	eq(button and button.p.keys, nil, "no keycap once the key is removed")
 end)
 
 case("host: Settings > Actions' Next action row offers the other actions, refuses a loop, and deleting an action drops it as a next", function(w: World)
@@ -3076,7 +3084,7 @@ case("host: a snoozed item's preview offers Unsnooze, which ends the snooze", fu
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
 	local row = findKey(pickerNode(b), "unsnooze")
 	yes(row ~= nil, "the snoozed item's preview has the row")
-	has(row.p.label, "Snoozed until", "it says until when")
+	has(row.p.text, "Snoozed until", "it says until when")
 	b.event({ ev = "action", act = "unsnooze" })
 	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, nil, "the saved snooze is gone")
 	eq(findKey(pickerNode(b), "unsnooze"), nil, "and the row with it")
@@ -3626,11 +3634,11 @@ end)
 local function nextOf(w: World, b: Block, id: string): any
 	b.event({ ev = "select", id = "layer.queue", item = id })
 	w.advance(300)
-	local button: any = findKey(pickerNode(b), "next", "item")
+	local button: any = findKey(pickerNode(b), "next", "button")
 	local p = hx.palette(w, b)
 	return {
-		button = if button then button.p.label else nil,
-		hint = if button then button.p.hint else nil,
+		button = if button then button.p.text else nil,
+		hint = if button then button.p.keys else nil,
 		row = if p.ids[1] == "next" then p.labels.next else nil,
 		group = p.groups.next,
 		key = p.keys.next,

@@ -390,14 +390,34 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	return out
 end
 
--- What a click does is drawn on the node itself (plotroom.css): an action is a button (BUTTON, a ring sized to its label),
--- a row or icon that opens something is a link (LINK, the accent label). A node with no click and no href has neither.
-local BUTTON, LINK = "plotroom.button", "plotroom.link"
+-- What a click does is drawn on the node itself (DESIGN.md › Buttons and links): an action is Tern's `button` kind, a
+-- row or icon that opens something is a link (LINK, plotroom.css underlines it). A node with no click and no href is
+-- neither.
+local LINK = "plotroom.link"
 
--- An action `item` drawn as a button; `p` is its props.
-local function button(p: { [string]: any }): Node
-	p.role, p.basis = BUTTON, "content"
-	return ui.node("item", p)
+-- Key names as Tern's keycaps read them: a keycap upper-cases every letter, so an upper-case key is Shift and its letter.
+local function keyNames(ks: { string }?): { string }?
+	if not ks then
+		return nil
+	end
+	local out: { string } = {}
+	for _, k in ks do
+		if string.match(k, "^%u$") then
+			table.insert(out, "shift")
+			table.insert(out, string.lower(k))
+		else
+			table.insert(out, k)
+		end
+	end
+	return out
+end
+
+-- A Tern button labelled `text` ("" with an `icon`: icon-only, named by `title`); `p` its props, `keys` the key names
+-- of the key that does the same. Size `sm` (rows, the preview, cards) unless `p.size` says `md` (bars, overlays, heads).
+local function button(text: string, p: { [string]: any }): Node
+	p.size = p.size or "sm"
+	p.keys = keyNames(p.keys)
+	return ui.button(text, p)
 end
 M.button = button
 
@@ -421,7 +441,7 @@ end
 -- `<key>-retry`, click `act`).
 local function failNode(key: string, title: string, message: string, aria: string, act: string): Node
 	return ui.node("empty", { key = key .. "-state", variant = "inline", tone = "error", title = title, text = message }, {
-		button({ key = key .. "-retry", label = "Retry", icon = "redo", aria = aria, actions = { click = act } }),
+		button("Retry", { key = key .. "-retry", icon = "redo", aria = aria, actions = { click = act } }),
 	})
 end
 
@@ -618,10 +638,10 @@ local function refRow(key: string, label: string, name: string, full: string?): 
 		ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
 		-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
 		ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, title = full, spans = { ui.span(name, "code") } }),
-		ui.node("icon", {
+		button("", {
 			key = "copy",
-			name = "copy",
-			role = BUTTON,
+			icon = "copy",
+			variant = "quiet",
 			href = whole,
 			actions = { click = "copy" },
 			title = "Copy " .. string.lower(label),
@@ -707,13 +727,13 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	-- Buttons sized to their label, left to right: the tab, then Remove.
 	local buttons: { Node } = {}
 	if tab then
-		table.insert(buttons, button({ key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
+		table.insert(buttons, button("Go to tab", { key = "go", icon = "arrow-right", keys = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
 	else
-		table.insert(buttons, button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
+		table.insert(buttons, button("Open in new tab", { key = "open", icon = "plus", keys = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
 	end
-	table.insert(buttons, button({ key = "remove", label = "Remove worktree", icon = "trash", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
+	table.insert(buttons, button("Remove worktree", { key = "remove", icon = "trash", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
 	if note.path and tern.fs.exists(note.path) then
-		table.insert(buttons, button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
+		table.insert(buttons, button("Open Git view", { key = "git", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
 	end
 	table.insert(body, buttonRow("actions", buttons))
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
@@ -743,7 +763,7 @@ local function descNodes(state: State, key: string, body: string?, loading: bool
 		}),
 	}
 	if unfolded then
-		table.insert(nodes, button({ key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
+		table.insert(nodes, button("Show less", { key = "less", icon = "chev-up", variant = "quiet", actions = { click = "fold-description" } }))
 	end
 	return nodes
 end
@@ -830,15 +850,15 @@ local function previewControls(state: State, item: any): Node?
 	local map = keys.load()
 	local move = engine.nextMove(state, state.kind.id, item)
 	if move then
-		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
+		table.insert(rows, button(move.label, { key = "next", icon = "arrow-right", keys = keys.caps(map, "next"), title = "Next move: " .. move.label, aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	if engine.pinFor(state.pins, item.key) then
-		table.insert(rows, button({ key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
+		table.insert(rows, button("Unpin", { key = "unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
 	end
 	local st = if state.snap then engine.status(state, state.snap.kind, item) else nil
 	if st and st.snoozed then
 		-- Snooze until tomorrow on a snoozed item ends its snooze (engine.mark), so its key is this button's.
-		table.insert(rows, button({ key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", hint = keys.caps(map, "snooze"), aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
+		table.insert(rows, button("Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", { key = "unsnooze", icon = "x", keys = keys.caps(map, "snooze"), aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
 	end
 	if #rows > 0 then
 		return buttonRow("controls", rows)
@@ -851,7 +871,7 @@ end
 local function headNodes(ref: string, tag: { text: string, tone: string }, page: { copy: string, open: string, what: string }?, badge: any, title: string): { Node }
 	local head: { Node } = { ui.text({ ui.span(ref, "mono") }), ui.node("badge", { key = "integration", text = tag.text, tone = tag.tone }) }
 	if page then
-		table.insert(head, ui.node("icon", { key = "copy", name = "copy", role = BUTTON, href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
+		table.insert(head, button("", { key = "copy", icon = "copy", variant = "quiet", href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
 		table.insert(head, ui.node("icon", { key = "open", name = "globe", role = LINK, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
 	end
 	table.insert(head, ui.node("col", { key = "fill", grow = 1 }))
@@ -1179,7 +1199,7 @@ function M.helpOverlay(state: State): Node
 	return ui.node("overlay", { key = "help", modal = true, size = "md", head = "Keyboard shortcuts" }, {
 		ui.node("col", { key = "keys", gap = "xs" }, lines),
 		buttonRow("buttons", {
-			button({ key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
+			button("Close", { key = "close", size = "md", icon = "x", keys = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
 		}),
 	})
 end
@@ -1779,7 +1799,7 @@ local function boardNode(state: State, bar: boolean?): Node
 	local kids: { Node } = {
 		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
 		buttonRow("foldbar", {
-			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chev" else "chev-r", actions = { click = "lanes-fold" } }),
+			button((if open then "Hide " else "Show ") .. table.concat(hidden, " · "), { key = "fold", size = "md", icon = if open then "chev" else "chev-r", actions = { click = "lanes-fold" } }),
 		}),
 	}
 	if open then
@@ -1824,20 +1844,26 @@ local function checklist(state: State): Node?
 		elseif how == "wait" then
 			asking = true
 		end
-		local props: { [string]: any } = {
+		local icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil
+		-- A line's one action: a setup guide is a page it opens (a link row); anything else does the step (a button,
+		-- with what it names beside it).
+		if click and not string.find(click, "^setup%-guide=") then
+			table.insert(lines, ui.node("row", { key = key, gap = "sm", wrap = true, align = "center" }, {
+				button(label, { key = "do", icon = icon, href = href, actions = { click = click } }),
+				ui.node("text", { key = "what", spans = { ui.span(value or "", "muted") } }),
+			}))
+			return
+		end
+		table.insert(lines, ui.node("item", {
 			key = key,
 			label = label,
 			value = value,
-			icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil,
+			icon = icon,
 			tone = if how == "done" then "success" elseif how == "wait" then "muted" else nil,
 			href = href,
-		}
-		-- A line's one action: a setup guide is a page it opens, anything else does the step.
-		if click then
-			props.actions = { click = click }
-			props.role = if string.find(click, "^setup%-guide=") then LINK else BUTTON
-		end
-		table.insert(lines, ui.node("item", props))
+			actions = if click then { click = click } else nil,
+			role = if click then LINK else nil,
+		}))
 	end
 	local gh = cli.installed.github
 	if gh == nil or (gh and setup.signedIn == nil) then
@@ -1881,8 +1907,8 @@ local function checklist(state: State): Node?
 		end
 		shortcuts = ui.node("row", { key = "keys", gap = "sm", wrap = true, align = "center" }, {
 			ui.node("text", { key = "what", spans = { ui.span("One-key shortcuts (" .. table.concat(letters, " ") .. ")") } }),
-			button({ key = "use", label = "Use them", icon = "check", actions = { click = "setup-keys=use" } }),
-			button({ key = "no", label = "No thanks", icon = "x", actions = { click = "setup-keys=no" } }),
+			button("Use them", { key = "use", icon = "check", actions = { click = "setup-keys=use" } }),
+			button("No thanks", { key = "no", icon = "x", actions = { click = "setup-keys=no" } }),
 		})
 	end
 	if not state.getStarted and (asking or todo == 0) then
@@ -1890,10 +1916,10 @@ local function checklist(state: State): Node?
 	end
 	return ui.node("card", { key = "get-started" }, {
 		ui.node("text", { key = "head", spans = { ui.span("Get started", "strong"), ui.span("  " .. (if todo == 0 and not asking then "All set" else todo .. " to do"), "muted") } }),
-		ui.node("list", { key = "lines" }, lines),
+		ui.node("col", { key = "lines", gap = "xs" }, lines),
 		shortcuts,
 		buttonRow("end", {
-			button({ key = "dismiss", label = if todo == 0 then "Close" else "Dismiss", icon = "x", tone = "muted", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
+			button(if todo == 0 then "Close" else "Dismiss", { key = "dismiss", icon = "x", variant = "quiet", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
 		}),
 	})
 end
@@ -2076,10 +2102,10 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.") } }))
 	end
 	local buttons: { Node } = {
-		button({ key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
+		button("Keep", { key = "keep", size = "md", variant = "primary", icon = "check", keys = { "enter" }, actions = { click = keepAct } }),
 	}
 	if dropAct then
-		table.insert(buttons, button({ key = "delete", label = "Remove", icon = "trash", hint = { "d" }, actions = { click = dropAct } }))
+		table.insert(buttons, button("Remove", { key = "delete", size = "md", icon = "trash", keys = { "d" }, actions = { click = dropAct } }))
 	end
 	table.insert(kids, buttonRow("buttons", buttons))
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)

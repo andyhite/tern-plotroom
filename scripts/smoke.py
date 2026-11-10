@@ -1333,7 +1333,7 @@ def sc_get_started(s: Smoke) -> None:
     s.wait_text("the checklist", "Get started")
     s.wait_text("the checkout found in the other tab", "Use %s as the checkout" % root)
     s.shot("get-started")
-    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart']")
+    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart.do']")
     s.wait_text("Use saves it", "Checkout saved")
     s.wait_until("the checkout's line is done", lambda: not any("as the checkout" in t for t in s.texts()))
     s.ctl_ok("click", "[data-id$='get-started.keys.no']")
@@ -2250,8 +2250,8 @@ def sc_now_settings(s: Smoke) -> None:
 
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
-    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as a button (role
-    plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
+    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as Tern's button kind
+    (.sf-button, small) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
     the shot shows them."""
     stamp = "2026-01-01T00:00:00Z"
 
@@ -2286,7 +2286,7 @@ def sc_controls(s: Smoke) -> None:
     s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
     s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
+    button, link = scope + ".sf-button[data-size='sm']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
     s.shot("controls")
     s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))

@@ -1304,6 +1304,15 @@ local function newWorld(instantiate: Loader, context: string): World
 			node = function(kind: string, props: any?, children: any?): any
 				return { k = kind, p = props, c = children }
 			end,
+			-- As Tern builds it: a `button` node whose props carry the label as `text`.
+			button = function(text: string?, props: any?): any
+				local p: { [string]: any } = {}
+				for k, v in props or {} do
+					p[k] = v
+				end
+				p.text = text or ""
+				return { k = "button", p = p }
+			end,
 			el = function(tag: string, props: any?, children: any?): any
 				local p: { [string]: any } = { tag = tag }
 				for k, v in props or {} do
@@ -2821,7 +2830,7 @@ M.chipsOf = chipsOf
 
 -- A click on the card's button `key`, as Tern sends it: the button's own id, with the action it was given.
 local function pressCard(b: Block, key: string)
-	local item: any = findKey(cardOf(b), key, "item")
+	local item: any = findKey(cardOf(b), key, "button")
 	b.event({ ev = "action", id = "layer.queue.worktree.actions." .. key, act = item.p.actions.click })
 end
 M.pressCard = pressCard
@@ -3183,9 +3192,9 @@ end
 M.helpRows = helpRows
 
 -- The nodes under `node` whose look disagrees with what a click does there, as "path (kind, role)": a node with a
--- click action or an href must wear render's button or link role, and no other node may. Hidden subtrees are skipped:
--- Tern draws none of them (they are the links the window reads by key).
-local CLICK_ROLES = { ["plotroom.button"] = true, ["plotroom.link"] = true }
+-- click action or an href must be Tern's `button` kind or wear render's link role, and no other node may (a button
+-- that does nothing is miscued too). Hidden subtrees are skipped: Tern draws none of them (they are the links the
+-- window reads by key).
 function hx.miscued(node: any): { string }
 	local out: { string } = {}
 	local function walk(n: any, path: string)
@@ -3198,7 +3207,7 @@ function hx.miscued(node: any): { string }
 		end
 		local here = path .. "." .. tostring(p.key or n.k)
 		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
-		if clicks ~= (CLICK_ROLES[p.role] == true) then
+		if clicks ~= (n.k == "button" or p.role == "plotroom.link") then
 			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
 		end
 		if type(n.c) == "table" then
@@ -3234,7 +3243,7 @@ function hx.offPalette(node: any): { string }
 		local tone = p.tone
 		if type(tone) == "string" and not MEANING_TONES[tone] and not NEUTRAL_TONES[tone] then
 			table.insert(out, tone .. ": " .. text)
-		elseif type(tone) == "string" and MEANING_TONES[tone] and p.role == "plotroom.button" then
+		elseif type(tone) == "string" and MEANING_TONES[tone] and n.k == "button" then
 			table.insert(out, "button " .. tone .. ": " .. text)
 		end
 		if type(n.k) == "string" then

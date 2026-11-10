@@ -436,10 +436,6 @@ local function edit(state: State, i: number)
 	state.at, state.editing = i, true
 end
 
-local function caps(k: string): { string }
-	return { k }
-end
-
 local function textNode(key: string, s: string, tone: string?): Node
 	return ui.node("text", { key = key, spans = { ui.span(s, tone) } })
 end
@@ -493,12 +489,12 @@ local function actionsNode(state: State, i: number): Node
 	local card = state.cards[i]
 	local what = if i == 0 then "the summary" elseif card then "comment " .. card.c.id else "the instructions"
 	if card and card.excerpt or (card and state.diffProblem) then
-		table.insert(buttons, button({ key = "keep", label = if card.keep then "Drop" else "Keep", icon = if card.keep then "x" else "check", hint = caps("Space"), aria = (if card.keep then "Drop " else "Keep ") .. what, actions = { click = "keep=" .. i } }))
+		table.insert(buttons, button(if card.keep then "Drop" else "Keep", { key = "keep", icon = if card.keep then "x" else "check", keys = { "space" }, aria = (if card.keep then "Drop " else "Keep ") .. what, actions = { click = "keep=" .. i } }))
 	end
 	if state.editing then
-		table.insert(buttons, button({ key = "done", label = "Done", icon = "check", hint = caps("esc"), aria = "Finish editing " .. what, actions = { click = "done" } }))
+		table.insert(buttons, button("Done", { key = "done", icon = "check", keys = { "esc" }, aria = "Finish editing " .. what, actions = { click = "done" } }))
 	else
-		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pen", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
+		table.insert(buttons, button(if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", { key = "edit", icon = "pen", keys = { "e" }, aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
 	end
 	return ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons)
 end
@@ -588,17 +584,16 @@ local function view(state: State): BlockView
 		for i, v in M.VERDICTS do
 			if v == "comment" or not state.own then
 				local on = state.verdict == v
-				table.insert(bar, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
+				table.insert(bar, button(VERDICT_LABEL[v], { key = v, size = "md", icon = if on then "check" else nil, keys = { tostring(i) }, aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
 			end
 		end
 	end
 	table.insert(bar, textNode("count", kept .. " kept · " .. (#state.cards - kept) .. " dropped", "muted"))
 	if state.sent then
 		table.insert(bar, ui.node("badge", { key = "sent", text = "Sent", tone = "muted" }))
-	elseif state.sending then
-		table.insert(bar, ui.node("row", { key = "sending", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Sending…", "muted") }))
 	elseif not state.loading then
-		table.insert(bar, button({ key = "send", label = "Send to agent", icon = "arrow-right", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
+		-- Busy while the window carries it to the agent: a spinner in the icon's place, and it sends nothing more.
+		table.insert(bar, button(if state.sending then "Sending…" else "Send to agent", { key = "send", size = "md", icon = "arrow-right", busy = state.sending == true, keys = { "cmd", "enter" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
 	end
 	table.insert(main, ui.node("row", { key = "bar", gap = "sm", wrap = true, align = "center" }, bar))
 	if state.own and not state.sent and not state.sending then
@@ -610,7 +605,7 @@ local function view(state: State): BlockView
 	if state.gone then
 		table.insert(main, ui.node("row", { key = "gone", gap = "sm", wrap = true, align = "center" }, {
 			textNode("why", state.gone, "error"),
-			button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }),
+			button("Copy", { key = "copy", size = "md", icon = "copy", keys = { "c" }, aria = "Copy the message for the agent", actions = { click = "copy" } }),
 		}))
 	end
 	if state.head and M.moved(p, state.head) then
