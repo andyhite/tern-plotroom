@@ -7,7 +7,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow.
-Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.8), git >= 2.36, omp on PATH,
+Smoke prerequisites: Tern >= 0.9.13, the minimum supported (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
 
@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from check import PLUGIN, SDK, SDK_SHA256, GateError, run, say, sha256_file
+from check import PLUGIN, SDK, SDK_SHA256, TERN_VERSION, GateError, run, say, sha256_file
 
 
 @dataclass
@@ -245,6 +245,11 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
         why = "TERN=%s is not an executable file" % given if given else "no `tern` on PATH"
         raise GateError("smoke needs Tern: %s. Install one, or set TERN=/path/to/tern." % why)
+    said = run([tern, "--version"], timeout=30).stdout.strip()
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", said)
+    least = tuple(int(n) for n in TERN_VERSION.split("."))
+    if not m or tuple(int(n) for n in m.groups()) < least:
+        raise GateError("smoke needs Tern >= %s, Plotroom's minimum; %s reports %r. Upgrade Tern." % (TERN_VERSION, tern, said))
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
@@ -2642,7 +2647,7 @@ def sdk_drift(tern: str, tmp: Path) -> None:
     if done.returncode != 0 or not made.is_file():
         WARNINGS.append("could not generate the installed Tern's SDK types: %s" % (done.stderr or done.stdout).strip()[:200])
     elif sha256_file(made) != SDK_SHA256:
-        WARNINGS.append("installed Tern's SDK types differ from the pinned 0.9.8 snapshot (sha256 %s); refresh scripts/%s" % (sha256_file(made)[:16], SDK.name))
+        WARNINGS.append("installed Tern's SDK types differ from the pinned %s snapshot (sha256 %s); refresh scripts/%s" % (TERN_VERSION, sha256_file(made)[:16], SDK.name))
 
 
 def check_smoke() -> str:

@@ -13,14 +13,15 @@ test    plugin/tests/regression.luau (which also runs the plugin/tests/check.lua
         Luau CLI from a temporary bundle: every plugin/**/*.luau module (subfolders included) wrapped as function(tern, require, os),
         so each case gets a fresh fake SDK (virtual clock, process, kv, fs, json, ui, blocks) and fresh
         module state. No network, no git, no files outside a temporary directory.
-types   luau-lsp analyze --platform standard against scripts/tern-0.9.8.d.luau (a copy of the SDK that
+types   luau-lsp analyze --platform standard against scripts/tern-0.9.13.d.luau (a copy of the SDK that
         `tern plugin types` writes), over plugin/**/*.luau (subfolders included). Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
 smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
-Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.9.8 (f21d9a3). Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
+Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.9.13 SDK (stencil-hq/tern-sdk 0479f70, the minimum supported Tern).
+Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
 """
 
 from __future__ import annotations
@@ -42,11 +43,11 @@ from typing import Callable, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"
-SDK = ROOT / "scripts" / "tern-0.9.8.d.luau"
-SDK_SHA256 = "f56084a35c5cdb24e33b7bacda8baa9a3d1504fd3e31a20d3a8c31f3e0c0a32b"
+SDK = ROOT / "scripts" / "tern-0.9.13.d.luau"
+SDK_SHA256 = "50ac8b5dcc41f6e853730d05db5525566992d765e5d3a249ce5e0a5ec4f7749e"
 LUAU_VERSION = "0.743"
 LSP_VERSION = "1.70.1"
-TERN_VERSION = "0.9.8"  # the SDK pin
+TERN_VERSION = "0.9.13"  # the SDK pin and the minimum Tern smoke accepts
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
 BENCH_PAYLOAD_MAX = 600000
 
