@@ -498,7 +498,7 @@ local function actionsNode(state: State, i: number): Node
 	if state.editing then
 		table.insert(buttons, button({ key = "done", label = "Done", icon = "check", hint = caps("esc"), aria = "Finish editing " .. what, actions = { click = "done" } }))
 	else
-		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pencil", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
+		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pen", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
 	end
 	return ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons)
 end
