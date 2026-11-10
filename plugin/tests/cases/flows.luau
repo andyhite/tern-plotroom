@@ -1860,6 +1860,34 @@ windowCase("window flows: the lens's show link with no Plotroom block focuses th
 	eq(w.window.launches[1].cwd, "/lens", "beside the pane the lens is in, not the focused one")
 end)
 
+windowCase("window flows: an Alt-clicked GitHub pull request or issue link in any pane shows it in Plotroom; a plain click, another page or a window with no Plotroom block is left to Tern", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	local pr, issue = "https://github.com/o/r/pull/45", "https://github.com/o/r/issues/7"
+	eq(w.click(pr, 2), nil, "a plain click on a pull request link is Tern's")
+	eq(w.click("https://github.com/o/r/pull/45/files", 2, { alt = true }), nil, "an Alt-click on another GitHub page is Tern's")
+	eq(w.click("https://example.com/o/r/pull/45", 2, { alt = true }), nil, "and on another site")
+	w.flush()
+	same(st.ops(), {}, "none of them asked the block anything")
+	same(w.click(pr, 2, { alt = true }), { handled = true }, "an Alt-clicked pull request link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, pr, "and shown as the lens's Show in Plotroom shows it")
+	same(w.click(issue, 2, { alt = true }), { handled = true }, "an Alt-clicked issue link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#7 in Plotroom" }).url, issue, "and shown too")
+	eq(#w.window.launches, 0, "no block is launched while one is open")
+end)
+
+windowCase("window flows: an Alt-clicked GitHub link with no Plotroom block in the window is left to Tern and launches nothing", function(w: World)
+	w.load("window")
+	w.window.panes[1].block = nil
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	eq(w.click("https://github.com/o/r/pull/45", 2, { alt = true }), nil, "not handled: Tern opens it as before")
+	w.flush()
+	eq(#w.window.launches, 0, "and no Plotroom block is launched")
+end)
+
 case("host triage: unseen rows are New, the selected row is marked seen on its own and saved to kv triage, a refresh writes nothing, a changed check or review shows Changed on a row nobody reads and is marked again on the row being read", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)

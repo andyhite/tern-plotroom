@@ -1538,6 +1538,15 @@ local function palette(cx: WindowCx, pane: number)
 	end)
 end
 
+-- "pull" or "issues" when `page` is a GitHub pull request or issue page, else nil.
+local function githubItem(page: string): string?
+	if #page > 2048 then
+		return nil
+	end
+	local kind = string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/(%a+)/%d+$")
+	return if kind == "pull" or kind == "issues" then kind else nil
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it. `typed`: an agent link asks for a typed
 -- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
 -- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
@@ -1554,7 +1563,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
 		-- pull request page, which the block's host validates again.
 		local page = unpct(shown)
-		if #page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+		if githubItem(page) ~= "pull" then
 			cx:toast("error", "Plotroom: malformed link")
 		else
 			flows.showUrl(cx, pane, page)
@@ -1775,6 +1784,17 @@ end
 
 tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
 	if string.sub(link.url, 1, #SCHEME) ~= SCHEME then
+		-- Alt-click on a GitHub pull request or issue link in any pane shows it as the lens's Show in Plotroom does,
+		-- while the window has a Plotroom block; anything else is Tern's to open.
+		if not (link.mods and link.mods.alt) or not githubItem(link.url) then
+			return nil
+		end
+		for _, p in cx.session:panes() do
+			if isPlotroom(cx, p.pane) then
+				flows.showUrl(cx, link.pane, link.url)
+				return { handled = true }
+			end
+		end
 		return nil
 	end
 	handle(cx, link.url, link.pane)
