@@ -134,6 +134,17 @@ local function clean(b: Block, why: string)
 	same(h.hx.offPalette(b.view().main), {}, why .. ": nothing is coloured outside DESIGN.md")
 end
 
+-- The bar's Send button, nil when it offers none.
+local function sendButton(b: Block): any
+	return findKey(findKey(b.view().main, "bar", "row"), "send", "button")
+end
+
+-- Whether Send is busy: the window is carrying the message to the agent.
+local function sending(b: Block): boolean
+	local send = sendButton(b)
+	return send ~= nil and send.p.busy == true
+end
+
 case("review: the navigator lists the summary, the comments grouped by file, then the instructions; one off the diff cannot be kept", function(w: World)
 	local diffs = reviewScene(w)
 	local b = openReview(w)
@@ -275,11 +286,17 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(navState(b, 2), "Dropped", "Space drops the selected comment")
 	-- Request changes.
 	b.typeText("3")
-	eq(findKey(b.view().main, "request_changes", "item").p.icon, "check", "3 picks Request changes")
-	eq(findKey(b.view().main, "comment", "item").p.icon, nil, "and only it has the check")
+	eq(findKey(b.view().main, "request_changes", "button").p.icon, "check", "3 picks Request changes")
+	eq(findKey(b.view().main, "comment", "button").p.icon, nil, "and only it has the check")
 	has(textOf(findKey(b.view().main, "count")), "2 kept · 2 dropped", "the count follows")
 	-- The instructions are last: Edit instructions opens them.
-	local edit: any = findKey(b.view().main, "edit", "item")
+	local edit: any = findKey(b.view().main, "edit", "button")
+	eq(edit.p.size, "sm", "the detail's buttons are small")
+	same(edit.p.keys, { "e" }, "with their key")
+	local send: any = sendButton(b)
+	eq(send.p.size, "md", "the head row's are medium")
+	same(send.p.keys, { "cmd", "enter" }, "Send wears ⌘↵ as key names")
+	eq(send.p.busy, false, "and is not busy before it is pressed")
 	yes(h.hx.ternIcon(edit.p.icon), "the Edit button wears an icon Tern draws: " .. tostring(edit.p.icon))
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n5" })
 	b.event({ ev = "action", act = "edit", value = "5" })
@@ -295,7 +312,9 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	same({ choices.repo, choices.number, choices.head } :: { any }, { "o/r", 5, HEAD } :: { any }, "for the pull request and head reviewed")
 	has(text, "My instructions: tone down c1", "the typed instructions go with it")
 	lacks(text, "head moved", "the head did not move")
-	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	yes(sending(b), "Send turns busy: it shows it is sending, and a click sends nothing more")
+	eq(sendButton(b).p.text, "Sending…", "saying so")
+	eq(findKey(b.view().main, "sending"), nil, "no hand-made spinner row")
 	b.typeText("3")
 	b.event({ ev = "action", act = "edit", value = "1" })
 	b.event({ ev = "action", act = "verdict", value = "approve" })
@@ -306,7 +325,7 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
 	b.typeText("k ")
 	eq(navState(b, 1), "Kept", "after Send nothing changes")
-	eq(findKey(b.view().main, "send", "item"), nil, "and there is no second Send")
+	eq(sendButton(b), nil, "and there is no second Send")
 	clean(b, "sent")
 	eq(b.saved().sent, AT1, "it stays Sent after a restart")
 	w.finish()
@@ -317,7 +336,7 @@ local function verdicts(b: Block): ({ string }, string?)
 	local keys: { string } = {}
 	local on: string? = nil
 	for _, v in { "comment", "approve", "request_changes" } do
-		local node = findKey(findKey(b.view().main, "bar", "row"), v, "item")
+		local node = findKey(findKey(b.view().main, "bar", "row"), v, "button")
 		if node then
 			table.insert(keys, v)
 			on = if node.p.icon == "check" then v else on
@@ -505,7 +524,7 @@ end)
 case("review: a reload onto a file Plotroom cannot read shows why in the error tone and Send sends nothing of the old proposal", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
-	yes(findKey(b.view().main, "send", "item"), "proposal A is sendable")
+	yes(sendButton(b), "proposal A is sendable")
 	local wrong = proposal(AT2)
 	wrong.version = 2
 	local bad = proposal(AT2)
@@ -522,7 +541,7 @@ case("review: a reload onto a file Plotroom cannot read shows why in the error t
 		yes(problem, "the block says why: " .. f.why)
 		eq(problem.p.spans[1].t, f.why, "the file's reason")
 		eq(problem.p.spans[1].s, "error", "in the error tone")
-		eq(findKey(b.view().main, "send", "item"), nil, "no Send button for the old proposal")
+		eq(sendButton(b), nil, "no Send button for the old proposal")
 		eq(b.title(), "Draft review", "nor its title")
 		local before = #w.opened
 		b.press("enter", "m")
@@ -534,7 +553,7 @@ case("review: a reload onto a file Plotroom cannot read shows why in the error t
 	w.fs.files[FILE] = jsonEncode(proposal(AT2))
 	b.event({ ev = "action", act = "reload" })
 	w.flush()
-	yes(findKey(b.view().main, "send", "item"), "a readable file again is sendable")
+	yes(sendButton(b), "a readable file again is sendable")
 	w.finish()
 end)
 
@@ -716,7 +735,7 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	w.flush()
 	eq(#w.window.agentCalls, asked, "nothing goes to a gone agent")
 	has(textOf(findKey(b.view().main, "gone")), "gone", "the block says so")
-	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	yes(findKey(b.view().main, "copy", "button"), "and offers Copy")
 	w.finish()
 end)
 
@@ -757,7 +776,7 @@ windowCase("review: a review/send link from the Draft review pane sends only the
 	w.click("plotroom://review/send", 30)
 	w.flush()
 	eq(#w.window.agentCalls, 0, "no Send pressed, nothing goes to the agent")
-	yes(findKey(b.view().main, "send", "item"), "the Send button stays")
+	yes(sendButton(b), "the Send button stays")
 	eq(findKey(b.view().main, "gone"), nil, "and there is no error row")
 	-- After Send: the same link, with and without a token, does not send again.
 	b.press("enter", "m")
@@ -800,13 +819,13 @@ case("review: a Send that no answer reaches leaves Sending after a while and off
 	local review = w.load("host/review") :: any
 	local b = openReview(w)
 	b.press("enter", "m")
-	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	yes(sending(b), "it shows it is sending")
 	w.advance(review.SEND_TIMEOUT_MS - 1)
-	yes(findKey(b.view().main, "sending"), "still sending just before the timeout")
+	yes(sending(b), "still sending just before the timeout")
 	w.advance(1)
-	eq(findKey(b.view().main, "sending"), nil, "no longer sending")
+	eq(sending(b), false, "no longer sending")
 	has(textOf(findKey(b.view().main, "gone")), "may not have reached the agent", "the block says so")
-	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	yes(findKey(b.view().main, "copy", "button"), "and offers Copy")
 	b.typeText("c")
 	has(w.copied[#w.copied], "```json", "Copy puts the message on the clipboard")
 	b.event({ ev = "action", act = "sent" })

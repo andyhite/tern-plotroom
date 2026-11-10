@@ -29,7 +29,9 @@ local function buttonsOf(b: Block): { string }
 	local list: any = findKey(cardOf(b), "actions", "row")
 	local rows: { any } = if list then list.c else {}
 	for _, row in rows do
-		table.insert(out, row.p.key .. ":" .. row.p.label)
+		eq(row.k, "button", "every one of the card's actions is Tern's button kind")
+		eq(row.p.size, "sm", "small, inside the card")
+		table.insert(out, row.p.key .. ":" .. row.p.text)
 	end
 	return out
 end
@@ -305,7 +307,7 @@ case("host: the preview shows skeletons while the detail loads, then the merge s
 	eq(findKey(pickerNode(b), "less"), nil, "nothing to fold back yet")
 	b.event({ ev = "toggle", id = "layer.queue.description", key = "description", collapsed = false })
 	eq(card().p.collapsed, false, "the more-lines button's unfolding is kept")
-	local less: any = findKey(pickerNode(b), "less", "item")
+	local less: any = findKey(pickerNode(b), "less", "button")
 	b.event({ ev = "action", id = "layer.queue.less", act = less.p.actions.click })
 	eq(card().p.collapsed, true, "Show less folds it again")
 	eq(findKey(pickerNode(b), "less"), nil, "and goes")
@@ -621,26 +623,27 @@ case("host: the worktree card is two badges, the branch and the path, then the b
 	eq(findKey(cardOf(b), "update", "section"), nil, "and no update commands: it is at the PR head")
 	local branch = findKey(cardOf(b), "wbranch")
 	eq(findKey(branch, "v").p.spans[1].t, "feature", "the branch")
-	eq(findKey(branch, "copy", "icon").p.href, "feature", "copied as it is")
+	eq(findKey(branch, "copy", "button").p.href, "feature", "copied as it is")
 	local path = findKey(cardOf(b), "wpath")
 	eq(findKey(path, "v").p.spans[1].t, "~/plotroom-o_r-pr-1", "the path, home written ~")
 	eq(findKey(path, "v").p.truncate, "middle", "cut in the middle when it is long")
 	eq(findKey(path, "v").p.title, target, "the tooltip has all of it")
-	eq(findKey(path, "copy", "icon").p.href, target, "and so does the copy icon")
+	eq(findKey(path, "copy", "button").p.href, target, "and so does the copy button")
+	eq(findKey(path, "copy", "button").p.text, "", "an icon-only button")
 	same(buttonsOf(b), { "open:Open in new tab", "remove:Remove worktree", "git:Open Git view" }, "no tab works in it: open one, remove it, or open Tern's Git view on it")
-	local open: any = findKey(cardOf(b), "open", "item")
-	same(open.p.hint, { "w" }, "Open in new tab wears the Worktree key")
+	local open: any = findKey(cardOf(b), "open", "button")
+	same(open.p.keys, { "w" }, "Open in new tab wears the Worktree key")
 	eq(open.p.actions.click, "worktree", "and is the Worktree button")
-	local remove: any = findKey(cardOf(b), "remove", "item")
-	eq(remove.p.tone, nil, "Remove wears no colour: its confirm guards it")
+	local remove: any = findKey(cardOf(b), "remove", "button")
+	eq(remove.p.variant, nil, "Remove wears no colour: its confirm guards it")
 	eq(remove.p.icon, "trash", "with a trash can")
-	eq(remove.p.hint, nil, "and no key")
+	eq(remove.p.keys, nil, "and no key")
 	pressCard(b, "open")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "a click opens the Worktree link, as the key does")
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
 	same(buttonsOf(b), { "go:Go to tab", "remove:Remove worktree", "git:Open Git view" }, "while a tab works in it, the button goes there instead")
-	same(findKey(cardOf(b), "go", "item").p.hint, { "g" }, "wearing the Go to tab key")
+	same(findKey(cardOf(b), "go", "button").p.keys, { "g" }, "wearing the Go to tab key")
 	pressCard(b, "go")
 	eq(w.opened[#w.opened], prLink("goto", "o/r", 1), "and its click opens the Go to tab link")
 	table.remove(w.panes)
@@ -779,7 +782,7 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	b.press("escape")
 	table.remove(w.panes)
 	pressCard(b, "remove")
-	local keep: any = findKey(confirmOf(b), "keep", "item")
+	local keep: any = findKey(confirmOf(b), "keep", "button")
 	b.event({ ev = "action", id = "layer.confirm.buttons.keep", act = keep.p.actions.click })
 	eq(confirmOf(b), nil, "the Keep button keeps it")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed so far")
@@ -817,8 +820,8 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	ask()
 	eq(answerOf(b, "a1").created, true, "asking again makes a new worktree: the old one is really gone")
 	pressCard(b, "remove")
-	local remove: any = findKey(confirmOf(b), "delete", "item")
-	eq(remove.p.label, "Remove", "the question's button says what it does")
+	local remove: any = findKey(confirmOf(b), "delete", "button")
+	eq(remove.p.text, "Remove", "the question's button says what it does")
 	b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = remove.p.actions.click })
 	w.flush()
 	eq(cardOf(b), nil, "its Remove button removes it as d does")
@@ -1836,12 +1839,12 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	local preview = pickerNode(b)
 	local branch = findKey(preview, "branch")
 	eq(findKey(branch, "v").p.spans[1].t, "octocat/12-fix-login", "the branch Worktree would make: the default format over gh's active login, the issue's key and its title's slug")
-	eq(findKey(branch, "copy", "icon").p.href, "octocat/12-fix-login", "with a copy icon")
+	eq(findKey(branch, "copy", "button").p.href, "octocat/12-fix-login", "with a copy button")
 	w.kv.put("branch-format", "{key}-{slug}")
 	b.render()
 	eq(findKey(findKey(pickerNode(b), "branch"), "v").p.spans[1].t, "12-fix-login", "a format saved in Settings shows through")
 	local head = findKey(preview, "head")
-	eq(findKey(head, "copy", "icon").p.href, "https://github.com/o/r/issues/12", "the head's copy icon takes the issue's link")
+	eq(findKey(head, "copy", "button").p.href, "https://github.com/o/r/issues/12", "the head's copy button takes the issue's link")
 	eq(findKey(head, "state", "badge").p.text, "Open", "the state")
 	eq(findKey(preview, "title").p.spans[1].t, "Fix login", "the title")
 	eq(findKey(preview, "buttons").p.hidden, true, "the buttons' links sit in an unseen node")
@@ -1870,7 +1873,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	eq(card().p.collapsed, true, "the description starts folded")
 	b.event({ ev = "toggle", id = "layer.queue.description", key = "description", collapsed = false })
 	eq(card().p.collapsed, false, "the more-lines button's unfolding is kept")
-	local less: any = findKey(pickerNode(b), "less", "item")
+	local less: any = findKey(pickerNode(b), "less", "button")
 	b.event({ ev = "action", id = "layer.queue.less", act = less.p.actions.click })
 	eq(card().p.collapsed, true, "Show less folds it again")
 	-- the chips: the labels, among the facts; a tab in the issue's worktree is the worktree card's to say (Go to tab)
@@ -1885,7 +1888,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	table.insert(w.panes, { pane = 9, cwd = "/wt/plotroom-o_r-issue-12" })
 	b.render()
 	same(chips(), { "bug", "ui" }, "a tab in the issue's worktree adds no chip")
-	yes(findKey(cardOf(b), "go", "item") ~= nil, "the worktree card offers Go to tab instead")
+	yes(findKey(cardOf(b), "go", "button") ~= nil, "the worktree card offers Go to tab instead")
 	-- an issue with no milestone, assignee or pull request, and no description
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_2313" })
 	w.advance(300)
@@ -2268,8 +2271,8 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 		b.event({ ev = "select", id = "layer.queue", item = id })
 		w.advance(300)
 		local preview = pickerNode(b)
-		local move: any = findKey(preview, "next", "item")
-		return (if move then move.p.label else nil), preview
+		local move: any = findKey(preview, "next", "button")
+		return (if move then move.p.text else nil), preview
 	end
 	local move = show("no_2fr_231")
 	local build, buildName = checkRow(b, "run1")
@@ -2373,8 +2376,8 @@ case("host likely flaky: a check list cut short (more checks than loaded) is nev
 	local function move(id: string): string?
 		b.event({ ev = "select", id = "layer.queue", item = id })
 		w.advance(300)
-		local node: any = findKey(pickerNode(b), "next", "item")
-		return if node then node.p.label else nil
+		local node: any = findKey(pickerNode(b), "next", "button")
+		return if node then node.p.text else nil
 	end
 	eq(move("no_2fr_231"), "Watch", "the details are cut short too: your PR goes to Watch, not Re-run failed checks")
 	eq(move("no_2fr_232"), "Re-run failed checks", "the complete list still re-runs")
@@ -2413,8 +2416,8 @@ case("host likely flaky: an ignored failing check neither stops nor makes a re-r
 	local function move(id: string): string?
 		b.event({ ev = "select", id = "layer.queue", item = id })
 		w.advance(300)
-		local node: any = findKey(pickerNode(b), "next", "item")
-		return if node then node.p.label else nil
+		local node: any = findKey(pickerNode(b), "next", "button")
+		return if node then node.p.text else nil
 	end
 	eq(rows.no_2fr_231.badges[2].text, "Re-run · likely flaky", "the one failing check not ignored is Likely flaky: a re-run")
 	eq(move("no_2fr_231"), "Re-run failed checks", "and the Next move re-runs it")
@@ -2699,7 +2702,7 @@ case("host: an issue's details that fail to load show the error and a Retry that
 	local failed: any = findKey(pickerNode(b), "linked-state", "empty")
 	eq(failed.p.tone, "error", "the error is an error row under Linked pull requests")
 	has(failed.p.text, "Server Error", "with the tool's message")
-	eq(findKey(failed, "linked-retry", "item").p.label, "Retry", "and a Retry button")
+	eq(findKey(failed, "linked-retry", "button").p.text, "Retry", "and a Retry button")
 	eq(findKey(pickerNode(b), "linked", "skeleton"), nil, "and no skeleton")
 	eq(findKey(pickerNode(b), "description", "skeleton"), nil, "nor for the description")
 	failing = false
@@ -3465,38 +3468,48 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	w.flush()
 	b.event({ ev = "toggle", id = "layer.queue.description", key = "description", collapsed = false })
 	local preview = pickerNode(b)
-	local next: any = findKey(preview, "next", "item")
-	eq(next.p.label, "Re-run failed checks", "a failed run's Next move")
-	eq(next.p.role, "plotroom.button", "is a button")
+	local next: any = findKey(preview, "next", "button")
+	eq(next.p.text, "Re-run failed checks", "a failed run's Next move")
+	eq(next.p.size, "sm", "a small button: it sits in the preview")
 	same(checkRow(b, "run1").menu, { "open", "ignore-in-this-repo…" }, "a failing check with a page: its row's menu opens it or ignores it")
 	eq(findKey(preview, "open1").p.href, "plotroom://github/check/1/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Factions%2Fruns%2F123%2Fjob%2F9", "through the hidden link the window honours")
 	eq(checkRow(b, "run2").menu, nil, "a passing check without a page offers nothing but Tern's Copy row")
 	eq(findKey(preview, "open2"), nil, "and has no link")
 	eq(findKey(preview, "r1", "item").p.role, nil, "nor is a reviewer's verdict")
-	eq(findKey(findKey(preview, "head"), "copy", "icon").p.role, "plotroom.button", "the head's Copy link is a button")
+	local copy: any = findKey(findKey(preview, "head"), "copy", "button")
+	eq(copy.p.text, "", "the head's Copy link is an icon-only button")
+	eq(copy.p.title, "Copy link", "named by its tooltip")
 	eq(findKey(findKey(preview, "head"), "open", "icon").p.role, "plotroom.link", "and its Open a link")
-	yes(findKey(preview, "less", "item") ~= nil and cardOf(b) ~= nil, "Show less and the worktree card are on screen")
+	yes(findKey(preview, "less", "button") ~= nil and cardOf(b) ~= nil, "Show less and the worktree card are on screen")
 	same(hx.miscued(b.view().layer), {}, "the pull request preview: every click and link has its look, nothing else does")
 	same(hx.offPalette(b.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "the removal asks first")
 	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
-	same(hx.offPalette(confirmOf(b)), {}, "neither wears a colour")
+	same(hx.offPalette(confirmOf(b)), {}, "Keep is its one primary and Remove wears no colour")
+	local keep: any, drop: any = findKey(confirmOf(b), "keep", "button"), findKey(confirmOf(b), "delete", "button")
+	eq(keep.p.variant, "primary", "Keep, the choice Enter makes, is the confirm's primary")
+	same(keep.p.keys, { "enter" }, "with Enter's keycap")
+	eq(drop.p.variant, nil, "Remove is a default button")
+	same(drop.p.keys, { "d" }, "with d's keycap")
+	eq(keep.p.size, "md", "both are medium: an overlay's")
+	eq(drop.p.size, "md", "both are medium: an overlay's")
 	-- DESIGN.md › Buttons: the accent `primary` variant only on a confirm overlay's one safe choice, `danger` never
-	-- (the view's tree is the block's own, so each check takes its variants off again)
+	-- (the view's tree is the block's own, so each check puts its variants back)
 	local function painted(variants: { [string]: string }, root: any?): { string }
 		local tree: any = root or confirmOf(b)
+		local was: { [string]: any } = {}
 		for key, variant in variants do
-			findKey(tree, key, "item").p.variant = variant
+			was[key] = findKey(tree, key, "button").p.variant
+			findKey(tree, key, "button").p.variant = variant
 		end
 		local out = hx.offPalette(tree)
 		for key in variants do
-			findKey(tree, key, "item").p.variant = nil
+			findKey(tree, key, "button").p.variant = was[key]
 		end
 		return out
 	end
-	same(painted({ keep = "primary" }), {}, "Keep may be the confirm's one primary button")
-	same(painted({ keep = "primary", delete = "primary" }), { "button primary twice: Remove" }, "but a confirm has one primary")
+	same(painted({ delete = "primary" }), { "button primary twice: Remove" }, "a confirm has one primary")
 	same(painted({ delete = "danger" }), { "button danger: Remove" }, "and Remove is never red")
 	same(painted({ next = "primary" }, b.view().layer), { "button primary outside a confirm: Re-run failed checks" }, "nor is the preview's Next move accent")
 	b.press("escape")
@@ -3504,7 +3517,9 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	b.typeText("z")
 	b.typeText("Z")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
-	yes(findKey(pickerNode(b), "unsnooze", "item") ~= nil, "the snoozed pull request offers Unsnooze")
+	local unsnooze: any = findKey(pickerNode(b), "unsnooze", "button")
+	yes(unsnooze ~= nil, "the snoozed pull request offers Unsnooze")
+	same(unsnooze.p.keys, { "z" }, "with Snooze's keycap")
 	same(hx.miscued(pickerNode(b)), {}, "which is a button too")
 end)
 

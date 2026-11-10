@@ -140,7 +140,7 @@ case("preview: a worktree's linked read that fails is an error row with the tool
 	eq(failed.p.tone, "error", "in the error tone")
 	eq(failed.p.title, "Could not load #5", "saying what failed")
 	has(failed.p.text, "HTTP 502", "with the tool's message")
-	local retry: any = findKey(failed, "pr-retry", "item")
+	local retry: any = findKey(failed, "pr-retry", "button")
 	failing = false
 	b.event({ ev = "action", id = "layer.queue.pr-state.pr-retry", act = retry.p.actions.click })
 	w.flush()
@@ -179,7 +179,7 @@ case("preview: loading sections are Tern skeletons shaped like them, a failed lo
 		eq(e.p.title, "Could not load " .. what, key .. ": saying what failed")
 		has(e.p.text, "HTTP 502", key .. ": with the tool's message")
 		has(e.p.text, "Trying again at ", key .. ": and when it is tried again")
-		eq(findKey(e, key .. "-retry", "item").p.actions.click, "retry-checks", key .. ": its Retry child asks again")
+		eq(findKey(e, key .. "-retry", "button").p.actions.click, "retry-checks", key .. ": its Retry child asks again")
 	end
 	failing = false
 	b.event({ ev = "action", id = "layer.queue.runs-state.runs-retry", act = "retry-checks" })

@@ -41,7 +41,7 @@ function M.showable(url: string): boolean
 end
 
 local function showLink(url: string): Node
-	return ui.node("item", { key = "show", label = "Show in Plotroom", icon = "merge", href = "plotroom://lens/show/" .. core.pct(url), actions = { click = "open" } })
+	return ui.button("Show in Plotroom", { key = "show", size = "sm", icon = "merge", href = "plotroom://lens/show/" .. core.pct(url), actions = { click = "open" } })
 end
 
 function M.define()
@@ -62,17 +62,17 @@ function M.define()
 			if not url then
 				return nil
 			end
-			local items = {
-				ui.node("item", { key = "copy", label = "Copy", icon = "copy", href = url, actions = { click = "copy" } }),
-				ui.node("item", { key = "browser", label = "Open", icon = "globe", href = url, actions = { click = "open" } }),
+			local buttons = {
+				ui.button("Copy", { key = "copy", size = "sm", icon = "copy", href = url, actions = { click = "copy" } }),
+				ui.button("Open", { key = "browser", size = "sm", icon = "globe", href = url, actions = { click = "open" } }),
 			}
 			-- Only github.com pull requests parse, so only they can be shown in Plotroom.
 			if string.match(url, "^https://github%.com/") then
-				table.insert(items, 1, showLink(url))
+				table.insert(buttons, 1, showLink(url))
 			end
 			return ui.node("col", { key = "pr" }, {
 				ui.node("text", { key = "url", spans = { ui.span(url) } }),
-				ui.node("list", { key = "buttons" }, items),
+				ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons),
 			})
 		end,
 	}
@@ -94,13 +94,13 @@ function M.define()
 			if not url then
 				return nil
 			end
-			local items = { ui.node("item", { key = "create", label = "Create pull request", icon = "globe", href = url, actions = { click = "open" } }) }
+			local buttons = { ui.button("Create pull request", { key = "create", size = "sm", icon = "globe", href = url, actions = { click = "open" } }) }
 			if M.showable(url) then
-				table.insert(items, showLink(url))
+				table.insert(buttons, showLink(url))
 			end
 			return ui.node("col", { key = "push" }, {
 				ui.node("text", { key = "url", spans = { ui.span(url) } }),
-				ui.node("list", { key = "buttons" }, items),
+				ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons),
 			})
 		end,
 	}
