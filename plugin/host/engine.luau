@@ -1724,6 +1724,15 @@ function M.reloadViews(state: State)
 	end
 end
 
+-- Every live block refreshes now, still never inside the server's cooldown.
+function M.refreshAll()
+	for _, s in running do
+		if M.alive(s) then
+			schedule(s, 0)
+		end
+	end
+end
+
 -- Every other live block of this runtime follows a change made in `origin`. Closed panes are retired, not rendered.
 function M.propagate(origin: State)
 	for _, s in running do
@@ -2645,6 +2654,22 @@ function M.wantSummary(state: State, item: any, pr: boolean): (string, string?)
 	return "busy"
 end
 
+-- The failed Summary's Retry: forgets why the selected item's Summary was not made and counts the cursor as rested, so
+-- the next render makes it again.
+function M.retrySummary(state: State)
+	local item = M.selected(state)
+	if item then
+		local prefix = item.key .. "@"
+		for k in summaryFailed do
+			if string.sub(k, 1, #prefix) == prefix then
+				summaryFailed[k] = nil
+			end
+		end
+		M.cancelSummary(state)
+		state.summaryWait = { key = item.key, ready = true, timer = nil }
+	end
+end
+
 -- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike
 -- a toast. `key` is the item's key (lowercase "owner/repo#n"). The next render scans the checkouts again, so git
 -- confirms a report. Only the attempts git has not confirmed count against NOTE_CAP: a block may hold more worktrees
@@ -2960,41 +2985,11 @@ end)
 tern.on("pane_exited", function(_ev: any, _cx: any)
 	redrawQueues()
 end)
--- A `git …` command finished in a pane inside a worktree some block has a note of: that card is read again at its
--- next render, so its badges follow `git commit` or `git pull` at once. Only the selected card is ever read.
--- ponytail: a read already under way when the command ends may predate it; the next finish or refresh corrects it.
-tern.on("command_finished", function(ev: any, _cx: any)
-	if type(ev) ~= "table" or type(ev.line) ~= "string" or type(ev.pane) ~= "number" or string.sub(ev.line, 1, 4) ~= "git " then
-		return
-	end
-	local cwd: string? = nil
-	for _, p in tern.pane.list() do
-		if p.pane == ev.pane then
-			cwd = p.cwd
-		end
-	end
-	if not cwd then
-		return
-	end
-	for _, s in running do
-		local hit = false
-		for _, note in s.notes do
-			if note.ok and note.path and worktree.within(cwd, note.path) then
-				note.checked = nil
-				s.scanned = nil -- the sync badge and update command come from the scan: it runs again too
-				hit = true
-			end
-		end
-		if hit and M.alive(s) then
-			s.cx:render()
-		end
-	end
-end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected? }):
+-- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected?, review? }):
 -- replaces what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted,
 -- and so are `since` and `expected` unless digits.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40, since = 12, expected = 12 }
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40, since = 12, expected = 12, review = 60 }
 local DIGITS: { [string]: boolean } = { since = true, expected = true }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then

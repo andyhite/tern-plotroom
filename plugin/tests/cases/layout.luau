@@ -5,7 +5,7 @@ local h = require("../harness")
 
 type World = h.World
 
-local EPOCH, array, asks, case, eq, expand, findKey = h.EPOCH, h.array, h.asks, h.case, h.eq, h.expand, h.findKey
+local EPOCH, array, asks, case, eq, expand, findKey, has = h.EPOCH, h.array, h.asks, h.case, h.eq, h.expand, h.findKey, h.has
 local goToSettings, hostScene, hx, listed, openQueue = h.goToSettings, h.hostScene, h.hx, h.listed, h.openQueue
 local pickerNode, pickerOf, rowIn, same, searchItem, yes = h.pickerNode, h.pickerOf, h.rowIn, h.same, h.searchItem, h.yes
 local board = hx.board
@@ -57,13 +57,18 @@ case("layout: a view's Layout (Settings › Views) saves Board with the view, wh
 	same(cols, { "needs: no_2fr_231", "working: no_2fr_235", "waiting: no_2fr_233", "ready: no_2fr_232" }, "Needs you (Blocked), Agent working, Waiting (PR open), Ready to merge in the view's order; the fold is closed")
 	eq(selected, "layer.queue.board.lanes.needs.list.no_2fr_231", "the selection stays on the view's selected item")
 	same(listed(b), {}, "the picker lists nothing of its own")
-	local card: any = findKey(pickerNode(b), "no_2fr_231", "item")
-	eq(card.p.value[1].t, "Address changes", "a card says what blocks it, by its most severe chip")
-	eq(card.p.detail[1].t, "o/r#1", "and names its item")
-	local fold: any = findKey(pickerNode(b), "fold", "item")
-	eq(fold.p.label, "Show Not started 0 · Worktree 0 · Merged or closed 1", "the merged item is in the fold's Merged or closed")
+	local card: any = findKey(pickerNode(b), "no_2fr_231", "card")
+	eq(findKey(card, "badge", "badge").p.text, "Address changes", "a card says what blocks it, by its most severe chip")
+	eq(card.p["end"], nil, "under its head, not at the head's end, where Tern draws it over the number in a narrow column")
+	eq(card.c[1].p.key, "tags", "the badge's row comes first in the card's body, above the title")
+	eq(card.p.head[1].t, "o/r#1", "its head names its item")
+	local fold: any = findKey(pickerNode(b), "fold", "button")
+	eq(fold.p.text, "Show Not started 0 · Worktree 0 · Merged or closed 1", "the merged item is in the fold's Merged or closed")
 	b.event({ ev = "action", id = "layer.queue.board.foldbar.fold", act = fold.p.actions.click })
 	eq((board(b) or {})[7], "done: no_2fr_234", "which the fold's button opens")
+	local none: any = findKey(findKey(pickerNode(b), "board", "col"), "list", "empty")
+	eq(none and none.p.title, "None", "an empty column (Not started) is Tern's empty row in its list's place")
+	eq(none.p.variant, "inline", "one row, under the column's head")
 	b.event({ ev = "change", id = "layer.settings", item = "vlayout:prs:v1", value = "grid" })
 	eq(w.kv.get("views-prs").items[1].layout, "board", "a layout the row does not offer is refused")
 	b.event({ ev = "change", id = "layer.settings", item = "vlayout:prs:v1", value = "list" })
@@ -139,13 +144,80 @@ case("layout: on a view's Board the keys move in and across columns, search and 
 	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "snoozed" })
 	w.flush()
 	eq((board(b) or {})[3], "waiting: no_2fr_233", "Show snoozed brings it back")
-	local snoozed: any = findKey(pickerNode(b), "no_2fr_233", "item")
-	eq(snoozed.p.detail[2].t, " · Snoozed", "marked Snoozed")
+	local snoozed: any = findKey(pickerNode(b), "no_2fr_233", "card")
+	eq(snoozed.p.head[2].t, " · Snoozed", "marked Snoozed")
 	-- A card is selected by a click and shown as the List shows it: nothing is marked seen without its preview.
-	b.event({ ev = "select", id = "layer.queue.board.lanes.ready.list", item = "layer.queue.board.lanes.ready.list.no_2fr_232" })
+	b.event({ ev = "action", id = "layer.queue.board.lanes.ready.list.no_2fr_232", act = "lane-pick" })
 	eq(at(b), "ready.list.no_2fr_232", "a click on a card selects it")
-	local ready: any = findKey(pickerNode(b), "no_2fr_232", "item")
-	eq(ready.p.value[1].t, "New", "and it is still New: a Board marks nothing seen")
+	local ready: any = findKey(pickerNode(b), "no_2fr_232", "card")
+	eq(findKey(ready, "badge", "badge").p.text, "New", "and it is still New: a Board marks nothing seen")
+end)
+
+case("layout: a Board is Tern's cards: each column a card headed by its name and count whose cards scroll in it, each card its item's number, one badge and a two-line title, the selected one ringed", function(w: World)
+	local b = scene(w, "board")
+	local boardCol = findKey(pickerNode(b), "board", "col")
+	local lane: any = findKey(boardCol, "needs", "card")
+	eq(lane.p.head, "Needs you", "a column is a card headed by its name")
+	eq(lane.p.meta, "1", "and its count")
+	eq(lane.p.role, "plotroom.lane", "in the Board's column role")
+	local scroller: any = findKey(lane, "list", "scroll")
+	yes(scroller ~= nil and type(scroller.p.max.h) == "string" and string.match(scroller.p.max.h, "^%d+lines$") ~= nil, "its cards scroll inside a bounded scroller")
+	local card: any = findKey(scroller, "no_2fr_231", "card")
+	eq(card.p.selected, true, "the selected card is ringed")
+	eq(findKey(boardCol, "no_2fr_232", "card").p.selected, false, "and no other")
+	local title: any = findKey(card, "title", "text")
+	eq(title.p.lines, 2, "its title is clamped to two lines, ending in …")
+	eq(title.p.max, nil, "with no max.h, whose clip fades its last lines")
+	eq(findKey(card, "title", "text").p.spans[1].t, "PR 1", "and reads the item's title")
+	eq(card.p.actions.click, "lane-pick", "a click selects it")
+	same(card.p.actions.menu, { "open", "worktree", "agent", "snooze" }, "its menu offers Open, Worktree, Agent and Snooze")
+	same(hx.miscued(boardCol), {}, "every card and button wears the role its click calls for")
+	same(hx.offPalette(boardCol), {}, "and every colour means what DESIGN.md says")
+end)
+
+case("layout: a view card's menu runs Open, Worktree, Agent and Snooze on its item, selecting it first, as their keys do", function(w: World)
+	local b = scene(w, "board")
+	local function menu(id: string, act: string)
+		b.event({ ev = "action", id = "layer.queue.board.lanes." .. id, act = act })
+	end
+	menu("ready.list.no_2fr_232", "worktree")
+	eq(at(b), "ready.list.no_2fr_232", "the card is selected")
+	has(w.opened[#w.opened], "plotroom://github/worktree/o/r/2", "and Worktree asks the window for its worktree")
+	menu("waiting.list.no_2fr_233", "agent")
+	has(w.opened[#w.opened], "plotroom://github/agent/o/r/3", "Agent starts one on that card's item")
+	menu("needs.list.no_2fr_231", "open")
+	has(w.opened[#w.opened], "plotroom://github/open/o/r/1", "Open does what Enter does")
+	menu("needs.list.no_2fr_231", "snooze")
+	w.flush()
+	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, EPOCH + 20 * 3600, "Snooze snoozes that card's item")
+	eq((board(b) or {})[1], "needs: ", "which leaves the Board")
+end)
+
+case("layout: each time the selection moves to another card the block scrolls that card into view in its column", function(w: World)
+	local b = scene(w, "board")
+	local function reveals(): { string }
+		local out: { string } = {}
+		for _, f in w.frames do
+			local op: any = f.ops[1]
+			if op and op[1] == "reveal" then
+				table.insert(out, op[2] .. " " .. op[3])
+			end
+		end
+		return out
+	end
+	w.flush()
+	same(reveals(), { "layer.queue.board.lanes.needs.list.no_2fr_231 nearest" }, "the selected card is revealed once the Board is drawn")
+	b.press("right")
+	w.flush()
+	eq(reveals()[2], "layer.queue.board.lanes.working.list.no_2fr_235 nearest", "and the card a move selects")
+	b.render()
+	w.flush()
+	eq(#reveals(), 2, "a render that keeps the selection reveals nothing")
+	layout(b)
+	w.flush()
+	layout(b)
+	w.flush()
+	eq(reveals()[3], "layer.queue.board.lanes.working.list.no_2fr_235 nearest", "a Board drawn again reveals its selected card anew")
 end)
 
 case("layout: below 80 columns a view's Board shows as the List with the List's keys", function(w: World)

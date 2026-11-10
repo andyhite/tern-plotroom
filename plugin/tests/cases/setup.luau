@@ -19,23 +19,37 @@ local function guide(b: Block): any
 	return findKey(b.view().layer, "get-started", "card")
 end
 
--- The checklist line `key` (an item, or the shortcuts' row).
+-- The checklist line `key` (an item, a step's row, or the shortcuts' row).
 local function line(b: Block, key: string): any
 	return findKey(guide(b), key)
 end
 
--- The labels of the checklist's lines, in order.
+-- A step line's button (key `do`), nil when the line has none.
+local function step(b: Block, key: string): any
+	return findKey(line(b, key), "do", "button")
+end
+
+-- What step line `key` names beside its button.
+local function stepWhat(b: Block, key: string): string
+	return findKey(line(b, key), "what").p.spans[1].t
+end
+
+-- The labels of the checklist's lines, in order: an item's label, a step's button text.
 local function labels(b: Block): { string }
 	local out: { string } = {}
-	for _, item in findKey(guide(b), "lines", "list").c do
-		table.insert(out, item.p.label)
+	for _, node in findKey(guide(b), "lines", "col").c do
+		table.insert(out, if node.k == "row" then findKey(node, "do", "button").p.text else node.p.label)
 	end
 	return out
 end
 
--- A click on checklist node `key`, as Tern sends it: its click action split at `=` into act and value.
+-- A click on checklist node `key` (a step line's button), as Tern sends it: its click action split at `=` into act
+-- and value.
 local function click(b: Block, key: string)
-	local node = findKey(guide(b), key, "item")
+	local node = findKey(guide(b), key)
+	if node.k == "row" then
+		node = findKey(node, "do", "button")
+	end
 	local act, value = string.match(node.p.actions.click, "^([^=]+)=?(.*)$")
 	b.event({ ev = "action", id = "layer.queue.get-started." .. key, act = act, value = if value ~= "" then value else nil })
 end
@@ -61,12 +75,15 @@ case("host: Get started lists gh, omp, the listed repository without a checkout 
 	local b = openOutside(w)
 	yes(guide(b) ~= nil, "a fresh profile shows the checklist")
 	same(labels(b), { "gh signed in as @octocat", "omp installed", "Choose the checkout of o/r…" }, "gh and omp done, o/r's checkout to choose")
-	local choose = line(b, "co:o/r").p
-	eq(choose.href, "plotroom://checkout/o/r", "nothing was found: it asks the window for a folder")
-	eq(choose.value, "A new or empty folder gets a clone", "and clone stays the fallback")
+	local choose = step(b, "co:o/r")
+	eq(choose.p.href, "plotroom://checkout/o/r", "nothing was found: it asks the window for a folder")
+	eq(choose.p.size, "sm", "a small button: it sits in a card")
+	eq(stepWhat(b, "co:o/r"), "A new or empty folder gets a clone", "and clone stays the fallback")
 	has(findKey(line(b, "keys"), "what").p.spans[1].t, "One-key shortcuts (j k", "the shortcuts line names its keys")
-	eq(findKey(line(b, "keys"), "use", "item").p.label, "Use them", "with Use them")
-	eq(findKey(line(b, "keys"), "no", "item").p.label, "No thanks", "and No thanks")
+	eq(findKey(line(b, "keys"), "use", "button").p.text, "Use them", "with Use them")
+	eq(findKey(line(b, "keys"), "no", "button").p.text, "No thanks", "and No thanks")
+	same(hx.miscued(guide(b)), {}, "every step and choice is Tern's button kind")
+	same(hx.offPalette(guide(b)), {}, "and none wears a colour")
 	has(findKey(guide(b), "head").p.spans[2].t, "2 to do", "the head counts what is left")
 	eq(h.pickerOf(b).preview, "side", "it shows in the preview")
 	click(b, "dismiss")
@@ -99,6 +116,7 @@ case("host: Get started points to each setup guide while gh is signed out or omp
 	local b = openOutside(w)
 	same(labels(b), { "Sign in to gh: run gh auth login", "Install omp, which runs the agents" }, "both lines say what to do")
 	eq(line(b, "gh").p.value, "Setup guide ↗", "each with its setup guide")
+	eq(line(b, "gh").p.role, "plotroom.link", "a link: it opens the guide")
 	click(b, "gh")
 	eq(w.opened[#w.opened], "https://cli.github.com/manual/gh_auth_login", "gh's sign-in guide")
 	click(b, "omp")
@@ -133,7 +151,7 @@ case("host: Get started's shortcuts: Use them binds the one-key set, No thanks k
 	eq(w.kv.get("keys"), nil, "No thanks binds nothing")
 	eq((w.kv.get("get-started") :: any).shortcuts, "no", "and is saved as decided")
 	eq(line(b, "keys").p.label, "One-key shortcuts: no thanks", "the line is done")
-	eq(findKey(guide(b), "dismiss").p.label, "Close", "all done, Get started's card offers Close")
+	eq(findKey(guide(b), "dismiss", "button").p.text, "Close", "all done, Get started's card offers Close")
 end)
 
 case("host: checkout detection offers the folder Plotroom opened in when one of its remotes is the listed repository, and Use saves it", function(w: World)
@@ -143,8 +161,8 @@ case("host: checkout detection offers the folder Plotroom opened in when one of 
 	s.git.remotes = { origin = { "https://github.com/me/r.git" }, upstream = { "https://github.com/o/r.git" } }
 	local b = h.openQueue(w)
 	eq(w.kv.get("checkouts")["me/r"], "/work/r", "the launch saved the fork")
-	eq(line(b, "co:o/r").p.label, "Use /work/r as the checkout", "and detection offers the folder for o/r")
-	eq(line(b, "co:o/r").p.value, "o/r", "naming the repository")
+	eq(step(b, "co:o/r").p.text, "Use /work/r as the checkout", "and detection offers the folder for o/r")
+	eq(stepWhat(b, "co:o/r"), "o/r", "naming the repository")
 	click(b, "co:o/r")
 	w.flush()
 	eq(w.kv.get("checkouts")["o/r"], "/work/r", "Use saves it")
@@ -160,14 +178,14 @@ case("host: checkout detection offers another pane's folder on this host, never 
 	wrong.remotes.origin = { "https://github.com/x/y.git" }
 	table.insert(w.panes, { pane = 7, cwd = "/code/x" })
 	local b = openOutside(w)
-	eq(line(b, "co:o/r").p.label, "Choose the checkout of o/r…", "a checkout whose remote is another repository is not offered")
+	eq(step(b, "co:o/r").p.text, "Choose the checkout of o/r…", "a checkout whose remote is another repository is not offered")
 	local right = newGit(w, "/code/r")
 	right.remotes.origin = { "git@github.com:o/r.git" }
 	w.fs.dirs["/code/r/src"] = true
 	table.insert(w.panes, { pane = 8, cwd = "/code/r/src" })
 	b.event({ ev = "action", act = "get-started" }) -- asks again at once
 	w.flush()
-	eq(line(b, "co:o/r").p.label, "Use /code/r as the checkout", "a pane inside a checkout of o/r offers that checkout")
+	eq(step(b, "co:o/r").p.text, "Use /code/r as the checkout", "a pane inside a checkout of o/r offers that checkout")
 	right.remotes.origin = { "https://github.com/x/z.git" }
 	click(b, "co:o/r")
 	w.flush()
@@ -184,7 +202,7 @@ case("host: a pane on another host never counts for checkout detection", functio
 	w.window.panes[9] = { cwd = "/code/r", tab = 1 }
 	w.window.hostOf[9] = 2
 	local b = openOutside(w)
-	eq(line(b, "co:o/r").p.label, "Choose the checkout of o/r…", "the other host's checkout is not offered")
+	eq(step(b, "co:o/r").p.text, "Choose the checkout of o/r…", "the other host's checkout is not offered")
 	eq(countCalls(w, "git -C /code/r rev-parse --show-toplevel"), 0, "nor looked at")
 end)
 

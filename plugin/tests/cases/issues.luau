@@ -787,8 +787,8 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
 	eq(factOf(b, "Type"), "Bug", "the type")
 	eq(factOf(b, "Priority"), "High", "and the priority, which the search carries")
-	has(b.text(), "Linked issues", "the linked items' heading shimmers meanwhile")
-	has(b.text(), "Loading linked issues…", "with the linked issues loading")
+	has(b.text(), "Linked issues", "the linked items' heading shows meanwhile")
+	eq(findKey(pickerNode(b), "linked", "skeleton").p.shape, "rows", "over a skeleton of the linked issues")
 	eq(acliCount(s.acli, "view"), 0, "the details wait for the cursor to rest")
 	w.advance(300)
 	eq(acliCount(s.acli, "view"), 1, "the details load once the cursor rests")
@@ -801,8 +801,8 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(factOf(b, "Updated"), "30m ago", "and last updated")
 	local preview = pickerNode(b)
 	local head = findKey(preview, "head")
-	eq(findKey(head, "copy", "icon").p.href, "https://acme.atlassian.net/browse/ABC-12", "the head's copy icon takes the browse link")
-	eq(findKey(head, "copy", "icon").p.aria, "Copy link to issue ABC-12", "which names the key")
+	eq(findKey(head, "copy", "button").p.href, "https://acme.atlassian.net/browse/ABC-12", "the head's copy button takes the browse link")
+	eq(findKey(head, "copy", "button").p.aria, "Copy link to issue ABC-12", "which names the key")
 	eq(findKey(head, "state", "badge").p.text, "In Progress", "the head's badge is the workflow status")
 	eq(findKey(head, "state", "badge").p.tone, "muted", "neutral: only Done is coloured")
 	eq(findKey(findKey(preview, "branch"), "v").p.spans[1].t, "octocat/ABC-12-fix-login", "the branch Worktree would make: the default format over gh's active login")
@@ -837,8 +837,10 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	-- an issue whose details cannot be read says why
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-13" })
 	w.advance(300)
-	has(b.text(), "Could not load linked issues: Issue does not exist or you do not have permission to see it.", "the reason is on screen")
+	has(b.text(), "Could not load linked issues", "the reason is on screen: what failed")
+	has(b.text(), "Issue does not exist or you do not have permission to see it.", "and the tool's message")
 	has(b.text(), "Retry", "with a Retry button")
+	same(hx.offPalette(b.view().layer), {}, "the error row's tone is the Color Meaning Rule's error")
 	same(hx.miscued(b.view().layer), {}, "and Retry is a button")
 	eq(factOf(b, "Comments"), nil, "and what only the details know stays hidden")
 end)
@@ -1529,7 +1531,7 @@ case("host: with both CLIs on, Settings has four pages: Views, Actions, Reposito
 	yes(rowIn(b, "fmt:branch") ~= nil and rowIn(b, "ropen:o/r") ~= nil and rowIn(b, "jopen:ABC") ~= nil, "with their rows")
 	b.press("escape")
 	goToSettings(b, "general")
-	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Refresh, then Reset")
+	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Draft review", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Draft review, Refresh, then Reset")
 	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
 	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
 end)
@@ -2982,6 +2984,52 @@ windowCase("window: an agent joins the tab working in its worktree, not a pane i
 	eq(w.window.switches[#w.window.switches], 6, "in its session")
 	eq(w.window.panes[12].tab, 22, "the agent's pane moved into that tab")
 	eq(#w.window.agents, 2, "two agents started")
+end)
+
+windowCase("window: a worktree tab Plotroom opened is tinted while its agent needs input, and a colour the user set is left alone", function(w: World)
+	local s = agentScene(w)
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(w.window.panes[11].cwd, s.target, "the agent has a worktree tab of its own")
+	local function color(tab: number): string?
+		for _, t in w.window.tabs do
+			if t.id == tab then
+				return t.color
+			end
+		end
+		return nil
+	end
+	local function paint(tab: number, c: string?) -- what the user's tab menu does
+		for _, t in w.window.tabs do
+			if t.id == tab then
+				t.color = c
+			end
+		end
+	end
+	local function turn(state: string)
+		w.window.agentStates[11] = state
+		w.advance(4000)
+	end
+	eq(color(11), nil, "a working agent's tab is not tinted")
+	turn("waiting_input")
+	eq(color(11), "blue", "the tab takes your turn's colour while its agent needs input")
+	eq(color(1), nil, "the queue's tab is not a worktree tab")
+	turn("working")
+	eq(color(11), nil, "and is cleared once the agent works")
+	turn("waiting_input")
+	turn("idle")
+	eq(color(11), nil, "or finishes")
+	turn("waiting_input")
+	paint(11, "red")
+	turn("working")
+	eq(color(11), "red", "a colour the user set over the tint is not cleared")
+	turn("waiting_input")
+	eq(color(11), "red", "nor overwritten")
+	paint(11, nil)
+	turn("working")
+	turn("waiting_input")
+	eq(color(11), "blue", "a tab the user cleared is tinted again")
 end)
 
 windowCase("window: a host announcing another protocol is refused for the new asks too: a pull request's or an issue's worktree, a tab, a prompt", function(w: World)
