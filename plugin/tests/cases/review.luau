@@ -414,10 +414,23 @@ end)
 case("review: a head that moved since the review is said, and Send asks the agent to check the new commits first", function(w: World)
 	reviewScene(w, sha("e"))
 	local b = openReview(w)
-	has(textOf(findKey(b.view().main, "moved", "text")), "head moved to eeeeeee", "the block says so")
+	same(findKey(b.view().main, "moved", "text").p.spans[2], { t = "eeeeeee", s = "mono" }, "the block says so, the SHA a machine string")
 	b.press("enter", "m")
 	local _, text = sentChoices(b)
 	has(text, "head moved to eeeeeeeeeeee since your review: check the new commits first", "and Send asks for it")
+	w.finish()
+end)
+
+case("review: both blocks open in Tern's sans face, and the Draft review's pull request and head SHA stay mono", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	eq(w.blocks.prs.font, "sans", "the queue block")
+	eq(w.blocks.review.font, "sans", "the Draft review block")
+	same(findKey(b.view().main, "head", "text").p.spans, {
+		{ t = "o/r#5", s = "mono" },
+		{ t = "  ·  Draft review of ", s = "muted" },
+		{ t = string.sub(HEAD, 1, 7), s = "mono" },
+	}, "the head line's machine strings are mono spans, its prose sans")
 	w.finish()
 end)
 
@@ -440,7 +453,7 @@ case("review: a short SHA that is not the start of the PR's head has moved", fun
 	p.head = string.sub(HEAD, 1, 7)
 	w.fs.files[FILE] = jsonEncode(p)
 	local b = openReview(w)
-	has(textOf(findKey(b.view().main, "moved", "text")), "head moved to eeeeeee", "the block says so")
+	same(findKey(b.view().main, "moved", "text").p.spans[2], { t = "eeeeeee", s = "mono" }, "the block says so")
 	b.press("enter", "m")
 	local _, text = sentChoices(b)
 	has(text, "head moved to eeeeeeeeeeee since your review: check the new commits first", "and Send asks for it")
