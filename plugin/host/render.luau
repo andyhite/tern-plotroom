@@ -266,7 +266,7 @@ local function agentClock(state: State, key: string): { any }?
 		end
 		table.insert(out, " ")
 	end
-	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "num"))
+	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "mono"))
 	return out
 end
 
@@ -1708,10 +1708,10 @@ local function boardNode(state: State, bar: boolean?): Node
 	local at = engine.laneAt(state)
 	local chosen = engine.laneSelected(state)
 	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
-	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
-	-- 6px, about three quarters of a cell row, under the picker's head, the column headings, the fold's button and,
-	-- with `bar`, the key footer (24px, about one and a half cell rows).
-	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.75))
+	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one sans line
+	-- (18px, the block's `font = "sans"`) plus 6px, about seven tenths of a cell row, under the picker's head, the column
+	-- headings, the fold's button and, with `bar`, the key footer (24px, about one and a half cell rows).
+	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.7))
 	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
 	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
 	-- lists them all).
@@ -1909,7 +1909,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
-	local title: { any } = { ui.span(if view then view.name else "Plotroom", "strong") }
+	local title: { any } = { ui.span(if view then view.name else "Plotroom", "title") }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "muted"))
 	elseif snap and not snap.complete then

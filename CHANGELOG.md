@@ -5,6 +5,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
+- Both Plotroom blocks open in Tern's sans face (`font = "sans"`), and the Draft review drops its own CSS font rules: people's text is in the UI face, while ids, refs, branches, SHAs (now also the Draft review's head and moved-head SHAs), paths and the agent clock stay mono. The queue's view name takes Tern's `title` token, and the agent clock is `mono` instead of `num`.
 - Worktree tab names survive a plugin reload: a worktree tab's `#123 title` is kept in kv `tab-labels` (the newest 50) and read at load, so restored tabs keep it. A closed tab's name is dropped when a pane or tab closes; a malformed store is never written over.
 - The queue refreshes as soon as `git push`, or a `gh pr`, `gh issue` or `gh run` command, succeeds in any shell pane on the block's host, instead of waiting for its timer; GitHub's rate-limit cooldown still holds. Failed commands and other lines change nothing.
 - Settings' on/off rows (Now's reasons, team review requests and accounts; Summaries) are Tern's native switches instead of On/Off segments; Enter on the row flips them. Each Settings page's nav entry counts what on it differs from the defaults: Now's switches and views (Views), actions (Actions), name formats, checkouts and branch formats (Repositories), shortcuts, action keys and the Summary settings (General).
