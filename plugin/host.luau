@@ -37,6 +37,10 @@ local runAction, runRow, setValue, settingsView, showPage = settings.runAction, 
 local preparing, rpc = requests.preparing, requests.rpc
 
 local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg = true }
+-- What a Board card's `action` events say (render's boardNode): its click, and its double click and menu entries.
+local CARD_ACTS = { ["lane-pick"] = true, open = true, worktree = true, agent = true, snooze = true }
+-- The preview's checks tables (render's checksNodes), by the last part of their node id.
+local CHECK_TABLES = { failing = true, running = true, queued = true, passed = true, skipped = true }
 
 -- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
 local function askRemove(state: State)
@@ -97,10 +101,19 @@ local function runQueueAction(state: State, act: string): boolean
 		openSettings(state)
 	elseif act == "more" then
 		state.cx:open("plotroom://more")
-	elseif act == "agentdisagree" then
-		-- Disagree with check… needs the selected item's checker verdict; its agent may have exited
+	elseif act == "agentdisagree" or act == "agentreview" then
+		-- Disagree with check… needs the selected item's checker verdict, Show Draft review a Draft review its run opened;
+		-- its agent may have exited. In the Agents list, Show Draft review is the previewed agent's.
+		if act == "agentreview" and state.agentsOn then
+			local row = engine.agentSelected(state)
+			if not row or not (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+				return false
+			end
+			engine.agentGo(state, act)
+			return true
+		end
 		local info = if chosen then state.agentInfo[chosen.key] else nil
-		if not chosen or not info or not info.check then
+		if not chosen or not info or not (if act == "agentreview" then info.review else info.check) then
 			return false
 		end
 		openSelected(state, act, false)
@@ -461,6 +474,8 @@ local function blockDef(): BlockDef<State>
 		end)
 	end
 	return {
+		-- Tern's sans face for people's text; mono/code/path spans and code kinds stay mono (Designing Views › Typography).
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
 			local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }
@@ -1004,12 +1019,24 @@ local function blockDef(): BlockDef<State>
 				return true
 			end
 			if act == "retry-checks" then
+				-- A preview section's Retry; on the Worktrees board it is the board's Refresh (its linked reads).
 				local chosen = selected(state)
 				local key = if chosen then detailKey(state, chosen) else nil
-				if key then
+				if state.boardOn then
+					engine.boardAct(state, "retry")
+				elseif key then
 					state.detailFail[key] = nil
 					cancelDetails(state)
 				end
+			elseif item and string.match(item, "^run%d+$") and CHECK_TABLES[string.match(ev.id or "", "%.(%a+)$") or ""] and (ev.ev == "select" or act == render.CHECK_MENU.open or act == render.CHECK_MENU.ignore) then
+				-- A checks table's row (render's checksNodes): a click or Open opens the check's page, Ignore in this repo…
+				-- asks the window's plan to ignore it; each through the link the hidden `checks` col shows.
+				local link = render.checkLink(state, if act == render.CHECK_MENU.ignore then "ignore" else "open", item)
+				if link then
+					state.cx:open(link)
+				end
+			elseif act == "retry-summary" then
+				engine.retrySummary(state)
 			elseif act == "rpc" then
 				rpc(state, ev.value)
 			elseif act == "show-pr" then
@@ -1026,19 +1053,21 @@ local function blockDef(): BlockDef<State>
 				engine.openNow(state)
 			elseif act == "lanes-fold" then
 				state.lanesFold = not state.lanesFold
-			elseif (ev.ev == "select" or ev.ev == "activate") and item and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." and engine.lanesShown(state) then
-				-- A Board card: its node id ends in its row's picker id.
-				local id = string.match(item, "([^%.]+)$")
+			elseif act and CARD_ACTS[act] and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." and engine.lanesShown(state) then
+				-- A Board card (render's boardNode): its node id ends in its row's picker id. A click selects it; a
+				-- double click or its menu's Open does what Enter does; Worktree, Agent and Snooze what their keys do (a
+				-- view's cards only: Now's rows are no view's selection).
+				local id = string.match(ev.id or "", "([^%.]+)$")
 				for _, r in engine.laneRows(state) do
 					if r.id == id then
 						engine.lanePick(state, r)
 						state.focus = "list"
-						if ev.ev == "activate" then
-							if state.nowOn then
-								openNowRow(state)
-							else
-								openSelected(state, "open", false)
-							end
+						if act == "open" and state.nowOn then
+							openNowRow(state)
+						elseif act == "open" then
+							openSelected(state, "open", false)
+						elseif act ~= "lane-pick" and not state.nowOn then
+							queueAction(state, act)
 						end
 					end
 				end
@@ -1115,6 +1144,18 @@ local function blockDef(): BlockDef<State>
 				for _, a in requests.paletteActions(state) do
 					if a.id == ev.value then
 						queueAction(state, a.id)
+					end
+				end
+			elseif act and (string.sub(act, 1, 3) == "kb:" or string.sub(act, 1, 6) == "kbrun:") then
+				-- A key footer seg: runs what its key runs, only while the footer lists it.
+				for _, e in requests.keyList(state, requests.paletteActions(state)) do
+					local chosen = selected(state)
+					if e.run ~= act then
+						continue
+					elseif string.sub(act, 1, 3) == "kb:" then
+						queueAction(state, string.sub(act, 4))
+					elseif chosen then
+						state.cx:open(runHrefOf(state, chosen, string.sub(act, 7)))
 					end
 				end
 			elseif act == "save-prompt" or act == "cancel-prompt" then
@@ -1282,6 +1323,46 @@ local function blockDef(): BlockDef<State>
 		end,
 	}
 end
+
+-- A `git …` command finished in a pane inside a worktree some block has a note of: that card is read again at its
+-- next render, so its badges follow `git commit` or `git pull` at once. Only the selected card is ever read.
+-- ponytail: a read already under way when the command ends may predate it; the next finish or refresh corrects it.
+tern.on("command_finished", function(ev: any, _cx: any)
+	if type(ev) ~= "table" or type(ev.line) ~= "string" or type(ev.pane) ~= "number" then
+		return
+	end
+	-- A `git push` or a `gh pr|issue|run …` command that succeeded in any shell changed what GitHub lists: every
+	-- queue refreshes now instead of at its timer, still never inside the server's cooldown (`engine.refreshAll`).
+	local line: string = ev.line
+	if ev.status == 0 and (string.find(line, "^git push") or string.find(line, "^gh pr ") or string.find(line, "^gh issue ") or string.find(line, "^gh run ")) then
+		engine.refreshAll()
+	end
+	if string.sub(ev.line, 1, 4) ~= "git " then
+		return
+	end
+	local cwd: string? = nil
+	for _, p in tern.pane.list() do
+		if p.pane == ev.pane then
+			cwd = p.cwd
+		end
+	end
+	if not cwd then
+		return
+	end
+	for _, s in running do
+		local hit = false
+		for _, note in s.notes do
+			if note.ok and note.path and worktree.within(cwd, note.path) then
+				note.checked = nil
+				s.scanned = nil -- the sync badge and update command come from the scan: it runs again too
+				hit = true
+			end
+		end
+		if hit and alive(s) then
+			s.cx:render()
+		end
+	end
+end)
 
 tern.block.define("prs", blockDef())
 lens.define()

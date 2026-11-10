@@ -134,6 +134,17 @@ local function clean(b: Block, why: string)
 	same(h.hx.offPalette(b.view().main), {}, why .. ": nothing is coloured outside DESIGN.md")
 end
 
+-- The bar's Send button, nil when it offers none.
+local function sendButton(b: Block): any
+	return findKey(findKey(b.view().main, "bar", "row"), "send", "button")
+end
+
+-- Whether Send is busy: the window is carrying the message to the agent.
+local function sending(b: Block): boolean
+	local send = sendButton(b)
+	return send ~= nil and send.p.busy == true
+end
+
 case("review: the navigator lists the summary, the comments grouped by file, then the instructions; one off the diff cannot be kept", function(w: World)
 	local diffs = reviewScene(w)
 	local b = openReview(w)
@@ -162,7 +173,7 @@ case("review: the navigator lists the summary, the comments grouped by file, the
 	b.typeText("j")
 	has(detailText(b), "Why?", "c3 is selected")
 	has(detailText(b), "Not on a changed line", "and says it cannot be kept")
-	lacks(textOf(findKey(findKey(b.view().main, "detail"), "buttons")), "Keep", "with no Keep button")
+	lacks(textOf(findKey(findKey(b.view().main, "detail"), "end")), "Keep", "with no Keep button")
 	b.typeText(" ")
 	eq(w.toasts[#w.toasts].text, "Not on a changed line", "Space on it says why it cannot be kept")
 	eq(navState(b, 4), "Dropped", "and it stays dropped")
@@ -275,10 +286,18 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(navState(b, 2), "Dropped", "Space drops the selected comment")
 	-- Request changes.
 	b.typeText("3")
-	eq(findKey(b.view().main, "request_changes", "item").p.icon, "check", "3 picks Request changes")
-	eq(findKey(b.view().main, "comment", "item").p.icon, nil, "and only it has the check")
+	eq(findKey(b.view().main, "request_changes", "button").p.on, true, "3 picks Request changes")
+	eq(findKey(b.view().main, "comment", "button").p.on, false, "and only it is on")
 	has(textOf(findKey(b.view().main, "count")), "2 kept · 2 dropped", "the count follows")
 	-- The instructions are last: Edit instructions opens them.
+	local edit: any = findKey(b.view().main, "edit", "button")
+	eq(edit.p.size, "sm", "the detail's buttons are small")
+	same(edit.p.keys, { "e" }, "with their key")
+	local send: any = sendButton(b)
+	eq(send.p.size, "md", "the head row's are medium")
+	same(send.p.keys, { "cmd", "enter" }, "Send wears ⌘↵ as key names")
+	eq(send.p.busy, false, "and is not busy before it is pressed")
+	yes(h.hx.ternIcon(edit.p.icon), "the Edit button wears an icon Tern draws: " .. tostring(edit.p.icon))
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n5" })
 	b.event({ ev = "action", act = "edit", value = "5" })
 	b.typeText("tone down c1")
@@ -293,7 +312,9 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	same({ choices.repo, choices.number, choices.head } :: { any }, { "o/r", 5, HEAD } :: { any }, "for the pull request and head reviewed")
 	has(text, "My instructions: tone down c1", "the typed instructions go with it")
 	lacks(text, "head moved", "the head did not move")
-	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	yes(sending(b), "Send turns busy: it shows it is sending, and a click sends nothing more")
+	eq(sendButton(b).p.text, "Sending…", "saying so")
+	eq(findKey(b.view().main, "sending"), nil, "no hand-made spinner row")
 	b.typeText("3")
 	b.event({ ev = "action", act = "edit", value = "1" })
 	b.event({ ev = "action", act = "verdict", value = "approve" })
@@ -304,21 +325,105 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
 	b.typeText("k ")
 	eq(navState(b, 1), "Kept", "after Send nothing changes")
-	eq(findKey(b.view().main, "send", "item"), nil, "and there is no second Send")
+	eq(sendButton(b), nil, "and there is no second Send")
 	clean(b, "sent")
 	eq(b.saved().sent, AT1, "it stays Sent after a restart")
 	w.finish()
 end)
 
--- The verdict buttons the decision row offers, in order, and the one with the check.
+case("review: the navigator and the selected item sit in a hairline split, stacked in a compact pane; the shares you drag are kept for the block", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	local split: any = findKey(b.view().main, "body", "split")
+	yes(split, "the body is Tern's split")
+	same({ split.p.dir, split.p.grow } :: { any }, { "row", 1 } :: { any }, "side by side in a regular pane, growing into the pane's height")
+	eq(split.p.variant, nil, "in Tern's default hairline look")
+	same(split.p.sizes, { 0.3, 0.7 }, "the navigator a third until dragged")
+	same(split.p.min, { "24ch", "40ch" }, "neither pane drags narrower than it reads")
+	same({ split.c[1].p.key, split.c[2].p.key }, { "nav", "detail" }, "the navigator, then the selected item")
+	b.event({ ev = "change", id = "main.body", value = array({ 0.45, 0.55 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.45, 0.55 }, "a drag is drawn back as the split's sizes")
+	b.event({ ev = "change", id = "main.body", value = array({ 2, -1 }) })
+	b.event({ ev = "change", id = "main.other", value = array({ 0.1, 0.9 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.45, 0.55 }, "shares that are not two fractions, or another node's, change nothing")
+	-- A compact pane stacks them, with its own shares.
+	b.cx.cols = 80
+	split = findKey(b.render().main, "body", "split")
+	same({ split.p.dir, split.p.sizes } :: { any }, { "col", { 0.3, 0.7 } } :: { any }, "a compact pane stacks the navigator above the item")
+	b.event({ ev = "change", id = "main.body", value = array({ 0.2, 0.8 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.2, 0.8 }, "a stacked drag is kept too")
+	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "the whole navigator stays listed")
+	-- A restart restores both.
+	local again = w.openReview(3, nil, b.saved())
+	w.flush()
+	again.cx.cols = 140
+	same(findKey(again.render().main, "body", "split").p.sizes, { 0.45, 0.55 }, "the regular pane's shares after a restart")
+	again.cx.cols = 80
+	same(findKey(again.render().main, "body", "split").p.sizes, { 0.2, 0.8 }, "and the compact pane's")
+	clean(b, "the split")
+	w.finish()
+end)
+
+case("review: the selected item is a card: a finding's path heads it, its lines are the meta and Keep/Drop and Edit sit at the head's end", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	local summary: any = findKey(b.view().main, "detail", "card")
+	eq(summary.p.head[1].t, "Summary", "the summary's card")
+	eq(summary.p["end"], "main.body.detail.end", "its Edit summary at the head's end")
+	eq(findKey(summary, "edit", "button").p.text, "Edit summary", "named for it")
+	b.typeText("j")
+	local card: any = findKey(b.view().main, "detail", "card")
+	same({ card.p.head[1].t, card.p.head[1].s }, { "src/a.lua", "mono" }, "a finding's card is headed by its path, in mono")
+	eq(card.p.meta[1].t, "line 3", "with where it is as the meta")
+	eq(card.p["end"], "main.body.detail.end", "naming its own child for the head's end")
+	local ends: any = findKey(card, "end", "row")
+	same({ ends.c[1].p.key, ends.c[2].p.key, ends.c[1].p.size, ends.c[2].p.size }, { "keep", "edit", "sm", "sm" }, "Keep/Drop then Edit, small")
+	eq(ends.c[1].p.text, "Drop", "a kept finding offers Drop")
+	yes(findKey(card, "diff", "col"), "the diff is inside the card")
+	has(textOf(findKey(card, "body", "md")), "z is unused", "and the feedback")
+	b.typeText("e")
+	eq(findKey(findKey(b.view().main, "detail", "card"), "done", "button").p.text, "Done", "while editing, Done takes Edit's place")
+	b.press("escape")
+	b.press("enter", "m")
+	eq(findKey(b.view().main, "detail", "card").p["end"], nil, "while sending the card has no controls")
+	eq(findKey(b.view().main, "end"), nil, "and no head child")
+	clean(b, "the card")
+	w.finish()
+end)
+
+case("review: a suggestion shows as a diff of the lines it replaces, or as code when those lines are not on the diff", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.comments = array({
+		{ id = "c1", path = "src/a.lua", line = 3, startLine = 2, side = "RIGHT", kind = "suggestion", body = "Merge them", suggestion = "local y, z = 3, 4\n" },
+		{ id = "c4", path = "src/a.lua", line = 2, side = "LEFT", kind = "suggestion", body = "Keep 2", suggestion = "local y = 2" },
+	})
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	b.typeText("j")
+	local suggestion: any = findKey(findKey(b.view().main, "detail"), "suggestion", "section")
+	local d: any = findKey(suggestion, "diff", "diff")
+	eq(d.p.text, "@@ -2,2 +2,1 @@\n-local y = 3\n-local z = 4\n+local y, z = 3, 4\n", "lines 2–3 as the pull request has them, then the suggestion")
+	eq(d.p.path, "src/a.lua", "highlighted as its file")
+	lacks(textOf(suggestion), "````", "no Markdown fence")
+	b.typeText("j")
+	suggestion = findKey(findKey(b.view().main, "detail"), "suggestion", "section")
+	eq(findKey(suggestion, "diff"), nil, "an old-side suggestion is no diff")
+	local code: any = findKey(suggestion, "code", "code")
+	same({ code.p.text, code.p.lang }, { "local y = 2", "lua" }, "it is code in its file's language")
+	w.finish()
+end)
+
+-- The verdict buttons the decision row's `buttons` group offers, in order, and the one that is `on`.
 local function verdicts(b: Block): ({ string }, string?)
 	local keys: { string } = {}
 	local on: string? = nil
+	local group = findKey(findKey(b.view().main, "bar", "row"), "verdict", "buttons")
 	for _, v in { "comment", "approve", "request_changes" } do
-		local node = findKey(findKey(b.view().main, "bar", "row"), v, "item")
+		local node = findKey(group, v, "button")
 		if node then
 			table.insert(keys, v)
-			on = if node.p.icon == "check" then v else on
+			on = if node.p.on then v else on
 		end
 	end
 	return keys, on
@@ -392,6 +497,9 @@ case("review: nothing is edited, kept or sent while the diff loads", function(w:
 	w.load("host")
 	local b = w.openReview(2, { "r1", "/wt/r5" })
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	local placeholder: any = findKey(b.view().main, "diff", "skeleton")
+	eq(placeholder and placeholder.p.shape, "block", "a skeleton stands where the comment's diff goes while it is read")
+	lacks(textOf(b.view().main), "Reading the diff", "with no spinner line")
 	b.typeText("e ")
 	lacks(detailText(b), "Done", "a comment cannot be edited yet")
 	eq(navState(b, 1), "Kept", "nor kept or dropped")
@@ -400,6 +508,8 @@ case("review: nothing is edited, kept or sent while the diff loads", function(w:
 	eq(#w.opened, before, "nor sent")
 	clean(b, "loading")
 	w.flush()
+	eq(findKey(b.view().main, "diff", "skeleton"), nil, "the loaded diff takes its place")
+	yes(findKey(b.view().main, "diff", "col") ~= nil, "under the same key")
 	eq(navState(b, 1), "Kept", "the loaded review starts as proposed")
 	w.finish()
 end)
@@ -407,10 +517,23 @@ end)
 case("review: a head that moved since the review is said, and Send asks the agent to check the new commits first", function(w: World)
 	reviewScene(w, sha("e"))
 	local b = openReview(w)
-	has(textOf(findKey(b.view().main, "moved", "text")), "head moved to eeeeeee", "the block says so")
+	same(findKey(b.view().main, "moved", "text").p.spans[2], { t = "eeeeeee", s = "mono" }, "the block says so, the SHA a machine string")
 	b.press("enter", "m")
 	local _, text = sentChoices(b)
 	has(text, "head moved to eeeeeeeeeeee since your review: check the new commits first", "and Send asks for it")
+	w.finish()
+end)
+
+case("review: both blocks open in Tern's sans face, and the Draft review's pull request and head SHA stay mono", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	eq(w.blocks.prs.font, "sans", "the queue block")
+	eq(w.blocks.review.font, "sans", "the Draft review block")
+	same(findKey(b.view().main, "head", "text").p.spans, {
+		{ t = "o/r#5", s = "mono" },
+		{ t = "  ·  Draft review of ", s = "muted" },
+		{ t = string.sub(HEAD, 1, 7), s = "mono" },
+	}, "the head line's machine strings are mono spans, its prose sans")
 	w.finish()
 end)
 
@@ -433,7 +556,7 @@ case("review: a short SHA that is not the start of the PR's head has moved", fun
 	p.head = string.sub(HEAD, 1, 7)
 	w.fs.files[FILE] = jsonEncode(p)
 	local b = openReview(w)
-	has(textOf(findKey(b.view().main, "moved", "text")), "head moved to eeeeeee", "the block says so")
+	same(findKey(b.view().main, "moved", "text").p.spans[2], { t = "eeeeeee", s = "mono" }, "the block says so")
 	b.press("enter", "m")
 	local _, text = sentChoices(b)
 	has(text, "head moved to eeeeeeeeeeee since your review: check the new commits first", "and Send asks for it")
@@ -485,7 +608,7 @@ end)
 case("review: a reload onto a file Plotroom cannot read shows why in the error tone and Send sends nothing of the old proposal", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
-	yes(findKey(b.view().main, "send", "item"), "proposal A is sendable")
+	yes(sendButton(b), "proposal A is sendable")
 	local wrong = proposal(AT2)
 	wrong.version = 2
 	local bad = proposal(AT2)
@@ -502,7 +625,7 @@ case("review: a reload onto a file Plotroom cannot read shows why in the error t
 		yes(problem, "the block says why: " .. f.why)
 		eq(problem.p.spans[1].t, f.why, "the file's reason")
 		eq(problem.p.spans[1].s, "error", "in the error tone")
-		eq(findKey(b.view().main, "send", "item"), nil, "no Send button for the old proposal")
+		eq(sendButton(b), nil, "no Send button for the old proposal")
 		eq(b.title(), "Draft review", "nor its title")
 		local before = #w.opened
 		b.press("enter", "m")
@@ -514,7 +637,7 @@ case("review: a reload onto a file Plotroom cannot read shows why in the error t
 	w.fs.files[FILE] = jsonEncode(proposal(AT2))
 	b.event({ ev = "action", act = "reload" })
 	w.flush()
-	yes(findKey(b.view().main, "send", "item"), "a readable file again is sendable")
+	yes(sendButton(b), "a readable file again is sendable")
 	w.finish()
 end)
 
@@ -531,17 +654,17 @@ case("review: the window's review request answers when the run's Draft review fi
 	w.finish()
 end)
 
--- A Plotroom queue block on pane 1 (the window's surface only) that answers the `review` request with `at`; its protocol
--- is the current one, or `protocol`.
-local function queueStub(w: World, protocol: string?): (string?) -> ()
+-- A Plotroom queue block on pane 1 (the window's surface only) that answers the `review` request with `at` (and
+-- `glimpse`: Draft review opens Over the agent's tab); its protocol is the current one, or `protocol`.
+local function queueStub(w: World, protocol: string?): (string?, boolean?) -> ()
 	local main: { any } = { { id = "main.rpc", p = { text = protocol or tostring((w.load("rpc") :: any).PROTOCOL), hidden = true } } }
 	w.window.surfaces[1] = { main = { id = "main", c = main } }
 	local answered: { [string]: boolean } = {}
-	return function(at: string?)
+	return function(at: string?, glimpse: boolean?)
 		for _, q in h.requestsSent(w) do
 			if q.op == "review" and not answered[q.id] then
 				answered[q.id] = true
-				table.insert(main, { id = "main.r" .. q.id, p = { text = jsonEncode({ at = at }), hidden = true } })
+				table.insert(main, { id = "main.r" .. q.id, p = { text = jsonEncode({ at = at, glimpse = glimpse }), hidden = true } })
 				w.click("plotroom://rpc/" .. q.id, 1)
 				w.flush()
 				return
@@ -607,6 +730,57 @@ windowCase("review: a turn end with a newer Draft review opens the block beside 
 	w.finish()
 end)
 
+windowCase("review: Over the agent's tab, a turn end glimpses the Draft review over the agent's tab when it is shown, else opens nothing and points at Show Draft review", function(w: World)
+	w.load("window")
+	local answer = queueStub(w)
+	seedRun(w)
+	w.window.panes[20].tab = 2
+	w.window.focused = 1
+	finished(w)
+	answer(AT1, true)
+	eq(#reviewLaunches(w), 0, "the agent's tab is not shown: nothing opens over another tab")
+	eq(w.window.focused, 1, "and focus stays where it was")
+	local toast = w.toasts[#w.toasts]
+	local said: { any } = { toast.text, toast.sub }
+	same(said, { "Draft review ready for o/r#5", "Show Draft review in Plotroom's Commands opens it over the agent's tab." } :: { any }, "a toast says how to show it")
+	eq((w.kv.get("agent-links") :: any)[1].reviewed, AT1, "the link remembers it, so Show Draft review is offered")
+	w.window.focused = 20
+	finished(w)
+	answer(AT2, true)
+	local opened = reviewLaunches(w)
+	eq(#opened, 1, "a newer proposal while the agent's tab is shown opens")
+	local review = w.window.focused :: number
+	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts == nil, w.window.panes[review].block, w.window.panes[review].tab }
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "glimpse", true, "plugin.plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
+	w.finish()
+end)
+
+case("review: Settings › General › Draft review opens saves Over the agent's tab, the review request tells the window, and settings it cannot read are never written over", function(w: World)
+	h.hostScene(w)
+	local b = h.openQueue(w)
+	w.fs.files[FILE] = jsonEncode(proposal())
+	h.goToSettings(b, "general")
+	eq(h.rowIn(b, "review:opens").control.value, "split", "Beside the agent by default")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "glimpse" })
+	same(w.kv.get("review"), { glimpse = true }, "Over the agent's tab is saved")
+	eq(h.rowIn(b, "review:opens").control.value, "glimpse", "and shown")
+	h.request(b, "q1", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q1"), { at = AT1, glimpse = true }, "the window is told with the file's at")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "tab" })
+	same(w.kv.get("review"), { glimpse = true }, "an option the row does not offer changes nothing")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "split" })
+	eq(w.kv.get("review"), nil, "Beside the agent is the default: nothing is kept")
+	h.request(b, "q2", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q2"), { at = AT1 }, "and the window is not told to glimpse")
+	w.kv.put("review", { glimpse = "yes" })
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "glimpse" })
+	same(w.kv.get("review"), { glimpse = "yes" }, "malformed settings are not written over")
+	has(h.rowIn(b, "review:opens").hint, "malformed", "the row says why")
+	h.request(b, "q3", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q3"), { at = AT1 }, "and they read as Beside the agent")
+	w.finish()
+end)
+
 windowCase("review: an older host is not asked, and a link with no run opens nothing", function(w: World)
 	w.load("window")
 	queueStub(w, "45")
@@ -645,7 +819,7 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	w.flush()
 	eq(#w.window.agentCalls, asked, "nothing goes to a gone agent")
 	has(textOf(findKey(b.view().main, "gone")), "gone", "the block says so")
-	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	yes(findKey(b.view().main, "copy", "button"), "and offers Copy")
 	w.finish()
 end)
 
@@ -686,7 +860,7 @@ windowCase("review: a review/send link from the Draft review pane sends only the
 	w.click("plotroom://review/send", 30)
 	w.flush()
 	eq(#w.window.agentCalls, 0, "no Send pressed, nothing goes to the agent")
-	yes(findKey(b.view().main, "send", "item"), "the Send button stays")
+	yes(sendButton(b), "the Send button stays")
 	eq(findKey(b.view().main, "gone"), nil, "and there is no error row")
 	-- After Send: the same link, with and without a token, does not send again.
 	b.press("enter", "m")
@@ -729,13 +903,13 @@ case("review: a Send that no answer reaches leaves Sending after a while and off
 	local review = w.load("host/review") :: any
 	local b = openReview(w)
 	b.press("enter", "m")
-	yes(findKey(b.view().main, "sending"), "it shows it is sending")
+	yes(sending(b), "it shows it is sending")
 	w.advance(review.SEND_TIMEOUT_MS - 1)
-	yes(findKey(b.view().main, "sending"), "still sending just before the timeout")
+	yes(sending(b), "still sending just before the timeout")
 	w.advance(1)
-	eq(findKey(b.view().main, "sending"), nil, "no longer sending")
+	eq(sending(b), false, "no longer sending")
 	has(textOf(findKey(b.view().main, "gone")), "may not have reached the agent", "the block says so")
-	yes(findKey(b.view().main, "copy", "item"), "and offers Copy")
+	yes(findKey(b.view().main, "copy", "button"), "and offers Copy")
 	b.typeText("c")
 	has(w.copied[#w.copied], "```json", "Copy puts the message on the clipboard")
 	b.event({ ev = "action", act = "sent" })

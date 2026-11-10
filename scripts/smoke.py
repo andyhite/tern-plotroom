@@ -118,6 +118,12 @@ if a[:2] == ["run", "list"] and "--repo" in a:  # a workflow's last runs on a br
     key = "%s@%s@%s" % (a[a.index("--repo") + 1].replace("github.com/", "", 1), opt.get("branch"), opt.get("workflow"))
     sys.stdout.write(json.dumps((json.load(open(f)) if os.path.exists(f) else {}).get(key, [])))
     sys.exit(0)
+if a[:2] == ["run", "view"] and "--log-failed" in a:  # a failed job's log, from log-failed.txt; none: gh fails
+    f = os.path.join(SMOKE, "log-failed.txt")
+    if not os.path.exists(f):
+        sys.exit(1)
+    sys.stdout.write(open(f, encoding="utf-8").read())
+    sys.exit(0)
 if a[:2] == ["pr", "list"] and any(x.startswith("--head=") for x in a):  # the pull request on an issue's worktree branch: none
     sys.stdout.write("[]")
     sys.exit(0)
@@ -1333,7 +1339,7 @@ def sc_get_started(s: Smoke) -> None:
     s.wait_text("the checklist", "Get started")
     s.wait_text("the checkout found in the other tab", "Use %s as the checkout" % root)
     s.shot("get-started")
-    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart']")
+    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart.do']")
     s.wait_text("Use saves it", "Checkout saved")
     s.wait_until("the checkout's line is done", lambda: not any("as the checkout" in t for t in s.texts()))
     s.ctl_ok("click", "[data-id$='get-started.keys.no']")
@@ -1717,13 +1723,13 @@ def sc_workflow(s: Smoke) -> None:
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
             s.wait_until("the both-linked preview's fetched titles", lambda: any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts()))
             seen_both = True
-            s.eq("no placeholder is left in the both-linked preview", False, any(t.startswith("Loading") and ("#2" in t or "#9" in t) for t in s.texts()))
+            s.eq("no skeleton is left in the both-linked preview", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-both-preview")
         elif "#1" in pt:
             # the tracker's answer, not the placeholder
             s.wait_until("the linked preview's fetched title", lambda: any("Flow PR 1" in t for t in s.texts()))
             seen_linked = True
-            s.eq("the fetched title replaced Loading #1", False, any(t.startswith("Loading #1") for t in s.texts()))
+            s.eq("the fetched title replaced its skeleton", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-linked-preview")
         # An unlinked worktree's preview is titled by its branch: that text at least twice (the row's title and the preview's title),
         # with its folder path under the row.
@@ -1844,7 +1850,7 @@ def sc_agent(s: Smoke) -> None:
     links = json.loads(stores[0].read_text(encoding="utf-8"))["agent-links"]
     s.eq("the agent's link names its run", agent["run"], next(l.get("run") for l in links if l["key"] == "a/gent#1"))
     tabs = len(s.state()["tabs"])  # type: ignore[arg-type]
-    draft_review(s, wt, agent)
+    draft_review(s, wt, agent, queue_tab)
 
     def back_to_queue() -> None:
         s.ctl_ok("tab", str(queue_tab))
@@ -1979,12 +1985,86 @@ def sc_agent(s: Smoke) -> None:
     s.eq("dismissing the review pushed nothing: the remote's refs are as before", refs_before, s.out(s.bare("a/gent"), "for-each-ref", "--format=%(refname) %(objectname)"))
 
 
-def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
-    """sc_agent's agent proposes a Draft review (its file, as the omp extension writes it, under PLOTROOM_DATA/runs/<run>): what a turn end of the
-    focused agent runs (plugin.plotroom.review-smoke; the fake agent ends no turn) asks the queue block's host for the file and opens the Draft review
-    block beside the agent, on the pull request's diff read by real git in the worktree: the comment on a changed line is shown with its lines and
-    kept, the one off the diff is listed under Not on a changed line; Space drops and keeps it. ⌘↵ sends; the fake agent is not omp, so Tern refuses
-    the message and the block says so and offers Copy. (sc_agent then checks the same file opens nothing more, and closes the block.)"""
+def glimpse_review(s: Smoke, wt: Path, queue_tab: int) -> None:
+    """Settings › General › Draft review opens › Over the agent's tab, in real Tern, with the agent focused and its Draft review file written: a turn
+    end shows the Draft review as a focused glimpse over the agent's tab, splitting no pane (the agent's keeps its size); a click outside closes it;
+    Show Draft review (Commands) brings the agent's tab forward and opens it again; Send from the glimpse reaches the window's handoff to the agent
+    (the fake agent is not omp, so Tern refuses it and the block says so, as beside the agent). Leaves Beside the agent set and the agent focused."""
+    scope = "[data-surface='plugin.plotroom.review']"
+
+    def agent_focused() -> bool:
+        focused: Dict[str, Any] = s.state()["focused"]  # type: ignore[assignment]
+        return os.path.realpath(str(focused.get("cwd") or "")) == os.path.realpath(str(wt)) and not str(focused.get("label") or "").startswith("Draft review")
+
+    def glimpsed() -> bool:
+        return int(json.loads(s.ctl("tree", scope)).get("count") or 0) > 0 and str(s.state()["focused"].get("label") or "").startswith("Draft review")  # type: ignore[union-attr]
+
+    def click(sel: str, ok: "Callable[[str], bool]", what: str) -> None:
+        """Clicks the center of the smallest drawn match of `sel` whose text passes `ok`."""
+        nodes = [x for x in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(x, dict) and x.get("rect") and ok(str(x.get("text") or ""))]
+        if not nodes:
+            s.fail(what, "drawn", "no match of %s" % sel)
+        r = min(nodes, key=lambda x: float(x["rect"][2]) * float(x["rect"][3]))["rect"]
+        s.ctl_ok("click", "%.0f" % (float(r[0]) + float(r[2]) / 2), "%.0f" % (float(r[1]) + float(r[3]) / 2))
+
+    def queue_command(name: str) -> None:
+        s.ctl_ok("tab", str(queue_tab))
+        s.wait_until("the queue's tab is focused", lambda: not agent_focused() and not glimpsed())
+        s.select_row()
+        s.ctl_ok("key", ".")
+        s.wait_text("Commands", "Refresh")
+        s.ctl_ok("type", json.dumps(name))
+        time.sleep(0.5)
+        s.ctl_ok("key", "Enter")
+
+    def opens(choice: str) -> None:
+        queue_command("Settings")
+        s.wait_text("Settings opens", "Repositories")
+        click("[data-surface='plugin.plotroom.prs'] .nav-row", lambda t: t.startswith("General"), "Settings › General")
+        s.wait_text("Settings › General › Draft review", "Draft review opens")
+        s.ctl_ok("resize", "2200", "2600")  # tall enough that General's Draft review row is drawn on screen
+        time.sleep(0.5)
+        click("[data-surface='plugin.plotroom.prs'] *", lambda t: t == choice, "the %s segment" % choice)
+        time.sleep(0.5)
+        s.ctl_ok("resize", "2200", "1000")
+        s.ctl_ok("key", "Escape")
+        s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
+        s.wait_until("back on the agent", agent_focused)
+
+    opens("Over the agent's tab")
+    stores = [p for p in s.tmp.rglob("kv.json") if "agent-links" in p.read_text(encoding="utf-8")]
+    s.eq("the segment saved Over the agent's tab", {"glimpse": True}, json.loads(stores[0].read_text(encoding="utf-8")).get("review"))
+    tabs, before = len(s.state()["tabs"]), s.state()["panes"]  # type: ignore[arg-type]
+    s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
+    s.wait_until("the Draft review shows over the agent's tab, focused", glimpsed)
+    s.wait_text("its summary", "Review of the change")
+    s.eq("no tab was opened", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    after = s.state()["panes"]  # type: ignore[index]
+    s.eq("the agent's pane keeps its size under the glimpse", before[0], next(p for p in after if p["id"] == before[0]["id"]))  # type: ignore[index]
+    s.shot("review-glimpse")
+    s.ctl_ok("click", "5", "400")  # outside the glimpse, on the agent's pane
+    s.wait_until("a click outside closes the glimpse", lambda: int(json.loads(s.ctl("tree", scope)).get("count") or 0) == 0)
+    s.eq("the agent's pane is focused again", True, agent_focused())
+    queue_command("Show Draft review")
+    s.wait_until("Show Draft review brings the agent's tab forward and opens the Draft review over it again", glimpsed)
+    s.wait_text("Send, from the glimpse", "Send to agent")
+    s.ctl_ok("key", "Meta+Enter")  # the glimpse has the keyboard: ⌘↵ sends, as beside the agent
+    s.wait_until("Send from the glimpse reaches the agent: the fake agent is not omp, so the block says the message was refused and offers Copy",
+                 lambda: any(t.startswith("The agent could not take the message") or t.startswith("The agent that proposed this review is gone") for t in s.texts()) and "Copy" in s.texts())
+    s.shot("review-glimpse-sent")
+    s.ctl_ok("click", "5", "400")
+    s.wait_until("the glimpse closes", lambda: int(json.loads(s.ctl("tree", scope)).get("count") or 0) == 0)
+    opens("Beside the agent")
+
+
+
+def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> None:
+    """sc_agent's agent proposes a Draft review (its file, as the omp extension writes it, under PLOTROOM_DATA/runs/<run>): first Over the agent's tab
+    (glimpse_review), then, for a newer proposal, what a turn end of the focused agent runs (plugin.plotroom.review-smoke; the fake agent ends no turn)
+    asks the queue block's host for the file and opens the Draft review block beside the agent, on the pull request's diff read by real git in the
+    worktree: the comment on a changed line is shown with its lines and kept, the one off the diff is listed under Not on a changed line; Space drops
+    and keeps it. ⌘↵ sends; the fake agent is not omp, so Tern refuses the message and the block says so and offers Copy. (sc_agent then checks the
+    same file opens nothing more, and closes the block.)"""
     # A real multi-line change: the file's one line becomes twelve, in a new commit on the PR's branch (the fake gh is told the new head).
     target = s.out(wt, "diff", "--name-only", "origin/main...HEAD").split()
     s.eq("the pull request changes one file", 1, len(target))
@@ -2007,9 +2087,13 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
     folder = Path(agent["data"]) / "runs" / agent["run"]
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "review.json").write_text(json.dumps(review), encoding="utf-8")
+    glimpse_review(s, wt, queue_tab)
+    review["at"] = "2026-11-04T10:30:00.000Z"  # a newer proposal, so the next turn end opens it again, now beside the agent
+    (folder / "review.json").write_text(json.dumps(review), encoding="utf-8")
     panes = len(s.state()["panes"])  # type: ignore[arg-type]
     s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
-    s.wait_text("the Draft review block", "Draft review of " + head[:7])
+    s.wait_text("the Draft review block", "Draft review of")
+    s.wait_text("its head SHA, a mono span of its own", head[:7])
     s.wait_text("the summary, rendered as Markdown", "Review of the change")
     s.wait_text("Send, with its key", "Send to agent")
     s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]
@@ -2022,7 +2106,7 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
     def n(sel: str) -> int:
         return int(json.loads(s.ctl("tree", sel)).get("count") or 0)
 
-    done = scope + " [data-id='main.body.detail.buttons.done']"
+    done = scope + " [data-id='main.body.detail.end.done']"
 
     def has(aria: str) -> int:
         return n(scope + " [aria-label='%s']" % aria)
@@ -2044,7 +2128,20 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
     s.wait_text("the first finding selected", "Smoke comment on the diff")
     s.wait_text("the diff around it, from git", "smoke review line 3")
     s.eq("the on-diff comment starts kept", True, kept("c1"))
+    s.eq("the navigator and the finding sit in Tern's split", 1, n(scope + " .sf-split"))
+    s.eq("the finding is a card with Drop at its head's end", 1, n(scope + " .sf-card [data-id='main.body.detail.end.keep']"))
     s.shot("review-finding")
+    # Drag the split's handle 120 px right: the navigator's pane widens, and keeps that width when the block draws again.
+    handle, nav_w = rects(scope + " .sf-split-handle")[0], rects(scope + " .sf-split-pane")[0][2]
+    x, y = str(handle[0] + handle[2] / 2), str(handle[1] + handle[3] / 2)
+    s.ctl_ok("down", x, y)
+    s.ctl_ok("move", str(float(x) + 120), y)
+    s.ctl_ok("up", str(float(x) + 120), y)
+    s.wait_until("the drag widens the navigator", lambda: rects(scope + " .sf-split-pane")[0][2] > nav_w + 60)
+    s.ctl_ok("key", "e")
+    s.ctl_ok("key", "Escape")
+    time.sleep(0.5)
+    s.eq("the dragged width is kept when the block draws again", True, rects(scope + " .sf-split-pane")[0][2] > nav_w + 60)
     s.ctl_ok("key", "e")
     s.wait_until("the comment's editor opens (Done is offered)", lambda: n(done) == 1)
     s.ctl_ok("type", json.dumps(" Smoke comment edit."))
@@ -2249,9 +2346,10 @@ def sc_now_settings(s: Smoke) -> None:
 
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
-    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as a button (role
-    plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
-    the shot shows them."""
+    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as Tern's button kind
+    (.sf-button, small); its checks are rows of Tern's native table (Check, Workflow, Took) and never a button or link. Nothing is clicked: the
+    shot shows them. The failing check's log excerpt is drawn open under its error line, clamped by Tern's code preview with its visible
+    "K more lines" button (a collapsible section would hide both)."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -2264,7 +2362,12 @@ def sc_controls(s: Smoke) -> None:
           "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs), "headSha": "1" * 40}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
     thread = {"path": "src/app.py", "line": 12, "by": "maria-k", "body": "Rename this helper", "url": "https://github.com/a/gent/pull/7#discussion_r1"}
-    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": [], "threads": [thread]}
+    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": [], "threads": [thread], "head": "1" * 40}
+    log = ["build\tRun tests\t2026-01-01T00:00:00.0000000Z ##[group]Run npm test"]
+    log += ["build\tRun tests\t2026-01-01T00:00:01.0000000Z line %d" % i for i in range(1, 21)]
+    log += ["build\tRun tests\t2026-01-01T00:00:02.0000000Z src/app.py(3,1): error TS2322: Type 'number' is not assignable"]
+    log += ["build\tRun tests\t2026-01-01T00:00:03.0000000Z after %d" % i for i in range(1, 21)]
+    (s.smoke / "log-failed.txt").write_text("\n".join(log) + "\n", encoding="utf-8")
     (s.smoke / "checks.json").write_text(json.dumps({"a/gent#7": {"total": len(runs), "next": None, "nodes": runs, "about": about}}), encoding="utf-8")
     job = "https://github.com/a/gent/actions/runs/123/job/9"
     (s.smoke / "flaky.json").write_text(json.dumps({"a/gent#7": {"head": "1" * 40, "files": ["src/app.py"], "runs": [
@@ -2285,14 +2388,24 @@ def sc_controls(s: Smoke) -> None:
     s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
     s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
+    button, link = scope + ".sf-button[data-size='sm']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
     s.shot("controls")
-    s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))
+    table = scope + ".sf-table"
+    s.wait_until("the failed check is a row of a native checks table", lambda: any("build" in t and "Workflow" in t and "Took" in t for t in s.matches(table)))
+    s.wait_until("keyed by its row id", lambda: any("build" in t for t in s.matches(table + " [data-key='run1']")))
     s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
     s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
+    s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the checks table under the threads
+    time.sleep(0.5)
     s.shot("controls-loaded")
-    s.eq("the check without a page is neither", False, any("lint" in t for t in s.matches(button + ", " + link)))
+    s.ctl_ok("resize", "2200", "1000")
+    time.sleep(0.5)
+    s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
+    s.wait_until("the failing check's excerpt is drawn, clamped, with the error line in it",
+                 lambda: any("error TS2322" in t for t in s.matches(scope + ".sf-code.clamped")))
+    s.wait_until("its K more lines button shows", lambda: any("more line" in t for t in s.matches(scope + ".sf-code-more:not(.sf-hidden)")))
+    (s.smoke / "log-failed.txt").unlink()
     s.ctl_ok("key", "Escape")
 def sc_previews(s: Smoke) -> None:
     """Every preview in one order (docs/reference.md › Finer points › Preview): a pull request with failing checks, a GitHub issue and a Jira issue, each
@@ -2418,7 +2531,9 @@ def sc_now_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    # a column is a card, holding its cards' scroller or Tern's empty row
+    lane = scope + ".sf-card[data-role='plotroom.lane']"
+    chosen = lane + " .sf-card.selected"
     s.ctl_ok("resize", "2200", "1000")
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
@@ -2443,9 +2558,19 @@ def sc_now_board(s: Smoke) -> None:
         nodes = [n for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
         return [float(v) for v in nodes[0]["rect"]] if nodes else []
 
-    fold, foot = rect(scope + "[data-id='layer.queue.board.foldbar.fold']"), rect(scope + "[data-role='plotroom.keys']")
-    s.eq("the fold's button %r sits above the key footer %r, within the 1000 px window" % (fold, foot), True,
-         bool(fold) and fold[1] + fold[3] <= (foot[1] + 1 if foot else 1000))
+    strip = ".sf-dock[data-surface='plugin.plotroom.prs'] .sf-status"  # the region element itself wears data-surface
+    segs = strip + " .sf-seg"
+    fold, foot, sheet = rect(scope + "[data-id='layer.queue.board.foldbar.fold']"), rect(strip), rect(scope + ".sf-picker > .pk-sheet")
+    s.eq("the key footer is Tern's status strip in the dock %r" % (foot,), True, bool(foot) and foot[1] + foot[3] <= 1000)
+    s.eq("the fold's button %r sits above the key footer %r" % (fold, foot), True, bool(fold) and fold[1] + fold[3] <= foot[1] + 1)
+    s.eq("the picker's sheet %r ends above the key footer %r, so the strip takes clicks" % (sheet, foot), True, bool(sheet) and sheet[1] + sheet[3] <= foot[1] + 1)
+    ref, badge = rect(chosen + " .sf-t-mono"), rect(chosen + " .sf-badge")
+    s.eq("the selected card's number %r and its badge %r do not overlap" % (ref, badge), True,
+         bool(ref and badge) and (badge[1] >= ref[1] + ref[3] - 1 or badge[0] >= ref[0] + ref[2] - 1))
+    s.ctl_ok("click", segs + "[data-id='dock.keybar.k1']")  # Commands, always first in the footer's order
+    s.wait_text("a click on the footer's Commands opens the palette, as . does", "Refresh")
+    s.ctl_ok("key", "Escape")
+    time.sleep(0.5)
 
     # Now lists reviews oldest first, then by key: Waiting runs 100, 101, 62, 63, … 99.
     s.ctl_ok("key", "Right")
@@ -2454,7 +2579,7 @@ def sc_now_board(s: Smoke) -> None:
         s.ctl_ok("key", "Down")
     s.wait_until("Down walks the column", lambda: any("Waiting 95: " in t for t in s.matches(chosen)))
     time.sleep(0.5)
-    card, box = rect(chosen), rect(scope + "[data-id='layer.queue.board.lanes.waiting.list'] .sf-list-scroll")
+    card, box = rect(chosen), rect(scope + "[data-id='layer.queue.board.lanes.waiting.list']")
     s.eq("the selected card %r sits inside its column's scroller %r, within the 1000 px window" % (card, box), True,
          bool(card and box) and card[1] >= box[1] - 1 and card[1] + card[3] <= box[1] + box[3] + 1 and card[1] + card[3] <= 1000)
     s.shot("now-board-scrolled")
@@ -2530,8 +2655,8 @@ def sc_view_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
-    cards = scope + ".sf-list[data-role='plotroom.lane'] .sf-item"
+    lane = scope + ".sf-card[data-role='plotroom.lane']"  # a column is a card, holding its cards' scroller or Tern's empty row
+    chosen, cards = lane + " .sf-card.selected", lane + " .sf-card"
 
     def command(label: str) -> None:
         s.ctl_ok("key", ".")
@@ -2568,6 +2693,15 @@ def sc_view_board(s: Smoke) -> None:
     s.wait_until("Left crosses from Ready to merge to Waiting", lambda: any("Waiting view card 82" in t for t in s.matches(chosen)))
     s.ctl_ok("key", "Right")
     s.wait_until("and Right back (nothing to its right holds cards)", lambda: any("Ready view card" in t for t in s.matches(chosen)))
+    s.ctl_ok("click", cards)  # the first card: Blocked, in Needs you
+    s.wait_until("a click on a card selects it", lambda: any("Blocked view card" in t for t in s.matches(chosen)))
+    s.ctl_ok("click", cards, "right")
+    s.wait_until("right-clicking a card opens its menu", lambda: bool(s.matches("[role='menuitem']")))
+    s.eq("the card's menu", ["Open", "Worktree", "Agent", "Snooze", "Copy"], s.matches("[role='menuitem']"))
+    s.shot("view-board-menu")
+    s.ctl_ok("key", "Escape")  # Tern's node menu is a popover, not a native context menu
+    s.wait_until("the menu closes", lambda: not s.matches("[role='menuitem']"))
+    s.eq("the clicked card is still the selection", True, any("Blocked view card" in t for t in s.matches(chosen)))
     command("Settings")
     s.wait_text("Settings opens", "Repositories")
     s.ctl_ok("click", ".nav-row:nth-child(1)")  # Views

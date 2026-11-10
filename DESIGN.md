@@ -10,7 +10,7 @@ Words on screen come from [PRODUCT.md › Glossary](PRODUCT.md#glossary). Behavi
 
 | Meaning | Tone (Tern) | Draws as | Where today |
 | --- | --- | --- | --- |
-| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading |
+| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading, a worktree tab's tint while its agent needs input (tab colours are named labels, not tones: `blue`) |
 | Needs fixing | `error` | `--bad` | **Blocked** and its chips (Address changes, Reply, Fix checks, Re-run, Resolve conflicts), Conflicts, Changes requested, Checks failing, a failed check run, Report: stuck, a worktree that could not be made or is missing, a load or read that failed, a security alert |
 | Done | `success` | `--ok` | **Ready to merge**, **Merged**, Approved, Verified, Checked, Passing, Done or Completed issues, a done Get started line |
 | Agent working | `pending` | `--live` | **Agent working**, Working, the filled cells of a working agent's bar |
@@ -31,23 +31,23 @@ The Color Meaning Rule is enforced by tests: `hx.offPalette` (plugin/tests/harne
 All Tern variables; the plugin declares none.
 
 - **Ink:** `--t1` (titles, body), `--t2` (keycap labels), `--t3` (muted text: `muted` tone), `--t4` (dim).
-- **Lines:** `--l1` to `--l4`; `--l3` rings Plotroom's buttons and underlines links.
+- **Lines:** `--l1` to `--l4`; `--l3` underlines links (Tern's `button` kind draws its own ring).
 - **Surfaces:** Tern's picker, card, prefs sheet and overlay draw their own (`--card`, `--panel`, `--chip-bg`); Plotroom paints none.
 - **Accent:** `--accent` only through the `accent` tone (your turn), the one `primary` button a confirm overlay may hold (Buttons and links), and Tern's own focus ring.
 - **Meaning colours:** through tones only: `accent`, `error` (`--bad`), `success` (`--ok`), `pending` (`--live`), `warning` (`--warn`).
 
 ## Typography
 
-- **Prose:** `var(--sans)`, Tern's default for every kind; no font stack is declared.
-- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, counts): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values.
-- **Weight:** `strong` spans for a heading's view name and a linked item's title; nothing else is bold.
+- **Prose:** Tern's sans face, set by `font = "sans"` on both blocks (Tern's Designing Views › Typography); no font stack is declared and no plugin CSS sets a block's face.
+- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, SHAs, counts, times): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values. A number in a kv value or running text is `mono`, never `num` (it paints the code-number colour).
+- **Weight:** the `title` token for the queue's view name (the page's name), `strong` for a linked item's title; nothing else is bold.
 - Text is never coloured for emphasis; only a meaning colours it.
 
 ## Spacing and radii
 
 - Lengths are `px`, `em`, `vw`, `vh` or `%` only (Tern rejects `ch` and `rem`); no logical properties, no `:has()`.
-- Steps in use: 2px (an icon button's padding), 6px (gap inside a button), 8px (button padding, the gap between Add buttons), 10px (above an Add row), 12px (a row's gap to its control). Node `gap` props use Tern's `xs`.
-- Radii: `--r-ctl` for buttons; everything else takes the radius its Tern kind draws (`--r-chip` badges, `--r-card` cards).
+- Steps in use: 8px (the gap between Add buttons), 10px (above an Add row), 12px (a row's gap to its control). Node `gap` props use Tern's `xs` and `sm`.
+- Radii: `--r-ctl` for the arrival ring on a row; everything else takes the radius its Tern kind draws (`--r-chip` badges, `--r-card` cards, a `button`'s own).
 
 ## Components
 
@@ -56,6 +56,10 @@ Each is built from Tern kinds; `plotroom.css` touches only what no kind or prop 
 ### Rows
 
 A picker `item` per pull request, issue, Now entry, agent or worktree. Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
+
+### Board
+
+Now or a view laid out in columns by stage, in the queue picker's preview pane (the one place `plotroom.css` touches Tern's inner picker classes). Each column is a `card` (`role = "plotroom.lane"`), its name as `head` and its count as `meta`, holding a `scroll` bounded to the block's height; an empty column holds the inline `empty` "None" instead. Each item is a compact selectable `card` (it carries `selected`; a click selects it, and Tern draws its hover and selection ring, so it wears no Plotroom cue): its number or Jira key (`mono`, then muted " · Snoozed") as `head`, one `badge` in a row under the head (Now's reason, or a view's first chip in `error`, else New / Changed in `accent`; its tooltip on the card; not the head's `end`, which Tern draws over the number in a narrow column), the title under it as a `text` with `lines = 2` (clamped, ending in `…`). The selected card is `selected` (Tern's accent ring). Double click is Enter; right-click is `actions.menu`: Open, Worktree, Agent, Snooze on a view, Open alone on Now. No CSS: the look is Tern's card.
 
 ### Badges
 
@@ -67,7 +71,7 @@ A Blocked pull request's reasons, one Tern `badge` each, right after the Blocked
 
 ### Arrival ring
 
-A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level.
+A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; while Tern hides the pane (`.sf-paused`) the fade pauses where it was; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level. A new animation in `plotroom.css` gets the same `.sf-still` and `.sf-paused` rules; `scripts/check.py test` fails without them.
 
 ### Preview card
 
@@ -75,13 +79,21 @@ The picker's preview, in one order for every item (docs/reference.md › Finer p
 
 ### Buttons and links
 
-What a click does shows on the node. A **button** does something: an `item` with `role = "plotroom.button"`, a 1px `--l3` ring, `--r-ctl` radius, sized to its label, its key as `hint` keycaps (render's `button()`). An icon button is an `icon` with the same role. A **link** opens something: `role = "plotroom.link"`, its label underlined in `--l3`, the underline darkening under the pointer. Every node with a click action or an `href` wears one of the two roles and no other node does (`hx.miscued`). Buttons are neutral: no tone, destructive ones included; their confirm is the guard.
+What a click does shows on the node. A **button** does something: Tern's `button` kind (`tern.ui.button`, render's `button()`), sized to its label, its key as `keys` keycaps (key names: `cmd`, `enter`, `esc`, `space`, a letter; an upper-case key is `shift` and its letter, since a keycap upper-cases every letter). Size `sm` in rows, the preview and cards (the worktree card, Get started, Retry, the lenses after `gh pr create` and `git push`); `md` in bars, overlays and the Draft review's head row (the Board's fold bar, the shortcut list's Close, the confirm, verdicts and Send). An icon button is the same kind with an empty label, `quiet`, named by its `title` (the head's and the branch's Copy). A button whose work is under way is `busy` (a spinner in its icon's place; it sends nothing more), as the Draft review's Send while the window carries it. A key footer seg (a `seg` in the dock's `status` strip, requests' `keyBar`) is neither: Tern's own seg, with its own hover fill and no Plotroom cue; the strip is Tern's status bar look, a keycap then what the key does. A Board card is neither too: a selectable `card` (it carries `selected`), whose click selects it, with Tern's own hover and selection ring. A **link** opens something: `role = "plotroom.link"`, its label underlined in `--l3`, the underline darkening under the pointer. Every node with a click action or an `href` is a button, a key footer seg, a selectable card or wears the link role, and no other node does (`hx.miscued`). Buttons are neutral: no tone, destructive ones included; their confirm is the guard.
 
-**One primary button, only in a confirm.** Tern's guide makes one accent `primary` button per screen, the action on the selection. Plotroom departs from it: accent already means your turn, and an accent Next move on every preview would wear that cue down until Needs you no longer stands out. So the only `primary` button is the one choice a confirm overlay (`overlay` keyed `confirm`) offers on Enter, today the worktree removal's **Keep**, where nothing else on screen competes for it; a confirm has at most one. The preview's Next move, the worktree card, Settings, the Draft review's **Send to agent** (a decision row, not an overlay) and every other button stay `default` or `quiet`. `danger` is never used: a red Remove would say "needs fixing", and the confirm is the guard. The confirms the window asks through Tern's picker (Send to an agent, guided mutations) are Tern's own confirm rows, not Plotroom buttons. Until Plotroom builds against an SDK with `tern.ui.button` and its variants, no button sets one.
+**One primary button, only in a confirm.** Tern's guide makes one accent `primary` button per screen, the action on the selection. Plotroom departs from it: accent already means your turn, and an accent Next move on every preview would wear that cue down until Needs you no longer stands out. So the only `primary` button is the one choice a confirm overlay (`overlay` keyed `confirm`) offers on Enter, today the worktree removal's **Keep**, where nothing else on screen competes for it; a confirm has at most one. The preview's Next move, the worktree card, Settings, the Draft review's **Send to agent** (a decision row, not an overlay) and every other button stay `default` or `quiet` (`quiet`: icon buttons, Show less, Get started's Dismiss). `danger` is never used: a red Remove would say "needs fixing", and the confirm is the guard. The confirms the window asks through Tern's picker (Send to an agent, guided mutations) are Tern's own confirm rows, not Plotroom buttons.
+
+### Checks table
+
+The preview's checks, one Tern `table` per group (Failing, Running, Queued; Passed and Skipped in their fold), each under its muted `Group N` heading. Columns: **Check** (the one `grow` column, a status `dot` in the run's tone: `error` failed, `warning` running or queued, `success` passed, `muted` skipped; Required, Likely flaky and Ignored as muted text after the name), **Workflow** and **Took** (`align = "end"`, `mono`). Rows are `selectable`: a click opens the check's page. Each row's right-click menu offers Open (when the check has a page) and, on a failing check not yet ignored, Ignore in this repo…; Tern adds Copy row. A failing check's excerpt is a `code` node (`lang = "text"`) in a plain section headed by its first error line, that line marked `error`, clamped by `preview` with Tern's "K more lines". Never put it in a collapsible section: Tern applies a code `preview` only while that disclosure is folded, and folded draws no body.
 
 ### Worktree card
 
 A `card` in the preview while the item has a worktree: neutral badges (Up to date or Not at PR head; Clean, Uncommitted changes or Changes unchecked; N unpushed), the branch and path with copy icons, the update commands folded away when behind, then buttons (Open in new tab or Go to tab, Remove worktree, Open Git view). The card takes the `error` tone only when the worktree could not be made, and then shows why and no buttons. It is a cache of git, never the source.
+
+### Loading, empty and error
+
+Tern's four states, in the place of what they stand for and under its key, so the loaded part replaces them without a jump. **Loading:** a `skeleton` (default `shimmer` variant, no tone) shaped like the part: `rows` for a list (Checks 3, Reviewers, Unresolved threads and linked items 2), `text` lines for the Summary, the description and a worktree's linked items, and a `block` 8 lines tall where the Draft review's diff goes. **Empty:** an `empty` with `variant = "inline"`, no tone, its `title` saying what is missing ("No checks", a Board column's "None"). **Error:** the same inline `empty` with `tone = "error"` (needs fixing), `title` `Could not load <what>`, `text` the tool's message and when it is tried again, and one child: a Retry button (render's `button()`, `icon = "redo"`, size `sm`). The queue picker's own `state = "loading" | "error"` stays.
 
 ### Commands
 
@@ -93,11 +105,11 @@ Tern's `prefs` side sheet in the block's layer, four pages (Views, Actions, Repo
 
 ### Draft review
 
-The review block is a focused workspace, not a feed of repeated diff cards. A compact header identifies the pull request and reviewed commit. A wrapping decision row holds the three neutral verdict choices (the selected one has a check), the kept/dropped count and **Send to agent**; sending and sent states replace the action, and a failed handoff offers **Copy** alongside its explanation.
+The review block is a focused workspace, not a feed of repeated diff cards. A compact header identifies the pull request and reviewed commit. A wrapping decision row holds the verdict choices as one `buttons` group (joined, neutral, the chosen one `on`), the kept/dropped count and **Send to agent**, all `md`; while sending, Send is `busy` and reads Sending…; once sent a muted Sent badge replaces it, and a failed handoff offers **Copy** alongside its explanation.
 
-A native `list` navigator selects Summary, each finding in file order, then Instructions. Its native selection stays in view; each finding names its filename, line and Kept/Dropped state without using colour as the only cue, with its kind, full path and feedback excerpt in the tooltip. The selected content occupies the remaining width: readable Markdown feedback, its native diff excerpt and local Keep/Drop and Edit controls. Off-diff findings explain why they cannot be kept. Summary and Instructions have explicit Edit controls, with Done while editing.
+A native `list` navigator selects Summary, each finding in file order, then Instructions. Its native selection stays in view; each finding names its filename, line and Kept/Dropped state without using colour as the only cue, with its kind, full path and feedback excerpt in the tooltip. The selected item is one `card` (no tone, no icon): a finding's `head` is its path in mono, its `meta` where it is (line or lines), its `end` a `row` of `sm` buttons, Keep/Drop then Edit (Done while editing); the body holds its native diff excerpt, its Markdown feedback and, in a folded section, its suggestion as a `diff` of the lines it replaces (else `code`). Summary and Instructions are cards the same way, with Edit summary and Edit instructions at their `end`. Off-diff findings explain why they cannot be kept.
 
-Use `row`/`col`, `list`/`item`, `md`, `editor`, `diff` and native keycaps. At compact pane widths the navigator becomes a short list above the detail, not a hidden pane. `j`/`k` or arrows move, Space keeps/drops, `e`/Enter edits, `1`/`2`/`3` choose the verdict and ⌘↵ sends. Buttons use the same neutral ring in both Plotroom block surfaces; selection uses the list's native highlight, not a semantic tone. No decorative colour, new font, animation or custom diff renderer.
+The navigator and the card sit in a `split` (keyed `body`, the default hairline look, growing into the pane's height): side by side with minimums of 24ch and 40ch, or stacked (`dir = "col"`) below 100 columns. The shares the user drags (`change`) are kept for the block per direction and fed back as `sizes`. Use `split`, `card`, `list`/`item`, `button`/`buttons`, `md`, `editor`, `diff`, `code` and native keycaps. `j`/`k` or arrows move, Space keeps/drops, `e`/Enter edits, `1`/`2`/`3` choose the verdict and ⌘↵ sends. Buttons are Tern's `button` kind in both Plotroom block surfaces; selection uses the list's native highlight, not a semantic tone. No decorative colour, new font, animation or custom diff renderer.
 
 ## Adding a component
 

@@ -28,3 +28,7 @@ match = ["gh pr create*"]
 id = "pr-checks"
 match = ["gh pr checks", "gh pr checks *"]
 
+[[lenses]]
+id = "git-push"
+match = ["git push*"]
+

@@ -186,7 +186,8 @@ export type Settings = {
 -- `stop`: why the item's chain stopped at Needs you (3 failed checks, 3 runs without progress, 3 failed starts).
 -- While it works: `since`, when its run or turn began (seconds since the epoch, on the window's clock), and `expected`,
 -- the median seconds of its action's finished runs (nil: fewer than 5, or a later turn); both digits as text.
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
+-- `review`: when the newest Draft review file of its run that opened was written (nil: none opened), for Show Draft review.
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string?, review: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`, each GitHub one with the login
@@ -292,6 +293,7 @@ export type State = {
 	nowOn: boolean, -- Now is shown instead of a view
 	nowAt: string?, -- the picker id of the Now row previewed
 	lanesFold: boolean, -- a Board's fold (Not started, Worktree, Merged or closed) is open
+	laneShown: string?, -- the node id of the Board card last scrolled into view (render's boardNode), nil while no Board is drawn
 	lanes: { of: { any }, seq: number, rows: { any }, cols: { any } }?, -- a Board's rows and columns (engine.laneColumns), made from `of` (Now's rows or a view's visible items) at noteSeq `seq`
 	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
@@ -535,7 +537,6 @@ M.STAGE = {
 	none = { text = "Not started", tone = "muted" },
 } :: { [string]: { text: string, tone: string, title: string? } }
 M.RUN_TONE = { success = "success", failure = "error", pending = "warning", neutral = "muted" } :: { [string]: string }
-M.RUN_ICON = { success = "check", failure = "x", pending = "clock", neutral = "minus" } :: { [string]: string }
 M.MERGE_STATE = {
 	conflicts = { text = "Conflicts", tone = "error" },
 	behind = { text = "Behind base", tone = "muted" },

@@ -275,7 +275,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 			page = p
 		end
 	end
-	same(page, { id = "general", label = "General", group = "General", icon = "gauge" }, "the keys are on the General page")
+	same(page, { id = "general", label = "General", group = "General", icon = "gauge", changed = 1 }, "the keys are on the General page, which counts Summaries off (the harness's) as changed")
 	local ids: { string } = {}
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
@@ -499,14 +499,17 @@ case("host: the Go to tab Commands row wears the key that goes to the tab, and s
 	end
 end)
 
-case("host: the preview lists the branch and the base apart, each with a copy icon that copies its name", function(w: World)
+case("host: the preview lists the branch and the base apart, each with a copy button that copies its name", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local refs: { [string]: string } = { branch = "branch-1", base = "main" }
 	for key, name in refs do
-		local icon: any = findKey(findKey(pickerNode(b), key), "copy", "icon")
-		eq(icon.p.href, name, key .. ": Tern's copy action copies the href")
-		eq(icon.p.actions.click, "copy", key .. ": on click")
+		local copy: any = findKey(findKey(pickerNode(b), key), "copy", "button")
+		eq(copy.p.href, name, key .. ": Tern's copy action copies the href")
+		eq(copy.p.actions.click, "copy", key .. ": on click")
+		eq(copy.p.text, "", key .. ": an icon-only button")
+		eq(copy.p.icon, "copy", key .. ": its icon")
+		eq(copy.p.title, "Copy " .. key, key .. ": named by its tooltip")
 	end
 end)
 
@@ -754,11 +757,90 @@ case("settings: Now's switches saved malformed are shown as the defaults Now run
 	yes(reviewed, "Now runs with every reason on")
 	goToSettings(b, "views")
 	expand(b, "nopen:now")
-	eq(rowIn(b, "now:review").control.value, "on", "shown as the default")
+	eq(rowIn(b, "now:review").control.on, true, "shown as the default")
 	has(rowIn(b, "now:review").disabled, "malformed", "and says why it cannot change")
-	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = "off" })
+	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = false })
 	same(w.kv.get("now"), { off = "review" }, "the saved store is untouched")
 	has(rowIn(b, "now:review").warning, "malformed", "the row says why")
+end)
+
+-- Settings' nav: page id -> its `changed` count.
+local function changedCounts(b: Block): { [string]: number }
+	local out: { [string]: number } = {}
+	for _, p in prefsOf(b).pages do
+		out[p.id] = p.changed
+	end
+	return out
+end
+
+case("settings: an on/off row is a switch: a click sends a boolean, Enter flips it, and a string changes nothing", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	same({ rowIn(b, "now:teams").control.k, rowIn(b, "now:teams").control.on }, { "switch", false } :: { any }, "team review requests: a switch, off by default")
+	eq(rowIn(b, "now:teams").control.options, nil, "with no On/Off segments")
+	b.event({ ev = "change", id = "layer.settings", item = "now:teams", value = "on" })
+	eq(w.kv.get("now"), nil, "the old segment's string saves nothing")
+	b.event({ ev = "select", id = "layer.settings", item = "now:teams" })
+	b.press("enter")
+	eq(w.kv.get("now").teams, true, "Enter on the row flips it on")
+	eq(rowIn(b, "now:teams").control.on, true, "and the switch shows it")
+	b.press("enter")
+	eq(w.kv.get("now").teams, false, "and off again")
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = false })
+	same(w.kv.get("now").off, { "blocked" }, "a click's false switches a reason off")
+	eq(rowIn(b, "now:blocked").control.on, false, "shown off")
+end)
+
+case("settings: each page counts the settings, views, actions and formats on it that differ from the defaults", function(w: World)
+	hostScene(w, 3)
+	local store: any = w.kv.store
+	store["views-prs"], store["views-issues"], store.keys = nil, nil, nil
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	same(changedCounts(b), { views = 0, prompts = 0, repos = 1, general = 1 }, "fresh: the default views and actions count nothing; the checkout saved at launch and Summaries off (the harness's) count one each")
+	-- Views: a Now switch, a view's layout, a deleted default.
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = false })
+	b.event({ ev = "change", id = "layer.settings", item = "now:board", value = "board" })
+	eq(changedCounts(b).views, 1, "a reason switched off counts; a row Now does not have changes nothing")
+	b.event({ ev = "change", id = "layer.settings", item = "vlayout:prs:v1", value = "board" })
+	eq(changedCounts(b).views, 2, "a default view laid out as a Board differs from its default")
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = true })
+	eq(changedCounts(b).views, 1, "switched back on, the reason no longer counts")
+	-- Actions: an edited default of each kind; saving the stores keeps every other default (next and checker by name) unchanged.
+	b.event({ ev = "change", id = "layer.settings", item = "peffort:prs:p1", value = "high" })
+	eq(changedCounts(b).prompts, 1, "Review with an effort differs")
+	b.event({ ev = "change", id = "layer.settings", item = "pwhere:issues:p3", value = "worktree" })
+	eq(changedCounts(b).prompts, 2, "Plan run in the worktree differs; Implement and Fix still lead to Watch and are checked by Check")
+	yes(w.kv.get("prompts-issues") ~= nil and w.kv.get("prompts-prs") ~= nil, "both stores were saved")
+	local issues: any = w.kv.get("prompts-issues")
+	local items: { any } = {}
+	for i, p in issues.items do
+		if i ~= 4 then
+			table.insert(items, p)
+		end
+	end
+	issues.items = array(items)
+	w.kv.put("prompts-issues", issues) -- as another machine's edit: shown at the next render
+	goToSettings(b, "prompts")
+	eq(changedCounts(b).prompts, 5, "a deleted default (Check) counts, and Implement and Fix, whose checker it was, now differ too")
+	-- Repositories: a name format and a repository's branch format.
+	w.kv.put("branch-format", "{key}")
+	w.kv.put("branch-formats", { ["o/r"] = "x/{key}" })
+	goToSettings(b, "repos")
+	eq(changedCounts(b).repos, 3, "the checkout, a name format and the repository's branch format")
+	-- General: Summaries switched back on, then a shortcut and an action's key.
+	goToSettings(b, "general")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = true })
+	eq(changedCounts(b).general, 0, "Summaries on is the default")
+	bindKey(b, "worktree", "w")
+	eq(changedCounts(b).general, 1, "a bound shortcut counts")
+	local prs: any = w.kv.get("prompts-prs")
+	prs.items[2].key = "q"
+	w.kv.put("prompts-prs", prs)
+	goToSettings(b, "general")
+	same({ changedCounts(b).general, changedCounts(b).prompts }, { 2, 5 }, "an action's key counts on General, where it is set, and not as a changed action")
 end)
 
 case("host: a view that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)
@@ -1173,8 +1255,8 @@ case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories
 	for _, p in prefsOf(b).pages do
 		byId[p.id] = p
 	end
-	same(byId.repos, { id = "repos", label = "Repositories", group = "Code", icon = "folder" }, "Repositories is a page of the Code group")
-	same(byId.general, { id = "general", label = "General", group = "General", icon = "gauge" }, "and General the General group's")
+	same({ byId.repos.id, byId.repos.label, byId.repos.group, byId.repos.icon }, { "repos", "Repositories", "Code", "folder" }, "Repositories is a page of the Code group")
+	same({ byId.general.id, byId.general.label, byId.general.group, byId.general.icon }, { "general", "General", "General", "gauge" }, "and General the General group's")
 	b.press("escape")
 	pickScope(b, "issues:v1")
 	b.typeText("s")
@@ -1803,33 +1885,49 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	ignored("no pull request", "x")
 end)
 
--- The key footer under the queue, each entry "<key> <what it does>" with its key drawn as a keycap; nil without one.
+-- The key footer in the dock, each seg "<key> <what it does>" with its key drawn as a keycap; nil without one. Also checks
+-- that the segs' priorities fall in order, so a narrow pane drops the last listed first.
 local function footerOf(b: Block): { string }?
 	local view: any = b.view()
-	local bar = findKey(view.layer, "keybar", "row")
+	local bar = view.dock and findKey(view.dock, "keybar", "status")
 	if not bar then
 		return nil
 	end
 	local out: { string } = {}
-	for _, n in bar.c do
+	for i, n in bar.c do
+		eq(n.k, "seg", "a footer key is a status seg")
 		eq(n.p.spans[1].s, "key", "a footer key is a keycap")
+		eq(n.p.priority, #bar.c - i + 1, "seg " .. i .. " drops after the ones listed after it")
 		table.insert(out, n.p.spans[1].t .. n.p.spans[2].t)
 	end
 	return out
 end
 
-case("host keys footer: Commands and Shortcut list first, then the selection's keys by use, at most 5, and only bound ones", function(w: World)
+-- The footer seg whose text starts with `prefix` ("<key> <label>").
+local function footerSeg(b: Block, prefix: string): any
+	local view: any = b.view()
+	for _, n in findKey(view.dock, "keybar", "status").c do
+		if string.sub(n.p.spans[1].t .. n.p.spans[2].t, 1, #prefix) == prefix then
+			return n
+		end
+	end
+	return nil
+end
+
+case("host keys footer: Commands and Shortcut list first, then every bound key for the selection by use, least used dropping first", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" })
 	local b = openQueue(w)
-	same(footerOf(b), { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	local first = footerOf(b) or {}
+	same({ table.unpack(first, 1, 5) }, { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	yes(#first > 5, "not cut at five: Tern's strip drops the lowest priority when narrow (" .. #first .. " keys)")
 	has(pickerOf(b).role, ".keys", "the picker ends above the footer")
 	for _ = 1, 3 do
 		b.typeText("r")
 		w.flush()
 	end
 	b.typeText("o")
-	same(footerOf(b), { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
+	same({ table.unpack(footerOf(b) or {}, 1, 5) }, { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
 	local saved: any = w.kv.get("keys")
 	saved.next = "x"
 	w.kv.put("keys", saved)
@@ -1837,12 +1935,31 @@ case("host keys footer: Commands and Shortcut list first, then the selection's k
 	b.press("up")
 	w.flush()
 	local bar = footerOf(b) or {}
-	eq(#bar, 5, "still at most 5")
 	eq(string.sub(bar[3], 1, 2), "x ", "a bound Next move comes right after Shortcut list, named as the move")
 	eq(bar[3], "x " .. hx.palette(w, b).labels.next, "named as Commands names it")
 	b.typeText("s")
 	w.flush()
 	eq(footerOf(b), nil, "Settings takes the keys: no footer under it")
+end)
+
+case("host keys footer: a click on a seg runs what its key runs, and a seg no longer listed runs nothing", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local help = footerSeg(b, "? Shortcut list")
+	same(hx.miscued(b.view().dock), {}, "a seg that does something is Tern's own clickable seg, and wears no Plotroom cue")
+	b.event({ ev = "action", id = "dock.keybar." .. help.p.key, act = help.p.actions.click })
+	yes(findKey(b.view().layer, "help", "overlay") ~= nil, "the Shortcut list opens, as ? does")
+	b.press("escape")
+	local refresh = footerSeg(b, "r Refresh")
+	local usage: any = w.kv.get("usage")
+	local before = if usage and usage.counts["queue:refresh"] then usage.counts["queue:refresh"].n else 0
+	b.event({ ev = "action", id = "dock.keybar." .. refresh.p.key, act = refresh.p.actions.click })
+	usage = w.kv.get("usage")
+	eq(usage.counts["queue:refresh"].n, before + 1, "Refresh ran and counted as its key's use")
+	w.kv.put("keys", { more = "." })
+	b.press("down")
+	b.event({ ev = "action", id = "dock.keybar.k9", act = refresh.p.actions.click })
+	eq(w.kv.get("usage").counts["queue:refresh"].n, before + 1, "unbound, Refresh is off the footer and its old seg runs nothing")
 end)
 
 case("host keys footer: with the default keys only Commands shows, an unbound Commands too leaves no footer", function(w: World)
@@ -1864,7 +1981,8 @@ case("host keys footer: a saved action's key shows the action where it beats the
 	}) })
 	local b = openQueue(w)
 	local bar = footerOf(b) or {}
-	same(bar, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	same({ table.unpack(bar, 1, 5) }, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	lacks(table.concat(bar, "|"), "Hand edited", "anywhere in the footer")
 	local saved: any = w.kv.get("keys")
 	saved.agent = ""
 	w.kv.put("keys", saved)
@@ -1874,6 +1992,9 @@ case("host keys footer: a saved action's key shows the action where it beats the
 	local opened = #w.opened
 	b.typeText("m")
 	eq(w.opened[opened + 1], runLink("o/r", 1, "p1"), "and m does run the saved action, as the footer says")
+	local mine = footerSeg(b, "m Mine")
+	b.event({ ev = "action", id = "dock.keybar." .. mine.p.key, act = mine.p.actions.click })
+	eq(w.opened[opened + 2], runLink("o/r", 1, "p1"), "a click on its seg runs it too")
 end)
 
 case("host: the preview's Unsnooze button wears the snooze key, which ends the snooze", function(w: World)
@@ -1883,13 +2004,18 @@ case("host: the preview's Unsnooze button wears the snooze key, which ends the s
 	b.typeText("Z")
 	w.flush()
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
-	local button: any = findKey(pickerNode(b), "unsnooze", "item")
-	same(button and button.p.hint, { "z" }, "Unsnooze shows z")
+	local button: any = findKey(pickerNode(b), "unsnooze", "button")
+	same(button and button.p.keys, { "z" }, "Unsnooze shows z")
+	w.kv.put("keys", { snooze = "Q" })
+	b.press("down")
+	b.press("up")
+	button = findKey(pickerNode(b), "unsnooze", "button")
+	same(button and button.p.keys, { "shift", "q" }, "an upper-case key shows as Shift and its letter: a keycap upper-cases every letter")
 	w.kv.put("keys", { snooze = "" })
 	b.press("down")
 	b.press("up")
-	button = findKey(pickerNode(b), "unsnooze", "item")
-	eq(button and button.p.hint, nil, "no keycap once the key is removed")
+	button = findKey(pickerNode(b), "unsnooze", "button")
+	eq(button and button.p.keys, nil, "no keycap once the key is removed")
 end)
 
 case("host: Settings > Actions' Next action row offers the other actions, refuses a loop, and deleting an action drops it as a next", function(w: World)
@@ -2997,7 +3123,7 @@ case("host: a snoozed item's preview offers Unsnooze, which ends the snooze", fu
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
 	local row = findKey(pickerNode(b), "unsnooze")
 	yes(row ~= nil, "the snoozed item's preview has the row")
-	has(row.p.label, "Snoozed until", "it says until when")
+	has(row.p.text, "Snoozed until", "it says until when")
 	b.event({ ev = "action", act = "unsnooze" })
 	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, nil, "the saved snooze is gone")
 	eq(findKey(pickerNode(b), "unsnooze"), nil, "and the row with it")
@@ -3042,6 +3168,61 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	eq(#viewSearchesOf(s.gh, "search"), 2, "the search resumes by itself once the limit has passed")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
 	lacks(b.text(), "Paused by GitHub", "the pause note is gone")
+end)
+
+case("host: a git push or a gh pr, issue or run command that succeeds in any shell refreshes every queue now; others and failures change nothing", function(w: World)
+	local s = hostScene(w, 3)
+	local one = openQueue(w)
+	openQueue(w, 2)
+	local function searches(): number
+		return #viewSearchesOf(s.gh, "search")
+	end
+	local finish: any = w.window.handlers.command_finished
+	local function done(line: string, status: number)
+		finish({ pane = 7, line = line, status = status, took_ms = 5 }, nil)
+		w.advance(1000)
+		w.flush()
+	end
+	local before = searches()
+	done("ls -la", 0)
+	done("git status", 0)
+	done("gh repo view", 0)
+	done("gh pr merge 1", 1)
+	done("git push", 128)
+	done("echo gh pr list", 0)
+	eq(searches(), before, "other lines and failed commands refresh nothing")
+	done("git push origin feature", 0)
+	eq(searches(), before + 2, "a git push refreshes both queues")
+	done("gh pr merge 1", 0)
+	eq(searches(), before + 4, "so does gh pr")
+	done("gh issue create", 0)
+	eq(searches(), before + 6, "gh issue")
+	done("gh run rerun 5", 0)
+	eq(searches(), before + 8, "and gh run")
+	same(listed(one), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the queue still lists its items")
+end)
+
+case("host: a command that refreshes the queue still waits for GitHub's cooldown", function(w: World)
+	local s = hostScene(w, 3)
+	local limited = true
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and limited then
+			return { status = 1, stderr = "gh: API rate limit exceeded (HTTP 403)\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	eq(#viewSearchesOf(s.gh, "search"), 1, "the first search was refused")
+	limited = false
+	local finish: any = w.window.handlers.command_finished
+	finish({ pane = 7, line = "gh pr merge 1", status = 0, took_ms = 5 }, nil)
+	w.advance(1000)
+	w.flush()
+	eq(#viewSearchesOf(s.gh, "search"), 1, "nothing is sent inside the cooldown")
+	w.advance(299 * 1000)
+	w.flush()
+	eq(#viewSearchesOf(s.gh, "search"), 2, "the refresh runs once the limit has passed")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
 end)
 
 case("host: clicking a view refreshes it, even a fresh cached one or the one already shown, and the worktrees list back to it", function(w: World)
@@ -3492,11 +3673,11 @@ end)
 local function nextOf(w: World, b: Block, id: string): any
 	b.event({ ev = "select", id = "layer.queue", item = id })
 	w.advance(300)
-	local button: any = findKey(pickerNode(b), "next", "item")
+	local button: any = findKey(pickerNode(b), "next", "button")
 	local p = hx.palette(w, b)
 	return {
-		button = if button then button.p.label else nil,
-		hint = if button then button.p.hint else nil,
+		button = if button then button.p.text else nil,
+		hint = if button then button.p.keys else nil,
 		row = if p.ids[1] == "next" then p.labels.next else nil,
 		group = p.groups.next,
 		key = p.keys.next,
