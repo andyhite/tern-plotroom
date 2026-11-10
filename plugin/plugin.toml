@@ -24,3 +24,7 @@ palette = false
 id = "pr-create"
 match = ["gh pr create*"]
 
+[[lenses]]
+id = "git-push"
+match = ["git push*"]
+
