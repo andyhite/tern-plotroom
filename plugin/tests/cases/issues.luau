@@ -1531,7 +1531,7 @@ case("host: with both CLIs on, Settings has four pages: Views, Actions, Reposito
 	yes(rowIn(b, "fmt:branch") ~= nil and rowIn(b, "ropen:o/r") ~= nil and rowIn(b, "jopen:ABC") ~= nil, "with their rows")
 	b.press("escape")
 	goToSettings(b, "general")
-	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Refresh, then Reset")
+	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Draft review", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Draft review, Refresh, then Reset")
 	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
 	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
 end)
@@ -2984,6 +2984,52 @@ windowCase("window: an agent joins the tab working in its worktree, not a pane i
 	eq(w.window.switches[#w.window.switches], 6, "in its session")
 	eq(w.window.panes[12].tab, 22, "the agent's pane moved into that tab")
 	eq(#w.window.agents, 2, "two agents started")
+end)
+
+windowCase("window: a worktree tab Plotroom opened is tinted while its agent needs input, and a colour the user set is left alone", function(w: World)
+	local s = agentScene(w)
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(w.window.panes[11].cwd, s.target, "the agent has a worktree tab of its own")
+	local function color(tab: number): string?
+		for _, t in w.window.tabs do
+			if t.id == tab then
+				return t.color
+			end
+		end
+		return nil
+	end
+	local function paint(tab: number, c: string?) -- what the user's tab menu does
+		for _, t in w.window.tabs do
+			if t.id == tab then
+				t.color = c
+			end
+		end
+	end
+	local function turn(state: string)
+		w.window.agentStates[11] = state
+		w.advance(4000)
+	end
+	eq(color(11), nil, "a working agent's tab is not tinted")
+	turn("waiting_input")
+	eq(color(11), "blue", "the tab takes your turn's colour while its agent needs input")
+	eq(color(1), nil, "the queue's tab is not a worktree tab")
+	turn("working")
+	eq(color(11), nil, "and is cleared once the agent works")
+	turn("waiting_input")
+	turn("idle")
+	eq(color(11), nil, "or finishes")
+	turn("waiting_input")
+	paint(11, "red")
+	turn("working")
+	eq(color(11), "red", "a colour the user set over the tint is not cleared")
+	turn("waiting_input")
+	eq(color(11), "red", "nor overwritten")
+	paint(11, nil)
+	turn("working")
+	turn("waiting_input")
+	eq(color(11), "blue", "a tab the user cleared is tinted again")
 end)
 
 windowCase("window: a host announcing another protocol is refused for the new asks too: a pull request's or an issue's worktree, a tab, a prompt", function(w: World)

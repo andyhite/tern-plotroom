@@ -350,7 +350,7 @@ export type WinPane = { block: string?, cwd: string, tab: number, kind: string?,
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
 export type Win = {
 	panes: { [number]: WinPane },
-	tabs: { { id: number, session: number } },
+	tabs: { { id: number, session: number, color: string? } },
 	sessions: { number },
 	focused: number?,
 	surfaces: { [number]: any }, -- pane -> { main, dock, layer } regions of TSP nodes
@@ -454,7 +454,7 @@ export type World = {
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
-	click: (string, number?) -> any,
+	click: (string, number?, { alt: boolean? }?) -> any, -- a link click in `pane` (default 1); `{alt = true}` holds Alt
 	command: (string) -> (),
 	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
@@ -714,10 +714,10 @@ local function newWorld(instantiate: Loader, context: string): World
 		run = function(_self: any, pane: number, text: string)
 			table.insert(win.runs, { pane = pane, text = text })
 		end,
-		-- A block of `kind` in the tab of `opts.target` (else a new tab), as cx:new_block opens it: its launch records the
-		-- kind, args, how and opts (`newBlock` true).
+		-- A block of `kind` in the tab of `opts.target` (a glimpse: the focused pane's tab; else a new tab), as cx:new_block
+		-- opens it: its launch records the kind, args, how and opts (`newBlock` true).
 		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
-			local target = if opts then win.panes[opts.target] else nil
+			local target = if opts and opts.target then win.panes[opts.target] elseif how == "glimpse" and win.focused then win.panes[win.focused] else nil
 			return addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
 		end,
 		session = {
@@ -752,7 +752,7 @@ local function newWorld(instantiate: Loader, context: string): World
 			tabs = function(_self: any): any
 				local rows: { any } = {}
 				for _, t in win.tabs do
-					table.insert(rows, { id = t.id, session = t.session })
+					table.insert(rows, { id = t.id, session = t.session, color = t.color })
 				end
 				return rows
 			end,
@@ -812,6 +812,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			name_tab = function(_self: any, tab: number, name: string)
 				win.tabNames[tab] = name
+			end,
+			color_tab = function(_self: any, tab: number, color: string?)
+				for _, t in win.tabs do
+					if t.id == tab then
+						t.color = color
+					end
+				end
 			end,
 			focus = function(_self: any, pane: number)
 				win.focused = pane
@@ -1567,12 +1574,13 @@ local function newWorld(instantiate: Loader, context: string): World
 		link = function(block: Block)
 			linked[block.pane] = block
 		end,
-		click = function(url: string, pane: number?): any
+		click = function(url: string, pane: number?, mods: { alt: boolean? }?): any
 			local handler = routes.link
 			if handler == nil then
 				error("load \"window\" before clicking a link", 2)
 			end
-			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = false, shift = false, ctrl = false } }, windowCx)
+			local alt = mods ~= nil and mods.alt == true
+			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = alt, shift = false, ctrl = false } }, windowCx)
 		end,
 		command = function(id: string)
 			local def = commands[id]

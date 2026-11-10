@@ -346,7 +346,7 @@ local function rowsOf(state: State, snap: Snap): { any }
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected|review;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -358,7 +358,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. "|" .. (info.review or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -618,6 +618,10 @@ local function itemActions(state: State, item: any, open: { [string]: boolean })
 	-- Disagree with check… (palette only): while the item's newest agent is a checker with a verdict, exited or not.
 	if (state.agentInfo[item.key] or {} :: core.AgentInfo).check then
 		table.insert(out, { id = "agentdisagree", label = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
+	end
+	-- Show Draft review (palette only): while the item's newest run has a Draft review that opened, its agent exited or not.
+	if (state.agentInfo[item.key] or {} :: core.AgentInfo).review then
+		table.insert(out, { id = "agentreview", label = "agentreview", href = hrefOf(state, item, "agentreview") })
 	end
 	-- Triage is the block's own (no link).
 	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
@@ -1437,6 +1441,9 @@ local function agentsPreview(state: State): { Node }
 		for _, act in AGENT_COMMANDS do
 			table.insert(links, ui.node("text", { key = act, href = engine.agentHref(row.key, act) }))
 		end
+		if (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+			table.insert(links, ui.node("text", { key = "agentreview", href = engine.agentHref(row.key, "agentreview") }))
+		end
 		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	end
 	return kids
@@ -1754,7 +1761,7 @@ local function boardNode(state: State, bar: boolean?): Node
 	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
 	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one sans line
 	-- (18px, the block's `font = "sans"`) plus 6px, about seven tenths of a cell row, under the picker's head, the column
-	-- headings, the fold's button and, with `bar`, the key footer (32px, about two cell rows).
+	-- headings, the fold's button and, with `bar`, the key footer (24px, about one and a half cell rows).
 	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.7))
 	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
 	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
@@ -2173,12 +2180,9 @@ local function finishedConfirm(state: State): Node
 	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
--- `bar`: requests' keyBar, the key footer pinned under the picker (plotroom.css lifts the picker's bottom for it).
+-- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
 function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
-	if bar then
-		table.insert(layer, bar)
-	end
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
@@ -2195,7 +2199,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end
-	return { main = ui.col(M.rpcNodes(state, palette)), layer = ui.col(layer) }
+	return { main = ui.col(M.rpcNodes(state, palette)), dock = if bar then ui.col({ bar }) else nil, layer = ui.col(layer) }
 end
 
 return M
