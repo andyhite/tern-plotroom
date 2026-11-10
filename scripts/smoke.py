@@ -6,7 +6,8 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
-        before it (read from git), then makes its worktree through the real link flow.
+        before it (read from git), then makes its worktree through the real link flow. Last, setup_wait: a second `tern serve` under zsh
+        (shell integration) starts an agent on a new worktree once its setup command finishes.
 Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.8), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
@@ -2590,6 +2591,61 @@ SCENARIOS = [
 ]
 
 
+def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
+    """Its own `tern serve` under zsh with an empty HOME (Tern's shell integration only; smoke's /bin/sh reports no command): an agent on a new
+    worktree whose setup command takes 4 s starts once the setup shell reports it finished, not at cx.session:settle's 2-minute ceiling, and no
+    toast says setup did not finish."""
+    zsh = shutil.which("zsh")
+    if not zsh:
+        WARNINGS.append("no zsh: the setup wait under a shell with integration was not run")
+        return "setup wait NOT RUN"
+    tmp.mkdir()
+    s = Smoke(tern, git, omp, tmp)
+    try:
+        s.repo("a", "gent", "agent", (1,))
+        (tmp / "zhome").mkdir()
+        s.env.update(SHELL=zsh, HOME=str(tmp / "zhome"))
+        s.env.pop("ZDOTDIR", None)
+        s.start()
+        s.selftest()
+        s.label = "setup wait (zsh)"
+        stamp = "2026-01-01T00:00:00Z"
+        pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
+              "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+              "labels": [], "runs": [], "runTotal": 0}
+        (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+        s.ctl_ok("tab", "new")
+        s.ctl_ok("ready")
+        s.cd(s.checkout("agent"))
+        s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+        s.leave_now()
+        s.wait_text("the pull request", "Agent PR 1")
+        stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
+        s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
+        kv = json.loads(stores[0].read_text(encoding="utf-8"))
+        marker = tmp / "setup-done"
+        kv["setup-commands"] = {"a/gent": ["sleep 4 && touch %s" % marker]}
+        stores[0].write_text(json.dumps(kv), encoding="utf-8")
+        s.select_row()
+        s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+        s.wait_text("the action picker", "Run on ")
+        s.ctl_ok("picker", "enter")
+        s.wait_text("the prompt", "Prompt for an agent on")
+        s.ctl_ok("type", json.dumps("smoke prompt"))
+        s.ctl_ok("key", "Enter")
+        started = s.smoke / "agents.jsonl"
+        s.wait_until("the agent starts", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
+        late = started.stat().st_mtime - marker.stat().st_mtime if marker.exists() else None
+        s.eq("the agent starts after setup finished, within 3 s of it (took %r s)" % late, True, late is not None and 0 <= late < 3)
+        s.eq("no toast says setup did not finish", [], [t for t in s.texts() if "Setup did not finish" in t or "Setup may still be running" in t])
+        return "setup wait under zsh (agent %.1f s after setup)" % late
+    except BaseException:
+        s.dump()
+        raise
+    finally:
+        s.stop()
+
+
 def sdk_drift(tern: str, tmp: Path) -> None:
     """Warn (never fail) when the installed Tern's own SDK types differ from the pinned snapshot."""
     out = tmp / "sdk"
@@ -2632,7 +2688,8 @@ def check_smoke() -> str:
             except GateError as why:
                 raise GateError("%s\n  last smoke result: %s" % (why, json.dumps(s.last)))
         s.final()
-        return "selftest toast, css clean, %d real-git scenarios (%.1f s)" % (len(SCENARIOS), time.monotonic() - started)
+        took = setup_wait(tern, git, omp, tmp / "zsh")
+        return "selftest toast, css clean, %d real-git scenarios, %s (%.1f s)" % (len(SCENARIOS), took, time.monotonic() - started)
     except BaseException:
         s.dump()
         raise

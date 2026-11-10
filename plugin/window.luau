@@ -54,8 +54,11 @@ local MENU_MS = 30 * 1000
 -- How often a waiting request looks for its answer on screen, in case the host's link to it never arrives.
 local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
--- How long an agent on a new worktree waits for its setup commands (the most cx.session:settle waits).
+-- How long an agent on a new worktree waits for its setup commands (the most cx.session:settle waits), how often it
+-- looks at the setup shell, and how long a shell that reports no command (no shell integration) is waited on.
 local SETUP_MS = 120 * 1000
+local SETUP_POLL_MS = 500
+local SETUP_SILENT_MS = 10 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
@@ -626,8 +629,11 @@ end
 -- agentCommand says (omp with Plotroom's extension, the prompt's model and effort). `split`: as a block beside the queue (pane `pane`), in its tab,
 -- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
 -- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
--- tab, which a `join` agent joins, and the agent starts once they finish (settle, up to SETUP_MS); a setup that fails,
--- is still running or cannot be waited on still starts it, with a toast saying why. `done` gets whether it started.
+-- tab, which a `join` agent joins, and the agent starts once the shell reports them finished (its pane's `running`
+-- and `last`, looked at every SETUP_POLL_MS: cx.session:settle alone resolves only at its deadline in Tern 0.9.14),
+-- with settle's SETUP_MS deadline as the ceiling. A setup that fails, is still running at the ceiling or cannot be
+-- waited on still starts it, with a toast saying why; a shell that reports no command within SETUP_SILENT_MS starts
+-- it then, with a toast that setup may still be running. `done` gets whether it started.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo, done: (boolean, WindowCx) -> ())
 	local model, effort, split = job.model, job.effort, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
@@ -739,21 +745,61 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		return done(start(), cx)
 	end
 	local sh: number = shell
-	cx.session:settle(sh, SETUP_MS):next(function(_, err, cx2)
-		if not cx2 then
-			return -- no window to start it in
+	local function key(p: PaneInfo?): string?
+		local l = if p then p.last else nil
+		return if l then l.line .. "\0" .. l.status .. "\0" .. l.took_ms else nil
+	end
+	local before = key(cx.session:pane(sh))
+	-- What the setup shell says: "closed", "running", "done" (with its status), or nil (nothing yet).
+	local function look(c: WindowCx): (string?, number?)
+		local p = c.session:pane(sh)
+		if not p then
+			return "closed", nil
+		elseif p.running then
+			return "running", nil
+		elseif p.last and key(p) ~= before then
+			return "done", p.last.status
 		end
-		cx = cx2 -- the window context of this call is spent
-		local p = if err then nil else cx.session:pane(sh)
-		local why = if err then tostring(err)
-			elseif not p then "Its tab closed."
-			elseif p.running then "Still running after " .. SETUP_MS // 60000 .. " minutes."
-			elseif p.last and p.last.status ~= 0 then "It exited with status " .. p.last.status .. "."
-			else nil
+		return nil, nil
+	end
+	local over, heard, waited = false, false, 0
+	local function finish(c: WindowCx, why: string?, title: string?)
+		over, cx = true, c -- the window context of this call is spent
 		if why then
-			cx:toast("error", "Setup did not finish for " .. t.label, why .. " The agent started anyway.")
+			cx:toast(if title then "info" else "error", (title or "Setup did not finish for ") .. t.label, why .. " The agent started anyway.")
 		end
 		done(start(), cx)
+	end
+	local function exited(status: number?): string?
+		return if status and status ~= 0 then "It exited with status " .. status .. "." else nil
+	end
+	local function poll(c: WindowCx?)
+		if over or not c then
+			return
+		end
+		local state, status = look(c)
+		if state == "closed" then
+			return finish(c, "Its tab closed.")
+		elseif state == "done" then
+			return finish(c, exited(status))
+		end
+		heard = heard or state == "running"
+		waited += SETUP_POLL_MS
+		if not heard and waited >= SETUP_SILENT_MS then
+			return finish(c, "Its shell does not report when a command finishes.", "Setup may still be running for ")
+		end
+		tern.timer(SETUP_POLL_MS, poll)
+	end
+	tern.timer(SETUP_POLL_MS, poll)
+	cx.session:settle(sh, SETUP_MS):next(function(_, err, cx2)
+		if over or not cx2 then
+			return -- started already, or no window to start it in
+		end
+		local state, status = look(cx2)
+		finish(cx2, if err then tostring(err)
+			elseif state == "closed" then "Its tab closed."
+			elseif state == "done" then exited(status)
+			else "Still running after " .. SETUP_MS // 60000 .. " minutes.")
 	end)
 end
 

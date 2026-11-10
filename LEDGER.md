@@ -59,7 +59,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Worktree: one key; the PR's head branch; an issue's branch from its linked PR or a chosen base | Commands, key, preview | Keep | — | Approved | The core of dispatch |
 | Checkouts and cloning | Settings › Repositories | Keep, plus automatic detection | 1 | Approved | Today a required manual step before any agent can start |
 | Setup commands | Settings › Repositories | Keep | — | Approved | |
-| An agent on a new worktree waits for its setup commands to finish (up to 2 minutes) before it starts; a failed or unfinished setup still starts it, with a toast saying why | Dispatch (worktree) | New | — | Approved | tern-plotroom#n6ha: an agent that starts during `pnpm install` trips over a half-done worktree. Waits with `cx.session:settle` on the setup shell |
+| An agent on a new worktree waits for its setup commands to finish (up to 2 minutes) before it starts; a failed or unfinished setup still starts it, with a toast saying why | Dispatch (worktree) | New | — | Approved | tern-plotroom#n6ha: an agent that starts during `pnpm install` trips over a half-done worktree. Watches the setup shell's reported command (`running`/`last`), with `cx.session:settle` as the 2-minute ceiling |
 | Name formats (branch and folder) | Settings › Worktrees | Merge into Settings › **Repositories** | 1 | Approved | A whole page for three fields |
 | Actions and Type a prompt… | Commands, Settings › Actions | Keep | — | Approved | |
 | Default actions (Review, Quick review, Address feedback, Watch, Implement, Fix, Plan) | Settings › Actions | Keep; outcomes added | 3 | Approved | Done: each names its default outcome, and sets Model, Opens in and Next action (Implement and Fix → Watch) |

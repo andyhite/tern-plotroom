@@ -377,7 +377,7 @@ export type Win = {
 	handlers: { [string]: any }, -- tern.on registrations by event name
 	runs: { { pane: number, text: string } }, -- every cx:run (text typed into a pane)
 	settles: { { pane: number, ms: number? } }, -- every cx.session:settle
-	setup: { ms: number?, err: string?, running: boolean?, status: number? }, -- how cx.session:settle resolves: after `ms` (default 0) with error `err`, else with the pane's command still running or its last status `status` (default 0)
+	setup: { ms: number?, err: string?, running: boolean?, status: number?, silent: boolean? }, -- what a shell does with a cx:run, as real Tern 0.9.14 reports it: `running` at once, then after `ms` (default 0) `last` with status `status` (default 0); `running` true: it never finishes; `silent`: no shell integration, so neither is ever reported. cx.session:settle resolves only at its deadline (as real Tern does), or with `err` at once
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
 	tabTitle: ((any) -> string?)?, -- the tern.chrome.tab_title formatter
 	refreshes: number, -- tern.chrome.refresh calls
@@ -716,6 +716,19 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 		run = function(_self: any, pane: number, text: string)
 			table.insert(win.runs, { pane = pane, text = text })
+			local p = win.panes[pane]
+			if p == nil or win.setup.silent then
+				return
+			end
+			local line = string.gsub(text, "\r$", "")
+			schedule(0, function()
+				p.running = { line = line, ms = 0 }
+			end)
+			if not win.setup.running then
+				schedule(win.setup.ms or 0, function()
+					p.running, p.last = nil, { line = line, status = win.setup.status or 0, took_ms = win.setup.ms or 0 }
+				end)
+			end
 		end,
 		-- A block of `kind` in the tab of `opts.target` (else a new tab), as cx:new_block opens it: its launch records the
 		-- kind, args, how and opts (`newBlock` true).
@@ -752,15 +765,9 @@ local function newWorld(instantiate: Loader, context: string): World
 				table.insert(win.settles, { pane = id, ms = ms })
 				return {
 					next = function(_self2: any, fn: (any, any, any) -> ())
-						schedule(win.setup.ms or 0, function()
-							local p = win.panes[id]
-							if win.setup.err or not p then
+						schedule(if win.setup.err then 0 else ms or 30000, function()
+							if win.setup.err or not win.panes[id] then
 								return fn(nil, win.setup.err or "pane closed", windowCx)
-							end
-							if win.setup.running then
-								p.running = { line = "setup", ms = ms or 30000 }
-							else
-								p.last = { line = "setup", status = win.setup.status or 0, took_ms = win.setup.ms or 0 }
 							end
 							fn("", nil, windowCx)
 						end)
