@@ -3052,19 +3052,33 @@ function M.agentStatus(state: State, raw: any)
 	state.agentsHeard = true
 end
 
--- How long the agent of item `key` has worked (seconds; nil: it is not working, or the window gave no start) and how
--- far along it probably is, 0 to 0.95 (nil: its action has too few finished runs to expect a duration): the bar eases
--- toward 90% at the expected duration, then creeps, never full before the run ends. ponytail: the start is on the
--- window's clock, so a remote host whose clock is off shows the difference; send an age instead if that matters.
-function M.agentClock(state: State, key: string): (number?, number?)
+-- How long the agent of item `key` has worked (ms; nil: it is not working, or the window gave no start), how far
+-- along it probably is, 0 to 0.95 (nil: its action has too few finished runs to expect a duration): the bar eases
+-- toward 90% at the expected duration, then creeps, never full before the run ends; and in how many ms that estimate
+-- reaches its next 5% step (nil: no estimate, or it is at 95%). Tern ticks the clock; only the estimate needs a redraw.
+-- ponytail: the start is on the window's clock, so a remote host whose clock is off shows the difference; send an
+-- age instead if that matters.
+local BAR_STEP = 0.05
+function M.agentClock(state: State, key: string): (number?, number?, number?)
 	local info = state.agentInfo[key]
 	local since = if state.agents[key] == "working" and info and info.since then tonumber(info.since) else nil
 	if not since then
-		return nil, nil
+		return nil, nil, nil
 	end
-	local elapsed = math.max(0, os.time() - since)
+	-- os.time() is whole seconds: anchor it to the monotonic clock once, so a redraw never moves a clock back.
+	state.wallAt = state.wallAt or (os.time() * 1000 - tern.now())
+	local elapsed = math.max(0, (state.wallAt :: number) + tern.now() - since * 1000)
 	local expected = if info and info.expected then tonumber(info.expected) else nil
-	return elapsed, if expected then math.min(0.95, 1 - math.exp(-2.3 * elapsed / math.max(expected, 1))) else nil
+	if not expected then
+		return elapsed, nil, nil
+	end
+	local span = math.max(expected, 1) * 1000
+	local fraction = math.min(0.95, 1 - math.exp(-2.3 * elapsed / span))
+	local nextStep = (math.floor(fraction / BAR_STEP + 1e-9) + 1) * BAR_STEP
+	if nextStep > 0.95 + 1e-9 then
+		return elapsed, fraction, nil
+	end
+	return elapsed, fraction, math.max(1, math.ceil(-span * math.log(1 - nextStep) / 2.3 - elapsed))
 end
 
 -- The Agents scope's rows: every agent not exited, by repository then item key. `repo` is the part of the key before `#`.

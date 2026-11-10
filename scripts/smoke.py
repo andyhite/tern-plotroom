@@ -1852,6 +1852,12 @@ def sc_agent(s: Smoke) -> None:
         s.select_row()
 
     back_to_queue()
+    # A working agent's clock in the item's preview is Tern's own elapsed node (m:ss): Tern moves it on, Plotroom does not redraw for it.
+    clock = "[data-surface='plugin.plotroom.prs'] .sf-elapsed"
+    s.wait_until("the preview's Working clock", lambda: any(re.match(r"^\d+:\d\d$", t) for t in s.matches(clock)))
+    first = s.matches(clock)[0]
+    s.wait_until("Tern ticks the clock on", lambda: s.matches(clock)[:1] not in ([], [first]))
+    s.shot("agent-clock")
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
     s.wait_until("agent-go focuses the pane the link names", agent_focused)
     s.shot("agent")

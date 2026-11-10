@@ -300,8 +300,9 @@ export type State = {
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view
 	agentAt: string?, -- the item key of the Agents row previewed
-	clocked: boolean?, -- the view being drawn shows a working agent's clock (render's agentClock)
-	clockTimer: TimerHandle?, -- the redraw that moves the shown clocks on, at most one a second
+	barDue: number?, -- ms until the soonest estimated bar the view being drawn shows reaches its next step (render's working)
+	barTimer: TimerHandle?, -- the redraw that moves the shown estimated bars on at that step
+	wallAt: number?, -- wall-clock ms at tern.now() 0, anchored once so agents' clocks keep one origin across redraws
 	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)

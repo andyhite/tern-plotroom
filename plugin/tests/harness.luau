@@ -2658,6 +2658,30 @@ local function pickerOf(b: Block): any
 end
 M.pickerOf = pickerOf
 
+-- The preview's Working line as "clock <s>" or "clock <s> bar <percent>": the age its `elapsed` node was sent and its
+-- `meter`'s value; nil when the preview has none.
+local function workingOf(b: Block): string?
+	local row = findKey(pickerNode(b), "working", "row")
+	if not row then
+		return nil
+	end
+	local clock, bar = findKey(row, "clock", "elapsed"), findKey(row, "bar", "meter")
+	local out = "clock " .. (clock.p.age / 1000)
+	return if bar then out .. string.format(" bar %d", math.floor(bar.p.value * 100)) else out
+end
+M.workingOf = workingOf
+
+-- A picker row's clock facts as workingOf reads them; nil when it has none.
+local function clockFacts(item: any): string?
+	local facts = item.facts
+	if not facts then
+		return nil
+	end
+	local out = "clock " .. (facts.clock / 1000)
+	return if facts.bar then out .. string.format(" bar %d", math.floor(facts.bar * 100)) else out
+end
+M.clockFacts = clockFacts
+
 -- Helpers shared by several case files, in one table.
 local hx = {}
 M.hx = hx
