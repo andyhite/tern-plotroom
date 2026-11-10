@@ -107,6 +107,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Draft review opens Beside the agent (default) or Over the agent's tab (a glimpse); **Show Draft review** brings it back once a glimpse is dismissed | Settings › General, Commands, Agents | New | 6 | Approved | Supervise: a review over the agent's tab no longer halves the agent pane. tern-plotroom#w56d |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
+| Shell lens after `git push`: GitHub's "Create a pull request" line becomes a **Create pull request** button for its `/pull/new/<branch>` page, and **Show in Plotroom** shows the branch's pull request when one exists | Shell pane | New | — | Approved | tern-plotroom#8qf1: the step from a pushed branch to its pull request. The lens runs nothing; Show in Plotroom looks the branch up only when clicked |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
 | Close issue…; Reopen issue… | Commands | Keep | — | Approved | "Won't do" is a triage outcome |
 | Re-run failed checks | Commands | Keep | — | Approved | |
