@@ -1860,6 +1860,12 @@ def sc_agent(s: Smoke) -> None:
         s.select_row()
 
     back_to_queue()
+    # A working agent's clock in the item's preview is Tern's own elapsed node (m:ss): Tern moves it on, Plotroom does not redraw for it.
+    clock = "[data-surface='plugin.plotroom.prs'] .sf-elapsed"
+    s.wait_until("the preview's Working clock", lambda: any(re.match(r"^\d+:\d\d$", t) for t in s.matches(clock)))
+    first = s.matches(clock)[0]
+    s.wait_until("Tern ticks the clock on", lambda: s.matches(clock)[:1] not in ([], [first]))
+    s.shot("agent-clock")
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
     s.wait_until("agent-go focuses the pane the link names", agent_focused)
     s.shot("agent")
@@ -1888,7 +1894,7 @@ def sc_agent(s: Smoke) -> None:
     # agent) runs in the focused pane, with or without the plugin. Real lifecycle transitions are used instead (launch -> working, pane close ->
     # exited). waiting_input is not proved by this smoke; the regression cases cover event-triggered updates.
 
-    # Selection message: review the actual selected text, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
+    # Selection message: review the actual selected text in the Plotroom block's Confirm overlay, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
     picked = s.tmp / "selected.txt"
     picked.write_text("é😀\nsmoke selected text\n", encoding="utf-8")
     back_to_queue()
@@ -1896,19 +1902,30 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("file", "open", str(picked), "split")
     s.ctl_ok("file", "wait")
     s.ctl_ok("key", "Meta+a")  # the opened file block holds focus: select all
+    file_pane = s.state()["focused"]["id"]  # type: ignore[index]
+    file_tab = [t["active"] for t in s.state()["tabs"]].index(True) + 1  # type: ignore[index,union-attr]  # ctl tab numbers from 1
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-message-selection")
     s.wait_text("the agent picker counts the selection", "Send the selection (")
     s.ctl_ok("picker", "enter")
-    s.wait_text("the review picker", "Send the selection to the agent of")
+    s.wait_text("the review, in the Plotroom block's Confirm overlay", "Send the selection to the agent of")
     s.wait_text("the review shows the non-ASCII line (native byte offsets)", "é😀")
     s.wait_text("the review shows the whole last line (a UTF-16 head would cut it)", "smoke selected text")
+    s.wait_text("the review offers a note", "Add a note…")
     s.wait_text("the review offers Cancel", "Cancel")
+    s.eq("the review is no palette picker", [], s.palette_rows())
+    time.sleep(0.6)  # the overlay's card slides in before the shot
     s.shot("agent-message-confirm")
-    s.ctl_ok("picker", "esc")
-    time.sleep(0.7)
-    s.eq("the review is gone", False, any("Send the selection to the agent of" in t for t in s.texts()))
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the review", lambda: not any("Send the selection to the agent of" in t for t in s.texts()))
     s.eq("cancelling shows no success toast", False, any(t.startswith("Sent to the agent of") for t in s.texts()))
     s.eq("cancelling opened no tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("the review took the focus to the Plotroom block", True, s.state()["focused"]["id"] != file_pane)  # type: ignore[index]
+    s.ctl_ok("tab", str(file_tab))  # the review may have shown in a Plotroom block of another tab
+    for _ in range(8):  # ctl focuses by direction only: step through the tab's panes back to the file block
+        if s.state()["focused"]["id"] == file_pane:  # type: ignore[index]
+            break
+        s.ctl_ok("focus", "next")
+    s.eq("back on the file block", file_pane, s.state()["focused"]["id"])  # type: ignore[index]
     s.ctl_ok("close")  # the file block
 
     # Files header button: opens a Plotroom beside the pane whose cwd is the Files root.
@@ -2324,7 +2341,8 @@ def sc_outcome(s: Smoke) -> None:
 
 def sc_now_settings(s: Smoke) -> None:
     """Settings › Views in real Tern: Now's card is first, and its open form has a switch per reason (Include team review requests under
-    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that."""
+    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that. Then General's
+    Reset all settings asks in the block: a confirm overlay over the sheet, Cancel then the red action in its foot; Esc keeps everything."""
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -2343,6 +2361,21 @@ def sc_now_settings(s: Smoke) -> None:
     s.wait_text("and Now's Layout", "A narrow block shows the List")
     s.wait_text("and the accounts", "Accounts")
     s.shot("settings-now")
+    for _ in range(3):  # Views → Actions → Repositories → General
+        s.ctl_ok("key", "Tab")
+    s.wait_text("General's Reset row", "Reset all settings")
+    s.ctl_ok("click", "[data-surface='plugin.plotroom.prs'] .pf-row[data-row='reset:all'] .btn")
+    foot = "[data-surface='plugin.plotroom.prs'] .sf-overlay .sf-ov-foot .sf-button"
+    s.wait_text("Reset asks in the block", "Reset all settings?")
+    s.wait_until("its foot holds Cancel, then the action", lambda: len(s.matches(foot)) == 2 and "Cancel" in s.matches(foot)[0]
+                 and "Reset all settings" in s.matches(foot)[1])
+    s.eq("the action is the red danger button", True, any("Reset all settings" in t for t in s.matches(foot + "[data-variant='danger']")))
+    s.eq("Cancel is quiet", True, any("Cancel" in t for t in s.matches(foot + "[data-variant='quiet']")))
+    time.sleep(0.6)  # the overlay's card slides in before the shot
+    s.shot("settings-confirm")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the confirm", lambda: not any("Reset all settings?" in t for t in s.texts()))
+    s.wait_text("and leaves Settings open", "Repositories")
     s.ctl_ok("key", "Escape")
 
 

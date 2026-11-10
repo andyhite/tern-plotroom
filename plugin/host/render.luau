@@ -44,31 +44,6 @@ function M.paceLine(state: State): string?
 	return nil
 end
 
--- What the window's palette asks before Delete or Remove row `row` acts (hidden node `main.confirm`, read by
--- window.luau's `confirmDelete`): the question, the destructive choice and what it does.
-local function deleteQuestion(state: State, row: string): { [string]: string }
-	local kind, id = string.match(row, "^(%a+):(.+)$")
-	if kind == "pdelete" then
-		local pk, pid = kindAndId(id or "")
-		local prompts = if pk then loadPrompts(pk) else nil
-		local p = if prompts then promptById(prompts, pid) else nil
-		return { row = row, head = "Delete action “" .. (if p then p.name else "this action") .. "”?", label = "Delete action", detail = "Gone from every Plotroom pane" }
-	elseif kind == "rremove" then
-		return { row = row, head = "Remove repository “" .. (id or "") .. "”?", label = "Remove repository", detail = "Forgets its checkout and settings; no folder is touched" }
-	elseif kind == "jremove" then
-		return { row = row, head = "Remove Jira project “" .. (id or "") .. "”?", label = "Remove project", detail = "Forgets its repositories" }
-	elseif kind == "reset" then
-		return {
-			row = row,
-			head = "Reset all settings?",
-			label = "Reset all settings",
-			detail = "Clears views, actions, shortcuts, repositories, branch and folder formats and Get started in every Plotroom pane; keeps triage, usage and agents",
-		}
-	end
-	local view = viewOf(state, id or "")
-	return { row = row, head = "Delete view “" .. (if view then view.name else "this view") .. "”?", label = "Delete view", detail = "Gone from every Plotroom pane" }
-end
-
 -- How a worktree report stands: error when it could not be prepared; otherwise no tone, since a stale, changed or clean
 -- worktree is none of DESIGN.md's colour meanings (its badge text says which).
 local function noteTone(note: Note): string?
@@ -244,29 +219,53 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
-local BAR_CELLS = 10
+-- A working agent's clock (ms) and estimated bar (0-1; engine.agentClock), nil when the agent of item `key` is not
+-- working. Tern ticks the clock; the view notes when the soonest bar it shows needs its next redraw (queuePicker).
+local function working(state: State, key: string): (number?, number?)
+	local elapsed, fraction, due = engine.agentClock(state, key)
+	if due and (not state.barDue or due < state.barDue) then
+		state.barDue = due
+	end
+	return elapsed, fraction
+end
 
--- A working agent's thin bar of how far along it probably is (engine.agentClock; only when its action has runs enough to
--- expect a duration) and its clock, m:ss; nil when the agent of item `key` is not working. The view redraws itself
--- a second later (queuePicker), and nothing on it animates.
-local function agentClock(state: State, key: string): { any }?
-	local elapsed, fraction = engine.agentClock(state, key)
+-- The Agents and Now pickers' columns: the estimated bar, then the clock, filled by clockFacts.
+local CLOCK_COLUMNS = { { id = "bar", format = "bar" }, { id = "clock", format = "elapsed" } }
+
+-- A picker row's facts for those columns; nil when its agent is not working.
+local function clockFacts(state: State, key: string): { [string]: number }?
+	local elapsed, fraction = working(state, key)
+	return if elapsed then { clock = elapsed, bar = fraction } :: { [string]: number } else nil
+end
+
+-- A preview's Working line: the clock (`elapsed`, m:ss) and the estimated bar (`meter`) when there is one; nil when
+-- the agent of item `key` is not working. A row, not a kv fact: a kv value holds spans only.
+local function clockRow(state: State, key: string): Node?
+	local elapsed, fraction = working(state, key)
 	if not elapsed then
 		return nil
 	end
-	state.clocked = true
-	local out: { any } = {}
+	local kids: { Node } = {
+		ui.node("text", { key = "label", spans = { ui.span("Working", "muted") } }),
+		ui.node("elapsed", { key = "clock", age = elapsed, format = "clock" }),
+	}
 	if fraction then
-		local filled = math.floor(fraction * BAR_CELLS) -- 95% is 9 of 10: never a full bar before the run ends
-		if filled > 0 then
-			table.insert(out, ui.span(string.rep("━", filled), "pending"))
-		end
-		if filled < BAR_CELLS then
-			table.insert(out, ui.span(string.rep("━", BAR_CELLS - filled), "muted"))
-		end
-		table.insert(out, " ")
+		table.insert(kids, ui.node("meter", { key = "bar", value = fraction, tone = "pending" }))
 	end
-	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "mono"))
+	return ui.node("row", { key = "working", gap = "sm", align = "center" }, kids)
+end
+
+-- A preview's agent part: the Working line while its agent works, then `facts` (the agent's action, ...).
+local function agentPart(state: State, key: string?, facts: { { [string]: any } }): { Node }
+	local out: { Node } = {}
+	local clock = if key then clockRow(state, key) else nil
+	if clock then
+		table.insert(out, clock)
+	end
+	if #facts > 0 then
+		table.insert(out, ui.node("kv", { key = "agent", items = facts }))
+	end
+
 	return out
 end
 
@@ -282,10 +281,10 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 end
 
 -- The status part of a PR's or issue's preview (what blocks it or needs you), under its next move: the item's stage,
--- toned as its row badge, what blocks it, how long its agent has worked (while it works), its agent's checked outcome
--- and what its checker found (a failed check lists
--- its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author).
-local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): Node
+-- toned as its row badge, what blocks it, its agent's checked outcome and what its checker found (a failed check
+-- lists its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author); then how
+-- long its agent has worked, while it works (clockRow).
+local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): { Node }
 	local id, blockers = engine.stage(state, kind, item)
 	local b = stageBadge(id, state.notes[item.key])
 	local items: { { [string]: any } } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
@@ -293,7 +292,6 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	for _, r in (blockers or {}) :: { engine.Blocker } do
 		table.insert(items, { k = "Blocked by", v = if r.detail then { ui.span(r.chip, "error"), ui.span(" — " .. r.detail) } else { ui.span(r.chip, "error") } })
 	end
-	table.insert(items, { k = "Working", v = agentClock(state, item.key) })
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil
 	if verdictBadge(info) then
@@ -311,7 +309,12 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 			table.insert(items, f)
 		end
 	end
-	return ui.node("kv", { key = "stage", items = withValue(items) })
+	local out: { Node } = { ui.node("kv", { key = "stage", items = withValue(items) }) }
+	local clock = clockRow(state, item.key)
+	if clock then
+		table.insert(out, clock)
+	end
+	return out
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the block's state changes or
@@ -382,10 +385,6 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
-	end
-	local s = state.settings
-	if s and s.confirm then
-		table.insert(out, ui.node("text", { key = "confirm", text = tern.json.encode(deleteQuestion(state, s.confirm)), hidden = true }))
 	end
 	return out
 end
@@ -996,7 +995,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		table.insert(out, controls)
 	end
 	addPart(out, "summary", summaryNodes(state, pr, true))
-	local status: { Node } = { stageFact(state, "prs", pr, if asked then { author } else nil) }
+	local status: { Node } = stageFact(state, "prs", pr, if asked then { author } else nil)
 	if asked and diff then
 		table.insert(status, diff)
 	end
@@ -1184,7 +1183,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 		table.insert(out, controls)
 	end
 	addPart(out, "summary", summaryNodes(state, issue, false))
-	addPart(out, "status", { stageFact(state, "issues", issue) })
+	addPart(out, "status", stageFact(state, "issues", issue))
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil, loading))
 	addPart(out, "properties", properties)
@@ -1448,14 +1447,13 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
 	local agent = withValue({
-		{ k = "Working", v = agentClock(state, row.key) },
 		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
 	})
 	local kids: { Node } = headNodes(printable(row.key), { text = "Agent", tone = "muted" }, nil, badge, printable(row.title or row.key))
 	addPart(kids, "status", if #needs > 0 then { ui.node("kv", { key = "stage", items = needs }) } else {})
-	addPart(kids, "agent", if #agent > 0 then { ui.node("kv", { key = "agent", items = agent }) } else {})
+	addPart(kids, "agent", agentPart(state, row.key, agent))
 	if href then
 		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
 		for _, act in AGENT_COMMANDS do
@@ -1492,12 +1490,7 @@ local function agentsProps(state: State, props: { [string]: any })
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
 		end
-		local clock = agentClock(state, row.key)
-		if clock then
-			table.insert(clock, " · ")
-			table.move(detail, 1, #detail, #clock + 1, clock)
-			detail = clock
-		end
+		local facts = clockFacts(state, row.key)
 		local report = REPORT_BADGE[row.attention or ""]
 		if row.err then
 			table.insert(detail, " · ")
@@ -1528,7 +1521,7 @@ local function agentsProps(state: State, props: { [string]: any })
 		if checked then
 			table.insert(badges, checked)
 		end
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges })
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges, facts = facts })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
 			table.insert(names, row.repo)
@@ -1548,7 +1541,7 @@ local function agentsProps(state: State, props: { [string]: any })
 	props.empty = { ui.span("No agents are running. Start one from a pull request or issue.", "muted") }
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if current then pickerId("g", current.key) else nil
-	props.columns, props.query, props.cursor = {}, nil, nil
+	props.columns, props.query, props.cursor = CLOCK_COLUMNS, nil, nil
 end
 
 -- What GitHub's notification reasons say, and how much each wants you; any other reason is shown as GitHub spelled it.
@@ -1659,12 +1652,10 @@ local function nowPreview(state: State): { Node }
 			}),
 		}),
 	})
-	local working = if row.key then agentClock(state, row.key) else nil
 	local agentFacts = withValue({
-		{ k = "Working", v = working },
 		{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
 	})
-	addPart(kids, "agent", if #agentFacts > 0 then { ui.node("kv", { key = "agent", items = agentFacts }) } else {})
+	addPart(kids, "agent", agentPart(state, row.key, agentFacts))
 	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } } } }) } else {})
 	table.insert(kids, ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }))
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
@@ -1712,13 +1703,7 @@ local function nowProps(state: State, props: { [string]: any })
 			table.insert(item.detail, ui.span(printable(row.agent.last), "muted"))
 		end
 		-- How long the item's agent has worked, while it works.
-		local clock = if row.key then agentClock(state, row.key) else nil
-		if clock then
-			table.insert(item.detail, " · ")
-			for _, s in clock do
-				table.insert(item.detail, s)
-			end
-		end
+		item.facts = if row.key then clockFacts(state, row.key) else nil
 		local badges: { any } = { badge }
 		for _, c in chips do
 			table.insert(badges, c)
@@ -1768,7 +1753,7 @@ local function nowProps(state: State, props: { [string]: any })
 	props.empty = { ui.span(if allOff then "Only agents are listed: Settings › Views › Now" else "Nothing needs you right now.", "muted") }
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
 	props.selected = if current then current.id else nil
-	props.columns, props.query, props.cursor = {}, nil, nil
+	props.columns, props.query, props.cursor = CLOCK_COLUMNS, nil, nil
 end
 
 -- A card's right-click menu, as ids its `action` events carry (host.luau's Board card events): a view's card offers
@@ -2008,7 +1993,7 @@ end
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret). `bar`: the
 -- key footer sits under it.
 function M.queuePicker(state: State, bar: boolean?): Node
-	state.clocked = false -- agentClock marks it again while a working agent's clock is drawn
+	state.barDue = nil -- working() notes the soonest step of an estimated bar drawn below
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
 	local open = openItems(state)
@@ -2137,6 +2122,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		cancelDetails(state)
 		if state.nowOn then
 			nowProps(state, props)
+			state.barDue = nil -- the Board draws no Now rows
 		end
 		laid = true
 		preview = { boardNode(state, bar) }
@@ -2164,10 +2150,15 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	end
 	local shown = props.selected ~= nil or guide ~= nil or laid
 	props.preview = if shown then "side" else "none"
-	-- A working agent's clock is shown: draw again a second from now, once (a key press redraws it no sooner).
-	if state.clocked and not state.clockTimer then
-		state.clockTimer = tern.timer(1000, function()
-			state.clockTimer = nil
+	-- Tern ticks the clocks; an estimated bar moves only by a redraw, so draw again when the soonest shown bar reaches
+	-- its next step (this draw replaces the one planned before it), and never without a bar to move.
+	if state.barTimer then
+		state.barTimer:cancel()
+		state.barTimer = nil
+	end
+	if state.barDue then
+		state.barTimer = tern.timer(state.barDue, function()
+			state.barTimer = nil
 			if engine.alive(state) then
 				state.cx:render()
 			end
@@ -2176,24 +2167,121 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	return ui.node("picker", props, if shown then preview else {})
 end
 
--- The Keep/Remove modal both worktree removals ask with: `tabbed` adds the warning that a tab works in the folder.
-local function removeOverlay(head: string, body: string, facts: { { [string]: any } }, tabbed: any, keepAct: string, dropAct: string?): Node
-	local kids: { Node } = {
-		ui.node("text", { key = "body", spans = { ui.span(body, "muted") } }),
-		ui.node("kv", { key = "facts", items = facts }),
-	}
-	if tabbed then
-		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.") } }))
+-- Every confirm (DESIGN.md › Confirm overlay): a modal overlay keyed `confirm`, its icon (`trash` unless `o.icon`), the
+-- question as its head, the consequence in one sentence, the facts (a kv, or `o.lines` as they will be sent), and in
+-- its foot Cancel first (quiet, Esc) and then the action (`danger` unless `o.calm`, its key `actKeys`). `o.act` nil: the
+-- action is refused (the sentence says why) and only Cancel is offered.
+local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, warn: string?, extra: Node?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
+	local icon = o.icon or "trash"
+	local kids: { Node } = { ui.node("text", { key = "body", spans = { ui.span(o.body, "muted") } }) }
+	if o.facts and #o.facts > 0 then
+		table.insert(kids, ui.node("kv", { key = "facts", items = o.facts }))
 	end
-	local buttons: { Node } = {
-		button("Keep", { key = "keep", size = "md", variant = "primary", icon = "check", keys = { "enter" }, actions = { click = keepAct } }),
-	}
-	if dropAct then
-		table.insert(buttons, button("Remove", { key = "delete", size = "md", icon = "trash", keys = { "d" }, actions = { click = dropAct } }))
+	if o.lines then
+		for i, line in o.lines do
+			table.insert(kids, ui.node("text", { key = "line-" .. i, spans = { ui.span(line) } }))
+		end
 	end
-	table.insert(kids, buttonRow("buttons", buttons))
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
+	if o.warn then
+		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span(o.warn) } }))
+	end
+	if o.extra then
+		table.insert(kids, o.extra)
+	end
+	local buttons: { Node } = { button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = o.cancel } }) }
+	if o.act then
+		table.insert(buttons, button(o.label, { key = "act", size = "md", variant = if o.calm then nil else "danger", icon = icon, keys = o.actKeys, actions = { click = o.act } }))
+	end
+	table.insert(kids, ui.node("row", { key = "foot", gap = "sm", justify = "end", align = "center" }, buttons))
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", icon = icon, head = o.head, meta = o.meta, foot = "layer.confirm.foot" }, kids)
 end
+
+-- A guided mutation's plan (requests.offer), asked in the block: Enter commits it with the plan's own token, Esc drops
+-- it. Not `danger`: it changes GitHub or Jira as shown, and destroys nothing Plotroom holds.
+local function planConfirm(state: State): Node
+	local plan = state.plan
+	return confirmOverlay({
+		head = plan.confirm.head,
+		icon = "merge",
+		body = "Sent once, exactly as shown; a change to the selection or the view first cancels it.",
+		lines = plan.confirm.lines,
+		label = plan.confirm.label,
+		actKeys = { "enter" },
+		calm = true,
+		cancel = "plan-cancel",
+		act = "plan-commit=" .. plan.token,
+	})
+end
+
+-- Stop agent… on an item's live agent (`state.stopping`), asked in the block: Enter stops it, Esc keeps it working.
+local function stopConfirm(key: string): Node
+	return confirmOverlay({
+		head = "Stop the agent for " .. key .. "?",
+		icon = "x",
+		body = "Its turn ends at once; its worktree and changes are kept.",
+		label = "Stop agent",
+		actKeys = { "enter" },
+		cancel = "stop-cancel",
+		act = "stop-agent",
+	})
+end
+
+-- A message for an agent the window asks about (`state.messaging`, rpc `message`): its note and lines as they will be
+-- sent; Enter or Send sends it, `n` or Add a note asks for the note, Esc drops it. Not `danger`: nothing is destroyed.
+local function messageConfirm(m: { head: string, lines: { string }, note: boolean }): Node
+	return confirmOverlay({
+		head = m.head,
+		icon = "merge",
+		body = "Sent once, exactly as shown, to the agent.",
+		lines = m.lines,
+		extra = ui.node("row", { key = "notes", justify = "start" }, { button(if m.note then "Edit note…" else "Add a note…", { key = "note", size = "md", variant = "quiet", icon = "pen", keys = { "n" }, actions = { click = "message-note" } }) }),
+		label = "Send",
+		actKeys = { "enter" },
+		calm = true,
+		cancel = "message-cancel",
+		act = "message-send",
+	})
+end
+
+-- Settings' Delete or Remove row `s.confirm` asks here, in the block: Enter deletes, Esc keeps it.
+function M.deleteConfirm(state: State): Node?
+	local row = if state.settings then state.settings.confirm else nil
+	local kind, id = string.match(row or "", "^(%a+):(.+)$")
+	if not kind or not id then
+		return nil
+	end
+	local head, label, body
+	if kind == "pdelete" then
+		local pk, pid = kindAndId(id)
+		local prompts = if pk then loadPrompts(pk) else nil
+		local p = if prompts then promptById(prompts, pid) else nil
+		head, label, body = "Delete action “" .. (if p then p.name else "this action") .. "”?", "Delete action", "It is gone from every Plotroom pane."
+	elseif kind == "rremove" then
+		head, label, body = "Remove repository “" .. id .. "”?", "Remove repository", "Plotroom forgets its checkout and settings; no folder is touched."
+	elseif kind == "jremove" then
+		head, label, body = "Remove Jira project “" .. id .. "”?", "Remove project", "Plotroom forgets its repositories."
+	elseif kind == "reset" then
+		head, label = "Reset all settings?", "Reset all settings"
+		body = "Views, actions, shortcuts, repositories, branch and folder formats and Get started go back to their defaults in every Plotroom pane; triage, usage and agents are kept."
+	else
+		local view = viewOf(state, id)
+		head, label, body = "Delete view “" .. (if view then view.name else "this view") .. "”?", "Delete view", "It is gone from every Plotroom pane."
+	end
+	return confirmOverlay({ head = head, body = body, label = label, actKeys = { "enter" }, cancel = "cancel-delete", act = "confirm-delete" })
+end
+
+-- The Branch fact of a worktree removal: the branch and, muted, what becomes of it.
+local function fateFact(branch: string?, fate: string): { [string]: any }
+	local v: { any } = { ui.span(fate, "muted") }
+	if branch then
+		table.insert(v, 1, ui.span(branch, "code"))
+		table.insert(v, 2, ui.span("  "))
+	end
+	return { k = "Branch", v = v }
+end
+
+local TAB_WARN = "A tab works in it and will be left in a folder that no longer exists."
+local REMOVE_BODY = "Its folder is deleted; git refuses while it has uncommitted changes, and nothing is forced."
 
 -- The modal that asks before a board row's worktree is removed; Enter or Esc keeps it, `d` or a click removes it.
 local function boardConfirm(state: State): Node
@@ -2203,58 +2291,81 @@ local function boardConfirm(state: State): Node
 			row = r
 		end
 	end
-	local facts = withValue({
-		{ k = "Path", v = if row then { ui.span(row.path, "code") } else nil },
-		{ k = "Branch", v = if row and row.branch then { ui.span(row.branch, "code") } else nil },
+	local facts = withValue({ { k = "Path", v = if row then { ui.span(row.path, "code") } else nil } })
+	if row then
+		table.insert(facts, fateFact(row.branch, board.fate(row)))
+	end
+	return confirmOverlay({
+		head = "Remove this worktree?",
+		body = REMOVE_BODY,
+		facts = facts,
+		warn = if row and engine.boardOpen(state)[row.path] then TAB_WARN else nil,
+		label = "Remove",
+		actKeys = { "d" },
+		cancel = "wt-cancel-remove",
+		act = "wt-confirm-remove",
 	})
-	local body = "Its folder is deleted. " .. (if row then board.fate(row) else "") .. " Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it."
-	return removeOverlay("Remove this worktree?", body, facts, row and engine.boardOpen(state)[row.path], "wt-cancel-remove", "wt-confirm-remove")
 end
 
 -- The modal that asks once before every finished worktree is removed: only the rows Find finished worktrees marked.
 local function finishedConfirm(state: State): Node
 	local items: { any } = {}
 	local ids: { string } = state.boardFinished or {}
+	local open = engine.boardOpen(state)
+	local tabbed = false
 	for _, id in ids do
 		for _, r in engine.boardRows(state) do
 			if r.id == id then
 				table.insert(items, { k = board.label(r), v = { ui.span(r.path, "code") } })
+				tabbed = tabbed or open[r.path] ~= nil
 			end
 		end
 	end
 	local n = #items
-	local tabbed = false
-	local open = engine.boardOpen(state)
-	for _, id in ids do
-		for _, r in engine.boardRows(state) do
-			if r.id == id and open[r.path] then
-				tabbed = true
-			end
-		end
-	end
 	local unchecked = board.unchecked(state.board)
-	local body = "Each worktree's folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses a worktree with uncommitted changes, which is kept; nothing is forced. "
-		.. (if unchecked > 0 then unchecked .. " worktree" .. (if unchecked == 1 then " was" else "s were") .. " not checked yet. " else "")
-		.. "Press d to remove all " .. n .. "; Enter or Esc keeps them."
-	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
+	return confirmOverlay({
+		head = "Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?",
+		meta = if unchecked > 0 then unchecked .. " not checked yet" else nil,
+		body = "Each folder is deleted, then its branch unless that holds commits saved nowhere else; git keeps a worktree with uncommitted changes, and nothing is forced.",
+		facts = withValue(items),
+		warn = if tabbed then TAB_WARN else nil,
+		label = "Remove all " .. n,
+		actKeys = { "d" },
+		cancel = "wt-cancel-remove",
+		act = "wt-confirm-remove",
+	})
 end
 
 -- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
 function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
-	local removing = state.removing
+	local removing, stopping = state.removing, state.stopping
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
 		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
-		local facts = withValue({
-			{ k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil },
-			{ k = "Branch", v = if note.branch then { ui.span(note.branch, "code") } else nil },
-		})
-		local body = if state.removeRefusal then state.removeRefusal .. " Enter or Esc closes this."
-			else "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
-		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", if state.removeRefusal then nil else "confirm-remove"))
+		local refusal = state.removeRefusal
+		local facts = withValue({ { k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil } })
+		if not refusal then
+			table.insert(facts, fateFact(note.branch, state.removeFate or "Reading its branch from git…"))
+		end
+		table.insert(layer, confirmOverlay({
+			head = "Remove worktree?",
+			body = refusal or REMOVE_BODY,
+			facts = facts,
+			warn = if openItems(state)[removing] then TAB_WARN else nil,
+			label = "Remove",
+			actKeys = { "d" },
+			cancel = "cancel-remove",
+			act = if refusal then nil else "confirm-remove",
+		}))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
+	elseif state.plan then
+		table.insert(layer, planConfirm(state))
+	elseif stopping then
+		table.insert(layer, stopConfirm(stopping.key))
+	elseif state.messaging then
+		table.insert(layer, messageConfirm(state.messaging))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

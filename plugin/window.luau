@@ -1465,30 +1465,6 @@ local function pickModel(cx: WindowCx, pane: number, qid: string)
 	end)
 end
 
--- plotroom://confirm: asks in the palette before the Plotroom block in `pane` deletes what its hidden `main.confirm`
--- node names (host/render's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
--- which acts only on the row it asked about.
-local function confirmDelete(cx: WindowCx, pane: number)
-	if not sameVersion(cx, pane) then
-		return
-	end
-	local text = nodeProp(readNode(cx, pane, "main.confirm"), "text")
-	local ok, q = pcall(tern.json.decode, if type(text) == "string" then text else "")
-	if not ok or type(q) ~= "table" or type(q.row) ~= "string" or type(q.head) ~= "string" or type(q.label) ~= "string" then
-		return cx:toast("error", "Plotroom: nothing to delete", "Press Delete again.")
-	end
-	local row: string = q.row
-	local items: { PickItem } = {
-		{ label = "Cancel", icon = "x" },
-		{ label = q.label, detail = if type(q.detail) == "string" then q.detail else nil, icon = "trash", confirm = true },
-	}
-	cx:pick({ items = items, placeholder = q.head, icon = "trash" }):next(function(item, _, cx2)
-		if cx2 then
-			cx2.session:event(pane, { ev = "action", act = if item and item.confirm then "confirm-delete" else "cancel-delete", value = row })
-		end
-	end)
-end
-
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
 	for _, node in CHECK_NODES do
@@ -1657,15 +1633,22 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		flows.reviewSend(cx, pane)
 		return true
 	end
-	if url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
+	local what, token = string.match(url, "^plotroom://message/(%a+)/(%x+)$")
+	if what == "send" or what == "note" then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		else
+			flows.messageLink(cx, pane, what, token :: string)
+		end
+		return true
+	end
+	if url == "plotroom://repos" or url == "plotroom://jira-projects" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
-		elseif url == "plotroom://jira-projects" then
-			pickJira(cx, pane)
 		else
-			confirmDelete(cx, pane)
+			pickJira(cx, pane)
 		end
 		return true
 	end
@@ -1756,7 +1739,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local ignoreIndex, ignoreName = string.match(url, "^plotroom://github/ignore/(%d+)/(.+)$")
 	if ignoreIndex and ignoreName then
-		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the palette.
+		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the block.
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then

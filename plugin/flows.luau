@@ -68,7 +68,6 @@ type StatusRow = { state: string, action: string?, branch: string?, title: strin
 -- `findings`), at chain `depth`, from Plotroom block `block`, with the run's saved `criteria`.
 export type Step = { step: string, chain: Chain, key: string, agent: number, host: HostId, started: number?, commit: string?, criteria: string?, findings: string?, block: number, depth: number }
 type Notes = { [number]: { last: string?, err: string? } }
-type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
@@ -89,7 +88,6 @@ M.NO_COMMIT = "The last run named no new commit on its branch, so there was noth
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
-local COMMIT_MS = 3 * 60 * 1000
 local EXPECTED_S = 300 -- the run log's medians are read again at most this often, and after every run it gains
 local DRAFT_MS = 3 * 60 * 1000 -- the host's ls-remote/fetch may take 120 s
 local OPEN_URL_TRIES = 20 -- of 500 ms: a launched or not yet rendered block has 10 seconds to say its protocol
@@ -1398,27 +1396,9 @@ function M.openGit(cx: WindowCx, pane: number, url: string)
 	end)
 end
 
--- ---------------------------------------------------------------- confirmation
-
--- Cancel FIRST (Enter keeps it), then the destructive choice, then the plan's target lines as rows. onConfirm runs
--- only for the confirm row: a dismissed picker, Cancel or a target row does nothing.
-local function confirmPick(cx: WindowCx, head: string, label: string, lines: { string }, onConfirm: (WindowCx) -> ())
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = label, confirm = true } }
-	for i, line in lines do
-		if i > MAX_ROWS then
-			break
-		end
-		table.insert(items, { label = line, group = "Target" })
-	end
-	cx:pick({ items = items, placeholder = head, icon = "merge", action = "confirm" }):next(function(item, _, cx2)
-		if cx2 and item and item.confirm == true then
-			onConfirm(cx2)
-		end
-	end)
-end
-
 -- Interrupt, Stop, Message or Reply (`act`: agentint | agentstop | agentmsg | agentreply) the live agent recorded for
--- `key`. Stop asks first; each step looks the agent up again, so one that exited meanwhile only toasts. Reply is Now's
+-- `key`. Stop was asked in the block's Confirm overlay, whose Stop opens this link; each step looks the agent up again,
+-- so one that exited meanwhile only toasts. Reply is Now's
 -- Message agent… for an agent that needs input: one that stopped waiting gets the same toast and nothing is sent.
 -- agentdisagree is Disagree with check… (M.disagree) and agentreview Show Draft review (M.showReview); neither needs a
 -- live agent.
@@ -1451,10 +1431,8 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 			cx.agents:interrupt(agent)
 		end)
 	elseif act == "agentstop" then
-		confirmPick(cx, "Stop the agent for " .. key .. "?", "Stop agent", { key }, function(cx2)
-			run(cx2, "stop", function(agent)
-				cx2.agents:stop(agent)
-			end)
+		run(cx, "stop", function(agent)
+			cx.agents:stop(agent)
 		end)
 	elseif act == "agentmsg" or waiting then
 		cx:prompt({ placeholder = (if waiting then "Reply to the agent of " else "Message for the agent of ") .. key, icon = "merge", action = "send" }):next(function(text, _, cx2)
@@ -1755,34 +1733,63 @@ function M.reviewSend(cx: WindowCx, pane: number)
 	try(cx)
 end
 
--- The review of a message for `agent`: the picker lists, Cancel first, Send, a one-line note the user types (the prompt
--- is one line, so the note is the editable part) and then every line of `context` as it will be sent, newlines
--- kept. Nothing is sent but by the Send row; Escape or Cancel sends nothing.
-local function review(cx: WindowCx, agent: number, key: string, head: string, context: { string }, note: string)
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pen", edit = true } }
-	if note ~= "" then
-		table.insert(items, { label = note, group = "Note", icon = "merge" })
-	end
-	for _, line in context do
-		table.insert(items, { label = if line == "" then " " else line, group = "Message" })
-	end
-	cx:pick({ items = items, placeholder = head, icon = "merge", action = "confirm" }):next(function(item, _, cx2)
-		if not cx2 or not item then
-			return
-		elseif item.edit == true then
-			cx2:prompt({ value = note, placeholder = "A note for the agent of " .. key .. " (one line)", icon = "merge", action = "review" }):next(function(text, _, cx3)
-				if not cx3 or not text then
-					return
-				end
-				local line = trim((string.gsub(text, "%c", " ")))
-				if (utf8.len(line) or #line) > NOTE_CHARS then
-					return cx3:toast("error", "The note is too long", "At most " .. NOTE_CHARS .. " characters.")
-				end
-				review(cx3, agent, key, head, context, line)
-			end)
-		elseif item.confirm == true then
-			sendTo(cx2, agent, key, (if note ~= "" then note .. "\n\n" else "") .. table.concat(context, "\n"))
+-- The message waiting in a Plotroom block's Confirm overlay (review): only that block's Send or Add a note link with
+-- this token acts on it; a newer review replaces it.
+local pendingMessage: { token: string, pane: number, agent: number, key: string, head: string, context: { string }, note: string }? = nil
+
+-- The review of a message for `agent`, in a Plotroom block's Confirm overlay (rpc `message`): `near` (the selection's
+-- pane) when it is a Plotroom block, else one in its tab, else the lowest on the agent's host, else any. It shows the
+-- one-line note (when there is one) and every line of `context` as they will be sent, newlines kept; its Send link
+-- sends, its Add a note link asks for the note and reviews again. Escape or Cancel sends nothing.
+local function review(cx: WindowCx, near: number, agent: number, key: string, head: string, context: { string }, note: string)
+	local panes = plotroomPanes(cx)
+	local host = hostOf(cx, agent)
+	local block: number? = if table.find(panes, near) then near else nil
+	local tab = cx.session:tab_of(near)
+	for _, p in panes do
+		if not block and tab and cx.session:tab_of(p) == tab then
+			block = p
 		end
+	end
+	block = block or (if host then blockOn(cx, host) else nil) or panes[1]
+	if not block then
+		return cx:toast("info", "Open Plotroom to send the selection", "The message is shown in a Plotroom block before it is sent.")
+	end
+	local lines: { string } = {}
+	if note ~= "" then
+		table.insert(lines, note)
+		table.insert(lines, "")
+	end
+	table.move(context, 1, #context, #lines + 1, lines)
+	local token = string.format("%08x%08x", math.random(0, 0x7FFFFFFF), math.random(0, 0x7FFFFFFF))
+	pendingMessage = { token = token, pane = block, agent = agent, key = key, head = head, context = context, note = note }
+	pcall(function()
+		cx.layout:focus(block)
+	end)
+	e().ask(cx, block, "message", { token = token, head = head, note = note ~= "", lines = lines }, ACT_MS, function() end)
+end
+
+-- plotroom://message/<what>/<token> from the Plotroom block in `pane`: its Confirm overlay's Send (`send`) delivers the
+-- pending message; Add a note (`note`) asks for the one-line note and reviews the message again. A link that is not the
+-- pending message's (another block, an old token) does nothing.
+function M.messageLink(cx: WindowCx, pane: number, what: string, token: string)
+	local m = pendingMessage
+	if not m or m.token ~= token or m.pane ~= pane then
+		return cx:toast("info", "That message is no longer waiting", "Run Message an agent with the selection… again.")
+	end
+	pendingMessage = nil
+	if what == "send" then
+		return sendTo(cx, m.agent, m.key, (if m.note ~= "" then m.note .. "\n\n" else "") .. table.concat(m.context, "\n"))
+	end
+	cx:prompt({ value = m.note, placeholder = "A note for the agent of " .. m.key .. " (one line)", icon = "merge", action = "review" }):next(function(text, _, cx2)
+		if not cx2 or not text then
+			return
+		end
+		local line = trim((string.gsub(text, "%c", " ")))
+		if (utf8.len(line) or #line) > NOTE_CHARS then
+			return cx2:toast("error", "The note is too long", "At most " .. NOTE_CHARS .. " characters.")
+		end
+		review(cx2, m.pane, m.agent, m.key, m.head, m.context, line)
 	end)
 end
 
@@ -1892,7 +1899,7 @@ local function offerSelection(cx: WindowCx, sel: Picked)
 		if not cx2 or not item or type(item.agent) ~= "number" then
 			return
 		end
-		review(cx2, item.agent, item.label, "Send the selection to the agent of " .. item.label .. "?", context, "")
+		review(cx2, sel.pane, item.agent, item.label, "Send the selection to the agent of " .. item.label .. "?", context, "")
 	end)
 end
 
@@ -1928,56 +1935,23 @@ function M.messageSelection(cx: WindowCx)
 	end)
 end
 
-local function planOf(a: any): Plan?
-	local c = a.confirm
-	if type(a.token) ~= "string" or a.token == "" or type(c) ~= "table" or type(c.head) ~= "string" or type(c.label) ~= "string" then
-		return nil
+-- A plan reply: the block asks it in its Confirm overlay and commits from there, so only a reply that is no plan (the
+-- problem, or nothing usable) is toasted here.
+local function planned(cx: WindowCx, a: any)
+	if type(a) ~= "table" or type(a.token) ~= "string" or a.token == "" then
+		local why = if type(a) == "table" then problemOf(a) else nil
+		cx:toast("error", "Plotroom: nothing to confirm", why or "The block's host gave no plan.")
 	end
-	local lines: { string } = {}
-	if type(c.lines) == "table" then
-		for _, line in c.lines do
-			if type(line) == "string" and line ~= "" then
-				table.insert(lines, line)
-			end
-		end
-	end
-	return { token = a.token, head = c.head, label = c.label, lines = lines }
 end
 
--- Shows the host's plan reply `plan` (`{token, confirm = {head, label, lines}}`): Cancel first, then the commit choice
--- and its lines. Only a confirmed plan sends `commit` with its own token (never kept past this call), and the result
--- or problem is toasted; `done` runs after a commit that succeeded.
-function M.confirmPlan(cx: WindowCx, pane: number, plan: any, done: ((WindowCx, any) -> ())?)
-	local p = if type(plan) == "table" then planOf(plan) else nil
-	if not p then
-		local why = if type(plan) == "table" then problemOf(plan) else nil
-		return cx:toast("error", "Plotroom: nothing to confirm", why or "The block's host gave no plan.")
-	end
-	local token = p.token
-	confirmPick(cx, p.head, p.label, p.lines, function(cx2: WindowCx)
-		e().ask(cx2, pane, "commit", { token = token }, COMMIT_MS, function(a: any, cx3: WindowCx)
-			local why = problemOf(a)
-			if why then
-				return cx3:toast("error", "Not done", why)
-			elseif a.ok ~= true then
-				return cx3:toast("error", "Not done", "The block's host gave no result")
-			end
-			cx3:toast("success", if type(a.message) == "string" then a.message else "Done", if type(a.url) == "string" then a.url else nil)
-			if done then
-				done(cx3, a)
-			end
-		end)
-	end)
-end
-
--- Asks the host for an `act`; a plan reply is confirmed, a problem is toasted under `title`.
+-- Asks the host for an `act`; a plan reply is confirmed in the block, a problem is toasted under `title`.
 local function planAct(cx: WindowCx, pane: number, title: string, args: { [string]: any })
 	e().ask(cx, pane, "act", args, ACT_MS, function(a: any, cx2: WindowCx)
 		local why = problemOf(a)
 		if why then
 			return cx2:toast("error", title, why)
 		end
-		M.confirmPlan(cx2, pane, a, nil)
+		planned(cx2, a)
 	end)
 end
 
@@ -1994,7 +1968,7 @@ local function runAction(cx: WindowCx, pane: number, name: string, title: string
 		if why then
 			return cx2:toast("error", title, why)
 		elseif type(a.runs) ~= "table" then
-			return M.confirmPlan(cx2, pane, a, nil)
+			return planned(cx2, a)
 		end
 		local items: { PickItem } = {}
 		for _, r in a.runs do
@@ -2025,7 +1999,7 @@ local function ignoreCheck(cx: WindowCx, pane: number)
 		if why then
 			return cx2:toast("error", title, why)
 		elseif type(a.checks) ~= "table" then
-			return M.confirmPlan(cx2, pane, a, nil)
+			return planned(cx2, a)
 		end
 		local items: { PickItem } = {}
 		for _, name in a.checks do
@@ -2193,7 +2167,7 @@ local function reviewDraft(cx: WindowCx, pane: number, p: any, title: string, bo
 			if why then
 				return cx3:toast("error", "Draft PR not planned", why)
 			end
-			M.confirmPlan(cx3, pane, a, nil)
+			planned(cx3, a)
 		end)
 	end)
 end
