@@ -4384,6 +4384,7 @@ windowCase("window events: a hook paused over budget shows in the status line an
 	eq(w.toasts[toasts + 1].text, "Plotroom paused: timer", "named")
 	eq(w.toasts[toasts + 1].level, "error", "as an error")
 	same(texts(), { "Plotroom paused: timer" }, "and shown on every pane's status line")
+	yes(h.hx.ternIcon(((w.window.status :: any)({ pane = 7 }))[1].icon), "with an icon Tern draws")
 	eq(w.window.refreshes, refreshes + 1, "which was redrawn")
 	w.window.handlers.budget({ hook = "status", state = "paused", ms = 4, paused_ms = 5000 }, w.cx)
 	eq(#w.toasts, toasts + 1, "a second pause adds no toast")
@@ -4484,6 +4485,7 @@ windowCase("window selection: a note is added by one line, a long selection is c
 	w.flush()
 	local review = w.window.picks[#w.window.picks]
 	has(review.items[3].label, "Edit note", "after a note the row offers to edit it")
+	yes(h.hx.ternIcon(review.items[3].icon), "with an icon Tern draws: " .. tostring(review.items[3].icon))
 	eq(review.items[4].label, "see this", "the note is shown first, in its own group")
 	local rows = pickRows(review)
 	eq(rows[#rows], "[clipped: first 40 of 50 lines]", "the cut is a row, so it is explicit")

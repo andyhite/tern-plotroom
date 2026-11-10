@@ -1779,7 +1779,7 @@ local function boardNode(state: State, bar: boolean?): Node
 	local kids: { Node } = {
 		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
 		buttonRow("foldbar", {
-			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "lanes-fold" } }),
+			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chev" else "chev-r", actions = { click = "lanes-fold" } }),
 		}),
 	}
 	if open then
