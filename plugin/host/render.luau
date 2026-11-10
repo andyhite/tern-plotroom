@@ -564,9 +564,10 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	if #links > 0 then
 		table.insert(out, ui.node("col", { key = "checks", hidden = true }, links))
 	end
-	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
-	-- engine.failures): code with that line marked, clamped to its first lines. No log viewer: the check's row above
-	-- opens its page.
+	-- Each failing check's first error line, its log excerpt under it (read once per check and head commit,
+	-- engine.failures): code with that line marked, clamped to its first lines with Tern's "K more lines". Not in a
+	-- collapsible section: Tern applies a code preview only while its disclosure is folded, and a folded section draws
+	-- no body. No log viewer: the check's row above opens its page.
 	local sha = if d and d.about then d.about.head else nil
 	for i, r in runs do
 		local log = if r.status == "failure" and sha then engine.ciLog(state, sha, r) else nil
@@ -577,7 +578,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 			if #log.refs > 0 then
 				table.insert(body, 1, ui.node("text", { key = "refs", spans = { ui.span("Changed files it names: ", "muted"), ui.span(table.concat(log.refs, ", "), "code") } }))
 			end
-			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") }, collapsible = true, collapsed = true }, body))
+			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") } }, body))
 		elseif log and log.problem then
 			table.insert(out, ui.node("text", { key = "fail" .. i, spans = { ui.span(r.name .. ": log not read: " .. log.problem, "muted") } }))
 		end
