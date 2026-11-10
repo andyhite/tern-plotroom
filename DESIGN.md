@@ -38,9 +38,9 @@ All Tern variables; the plugin declares none.
 
 ## Typography
 
-- **Prose:** `var(--sans)`, Tern's default for every kind; no font stack is declared.
-- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, counts): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values.
-- **Weight:** `strong` spans for a heading's view name and a linked item's title; nothing else is bold.
+- **Prose:** Tern's sans face, set by `font = "sans"` on both blocks (Tern's Designing Views › Typography); no font stack is declared and no plugin CSS sets a block's face.
+- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, SHAs, counts, times): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values. A number in a kv value or running text is `mono`, never `num` (it paints the code-number colour).
+- **Weight:** the `title` token for the queue's view name (the page's name), `strong` for a linked item's title; nothing else is bold.
 - Text is never coloured for emphasis; only a meaning colours it.
 
 ## Spacing and radii

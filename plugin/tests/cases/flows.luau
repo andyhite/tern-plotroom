@@ -4201,6 +4201,7 @@ case("host agents: a working agent shows its clock, and its estimated bar once i
 	eq(bar(fact("Working") :: any), "7/10", "and the bar at 1 - e^(-2.3 * 67 / 100), 79%")
 	b.typeText("j")
 	eq(h.factOf(b, "Working"), "0:05", "an action with too few runs to expect a duration: the clock alone")
+	same(fact("Working"), { { t = "0:05", s = "mono" } }, "a time in a kv value is mono, not num (Tern's Typography)")
 	b.typeText("j")
 	eq(h.factOf(b, "Working"), nil, "an idle agent: no clock")
 	pickScope(b, "agents")
