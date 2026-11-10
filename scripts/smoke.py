@@ -2009,7 +2009,8 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any]) -> None:
     (folder / "review.json").write_text(json.dumps(review), encoding="utf-8")
     panes = len(s.state()["panes"])  # type: ignore[arg-type]
     s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
-    s.wait_text("the Draft review block", "Draft review of " + head[:7])
+    s.wait_text("the Draft review block", "Draft review of")
+    s.wait_text("its head SHA, a mono span of its own", head[:7])
     s.wait_text("the summary, rendered as Markdown", "Review of the change")
     s.wait_text("Send, with its key", "Send to agent")
     s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]

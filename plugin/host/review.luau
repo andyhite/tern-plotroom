@@ -569,7 +569,8 @@ local function view(state: State): BlockView
 	end
 	table.insert(main, ui.node("text", { key = "head", spans = {
 		ui.span(p.repo .. "#" .. p.number, "mono"),
-		ui.span("  ·  Draft review of " .. string.sub(p.head, 1, 7), "muted"),
+		ui.span("  ·  Draft review of ", "muted"),
+		ui.span(string.sub(p.head, 1, 7), "mono"),
 	} }))
 	table.insert(main, ui.node("text", { key = "moves", spans = { ui.span("j/k move  ·  Space keep or drop  ·  e edit", "muted") } }))
 	-- The decision row: verdict, count, then Send (or its status).
@@ -610,7 +611,11 @@ local function view(state: State): BlockView
 		}))
 	end
 	if state.head and M.moved(p, state.head) then
-		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "muted"))
+		table.insert(main, ui.node("text", { key = "moved", spans = {
+			ui.span("The pull request's head moved to ", "muted"),
+			ui.span(string.sub(state.head, 1, 7), "mono"),
+			ui.span(" since this review: Send asks the agent to check the new commits first.", "muted"),
+		} }))
 	end
 	if state.loading then
 		table.insert(main, ui.node("row", { key = "loading", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
@@ -633,6 +638,7 @@ end
 
 function M.define()
 	tern.block.define("review", {
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local a: any = args
 			if (not a or not a[1]) and isTable(saved) and saved.version == 1 then

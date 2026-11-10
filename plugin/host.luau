@@ -461,6 +461,8 @@ local function blockDef(): BlockDef<State>
 		end)
 	end
 	return {
+		-- Tern's sans face for people's text; mono/code/path spans and code kinds stay mono (Designing Views › Typography).
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
 			local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }

@@ -1530,6 +1530,7 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	local wideIds, wide = snap()
 	eq(wide["issues:v1"].count, 3, "wide: the loaded filter has a count")
 	eq(pickerOf(b).title[1].t, "Assigned to me", "wide: the view's name is the title")
+	eq(pickerOf(b).title[1].s, "title", "in Tern's title token, the page's name")
 	eq(pickerOf(b).strip, nil, "no Sort strip: the order is announced by the toast when it changes")
 	b.cx.cols = 100
 	b.cx:render()
