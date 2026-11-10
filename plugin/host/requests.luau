@@ -1695,8 +1695,28 @@ end
 
 -- Opens the item at `url` in this block: fetched first (gh or acli), so a missing or foreign item is reported, then shown
 -- as the pin. Nothing is opened in a browser. `done(problem, message)` tells the outcome: a window request replies with it,
--- a paste toasts it.
+-- a paste toasts it. A branch's new pull request page (`…/pull/new/<branch>`, from the `git push` lens) opens the
+-- branch's pull request, looked up now; a branch with none says so.
 function M.openUrl(state: State, url: any, done: (string?, string?) -> ())
+	local owner, name, branch = nil, nil, nil
+	if type(url) == "string" then
+		owner, name, branch = string.match(url, "^https://github%.com/([%w%._%-]+)/([%w%._%-]+)/pull/new/([%w%._%-/]+)$")
+	end
+	if owner and name and branch then
+		if not cli.on("github") then
+			return done("The GitHub CLI (gh) does not start on this host.")
+		end
+		return github.pullByHead(owner .. "/" .. name, branch, nil, function(pr: github.HeadPr?, problem: github.Problem?)
+			if not alive(state) then
+				return
+			elseif problem then
+				return done(M.whyOf(problem))
+			elseif not pr then
+				return done("No pull request for " .. branch .. " yet.")
+			end
+			M.openUrl(state, pr.url, done)
+		end)
+	end
 	local pin = engine.pinView(url)
 	if not pin then
 		return done("That is not a GitHub pull request or issue URL, or a Jira issue URL.")

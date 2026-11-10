@@ -1559,10 +1559,10 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local shown = string.match(url, "^plotroom://lens/show/(.+)$")
 	if shown then
-		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
-		-- pull request page, which the block's host validates again.
+		-- The one link a pane that is not a Plotroom block may send (a shell lens's Show in Plotroom): it only shows a
+		-- pull request page, or a branch's new pull request page (`git push`), which the block's host validates again.
 		local page = unpct(shown)
-		if #page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+		if #page > 2048 or not (string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") or string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/new/[%w%._%-/]+$")) then
 			cx:toast("error", "Plotroom: malformed link")
 		else
 			flows.showUrl(cx, pane, page)

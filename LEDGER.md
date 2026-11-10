@@ -106,6 +106,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Draft review layout: compact findings navigator and focused diff/feedback pane, with verdict and Send at the top; stacked layout in narrow panes | Draft review block | Keep | 6 | Approved | Refinement of the existing review block: make agent findings easy to inspect and edit without scrolling through repeated cards or losing the handoff controls |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
+| Shell lens after `git push`: GitHub's "Create a pull request" line becomes a **Create pull request** button for its `/pull/new/<branch>` page, and **Show in Plotroom** shows the branch's pull request when one exists | Shell pane | New | — | Approved | tern-plotroom#8qf1: the step from a pushed branch to its pull request. The lens runs nothing; Show in Plotroom looks the branch up only when clicked |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
 | Close issue…; Reopen issue… | Commands | Keep | — | Approved | "Won't do" is a triage outcome |
 | Re-run failed checks | Commands | Keep | — | Approved | |
