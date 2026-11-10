@@ -97,7 +97,7 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 	has(w.toasts[6].sub, "Current", "and is current")
 	has(w.toasts[6].sub, "Clean", "and clean")
 	eq(commandsOf(b, "update"), nil, "no update commands: the worktree is current")
-	yes(findKey(cardOf(b), "remove", "item") ~= nil, "the card offers to remove it")
+	yes(findKey(cardOf(b), "remove", "button") ~= nil, "the card offers to remove it")
 	-- the card's Open in new tab is the Worktree button: its click reaches the window's flow, which opens another tab
 	local tabs = #w.window.launches
 	pressCard(b, "open")

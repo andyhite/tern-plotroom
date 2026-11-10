@@ -290,7 +290,6 @@ function M.keyBar(state: State, queue: { QueueAction }): Node?
 	for i, e in list do
 		table.insert(segs, ui.node("seg", {
 			key = "k" .. i,
-			role = "plotroom.button",
 			spans = { ui.span(e.key, "key"), ui.span(" " .. e.label, "muted") },
 			priority = #list - i + 1,
 			actions = { click = e.run },

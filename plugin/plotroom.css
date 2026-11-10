@@ -58,25 +58,10 @@
 	max-width: none;
 }
 
-/* What a click does shows on the node (host/render's BUTTON and LINK roles): an action is a button, sized to its label
-   with a button's ring (items: Plotroom does not use Tern's button kind yet); what opens something is a link, its label underlined
-   in a hairline that darkens under the pointer. Links stay neutral: colour is for DESIGN.md's Color Meaning Rule only.
-   Tern's own .sf-act already gives both the pointing hand. */
-[data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.button'],
-[data-surface='plugin.plotroom.review'] .sf-item[data-role='plotroom.button'] {
-	border: 1px solid var(--l3);
-	border-radius: var(--r-ctl);
-	padding: 0 8px;
-	gap: 6px;
-}
-
-[data-surface='plugin.plotroom.prs'] .sf-icon[data-role='plotroom.button'],
-[data-surface='plugin.plotroom.review'] .sf-icon[data-role='plotroom.button'] {
-	border: 1px solid var(--l3);
-	border-radius: var(--r-ctl);
-	padding: 2px;
-}
-
+/* What a click does shows on the node (DESIGN.md › Buttons and links): an action is Tern's button kind, which draws
+   itself; what opens something is a link (host/render's LINK role), its label underlined in a hairline that darkens
+   under the pointer. Links stay neutral: colour is for DESIGN.md's Color Meaning Rule only. Tern's own .sf-act gives
+   the pointing hand. */
 [data-surface='plugin.plotroom.prs'] .sf-item[data-role='plotroom.link'] .sf-item-label {
 	text-decoration: underline;
 	text-decoration-color: var(--l3);
