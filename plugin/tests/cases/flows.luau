@@ -4270,74 +4270,53 @@ case("host agents: the Agents list shows the last message, delivery error and la
 	same(b.state().agentInfo["o/r#1"], {}, "texts that are not clean strings are dropped")
 end)
 
-case("host agents: a working agent shows its clock, and its estimated bar once its action expects a duration, in the Agents list, its preview and the item's preview, drawn again once a second", function(w: World)
+case("host agents: a working agent's clock and estimated bar are Tern's elapsed and bar columns on its Agents row, an elapsed node and a meter in its preview and the item's, drawn again only when the estimate moves", function(w: World)
 	hostScene(w, 3)
 	local b = openQueue(w)
 	local now = w.seconds()
-	-- The bar's cells as "filled/all": the pending span (agent working) is how far along the run probably is.
-	local function bar(spans: { any }): string
-		local filled, all = 0, 0
-		for _, s in spans do
-			if type(s) == "table" and string.find(s.t, "━", 1, true) then
-				local n = utf8.len(s.t) :: number
-				all += n
-				filled += if s.s == "pending" then n else 0
-			end
-		end
-		return filled .. "/" .. all
-	end
-	local function fact(key: string): { any }?
-		for _, part in { "stage", "agent" } do
-			local facts: any = findKey(pickerNode(b), part, "kv")
-			for _, item in if facts then facts.p.items else {} do
-				if item.k == key then
-					return item.v
-				end
-			end
-		end
-		return nil
-	end
 	asks.hx.agents(b, {
 		["o/r#1"] = { state = "working", action = "Review", title = "Fix one", since = tostring(now - 67), expected = "100" },
 		["o/r#2"] = { state = "working", action = "Watch", title = "Fix two", since = tostring(now - 5) },
 		["o/r#3"] = { state = "idle", action = "Fix", title = "Fix three", since = tostring(now - 5), expected = "100" },
 	})
-	has(h.factOf(b, "Working") :: string, "1:07", "the item's preview shows the clock")
-	eq(bar(fact("Working") :: any), "7/10", "and the bar at 1 - e^(-2.3 * 67 / 100), 79%")
+	eq(h.workingOf(b), "clock 67 bar 78", "the item's preview: the clock from the run's start, the bar at 1 - e^(-2.3 * 67 / 100)")
+	eq(h.factOf(b, "Working"), nil, "not a kv fact: a kv value holds spans only")
 	b.typeText("j")
-	eq(h.factOf(b, "Working"), "0:05", "an action with too few runs to expect a duration: the clock alone")
-	same(fact("Working"), { { t = "0:05", s = "mono" } }, "a time in a kv value is mono, not num (Tern's Typography)")
+	eq(h.workingOf(b), "clock 5", "an action with too few runs to expect a duration: the clock alone")
 	b.typeText("j")
-	eq(h.factOf(b, "Working"), nil, "an idle agent: no clock")
+	eq(h.workingOf(b), nil, "an idle agent: no clock")
 	pickScope(b, "agents")
 	w.flush()
-	local rows: { string } = {}
+	same(pickerOf(b).columns, { { id = "bar", format = "bar" }, { id = "clock", format = "elapsed" } }, "the Agents picker has the bar and clock columns")
+	local rows: { any } = {}
 	for _, item in pickerOf(b).items do
-		table.insert(rows, detailText(item) .. " " .. bar(item.detail))
+		table.insert(rows, { detailText(item), h.clockFacts(item) or "none" })
 	end
-	same(rows, { "━━━━━━━━━━ 1:07 · Review 7/10", "0:05 · Watch 0/0", "Fix 0/0" }, "the Agents rows lead with the bar and clock of a working agent")
-	has(h.factOf(b, "Working") :: string, "1:07", "and so does its preview")
+	same(rows, { { "Review", "clock 67 bar 78" }, { "Watch", "clock 5" }, { "Fix", "none" } }, "each working row fills them; the detail no longer carries a clock")
+	eq(h.workingOf(b), "clock 67 bar 78", "and so does its preview")
+	-- The bar is at 78%; it reaches its next step, 80%, at 100 ln(5) / 2.3 = 69.9756 s, 2976 ms from now.
 	local drawn = b.renders()
-	w.advance(1000)
-	eq(b.renders(), drawn + 1, "a second later the view is drawn again")
-	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 1:08", "with the clock moved on")
-	w.advance(3000)
-	eq(b.renders(), drawn + 4, "once a second")
+	w.advance(2975)
+	eq(b.renders(), drawn, "Tern ticks the clocks: nothing is drawn while the estimate stays in its step")
+	w.advance(1)
+	eq(b.renders(), drawn + 1, "drawn again once the estimate reaches its next step")
+	eq(h.workingOf(b), "clock 69.976 bar 80", "the bar moved on, the clock sent from the same start")
 	b.press("down")
-	eq(b.renders(), drawn + 5, "a key press draws it once")
-	w.advance(1000)
-	eq(b.renders(), drawn + 6, "and adds no redraw of its own")
+	eq(h.workingOf(b), "clock 7.976", "a key press draws it; the clock keeps the run's start")
 	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = tostring(w.seconds() - 100), expected = "100" } })
-	eq(bar(fact("Working") :: any), "8/10", "at the expected duration the bar is at 90%")
+	b.press("up")
+	eq(h.workingOf(b), "clock 100.976 bar 90", "at the expected duration the bar is at 90%")
 	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = tostring(now - 100000), expected = "100" } })
-	eq(bar(fact("Working") :: any), "9/10", "and it is never full before the run ends")
-	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = "soon", expected = "-5" } })
-	eq(h.factOf(b, "Working"), nil, "a start that is not digits is dropped")
-	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Review" } })
-	w.advance(1000)
+	eq(h.workingOf(b), "clock 100002.976 bar 95", "and it is never full before the run ends")
 	drawn = b.renders()
-	w.advance(5000)
-	eq(b.renders(), drawn, "no working agent shown: nothing is drawn again")
+	w.advance(30000)
+	eq(b.renders(), drawn, "at 95% the estimate moves no more: nothing is drawn again")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "working", action = "Review", since = "soon", expected = "-5" } })
+	eq(h.workingOf(b), nil, "a start that is not digits is dropped")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Review" } })
+	drawn = b.renders()
+	w.advance(10000)
+	eq(b.renders(), drawn, "only clocks shown, no estimate: nothing is drawn again")
 end)
 
 case("host agents: a run's checked outcome shows on its row, the preview and the Agents list; Not verified or a stuck report is Needs you while the agent is idle", function(w: World)

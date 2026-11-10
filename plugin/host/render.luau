@@ -219,29 +219,53 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	row.badges = badges
 end
 
-local BAR_CELLS = 10
+-- A working agent's clock (ms) and estimated bar (0-1; engine.agentClock), nil when the agent of item `key` is not
+-- working. Tern ticks the clock; the view notes when the soonest bar it shows needs its next redraw (queuePicker).
+local function working(state: State, key: string): (number?, number?)
+	local elapsed, fraction, due = engine.agentClock(state, key)
+	if due and (not state.barDue or due < state.barDue) then
+		state.barDue = due
+	end
+	return elapsed, fraction
+end
 
--- A working agent's thin bar of how far along it probably is (engine.agentClock; only when its action has runs enough to
--- expect a duration) and its clock, m:ss; nil when the agent of item `key` is not working. The view redraws itself
--- a second later (queuePicker), and nothing on it animates.
-local function agentClock(state: State, key: string): { any }?
-	local elapsed, fraction = engine.agentClock(state, key)
+-- The Agents and Now pickers' columns: the estimated bar, then the clock, filled by clockFacts.
+local CLOCK_COLUMNS = { { id = "bar", format = "bar" }, { id = "clock", format = "elapsed" } }
+
+-- A picker row's facts for those columns; nil when its agent is not working.
+local function clockFacts(state: State, key: string): { [string]: number }?
+	local elapsed, fraction = working(state, key)
+	return if elapsed then { clock = elapsed, bar = fraction } :: { [string]: number } else nil
+end
+
+-- A preview's Working line: the clock (`elapsed`, m:ss) and the estimated bar (`meter`) when there is one; nil when
+-- the agent of item `key` is not working. A row, not a kv fact: a kv value holds spans only.
+local function clockRow(state: State, key: string): Node?
+	local elapsed, fraction = working(state, key)
 	if not elapsed then
 		return nil
 	end
-	state.clocked = true
-	local out: { any } = {}
+	local kids: { Node } = {
+		ui.node("text", { key = "label", spans = { ui.span("Working", "muted") } }),
+		ui.node("elapsed", { key = "clock", age = elapsed, format = "clock" }),
+	}
 	if fraction then
-		local filled = math.floor(fraction * BAR_CELLS) -- 95% is 9 of 10: never a full bar before the run ends
-		if filled > 0 then
-			table.insert(out, ui.span(string.rep("━", filled), "pending"))
-		end
-		if filled < BAR_CELLS then
-			table.insert(out, ui.span(string.rep("━", BAR_CELLS - filled), "muted"))
-		end
-		table.insert(out, " ")
+		table.insert(kids, ui.node("meter", { key = "bar", value = fraction, tone = "pending" }))
 	end
-	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "mono"))
+	return ui.node("row", { key = "working", gap = "sm", align = "center" }, kids)
+end
+
+-- A preview's agent part: the Working line while its agent works, then `facts` (the agent's action, ...).
+local function agentPart(state: State, key: string?, facts: { { [string]: any } }): { Node }
+	local out: { Node } = {}
+	local clock = if key then clockRow(state, key) else nil
+	if clock then
+		table.insert(out, clock)
+	end
+	if #facts > 0 then
+		table.insert(out, ui.node("kv", { key = "agent", items = facts }))
+	end
+
 	return out
 end
 
@@ -257,10 +281,10 @@ local function withValue(facts: { { [string]: any } }): { { [string]: any } }
 end
 
 -- The status part of a PR's or issue's preview (what blocks it or needs you), under its next move: the item's stage,
--- toned as its row badge, what blocks it, how long its agent has worked (while it works), its agent's checked outcome
--- and what its checker found (a failed check lists
--- its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author).
-local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): Node
+-- toned as its row badge, what blocks it, its agent's checked outcome and what its checker found (a failed check
+-- lists its findings), then `lead`, the facts its stage acts on first (a review asked of you: its author); then how
+-- long its agent has worked, while it works (clockRow).
+local function stageFact(state: State, kind: string, item: any, lead: { { [string]: any } }?): { Node }
 	local id, blockers = engine.stage(state, kind, item)
 	local b = stageBadge(id, state.notes[item.key])
 	local items: { { [string]: any } } = { { k = "Stage", v = { ui.span(b.text, b.tone) } } }
@@ -268,7 +292,6 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	for _, r in (blockers or {}) :: { engine.Blocker } do
 		table.insert(items, { k = "Blocked by", v = if r.detail then { ui.span(r.chip, "error"), ui.span(" — " .. r.detail) } else { ui.span(r.chip, "error") } })
 	end
-	table.insert(items, { k = "Working", v = agentClock(state, item.key) })
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil
 	if verdictBadge(info) then
@@ -286,7 +309,12 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 			table.insert(items, f)
 		end
 	end
-	return ui.node("kv", { key = "stage", items = withValue(items) })
+	local out: { Node } = { ui.node("kv", { key = "stage", items = withValue(items) }) }
+	local clock = clockRow(state, item.key)
+	if clock then
+		table.insert(out, clock)
+	end
+	return out
 end
 
 -- The picker rows of a snapshot, built once: again only when a worktree report arrives, the block's state changes or
@@ -967,7 +995,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		table.insert(out, controls)
 	end
 	addPart(out, "summary", summaryNodes(state, pr, true))
-	local status: { Node } = { stageFact(state, "prs", pr, if asked then { author } else nil) }
+	local status: { Node } = stageFact(state, "prs", pr, if asked then { author } else nil)
 	if asked and diff then
 		table.insert(status, diff)
 	end
@@ -1155,7 +1183,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 		table.insert(out, controls)
 	end
 	addPart(out, "summary", summaryNodes(state, issue, false))
-	addPart(out, "status", { stageFact(state, "issues", issue) })
+	addPart(out, "status", stageFact(state, "issues", issue))
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
 	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil, loading))
 	addPart(out, "properties", properties)
@@ -1419,14 +1447,13 @@ local function agentsPreview(state: State): { Node }
 		{ k = "Not delivered", v = if row.err then { ui.span(printable(row.err), "error") } else nil },
 	})
 	local agent = withValue({
-		{ k = "Working", v = agentClock(state, row.key) },
 		{ k = "Action", v = if row.action then { ui.span(printable(row.action)) } else nil },
 		{ k = "Branch", v = if row.branch then { ui.span(printable(row.branch), "code") } else nil },
 		{ k = "Last run", v = if row.result then { ui.span(printable(row.result .. (if row.ended then " " .. row.ended else ""))) } else nil },
 	})
 	local kids: { Node } = headNodes(printable(row.key), { text = "Agent", tone = "muted" }, nil, badge, printable(row.title or row.key))
 	addPart(kids, "status", if #needs > 0 then { ui.node("kv", { key = "stage", items = needs }) } else {})
-	addPart(kids, "agent", if #agent > 0 then { ui.node("kv", { key = "agent", items = agent }) } else {})
+	addPart(kids, "agent", agentPart(state, row.key, agent))
 	if href then
 		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
 		for _, act in AGENT_COMMANDS do
@@ -1463,12 +1490,7 @@ local function agentsProps(state: State, props: { [string]: any })
 		if #detail == 0 then
 			detail = { ui.span(printable(row.key), "mono") }
 		end
-		local clock = agentClock(state, row.key)
-		if clock then
-			table.insert(clock, " · ")
-			table.move(detail, 1, #detail, #clock + 1, clock)
-			detail = clock
-		end
+		local facts = clockFacts(state, row.key)
 		local report = REPORT_BADGE[row.attention or ""]
 		if row.err then
 			table.insert(detail, " · ")
@@ -1499,7 +1521,7 @@ local function agentsProps(state: State, props: { [string]: any })
 		if checked then
 			table.insert(badges, checked)
 		end
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges })
+		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = badges, facts = facts })
 		if not groups[row.repo] then
 			groups[row.repo] = {}
 			table.insert(names, row.repo)
@@ -1519,7 +1541,7 @@ local function agentsProps(state: State, props: { [string]: any })
 	props.empty = { ui.span("No agents are running. Start one from a pull request or issue.", "muted") }
 	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
 	props.selected = if current then pickerId("g", current.key) else nil
-	props.columns, props.query, props.cursor = {}, nil, nil
+	props.columns, props.query, props.cursor = CLOCK_COLUMNS, nil, nil
 end
 
 -- What GitHub's notification reasons say, and how much each wants you; any other reason is shown as GitHub spelled it.
@@ -1630,12 +1652,10 @@ local function nowPreview(state: State): { Node }
 			}),
 		}),
 	})
-	local working = if row.key then agentClock(state, row.key) else nil
 	local agentFacts = withValue({
-		{ k = "Working", v = working },
 		{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
 	})
-	addPart(kids, "agent", if #agentFacts > 0 then { ui.node("kv", { key = "agent", items = agentFacts }) } else {})
+	addPart(kids, "agent", agentPart(state, row.key, agentFacts))
 	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } } } }) } else {})
 	table.insert(kids, ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }))
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
@@ -1683,13 +1703,7 @@ local function nowProps(state: State, props: { [string]: any })
 			table.insert(item.detail, ui.span(printable(row.agent.last), "muted"))
 		end
 		-- How long the item's agent has worked, while it works.
-		local clock = if row.key then agentClock(state, row.key) else nil
-		if clock then
-			table.insert(item.detail, " · ")
-			for _, s in clock do
-				table.insert(item.detail, s)
-			end
-		end
+		item.facts = if row.key then clockFacts(state, row.key) else nil
 		local badges: { any } = { badge }
 		for _, c in chips do
 			table.insert(badges, c)
@@ -1739,7 +1753,7 @@ local function nowProps(state: State, props: { [string]: any })
 	props.empty = { ui.span(if allOff then "Only agents are listed: Settings › Views › Now" else "Nothing needs you right now.", "muted") }
 	props.items, props.order, props.hits = tern.json.array(items), tern.json.array(order), nil
 	props.selected = if current then current.id else nil
-	props.columns, props.query, props.cursor = {}, nil, nil
+	props.columns, props.query, props.cursor = CLOCK_COLUMNS, nil, nil
 end
 
 -- A card's right-click menu, as ids its `action` events carry (host.luau's Board card events): a view's card offers
@@ -1979,7 +1993,7 @@ end
 -- The queue's picker; also drawn under Settings' side sheet, where keys go to Settings (so no search caret). `bar`: the
 -- key footer sits under it.
 function M.queuePicker(state: State, bar: boolean?): Node
-	state.clocked = false -- agentClock marks it again while a working agent's clock is drawn
+	state.barDue = nil -- working() notes the soonest step of an estimated bar drawn below
 	local snap, problem, view, item = state.snap, state.problem, activeView(state), selected(state)
 	local vis = filtered(state)
 	local open = openItems(state)
@@ -2108,6 +2122,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		cancelDetails(state)
 		if state.nowOn then
 			nowProps(state, props)
+			state.barDue = nil -- the Board draws no Now rows
 		end
 		laid = true
 		preview = { boardNode(state, bar) }
@@ -2135,10 +2150,15 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	end
 	local shown = props.selected ~= nil or guide ~= nil or laid
 	props.preview = if shown then "side" else "none"
-	-- A working agent's clock is shown: draw again a second from now, once (a key press redraws it no sooner).
-	if state.clocked and not state.clockTimer then
-		state.clockTimer = tern.timer(1000, function()
-			state.clockTimer = nil
+	-- Tern ticks the clocks; an estimated bar moves only by a redraw, so draw again when the soonest shown bar reaches
+	-- its next step (this draw replaces the one planned before it), and never without a bar to move.
+	if state.barTimer then
+		state.barTimer:cancel()
+		state.barTimer = nil
+	end
+	if state.barDue then
+		state.barTimer = tern.timer(state.barDue, function()
+			state.barTimer = nil
 			if engine.alive(state) then
 				state.cx:render()
 			end
