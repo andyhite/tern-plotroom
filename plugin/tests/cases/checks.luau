@@ -1621,6 +1621,27 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#viewSearchesOf(s.gh, "issue-search"), 1, "the issues were searched once")
 end)
 
+-- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that the
+-- sidebar uses; add one only after finding it in Tern's set.
+local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle" }
+
+case("host: every sidebar scope and the list it shows wear an icon Tern knows", function(w: World)
+	local s = issueHost(w)
+	s.gh.items.octocat = manyItems("o/r", 3)
+	local b = openQueue(w)
+	local ids: { string } = {}
+	for _, scope in pickerOf(b).scopes do
+		yes(table.find(TERN_ICONS, scope.icon) ~= nil, "the " .. scope.label .. " entry's icon " .. tostring(scope.icon) .. " is a Tern icon")
+		table.insert(ids, scope.id)
+	end
+	yes(table.find(ids, "agents") ~= nil and table.find(ids, "worktrees") ~= nil and table.find(ids, "now") ~= nil, "Now, Worktrees and Agents are among them")
+	for _, id in ids do
+		pickScope(b, id)
+		w.flush()
+		yes(table.find(TERN_ICONS, pickerOf(b).icon) ~= nil, "the " .. id .. " list's icon " .. tostring(pickerOf(b).icon) .. " is a Tern icon")
+	end
+end)
+
 case("host: a block saves the kind of its filter and restores it: both stores have a v1, and a pane saved before issue filters joined the block is on a pull request filter", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = manyItems("o/r", 3)
