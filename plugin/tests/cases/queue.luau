@@ -79,7 +79,7 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	eq(b.title(), "Plotroom · My PRs · 3 reviews requested", "the title names the filter, not its count (the sidebar has it), then what needs you")
 	local prHead: any = findKey(pickerNode(b), "head", "card")
-	eq(prHead.p.meta[2].t, " · GitHub", "the preview's head card names the integration in its meta")
+	eq(findKey(prHead, "meta", "text").p.spans[2].t, " · GitHub", "the preview's head card names the integration in its meta line")
 	eq(prHead.p.icon, "merge", "under a pull request's icon")
 	for _, item in pickerOf(b).items do
 		for _, badge in item.badges or {} do

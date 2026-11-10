@@ -1827,7 +1827,8 @@ case("host: an issue row names its number, the repository only when the view spa
 	eq(row(1).facts, nil, "the rows carry no facts column: no comment count, no assignee")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
 	local head: any = findKey(pickerNode(b), "head", "card")
-	same({ head.p.meta[1].t, head.p.meta[2].t }, { "#12 · o/r", " · GitHub" }, "the head card's meta names the number, the repository and GitHub")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[2].t }, { "#12 · o/r", " · GitHub" }, "the head card's meta line names the number, the repository and GitHub")
 	eq(findKey(head, "integration"), nil, "with no integration badge")
 	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
 	eq(badges(2), "Closed/muted Completed/success", "a completed issue")
@@ -1877,7 +1878,7 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	local head = findKey(preview, "head", "card")
 	eq(findKey(head, "copy", "button").p.href, "https://github.com/o/r/issues/12", "the head's copy button takes the issue's link")
 	eq(findKey(head, "state", "badge").p.text, "Open", "the state")
-	eq(head.p.head[1].t, "Fix login", "the title")
+	eq(findKey(head, "title", "text").p.spans[1].t, "Fix login", "the title")
 	eq(findKey(preview, "buttons").p.hidden, true, "the buttons' links sit in an unseen node")
 	eq(factOf(b, "Author"), "@octo", "author")
 	eq(factOf(b, "Assignees"), "@ann, @bob", "assignees")

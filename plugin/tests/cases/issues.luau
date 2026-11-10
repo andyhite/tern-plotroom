@@ -683,7 +683,8 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	same(hx.inTab(w, b), { pickerOf(b).items[1].id }, "a tab in the worktree is known to work in the issue: the directory keeps the key's case")
 	local head: any = findKey(pickerNode(b), "head", "card")
 	yes(head ~= nil, "the preview has a head card")
-	same({ head.p.meta[1].t, head.p.meta[2].t }, { "ABC-12 · ABC", " · Jira" }, "naming the key, the project and the tracker")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[2].t }, { "ABC-12 · ABC", " · Jira" }, "naming the key, the project and the tracker")
 	eq(findKey(head, "integration"), nil, "with no badge for it")
 	-- a format saved for the repository applies, with its {project}
 	w.kv.put("branch-formats", { ["o/r"] = "{project}/{key}" })

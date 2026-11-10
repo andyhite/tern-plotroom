@@ -909,9 +909,10 @@ local function previewControls(state: State, item: any): Node?
 	return nil
 end
 
--- An item preview's head (PR and issue): one card, its icon the kind's, its head the title, its meta the ref, where it
--- lives and the integration, and at its end the state badge, the suggested next move for the item's stage
--- (engine.nextMove, run as the Next move queue action), Copy link and Open.
+-- An item preview's head (PR and issue): one card, its icon the kind's, its head the title with its meta line under it
+-- (the ref, where it lives and the integration), and at its end the state badge, the suggested next move for the
+-- item's stage (engine.nextMove, run as the Next move queue action), Copy link and Open. The meta is a line of the head,
+-- not Tern's `meta` prop: that one is drawn after the title on its line and is cut to nothing in a narrow preview.
 local function itemHead(state: State, item: any, icon: string, ref: string, where: string, integration: string, badge: any, page: { copy: string, open: string, what: string }): Node
 	local tail: { Node } = { ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }) }
 	local move = engine.nextMove(state, state.kind.id, item)
@@ -923,10 +924,16 @@ local function itemHead(state: State, item: any, icon: string, ref: string, wher
 	return ui.node("card", {
 		key = "head",
 		icon = icon,
-		head = { ui.span(item.title) },
-		meta = { ui.span(ref .. " · " .. where, "mono"), ui.span(" · " .. integration) },
+		head = core.QUEUE_ID .. ".head.top",
 		["end"] = core.QUEUE_ID .. ".head.end",
-	}, { ui.node("row", { key = "end", gap = "xs", align = "center" }, tail) })
+	}, {
+		ui.node("col", { key = "top" }, {
+			ui.node("text", { key = "title", spans = { ui.span(item.title, "strong") } }),
+			ui.node("text", { key = "meta", spans = { ui.span(ref .. " · " .. where, "mono"), ui.span(" · " .. integration, "muted") } }),
+		}),
+		-- At most half the head, wrapping inside it, so a narrow preview keeps room for the title.
+		ui.node("row", { key = "end", gap = "xs", align = "center", justify = "end", wrap = true, max = { w = 0.5 } }, tail),
+	})
 end
 
 -- The strip of stat tiles under an item preview's head (at most four; Tern's `stats`).

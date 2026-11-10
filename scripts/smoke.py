@@ -2424,7 +2424,8 @@ def sc_controls(s: Smoke) -> None:
     s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
     button, link = scope + ".sf-button[data-size='sm']", scope + ".sf-item[data-role='plotroom.link']"
-    s.wait_until("Re-run failed checks is drawn as a button in the head card", lambda: any("Re-run failed checks" in t for t in s.matches(scope + ".sf-card " + button)))
+    s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
+    s.wait_until("the head is a card: the title, then the number", lambda: any("Controls PR 7" in t and "#7" in t for t in s.matches(scope + ".sf-card")))
     s.wait_until("the Checks stat counts the failure", lambda: any("1 of 2 failing" in t for t in s.matches(scope + ".sf-stats")))
     s.wait_until("the tabs are drawn, Overview first", lambda: any(t.startswith("Overview") for t in s.matches(scope + ".sf-tab.on")))
     s.shot("controls")

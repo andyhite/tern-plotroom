@@ -114,7 +114,7 @@ case("preview: a Jira issue keeps the shared order", function(w: World)
 	local jira = partsOf(b)
 	same(jira, { "head", "stats", "status", "description", "properties", "linked" }, "a Jira issue")
 	yes(shared(jira), "in the shared order")
-	eq(findKey(pickerNode(b), "head", "card").p.meta[2].t, " · Jira", "its head names its tracker")
+	eq(findKey(findKey(pickerNode(b), "head", "card"), "meta", "text").p.spans[2].t, " · Jira", "its head names its tracker")
 end)
 
 case("preview: a worktree made for a pull request lists it under Linked pull requests, after its facts", function(w: World)
@@ -297,8 +297,10 @@ case("preview: a pull request's head is one card, four stats sit under it, and i
 	-- Copy link and Open
 	local head: any = findKey(pickerNode(b), "head", "card")
 	eq(head.p.icon, "merge", "a pull request's icon")
-	eq(head.p.head[1].t, "Fix the race", "the title is the card's head")
-	same({ head.p.meta[1].t, head.p.meta[1].s, head.p.meta[2].t }, { "#1 · o/r", "mono", " · GitHub" }, "its meta: number and repository in mono, then the integration")
+	eq(head.p.head, "layer.queue.head.top", "the card's head is its own column")
+	eq(findKey(head, "title", "text").p.spans[1].t, "Fix the race", "the title first")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[1].s, meta[2].t }, { "#1 · o/r", "mono", " · GitHub" }, "then the meta line: number and repository in mono, then the integration")
 	eq(head.p["end"], "layer.queue.head.end", "its end is the card's own row")
 	local tail: { string } = {}
 	for _, n in findKey(head, "end", "row").c do
