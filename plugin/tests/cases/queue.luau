@@ -1885,33 +1885,49 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	ignored("no pull request", "x")
 end)
 
--- The key footer under the queue, each entry "<key> <what it does>" with its key drawn as a keycap; nil without one.
+-- The key footer in the dock, each seg "<key> <what it does>" with its key drawn as a keycap; nil without one. Also checks
+-- that the segs' priorities fall in order, so a narrow pane drops the last listed first.
 local function footerOf(b: Block): { string }?
 	local view: any = b.view()
-	local bar = findKey(view.layer, "keybar", "row")
+	local bar = view.dock and findKey(view.dock, "keybar", "status")
 	if not bar then
 		return nil
 	end
 	local out: { string } = {}
-	for _, n in bar.c do
+	for i, n in bar.c do
+		eq(n.k, "seg", "a footer key is a status seg")
 		eq(n.p.spans[1].s, "key", "a footer key is a keycap")
+		eq(n.p.priority, #bar.c - i + 1, "seg " .. i .. " drops after the ones listed after it")
 		table.insert(out, n.p.spans[1].t .. n.p.spans[2].t)
 	end
 	return out
 end
 
-case("host keys footer: Commands and Shortcut list first, then the selection's keys by use, at most 5, and only bound ones", function(w: World)
+-- The footer seg whose text starts with `prefix` ("<key> <label>").
+local function footerSeg(b: Block, prefix: string): any
+	local view: any = b.view()
+	for _, n in findKey(view.dock, "keybar", "status").c do
+		if string.sub(n.p.spans[1].t .. n.p.spans[2].t, 1, #prefix) == prefix then
+			return n
+		end
+	end
+	return nil
+end
+
+case("host keys footer: Commands and Shortcut list first, then every bound key for the selection by use, least used dropping first", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" })
 	local b = openQueue(w)
-	same(footerOf(b), { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	local first = footerOf(b) or {}
+	same({ table.unpack(first, 1, 5) }, { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	yes(#first > 5, "not cut at five: Tern's strip drops the lowest priority when narrow (" .. #first .. " keys)")
 	has(pickerOf(b).role, ".keys", "the picker ends above the footer")
 	for _ = 1, 3 do
 		b.typeText("r")
 		w.flush()
 	end
 	b.typeText("o")
-	same(footerOf(b), { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
+	same({ table.unpack(footerOf(b) or {}, 1, 5) }, { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
 	local saved: any = w.kv.get("keys")
 	saved.next = "x"
 	w.kv.put("keys", saved)
@@ -1919,12 +1935,31 @@ case("host keys footer: Commands and Shortcut list first, then the selection's k
 	b.press("up")
 	w.flush()
 	local bar = footerOf(b) or {}
-	eq(#bar, 5, "still at most 5")
 	eq(string.sub(bar[3], 1, 2), "x ", "a bound Next move comes right after Shortcut list, named as the move")
 	eq(bar[3], "x " .. hx.palette(w, b).labels.next, "named as Commands names it")
 	b.typeText("s")
 	w.flush()
 	eq(footerOf(b), nil, "Settings takes the keys: no footer under it")
+end)
+
+case("host keys footer: a click on a seg runs what its key runs, and a seg no longer listed runs nothing", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local help = footerSeg(b, "? Shortcut list")
+	same(hx.miscued(b.view().dock), {}, "a seg that does something is Tern's own clickable seg, and wears no Plotroom cue")
+	b.event({ ev = "action", id = "dock.keybar." .. help.p.key, act = help.p.actions.click })
+	yes(findKey(b.view().layer, "help", "overlay") ~= nil, "the Shortcut list opens, as ? does")
+	b.press("escape")
+	local refresh = footerSeg(b, "r Refresh")
+	local usage: any = w.kv.get("usage")
+	local before = if usage and usage.counts["queue:refresh"] then usage.counts["queue:refresh"].n else 0
+	b.event({ ev = "action", id = "dock.keybar." .. refresh.p.key, act = refresh.p.actions.click })
+	usage = w.kv.get("usage")
+	eq(usage.counts["queue:refresh"].n, before + 1, "Refresh ran and counted as its key's use")
+	w.kv.put("keys", { more = "." })
+	b.press("down")
+	b.event({ ev = "action", id = "dock.keybar.k9", act = refresh.p.actions.click })
+	eq(w.kv.get("usage").counts["queue:refresh"].n, before + 1, "unbound, Refresh is off the footer and its old seg runs nothing")
 end)
 
 case("host keys footer: with the default keys only Commands shows, an unbound Commands too leaves no footer", function(w: World)
@@ -1946,7 +1981,8 @@ case("host keys footer: a saved action's key shows the action where it beats the
 	}) })
 	local b = openQueue(w)
 	local bar = footerOf(b) or {}
-	same(bar, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	same({ table.unpack(bar, 1, 5) }, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	lacks(table.concat(bar, "|"), "Hand edited", "anywhere in the footer")
 	local saved: any = w.kv.get("keys")
 	saved.agent = ""
 	w.kv.put("keys", saved)
@@ -1956,6 +1992,9 @@ case("host keys footer: a saved action's key shows the action where it beats the
 	local opened = #w.opened
 	b.typeText("m")
 	eq(w.opened[opened + 1], runLink("o/r", 1, "p1"), "and m does run the saved action, as the footer says")
+	local mine = footerSeg(b, "m Mine")
+	b.event({ ev = "action", id = "dock.keybar." .. mine.p.key, act = mine.p.actions.click })
+	eq(w.opened[opened + 2], runLink("o/r", 1, "p1"), "a click on its seg runs it too")
 end)
 
 case("host: the preview's Unsnooze button wears the snooze key, which ends the snooze", function(w: World)

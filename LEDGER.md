@@ -24,6 +24,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Linked pull requests and issues | Preview | Keep | — | Approved | Navigation between the halves of one piece of work |
 | Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark all notifications read… |
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
+| Alt-click a GitHub pull request or issue link in any pane to show it in Plotroom | Any pane's links | New | — | Approved | tern-plotroom#cfd8: intake of an item met anywhere in the window without copying its URL; a plain click still opens the browser |
 | Open Plotroom button in the Files pane | Files pane | Keep | — | Approved | Entry point |
 | Plotroom: Open | Tern's palette | Keep | — | Approved | Entry point |
 
@@ -106,6 +107,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Draft review layout: compact findings navigator and focused diff/feedback pane, with verdict and Send at the top; stacked layout in narrow panes | Draft review block | Keep | 6 | Approved | Refinement of the existing review block: make agent findings easy to inspect and edit without scrolling through repeated cards or losing the handoff controls |
 | Ready for review…; Convert to draft… | Commands | Keep | — | Approved | |
 | Draft PR… from an issue's worktree | Commands | Keep | — | Approved | |
+| Shell lens after `git push`: GitHub's "Create a pull request" line becomes a **Create pull request** button for its `/pull/new/<branch>` page, and **Show in Plotroom** shows the branch's pull request when one exists | Shell pane | New | — | Approved | tern-plotroom#8qf1: the step from a pushed branch to its pull request. The lens runs nothing; Show in Plotroom looks the branch up only when clicked |
 | Comment…; Assign to me | Commands | Keep | — | Approved | |
 | Close issue…; Reopen issue… | Commands | Keep | — | Approved | "Won't do" is a triage outcome |
 | Re-run failed checks | Commands | Keep | — | Approved | |
@@ -139,6 +141,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Reset all settings | Settings › General | New | 1 | Approved | Starting over, and the way out of a corrupted store; keeps triage, usage, runs and agent links |
 | Settings' on/off rows as native switches; each Settings page counts what differs from the defaults | Settings (Views › Now, General › Summaries; every page's nav entry) | New | — | Approved | Setup. tern-plotroom#y47f: Tern's prefs `switch` control and page `changed` count (spike `.evidence/y47f/`); an On/Off segment pair read as two choices, and nothing said where your changes are |
 | Key footer: at most 5 bound keys for the selection (Commands, Shortcut list, Next move, then the most used); actions show their key where they appear | Queue, Commands, preview | New | — | Approved | Trust: a second user finds the keys. Adopted from tern-pr-guide (DESIGN.md › Keycaps); tern-plotroom#4ban |
+| Key footer as Tern's native status strip in the block's dock: one clickable seg per bound key, a narrow pane dropping the least used first instead of a cap of five | Queue | New | — | Approved | Trust (Commands and keys). tern-plotroom#1g5t: Tern's `status`/`seg` kind (spike `.evidence/1g5t/spike/`); the footer was an absolutely placed row in the layer that cut at five whatever the width and ran nothing on click |
 | Export and import of views and actions | Commands › Configuration | Cut | 1 | Approved | About 700 lines for a rare move between machines; views and actions are re-created by hand |
 | `Plotroom:` commands in Tern's palette, except Open, Open item by URL, Message an agent with the selection… and Go to the first agent that needs input (33 of 37 today) | Tern's palette | Hide: they stay in Commands; Tern's palette keeps only entry points and cross-pane commands. Tern-level key binds to hidden commands stop working. | 1 | Approved | Metric 2; Tern's palette is shared with every other plugin |
 | Tern's palette rows under one **Plotroom** group, titles without the `Plotroom:` prefix; default keys ⌃⌥⇧Q Go to Plotroom (focus the block, else open one), ⌃⌥⇧I Show what needs you (Now), ⌃⌥⇧A Go to the first agent that needs input | Tern's palette, keys | New | — | Approved | tern-plotroom#1tyq (Trust: Commands and keys); rows read "Tern Plotroom › Plotroom: Open", and the cross-pane jumps had no key |

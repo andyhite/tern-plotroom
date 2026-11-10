@@ -454,7 +454,7 @@ export type World = {
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
-	click: (string, number?) -> any,
+	click: (string, number?, { alt: boolean? }?) -> any, -- a link click in `pane` (default 1); `{alt = true}` holds Alt
 	command: (string) -> (),
 	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
@@ -1565,12 +1565,13 @@ local function newWorld(instantiate: Loader, context: string): World
 		link = function(block: Block)
 			linked[block.pane] = block
 		end,
-		click = function(url: string, pane: number?): any
+		click = function(url: string, pane: number?, mods: { alt: boolean? }?): any
 			local handler = routes.link
 			if handler == nil then
 				error("load \"window\" before clicking a link", 2)
 			end
-			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = false, shift = false, ctrl = false } }, windowCx)
+			local alt = mods ~= nil and mods.alt == true
+			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = alt, shift = false, ctrl = false } }, windowCx)
 		end,
 		command = function(id: string)
 			local def = commands[id]
@@ -3193,8 +3194,8 @@ M.helpRows = helpRows
 
 -- The nodes under `node` whose look disagrees with what a click does there, as "path (kind, role)": a node with a
 -- click action or an href must be Tern's `button` kind or wear render's link role, and no other node may (a button
--- that does nothing is miscued too). Hidden subtrees are skipped: Tern draws none of them (they are the links the
--- window reads by key).
+-- that does nothing is miscued too). A `seg` (the key footer's status strip) is Tern's own clickable control, so it is
+-- neither. Hidden subtrees are skipped: Tern draws none of them (they are the links the window reads by key).
 function hx.miscued(node: any): { string }
 	local out: { string } = {}
 	local function walk(n: any, path: string)
@@ -3207,7 +3208,7 @@ function hx.miscued(node: any): { string }
 		end
 		local here = path .. "." .. tostring(p.key or n.k)
 		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
-		if clicks ~= (n.k == "button" or p.role == "plotroom.link") then
+		if n.k ~= "seg" and clicks ~= (n.k == "button" or p.role == "plotroom.link") then
 			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
 		end
 		if type(n.c) == "table" then

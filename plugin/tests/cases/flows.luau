@@ -1832,6 +1832,50 @@ case("lens: a gh pr create transcript offers to show, copy and open the new pull
 	eq(exists, nil, "gh's already-exists failure (exit 1) shows its raw output, not the old pull request")
 end)
 
+case("lens: a git push that GitHub answers with its Create a pull request line offers that page and Show in Plotroom; other output stays raw", function(w: World)
+	w.load("host")
+	local def: any = w.lenses["git-push"]
+	yes(def ~= nil, "the manifest's lens is defined")
+	local page = "https://github.com/o/r/pull/new/feat/toggle-mode"
+	local function run(lines: { string }, status: number?): any
+		local state = def.open({ line = "git push -u origin feat/toggle-mode", typed = "git push -u origin feat/toggle-mode", program = "git", args = { "push", "-u", "origin", "feat/toggle-mode" } }, w.cx)
+		for _, text in lines do
+			def.line(state, { text = text, links = {} })
+		end
+		def.finish(state, status or 0)
+		return def.view(state)
+	end
+	-- As GitHub prints it, trailing blanks trimmed by Tern.
+	local pushed = {
+		"remote:",
+		"remote: Create a pull request for 'feat/toggle-mode' on GitHub by visiting:",
+		"remote:      " .. page,
+		"remote:",
+		"To github.com:o/r.git",
+		" * [new branch]      feat/toggle-mode -> feat/toggle-mode",
+		"branch 'feat/toggle-mode' set up to track 'origin/feat/toggle-mode'.",
+	}
+	local view = run(pushed)
+	local create = findKey(view, "create", "button")
+	eq(create.p.text, "Create pull request", "the lens offers Create pull request")
+	eq(create.p.href, page, "opening GitHub's page for it")
+	eq(create.p.actions.click, "open", "as a link opens")
+	eq(findKey(view, "url", "text").p.spans[1].t, page, "the page is shown")
+	local show = findKey(view, "show", "button")
+	eq(show.p.text, "Show in Plotroom", "and Show in Plotroom")
+	eq(show.p.size, "sm", "both small buttons: they sit inline in the shell's output")
+	same(h.hx.miscued(view), {}, "every one of its buttons is Tern's button kind")
+	eq(show.p.href, "plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Ffeat%2Ftoggle-mode", "as a link carrying the page")
+	eq(def.event, nil, "the lens handles no events of its own: it runs nothing")
+	eq(#w.calls, 0, "and nothing was spawned")
+	eq(run({ "To github.com:o/r.git", "   1a2b3c4..5d6e7f8  main -> main" }), nil, "a push without the line (an existing branch) shows the raw output")
+	eq(run({ "remote: see https://github.com/o/r/pull/new/x", page }), nil, "a URL that does not follow the line is not taken for it")
+	eq(run(pushed, 1), nil, "a failed push shows its raw output")
+	local other = run({ "remote: Create a pull request for 'b' on GitHub by visiting:", "remote:      https://ghe.example.com/o/r/pull/new/b" })
+	eq(findKey(other, "create", "button").p.href, "https://ghe.example.com/o/r/pull/new/b", "another GitHub host keeps Create pull request")
+	eq(findKey(other, "show", "button"), nil, "but not Show in Plotroom")
+end)
+
 windowCase("window flows: the lens's show link works from a shell pane, while an item link from it is still refused", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -1848,6 +1892,12 @@ windowCase("window flows: the lens's show link works from a shell pane, while an
 	w.click("plotroom://github/worktree/o/r/45", 2)
 	eq(w.toasts[said + 2].text, "Plotroom: link did not come from a Plotroom block", "a worktree link from the shell pane is refused")
 	same(st.ops(), { "open-url" }, "and nothing else was asked of the block")
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Ffeat%2Fx", 2)
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, "https://github.com/o/r/pull/new/feat/x", "the git push lens's branch page goes to the block the same way")
+	said = #w.toasts
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Fa%20b", 2)
+	eq(w.toasts[said + 1].text, "Plotroom: malformed link", "a branch page with other characters is refused")
 end)
 
 windowCase("window flows: the lens's show link with no Plotroom block focuses the shell pane before launching one", function(w: World)
@@ -1860,6 +1910,34 @@ windowCase("window flows: the lens's show link with no Plotroom block focuses th
 	w.flush()
 	eq(#w.window.launches, 1, "a Plotroom block is launched")
 	eq(w.window.launches[1].cwd, "/lens", "beside the pane the lens is in, not the focused one")
+end)
+
+windowCase("window flows: an Alt-clicked GitHub pull request or issue link in any pane shows it in Plotroom; a plain click, another page or a window with no Plotroom block is left to Tern", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	local pr, issue = "https://github.com/o/r/pull/45", "https://github.com/o/r/issues/7"
+	eq(w.click(pr, 2), nil, "a plain click on a pull request link is Tern's")
+	eq(w.click("https://github.com/o/r/pull/45/files", 2, { alt = true }), nil, "an Alt-click on another GitHub page is Tern's")
+	eq(w.click("https://example.com/o/r/pull/45", 2, { alt = true }), nil, "and on another site")
+	w.flush()
+	same(st.ops(), {}, "none of them asked the block anything")
+	same(w.click(pr, 2, { alt = true }), { handled = true }, "an Alt-clicked pull request link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, pr, "and shown as the lens's Show in Plotroom shows it")
+	same(w.click(issue, 2, { alt = true }), { handled = true }, "an Alt-clicked issue link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#7 in Plotroom" }).url, issue, "and shown too")
+	eq(#w.window.launches, 0, "no block is launched while one is open")
+end)
+
+windowCase("window flows: an Alt-clicked GitHub link with no Plotroom block in the window is left to Tern and launches nothing", function(w: World)
+	w.load("window")
+	w.window.panes[1].block = nil
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	eq(w.click("https://github.com/o/r/pull/45", 2, { alt = true }), nil, "not handled: Tern opens it as before")
+	w.flush()
+	eq(#w.window.launches, 0, "and no Plotroom block is launched")
 end)
 
 case("host triage: unseen rows are New, the selected row is marked seen on its own and saved to kv triage, a refresh writes nothing, a changed check or review shows Changed on a row nobody reads and is marked again on the row being read", function(w: World)
@@ -3440,6 +3518,24 @@ case("host open-url: a GitHub pull request, a GitHub issue and a Jira issue URL 
 	yes(table.find(labels(), "Assigned to me") ~= nil, "beside the Jira view")
 	same(b.saved().pins, { prUrl, issueUrl, "https://acme.atlassian.net/browse/ABC-12" }, "and saved")
 	eq(b.saved().activeViewId, "pin:abc#ABC-12", "the Jira pin's id is saved whole")
+end)
+
+case("host open-url: a branch's new pull request page shows the branch's pull request, and a branch with none says so", function(w: World)
+	local s = jiraHost(w)
+	local prUrl = "https://github.com/o/r/pull/45"
+	s.gh.pulls[prUrl] = searchItem(45, "o/r", EPOCH - 60)
+	s.gh.heads["o/r@feat/x"] = { { number = 45, title = "Feat", state = "OPEN", isDraft = false, url = prUrl } }
+	local b = openIssues(w)
+	local r = asks.hx.ask(w, b, { op = "open-url", url = "https://github.com/o/r/pull/new/feat/x" })
+	eq(r.ok, true, "the branch's pull request is accepted")
+	eq(r.message, "Showing o/r#45 in Plotroom", "and said so")
+	eq(pickerOf(b).scope, "pin:o/r#45", "it is pinned and shown, as its own URL would be")
+	local calls = #w.calls
+	local none = asks.hx.ask(w, b, { op = "open-url", url = "https://github.com/o/r/pull/new/other" })
+	eq(none.problem, "No pull request for other yet.", "a branch with no pull request says so")
+	eq(none.ok, nil, "and is not accepted")
+	yes(#w.calls > calls, "after asking GitHub")
+	eq(pickerOf(b).scope, "pin:o/r#45", "the shown scope is as it was")
 end)
 
 case("host open-url: another site's URL, garbage, an item that is not found and an oversize URL are refused with nothing shown and no gh or acli call for a URL that names no item", function(w: World)
