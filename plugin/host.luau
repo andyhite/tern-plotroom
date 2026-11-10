@@ -1117,6 +1117,18 @@ local function blockDef(): BlockDef<State>
 						queueAction(state, a.id)
 					end
 				end
+			elseif act and (string.sub(act, 1, 3) == "kb:" or string.sub(act, 1, 6) == "kbrun:") then
+				-- A key footer seg: runs what its key runs, only while the footer lists it.
+				for _, e in requests.keyList(state, requests.paletteActions(state)) do
+					local chosen = selected(state)
+					if e.run ~= act then
+						continue
+					elseif string.sub(act, 1, 3) == "kb:" then
+						queueAction(state, string.sub(act, 4))
+					elseif chosen then
+						state.cx:open(runHrefOf(state, chosen, string.sub(act, 7)))
+					end
+				end
 			elseif act == "save-prompt" or act == "cancel-prompt" then
 				-- The editor card's buttons: their own ids, not the prefs node's.
 				if s and act == "save-prompt" then

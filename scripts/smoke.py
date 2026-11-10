@@ -2443,9 +2443,16 @@ def sc_now_board(s: Smoke) -> None:
         nodes = [n for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
         return [float(v) for v in nodes[0]["rect"]] if nodes else []
 
-    fold, foot = rect(scope + "[data-id='layer.queue.board.foldbar.fold']"), rect(scope + "[data-role='plotroom.keys']")
-    s.eq("the fold's button %r sits above the key footer %r, within the 1000 px window" % (fold, foot), True,
-         bool(fold) and fold[1] + fold[3] <= (foot[1] + 1 if foot else 1000))
+    strip = ".sf-dock[data-surface='plugin.plotroom.prs'] .sf-status"  # the region element itself wears data-surface
+    segs = strip + " .sf-seg"
+    fold, foot, sheet = rect(scope + "[data-id='layer.queue.board.foldbar.fold']"), rect(strip), rect(scope + ".sf-picker > .pk-sheet")
+    s.eq("the key footer is Tern's status strip in the dock %r" % (foot,), True, bool(foot) and foot[1] + foot[3] <= 1000)
+    s.eq("the fold's button %r sits above the key footer %r" % (fold, foot), True, bool(fold) and fold[1] + fold[3] <= foot[1] + 1)
+    s.eq("the picker's sheet %r ends above the key footer %r, so the strip takes clicks" % (sheet, foot), True, bool(sheet) and sheet[1] + sheet[3] <= foot[1] + 1)
+    s.ctl_ok("click", segs + "[data-id='dock.keybar.k1']")  # Commands, always first in the footer's order
+    s.wait_text("a click on the footer's Commands opens the palette, as . does", "Refresh")
+    s.ctl_ok("key", "Escape")
+    time.sleep(0.5)
 
     # Now lists reviews oldest first, then by key: Waiting runs 100, 101, 62, 63, … 99.
     s.ctl_ok("key", "Right")
