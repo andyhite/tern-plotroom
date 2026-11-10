@@ -1709,7 +1709,7 @@ end
 -- is one line, so the note is the editable part) and then every line of `context` as it will be sent, newlines
 -- kept. Nothing is sent but by the Send row; Escape or Cancel sends nothing.
 local function review(cx: WindowCx, agent: number, key: string, head: string, context: { string }, note: string)
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pencil", edit = true } }
+	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pen", edit = true } }
 	if note ~= "" then
 		table.insert(items, { label = note, group = "Note", icon = "merge" })
 	end

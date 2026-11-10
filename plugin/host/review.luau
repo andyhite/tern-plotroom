@@ -498,7 +498,7 @@ local function actionsNode(state: State, i: number): Node
 	if state.editing then
 		table.insert(buttons, button({ key = "done", label = "Done", icon = "check", hint = caps("esc"), aria = "Finish editing " .. what, actions = { click = "done" } }))
 	else
-		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pencil", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
+		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pen", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
 	end
 	return ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons)
 end
@@ -530,6 +530,9 @@ local function detailNode(state: State): Node
 		if card.excerpt then
 			-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
 			table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
+		elseif state.loading then
+			-- the diff is still being read: its shape, where it will go
+			table.insert(kids, ui.node("skeleton", { key = "diff", shape = "block", min = { h = "8lines" } }))
 		end
 		if state.editing then
 			table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
@@ -569,7 +572,8 @@ local function view(state: State): BlockView
 	end
 	table.insert(main, ui.node("text", { key = "head", spans = {
 		ui.span(p.repo .. "#" .. p.number, "mono"),
-		ui.span("  ·  Draft review of " .. string.sub(p.head, 1, 7), "muted"),
+		ui.span("  ·  Draft review of ", "muted"),
+		ui.span(string.sub(p.head, 1, 7), "mono"),
 	} }))
 	table.insert(main, ui.node("text", { key = "moves", spans = { ui.span("j/k move  ·  Space keep or drop  ·  e edit", "muted") } }))
 	-- The decision row: verdict, count, then Send (or its status).
@@ -610,11 +614,13 @@ local function view(state: State): BlockView
 		}))
 	end
 	if state.head and M.moved(p, state.head) then
-		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "muted"))
+		table.insert(main, ui.node("text", { key = "moved", spans = {
+			ui.span("The pull request's head moved to ", "muted"),
+			ui.span(string.sub(state.head, 1, 7), "mono"),
+			ui.span(" since this review: Send asks the agent to check the new commits first.", "muted"),
+		} }))
 	end
-	if state.loading then
-		table.insert(main, ui.node("row", { key = "loading", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
-	elseif state.diffProblem then
+	if state.diffProblem then
 		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
 	end
 	-- Regular panes put the navigator beside the detail, compact ones above it.
@@ -633,6 +639,7 @@ end
 
 function M.define()
 	tern.block.define("review", {
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local a: any = args
 			if (not a or not a[1]) and isTable(saved) and saved.version == 1 then

@@ -1125,6 +1125,7 @@ windowCase("window: a host one protocol older serves the ops it knows and refuse
 	nodes[1].p.text = tostring(current - 2)
 	w.advance(2100)
 	eq((w.window.status :: any)({ pane = 1 })[1].text, "Plotroom on host1 is a different version from this window's", "a host below the range shows the mismatch, naming the host")
+	yes(h.hx.ternIcon((w.window.status :: any)({ pane = 1 })[1].icon), "with an icon Tern draws")
 	said = #w.toasts
 	w.click(prLink("agent", "o/r", 5))
 	eq(w.toasts[said + 1].text, "Plotroom on host1 is another version", "and is refused as another version")

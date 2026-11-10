@@ -2654,6 +2654,22 @@ function M.wantSummary(state: State, item: any, pr: boolean): (string, string?)
 	return "busy"
 end
 
+-- The failed Summary's Retry: forgets why the selected item's Summary was not made and counts the cursor as rested, so
+-- the next render makes it again.
+function M.retrySummary(state: State)
+	local item = M.selected(state)
+	if item then
+		local prefix = item.key .. "@"
+		for k in summaryFailed do
+			if string.sub(k, 1, #prefix) == prefix then
+				summaryFailed[k] = nil
+			end
+		end
+		M.cancelSummary(state)
+		state.summaryWait = { key = item.key, ready = true, timer = nil }
+	end
+end
+
 -- Keeps the outcome of a worktree attempt (a report, or why there is none) for the queue preview: persistent, unlike
 -- a toast. `key` is the item's key (lowercase "owner/repo#n"). The next render scans the checkouts again, so git
 -- confirms a report. Only the attempts git has not confirmed count against NOTE_CAP: a block may hold more worktrees

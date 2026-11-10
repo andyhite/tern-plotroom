@@ -88,6 +88,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Message an agent with the selection… | Tern's palette | Keep | — | Approved | Sends context to an agent from any pane |
 | Send a Browser page element to an agent… | Commands, Tern's palette | Cut | 1 | Approved | Rarely in the loop; refused on remote hosts |
 | Worktree tabs named after their item | Tab bar | Keep | — | Approved | |
+| Worktree tab names survive a plugin reload: kept in kv `tab-labels` (newest 50), read at load, a closed tab's name dropped when a tab closes | Tab bar | New | — | Approved | Tern's Lifecycle and Reload: window state that must survive a reload belongs in kv; restored tabs kept losing their `#123 title`. tern-plotroom#vr4v |
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
@@ -146,4 +147,6 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Polite refresh and rate-limit backoff | Engine | Keep | — | Approved | |
 | Developer commands (`PLOTROOM_SELFTEST=1`) | Tern's palette | Keep | — | Approved | Hidden unless the variable is set |
 | DESIGN.md: one meaning per colour (your turn, needs fixing, done, agent working, checks running), everything else neutral | Every surface | New | 1 | Approved | Trust and coherence: a colour you can read at a glance; adopted from tern-pr-guide |
+| Loading, empty and failed preview sections as Tern's `skeleton` and `empty` kinds; a failed read (or Summary) offers Retry in place; the Draft review's diff loads as a skeleton; an empty Board column is an `empty` | Preview, Board, Draft review | New | — | Approved | Trust: one look for the four states (Tern's Designing Views › The four states); tern-plotroom#eav9 |
 | Arrival ring pauses with its pane: Tern's `.sf-paused` (a hidden pane) holds the ring where it was, and it resumes when the pane shows again | Queue rows | New | — | Approved | Trust (finer points): Tern's Styling views asks every plugin animation to pause under `.sf-paused`; a ring that ran out while the pane was hidden would leave a stage change unnoticed. tern-plotroom#4y4w |
+| Both blocks in Tern's sans face (`font = "sans"`): people's text in the UI face, machine strings (ids, refs, branches, SHAs, paths, sizes, times) in `mono`/`code`/`path` spans, numbers in text `mono` not `num`, the queue's view name in the `title` token | Queue, Draft review | New | — | Approved | Trust (finer points): Tern's Designing Views › Typography ("Open apps in sans"); the Draft review's plugin-CSS font override is gone. tern-plotroom#7rrn |

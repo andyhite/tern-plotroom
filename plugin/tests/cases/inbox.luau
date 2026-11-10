@@ -1057,10 +1057,13 @@ case("now: Show Now as Board lays Now out in columns by stage, the fold closed; 
 	local fold: any = h.findKey(h.pickerNode(b), "fold", "item")
 	eq(fold.p.label, "Show Not started 1 · Worktree 0", "the fold's button counts what it hides")
 	eq(fold.p.role, "plotroom.button", "and is drawn as a button")
+	yes(h.hx.ternIcon(fold.p.icon), "with an icon Tern draws: " .. tostring(fold.p.icon))
 	b.event({ ev = "action", id = "layer.queue.board.foldbar.fold", act = fold.p.actions.click })
 	local opened = board(b) or {}
 	eq(opened[5], "none: no_2fr_2312", "it opens the fold: Not started")
 	eq(opened[6], "worktree: ", "and Worktree")
+	local unfold: any = h.findKey(h.pickerNode(b), "fold", "item")
+	yes(h.hx.ternIcon(unfold.p.icon) and unfold.p.icon ~= fold.p.icon, "its button now wears the other Tern icon: " .. tostring(unfold.p.icon))
 	eq(h.hx.palette(w, b).labels.layout, "Show Now as List", "Commands now offers the List")
 	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
 	eq((board(b)), nil, "which goes back")

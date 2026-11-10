@@ -230,7 +230,7 @@ case("host: the 30 s checks read stops when the selection moves", function(w: Wo
 	b.close()
 end)
 
-case("host: the preview shimmers while the detail loads, then shows the merge state, each reviewer's verdict and the description, folded and foldable again", function(w: World)
+case("host: the preview shows skeletons while the detail loads, then the merge state, each reviewer's verdict and the description, folded and foldable again", function(w: World)
 	local s = hostScene(w, 0)
 	serveChecks(s, "SUCCESS", { job("build", "passed") })
 	s.gh.about["o/r#1"] = {
@@ -250,9 +250,10 @@ case("host: the preview shimmers while the detail loads, then shows the merge st
 		return nil
 	end
 	eq(merge(), nil, "no merge state before the detail loads")
-	eq(findKey(pickerNode(b), "reviewers"), nil, "nor reviewers")
-	eq(findKey(pickerNode(b), "reviewers-loading", "shimmer").p.text, "Loading reviewers…", "but Tern's shimmer under the heading")
-	eq(findKey(pickerNode(b), "runs-loading", "shimmer").p.text, "Loading checks…", "and under the checks'")
+	eq(findKey(pickerNode(b), "reviewers", "list"), nil, "nor reviewers")
+	eq(findKey(pickerNode(b), "reviewers", "skeleton").p.shape, "rows", "but a skeleton of rows under the heading")
+	eq(findKey(pickerNode(b), "runs", "skeleton").p.shape, "rows", "and under the checks'")
+	eq(findKey(pickerNode(b), "description", "skeleton").p.shape, "text", "and lines where the description goes")
 	w.advance(300)
 	eq(merge().t, "Conflicts", "a conflicting PR says so")
 	eq(merge().s, "error", "in red")
@@ -262,8 +263,9 @@ case("host: the preview shimmers while the detail loads, then shows the merge st
 		table.insert(rows, item.p.title .. " " .. item.p.icon .. " " .. item.p.tone)
 	end
 	same(rows, { "@ann — Approved check success", "@bob — Requested clock muted" }, "each reviewer with a verdict, then those still asked (no colour: waiting on someone else); the tooltip spells it out")
-	eq(findKey(pickerNode(b), "reviewers-loading"), nil, "the shimmer is gone")
-	eq(findKey(pickerNode(b), "runs-loading"), nil, "from the checks too")
+	eq(findKey(pickerNode(b), "reviewers", "skeleton"), nil, "the skeleton is gone")
+	eq(findKey(pickerNode(b), "runs", "skeleton"), nil, "from the checks too")
+	eq(findKey(pickerNode(b), "description", "skeleton"), nil, "and the description")
 	local function card(): any
 		return findKey(pickerNode(b), "description", "card")
 	end
@@ -1530,6 +1532,7 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	local wideIds, wide = snap()
 	eq(wide["issues:v1"].count, 3, "wide: the loaded filter has a count")
 	eq(pickerOf(b).title[1].t, "Assigned to me", "wide: the view's name is the title")
+	eq(pickerOf(b).title[1].s, "title", "in Tern's title token, the page's name")
 	eq(pickerOf(b).strip, nil, "no Sort strip: the order is announced by the toast when it changes")
 	b.cx.cols = 100
 	b.cx:render()
@@ -1621,24 +1624,20 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#viewSearchesOf(s.gh, "issue-search"), 1, "the issues were searched once")
 end)
 
--- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that the
--- sidebar uses; add one only after finding it in Tern's set.
-local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle" }
-
 case("host: every sidebar scope and the list it shows wear an icon Tern knows", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = manyItems("o/r", 3)
 	local b = openQueue(w)
 	local ids: { string } = {}
 	for _, scope in pickerOf(b).scopes do
-		yes(table.find(TERN_ICONS, scope.icon) ~= nil, "the " .. scope.label .. " entry's icon " .. tostring(scope.icon) .. " is a Tern icon")
+		yes(h.hx.ternIcon(scope.icon), "the " .. scope.label .. " entry's icon " .. tostring(scope.icon) .. " is a Tern icon")
 		table.insert(ids, scope.id)
 	end
 	yes(table.find(ids, "agents") ~= nil and table.find(ids, "worktrees") ~= nil and table.find(ids, "now") ~= nil, "Now, Worktrees and Agents are among them")
 	for _, id in ids do
 		pickScope(b, id)
 		w.flush()
-		yes(table.find(TERN_ICONS, pickerOf(b).icon) ~= nil, "the " .. id .. " list's icon " .. tostring(pickerOf(b).icon) .. " is a Tern icon")
+		yes(h.hx.ternIcon(pickerOf(b).icon), "the " .. id .. " list's icon " .. tostring(pickerOf(b).icon) .. " is a Tern icon")
 	end
 end)
 
@@ -1800,11 +1799,11 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 		}),
 	}
 	local b = openIssues(w)
-	has(b.text(), "Loading linked pull requests…", "the linked pull requests shimmer while the details load")
+	eq(findKey(pickerNode(b), "linked", "skeleton").p.shape, "rows", "the linked pull requests are a skeleton while the details load")
 	eq(#requestsOf(s.gh, "issue"), 0, "nothing loads the moment an issue is selected")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "issue"), 1, "the details load once the cursor rests")
-	lacks(b.text(), "Loading linked pull requests…", "the shimmer is gone")
+	eq(findKey(pickerNode(b), "linked", "skeleton"), nil, "the skeleton is gone")
 	local preview = pickerNode(b)
 	local branch = findKey(preview, "branch")
 	eq(findKey(branch, "v").p.spans[1].t, "octocat/12-fix-login", "the branch Worktree would make: the default format over gh's active login, the issue's key and its title's slug")
@@ -2667,9 +2666,12 @@ case("host: an issue's details that fail to load show the error and a Retry that
 	local b = openIssues(w)
 	w.advance(300)
 	eq(#requestsOf(s.gh, "issue"), 1, "one load")
-	has(b.text(), "Server Error", "the error is on screen")
-	has(b.text(), "Retry", "with a Retry button")
-	lacks(b.text(), "Loading linked pull requests…", "and no shimmer")
+	local failed: any = findKey(pickerNode(b), "linked-state", "empty")
+	eq(failed.p.tone, "error", "the error is an error row under Linked pull requests")
+	has(failed.p.text, "Server Error", "with the tool's message")
+	eq(findKey(failed, "linked-retry", "item").p.label, "Retry", "and a Retry button")
+	eq(findKey(pickerNode(b), "linked", "skeleton"), nil, "and no skeleton")
+	eq(findKey(pickerNode(b), "description", "skeleton"), nil, "nor for the description")
 	failing = false
 	b.event({ ev = "action", id = "layer.queue", act = "retry-checks" })
 	w.advance(300)
