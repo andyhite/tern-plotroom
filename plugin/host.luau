@@ -674,7 +674,7 @@ local function blockDef(): BlockDef<State>
 				state.removing = nil -- its note was evicted: nothing left to ask about
 			end
 			if state.removing and not s then
-				-- Like a delete: Enter keeps the worktree, only a deliberate `d` or a click removes it.
+				-- Enter or Esc keeps the worktree; only a deliberate `d` or the confirm's Remove removes it.
 				if name == "enter" or name == "escape" then
 					state.removing = nil
 				elseif plain and k == "d" then
@@ -683,6 +683,15 @@ local function blockDef(): BlockDef<State>
 					end
 				else
 					return false
+				end
+				return true
+			end
+			if s and s.confirm then
+				-- Settings' delete confirm: Enter deletes, Esc keeps it; it is modal, so no other key reaches the sheet.
+				if name == "enter" then
+					confirmDelete(state)
+				elseif name == "escape" then
+					s.confirm = nil
 				end
 				return true
 			end
@@ -1072,8 +1081,8 @@ local function blockDef(): BlockDef<State>
 			elseif act == "close-help" then
 				state.help = false
 			elseif act == "confirm-delete" or act == "cancel-delete" then
-				-- The window palette's answer, acted on only for the row this block asked about.
-				if s and s.confirm and s.confirm == ev.value then
+				-- The Settings confirm overlay's buttons.
+				if s and s.confirm then
 					if act == "confirm-delete" then
 						confirmDelete(state)
 					else

@@ -2303,7 +2303,8 @@ def sc_outcome(s: Smoke) -> None:
 
 def sc_now_settings(s: Smoke) -> None:
     """Settings › Views in real Tern: Now's card is first, and its open form has a switch per reason (Include team review requests under
-    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that."""
+    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that. Then General's
+    Reset all settings asks in the block: a confirm overlay over the sheet, Cancel then the red action in its foot; Esc keeps everything."""
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -2322,6 +2323,21 @@ def sc_now_settings(s: Smoke) -> None:
     s.wait_text("and Now's Layout", "A narrow block shows the List")
     s.wait_text("and the accounts", "Accounts")
     s.shot("settings-now")
+    for _ in range(3):  # Views → Actions → Repositories → General
+        s.ctl_ok("key", "Tab")
+    s.wait_text("General's Reset row", "Reset all settings")
+    s.ctl_ok("click", "[data-surface='plugin.plotroom.prs'] .pf-row[data-row='reset:all'] .btn")
+    foot = "[data-surface='plugin.plotroom.prs'] .sf-overlay .sf-ov-foot .sf-button"
+    s.wait_text("Reset asks in the block", "Reset all settings?")
+    s.wait_until("its foot holds Cancel, then the action", lambda: len(s.matches(foot)) == 2 and "Cancel" in s.matches(foot)[0]
+                 and "Reset all settings" in s.matches(foot)[1])
+    s.eq("the action is the red danger button", True, any("Reset all settings" in t for t in s.matches(foot + "[data-variant='danger']")))
+    s.eq("Cancel is quiet", True, any("Cancel" in t for t in s.matches(foot + "[data-variant='quiet']")))
+    time.sleep(0.6)  # the overlay's card slides in before the shot
+    s.shot("settings-confirm")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the confirm", lambda: not any("Reset all settings?" in t for t in s.texts()))
+    s.wait_text("and leaves Settings open", "Repositories")
     s.ctl_ok("key", "Escape")
 
 

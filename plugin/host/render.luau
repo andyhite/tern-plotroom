@@ -44,31 +44,6 @@ function M.paceLine(state: State): string?
 	return nil
 end
 
--- What the window's palette asks before Delete or Remove row `row` acts (hidden node `main.confirm`, read by
--- window.luau's `confirmDelete`): the question, the destructive choice and what it does.
-local function deleteQuestion(state: State, row: string): { [string]: string }
-	local kind, id = string.match(row, "^(%a+):(.+)$")
-	if kind == "pdelete" then
-		local pk, pid = kindAndId(id or "")
-		local prompts = if pk then loadPrompts(pk) else nil
-		local p = if prompts then promptById(prompts, pid) else nil
-		return { row = row, head = "Delete action “" .. (if p then p.name else "this action") .. "”?", label = "Delete action", detail = "Gone from every Plotroom pane" }
-	elseif kind == "rremove" then
-		return { row = row, head = "Remove repository “" .. (id or "") .. "”?", label = "Remove repository", detail = "Forgets its checkout and settings; no folder is touched" }
-	elseif kind == "jremove" then
-		return { row = row, head = "Remove Jira project “" .. (id or "") .. "”?", label = "Remove project", detail = "Forgets its repositories" }
-	elseif kind == "reset" then
-		return {
-			row = row,
-			head = "Reset all settings?",
-			label = "Reset all settings",
-			detail = "Clears views, actions, shortcuts, repositories, branch and folder formats and Get started in every Plotroom pane; keeps triage, usage and agents",
-		}
-	end
-	local view = viewOf(state, id or "")
-	return { row = row, head = "Delete view “" .. (if view then view.name else "this view") .. "”?", label = "Delete view", detail = "Gone from every Plotroom pane" }
-end
-
 -- How a worktree report stands: error when it could not be prepared; otherwise no tone, since a stale, changed or clean
 -- worktree is none of DESIGN.md's colour meanings (its badge text says which).
 local function noteTone(note: Note): string?
@@ -382,10 +357,6 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	}
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
-	end
-	local s = state.settings
-	if s and s.confirm then
-		table.insert(out, ui.node("text", { key = "confirm", text = tern.json.encode(deleteQuestion(state, s.confirm)), hidden = true }))
 	end
 	return out
 end
@@ -2099,24 +2070,64 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	return ui.node("picker", props, if shown then preview else {})
 end
 
--- The Keep/Remove modal both worktree removals ask with: `tabbed` adds the warning that a tab works in the folder.
-local function removeOverlay(head: string, body: string, facts: { { [string]: any } }, tabbed: any, keepAct: string, dropAct: string?): Node
-	local kids: { Node } = {
-		ui.node("text", { key = "body", spans = { ui.span(body, "muted") } }),
-		ui.node("kv", { key = "facts", items = facts }),
-	}
-	if tabbed then
-		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.") } }))
+-- Every confirm (DESIGN.md › Confirm overlay): a modal overlay keyed `confirm`, the trash icon, the question as its
+-- head, the consequence in one sentence, the facts, and in its foot Cancel first (quiet, Esc) and then the action
+-- (`danger`, its key `actKeys`). `o.act` nil: the action is refused (the sentence says why) and only Cancel is offered.
+local function confirmOverlay(o: { head: string, meta: string?, body: string, facts: { { [string]: any } }?, warn: string?, label: string, actKeys: { string }, cancel: string, act: string? }): Node
+	local kids: { Node } = { ui.node("text", { key = "body", spans = { ui.span(o.body, "muted") } }) }
+	if o.facts and #o.facts > 0 then
+		table.insert(kids, ui.node("kv", { key = "facts", items = o.facts }))
 	end
-	local buttons: { Node } = {
-		button("Keep", { key = "keep", size = "md", variant = "primary", icon = "check", keys = { "enter" }, actions = { click = keepAct } }),
-	}
-	if dropAct then
-		table.insert(buttons, button("Remove", { key = "delete", size = "md", icon = "trash", keys = { "d" }, actions = { click = dropAct } }))
+	if o.warn then
+		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span(o.warn) } }))
 	end
-	table.insert(kids, buttonRow("buttons", buttons))
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
+	local buttons: { Node } = { button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = o.cancel } }) }
+	if o.act then
+		table.insert(buttons, button(o.label, { key = "act", size = "md", variant = "danger", icon = "trash", keys = o.actKeys, actions = { click = o.act } }))
+	end
+	table.insert(kids, ui.node("row", { key = "foot", gap = "sm", justify = "end", align = "center" }, buttons))
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", icon = "trash", head = o.head, meta = o.meta, foot = "layer.confirm.foot" }, kids)
 end
+
+-- Settings' Delete or Remove row `s.confirm` asks here, in the block: Enter deletes, Esc keeps it.
+function M.deleteConfirm(state: State): Node?
+	local row = if state.settings then state.settings.confirm else nil
+	local kind, id = string.match(row or "", "^(%a+):(.+)$")
+	if not kind or not id then
+		return nil
+	end
+	local head, label, body
+	if kind == "pdelete" then
+		local pk, pid = kindAndId(id)
+		local prompts = if pk then loadPrompts(pk) else nil
+		local p = if prompts then promptById(prompts, pid) else nil
+		head, label, body = "Delete action “" .. (if p then p.name else "this action") .. "”?", "Delete action", "It is gone from every Plotroom pane."
+	elseif kind == "rremove" then
+		head, label, body = "Remove repository “" .. id .. "”?", "Remove repository", "Plotroom forgets its checkout and settings; no folder is touched."
+	elseif kind == "jremove" then
+		head, label, body = "Remove Jira project “" .. id .. "”?", "Remove project", "Plotroom forgets its repositories."
+	elseif kind == "reset" then
+		head, label = "Reset all settings?", "Reset all settings"
+		body = "Views, actions, shortcuts, repositories, branch and folder formats and Get started go back to their defaults in every Plotroom pane; triage, usage and agents are kept."
+	else
+		local view = viewOf(state, id)
+		head, label, body = "Delete view “" .. (if view then view.name else "this view") .. "”?", "Delete view", "It is gone from every Plotroom pane."
+	end
+	return confirmOverlay({ head = head, body = body, label = label, actKeys = { "enter" }, cancel = "cancel-delete", act = "confirm-delete" })
+end
+
+-- The Branch fact of a worktree removal: the branch and, muted, what becomes of it.
+local function fateFact(branch: string?, fate: string): { [string]: any }
+	local v: { any } = { ui.span(fate, "muted") }
+	if branch then
+		table.insert(v, 1, ui.span(branch, "code"))
+		table.insert(v, 2, ui.span("  "))
+	end
+	return { k = "Branch", v = v }
+end
+
+local TAB_WARN = "A tab works in it and will be left in a folder that no longer exists."
+local REMOVE_BODY = "Its folder is deleted; git refuses while it has uncommitted changes, and nothing is forced."
 
 -- The modal that asks before a board row's worktree is removed; Enter or Esc keeps it, `d` or a click removes it.
 local function boardConfirm(state: State): Node
@@ -2126,40 +2137,49 @@ local function boardConfirm(state: State): Node
 			row = r
 		end
 	end
-	local facts = withValue({
-		{ k = "Path", v = if row then { ui.span(row.path, "code") } else nil },
-		{ k = "Branch", v = if row and row.branch then { ui.span(row.branch, "code") } else nil },
+	local facts = withValue({ { k = "Path", v = if row then { ui.span(row.path, "code") } else nil } })
+	if row then
+		table.insert(facts, fateFact(row.branch, board.fate(row)))
+	end
+	return confirmOverlay({
+		head = "Remove this worktree?",
+		body = REMOVE_BODY,
+		facts = facts,
+		warn = if row and engine.boardOpen(state)[row.path] then TAB_WARN else nil,
+		label = "Remove",
+		actKeys = { "d" },
+		cancel = "wt-cancel-remove",
+		act = "wt-confirm-remove",
 	})
-	local body = "Its folder is deleted. " .. (if row then board.fate(row) else "") .. " Git refuses while the worktree has uncommitted changes, and nothing is forced. Press d to remove it; Enter or Esc keeps it."
-	return removeOverlay("Remove this worktree?", body, facts, row and engine.boardOpen(state)[row.path], "wt-cancel-remove", "wt-confirm-remove")
 end
 
 -- The modal that asks once before every finished worktree is removed: only the rows Find finished worktrees marked.
 local function finishedConfirm(state: State): Node
 	local items: { any } = {}
 	local ids: { string } = state.boardFinished or {}
+	local open = engine.boardOpen(state)
+	local tabbed = false
 	for _, id in ids do
 		for _, r in engine.boardRows(state) do
 			if r.id == id then
 				table.insert(items, { k = board.label(r), v = { ui.span(r.path, "code") } })
+				tabbed = tabbed or open[r.path] ~= nil
 			end
 		end
 	end
 	local n = #items
-	local tabbed = false
-	local open = engine.boardOpen(state)
-	for _, id in ids do
-		for _, r in engine.boardRows(state) do
-			if r.id == id and open[r.path] then
-				tabbed = true
-			end
-		end
-	end
 	local unchecked = board.unchecked(state.board)
-	local body = "Each worktree's folder is deleted, then its branch unless that holds commits saved nowhere else. Git refuses a worktree with uncommitted changes, which is kept; nothing is forced. "
-		.. (if unchecked > 0 then unchecked .. " worktree" .. (if unchecked == 1 then " was" else "s were") .. " not checked yet. " else "")
-		.. "Press d to remove all " .. n .. "; Enter or Esc keeps them."
-	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
+	return confirmOverlay({
+		head = "Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?",
+		meta = if unchecked > 0 then unchecked .. " not checked yet" else nil,
+		body = "Each folder is deleted, then its branch unless that holds commits saved nowhere else; git keeps a worktree with uncommitted changes, and nothing is forced.",
+		facts = withValue(items),
+		warn = if tabbed then TAB_WARN else nil,
+		label = "Remove all " .. n,
+		actKeys = { "d" },
+		cancel = "wt-cancel-remove",
+		act = "wt-confirm-remove",
+	})
 end
 
 -- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
@@ -2169,13 +2189,21 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
 		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
-		local facts = withValue({
-			{ k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil },
-			{ k = "Branch", v = if note.branch then { ui.span(note.branch, "code") } else nil },
-		})
-		local body = if state.removeRefusal then state.removeRefusal .. " Enter or Esc closes this."
-			else "Its folder is deleted. " .. (state.removeFate or "Reading its branch from git…") .. " Git refuses while the worktree has uncommitted changes. Press d to remove it; Enter or Esc keeps it."
-		table.insert(layer, removeOverlay("Remove worktree?", body, facts, openItems(state)[removing], "cancel-remove", if state.removeRefusal then nil else "confirm-remove"))
+		local refusal = state.removeRefusal
+		local facts = withValue({ { k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil } })
+		if not refusal then
+			table.insert(facts, fateFact(note.branch, state.removeFate or "Reading its branch from git…"))
+		end
+		table.insert(layer, confirmOverlay({
+			head = "Remove worktree?",
+			body = refusal or REMOVE_BODY,
+			facts = facts,
+			warn = if openItems(state)[removing] then TAB_WARN else nil,
+			label = "Remove",
+			actKeys = { "d" },
+			cancel = "cancel-remove",
+			act = if refusal then nil else "confirm-remove",
+		}))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
 	elseif state.help then

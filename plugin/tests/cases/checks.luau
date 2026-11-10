@@ -736,10 +736,15 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	yes(box ~= nil, "Remove worktree asks")
 	eq(box.p.head, "Remove worktree?", "with its question")
 	eq(box.p.modal, true, "over everything")
+	eq(box.p.icon, "trash", "with the trash icon")
+	eq(box.p.foot, "layer.confirm.foot", "its buttons in its foot")
+	local foot: any = findKey(box, "foot", "row")
+	same({ foot.c[1].p.text, foot.c[1].p.variant, foot.c[1].p.keys } :: any, { "Cancel", "quiet", { "esc" } :: any }, "Cancel first, quiet, with Esc")
+	same({ foot.c[2].p.text, foot.c[2].p.variant, foot.c[2].p.keys } :: any, { "Remove", "danger", { "d" } :: any }, "then Remove, danger, with its d")
 	same(findKey(box, "facts", "kv").p.items, {
 		{ k = "Path", v = { { t = target, s = "code" } } },
-		{ k = "Branch", v = { { t = branch, s = "code" } } },
-	}, "naming the worktree's path and branch")
+		{ k = "Branch", v = { { t = branch, s = "code" }, { t = "  " } :: any, { t = "Reading its branch from git…", s = "muted" } } },
+	}, "naming the worktree's path and branch, and what becomes of the branch once git answers")
 	eq(findKey(box, "tab"), nil, "no tab works in it: no warning")
 	eq(b.press("j"), false, "other keys are not taken while it asks")
 	eq(b.press("escape"), true, "Esc keeps it")
@@ -753,9 +758,9 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	b.press("escape")
 	table.remove(w.panes)
 	pressCard(b, "remove")
-	local keep: any = findKey(confirmOf(b), "keep", "button")
-	b.event({ ev = "action", id = "layer.confirm.buttons.keep", act = keep.p.actions.click })
-	eq(confirmOf(b), nil, "the Keep button keeps it")
+	local cancel: any = findKey(confirmOf(b), "cancel", "button")
+	b.event({ ev = "action", id = "layer.confirm.foot.cancel", act = cancel.p.actions.click })
+	eq(confirmOf(b), nil, "the Cancel button keeps it")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed so far")
 	w.flush() -- the reads of the questions above finish before the log is marked
 	local mark = #s.git.log
@@ -791,9 +796,9 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	ask()
 	eq(answerOf(b, "a1").created, true, "asking again makes a new worktree: the old one is really gone")
 	pressCard(b, "remove")
-	local remove: any = findKey(confirmOf(b), "delete", "button")
+	local remove: any = findKey(confirmOf(b), "act", "button")
 	eq(remove.p.text, "Remove", "the question's button says what it does")
-	b.event({ ev = "action", id = "layer.confirm.buttons.delete", act = remove.p.actions.click })
+	b.event({ ev = "action", id = "layer.confirm.foot.act", act = remove.p.actions.click })
 	w.flush()
 	eq(cardOf(b), nil, "its Remove button removes it as d does")
 	ask()
@@ -815,10 +820,19 @@ case("host: the card's Remove confirm says what becomes of the branch from git's
 	w.flush()
 	local function said(): string
 		pressCard(b, "remove")
-		local shown = findKey(confirmOf(b), "body", "text").p.spans[1].t
-		has(shown, "Reading its branch", "until git answers, the confirm says it is reading")
+		local function shown(): string
+			local box = confirmOf(b)
+			local out = findKey(box, "body", "text").p.spans[1].t
+			for _, f in findKey(box, "facts", "kv").p.items do
+				for _, sp in f.v do
+					out ..= " " .. sp.t
+				end
+			end
+			return out
+		end
+		has(shown(), "Reading its branch", "until git answers, the confirm says it is reading")
 		w.flush()
-		local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
+		local body = shown()
 		b.press("escape")
 		return body
 	end
@@ -854,8 +868,8 @@ case("host: a Jira worktree whose mapped checkout is not git's main path has no 
 	lacks(body, "folder is deleted", "a refusal does not say the folder goes")
 	lacks(body, "Press d", "nor offer d")
 	local mark, toasts = #s.git.log, #w.toasts
-	eq(findKey(confirmOf(b), "delete"), nil, "a refused removal offers no Remove row")
-	yes(findKey(confirmOf(b), "keep") ~= nil, "only Keep")
+	eq(findKey(confirmOf(b), "act"), nil, "a refused removal offers no Remove button")
+	yes(findKey(confirmOf(b), "cancel") ~= nil, "only Cancel")
 	b.typeText("d")
 	w.flush()
 	eq(#w.toasts, toasts, "d does nothing while the refusal stands")
@@ -876,7 +890,7 @@ case("host: a worktree detached after its card was made is refused by git's clai
 	w.flush()
 	local mark = #s.git.log
 	has(findKey(confirmOf(b), "body", "text").p.spans[1].t, "no longer lists", "the confirm says git lost the worktree")
-	eq(findKey(confirmOf(b), "delete"), nil, "and offers no Remove row")
+	eq(findKey(confirmOf(b), "act"), nil, "and offers no Remove button")
 	b.typeText("d")
 	w.flush()
 	eq(countLog(s.git, "worktree remove", mark), 0, "d removes nothing")
@@ -904,7 +918,7 @@ case("host: a locked, prunable or missing worktree is refused on the card's conf
 		local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
 		has(body, "is locked, prunable or missing; repair it yourself", flaw .. ": the confirm gives removal's own reason")
 		lacks(body, "Press d", flaw .. ": and offers no d")
-		eq(findKey(confirmOf(b), "delete"), nil, flaw .. ": nor a Remove row")
+		eq(findKey(confirmOf(b), "act"), nil, flaw .. ": nor a Remove button")
 		local mark, toasts = #s.git.log, #w.toasts
 		b.typeText("d")
 		w.flush()
@@ -3453,16 +3467,16 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	same(hx.offPalette(b.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "the removal asks first")
-	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
-	same(hx.offPalette(confirmOf(b)), {}, "Keep is its one primary and Remove wears no colour")
-	local keep: any, drop: any = findKey(confirmOf(b), "keep", "button"), findKey(confirmOf(b), "delete", "button")
-	eq(keep.p.variant, "primary", "Keep, the choice Enter makes, is the confirm's primary")
-	same(keep.p.keys, { "enter" }, "with Enter's keycap")
-	eq(drop.p.variant, nil, "Remove is a default button")
+	same(hx.miscued(confirmOf(b)), {}, "and its Cancel and Remove are buttons")
+	same(hx.offPalette(confirmOf(b)), {}, "Remove is its one danger button and Cancel wears no colour")
+	local cancel: any, drop: any = findKey(confirmOf(b), "cancel", "button"), findKey(confirmOf(b), "act", "button")
+	eq(cancel.p.variant, "quiet", "Cancel is quiet")
+	same(cancel.p.keys, { "esc" }, "with Esc's keycap")
+	eq(drop.p.variant, "danger", "Remove, the destructive action, is danger")
 	same(drop.p.keys, { "d" }, "with d's keycap")
-	eq(keep.p.size, "md", "both are medium: an overlay's")
+	eq(cancel.p.size, "md", "both are medium: an overlay's")
 	eq(drop.p.size, "md", "both are medium: an overlay's")
-	-- DESIGN.md › Buttons: the accent `primary` variant only on a confirm overlay's one safe choice, `danger` never
+	-- DESIGN.md › Buttons: `danger` only on a confirm overlay's one action, `primary` never
 	-- (the view's tree is the block's own, so each check puts its variants back)
 	local function painted(variants: { [string]: string }, root: any?): { string }
 		local tree: any = root or confirmOf(b)
@@ -3477,9 +3491,9 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 		end
 		return out
 	end
-	same(painted({ delete = "primary" }), { "button primary twice: Remove" }, "a confirm has one primary")
-	same(painted({ delete = "danger" }), { "button danger: Remove" }, "and Remove is never red")
-	same(painted({ next = "primary" }, b.view().layer), { "button primary outside a confirm: Re-run failed checks" }, "nor is the preview's Next move accent")
+	same(painted({ cancel = "danger" }), { "button danger twice: Remove" }, "a confirm has one danger button")
+	same(painted({ act = "primary" }), { "button primary: Remove" }, "and no primary")
+	same(painted({ next = "danger" }, b.view().layer), { "button danger outside a confirm: Re-run failed checks" }, "nor is the preview's Next move red")
 	b.press("escape")
 	eq(confirmOf(b), nil, "Escape keeps the worktree")
 	b.typeText("z")

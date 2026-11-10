@@ -10,14 +10,14 @@ type HostScene = h.HostScene
 type Reply = h.Reply
 type World = h.World
 
-local EPOCH, NULL, agentScene, answerOf, array = h.EPOCH, h.NULL, h.agentScene, h.answerOf, h.array
+local EPOCH, NULL, answerOf, array = h.EPOCH, h.NULL, h.answerOf, h.array
 local bindKey, case, editorCard, eq, expand, findKey = h.bindKey, h.case, h.editorCard, h.eq, h.expand, h.findKey
 local forgetCheckouts, goToSettings, has, helpEntries, helpRows, hostScene = h.forgetCheckouts, h.goToSettings, h.has, h.helpEntries, h.helpRows, h.hostScene
-local hx, jsonDecode, jsonEncode, lacks, leaveWt, listPr = h.hx, h.jsonDecode, h.jsonEncode, h.lacks, h.leaveWt, h.listPr
+local hx, jsonDecode, jsonEncode, lacks, leaveWt = h.hx, h.jsonDecode, h.jsonEncode, h.lacks, h.leaveWt
 local listed, loginsSavedBy, newAcli, newGh, newGit, openQueue = h.listed, h.loginsSavedBy, h.newAcli, h.newGh, h.newGit, h.openQueue
 local pickScope, pickerNode, pickerOf, prLink, prefsOf, promptOf = h.pickScope, h.pickerNode, h.pickerOf, h.prLink, h.prefsOf, h.promptOf
 local refreshNow, request, requestsOf, rowIn, runLink, same = h.refreshNow, h.request, h.requestsOf, h.rowIn, h.runLink, h.same
-local savePrompts, searchItem, sectionIn, sha, windowCase, yes = h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.windowCase, h.yes
+local savePrompts, searchItem, sectionIn, sha, yes = h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.yes
 local asks = h.asks
 local viewSearchesOf = h.viewSearchesOf
 
@@ -32,11 +32,24 @@ local function searchesOf(acli: h.Acli): number
 	return n
 end
 
--- The delete the block asks the window to confirm: its hidden `confirm` node, decoded ({row, head, label, detail}); nil when none is pending.
+-- Settings' confirm overlay as it stands ({head, icon, body, foot = {"<label>/<variant>/<keys>", …}, cancel, act}); nil
+-- when none is open. `cancel` and `act` click its Cancel and action buttons.
 local function pendingOf(b: Block): any
-	local view: any = b.view()
-	local node = findKey(view.main, "confirm")
-	return if node then jsonDecode(node.p.text) else nil
+	local box: any = findKey(b.view().layer, "confirm", "overlay")
+	if not box then
+		return nil
+	end
+	local foot: any = findKey(box, "foot", "row")
+	local labels: { string } = {}
+	for _, btn in foot.c do
+		table.insert(labels, btn.p.text .. "/" .. tostring(btn.p.variant) .. "/" .. table.concat(btn.p.keys, "+"))
+	end
+	local function click(key: string)
+		return function()
+			b.event({ ev = "action", id = "layer.confirm.foot." .. key, act = findKey(foot, key, "button").p.actions.click })
+		end
+	end
+	return { head = box.p.head, icon = box.p.icon, footId = box.p.foot, body = findKey(box, "body", "text").p.spans[1].t, foot = labels, cancel = click("cancel"), act = click("act") }
 end
 
 -- The lowercased key labels of a shortcut list overlay found under `node`.
@@ -930,7 +943,7 @@ case("host: unreadable or malformed saved views are shown as defaults and never 
 	same(w.kv.get("views-prs"), { version = 2 }, "and are not overwritten either")
 end)
 
-case("host: a first run saves the default views of both kinds, Add creates one, and Delete asks the window to confirm", function(w: World)
+case("host: a first run saves the default views of both kinds, Add creates one, and Delete asks first in the block", function(w: World)
 	local s = hostScene(w, 3)
 	newAcli(w)
 	local store: any = w.kv.store
@@ -973,30 +986,37 @@ case("host: a first run saves the default views of both kinds, Add creates one, 
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
 	b.press("enter")
 	local ask = pendingOf(b)
-	same({ ask.row, ask.label }, { "delete:prs:v2", "Delete view" }, "Delete asks the window to confirm: this row, this action")
-	has(ask.head, "Review requested", "naming the view")
-	eq(w.opened[#w.opened], "plotroom://confirm", "through the window's link")
-	eq(findKey(b.view().layer, "confirm"), nil, "Settings draws no overlay of its own")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v1" })
-	eq(#w.kv.get("views-prs").items, 3, "a confirmation of another row deletes nothing")
+	has(ask.head, "Review requested", "Delete asks first in the block, naming the view")
+	same({ ask.icon, ask.footId, ask.body }, { "trash", "layer.confirm.foot", "It is gone from every Plotroom pane." }, "with the trash icon, its consequence and its buttons in the foot")
+	same(ask.foot, { "Cancel/quiet/esc", "Delete view/danger/enter" }, "Cancel first and quiet with Esc, then Delete view, danger, with Enter")
+	same(hx.offPalette(findKey(b.view().layer, "confirm", "overlay")), {}, "its one danger button is the action")
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "over the Settings sheet, which stays")
+	lacks(table.concat(w.opened, " "), "plotroom://confirm", "no link goes to the window")
+	eq(findKey(b.view().main, "confirm"), nil, "and no hidden question is published")
+	eq(b.press("j"), true, "it is modal: other keys are taken")
 	b.typeText("d")
+	eq(#w.kv.get("views-prs").items, 3, "and do nothing")
+	b.press("escape")
+	eq(pendingOf(b), nil, "Esc drops the question")
+	eq(#w.kv.get("views-prs").items, 3, "and deletes nothing")
+	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "leaving Settings open")
 	b.press("enter")
-	eq(#w.kv.get("views-prs").items, 3, "d and Enter do not confirm it")
-	b.event({ ev = "action", id = "layer.settings", act = "cancel-delete", value = ask.row })
-	eq(pendingOf(b), nil, "cancelling clears the question")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
+	pendingOf(b).cancel()
+	eq(pendingOf(b), nil, "Cancel drops it too")
+	eq(#w.kv.get("views-prs").items, 3, "deleting nothing")
+	b.event({ ev = "action", id = "layer.confirm.foot.act", act = "confirm-delete" })
 	eq(#w.kv.get("views-prs").items, 3, "and a late confirmation deletes nothing")
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
 	b.press("enter")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = ask.row })
-	eq(pendingOf(b), nil, "confirming closes the question")
+	b.press("enter")
+	eq(pendingOf(b), nil, "Enter confirms and closes the question")
 	local items = w.kv.get("views-prs").items
 	eq(#items, 2, "and deletes the view")
 	eq(items[2].id, "v3", "the other views stay")
 	expand(b, "vopen:prs:v3")
 	b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v3" })
 	b.press("enter")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "delete:prs:v3" })
+	pendingOf(b).act()
 	w.flush()
 	eq(#w.kv.get("views-prs").items, 1, "the active view can be deleted too")
 	eq(pickerOf(b).scope, "issues:v1", "the filter now at its place in the list is shown: the pull request filters are followed by the issue filters")
@@ -1069,43 +1089,23 @@ case("host: an account's Add missing defaults saves back the default views its g
 	yes(rowIn(b, "vrestore:jira:") ~= nil, "while Jira still has defaults to restore")
 end)
 
-windowCase("window: a Settings delete is confirmed in the palette with Cancel first; only the destructive item deletes, Cancel and dismissing delete nothing", function(w: World)
-	local _, b = agentScene(w)
-	goToSettings(b, "views")
-	expand(b, "vopen:prs:v2")
-	-- Presses Delete on the second view and follows the link the block opened; returns the question and the picker the window showed.
-	local function ask(): (any, any)
-		b.event({ ev = "select", id = "layer.settings", item = "delete:prs:v2" })
-		b.press("enter")
-		local question = pendingOf(b)
-		w.click(w.opened[#w.opened])
-		w.flush()
-		return question, w.window.picks[#w.window.picks]
-	end
-	local function views(): number
-		return #w.kv.get("views-prs").items
-	end
-	local function lastEvent(): any
-		return w.window.events[#w.window.events]
-	end
-	w.window.choose = "Cancel"
-	local question, pick = ask()
-	eq(#pick.items, 2, "two items")
-	same({ pick.items[1].label, pick.items[1].icon }, { "Cancel", "x" }, "Cancel comes first")
-	same({ pick.items[2].label, pick.items[2].detail, pick.items[2].icon, pick.items[2].confirm }, { question.label, question.detail, "trash", true }, "the destructive item second, as the block worded it")
-	same({ pick.placeholder, pick.icon }, { question.head, "trash" }, "under the block's question")
-	same(lastEvent(), { pane = 1, ev = { ev = "action", act = "cancel-delete", value = "delete:prs:v2" } }, "Cancel tells the pane to drop the question")
-	eq(pendingOf(b), nil, "which does")
-	eq(views(), 2, "and nothing is deleted")
-	w.window.choose = nil
-	ask()
-	same(lastEvent(), { pane = 1, ev = { ev = "action", act = "cancel-delete", value = "delete:prs:v2" } }, "dismissing the picker cancels too")
-	eq(views(), 2, "and nothing is deleted")
-	w.window.choose = "Delete view"
-	ask()
-	same(lastEvent(), { pane = 1, ev = { ev = "action", act = "confirm-delete", value = "delete:prs:v2" } }, "the destructive item tells the pane to delete that row")
-	eq(views(), 1, "the view is deleted")
-	eq(pendingOf(b), nil, "and the question is closed")
+case("host: Remove repository and Remove project ask in the block, each naming what Plotroom forgets", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("jira-repos", { ABC = array({ "o/r" }) })
+	local b = openQueue(w)
+	goToSettings(b, "repos")
+	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "rremove:o/r" })
+	local ask = pendingOf(b)
+	same({ ask.head, ask.body }, { "Remove repository “o/r”?", "Plotroom forgets its checkout and settings; no folder is touched." }, "the repository's question and consequence")
+	same(ask.foot, { "Cancel/quiet/esc", "Remove repository/danger/enter" }, "Cancel first, then Remove repository")
+	b.press("escape")
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "Esc keeps it")
+	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "jremove:ABC" })
+	ask = pendingOf(b)
+	same({ ask.head, ask.body }, { "Remove Jira project “ABC”?", "Plotroom forgets its repositories." }, "the Jira project's question and consequence")
+	same(ask.foot, { "Cancel/quiet/esc", "Remove project/danger/enter" }, "Cancel first, then Remove project")
+	b.press("enter")
+	eq(w.kv.get("jira-repos").ABC, nil, "Enter removes it")
 end)
 
 -- Seeds a value under every key Reset all settings clears, and work state it keeps; returns the kept values.
@@ -1131,9 +1131,11 @@ end
 
 local CLEARED = { "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands", "jira-repos", "branch-format", "pr-dir-format", "issue-dir-format", "status-order", "get-started" }
 
-windowCase("window: Reset all settings is confirmed in the palette with Cancel first; only Reset all settings clears the settings, and work state stays", function(w: World)
-	local _, b = agentScene(w)
+case("host: Reset all settings asks in the block with Cancel first; only its action clears the settings, and work state stays", function(w: World)
+	hostScene(w, 3)
 	local kept = seedSettings(w)
+	local b = openQueue(w)
+	w.flush()
 	local before: { [string]: string } = table.clone(w.kv.store)
 	goToSettings(b, "general")
 	local row = rowIn(b, "reset:all")
@@ -1141,25 +1143,19 @@ windowCase("window: Reset all settings is confirmed in the palette with Cancel f
 	local secs = prefsOf(b).sections
 	same({ secs[#secs].id, secs[#secs].title }, { "reset", "Reset" }, "under Reset, the last card")
 	has(row.hint, "keeps triage", "its hint says what stays")
-	local function ask(): (any, any)
-		b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
-		local question = pendingOf(b)
-		w.click(w.opened[#w.opened])
-		w.flush()
-		return question, w.window.picks[#w.window.picks]
-	end
-	w.window.choose = "Cancel"
-	local question, pick = ask()
-	same({ question.head, question.label }, { "Reset all settings?", "Reset all settings" }, "the block asks to reset everything")
-	has(question.detail, "keeps triage, usage and agents", "saying what is kept")
-	same({ pick.items[1].label, pick.items[2].label }, { "Cancel", "Reset all settings" }, "Cancel comes first")
+	b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
+	local ask = pendingOf(b)
+	eq(ask.head, "Reset all settings?", "the block asks to reset everything")
+	has(ask.body, "triage, usage and agents are kept", "saying what is kept")
+	same(ask.foot, { "Cancel/quiet/esc", "Reset all settings/danger/enter" }, "Cancel comes first")
+	ask.cancel()
 	eq(pendingOf(b), nil, "Cancel drops the question")
 	same(w.kv.store, before, "and kv is as it was")
-	w.window.choose = nil
-	ask()
-	same(w.kv.store, before, "dismissing the picker changes nothing either")
-	w.window.choose = "Reset all settings"
-	ask()
+	b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
+	b.press("escape")
+	same(w.kv.store, before, "Esc changes nothing either")
+	b.event({ ev = "action", id = "layer.settings", act = "reset-all", value = "reset:all" })
+	pendingOf(b).act()
 	for _, key in CLEARED do
 		eq(w.kv.get(key), nil, key .. " is cleared")
 	end
@@ -1198,29 +1194,6 @@ case("host: Reset all settings brings back the default views, actions and checkl
 	yes(findKey(b.view().layer, "get-started", "card") ~= nil, "the checklist shows again")
 	yes(findKey(other.view().layer, "get-started", "card") ~= nil, "in the other open block too")
 	has(other.title(), "My PRs", "which shows the default views")
-end)
-
-windowCase("window: the confirm link is refused from a pane of another version or another block, and with nothing pending", function(w: World)
-	w.load("window")
-	listPr(w, "o/r", 5)
-	local surface: any = w.window.surfaces[1]
-	local question = jsonEncode({ row = "delete:prs:v2", head = "Delete view “B”?", label = "Delete view", detail = "Gone from every Plotroom pane" })
-	local function refused(text: string, what: string, pane: number?)
-		local said = #w.toasts
-		w.click("plotroom://confirm", pane)
-		w.flush()
-		eq(#w.toasts, said + 1, what .. ": the user is told once")
-		eq(w.toasts[#w.toasts].level, "error", what .. ": as an error")
-		has(w.toasts[#w.toasts].text, text, what .. ": what is wrong")
-		eq(#w.window.picks + #w.window.events, 0, what .. ": nothing was picked or sent")
-	end
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "2", hidden = true } }, { id = "main.confirm", p = { text = question, hidden = true } } } }
-	refused("another version", "another protocol")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } } }
-	refused("nothing to delete", "no question")
-	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } }, { id = "main.confirm", p = { text = "{not json", hidden = true } } } }
-	refused("nothing to delete", "a malformed question")
-	refused("did not come from a Plotroom block", "a pane that is not Plotroom", 2)
 end)
 
 case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories, General, and Shift+Tab goes back; they are the same whichever kind of filter is shown", function(w: World)
@@ -1526,7 +1499,7 @@ case("host: a view's Prompts chips keep only prompts that exist, and Enter, Righ
 	same(saved(), { "p1" }, "without changing the prompts")
 end)
 
-case("host: Delete on a prompt asks the window to confirm, naming it: confirming deletes it, cancelling keeps it", function(w: World)
+case("host: Delete on a prompt asks in the block, naming it: confirming deletes it, cancelling keeps it", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })
 	local b = openQueue(w)
@@ -1535,22 +1508,21 @@ case("host: Delete on a prompt asks the window to confirm, naming it: confirming
 	b.event({ ev = "select", id = "layer.settings", item = "pdelete:prs:p1" })
 	b.press("enter")
 	local ask = pendingOf(b)
-	same({ ask.row, ask.head, ask.label }, { "pdelete:prs:p1", "Delete action “Review”?", "Delete action" }, "Delete asks the window to confirm, naming the prompt")
-	eq(w.opened[#w.opened], "plotroom://confirm", "through the window's link")
-	b.event({ ev = "action", id = "layer.settings", act = "cancel-delete", value = "pdelete:prs:p1" })
+	same({ ask.head, ask.foot[2] }, { "Delete action “Review”?", "Delete action/danger/enter" }, "Delete asks in the block, naming the prompt")
+	ask.cancel()
 	eq(#w.kv.get("prompts-prs").items, 2, "cancelling keeps it")
 	eq(pendingOf(b), nil, "and closes the question")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p1" })
+	b.event({ ev = "action", id = "layer.confirm.foot.act", act = "confirm-delete" })
 	eq(#w.kv.get("prompts-prs").items, 2, "a confirmation of a question that is gone deletes nothing")
 	b.press("enter")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p1" })
+	b.press("enter")
 	local items = w.kv.get("prompts-prs").items
 	eq(#items, 1, "confirming deletes it")
 	eq(items[1].id, "p2", "the other prompt stays")
 	eq(prefsOf(b).focus, "padd:prs", "and the Add row takes the focus")
 	b.event({ ev = "action", id = "layer.settings", act = "delete", value = "pdelete:prs:p2" })
 	eq(pendingOf(b).head, "Delete action “Triage”?", "the Delete button asks the same question")
-	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p2" })
+	pendingOf(b).act()
 	eq(#w.kv.get("prompts-prs").items, 0, "and confirming it deletes that prompt")
 end)
 

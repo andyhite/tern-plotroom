@@ -3425,6 +3425,10 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 	local texts: { string } = {}
 	collectTexts(overlay, texts)
 	has(table.concat(texts, " "), "/wt/pr5", "naming its folder")
+	same({ overlay.p.head, overlay.p.icon, overlay.p.foot }, { "Remove this worktree?", "trash", "layer.confirm.foot" }, "a trash-icon question with its buttons in the foot")
+	local foot: any = findKey(overlay, "foot", "row")
+	same({ foot.c[1].p.text, foot.c[1].p.variant, foot.c[1].p.keys, foot.c[2].p.text, foot.c[2].p.variant, foot.c[2].p.keys } :: any, { "Cancel", "quiet", { "esc" } :: any, "Remove", "danger", { "d" } :: any }, "Cancel first, then the red Remove with d")
+	same(hx.offPalette(overlay), {}, "and nothing else is coloured")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed yet")
 	b.press("enter")
 	eq(confirmOf(b), nil, "Enter keeps it")
