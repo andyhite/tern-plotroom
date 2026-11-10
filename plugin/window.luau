@@ -542,6 +542,7 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
 	nameTab(cx, newPane, t)
+	flows.worktreeTab(cx, newPane)
 	labelTab(r, t)
 	if r.setup then
 		cx:run(newPane, r.setup .. "\r")
@@ -672,6 +673,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		if shell then
 			cx:run(shell, setup .. "\r")
 			nameTab(cx, shell, t)
+			flows.worktreeTab(cx, shell)
 			if not split then
 				tab = cx.session:tab_of(shell)
 			end
@@ -729,10 +731,16 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			return true
 		end
 		nameTab(cx, agent, t)
+		if join then
+			flows.worktreeTab(cx, agent)
+		end
 		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 		return true
 	end
 	nameTab(cx, agent, t)
+	if join then
+		flows.worktreeTab(cx, agent)
+	end
 	cx:toast("success", "Agent started for " .. t.label, named)
 	return true
 end

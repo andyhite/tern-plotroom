@@ -350,7 +350,7 @@ export type WinPane = { block: string?, cwd: string, tab: number, kind: string?,
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
 export type Win = {
 	panes: { [number]: WinPane },
-	tabs: { { id: number, session: number } },
+	tabs: { { id: number, session: number, color: string? } },
 	sessions: { number },
 	focused: number?,
 	surfaces: { [number]: any }, -- pane -> { main, dock, layer } regions of TSP nodes
@@ -752,7 +752,7 @@ local function newWorld(instantiate: Loader, context: string): World
 			tabs = function(_self: any): any
 				local rows: { any } = {}
 				for _, t in win.tabs do
-					table.insert(rows, { id = t.id, session = t.session })
+					table.insert(rows, { id = t.id, session = t.session, color = t.color })
 				end
 				return rows
 			end,
@@ -812,6 +812,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			name_tab = function(_self: any, tab: number, name: string)
 				win.tabNames[tab] = name
+			end,
+			color_tab = function(_self: any, tab: number, color: string?)
+				for _, t in win.tabs do
+					if t.id == tab then
+						t.color = color
+					end
+				end
 			end,
 			focus = function(_self: any, pane: number)
 				win.focused = pane
