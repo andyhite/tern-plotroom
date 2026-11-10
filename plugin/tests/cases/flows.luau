@@ -18,7 +18,7 @@ local openIssues, openQueue, pickScope, pickerNode, pickerOf, prLink = h.openIss
 local ranSince, refreshNow, request, requestsOf, requestsSent = h.ranSince, h.refreshNow, h.request, h.requestsOf, h.requestsSent
 local rowIn, runLink, same, searchItem, sha = h.rowIn, h.runLink, h.same, h.searchItem, h.sha
 local show, windowCase, yes = h.show, h.windowCase, h.yes
-local iso = h.iso
+local iso, loggedRuns = h.iso, h.loggedRuns
 
 type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops: () -> { string }, palette: (any) -> () }
 
@@ -320,7 +320,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.advance(90 * 1000)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "failed" }, w.cx)
 	w.flush()
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	eq(#runs, 1000, "the cap holds")
 	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none", ghRepo = "o/r", number = 5, branch = "fix-5", depth = 0 }, "the run: item key, action, kind, model, where it ran, start, end, result, what GitHub knows its work by, no report, and depth 0: started by hand")
 	eq(runs[2].key, "o/r#1", "the earlier runs follow")
@@ -330,7 +330,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.advance(600 * 1000)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	runs = w.kv.get("runs")
+	runs = loggedRuns(w)
 	eq(runs[1].result, "failed", "a later turn of the same agent adds no run")
 	eq(runs[2].key, "o/r#1", "nor pushes one out")
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "while its link still shows the latest turn")
@@ -375,11 +375,11 @@ windowCase("window flows: a valid end-of-run report call goes on the run record 
 	})
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	eq(run.result, "done", "the turn's result is Tern's, whatever the report claims")
 	same({ run.attention, run.reason, run.commit, run.pr, run.blocker }, { "stuck", "The migration fails", string.lower(commit), "https://github.com/o/r/pull/9", "No test database" }, "the last call's report is on the run record")
 	same(run.evidence, { "luau tests: 3 failed" }, "with its evidence")
-	lacks(jsonEncode(w.kv.get("runs")), "All set", "no other agent output is stored in the run log")
+	lacks(jsonEncode(loggedRuns(w)), "All set", "no other agent output is stored in the run log")
 	lacks(jsonEncode(w.kv.get("agent-links")), "All set", "nor on the link")
 	local links: any = w.kv.get("agent-links")
 	same({ links[1].attention, links[1].reason, links[1].blocker }, { "stuck", "The migration fails", "No test database" }, "the link keeps what the Agents list shows")
@@ -398,15 +398,15 @@ windowCase("window flows: a refused report call is not read; the corrected call 
 	})
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	same({ run.attention, run.reason }, { "needs-human", "Second call" }, "the corrected call is recorded")
-	lacks(jsonEncode(w.kv.get("runs")), "bogus", "the refused one is not")
+	lacks(jsonEncode(loggedRuns(w)), "bogus", "the refused one is not")
 	w.window.panes[link.agent] = nil
 	local other = startReview(w)
 	lastSays(w, other.agent, "Gave up.", { reportCall(`\{"attention":"ok","reason":"Only try","evidence":[]}`, true) })
 	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
 	w.flush()
-	eq((w.kv.get("runs") :: any)[1].attention, "none", "a turn whose only call was refused records No report")
+	eq((loggedRuns(w) :: any)[1].attention, "none", "a turn whose only call was refused records No report")
 end)
 
 windowCase("window flows: a turn end reported before omp's transcript has the turn's last calls waits for them, then records the report", function(w: World)
@@ -425,9 +425,9 @@ windowCase("window flows: a turn end reported before omp's transcript has the tu
 	lastSays(w, link.agent, "done", { refused, reportCall(`\{"attention":"stuck","reason":"Second call","commit":null,"pr":null,"evidence":["ran it"],"blocker":"No database","check":"fail","findings":["a finding"]}`) })
 	w.advance(1000)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	same({ run.attention, run.reason, run.blocker }, { "stuck", "Second call", "No database" }, "once it has them, the corrected call is recorded")
-	eq(#(w.kv.get("runs") :: any), 1, "as one run")
+	eq(#(loggedRuns(w) :: any), 1, "as one run")
 	w.window.panes[link.agent] = nil
 	local other = startReview(w)
 	-- An agent started with the extension (its link names a run) whose transcript is still empty: waited on too.
@@ -441,14 +441,14 @@ windowCase("window flows: a turn end reported before omp's transcript has the tu
 	w.window.transcripts[other.agent] = {}
 	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
 	w.advance(9000)
-	eq(#(w.kv.get("runs") :: any), 1, "a transcript that never settles is waited on for up to 10 seconds")
+	eq(#(loggedRuns(w) :: any), 1, "a transcript that never settles is waited on for up to 10 seconds")
 	w.advance(1000)
-	eq((w.kv.get("runs") :: any)[1].attention, "none", "then recorded as it is")
+	eq((loggedRuns(w) :: any)[1].attention, "none", "then recorded as it is")
 	w.window.panes[other.agent] = nil
 	local plain = startReview(w)
 	w.window.handlers.agent_finished({ pane = plain.agent, result = "done" }, w.cx)
 	w.flush()
-	eq(#(w.kv.get("runs") :: any), 3, "an agent started without the extension has no omp chat to wait for")
+	eq(#(loggedRuns(w) :: any), 3, "an agent started without the extension has no omp chat to wait for")
 end)
 
 windowCase("window flows: a turn end whose pane closes while its transcript lags is still recorded, with the report read before it closed", function(w: World)
@@ -462,7 +462,7 @@ windowCase("window flows: a turn end whose pane closes while its transcript lags
 	w.window.panes[link.agent] = nil
 	w.window.transcripts[link.agent] = nil
 	w.advance(11000)
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	eq(#runs, 1, "the closed pane's turn is one run")
 	same({ runs[1].result, runs[1].attention, runs[1].reason }, { "done", "needs-human", "Which base?" }, "with the report read before the pane closed")
 	local l: any = (w.kv.get("agent-links") :: any)[1]
@@ -490,7 +490,7 @@ windowCase("window flows: a prompt sent to the agent during the settle wait does
 	repliedTo(w, link.agent)
 	w.advance(1000)
 	w.flush()
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	eq(#runs, 1, "one run")
 	same({ runs[1].attention, runs[1].reason }, { "stuck", "Turn one" }, "carrying the turn that ended, not the new one")
 	-- The new prompt arrives while turn 1's last reply still lags: the turn is over all the same.
@@ -503,7 +503,7 @@ windowCase("window flows: a prompt sent to the agent during the settle wait does
 	table.insert(msgs, { role = "user", text = "reply", tools = {} })
 	w.advance(1000)
 	w.flush()
-	runs = w.kv.get("runs")
+	runs = loggedRuns(w)
 	eq(#runs, 2, "recorded at once")
 	eq(runs[1].attention, "stuck", "with its report")
 end)
@@ -519,7 +519,7 @@ windowCase("window flows: a second turn end during the settle wait yields one ru
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.advance(11000)
 	w.flush()
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	eq(#runs, 1, "exactly one run")
 	same({ runs[1].attention, runs[1].reason, runs[1].blocker }, { "stuck", "Turn one", "No database" }, "with turn 1's report")
 	local l: any = (w.kv.get("agent-links") :: any)[1]
@@ -552,7 +552,7 @@ windowCase("window flows: a later turn end read before its prompt reached the tr
 	w.flush()
 	local l: any = (w.kv.get("agent-links") :: any)[1]
 	same({ l.attention, l.reason, l.commit }, { "ok", "Based on main", commit }, "turn 2's report is recorded")
-	eq(#(w.kv.get("runs") :: any), 1, "as no second run")
+	eq(#(loggedRuns(w) :: any), 1, "as no second run")
 end)
 
 windowCase("window flows: a later turn end whose transcript already shows that turn is recorded at once", function(w: World)
@@ -574,7 +574,7 @@ windowCase("window flows: a turn with no report call records No report, and a la
 	})
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	eq(run.attention, "none", "the run records No report")
 	eq(run.reason, nil, "with no reason")
 	eq((w.kv.get("agent-links") :: any)[1].attention, "none", "and so does the link")
@@ -584,7 +584,7 @@ windowCase("window flows: a turn with no report call records No report, and a la
 	local l: any = (w.kv.get("agent-links") :: any)[1]
 	same({ l.attention, l.reason }, { "needs-human", "Which base?" }, "a later valid report is shown")
 	eq(l.blocker, nil, "with no blocker")
-	eq(#(w.kv.get("runs") :: any), 1, "and adds no run")
+	eq(#(loggedRuns(w) :: any), 1, "and adds no run")
 	lastSays(w, link.agent, "A reply to a typed message, with no report")
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
@@ -597,8 +597,8 @@ windowCase("window flows: a fenced plotroom-report block in the agent's message 
 	lastSays(w, link.agent, "Done.\n\n```plotroom-report\n{\"attention\": \"ok\", \"reason\": \"Shipped\", \"evidence\": []}\n```")
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	eq((w.kv.get("runs") :: any)[1].attention, "none", "only the tool call is a report")
-	lacks(jsonEncode(w.kv.get("runs")), "Shipped", "and none of it is kept")
+	eq((loggedRuns(w) :: any)[1].attention, "none", "only the tool call is a report")
+	lacks(jsonEncode(loggedRuns(w)), "Shipped", "and none of it is kept")
 end)
 
 -- Starts the saved action `name` with outcome `outcome` on o/r#5 as gh login cat; its link and the worktree request.
@@ -635,12 +635,12 @@ windowCase("window flows: an action's outcome is checked as the run's login at e
 	reports(w, link.agent, `\{"attention": "ok", "reason": "Replied and pushed", "commit": "{commit}", "pr": null, "evidence": [], "blocker": null}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	eq((w.kv.get("runs") :: any)[1].outcome, "replied", "the run records its outcome")
-	eq((w.kv.get("runs") :: any)[1].verdict, nil, "and no verdict before the check answers: never Verified on no data")
+	eq((loggedRuns(w) :: any)[1].outcome, "replied", "the run records its outcome")
+	eq((loggedRuns(w) :: any)[1].verdict, nil, "and no verdict before the check answers: never Verified on no data")
 	local q = st.reply("outcome", { verdict = "not" })
 	same({ q.outcome, q.repo, q.number, q.branch, q.commit, q.since, q.login }, { "replied", "o/r", 5, "fix-5", commit, link.started, "cat" } :: { any }, "the check names the run's facts, its start and login")
 	eq((w.kv.get("agent-links") :: any)[1].verdict, "not", "Not verified on the link")
-	eq((w.kv.get("runs") :: any)[1].verdict, "not", "and on the run")
+	eq((loggedRuns(w) :: any)[1].verdict, "not", "and on the run")
 	w.advance(4100)
 	local row: any = statusEvents(w)[#statusEvents(w)].map["o/r#5"]
 	same({ row.outcome, row.verdict }, { "replied", "not" }, "and the block is told it")
@@ -649,8 +649,8 @@ windowCase("window flows: an action's outcome is checked as the run's login at e
 	w.flush()
 	q = st.reply("outcome", { verdict = "verified" })
 	eq(q.commit, commit, "a later turn is checked again, with the last commit reported")
-	eq((w.kv.get("runs") :: any)[1].verdict, "verified", "the same run is Verified")
-	eq(#(w.kv.get("runs") :: any), 1, "with no second run")
+	eq((loggedRuns(w) :: any)[1].verdict, "verified", "the same run is Verified")
+	eq(#(loggedRuns(w) :: any), 1, "with no second run")
 	for _, t in w.toasts do
 		lacks(t.text, "did not answer", "no check is toasted")
 	end
@@ -664,7 +664,7 @@ windowCase("window flows: an action with no outcome is never checked, and a host
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
 	eq(#outcomeAsks(w), 0, "no check")
-	eq((w.kv.get("runs") :: any)[1].outcome, nil, "and no outcome on the run")
+	eq((loggedRuns(w) :: any)[1].outcome, nil, "and no outcome on the run")
 	w.window.panes[link.agent] = nil -- that agent is gone, so nothing asks about starting another
 	local main: any = w.window.surfaces[1].main.c
 	main[1].p.text = "35"
@@ -698,7 +698,7 @@ windowCase("window flows: an Unchecked run is checked again once a refresh, a Me
 	st.reply("outcome", { verdict = "verified" })
 	w.advance(130 * 1000)
 	eq(#outcomeAsks(w), 3, "Verified: never again")
-	eq((w.kv.get("runs") :: any)[1].verdict, "verified", "the run is Verified")
+	eq((loggedRuns(w) :: any)[1].verdict, "verified", "the run is Verified")
 	w.window.panes[link.agent] = nil
 	local other = startWithOutcome(w, st, "Watch", "merged")
 	w.window.handlers.agent_finished({ pane = other.agent, result = "done" }, w.cx)
@@ -748,7 +748,7 @@ windowCase("window flows: an oversized report is cut to the store caps", functio
 	reports(w, link.agent, `\{"attention": "stuck", "reason": "{string.rep("r", 1000)}", "pr": "https://github.com/o/r/pull/{string.rep("9", 900)}", "evidence": [{table.concat(evidence, ",")}], "blocker": "{string.rep("b", 1000)}"}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	eq(run.attention, "stuck", "an oversized report is still read")
 	eq(#run.reason, 200, "its reason cut to 200 bytes")
 	eq(#run.blocker, 200, "and its blocker")
@@ -768,7 +768,7 @@ windowCase("window flows: a report whose line plotroom_report cut at a non-BMP c
 	reports(w, link.agent, `\{"attention":"stuck","reason":"{party} {string.rep("a", 196)}","commit":null,"pr":null,"evidence":["{string.rep("b", 199)}"],"blocker":"{string.rep("c", 199)}"}`)
 	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
 	w.flush()
-	local run: any = (w.kv.get("runs") :: any)[1]
+	local run: any = (loggedRuns(w) :: any)[1]
 	local reason = `{party} {string.rep("a", 195)}`
 	same({ run.attention, run.reason, run.blocker }, { "stuck", reason, string.rep("c", 199) }, "the run records its attention and reason, cut whole to 200 bytes")
 	same(run.evidence, { string.rep("b", 199) }, "and its evidence")
@@ -793,6 +793,77 @@ windowCase("window flows: a malformed run log or usage store is never overwritte
 	has(text, "Usage counts on this machine is malformed", "this machine's store is named")
 	has(text, "The run log is malformed", "and so is the run log")
 	eq(w.toasts[#w.toasts].text, "Usage report copied, with parts missing", "the toast says parts are missing")
+end)
+
+case("usage: each run's whole record is its own file beside a Draft review; kv runs keeps only an index entry, and every change rewrites both", function(w: World)
+	local usage: any = w.load("usage")
+	local file = "/data/plotroom/runs/1700000000-abc123/run.json"
+	local criteria = string.rep("c", 5000)
+	usage.appendRun({ id = "1700000000-abc123", key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = EPOCH, ended = EPOCH + 60, result = "done", attention = "stuck", reason = "No database", evidence = { "ran it" }, blocker = "No db", pr = "https://github.com/o/r/pull/5", criteria = criteria, login = "cat", ghRepo = "o/r", number = 5 })
+	local saved: any = jsonDecode(w.fs.files[file])
+	same({ saved.key, saved.criteria, saved.reason, saved.evidence, saved.model }, { "o/r#5", criteria, "No database", { "ran it" }, "opus" } :: { any }, "the file holds the whole record, criteria and report included")
+	eq(saved.id, nil, "its id is its folder's name")
+	local index: any = w.kv.get("runs")
+	same(index, { { id = "1700000000-abc123", key = "o/r#5", action = "Review", started = EPOCH, ended = EPOCH + 60, result = "done", login = "cat", ghRepo = "o/r", number = 5 } }, "the index entry keeps what the log's readers use, under the agent's run id")
+	lacks(jsonEncode(index), "No database", "and none of the report's text")
+	w.fs.files["/data/plotroom/runs/1700000000-abc123/review.json"] = "{}"
+	usage.setVerdict("o/r#5", EPOCH, "verified")
+	eq((w.kv.get("runs") :: any)[1].verdict, "verified", "a change reaches the index")
+	saved = jsonDecode(w.fs.files[file])
+	same({ saved.verdict, saved.criteria }, { "verified", criteria }, "and the file, which keeps the rest")
+	-- tern.fs.write is not atomic: a torn file is skipped with a log line and rebuilt from the index at the next change.
+	local warned: { string } = {}
+	w.sdk.log.warn = function(m: string)
+		table.insert(warned, m)
+	end
+	w.fs.files[file] = '{"key":"o/r#5","act'
+	eq(#usage.readRuns(), 1, "reading the log never reads a file")
+	usage.setCheck("o/r#5", EPOCH, "fail", { "AC2 fails" })
+	has(warned[1] or "", "run file 1700000000-abc123 is unreadable or malformed; skipped", "the torn file is logged")
+	saved = jsonDecode(w.fs.files[file])
+	same({ saved.check, saved.findings, saved.verdict, saved.key }, { "fail", { "AC2 fails" }, "verified", "o/r#5" } :: { any }, "and written again from the index, with the change")
+	eq(saved.criteria, nil, "losing only what the torn file alone held")
+	same((w.kv.get("runs") :: any)[1].findings, { "AC2 fails" }, "the index keeps the findings the chain's limits read")
+	-- The cap: runs pushed out of the index lose their files, and a folder with a Draft review keeps it.
+	usage.RUNS_CAP = 2
+	usage.appendRun({ key = "o/r#6", action = "Fix", ended = EPOCH + 70, result = "done" })
+	usage.appendRun({ key = "o/r#7", action = "Fix", ended = EPOCH + 80, result = "done" })
+	index = w.kv.get("runs")
+	same({ index[1].key, index[2].key, #index }, { "o/r#7", "o/r#6", 2 } :: { any }, "the newest two are kept")
+	has(index[1].id, tostring(EPOCH + 80) .. "-", "a run with no run id gets one made from its end")
+	yes(w.fs.files["/data/plotroom/runs/" .. index[1].id .. "/run.json"] ~= nil, "with its file")
+	eq(w.fs.files[file], nil, "the run pushed out loses its file")
+	eq(w.fs.files["/data/plotroom/runs/1700000000-abc123/review.json"], "{}", "but not its Draft review")
+end)
+
+case("usage: a run log from before the index is split into one file per run once, and its index replaces it", function(w: World)
+	local usage: any = w.load("usage")
+	w.kv.put("runs", array({
+		{ key = "o/r#2", action = "Fix", result = "done", started = EPOCH - 50, ended = EPOCH - 10, criteria = "AC1", reason = "Done", attention = "ok", evidence = array({ "ran it" }) },
+		{ key = "o/r#1", action = "Review", result = "failed", ended = EPOCH - 100, verdict = "not" },
+	}))
+	local runs: any = usage.readRuns()
+	same({ runs[1].id, runs[2].id }, { tostring(EPOCH - 10) .. "-m1", tostring(EPOCH - 100) .. "-m2" }, "each run gets an id")
+	local index: any = w.kv.get("runs")
+	same(index[1], { id = tostring(EPOCH - 10) .. "-m1", key = "o/r#2", action = "Fix", result = "done", started = EPOCH - 50, ended = EPOCH - 10 }, "the index replaces the old log")
+	eq(index[2].verdict, "not", "keeping what its readers use")
+	same(loggedRuns(w), { { key = "o/r#2", action = "Fix", result = "done", started = EPOCH - 50, ended = EPOCH - 10, criteria = "AC1", reason = "Done", attention = "ok", evidence = { "ran it" } }, { key = "o/r#1", action = "Review", result = "failed", ended = EPOCH - 100, verdict = "not" } } :: { any }, "and every old record is whole in its file")
+	local before = jsonEncode(w.kv.get("runs"))
+	usage.readRuns()
+	eq(jsonEncode(w.kv.get("runs")), before, "a second read moves nothing")
+	same(usage.medians(usage.readRuns()), {}, "medians read the index")
+end)
+
+case("usage: an old run log whose files cannot be written stays as it was", function(w: World)
+	local usage: any = w.load("usage")
+	local old = array({ { key = "o/r#1", action = "Review", result = "done", ended = EPOCH, criteria = "AC1" } })
+	w.kv.put("runs", old)
+	w.fs.denyMkdir["/data/plotroom/runs/" .. EPOCH .. "-m1"] = "mkdir: Permission denied"
+	local runs, why = usage.readRuns()
+	eq(runs, nil, "the log is not read")
+	eq(why, "could not be moved to files", "and says why")
+	usage.appendRun({ key = "o/r#2", action = "Fix", ended = EPOCH + 1, result = "done" })
+	same(w.kv.get("runs"), { { key = "o/r#1", action = "Review", result = "done", ended = EPOCH, criteria = "AC1" } }, "and nothing is written over it")
 end)
 
 windowCase("window flows: Copy usage report lists both machines' counts by name and the runs by action, with results and median run time", function(w: World)
@@ -3635,7 +3706,7 @@ windowCase("window flows: a done turn whose pane closes while its transcript lag
 	eq(w.kv.get("runs"), nil, "the turn end waits for the transcript")
 	w.window.panes[first.agent] = nil
 	w.advance(11000)
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	eq(#runs, 1, "one run")
 	eq(runs[1].result, "done", "done")
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "on the link too")
@@ -3649,7 +3720,7 @@ windowCase("window flows: a done turn whose pane closes while its transcript lag
 	agentFinished(w, second.agent, "closed")
 	w.window.panes[second.agent] = nil
 	w.advance(11000)
-	runs = w.kv.get("runs")
+	runs = loggedRuns(w)
 	eq(#runs, 2, "one more run")
 	same({ runs[2].result, runs[2].reason }, { "done", "Reviewed" }, "done, with its report")
 end)
@@ -4729,7 +4800,7 @@ end
 
 -- The builder's run (not its checker's) that started at `started`.
 local function runAt(w: World, started: number): any
-	for _, r in w.kv.get("runs") :: any do
+	for _, r in loggedRuns(w) :: any do
 		if r.started == started and not r.checking then
 			return r
 		end
@@ -4876,7 +4947,7 @@ end)
 
 -- The run log's record of item `key`'s run that started at `started`.
 local function loggedRun(w: World, key: string, started: number?): any
-	for _, r in (w.kv.get("runs") or {}) :: any do
+	for _, r in (loggedRuns(w) or {}) :: any do
 		if r.key == key and r.started == started then
 			return r
 		end
@@ -5130,7 +5201,7 @@ windowCase("window flows: 3 runs in a row with no new commit stop the chain with
 	eq(countOps(st, "action"), 4, "one check, three fix rounds, and no fourth round")
 	eq(w.toasts[#w.toasts].sub, "3 runs without progress", "the chain stops for no progress")
 	eq((w.kv.get("agent-links") :: any)[1].stop, "3 runs without progress", "at Needs you")
-	local runs: any = w.kv.get("runs")
+	local runs: any = loggedRuns(w)
 	same({ runs[1].depth, runs[2].depth, runs[3].depth }, { 6, 4, 2 } :: { any }, "the counters come from the item's runs in the run log")
 end)
 
