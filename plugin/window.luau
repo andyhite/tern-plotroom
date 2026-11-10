@@ -46,8 +46,8 @@ local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.t
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE
-local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree: the hidden links of the agent commands
-local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check
+local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree | agentreview: the hidden links of the agent commands
+local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check, Show Draft review
 local MORE_NODE = "main.more" -- hidden: the command palette
 local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
@@ -66,7 +66,7 @@ local RECENT_CAP = 5
 local strOf = flows.strOf
 
 -- The valid link actions of an item (a PR link also takes open and show).
-local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, run = true }
+local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true, run = true }
 
 -- The hidden node whose href a link of action `act` must match (`id`: a saved prompt's id for `run`).
 local function nodeOf(act: string, id: string?): string
@@ -1546,6 +1546,15 @@ local function palette(cx: WindowCx, pane: number)
 	end)
 end
 
+-- "pull" or "issues" when `page` is a GitHub pull request or issue page, else nil.
+local function githubItem(page: string): string?
+	if #page > 2048 then
+		return nil
+	end
+	local kind = string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/(%a+)/%d+$")
+	return if kind == "pull" or kind == "issues" then kind else nil
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it. `typed`: an agent link asks for a typed
 -- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
 -- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
@@ -1559,10 +1568,10 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local shown = string.match(url, "^plotroom://lens/show/(.+)$")
 	if shown then
-		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
-		-- pull request page, which the block's host validates again.
+		-- The one link a pane that is not a Plotroom block may send (a shell lens's Show in Plotroom): it only shows a
+		-- pull request page, or a branch's new pull request page (`git push`), which the block's host validates again.
 		local page = unpct(shown)
-		if #page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+		if githubItem(page) ~= "pull" and (#page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/new/[%w%._%-/]+$")) then
 			cx:toast("error", "Plotroom: malformed link")
 		else
 			flows.showUrl(cx, pane, page)
@@ -1783,6 +1792,17 @@ end
 
 tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
 	if string.sub(link.url, 1, #SCHEME) ~= SCHEME then
+		-- Alt-click on a GitHub pull request or issue link in any pane shows it as the lens's Show in Plotroom does,
+		-- while the window has a Plotroom block; anything else is Tern's to open.
+		if not (link.mods and link.mods.alt) or not githubItem(link.url) then
+			return nil
+		end
+		for _, p in cx.session:panes() do
+			if isPlotroom(cx, p.pane) then
+				flows.showUrl(cx, link.pane, link.url)
+				return { handled = true }
+			end
+		end
 		return nil
 	end
 	handle(cx, link.url, link.pane)

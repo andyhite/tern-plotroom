@@ -99,10 +99,19 @@ local function runQueueAction(state: State, act: string): boolean
 		openSettings(state)
 	elseif act == "more" then
 		state.cx:open("plotroom://more")
-	elseif act == "agentdisagree" then
-		-- Disagree with check… needs the selected item's checker verdict; its agent may have exited
+	elseif act == "agentdisagree" or act == "agentreview" then
+		-- Disagree with check… needs the selected item's checker verdict, Show Draft review a Draft review its run opened;
+		-- its agent may have exited. In the Agents list, Show Draft review is the previewed agent's.
+		if act == "agentreview" and state.agentsOn then
+			local row = engine.agentSelected(state)
+			if not row or not (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+				return false
+			end
+			engine.agentGo(state, act)
+			return true
+		end
 		local info = if chosen then state.agentInfo[chosen.key] else nil
-		if not chosen or not info or not info.check then
+		if not chosen or not info or not (if act == "agentreview" then info.review else info.check) then
 			return false
 		end
 		openSelected(state, act, false)
@@ -1126,6 +1135,18 @@ local function blockDef(): BlockDef<State>
 				for _, a in requests.paletteActions(state) do
 					if a.id == ev.value then
 						queueAction(state, a.id)
+					end
+				end
+			elseif act and (string.sub(act, 1, 3) == "kb:" or string.sub(act, 1, 6) == "kbrun:") then
+				-- A key footer seg: runs what its key runs, only while the footer lists it.
+				for _, e in requests.keyList(state, requests.paletteActions(state)) do
+					local chosen = selected(state)
+					if e.run ~= act then
+						continue
+					elseif string.sub(act, 1, 3) == "kb:" then
+						queueAction(state, string.sub(act, 4))
+					elseif chosen then
+						state.cx:open(runHrefOf(state, chosen, string.sub(act, 7)))
 					end
 				end
 			elseif act == "save-prompt" or act == "cancel-prompt" then

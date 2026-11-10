@@ -43,7 +43,7 @@ local function flowHost(w: World, pane: number?): FlowStub
 			local sig = ""
 			for _, k in keys do
 				local r = map[k]
-				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. ";"
+				sig ..= k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. "|" .. (r.review or "") .. ";"
 			end
 			for i = #main, 1, -1 do
 				if main[i].id == "main.agents" then
@@ -1830,6 +1830,48 @@ case("lens: a gh pr create transcript offers to show, copy and open the new pull
 	eq(exists, nil, "gh's already-exists failure (exit 1) shows its raw output, not the old pull request")
 end)
 
+case("lens: a git push that GitHub answers with its Create a pull request line offers that page and Show in Plotroom; other output stays raw", function(w: World)
+	w.load("host")
+	local def: any = w.lenses["git-push"]
+	yes(def ~= nil, "the manifest's lens is defined")
+	local page = "https://github.com/o/r/pull/new/feat/toggle-mode"
+	local function run(lines: { string }, status: number?): any
+		local state = def.open({ line = "git push -u origin feat/toggle-mode", typed = "git push -u origin feat/toggle-mode", program = "git", args = { "push", "-u", "origin", "feat/toggle-mode" } }, w.cx)
+		for _, text in lines do
+			def.line(state, { text = text, links = {} })
+		end
+		def.finish(state, status or 0)
+		return def.view(state)
+	end
+	-- As GitHub prints it, trailing blanks trimmed by Tern.
+	local pushed = {
+		"remote:",
+		"remote: Create a pull request for 'feat/toggle-mode' on GitHub by visiting:",
+		"remote:      " .. page,
+		"remote:",
+		"To github.com:o/r.git",
+		" * [new branch]      feat/toggle-mode -> feat/toggle-mode",
+		"branch 'feat/toggle-mode' set up to track 'origin/feat/toggle-mode'.",
+	}
+	local view = run(pushed)
+	local create = findKey(view, "create", "item")
+	eq(create.p.label, "Create pull request", "the lens offers Create pull request")
+	eq(create.p.href, page, "opening GitHub's page for it")
+	eq(create.p.actions.click, "open", "as a link opens")
+	eq(findKey(view, "url", "text").p.spans[1].t, page, "the page is shown")
+	local show = findKey(view, "show", "item")
+	eq(show.p.label, "Show in Plotroom", "and Show in Plotroom")
+	eq(show.p.href, "plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Ffeat%2Ftoggle-mode", "as a link carrying the page")
+	eq(def.event, nil, "the lens handles no events of its own: it runs nothing")
+	eq(#w.calls, 0, "and nothing was spawned")
+	eq(run({ "To github.com:o/r.git", "   1a2b3c4..5d6e7f8  main -> main" }), nil, "a push without the line (an existing branch) shows the raw output")
+	eq(run({ "remote: see https://github.com/o/r/pull/new/x", page }), nil, "a URL that does not follow the line is not taken for it")
+	eq(run(pushed, 1), nil, "a failed push shows its raw output")
+	local other = run({ "remote: Create a pull request for 'b' on GitHub by visiting:", "remote:      https://ghe.example.com/o/r/pull/new/b" })
+	eq(findKey(other, "create", "item").p.href, "https://ghe.example.com/o/r/pull/new/b", "another GitHub host keeps Create pull request")
+	eq(findKey(other, "show", "item"), nil, "but not Show in Plotroom")
+end)
+
 windowCase("window flows: the lens's show link works from a shell pane, while an item link from it is still refused", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -1846,6 +1888,12 @@ windowCase("window flows: the lens's show link works from a shell pane, while an
 	w.click("plotroom://github/worktree/o/r/45", 2)
 	eq(w.toasts[said + 2].text, "Plotroom: link did not come from a Plotroom block", "a worktree link from the shell pane is refused")
 	same(st.ops(), { "open-url" }, "and nothing else was asked of the block")
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Ffeat%2Fx", 2)
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, "https://github.com/o/r/pull/new/feat/x", "the git push lens's branch page goes to the block the same way")
+	said = #w.toasts
+	w.click("plotroom://lens/show/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2Fnew%2Fa%20b", 2)
+	eq(w.toasts[said + 1].text, "Plotroom: malformed link", "a branch page with other characters is refused")
 end)
 
 windowCase("window flows: the lens's show link with no Plotroom block focuses the shell pane before launching one", function(w: World)
@@ -1858,6 +1906,34 @@ windowCase("window flows: the lens's show link with no Plotroom block focuses th
 	w.flush()
 	eq(#w.window.launches, 1, "a Plotroom block is launched")
 	eq(w.window.launches[1].cwd, "/lens", "beside the pane the lens is in, not the focused one")
+end)
+
+windowCase("window flows: an Alt-clicked GitHub pull request or issue link in any pane shows it in Plotroom; a plain click, another page or a window with no Plotroom block is left to Tern", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	local pr, issue = "https://github.com/o/r/pull/45", "https://github.com/o/r/issues/7"
+	eq(w.click(pr, 2), nil, "a plain click on a pull request link is Tern's")
+	eq(w.click("https://github.com/o/r/pull/45/files", 2, { alt = true }), nil, "an Alt-click on another GitHub page is Tern's")
+	eq(w.click("https://example.com/o/r/pull/45", 2, { alt = true }), nil, "and on another site")
+	w.flush()
+	same(st.ops(), {}, "none of them asked the block anything")
+	same(w.click(pr, 2, { alt = true }), { handled = true }, "an Alt-clicked pull request link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#45 in Plotroom" }).url, pr, "and shown as the lens's Show in Plotroom shows it")
+	same(w.click(issue, 2, { alt = true }), { handled = true }, "an Alt-clicked issue link is handled")
+	w.flush()
+	eq(st.reply("open-url", { ok = true, message = "Showing o/r#7 in Plotroom" }).url, issue, "and shown too")
+	eq(#w.window.launches, 0, "no block is launched while one is open")
+end)
+
+windowCase("window flows: an Alt-clicked GitHub link with no Plotroom block in the window is left to Tern and launches nothing", function(w: World)
+	w.load("window")
+	w.window.panes[1].block = nil
+	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
+	eq(w.click("https://github.com/o/r/pull/45", 2, { alt = true }), nil, "not handled: Tern opens it as before")
+	w.flush()
+	eq(#w.window.launches, 0, "and no Plotroom block is launched")
 end)
 
 case("host triage: unseen rows are New, the selected row is marked seen on its own and saved to kv triage, a refresh writes nothing, a changed check or review shows Changed on a row nobody reads and is marked again on the row being read", function(w: World)
@@ -3440,6 +3516,24 @@ case("host open-url: a GitHub pull request, a GitHub issue and a Jira issue URL 
 	eq(b.saved().activeViewId, "pin:abc#ABC-12", "the Jira pin's id is saved whole")
 end)
 
+case("host open-url: a branch's new pull request page shows the branch's pull request, and a branch with none says so", function(w: World)
+	local s = jiraHost(w)
+	local prUrl = "https://github.com/o/r/pull/45"
+	s.gh.pulls[prUrl] = searchItem(45, "o/r", EPOCH - 60)
+	s.gh.heads["o/r@feat/x"] = { { number = 45, title = "Feat", state = "OPEN", isDraft = false, url = prUrl } }
+	local b = openIssues(w)
+	local r = asks.hx.ask(w, b, { op = "open-url", url = "https://github.com/o/r/pull/new/feat/x" })
+	eq(r.ok, true, "the branch's pull request is accepted")
+	eq(r.message, "Showing o/r#45 in Plotroom", "and said so")
+	eq(pickerOf(b).scope, "pin:o/r#45", "it is pinned and shown, as its own URL would be")
+	local calls = #w.calls
+	local none = asks.hx.ask(w, b, { op = "open-url", url = "https://github.com/o/r/pull/new/other" })
+	eq(none.problem, "No pull request for other yet.", "a branch with no pull request says so")
+	eq(none.ok, nil, "and is not accepted")
+	yes(#w.calls > calls, "after asking GitHub")
+	eq(pickerOf(b).scope, "pin:o/r#45", "the shown scope is as it was")
+end)
+
 case("host open-url: another site's URL, garbage, an item that is not found and an oversize URL are refused with nothing shown and no gh or acli call for a URL that names no item", function(w: World)
 	local s = jiraHost(w)
 	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login")
@@ -3565,16 +3659,16 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	end
 	eq(sig(b), "", "no agents: empty")
 	asks.hx.agents(b, { ["o/r#2"] = "idle", ["o/r#1"] = "working" })
-	eq(sig(b), "o/r#1=working|||||||||||||||||;o/r#2=idle|||||||||||||||||;", "pairs in key order")
+	eq(sig(b), "o/r#1=working||||||||||||||||||;o/r#2=idle||||||||||||||||||;", "pairs in key order")
 	asks.hx.agents(b, {})
 	eq(sig(b), "", "an empty report empties it")
 	asks.hx.agents(b, { ["o/r#3"] = "waiting_input" })
-	eq(sig(b), "o/r#3=waiting_input|||||||||||||||||;", "one pair")
+	eq(sig(b), "o/r#3=waiting_input||||||||||||||||||;", "one pair")
 	local again = w.open(2, { "/work/r" }, b.saved())
 	w.flush()
 	eq(sig(again), "", "a reloaded block holds no map, so the window sends it again")
-	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet", stop = "3 failed checks" } })
-	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks||;", "the recorded texts are part of it")
+	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", branch = "fix", title = "Fix it", attention = "stuck", reason = "Tests fail", blocker = "No database", outcome = "pr", verdict = "not", check = "fail", findings = "AC2 unmet", stop = "3 failed checks", review = "2026-11-04T10:00:00.000Z" } })
+	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks|||2026-11-04T10:00:00.000Z;", "the recorded texts are part of it")
 end)
 
 case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
@@ -5450,6 +5544,98 @@ case("host agents: Disagree with check… is a Commands row and hidden link only
 	yes(not offered(), "another item with no check: no row")
 	b.event({ ev = "action", act = "queue", value = "agentdisagree" })
 	eq(#w.opened, opened, "and the action opens nothing")
+end)
+
+case("host agents: Show Draft review is a Commands row and hidden link while the item's run has a Draft review that opened, exited or not, and in the Agents list for the previewed agent", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	local link = prLink("agentreview", "o/r", 1)
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).ids, "agentreview") ~= nil
+	end
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Review" } })
+	yes(not offered(), "no Draft review opened: no row")
+	eq(findKey(pickerNode(b), "agentreview"), nil, "nor hidden link")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "exited", review = "2026-11-04T10:00:00.000Z" } })
+	local p = hx.palette(w, b)
+	eq(p.labels.agentreview, "Show Draft review", "a Draft review that opened, its agent exited: the row, named so")
+	eq(p.groups.agentreview, "Actions", "in the Actions group")
+	eq(findKey(pickerNode(b), "agentreview").p.href, link, "the hidden link the window checks")
+	b.event({ ev = "action", act = "queue", value = "agentreview" })
+	eq(w.opened[#w.opened], link, "the pick opens the selected item's link")
+	b.typeText("j")
+	local opened = #w.opened
+	yes(not offered(), "another item with no Draft review: no row")
+	b.event({ ev = "action", act = "queue", value = "agentreview" })
+	eq(#w.opened, opened, "and the action opens nothing")
+	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", review = "2026-11-04T10:00:00.000Z" } })
+	pickScope(b, "agents")
+	w.flush()
+	eq(hx.palette(w, b).groups.agentreview, "Agents", "the Agents list offers it for the previewed agent")
+	b.event({ ev = "action", act = "queue", value = "agentreview" })
+	eq(w.opened[#w.opened], link, "and opens that agent's link")
+end)
+
+windowCase("window flows: Show Draft review focuses the run's open Draft review, else asks the host and opens it again as set: over the agent's tab, brought forward first, or beside the agent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = prLink("agentreview", "o/r", 5)
+	st.link("layer.queue.buttons.agentreview", link)
+	w.window.surfaces[1].main.c[1].p.text = tostring((w.load("rpc") :: any).PROTOCOL) -- the `review` op needs a host at 46 or later
+	seedAgent(w, 50, "idle", 1, "o/r#5")
+	-- The Draft review blocks opened, oldest first, the newest with its pane (the highest id running the block).
+	local function launches(): { any }
+		local out: { any } = {}
+		for _, l in w.window.launches do
+			if l.newBlock then
+				table.insert(out, { how = l.how, opts = l.opts, args = l.args })
+			end
+		end
+		for id, p in w.window.panes do
+			if p.block == "plugin.plotroom.review" and #out > 0 and id > (out[#out].pane or 0) then
+				out[#out].pane = id
+			end
+		end
+		return out
+	end
+	w.click(link)
+	w.flush()
+	eq(w.toasts[#w.toasts].text, "No Draft review for o/r#5", "a run with no Draft review opened has none to show")
+	eq(#requestsSent(w), 0, "and nothing is asked")
+	local links: any = w.kv.get("agent-links")
+	links[1].run, links[1].reviewed, links[1].cwd, links[1].login = "r1", "2026-11-04T10:00:00.000Z", "/wt/seed50", "octocat"
+	w.kv.put("agent-links", links)
+	-- Over the agent's tab, from the queue's tab: the agent's tab comes forward, then the glimpse shows over it.
+	w.click(link)
+	w.flush()
+	local q = st.reply("review", { at = "2026-11-04T10:00:00.000Z", glimpse = true })
+	eq(q.run, "r1", "the block's host is asked for the run's file")
+	local made = launches()
+	eq(#made, 1, "the Draft review opens again")
+	local got: { any } = { made[1].how, made[1].opts == nil, made[1].args, w.window.panes[made[1].pane].tab, w.window.focused == made[1].pane }
+	same(got, { "glimpse", true, { "r1", "/wt/seed50", "octocat" }, 50, true } :: { any }, "the agent's tab came forward first: a glimpse over it, focused")
+	-- Open for that run: it is focused, nothing is asked or opened.
+	w.window.surfaces[made[1].pane] = { main = { id = "main", c = { { id = "main.run", p = { text = "r1", hidden = true } } } } }
+	w.window.focused = 1
+	local asked = #requestsSent(w)
+	w.click(link)
+	w.flush()
+	same({ w.window.focused, #requestsSent(w), #launches() }, { made[1].pane, asked, 1 }, "the open Draft review is focused")
+	-- Dismissed (its pane gone) and its file gone from the host: said, nothing opens.
+	w.window.panes[made[1].pane] = nil
+	w.click(link)
+	w.flush()
+	st.reply("review", {})
+	local gone: { any } = { w.toasts[#w.toasts].text, w.toasts[#w.toasts].sub, #launches() }
+	same(gone, { "No Draft review for o/r#5", "Its file is no longer on the agent's host.", 1 } :: { any }, "a gone file opens nothing")
+	-- Beside the agent (the default): split to the agent's right.
+	w.click(link)
+	w.flush()
+	st.reply("review", { at = "2026-11-04T10:00:00.000Z" })
+	made = launches()
+	local beside: { any } = { #made, made[#made].how, made[#made].opts }
+	same(beside, { 2, "split", { target = 50, dir = "right" } } :: { any }, "beside the agent")
+	w.finish()
 end)
 
 case("host criteria: the block reads an issue's acceptance criteria from GitHub's task list or Jira's section, and says why when it cannot", function(w: World)

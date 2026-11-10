@@ -186,7 +186,8 @@ export type Settings = {
 -- `stop`: why the item's chain stopped at Needs you (3 failed checks, 3 runs without progress, 3 failed starts).
 -- While it works: `since`, when its run or turn began (seconds since the epoch, on the window's clock), and `expected`,
 -- the median seconds of its action's finished runs (nil: fewer than 5, or a later turn); both digits as text.
-export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
+-- `review`: when the newest Draft review file of its run that opened was written (nil: none opened), for Show Draft review.
+export type AgentInfo = { action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string?, review: string? }
 
 -- Now's sources as last read (engine.nowRead): the open pull requests the signed-in logins wrote (`mine`) and are asked
 -- to review (`review`), the open issues assigned to them on GitHub and Jira (`assigned`, each GitHub one with the login

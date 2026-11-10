@@ -113,21 +113,11 @@
 	margin-right: calc(var(--tv-aside, 440px) / var(--sf-zoom, 1));
 }
 
-/* The key footer (host/requests' keyBar) is a row in the layer, which stacks it over the screen-sized picker: pin it to
-   the block's bottom and end the picker's sheet above it (`.keys`), so it covers no row. */
+/* The key footer (host/requests' keyBar) is Tern's status strip in the dock, which the screen-sized picker in the layer
+   would cover (it reaches the block's bottom): end the picker's sheet above the strip (`.keys`), so the strip takes
+   clicks and covers no row. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role^='plotroom.queue'][data-role*='.keys'] > .pk-sheet {
-	height: calc(100% - 32px);
-}
-
-[data-surface='plugin.plotroom.prs'] [data-role='plotroom.keys'] {
-	position: absolute;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	height: 32px;
-	padding: 0 12px;
-	border-top: 1px solid var(--l2);
-	overflow: hidden;
+	height: calc(100% - 24px);
 }
 
 /* A prompt's editor card over the Settings sheet: the card's width, up to 640px, so a narrow sheet never clips it. */
