@@ -6,7 +6,7 @@
 Triage with the keyboard. One key checks a PR or issue out into its own worktree. Another points an agent at it.
 
 [![check](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml/badge.svg)](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml)
-![Tern 0.9.8](https://img.shields.io/badge/Tern-0.9.8-blue)
+![Tern 0.9.13](https://img.shields.io/badge/Tern-0.9.13-blue)
 
 </div>
 
@@ -43,14 +43,14 @@ An action starts an agent in the item's worktree. While it works, the item says 
 
 ## Install and first run
 
-Requires Tern 0.9.8, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi), plus `gh` signed in to github.com for GitHub and Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) for Jira.
+Requires Tern 0.9.13 or newer, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi), plus `gh` signed in to github.com for GitHub and Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) for Jira.
 
 ```sh
 tern plugin install github.com/andyhite/tern-plotroom/plugin
 ```
 
 1. Open the repository you work on in a Tern tab.
-2. Tern's palette → **Plotroom: Open**.
+2. Tern's palette → **Plotroom › Open** (or press ⌃⌥⇧Q).
 3. Follow **Get started** above the preview: it lists what is left before an agent can run (`gh`, `omp`, a checkout, the one-key shortcuts), one action per line.
 4. Select an item and press **Worktree**, or pick an action from Commands (`.`): the agent starts in the item's worktree.
 
@@ -81,6 +81,6 @@ python3 scripts/check.py           # test · types · bench · smoke
 | `plugin/triage.luau` · `sorting.luau` · `board.luau` | seen/snooze memory, per-view sorts, the Worktrees model |
 | `plugin/github.luau` · `jira.luau` · `tracker.luau` · `worktree.luau` · `process.luau` · `input.luau` · `keys.luau` · `prompts.luau` | `gh` search and writes, Jira through `acli`, tracker-neutral issues and name formats, worktrees and their inventory, argv process runner, text input (one line or many), the queue's rebindable keys, the default prompts |
 | `plugin/tests/` | `regression.luau` (runner), `harness.luau` (fake SDK, helpers), `cases/` (one file per area), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
-| `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` (no smoke, Tern is not available there). `smoke.py` runs on installed Tern 0.9.8+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
+| `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` (no smoke, Tern is not available there). `smoke.py` runs on installed Tern 0.9.13+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
 
 `link` and `install` are exclusive per id: switch with `tern plugin remove plotroom` / `tern plugin unlink plotroom` first.

@@ -7,7 +7,7 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow.
-Smoke prerequisites: any Tern (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.8), git >= 2.36, omp on PATH,
+Smoke prerequisites: Tern >= 0.9.13, the minimum supported (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
 
@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from check import PLUGIN, SDK, SDK_SHA256, GateError, run, say, sha256_file
+from check import PLUGIN, SDK, SDK_SHA256, TERN_VERSION, GateError, run, say, sha256_file
 
 
 @dataclass
@@ -245,6 +245,11 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
     if not tern or not os.path.isfile(tern) or not os.access(tern, os.X_OK):
         why = "TERN=%s is not an executable file" % given if given else "no `tern` on PATH"
         raise GateError("smoke needs Tern: %s. Install one, or set TERN=/path/to/tern." % why)
+    said = run([tern, "--version"], timeout=30).stdout.strip()
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", said)
+    least = tuple(int(n) for n in TERN_VERSION.split("."))
+    if not m or tuple(int(n) for n in m.groups()) < least:
+        raise GateError("smoke needs Tern >= %s, Plotroom's minimum; %s reports %r. Upgrade Tern." % (TERN_VERSION, tern, said))
     git = shutil.which("git")
     if not git:
         raise GateError("smoke needs git >= %d.%d on PATH; none found." % GIT_MIN)
@@ -533,6 +538,26 @@ class Smoke:
             if isinstance(node, dict):
                 inside = inside or (node.get("role") == "Dialog" and node.get("name") == "Command palette")
                 if inside and node.get("role") == "ListBoxOption" and isinstance(node.get("name"), str):
+                    out.append(node["name"])
+                walk(node.get("children") or [], inside)
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child, inside)
+
+        walk(json.loads(self.ctl("a11y")), False)
+        return out
+
+    def palette_group(self, heading: str) -> List[str]:
+        """The option rows under the group heading `heading` of Tern's open command palette (a row's name ends with its key hint, if any)."""
+        out: List[str] = []
+        at: List[Optional[str]] = [None]
+
+        def walk(node: object, inside: bool) -> None:
+            if isinstance(node, dict):
+                inside = inside or (node.get("role") == "Dialog" and node.get("name") == "Command palette")
+                if inside and node.get("role") == "Label":
+                    at[0] = str(node.get("value") or node.get("name") or "")
+                elif inside and node.get("role") == "ListBoxOption" and at[0] == heading and isinstance(node.get("name"), str):
                     out.append(node["name"])
                 walk(node.get("children") or [], inside)
             elif isinstance(node, list):
@@ -1601,15 +1626,18 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
     s.eq("the palette left the selection alone", chosen, s.selection())
     s.eq("and its preview", True, s.previewing())
-    # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only pair this run sets);
+    # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only trio this run sets),
+    # every one under the Plotroom group heading with no "Plotroom:" prefix, a default key shown beside its row (Go to Plotroom's ⌃⌥⇧Q row is not listed);
     # the `plugins run` calls below (snooze, toggle-snoozed, sort) prove an unlisted command still runs by its action name.
-    s.ctl_ok("palette", "Plotroom:")
-    s.wait_until("Tern's palette lists Plotroom: Open", lambda: "Plotroom: Open" in s.palette_rows())
+    s.ctl_ok("palette")
+    s.wait_until("Tern's palette has the Plotroom group", lambda: "Open" in s.palette_group("Plotroom"))
     time.sleep(0.5)
-    listed = sorted(t for t in s.palette_rows() if t.startswith("Plotroom: "))
     s.shot("tern-palette")
-    s.eq("Tern's palette lists only Open, Open item by URL, Message an agent and, while something needs you, Now",
-         ["Plotroom: Draft review smoke", "Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Show what needs you (Now)", "Plotroom: Worktree smoke"], listed)
+    group = s.palette_group("Plotroom")
+    s.eq("Tern's palette lists only Open, Open item by URL and Message an agent (and, while something needs you, Now), under the Plotroom group",
+         ["Draft review smoke", "Message an agent with the selection…", "Open", "Open item by URL", "Self-test", "Worktree smoke"],
+         sorted(t for t in group if not t.startswith("Show what needs you")))
+    s.eq("Now's row, when listed, shows its default key", [], [t for t in group if t.startswith("Show what needs you") and t != "Show what needs you (Now) ⌃ ⌥ ⇧ I"])
     s.ctl_ok("key", "Escape")
     s.wait_until("Tern's palette is closed", lambda: not s.palette_rows())
     s.eq("Tern's palette left the selection alone", chosen, s.selection())
@@ -2554,6 +2582,24 @@ def sc_view_board(s: Smoke) -> None:
     s.wait_until("Show as List goes back", lambda: len(s.matches(lane)) == 0 and bool(s.selection()))
 
 
+def sc_keys(s: Smoke) -> None:
+    """Go to Plotroom's default key, ⌃⌥⇧Q (a chord Tern's default keymap leaves free, so Tern keeps the plugin's bind), moves focus from a new
+    tab's shell to an earlier scenario's Plotroom block in another tab, and opens no block beside the shell."""
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    shell_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
+
+    def plotroom_focused() -> bool:
+        return str(s.state()["focused"].get("label") or "").startswith("Plotroom")  # type: ignore[union-attr]
+
+    s.eq("a shell is focused in the new tab", False, plotroom_focused())
+    s.ctl_ok("key", "Control+Alt+Shift+q")
+    s.wait_until("the key focuses a Plotroom block", plotroom_focused)
+    s.ctl_ok("tab", str(shell_tab))
+    s.wait_until("back in the shell's tab", lambda: not plotroom_focused())
+    s.eq("the shell's tab still holds the shell alone: no block was opened", 1, len(s.state()["panes"]))  # type: ignore[arg-type]
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -2587,6 +2633,7 @@ SCENARIOS = [
     ("Now as a Board", sc_now_board),
     ("arrival ring", sc_arrival),
     ("a view as a Board", sc_view_board),
+    ("Go to Plotroom's key", sc_keys),
 ]
 
 
@@ -2600,7 +2647,7 @@ def sdk_drift(tern: str, tmp: Path) -> None:
     if done.returncode != 0 or not made.is_file():
         WARNINGS.append("could not generate the installed Tern's SDK types: %s" % (done.stderr or done.stdout).strip()[:200])
     elif sha256_file(made) != SDK_SHA256:
-        WARNINGS.append("installed Tern's SDK types differ from the pinned 0.9.8 snapshot (sha256 %s); refresh scripts/%s" % (sha256_file(made)[:16], SDK.name))
+        WARNINGS.append("installed Tern's SDK types differ from the pinned %s snapshot (sha256 %s); refresh scripts/%s" % (TERN_VERSION, sha256_file(made)[:16], SDK.name))
 
 
 def check_smoke() -> str:
