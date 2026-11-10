@@ -406,25 +406,43 @@ local function buttonRow(key: string, buttons: { Node }): Node
 	return ui.node("row", { key = key, gap = "sm", wrap = true, align = "center" }, buttons)
 end
 
--- One section of a preview whose rows load, the same for every section: its heading, then while loading Tern's shimmer
--- (`Loading <what>…`), after a failed detail load (`fail`) why, when it is tried again and a Retry button, after another
--- failed read (`problem`, retried by its own Refresh) why, else `body` or, with nothing in it, `No <what>`. `key`
--- prefixes each node's key.
+-- Tern's four states of a part that loads (docs/reference.md › Finer points › Preview): a skeleton shaped like what is
+-- on its way (`shape` "rows" or "text", `n` of them), keyed like the part, so the loaded part takes its place.
+local function skeleton(key: string, shape: string, n: number): Node
+	return ui.node("skeleton", { key = key, shape = shape, rows = if shape == "rows" then n else nil, lines = if shape == "text" then n else nil })
+end
+
+-- Nothing to show: one inline row saying what is missing.
+local function emptyNode(key: string, title: string): Node
+	return ui.node("empty", { key = key, variant = "inline", title = title })
+end
+
+-- A failed read: an inline error row (key `<key>-state`) with what failed, the tool's message and a Retry button (key
+-- `<key>-retry`, click `act`).
+local function failNode(key: string, title: string, message: string, aria: string, act: string): Node
+	return ui.node("empty", { key = key .. "-state", variant = "inline", tone = "error", title = title, text = message }, {
+		button({ key = key .. "-retry", label = "Retry", icon = "redo", aria = aria, actions = { click = act } }),
+	})
+end
+
+-- One section of a preview whose rows load, the same for every section: its heading, then while loading a skeleton
+-- (`shape`, `n`: see skeleton), after a failed detail load (`fail`) or another failed read (`problem`) an error with why,
+-- when it is tried again and Retry, else `body` or, with nothing in it, `No <what>`. `key` prefixes each node's key.
 type Load = { loading: boolean?, fail: DetailFail?, problem: string? }
-local function section(key: string, head: string, what: string, body: { Node }, load: Load): { Node }
+local function section(key: string, head: string, what: string, body: { Node }, load: Load, shape: string, n: number): { Node }
 	local out: { Node } = { ui.node("text", { key = key .. "-head", spans = { ui.span(head, "strong") } }) }
 	local fail = load.fail
 	if load.loading then
-		table.insert(out, ui.node("shimmer", { key = key .. "-loading", text = "Loading " .. what .. "…" }))
+		table.insert(out, skeleton(key, shape, n))
 		return out
 	elseif fail then
 		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
-		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") } }))
-		table.insert(out, button({ key = key .. "-retry", label = "Retry", icon = "redo", aria = "Retry loading " .. what, actions = { click = "retry-checks" } }))
+		table.insert(out, failNode(key, "Could not load " .. what, brief(fail.problem.message) .. "  " .. when, "Retry loading " .. what, "retry-checks"))
 	elseif load.problem then
-		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(load.problem), "error") } }))
+		-- the Worktrees board's read: its Retry is the board's Refresh (host's retry-checks)
+		table.insert(out, failNode(key, "Could not load " .. what, brief(load.problem), "Retry loading " .. what, "retry-checks"))
 	elseif #body == 0 then
-		table.insert(out, ui.node("text", { key = key .. "-empty", spans = { ui.span("No " .. what, "muted") } }))
+		table.insert(out, emptyNode(key, "No " .. what))
 	end
 	table.move(body, 1, #body, #out + 1, out)
 	return out
@@ -524,7 +542,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
 	end
-	return section("runs", "Checks", "checks", out, { loading = key ~= nil and d == nil and fail == nil, fail = fail })
+	return section("runs", "Checks", "checks", out, { loading = key ~= nil and d == nil and fail == nil, fail = fail }, "rows", 3)
 end
 
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
@@ -704,9 +722,11 @@ end
 -- The description part of the item with key `key`. A folded bare card shows its first lines under a fade and Tern's
 -- own "N more lines" button; its head row is hidden by plotroom.css, so the text stands alone. `collapsed` mirrors
 -- state.descOpen (set by the card's toggle event), so Show less, a value the card has not been sent yet, folds it again.
--- Nothing for a blank body.
-local function descNodes(state: State, key: string, body: string?): { Node }
-	if not body or not string.find(body, "%S") then
+-- While the details load (`loading`), a skeleton of its first lines; nothing for a blank body.
+local function descNodes(state: State, key: string, body: string?, loading: boolean): { Node }
+	if loading then
+		return { skeleton("description", "text", 3) }
+	elseif not body or not string.find(body, "%S") then
 		return {}
 	end
 	local unfolded = state.descOpen == key
@@ -736,9 +756,9 @@ local function summaryNodes(state: State, item: any, pr: boolean): { Node }
 	if status == "done" then
 		return { head, ui.node("text", { key = "summary", spans = { ui.span(text or "") } }) }
 	elseif status == "busy" then
-		return { head, ui.node("shimmer", { key = "summary-loading", text = "Summarizing…" }) }
+		return { head, skeleton("summary", "text", 3) }
 	elseif status == "failed" then
-		return { head, ui.node("text", { key = "summary-state", spans = { ui.span("Summary not made: " .. brief(text or ""), "muted") } }) }
+		return { head, failNode("summary", "Summary not made", brief(text or ""), "Make the Summary again", "retry-summary") }
 	end
 	return {}
 end
@@ -914,7 +934,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	end
 	addPart(out, "status", status)
 	addPart(out, "worktree", worktreeNodes(state, pr.key, acts))
-	addPart(out, "description", descNodes(state, pr.key, if about then about.body else nil))
+	addPart(out, "description", descNodes(state, pr.key, if about then about.body else nil, loading))
 	local properties: { Node } = {
 		ui.node("col", { key = "about", gap = "sm" }, {
 			refRow("branch", "Branch", pr.head),
@@ -931,7 +951,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	end
 	addPart(out, "properties", properties)
 	local load: Load = { loading = loading, fail = fail }
-	addPart(out, "linked", section("linked", "Linked issues", "linked issues", linkedIssues(if about then about.closing else {}, if detail then detail.noted else nil), load))
+	addPart(out, "linked", section("linked", "Linked issues", "linked issues", linkedIssues(if about then about.closing else {}, if detail then detail.noted else nil), load, "rows", 2))
 	local reviewers: { Node } = {}
 	local reviews: { github.Review } = if about then about.reviews else {}
 	for i, r in reviews do
@@ -941,9 +961,9 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 			table.insert(reviewers, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
 		end
 	end
-	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load))
+	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load, "rows", 2))
 	-- Unresolved review threads, read-only: who started each, where, its first line; each opens its thread on GitHub
-	-- through the check link route (window.luau's CHECK_LISTS). Nothing when none is open.
+	-- through the check link route (window.luau's CHECK_LISTS). A skeleton while the details load; nothing when none is open.
 	local threads: { Node } = {}
 	for i, t in (if about then about.threads else {}) :: { github.Thread } do
 		local where = if t.path then printable(t.path) .. (if t.line then ":" .. t.line else "") else nil
@@ -961,7 +981,12 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 			actions = { click = "open" },
 		}))
 	end
-	if #threads > 0 then
+	if loading then
+		addPart(out, "threads", {
+			ui.node("text", { key = "threads-head", spans = { ui.span("Unresolved threads", "strong") } }),
+			skeleton("threads", "rows", 2),
+		})
+	elseif #threads > 0 then
 		addPart(out, "threads", {
 			ui.node("text", { key = "threads-head", spans = { ui.span("Unresolved threads · " .. #threads, "strong") } }),
 			ui.node("list", { key = "threads" }, threads),
@@ -1093,7 +1118,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	addPart(out, "summary", summaryNodes(state, issue, false))
 	addPart(out, "status", { stageFact(state, "issues", issue) })
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
-	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil))
+	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil, loading))
 	addPart(out, "properties", properties)
 	-- The PR whose head is the issue's worktree branch joins a GitHub issue's linked pull requests; a Jira issue's
 	-- linked items are issues, so it has a Linked pull requests section of its own while there is one.
@@ -1103,7 +1128,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 		table.insert(linked, headPr)
 	end
 	local heading = INTEGRATIONS[issue.tracker].linked
-	addPart(out, "linked", section("linked", heading, string.lower(heading), linked, { loading = loading, fail = fail }))
+	addPart(out, "linked", section("linked", heading, string.lower(heading), linked, { loading = loading, fail = fail }, "rows", 2))
 	if headPr and issue.tracker ~= "github" then
 		addPart(out, "headpr", { ui.node("text", { key = "headpr-head", spans = { ui.span(INTEGRATIONS.github.linked, "strong") } }), headPr })
 	end
@@ -1273,7 +1298,7 @@ local function boardPreview(state: State): { Node }
 		local info = sec.info
 		local body: { Node } = {}
 		if sec.state == "empty" or (sec.state == "ready" and not info) then
-			table.insert(body, ui.node("text", { key = key .. "-empty", spans = { ui.span(sec.ref .. " was not found by its tracker.", "muted") } }))
+			table.insert(body, emptyNode(key .. "-empty", sec.ref .. " was not found by its tracker."))
 		elseif sec.state == "ready" and info then
 			table.insert(body, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
 				ui.text({ ui.span(sec.ref, "mono") }),
@@ -1289,7 +1314,7 @@ local function boardPreview(state: State): { Node }
 				table.insert(body, ui.node("text", { key = key .. "-excerpt", spans = { ui.span(printable(info.excerpt), "muted") } }))
 			end
 		end
-		local nodes = section(key, heading, sec.ref, body, { loading = sec.state == "loading", problem = if sec.state == "error" then sec.problem or "no answer" else nil })
+		local nodes = section(key, heading, sec.ref, body, { loading = sec.state == "loading", problem = if sec.state == "error" then sec.problem or "no answer" else nil }, "text", 2)
 		table.move(nodes, 1, #nodes, #linked + 1, linked)
 	end
 	half("pr", INTEGRATIONS.github.linked, p.pr)
@@ -1734,9 +1759,10 @@ local function boardNode(state: State, bar: boolean?): Node
 				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
 			end
 		end
+		-- An empty lane is Tern's empty row in the list's place (and key).
 		return ui.node("col", { key = col.id, grow = 1, basis = 0, gap = "xs" }, {
 			ui.node("text", { key = "head", spans = { ui.span(col.label, "strong"), ui.span("  " .. #col.rows, "muted") } }),
-			ui.node("list", { key = "list", role = "plotroom.lane", selected = selected, max = { lines = lines }, empty = { ui.span("None", "muted") } }, cards),
+			if #cards == 0 then emptyNode("list", "None") else ui.node("list", { key = "list", role = "plotroom.lane", selected = selected, max = { lines = lines } }, cards),
 		})
 	end
 	local lanes: { Node } = {}
@@ -1753,7 +1779,7 @@ local function boardNode(state: State, bar: boolean?): Node
 	local kids: { Node } = {
 		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
 		buttonRow("foldbar", {
-			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "lanes-fold" } }),
+			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chev" else "chev-r", actions = { click = "lanes-fold" } }),
 		}),
 	}
 	if open then
