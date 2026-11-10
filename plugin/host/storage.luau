@@ -440,7 +440,7 @@ end
 -- Work state stays: triage (seen, snooze), usage, runs, agent links and recent agents.
 M.SETTINGS_KEYS = {
 	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
-	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now", "summary",
+	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now", "summary", "review",
 	IGNORED_KEY,
 } :: { string }
 
@@ -719,6 +719,29 @@ function M.editSummary(fn: (SummaryPrefs) -> ()): string?
 	end
 	fn(prefs)
 	local werr = kvSet("summary", { off = if prefs.on then nil else true, model = prefs.model })
+	return if werr then "Could not save: " .. werr else nil
+end
+
+-- Where a Draft review opens (kv "review": { glimpse = true }): Over the agent's tab (Tern's glimpse) or, absent,
+-- Beside the agent. One that cannot be read or is malformed reads as Beside and is never written over.
+function M.readReview(): (boolean, string?)
+	local ok, v = pcall(tern.kv.get, "review")
+	if not ok then
+		return false, "Draft review settings could not be read: " .. tostring(v)
+	end
+	if v ~= nil and (not isTable(v) or (v.glimpse ~= nil and type(v.glimpse) ~= "boolean")) then
+		return false, "Draft review settings are malformed; not overwriting them."
+	end
+	return v ~= nil and v.glimpse == true, nil
+end
+
+-- Saves where a Draft review opens (true: Over the agent's tab); an error message or nil.
+function M.saveReview(glimpse: boolean): string?
+	local _, err = M.readReview()
+	if err then
+		return err
+	end
+	local werr = kvSet("review", if glimpse then { glimpse = true } else nil)
 	return if werr then "Could not save: " .. werr else nil
 end
 

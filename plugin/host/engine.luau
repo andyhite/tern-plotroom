@@ -2970,10 +2970,10 @@ tern.on("pane_exited", function(_ev: any, _cx: any)
 	redrawQueues()
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
--- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected? }):
+-- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected?, review? }):
 -- replaces what the rows show. An optional text that is not a clean string within its cap is dropped, never trusted,
 -- and so are `since` and `expected` unless digits.
-local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40, since = 12, expected = 12 }
+local INFO_CAPS: { [string]: number } = { action = 120, branch = 200, title = 256, last = 200, err = 200, result = 10, ended = 10, attention = 11, reason = 200, blocker = 200, outcome = 16, verdict = 10, check = 4, findings = 1000, stop = 40, since = 12, expected = 12, review = 60 }
 local DIGITS: { [string]: boolean } = { since = true, expected = true }
 function M.agentStatus(state: State, raw: any)
 	if type(raw) ~= "string" or #raw > 40000 then

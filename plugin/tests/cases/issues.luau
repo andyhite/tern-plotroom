@@ -1529,7 +1529,7 @@ case("host: with both CLIs on, Settings has four pages: Views, Actions, Reposito
 	yes(rowIn(b, "fmt:branch") ~= nil and rowIn(b, "ropen:o/r") ~= nil and rowIn(b, "jopen:ABC") ~= nil, "with their rows")
 	b.press("escape")
 	goToSettings(b, "general")
-	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Refresh, then Reset")
+	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Draft review", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Draft review, Refresh, then Reset")
 	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
 	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
 end)

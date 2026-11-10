@@ -531,17 +531,17 @@ case("review: the window's review request answers when the run's Draft review fi
 	w.finish()
 end)
 
--- A Plotroom queue block on pane 1 (the window's surface only) that answers the `review` request with `at`; its protocol
--- is the current one, or `protocol`.
-local function queueStub(w: World, protocol: string?): (string?) -> ()
+-- A Plotroom queue block on pane 1 (the window's surface only) that answers the `review` request with `at` (and
+-- `glimpse`: Draft review opens Over the agent's tab); its protocol is the current one, or `protocol`.
+local function queueStub(w: World, protocol: string?): (string?, boolean?) -> ()
 	local main: { any } = { { id = "main.rpc", p = { text = protocol or tostring((w.load("rpc") :: any).PROTOCOL), hidden = true } } }
 	w.window.surfaces[1] = { main = { id = "main", c = main } }
 	local answered: { [string]: boolean } = {}
-	return function(at: string?)
+	return function(at: string?, glimpse: boolean?)
 		for _, q in h.requestsSent(w) do
 			if q.op == "review" and not answered[q.id] then
 				answered[q.id] = true
-				table.insert(main, { id = "main.r" .. q.id, p = { text = jsonEncode({ at = at }), hidden = true } })
+				table.insert(main, { id = "main.r" .. q.id, p = { text = jsonEncode({ at = at, glimpse = glimpse }), hidden = true } })
 				w.click("plotroom://rpc/" .. q.id, 1)
 				w.flush()
 				return
@@ -604,6 +604,57 @@ windowCase("review: a turn end with a newer Draft review opens the block beside 
 	local last = w.window.events[#w.window.events]
 	local reload: { any } = { last.pane, last.ev.act }
 	same(reload, { pane, "reload" } :: { any }, "the open one reloads")
+	w.finish()
+end)
+
+windowCase("review: Over the agent's tab, a turn end glimpses the Draft review over the agent's tab when it is shown, else opens nothing and points at Show Draft review", function(w: World)
+	w.load("window")
+	local answer = queueStub(w)
+	seedRun(w)
+	w.window.panes[20].tab = 2
+	w.window.focused = 1
+	finished(w)
+	answer(AT1, true)
+	eq(#reviewLaunches(w), 0, "the agent's tab is not shown: nothing opens over another tab")
+	eq(w.window.focused, 1, "and focus stays where it was")
+	local toast = w.toasts[#w.toasts]
+	local said: { any } = { toast.text, toast.sub }
+	same(said, { "Draft review ready for o/r#5", "Show Draft review in Plotroom's Commands opens it over the agent's tab." } :: { any }, "a toast says how to show it")
+	eq((w.kv.get("agent-links") :: any)[1].reviewed, AT1, "the link remembers it, so Show Draft review is offered")
+	w.window.focused = 20
+	finished(w)
+	answer(AT2, true)
+	local opened = reviewLaunches(w)
+	eq(#opened, 1, "a newer proposal while the agent's tab is shown opens")
+	local review = w.window.focused :: number
+	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts == nil, w.window.panes[review].block, w.window.panes[review].tab }
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "glimpse", true, "plugin.plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
+	w.finish()
+end)
+
+case("review: Settings › General › Draft review opens saves Over the agent's tab, the review request tells the window, and settings it cannot read are never written over", function(w: World)
+	h.hostScene(w)
+	local b = h.openQueue(w)
+	w.fs.files[FILE] = jsonEncode(proposal())
+	h.goToSettings(b, "general")
+	eq(h.rowIn(b, "review:opens").control.value, "split", "Beside the agent by default")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "glimpse" })
+	same(w.kv.get("review"), { glimpse = true }, "Over the agent's tab is saved")
+	eq(h.rowIn(b, "review:opens").control.value, "glimpse", "and shown")
+	h.request(b, "q1", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q1"), { at = AT1, glimpse = true }, "the window is told with the file's at")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "tab" })
+	same(w.kv.get("review"), { glimpse = true }, "an option the row does not offer changes nothing")
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "split" })
+	eq(w.kv.get("review"), nil, "Beside the agent is the default: nothing is kept")
+	h.request(b, "q2", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q2"), { at = AT1 }, "and the window is not told to glimpse")
+	w.kv.put("review", { glimpse = "yes" })
+	b.event({ ev = "change", id = "layer.settings", item = "review:opens", value = "glimpse" })
+	same(w.kv.get("review"), { glimpse = "yes" }, "malformed settings are not written over")
+	has(h.rowIn(b, "review:opens").hint, "malformed", "the row says why")
+	h.request(b, "q3", { op = "review", run = "r1" })
+	same(h.answerOf(b, "q3"), { at = AT1 }, "and they read as Beside the agent")
 	w.finish()
 end)
 

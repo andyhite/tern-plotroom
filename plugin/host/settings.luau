@@ -721,6 +721,21 @@ local function pageContent(state: State): ({ any }, { Node })
 			changed = smodel ~= nil,
 			defaultLabel = sdefault .. " (omp's small model)",
 		})
+		-- Where a turn end's Draft review opens (Settings › General › Draft review).
+		local glimpse, rproblem = storage.readReview()
+		section("review", "Draft review")
+		row({
+			id = "review:opens",
+			label = "Draft review opens",
+			hint = rproblem or "Over the agent's tab, it shows until you click outside it; Show Draft review brings it back",
+			disabled = rproblem,
+			control = {
+				k = "choice",
+				style = "segmented",
+				value = if glimpse then "glimpse" else "split",
+				options = tern.json.array({ { value = "split", label = "Beside the agent" }, { value = "glimpse", label = "Over the agent's tab" } }),
+			},
+		})
 		local now = os.time()
 		local wait = waitOf(state)
 		table.insert(sections, {
@@ -1210,6 +1225,14 @@ function M.setValue(state: State, row: string, value: any)
 		s.errors[row] = storage.editSummary(function(p)
 			p.on = on
 		end)
+		if not s.errors[row] then
+			propagate(state)
+		end
+	elseif kind == "review" and id == "opens" then
+		if choice ~= "split" and choice ~= "glimpse" then
+			return
+		end
+		s.errors[row] = storage.saveReview(choice == "glimpse")
 		if not s.errors[row] then
 			propagate(state)
 		end
@@ -2101,7 +2124,7 @@ end
 -- count beside each page in Settings' nav. Views: Now's switches and Layout, and the views (as changedActions counts
 -- actions: query, group, sort, layout, accounts and actions offered). Actions: the actions. Repositories: the name
 -- formats and each repository's checkout and branch format (the rows with a changed dot). General: the keyboard
--- shortcuts, the actions' keys and the Summary settings. A store that cannot be read counts as its defaults.
+-- shortcuts, the actions' keys, the Summary settings and where a Draft review opens. A store that cannot be read counts as its defaults.
 local function pageChanges(state: State): { [string]: number }
 	local now = storage.readNow()
 	local views = 0
@@ -2164,7 +2187,7 @@ local function pageChanges(state: State): { [string]: number }
 		general += if map[a.id] ~= a.default then 1 else 0
 	end
 	local summary = storage.readSummary()
-	general += (if summary.on then 0 else 1) + (if summary.model then 1 else 0)
+	general += (if summary.on then 0 else 1) + (if summary.model then 1 else 0) + (if storage.readReview() then 1 else 0)
 	return { views = views, prompts = actions, repos = repos, general = general }
 end
 

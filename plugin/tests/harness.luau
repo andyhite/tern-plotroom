@@ -714,10 +714,10 @@ local function newWorld(instantiate: Loader, context: string): World
 		run = function(_self: any, pane: number, text: string)
 			table.insert(win.runs, { pane = pane, text = text })
 		end,
-		-- A block of `kind` in the tab of `opts.target` (else a new tab), as cx:new_block opens it: its launch records the
-		-- kind, args, how and opts (`newBlock` true).
+		-- A block of `kind` in the tab of `opts.target` (a glimpse: the focused pane's tab; else a new tab), as cx:new_block
+		-- opens it: its launch records the kind, args, how and opts (`newBlock` true).
 		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
-			local target = if opts then win.panes[opts.target] else nil
+			local target = if opts and opts.target then win.panes[opts.target] elseif how == "glimpse" and win.focused then win.panes[win.focused] else nil
 			return addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
 		end,
 		session = {
