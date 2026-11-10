@@ -94,6 +94,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
 | A working agent's clock and estimated progress bar | Agents list, Now, previews | New | 2 | Approved | Elapsed m:ss; the bar eases toward the median of the action's finished runs in the run log (at least 5), never full before the run ends; redrawn once a second. Adopted from tern-pr-guide |
 | End-of-run report as a `plotroom_report` tool call, read from the agent's transcript | Plotroom's omp extension, Agents, run log | New | 3 | Approved | PRODUCT.md › Principles 7. tern-plotroom#xzmc: the extension checks the report when the agent calls the tool, so a malformed one is refused and fixed by the agent instead of recorded as No report; the window reads the turn's last accepted call from `agents:transcript`, with no file and no rpc op. Replaces the fenced `plotroom-report` block |
+| Worktree tab tinted while its agent needs input | Tab bar | New | 2 | Approved | tern-plotroom#dkwa: a tab Plotroom opened for a worktree takes your turn's colour (`cx.layout:color_tab`) while its agent waits for input, cleared when it works or finishes; a colour the user set is left alone |
 
 ## Land
 
