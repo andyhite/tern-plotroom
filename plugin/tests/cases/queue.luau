@@ -3123,6 +3123,61 @@ case("host: a rate limit holds every refresh, the manual one included, until it 
 	lacks(b.text(), "Paused by GitHub", "the pause note is gone")
 end)
 
+case("host: a git push or a gh pr, issue or run command that succeeds in any shell refreshes every queue now; others and failures change nothing", function(w: World)
+	local s = hostScene(w, 3)
+	local one = openQueue(w)
+	openQueue(w, 2)
+	local function searches(): number
+		return #viewSearchesOf(s.gh, "search")
+	end
+	local finish: any = w.window.handlers.command_finished
+	local function done(line: string, status: number)
+		finish({ pane = 7, line = line, status = status, took_ms = 5 }, nil)
+		w.advance(1000)
+		w.flush()
+	end
+	local before = searches()
+	done("ls -la", 0)
+	done("git status", 0)
+	done("gh repo view", 0)
+	done("gh pr merge 1", 1)
+	done("git push", 128)
+	done("echo gh pr list", 0)
+	eq(searches(), before, "other lines and failed commands refresh nothing")
+	done("git push origin feature", 0)
+	eq(searches(), before + 2, "a git push refreshes both queues")
+	done("gh pr merge 1", 0)
+	eq(searches(), before + 4, "so does gh pr")
+	done("gh issue create", 0)
+	eq(searches(), before + 6, "gh issue")
+	done("gh run rerun 5", 0)
+	eq(searches(), before + 8, "and gh run")
+	same(listed(one), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the queue still lists its items")
+end)
+
+case("host: a command that refreshes the queue still waits for GitHub's cooldown", function(w: World)
+	local s = hostScene(w, 3)
+	local limited = true
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and limited then
+			return { status = 1, stderr = "gh: API rate limit exceeded (HTTP 403)\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	eq(#viewSearchesOf(s.gh, "search"), 1, "the first search was refused")
+	limited = false
+	local finish: any = w.window.handlers.command_finished
+	finish({ pane = 7, line = "gh pr merge 1", status = 0, took_ms = 5 }, nil)
+	w.advance(1000)
+	w.flush()
+	eq(#viewSearchesOf(s.gh, "search"), 1, "nothing is sent inside the cooldown")
+	w.advance(299 * 1000)
+	w.flush()
+	eq(#viewSearchesOf(s.gh, "search"), 2, "the refresh runs once the limit has passed")
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and loads")
+end)
+
 case("host: clicking a view refreshes it, even a fresh cached one or the one already shown, and the worktrees list back to it", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)

@@ -20,6 +20,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Default views (My PRs, Review requested, Assigned to me, Created by me, My sprint, Up for grabs, My epics) | First run, Settings › Views | Keep | — | Approved | Trimmed from 14 to 7 on 2026-10-30 |
 | Restore defaults | Settings › Views, Settings › Actions | Keep, renamed **Add missing defaults** | 1 | Approved | It never overwrites edited defaults, and the current label implies it does |
 | Pins: Open item by URL, pasting a URL | Commands, Tern's palette, paste in the queue | Keep | — | Approved | Intake of one-off items |
+| Refresh after your own commands: `git push`, `gh pr`, `gh issue` or `gh run` succeeding in any shell refreshes every queue at once, within the cooldown | Engine (shell hook) | New | — | Approved | tern-plotroom#bgvj: what you just did in a shell shows in the queue without waiting for the timer |
 | Linked pull requests and issues | Preview | Keep | — | Approved | Navigation between the halves of one piece of work |
 | Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark all notifications read… |
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
