@@ -185,6 +185,8 @@ local function runQueueAction(state: State, act: string): boolean
 		else
 			return runQueueAction(state, move.id)
 		end
+	elseif act == "tab-next" or act == "tab-prev" then
+		return render.moveTab(state, if act == "tab-next" then 1 else -1)
 	else
 		return false
 	end
@@ -970,10 +972,15 @@ local function blockDef(): BlockDef<State>
 					act = nil
 				end
 			end
-			if name == "tab" and plain then
+			if name == "tab" and plain and not scopes and render.tabsShown(state) then
+				-- A pull request's preview tabs: Tab the next, Shift+Tab the previous; ← reaches the views.
+				render.moveTab(state, if key.shift then -1 else 1)
+			elseif name == "tab" and plain then
 				state.focus = if scopes then "list" else "scopes"
 			elseif laid and (act == "left" or act == "right" or (not searching and (name == "left" or name == "right"))) then
 				engine.laneMove(state, if name == "left" or act == "left" then -1 else 1, 0)
+			elseif not searching and ((name == "left" and not scopes) or (name == "right" and scopes)) then
+				state.focus = if scopes then "list" else "scopes"
 			elseif name == "escape" then
 				local q = state.query
 				if q then
@@ -1129,6 +1136,9 @@ local function blockDef(): BlockDef<State>
 				addJira(state, ev.value)
 			elseif act == "fold-description" then
 				state.descOpen = nil
+			elseif ev.ev == "select" and ev.id == QUEUE_ID .. ".tabs" and item and table.find(render.TABS, item) then
+				-- A click on a preview tab (render's previewNodes): the strip shows only what is sent back.
+				state.previewTab = item
 			elseif ev.ev == "toggle" and ev.key == "description" then
 				local chosen = selected(state)
 				state.descOpen = if chosen and ev.collapsed == false then chosen.key else nil

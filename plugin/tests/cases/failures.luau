@@ -162,6 +162,7 @@ case("host: the preview shows a failing check's first error line, its excerpt cl
 	failing(s.gh, 1, true)
 	local seen = serveLog(s.gh, failedLog())
 	local b = openQueue(w)
+	h.showTab(b, "checks") -- the excerpts are the Checks tab's, read while it shows
 	w.advance(300)
 	w.flush()
 	same(seen, { RUN_VIEW }, "the failing check's log is read; the passing one's is not")
