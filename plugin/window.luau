@@ -14,7 +14,8 @@ local prompts = require("./prompts")
 -- Every palette command's title by id, for the usage report (flows.setup).
 local TITLES: { [string]: string } = {}
 
--- tern.command, counting each run in this machine's usage as "palette:<id>".
+-- tern.command, counting each run in this machine's usage as "palette:<id>". Every row sits under Tern's palette group
+-- Plotroom, so titles carry no "Plotroom: " prefix.
 local function command(def: CommandDef)
 	TITLES[def.id] = def.title
 	local run = def.run
@@ -22,6 +23,8 @@ local function command(def: CommandDef)
 		id = def.id,
 		title = def.title,
 		icon = def.icon,
+		group = "Plotroom",
+		keys = def.keys,
 		available = def.available,
 		run = function(cx: WindowCx)
 			usage.bump("palette:" .. def.id)
@@ -353,7 +356,8 @@ end)
 
 command({
 	id = "agents-waiting",
-	title = "Plotroom: Go to the first agent that needs input",
+	title = "Go to the first agent that needs input",
+	keys = { "ctrl+alt+shift+a" },
 	icon = "merge",
 	available = function(_cx: WindowCx): boolean
 		return flows.waitingCount() > 0
@@ -363,7 +367,8 @@ command({
 
 command({
 	id = "now",
-	title = "Plotroom: Show what needs you (Now)",
+	title = "Show what needs you (Now)",
+	keys = { "ctrl+alt+shift+i" },
 	icon = "inbox",
 	available = function(_cx: WindowCx): boolean
 		return flows.needCount() > 0
@@ -1867,7 +1872,7 @@ tern.files.button({
 
 command({
 	id = "open",
-	title = "Plotroom: Open",
+	title = "Open",
 	icon = "merge",
 	run = launch,
 })
@@ -1878,6 +1883,33 @@ command({
 local function hidden(_cx: WindowCx): boolean
 	return false
 end
+
+-- Go to Plotroom (its key's command; not listed in Tern's palette, where Open is): the lowest Plotroom block of this
+-- session that is in a tab takes focus, else one opens as Open opens it. On a Plotroom block already, nothing happens.
+command({
+	id = "focus",
+	title = "Go to Plotroom",
+	keys = { "ctrl+alt+shift+q" },
+	icon = "merge",
+	available = hidden,
+	run = function(cx: WindowCx)
+		local focused = cx.session:focused()
+		if focused and isPlotroom(cx, focused) then
+			return
+		end
+		local found: number? = nil
+		for _, p in cx.session:panes() do
+			if p.tab and not p.parked and isPlotroom(cx, p.pane) and (found == nil or p.pane < found) then
+				found = p.pane
+			end
+		end
+		if found then
+			cx.layout:focus(found)
+		else
+			launchPane(cx)
+		end
+	end,
+})
 
 local drive: (WindowCx) -> () -- starts the chain steps due (flows.dueSteps); set below, by startStep
 
@@ -2087,7 +2119,7 @@ end)
 
 command({
 	id = "open-selected",
-	title = "Plotroom: Open the selected PR or issue in Browser",
+	title = "Open the selected PR or issue in Browser",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2097,7 +2129,7 @@ command({
 
 command({
 	id = "worktree-selected",
-	title = "Plotroom: Open the selected PR or issue in a worktree",
+	title = "Open the selected PR or issue in a worktree",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2107,7 +2139,7 @@ command({
 
 command({
 	id = "goto-selected",
-	title = "Plotroom: Go to the selected PR or issue's tab",
+	title = "Go to the selected PR or issue's tab",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2117,7 +2149,7 @@ command({
 
 command({
 	id = "agent-selected",
-	title = "Plotroom: Run an agent on the selected PR or issue",
+	title = "Run an agent on the selected PR or issue",
 	icon = "merge",
 	available = hidden,
 	run = function(cx: WindowCx)
@@ -2128,7 +2160,8 @@ command({
 if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	tern.command({
 		id = "selftest",
-		title = "Plotroom: Self-test",
+		title = "Self-test",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			require("./tests/check").run()
 			cx:toast("success", "Plotroom self-test passed")
@@ -2136,7 +2169,8 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	})
 	tern.command({
 		id = "smoke",
-		title = "Plotroom: Worktree smoke",
+		title = "Worktree smoke",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			require("./tests/runtime").run(cx)
 		end,
@@ -2144,7 +2178,8 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 	-- Smoke's fake agent ends no turn: this runs what a turn end of the focused agent runs for its Draft review.
 	tern.command({
 		id = "review-smoke",
-		title = "Plotroom: Draft review smoke",
+		title = "Draft review smoke",
+		group = "Plotroom",
 		run = function(cx: WindowCx)
 			local pane = cx.session:focused()
 			if pane then

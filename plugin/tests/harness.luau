@@ -458,6 +458,7 @@ export type World = {
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
 	click: (string, number?) -> any,
 	command: (string) -> (),
+	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
 	finish: () -> (),
 }
@@ -1592,6 +1593,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end
 			def.run(windowCx)
 		end,
+		commandDef = function(id: string): any
+			return commands[id]
+		end,
 		-- The ids of the commands Tern's palette lists now (no `available`, or one that answers true), sorted.
 		palette = function(): { string }
 			local out: { string } = {}
@@ -1628,6 +1632,22 @@ local function windowCase(name: string, run: (World) -> ())
 	table.insert(cases, { name = name, context = "window", run = run })
 end
 M.windowCase = windowCase
+
+-- The run log's whole records, newest first: kv `runs` (the index) read through each run's file (usage.runFile);
+-- false for an entry whose file is missing, nil when there is no log.
+local function loggedRuns(w: World): any
+	local index: any = w.kv.get("runs")
+	if index == nil then
+		return nil
+	end
+	local out: { any } = {}
+	for _, e in index do
+		local text = w.fs.files["/data/plotroom/runs/" .. tostring(e.id) .. "/run.json"]
+		table.insert(out, if text then jsonDecode(text) else false)
+	end
+	return out
+end
+M.loggedRuns = loggedRuns
 
 -- ---------------------------------------------------------------- semantic models of gh and git
 -- They answer process.run calls from state: a PR list per login with paging and quota headers, a repository
@@ -3206,15 +3226,18 @@ end
 
 -- What under `node` breaks DESIGN.md's Color Meaning Rule, as "<tone or style>: <text>": a tone other than the five
 -- meaning colours (accent, error, success, pending, warning) or neutral ones (muted, neutral), a span style that colours
--- text outside those (num, ins, del, info, link), or a button wearing a meaning colour. Walks every table, so picker
--- rows' badges and spans count as nodes do.
+-- text outside those (num, ins, del, info, link), a button wearing a meaning colour, or a node of Tern's accent
+-- (`variant = "primary"`) or red (`danger`) variant: primary is allowed once per confirm overlay (key `confirm`), on
+-- the button Enter presses, and nowhere else; danger never. Walks every table, so picker rows' badges and spans count
+-- as nodes do.
 local MEANING_TONES = { accent = true, error = true, success = true, pending = true, warning = true }
 local NEUTRAL_TONES = { muted = true, neutral = true }
 local OFF_STYLES = { num = true, ins = true, del = true, info = true, link = true, user = true }
 function hx.offPalette(node: any): { string }
 	local out: { string } = {}
 	local seen: { [any]: boolean } = {}
-	local function walk(n: any)
+	-- `confirm`: the confirm overlay `n` sits in (counting its primaries), nil outside one.
+	local function walk(n: any, confirm: { primaries: number }?)
 		if type(n) ~= "table" or seen[n] then
 			return
 		end
@@ -3227,6 +3250,21 @@ function hx.offPalette(node: any): { string }
 		elseif type(tone) == "string" and MEANING_TONES[tone] and p.role == "plotroom.button" then
 			table.insert(out, "button " .. tone .. ": " .. text)
 		end
+		if type(n.k) == "string" then
+			if n.k == "overlay" and p.key == "confirm" then
+				confirm = { primaries = 0 }
+			end
+			if p.variant == "danger" then
+				table.insert(out, "button danger: " .. text)
+			elseif p.variant == "primary" and not confirm then
+				table.insert(out, "button primary outside a confirm: " .. text)
+			elseif p.variant == "primary" and confirm then
+				confirm.primaries += 1
+				if confirm.primaries > 1 then
+					table.insert(out, "button primary twice: " .. text)
+				end
+			end
+		end
 		if type(n.t) == "string" and type(n.s) == "string" and OFF_STYLES[n.s] then
 			table.insert(out, n.s .. ": " .. n.t)
 		end
@@ -3234,10 +3272,10 @@ function hx.offPalette(node: any): { string }
 			table.insert(out, "meter " .. n.token .. ": " .. tostring(n.label))
 		end
 		for _, v in n do
-			walk(v)
+			walk(v, confirm)
 		end
 	end
-	walk(node)
+	walk(node, nil)
 	table.sort(out)
 	return out
 end

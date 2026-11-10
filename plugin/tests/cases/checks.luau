@@ -1621,6 +1621,27 @@ case("host: pull request and issue filters share one sidebar with an icon each, 
 	eq(#viewSearchesOf(s.gh, "issue-search"), 1, "the issues were searched once")
 end)
 
+-- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that the
+-- sidebar uses; add one only after finding it in Tern's set.
+local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle" }
+
+case("host: every sidebar scope and the list it shows wear an icon Tern knows", function(w: World)
+	local s = issueHost(w)
+	s.gh.items.octocat = manyItems("o/r", 3)
+	local b = openQueue(w)
+	local ids: { string } = {}
+	for _, scope in pickerOf(b).scopes do
+		yes(table.find(TERN_ICONS, scope.icon) ~= nil, "the " .. scope.label .. " entry's icon " .. tostring(scope.icon) .. " is a Tern icon")
+		table.insert(ids, scope.id)
+	end
+	yes(table.find(ids, "agents") ~= nil and table.find(ids, "worktrees") ~= nil and table.find(ids, "now") ~= nil, "Now, Worktrees and Agents are among them")
+	for _, id in ids do
+		pickScope(b, id)
+		w.flush()
+		yes(table.find(TERN_ICONS, pickerOf(b).icon) ~= nil, "the " .. id .. " list's icon " .. tostring(pickerOf(b).icon) .. " is a Tern icon")
+	end
+end)
+
 case("host: a block saves the kind of its filter and restores it: both stores have a v1, and a pane saved before issue filters joined the block is on a pull request filter", function(w: World)
 	local s = issueHost(w)
 	s.gh.items.octocat = manyItems("o/r", 3)
@@ -3427,6 +3448,23 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	yes(confirmOf(b) ~= nil, "the removal asks first")
 	same(hx.miscued(confirmOf(b)), {}, "and its Keep and Remove are buttons")
 	same(hx.offPalette(confirmOf(b)), {}, "neither wears a colour")
+	-- DESIGN.md › Buttons: the accent `primary` variant only on a confirm overlay's one safe choice, `danger` never
+	-- (the view's tree is the block's own, so each check takes its variants off again)
+	local function painted(variants: { [string]: string }, root: any?): { string }
+		local tree: any = root or confirmOf(b)
+		for key, variant in variants do
+			findKey(tree, key, "item").p.variant = variant
+		end
+		local out = hx.offPalette(tree)
+		for key in variants do
+			findKey(tree, key, "item").p.variant = nil
+		end
+		return out
+	end
+	same(painted({ keep = "primary" }), {}, "Keep may be the confirm's one primary button")
+	same(painted({ keep = "primary", delete = "primary" }), { "button primary twice: Remove" }, "but a confirm has one primary")
+	same(painted({ delete = "danger" }), { "button danger: Remove" }, "and Remove is never red")
+	same(painted({ next = "primary" }, b.view().layer), { "button primary outside a confirm: Re-run failed checks" }, "nor is the preview's Next move accent")
 	b.press("escape")
 	eq(confirmOf(b), nil, "Escape keeps the worktree")
 	b.typeText("z")
