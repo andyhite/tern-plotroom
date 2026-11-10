@@ -3180,15 +3180,18 @@ end
 
 -- What under `node` breaks DESIGN.md's Color Meaning Rule, as "<tone or style>: <text>": a tone other than the five
 -- meaning colours (accent, error, success, pending, warning) or neutral ones (muted, neutral), a span style that colours
--- text outside those (num, ins, del, info, link), or a button wearing a meaning colour. Walks every table, so picker
--- rows' badges and spans count as nodes do.
+-- text outside those (num, ins, del, info, link), a button wearing a meaning colour, or a node of Tern's accent
+-- (`variant = "primary"`) or red (`danger`) variant: primary is allowed once per confirm overlay (key `confirm`), on
+-- the button Enter presses, and nowhere else; danger never. Walks every table, so picker rows' badges and spans count
+-- as nodes do.
 local MEANING_TONES = { accent = true, error = true, success = true, pending = true, warning = true }
 local NEUTRAL_TONES = { muted = true, neutral = true }
 local OFF_STYLES = { num = true, ins = true, del = true, info = true, link = true, user = true }
 function hx.offPalette(node: any): { string }
 	local out: { string } = {}
 	local seen: { [any]: boolean } = {}
-	local function walk(n: any)
+	-- `confirm`: the confirm overlay `n` sits in (counting its primaries), nil outside one.
+	local function walk(n: any, confirm: { primaries: number }?)
 		if type(n) ~= "table" or seen[n] then
 			return
 		end
@@ -3201,6 +3204,21 @@ function hx.offPalette(node: any): { string }
 		elseif type(tone) == "string" and MEANING_TONES[tone] and p.role == "plotroom.button" then
 			table.insert(out, "button " .. tone .. ": " .. text)
 		end
+		if type(n.k) == "string" then
+			if n.k == "overlay" and p.key == "confirm" then
+				confirm = { primaries = 0 }
+			end
+			if p.variant == "danger" then
+				table.insert(out, "button danger: " .. text)
+			elseif p.variant == "primary" and not confirm then
+				table.insert(out, "button primary outside a confirm: " .. text)
+			elseif p.variant == "primary" and confirm then
+				confirm.primaries += 1
+				if confirm.primaries > 1 then
+					table.insert(out, "button primary twice: " .. text)
+				end
+			end
+		end
 		if type(n.t) == "string" and type(n.s) == "string" and OFF_STYLES[n.s] then
 			table.insert(out, n.s .. ": " .. n.t)
 		end
@@ -3208,10 +3226,10 @@ function hx.offPalette(node: any): { string }
 			table.insert(out, "meter " .. n.token .. ": " .. tostring(n.label))
 		end
 		for _, v in n do
-			walk(v)
+			walk(v, confirm)
 		end
 	end
-	walk(node)
+	walk(node, nil)
 	table.sort(out)
 	return out
 end

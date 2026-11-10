@@ -16,9 +16,9 @@ Words on screen come from [PRODUCT.md › Glossary](PRODUCT.md#glossary). Behavi
 | Agent working | `pending` | `--live` | **Agent working**, Working, the filled cells of a working agent's bar |
 | Checks running | `warning` | `--warn` | a pending check run and Pending checks |
 
-So: Open, Draft, Closed, PR open, Worktree, Not started, Idle, Exited, Clean, Uncommitted changes, Not at PR head, unpushed counts, In tab, Locked, New commits since you approved (the Changed badge already carries it), review required or requested of someone else, Jira workflow statuses other than Done, the integration tag (GitHub, Jira), numbers, a working agent's clock and the empty cells of its bar, diff sizes, stale or partial results and every button are neutral. A meaning colour on something that does not carry that meaning breaks the rule, a red Remove button or a blue Next button included. Toasts use Tern's levels and are outside the rule; Tern's own focus ring, list selection and author avatars keep Tern's colours, which are Tern chrome, not a Plotroom meaning.
+So: Open, Draft, Closed, PR open, Worktree, Not started, Idle, Exited, Clean, Uncommitted changes, Not at PR head, unpushed counts, In tab, Locked, New commits since you approved (the Changed badge already carries it), review required or requested of someone else, Jira workflow statuses other than Done, the integration tag (GitHub, Jira), numbers, a working agent's clock and the empty cells of its bar, diff sizes, stale or partial results and every button but a confirm's one primary (Buttons and links) are neutral. A meaning colour on something that does not carry that meaning breaks the rule, a red Remove button or a blue Next button included. Toasts use Tern's levels and are outside the rule; Tern's own focus ring, list selection and author avatars keep Tern's colours, which are Tern chrome, not a Plotroom meaning.
 
-The Color Meaning Rule is enforced by tests: `hx.offPalette` (plugin/tests/harness.luau) fails on any other tone, a coloured span style (`num`, `ins`, `del`, `info`, `link`), or a button with a meaning colour; `scripts/check.py` fails `plotroom.css` on a hex or literal `rgb()`/`hsl()` colour, or on Tern's meaning variables (`--bad`, `--ok`, `--warn`, `--live`, …), which only a node's tone may use.
+The Color Meaning Rule is enforced by tests: `hx.offPalette` (plugin/tests/harness.luau) fails on any other tone, a coloured span style (`num`, `ins`, `del`, `info`, `link`), a button with a meaning colour, a `primary` variant outside a confirm overlay or a second one inside it, or any `danger` variant (Buttons and links below); `scripts/check.py` fails `plotroom.css` on a hex or literal `rgb()`/`hsl()` colour, or on Tern's meaning variables (`--bad`, `--ok`, `--warn`, `--live`, …), which only a node's tone may use.
 
 **Every visible string changes a decision.** A word on screen is there because it changes what you do next. A count the sidebar already shows, a label that repeats the badge beside it, a state nothing acts on: cut it. Reference text goes in a tooltip (`title`), not on the row.
 
@@ -33,7 +33,7 @@ All Tern variables; the plugin declares none.
 - **Ink:** `--t1` (titles, body), `--t2` (keycap labels), `--t3` (muted text: `muted` tone), `--t4` (dim).
 - **Lines:** `--l1` to `--l4`; `--l3` rings Plotroom's buttons and underlines links.
 - **Surfaces:** Tern's picker, card, prefs sheet and overlay draw their own (`--card`, `--panel`, `--chip-bg`); Plotroom paints none.
-- **Accent:** `--accent` only through the `accent` tone (your turn) and Tern's own focus ring.
+- **Accent:** `--accent` only through the `accent` tone (your turn), the one `primary` button a confirm overlay may hold (Buttons and links), and Tern's own focus ring.
 - **Meaning colours:** through tones only: `accent`, `error` (`--bad`), `success` (`--ok`), `pending` (`--live`), `warning` (`--warn`).
 
 ## Typography
@@ -76,6 +76,8 @@ The picker's preview, in one order for every item (docs/reference.md › Finer p
 ### Buttons and links
 
 What a click does shows on the node. A **button** does something: an `item` with `role = "plotroom.button"`, a 1px `--l3` ring, `--r-ctl` radius, sized to its label, its key as `hint` keycaps (render's `button()`). An icon button is an `icon` with the same role. A **link** opens something: `role = "plotroom.link"`, its label underlined in `--l3`, the underline darkening under the pointer. Every node with a click action or an `href` wears one of the two roles and no other node does (`hx.miscued`). Buttons are neutral: no tone, destructive ones included; their confirm is the guard.
+
+**One primary button, only in a confirm.** Tern's guide makes one accent `primary` button per screen, the action on the selection. Plotroom departs from it: accent already means your turn, and an accent Next move on every preview would wear that cue down until Needs you no longer stands out. So the only `primary` button is the one choice a confirm overlay (`overlay` keyed `confirm`) offers on Enter, today the worktree removal's **Keep**, where nothing else on screen competes for it; a confirm has at most one. The preview's Next move, the worktree card, Settings, the Draft review's **Send to agent** (a decision row, not an overlay) and every other button stay `default` or `quiet`. `danger` is never used: a red Remove would say "needs fixing", and the confirm is the guard. The confirms the window asks through Tern's picker (Send to an agent, guided mutations) are Tern's own confirm rows, not Plotroom buttons. Until Plotroom builds against an SDK with `tern.ui.button` and its variants, no button sets one.
 
 ### Worktree card
 
