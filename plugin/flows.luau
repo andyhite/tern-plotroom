@@ -1147,6 +1147,7 @@ local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string
 	end
 	if first then
 		usage.appendRun({
+			id = l.run,
 			key = l.key,
 			action = if l.chain and l.chain.name ~= "" then l.chain.name else l.action or "",
 			kind = l.kind,

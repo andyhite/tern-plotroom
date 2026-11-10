@@ -1603,6 +1603,22 @@ local function windowCase(name: string, run: (World) -> ())
 end
 M.windowCase = windowCase
 
+-- The run log's whole records, newest first: kv `runs` (the index) read through each run's file (usage.runFile);
+-- false for an entry whose file is missing, nil when there is no log.
+local function loggedRuns(w: World): any
+	local index: any = w.kv.get("runs")
+	if index == nil then
+		return nil
+	end
+	local out: { any } = {}
+	for _, e in index do
+		local text = w.fs.files["/data/plotroom/runs/" .. tostring(e.id) .. "/run.json"]
+		table.insert(out, if text then jsonDecode(text) else false)
+	end
+	return out
+end
+M.loggedRuns = loggedRuns
+
 -- ---------------------------------------------------------------- semantic models of gh and git
 -- They answer process.run calls from state: a PR list per login with paging and quota headers, a repository
 -- with refs, remotes and worktrees. A case changes that state (or injects a failure) and reads it back.
