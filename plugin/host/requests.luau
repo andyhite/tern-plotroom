@@ -844,7 +844,7 @@ function M.offer(state: State, id: string, item: any, confirm: { head: string, l
 		discardEdit(state)
 		state.settings = nil
 	end
-	state.plan = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }
+	state.plan, state.messaging = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil
 	reply(state, id, { token = token, confirm = { head = confirm.head, label = confirm.label, lines = tern.json.array(confirm.lines) } })
 end
 
@@ -2060,6 +2060,24 @@ function M.rpc(state: State, raw: any)
 		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
+	elseif q.op == "message" and type(q.token) == "string" and string.match(q.token, "^%x+$") and #q.token <= 32 and type(q.head) == "string" and q.head ~= "" and #q.head <= 400 and type(q.lines) == "table" and #q.lines >= 1 and #q.lines <= 50 then
+		-- A message for an agent, asked in the Confirm overlay over the queue (render.messageConfirm), so Settings closes
+		-- first; it replaces any other question there. {shown}.
+		local lines: { string } = {}
+		for _, line in q.lines do
+			if type(line) ~= "string" or #line > 2000 then
+				return
+			end
+			table.insert(lines, line)
+		end
+		if state.settings then
+			discardEdit(state)
+			state.settings = nil
+		end
+		state.plan, state.stopping, state.removing = nil, nil, nil
+		state.messaging = { token = q.token, head = q.head, lines = lines, note = q.note == true }
+		reply(state, id, { shown = true })
+		state.cx:render()
 	elseif q.op == "review" and review.validRun(q.run) then
 		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none; with
 		-- `glimpse` when Settings › General has a Draft review open Over the agent's tab.

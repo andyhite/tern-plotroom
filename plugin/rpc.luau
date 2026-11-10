@@ -6,10 +6,11 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 48
+M.PROTOCOL = 49
 M.MIN = 48
 -- op → the protocol that added it; an op not listed is known to every host in range. 48 (MIN): `commit` is gone and a
--- plan (act's or draft's answer) is confirmed in the block's own Confirm overlay, not by the window.
-M.SINCE = {} :: { [string]: number }
+-- plan (act's or draft's answer) is confirmed in the block's own Confirm overlay, not by the window. 49: `message`, a
+-- message for an agent reviewed in the block's Confirm overlay.
+M.SINCE = { message = 49 } :: { [string]: number }
 
 return M

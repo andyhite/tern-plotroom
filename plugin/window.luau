@@ -1560,6 +1560,15 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		flows.reviewSend(cx, pane)
 		return true
 	end
+	local what, token = string.match(url, "^plotroom://message/(%a+)/(%x+)$")
+	if what == "send" or what == "note" then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		else
+			flows.messageLink(cx, pane, what, token :: string)
+		end
+		return true
+	end
 	if url == "plotroom://repos" or url == "plotroom://jira-projects" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")

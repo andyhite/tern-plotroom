@@ -2151,7 +2151,7 @@ end
 -- question as its head, the consequence in one sentence, the facts (a kv, or `o.lines` as they will be sent), and in
 -- its foot Cancel first (quiet, Esc) and then the action (`danger` unless `o.calm`, its key `actKeys`). `o.act` nil: the
 -- action is refused (the sentence says why) and only Cancel is offered.
-local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, warn: string?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
+local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, warn: string?, extra: Node?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
 	local icon = o.icon or "trash"
 	local kids: { Node } = { ui.node("text", { key = "body", spans = { ui.span(o.body, "muted") } }) }
 	if o.facts and #o.facts > 0 then
@@ -2164,6 +2164,9 @@ local function confirmOverlay(o: { head: string, meta: string?, icon: string?, b
 	end
 	if o.warn then
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span(o.warn) } }))
+	end
+	if o.extra then
+		table.insert(kids, o.extra)
 	end
 	local buttons: { Node } = { button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = o.cancel } }) }
 	if o.act then
@@ -2200,6 +2203,23 @@ local function stopConfirm(key: string): Node
 		actKeys = { "enter" },
 		cancel = "stop-cancel",
 		act = "stop-agent",
+	})
+end
+
+-- A message for an agent the window asks about (`state.messaging`, rpc `message`): its note and lines as they will be
+-- sent; Enter or Send sends it, `n` or Add a note asks for the note, Esc drops it. Not `danger`: nothing is destroyed.
+local function messageConfirm(m: { head: string, lines: { string }, note: boolean }): Node
+	return confirmOverlay({
+		head = m.head,
+		icon = "merge",
+		body = "Sent once, exactly as shown, to the agent.",
+		lines = m.lines,
+		extra = ui.node("row", { key = "notes", justify = "start" }, { button(if m.note then "Edit note…" else "Add a note…", { key = "note", size = "md", variant = "quiet", icon = "pen", keys = { "n" }, actions = { click = "message-note" } }) }),
+		label = "Send",
+		actKeys = { "enter" },
+		calm = true,
+		cancel = "message-cancel",
+		act = "message-send",
 	})
 end
 
@@ -2324,6 +2344,8 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 		table.insert(layer, planConfirm(state))
 	elseif stopping then
 		table.insert(layer, stopConfirm(stopping.key))
+	elseif state.messaging then
+		table.insert(layer, messageConfirm(state.messaging))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

@@ -1733,34 +1733,63 @@ function M.reviewSend(cx: WindowCx, pane: number)
 	try(cx)
 end
 
--- The review of a message for `agent`: the picker lists, Cancel first, Send, a one-line note the user types (the prompt
--- is one line, so the note is the editable part) and then every line of `context` as it will be sent, newlines
--- kept. Nothing is sent but by the Send row; Escape or Cancel sends nothing.
-local function review(cx: WindowCx, agent: number, key: string, head: string, context: { string }, note: string)
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pen", edit = true } }
-	if note ~= "" then
-		table.insert(items, { label = note, group = "Note", icon = "merge" })
-	end
-	for _, line in context do
-		table.insert(items, { label = if line == "" then " " else line, group = "Message" })
-	end
-	cx:pick({ items = items, placeholder = head, icon = "merge", action = "confirm" }):next(function(item, _, cx2)
-		if not cx2 or not item then
-			return
-		elseif item.edit == true then
-			cx2:prompt({ value = note, placeholder = "A note for the agent of " .. key .. " (one line)", icon = "merge", action = "review" }):next(function(text, _, cx3)
-				if not cx3 or not text then
-					return
-				end
-				local line = trim((string.gsub(text, "%c", " ")))
-				if (utf8.len(line) or #line) > NOTE_CHARS then
-					return cx3:toast("error", "The note is too long", "At most " .. NOTE_CHARS .. " characters.")
-				end
-				review(cx3, agent, key, head, context, line)
-			end)
-		elseif item.confirm == true then
-			sendTo(cx2, agent, key, (if note ~= "" then note .. "\n\n" else "") .. table.concat(context, "\n"))
+-- The message waiting in a Plotroom block's Confirm overlay (review): only that block's Send or Add a note link with
+-- this token acts on it; a newer review replaces it.
+local pendingMessage: { token: string, pane: number, agent: number, key: string, head: string, context: { string }, note: string }? = nil
+
+-- The review of a message for `agent`, in a Plotroom block's Confirm overlay (rpc `message`): `near` (the selection's
+-- pane) when it is a Plotroom block, else one in its tab, else the lowest on the agent's host, else any. It shows the
+-- one-line note (when there is one) and every line of `context` as they will be sent, newlines kept; its Send link
+-- sends, its Add a note link asks for the note and reviews again. Escape or Cancel sends nothing.
+local function review(cx: WindowCx, near: number, agent: number, key: string, head: string, context: { string }, note: string)
+	local panes = plotroomPanes(cx)
+	local host = hostOf(cx, agent)
+	local block: number? = if table.find(panes, near) then near else nil
+	local tab = cx.session:tab_of(near)
+	for _, p in panes do
+		if not block and tab and cx.session:tab_of(p) == tab then
+			block = p
 		end
+	end
+	block = block or (if host then blockOn(cx, host) else nil) or panes[1]
+	if not block then
+		return cx:toast("info", "Open Plotroom to send the selection", "The message is shown in a Plotroom block before it is sent.")
+	end
+	local lines: { string } = {}
+	if note ~= "" then
+		table.insert(lines, note)
+		table.insert(lines, "")
+	end
+	table.move(context, 1, #context, #lines + 1, lines)
+	local token = string.format("%08x%08x", math.random(0, 0x7FFFFFFF), math.random(0, 0x7FFFFFFF))
+	pendingMessage = { token = token, pane = block, agent = agent, key = key, head = head, context = context, note = note }
+	pcall(function()
+		cx.layout:focus(block)
+	end)
+	e().ask(cx, block, "message", { token = token, head = head, note = note ~= "", lines = lines }, ACT_MS, function() end)
+end
+
+-- plotroom://message/<what>/<token> from the Plotroom block in `pane`: its Confirm overlay's Send (`send`) delivers the
+-- pending message; Add a note (`note`) asks for the one-line note and reviews the message again. A link that is not the
+-- pending message's (another block, an old token) does nothing.
+function M.messageLink(cx: WindowCx, pane: number, what: string, token: string)
+	local m = pendingMessage
+	if not m or m.token ~= token or m.pane ~= pane then
+		return cx:toast("info", "That message is no longer waiting", "Run Message an agent with the selection… again.")
+	end
+	pendingMessage = nil
+	if what == "send" then
+		return sendTo(cx, m.agent, m.key, (if m.note ~= "" then m.note .. "\n\n" else "") .. table.concat(m.context, "\n"))
+	end
+	cx:prompt({ value = m.note, placeholder = "A note for the agent of " .. m.key .. " (one line)", icon = "merge", action = "review" }):next(function(text, _, cx2)
+		if not cx2 or not text then
+			return
+		end
+		local line = trim((string.gsub(text, "%c", " ")))
+		if (utf8.len(line) or #line) > NOTE_CHARS then
+			return cx2:toast("error", "The note is too long", "At most " .. NOTE_CHARS .. " characters.")
+		end
+		review(cx2, m.pane, m.agent, m.key, m.head, m.context, line)
 	end)
 end
 
@@ -1870,7 +1899,7 @@ local function offerSelection(cx: WindowCx, sel: Picked)
 		if not cx2 or not item or type(item.agent) ~= "number" then
 			return
 		end
-		review(cx2, item.agent, item.label, "Send the selection to the agent of " .. item.label .. "?", context, "")
+		review(cx2, sel.pane, item.agent, item.label, "Send the selection to the agent of " .. item.label .. "?", context, "")
 	end)
 end
 

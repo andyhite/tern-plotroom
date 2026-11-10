@@ -306,6 +306,7 @@ export type State = {
 	clockTimer: TimerHandle?, -- the redraw that moves the shown clocks on, at most one a second
 	plan: any, -- the one mutation plan waiting for confirmation in the block's Confirm overlay (requests.offer), nil: none
 	stopping: { key: string, href: string }?, -- the item whose agent Stop agent… asks about (a Confirm overlay), and the link that stops it
+	messaging: { token: string, head: string, lines: { string }, note: boolean }?, -- a message for an agent the window asks about in the Confirm overlay (rpc `message`); Send and Add a note open the window's links with `token`
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
 	boardOn: boolean, -- the Worktrees scope is shown instead of a view

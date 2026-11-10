@@ -1886,7 +1886,7 @@ def sc_agent(s: Smoke) -> None:
     # agent) runs in the focused pane, with or without the plugin. Real lifecycle transitions are used instead (launch -> working, pane close ->
     # exited). waiting_input is not proved by this smoke; the regression cases cover event-triggered updates.
 
-    # Selection message: review the actual selected text, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
+    # Selection message: review the actual selected text in the Plotroom block's Confirm overlay, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
     picked = s.tmp / "selected.txt"
     picked.write_text("é😀\nsmoke selected text\n", encoding="utf-8")
     back_to_queue()
@@ -1894,19 +1894,30 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("file", "open", str(picked), "split")
     s.ctl_ok("file", "wait")
     s.ctl_ok("key", "Meta+a")  # the opened file block holds focus: select all
+    file_pane = s.state()["focused"]["id"]  # type: ignore[index]
+    file_tab = [t["active"] for t in s.state()["tabs"]].index(True) + 1  # type: ignore[index,union-attr]  # ctl tab numbers from 1
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-message-selection")
     s.wait_text("the agent picker counts the selection", "Send the selection (")
     s.ctl_ok("picker", "enter")
-    s.wait_text("the review picker", "Send the selection to the agent of")
+    s.wait_text("the review, in the Plotroom block's Confirm overlay", "Send the selection to the agent of")
     s.wait_text("the review shows the non-ASCII line (native byte offsets)", "é😀")
     s.wait_text("the review shows the whole last line (a UTF-16 head would cut it)", "smoke selected text")
+    s.wait_text("the review offers a note", "Add a note…")
     s.wait_text("the review offers Cancel", "Cancel")
+    s.eq("the review is no palette picker", [], s.palette_rows())
+    time.sleep(0.6)  # the overlay's card slides in before the shot
     s.shot("agent-message-confirm")
-    s.ctl_ok("picker", "esc")
-    time.sleep(0.7)
-    s.eq("the review is gone", False, any("Send the selection to the agent of" in t for t in s.texts()))
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the review", lambda: not any("Send the selection to the agent of" in t for t in s.texts()))
     s.eq("cancelling shows no success toast", False, any(t.startswith("Sent to the agent of") for t in s.texts()))
     s.eq("cancelling opened no tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("the review took the focus to the Plotroom block", True, s.state()["focused"]["id"] != file_pane)  # type: ignore[index]
+    s.ctl_ok("tab", str(file_tab))  # the review may have shown in a Plotroom block of another tab
+    for _ in range(8):  # ctl focuses by direction only: step through the tab's panes back to the file block
+        if s.state()["focused"]["id"] == file_pane:  # type: ignore[index]
+            break
+        s.ctl_ok("focus", "next")
+    s.eq("back on the file block", file_pane, s.state()["focused"]["id"])  # type: ignore[index]
     s.ctl_ok("close")  # the file block
 
     # Files header button: opens a Plotroom beside the pane whose cwd is the Files root.

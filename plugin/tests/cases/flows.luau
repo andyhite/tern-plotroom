@@ -3008,6 +3008,48 @@ case("host agents: Stop agent… asks in the block's Confirm overlay, Cancel fir
 	yes(h.confirmOf(b) ~= nil, "and it asks")
 end)
 
+case("host agents: a message for an agent is asked in the block's Confirm overlay, Cancel first; Esc drops it, Enter or Send opens the window's send link, n or Add a note its note link", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "general")
+	local function ask(note: boolean)
+		asks.hx.ask(w, b, { op = "message", token = "abc123", head = "Send the selection to the agent of o/r#1?", note = note, lines = { "fix this", "", "Selected in the terminal block:", "local x = 1" } })
+	end
+	ask(false)
+	eq(b.state().settings, nil, "asked over Settings, Settings closes so the confirm shows")
+	local o = h.confirmOf(b)
+	eq(o.p.head, "Send the selection to the agent of o/r#1?", "the overlay's head is the window's question")
+	has(textOf(findKey(o, "body")), "exactly as shown", "one sentence says what sending does")
+	same({ textOf(findKey(o, "line-1")), textOf(findKey(o, "line-4")) }, { "fix this", "local x = 1" }, "then every line as it will be sent")
+	eq(findKey(o, "note").p.text, "Add a note…", "a note can be added")
+	same(confirmFoot(b), { "Cancel|quiet|esc", "Send|nil|enter" }, "Cancel first, then Send; no danger: nothing is destroyed")
+	same(hx.offPalette(b.view().layer), {}, "within the palette")
+	local opened = #w.opened
+	b.typeText("j")
+	eq(#w.opened, opened, "it is modal: j opens nothing")
+	b.press("escape")
+	eq(h.confirmOf(b), nil, "Esc closes it")
+	eq(#w.opened, opened, "and sends nothing")
+	ask(true)
+	eq(findKey(h.confirmOf(b), "note").p.text, "Edit note…", "with a note it offers to edit it")
+	b.press("enter")
+	eq(w.opened[#w.opened], "plotroom://message/send/abc123", "Enter opens the send link the window follows")
+	eq(h.confirmOf(b), nil, "and closes it")
+	ask(false)
+	b.typeText("n")
+	eq(w.opened[#w.opened], "plotroom://message/note/abc123", "n opens the note link")
+	ask(false)
+	opened = #w.opened
+	b.event({ ev = "action", act = "message-send" })
+	eq(#w.opened, opened + 1, "so does its Send button")
+	eq(w.opened[#w.opened], "plotroom://message/send/abc123", "the send link")
+	ask(false)
+	opened = #w.opened
+	b.event({ ev = "action", act = "message-cancel" })
+	eq(h.confirmOf(b), nil, "and Cancel drops it")
+	eq(#w.opened, opened, "sending nothing")
+end)
+
 case("host mutations: a plan is asked in the block's Confirm overlay, Cancel first: Esc drops it, Enter commits it with its own token and toasts what came of it", function(w: World)
 	local s = issueHost(w)
 	local seen = asks.hx.writes(s.gh)
@@ -4435,16 +4477,31 @@ end)
 
 -- ---------------------------------------------------------------- agent events, Files, selection
 
-local function reviewWith(w: World, label: (string, number) -> string?)
-	local reviews = 0
+-- Answers the agent picker of Message an agent with the selection… with o/r#5.
+local function pickAgent(w: World)
 	w.window.decide = function(opts: any): (string?, boolean?)
-		local ph: string = opts.placeholder or ""
-		if string.find(ph, "^Send the selection %(") then
-			return "o/r#5", nil
-		end
-		reviews += 1
-		return label(ph, reviews), nil
+		return if string.find(opts.placeholder or "", "^Send the selection %(") then "o/r#5" else nil, nil
 	end
+end
+
+-- The message the window asked block `st` (pane 1) to review in its Confirm overlay (rpc `message`), answered; then the
+-- overlay's `what` link (send | note), when given, as the block opens it.
+local function reviewed(w: World, st: FlowStub, what: string?): any
+	local q = st.reply("message", { shown = true })
+	if what then
+		w.click("plotroom://message/" .. what .. "/" .. q.token, 1)
+		w.flush()
+	end
+	return q
+end
+
+-- How many reviews the window asked block `st` for.
+local function messagesAsked(st: FlowStub): number
+	local n = 0
+	for _, op in st.ops() do
+		n += if op == "message" then 1 else 0
+	end
+	return n
 end
 
 local function pickRows(pick: any): { string }
@@ -4553,37 +4610,39 @@ windowCase("window files: the Files button opens Plotroom on the folder it shows
 	eq(w.window.launches[#w.window.launches].cwd, "/work/r", "with no folder it opens as Open does, in the focused pane's directory")
 end)
 
-windowCase("window selection: the user picks the agent, reviews every line and sends only by the Send row; cancelling, a dead agent and a refused delivery send nothing", function(w: World)
+windowCase("window selection: the user picks the agent and reviews every line in the block's Confirm overlay; only its own Send link sends; a stale link, a dead agent and a refused delivery send nothing", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	startAgentOn(w, st)
 	local agent = (w.kv.get("agent-links") :: any)[1].agent
 	w.window.selection = { pane = 1, kind = "terminal", text = "local x = 1\r\n\treturn x" }
-	reviewWith(w, function(_ph, _n)
-		return "Cancel"
-	end)
+	pickAgent(w)
+	local picks = #w.window.picks
 	w.command("agent-message-selection")
 	w.flush()
 	eq(w.window.selectionAsks[1].max_chars, 4000, "the selection is read with an explicit cap")
-	same(pickRows(w.window.picks[#w.window.picks - 1]), { "o/r#5" }, "the agents to choose from: each live linked one")
-	same(pickRows(w.window.picks[#w.window.picks]), { "Cancel", "Send to o/r#5", "Add a note…", "Selected in the terminal block:", "local x = 1", "\treturn x" }, "the review: Cancel first, then Send, then every line as it will be sent")
-	eq(#w.window.agentCalls, 0, "Cancel sends nothing")
-	reviewWith(w, function(_ph, _n)
-		return nil
-	end)
-	w.command("agent-message-selection")
+	eq(#w.window.picks, picks + 1, "one palette picker: the agent; the review is not one")
+	same(pickRows(w.window.picks[#w.window.picks]), { "o/r#5" }, "the agents to choose from: each live linked one")
+	local q = reviewed(w, st)
+	eq(q.head, "Send the selection to the agent of o/r#5?", "the Plotroom block asks it in its Confirm overlay")
+	same(q.lines, { "Selected in the terminal block:", "local x = 1", "\treturn x" }, "with every line as it will be sent")
+	eq(q.note, false, "and no note yet")
+	eq(#w.window.agentCalls, 0, "nothing is sent while it asks (Cancel or Esc there sends nothing)")
+	w.click("plotroom://message/send/0123abcd", 1)
 	w.flush()
-	eq(#w.window.agentCalls, 0, "dismissing the review sends nothing")
-	reviewWith(w, function(_ph, _n)
-		return "Send to o/r#5"
-	end)
-	w.command("agent-message-selection")
+	eq(#w.window.agentCalls, 0, "a Send link with another token sends nothing")
+	eq(w.toasts[#w.toasts].text, "That message is no longer waiting", "and says so")
+	w.click("plotroom://message/send/" .. q.token, 1)
 	w.flush()
-	same(w.window.agentCalls, { { op = "ask", pane = agent, text = "Selected in the terminal block:\nlocal x = 1\n\treturn x" } }, "Send delivers it whole, newlines kept")
+	same(w.window.agentCalls, { { op = "ask", pane = agent, text = "Selected in the terminal block:\nlocal x = 1\n\treturn x" } }, "its Send delivers it whole, newlines kept")
 	eq(w.toasts[#w.toasts].text, "Sent to the agent of o/r#5", "and says so")
+	w.click("plotroom://message/send/" .. q.token, 1)
+	w.flush()
+	eq(#w.window.agentCalls, 1, "one Send sends once")
 	w.window.askFails = true
 	w.command("agent-message-selection")
 	w.flush()
+	reviewed(w, st, "send")
 	eq(w.toasts[#w.toasts].text, "Could not message the agent for o/r#5", "a refused delivery is an error")
 	w.window.askFails = false
 	w.window.agentStates[agent] = "exited"
@@ -4604,43 +4663,38 @@ windowCase("window selection: a note is added by one line, a long selection is c
 	end
 	w.window.selection = { pane = 1, kind = "terminal", text = table.concat(lines, "\n"), chars_clipped = true }
 	w.window.typed = "see this"
-	local sent = ""
-	reviewWith(w, function(_ph, n)
-		if n == 1 then
-			return "Add a note…"
-		end
-		return "Send to o/r#5"
-	end)
+	pickAgent(w)
 	w.command("agent-message-selection")
 	w.flush()
-	local review = w.window.picks[#w.window.picks]
-	has(review.items[3].label, "Edit note", "after a note the row offers to edit it")
-	yes(h.hx.ternIcon(review.items[3].icon), "with an icon Tern draws: " .. tostring(review.items[3].icon))
-	eq(review.items[4].label, "see this", "the note is shown first, in its own group")
-	local rows = pickRows(review)
-	eq(rows[#rows], "[clipped: first 40 of 50 lines]", "the cut is a row, so it is explicit")
-	eq(rows[#rows - 1], "line 40", "after the 40th line")
-	sent = (w.window.agentCalls[1] :: any).text
+	has(w.window.picks[#w.window.picks].placeholder, "clipped", "the agent picker says the reader clipped it")
+	local first = reviewed(w, st, "note")
+	local q = reviewed(w, st)
+	eq(q.note, true, "after a note the overlay offers to edit it")
+	same({ q.lines[1], q.lines[2], q.lines[3] }, { "see this", "", "Selected in the terminal block:" }, "the note is shown first, as it will be sent")
+	eq(q.lines[#q.lines], "[clipped: first 40 of 50 lines]", "the cut is a line, so it is explicit")
+	eq(q.lines[#q.lines - 1], "line 40", "after the 40th line")
+	w.click("plotroom://message/send/" .. first.token, 1)
+	w.flush()
+	eq(#w.window.agentCalls, 0, "the review before the note is no longer the one waiting")
+	w.click("plotroom://message/send/" .. q.token, 1)
+	w.flush()
+	local sent = (w.window.agentCalls[1] :: any).text
 	eq(string.sub(sent, 1, #"see this\n\nSelected in the terminal block:\nline 1"), "see this\n\nSelected in the terminal block:\nline 1", "the note leads the message")
 	eq(string.find(sent, "line 41", 1, true), nil, "no line past the shown ones is sent")
-	has(w.window.picks[#w.window.picks - 2].placeholder, "clipped", "the picker says the reader clipped it")
 	w.window.agentCalls = {}
 	w.window.typed = string.rep("x", 401)
-	reviewWith(w, function(_ph, n)
-		return if n == 1 then "Add a note…" else "Send to o/r#5"
-	end)
 	w.command("agent-message-selection")
 	w.flush()
-	eq(#w.window.agentCalls, 0, "a note over its cap is refused")
+	reviewed(w, st, "note")
+	eq(w.toasts[#w.toasts].text, "The note is too long", "a note over its cap is refused")
+	eq(#w.window.agentCalls, 0, "and nothing is sent")
 	w.window.selection = nil
 	w.window.docs["/work/f.txt"] = "alpha\nbeta"
 	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 10 } }
 	w.window.typed = nil
-	reviewWith(w, function(_ph, _n)
-		return "Send to o/r#5"
-	end)
 	w.command("agent-message-selection")
 	w.flush()
+	reviewed(w, st, "send")
 	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\nalpha\nbeta", "a file's selection is read from its text by its offsets")
 	w.window.fileRead = nil
 	w.command("agent-message-selection")
@@ -4656,13 +4710,15 @@ windowCase("window selection: a file's selection is only byte offsets, so its te
 	local function select(anchor: number, head: number)
 		w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = anchor, head = head }, size = #text }
 	end
-	reviewWith(w, function(_ph, _n)
-		return "Send to o/r#5"
-	end)
+	pickAgent(w)
 	local function run()
 		w.window.agentCalls = {}
+		local asked = messagesAsked(st)
 		w.command("agent-message-selection")
 		w.flush()
+		if messagesAsked(st) > asked then
+			reviewed(w, st, "send")
+		end
 	end
 	select(0, 6)
 	run()
@@ -4709,7 +4765,7 @@ windowCase("window selection: a file's selection is only byte offsets, so its te
 	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 5000 }, size = 5000 }
 	run()
 	has((w.window.agentCalls[1] :: any).text, "[clipped: first 40 of 800 lines]", "a big range is cut at the 4000-byte cap, then shown and sent as 40 lines")
-	has(w.window.picks[#w.window.picks - 1].placeholder, "4000 characters, clipped", "and the picker says it was clipped")
+	has(w.window.picks[#w.window.picks].placeholder, "4000 characters, clipped", "and the agent picker says it was clipped")
 end)
 
 windowCase("window selection: with a file focused another block's old selection is never taken for it, and the count is characters", function(w: World)
@@ -4721,17 +4777,17 @@ windowCase("window selection: with a file focused another block's old selection 
 	w.window.panes[1].kind = "file"
 	w.window.docs["/work/f.txt"] = "日本語 text"
 	w.window.fileRead = { kind = "file", path = "/work/f.txt", selection = { anchor = 0, head = 9 }, size = 14 }
-	reviewWith(w, function(_ph, _n)
-		return "Send to o/r#5"
-	end)
+	pickAgent(w)
 	w.command("agent-message-selection")
 	w.flush()
+	reviewed(w, st, "send")
 	eq((w.window.agentCalls[1] :: any).text, "Selected in the file block:\n日本語", "the focused file's own range is what is offered")
-	has(w.window.picks[#w.window.picks - 1].placeholder, "(3 characters)", "counted in characters, not bytes")
+	has(w.window.picks[#w.window.picks].placeholder, "(3 characters)", "counted in characters, not bytes")
 	w.window.panes[1].kind = nil
 	w.window.agentCalls = {}
 	w.command("agent-message-selection")
 	w.flush()
+	reviewed(w, st, "send")
 	eq((w.window.agentCalls[1] :: any).text, "Selected in the terminal block:\nstale terminal text", "with no file focused the plain selection call is used, as before")
 end)
 
