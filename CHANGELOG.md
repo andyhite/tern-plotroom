@@ -5,6 +5,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
+- Worktree tab names survive a plugin reload: a worktree tab's `#123 title` is kept in kv `tab-labels` (the newest 50) and read at load, so restored tabs keep it. A closed tab's name is dropped when a pane or tab closes; a malformed store is never written over.
 - The queue refreshes as soon as `git push`, or a `gh pr`, `gh issue` or `gh run` command, succeeds in any shell pane on the block's host, instead of waiting for its timer; GitHub's rate-limit cooldown still holds. Failed commands and other lines change nothing.
 - Settings' on/off rows (Now's reasons, team review requests and accounts; Summaries) are Tern's native switches instead of On/Off segments; Enter on the row flips them. Each Settings page's nav entry counts what on it differs from the defaults: Now's switches and views (Views), actions (Actions), name formats, checkouts and branch formats (Repositories), shortcuts, action keys and the Summary settings (General).
 - Preview checks by state: Failing, Running and Queued, each headed with its count, then Passed and Skipped in one fold that starts folded ("Passed 12 · Skipped 1"). Each check shows its CI (workflow, app or status host) and how long it ran or has been running ("45s", "6m 24s", "1h 05m"); required ones say Required. While a check is unfinished, the previewed pull request's checks are read again every 30 s, until the selection moves or nothing is pending. This replaces the Required and Optional groups.
