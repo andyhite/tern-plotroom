@@ -2044,6 +2044,11 @@ local function ignoreCheck(cx: WindowCx, pane: number)
 	end)
 end
 
+-- Ignore in this repo… on a failing check's row (window.luau's ignore link): the plan for that check.
+function M.ignoreCheck(cx: WindowCx, pane: number, check: string)
+	planAct(cx, pane, "Check not ignored", { name = "ignore-check", check = check })
+end
+
 -- Now's notifications marked read: the host names the listed threads and the account in the confirm.
 local function markRead(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not marked read", { name = "mark-read" })

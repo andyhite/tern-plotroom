@@ -537,7 +537,6 @@ M.STAGE = {
 	none = { text = "Not started", tone = "muted" },
 } :: { [string]: { text: string, tone: string, title: string? } }
 M.RUN_TONE = { success = "success", failure = "error", pending = "warning", neutral = "muted" } :: { [string]: string }
-M.RUN_ICON = { success = "check", failure = "x", pending = "clock", neutral = "minus" } :: { [string]: string }
 M.MERGE_STATE = {
 	conflicts = { text = "Conflicts", tone = "error" },
 	behind = { text = "Behind base", tone = "muted" },
