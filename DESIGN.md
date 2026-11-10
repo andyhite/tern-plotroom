@@ -10,7 +10,7 @@ Words on screen come from [PRODUCT.md › Glossary](PRODUCT.md#glossary). Behavi
 
 | Meaning | Tone (Tern) | Draws as | Where today |
 | --- | --- | --- | --- |
-| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading |
+| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading, a worktree tab's tint while its agent needs input (tab colours are named labels, not tones: `blue`) |
 | Needs fixing | `error` | `--bad` | **Blocked** and its chips (Address changes, Reply, Fix checks, Re-run, Resolve conflicts), Conflicts, Changes requested, Checks failing, a failed check run, Report: stuck, a worktree that could not be made or is missing, a load or read that failed, a security alert |
 | Done | `success` | `--ok` | **Ready to merge**, **Merged**, Approved, Verified, Checked, Passing, Done or Completed issues, a done Get started line |
 | Agent working | `pending` | `--live` | **Agent working**, Working, the filled cells of a working agent's bar |
