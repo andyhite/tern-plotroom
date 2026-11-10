@@ -877,6 +877,39 @@ case("host: a worktree detached after its card was made is refused by git's clai
 	eq(countLog(s.git, "worktree remove", mark), 0, "d removes nothing")
 end)
 
+case("host: a locked, prunable or missing worktree is refused on the card's confirm: it says why, offers no d, and d removes nothing", function(w: World)
+	for _, flaw in { "locked", "prunable", "missing" } do
+		local s = hostScene(w, 1)
+		local path = leaveWt(w, s, 1)
+		local b = openQueue(w)
+		for _, t in s.git.worktrees do
+			if t.path == path then
+				if flaw == "locked" then
+					t.locked = true
+				elseif flaw == "prunable" then
+					t.prunable = true
+				end
+			end
+		end
+		if flaw == "missing" then
+			w.fs.dirs[path] = nil
+		end
+		pressCard(b, "remove")
+		w.flush()
+		local body = findKey(confirmOf(b), "body", "text").p.spans[1].t
+		has(body, "is locked, prunable or missing; repair it yourself", flaw .. ": the confirm gives removal's own reason")
+		lacks(body, "Press d", flaw .. ": and offers no d")
+		eq(findKey(confirmOf(b), "delete"), nil, flaw .. ": nor a Remove row")
+		local mark, toasts = #s.git.log, #w.toasts
+		b.typeText("d")
+		w.flush()
+		eq(countLog(s.git, "worktree remove", mark), 0, flaw .. ": d runs no git worktree remove")
+		eq(#w.toasts, toasts, flaw .. ": nor a toast")
+		yes(cardOf(b) ~= nil, flaw .. ": the card stays")
+		b.press("escape")
+	end
+end)
+
 case("host: a worktree git refuses to remove stays: its card says why, its badge follows, and nothing else was done", function(w: World)
 	local s = hostScene(w, 1)
 	s.git.served["refs/pull/1/head"] = sha("b")

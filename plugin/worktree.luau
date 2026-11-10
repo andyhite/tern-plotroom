@@ -894,6 +894,14 @@ local function claim(checkout: string, repo: string, path: string, branch: strin
 	end)
 end
 
+-- Why removal refuses inventory worktree `e` (locked, prunable or missing), as removeEntry says it; nil: it does not.
+function M.unusable(e: Entry): string?
+	if e.locked or e.prunable or e.missing then
+		return "The worktree at " .. e.path .. " is locked, prunable or missing; repair it yourself (git worktree repair or prune)."
+	end
+	return nil
+end
+
 -- Removes one inventory worktree without force, as `remove` does for an item's: a locked, prunable or missing one, the
 -- main checkout and one that is no longer at `path` on `branch` are refused. Only a branch Plotroom noted (an issue key
 -- or a pull request number, not a guessed one) goes with the worktree, as `remove` does it; any other branch is kept,
@@ -903,8 +911,8 @@ function M.removeEntry(checkout: string, repo: string, path: string, branch: str
 	claim(checkout, repo, path, branch, function(e, why)
 		if not e then
 			return done(nil, why, nil)
-		elseif e.locked or e.prunable or e.missing then
-			return done(nil, "The worktree at " .. path .. " is locked, prunable or missing; repair it yourself (git worktree repair or prune).", nil)
+		elseif M.unusable(e) then
+			return done(nil, M.unusable(e), nil)
 		end
 		local b = e.branch
 		if not b then
