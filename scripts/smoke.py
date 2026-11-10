@@ -542,6 +542,26 @@ class Smoke:
         walk(json.loads(self.ctl("a11y")), False)
         return out
 
+    def palette_group(self, heading: str) -> List[str]:
+        """The option rows under the group heading `heading` of Tern's open command palette (a row's name ends with its key hint, if any)."""
+        out: List[str] = []
+        at: List[Optional[str]] = [None]
+
+        def walk(node: object, inside: bool) -> None:
+            if isinstance(node, dict):
+                inside = inside or (node.get("role") == "Dialog" and node.get("name") == "Command palette")
+                if inside and node.get("role") == "Label":
+                    at[0] = str(node.get("value") or node.get("name") or "")
+                elif inside and node.get("role") == "ListBoxOption" and at[0] == heading and isinstance(node.get("name"), str):
+                    out.append(node["name"])
+                walk(node.get("children") or [], inside)
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child, inside)
+
+        walk(json.loads(self.ctl("a11y")), False)
+        return out
+
     def preview_texts(self) -> List[str]:
         """Texts inside the drawn native preview slot (`pk-pv-slot`) that has a positive-size rect; empty when no such slot is drawn."""
         out: List[str] = []
@@ -1601,15 +1621,18 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the palette is closed", lambda: not any(t == "Refresh" for t in s.texts()))
     s.eq("the palette left the selection alone", chosen, s.selection())
     s.eq("and its preview", True, s.previewing())
-    # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only pair this run sets);
+    # Tern's own palette, with this Plotroom block focused, lists only the entry points and cross-pane commands (and the selftest-only trio this run sets),
+    # every one under the Plotroom group heading with no "Plotroom:" prefix, a default key shown beside its row (Go to Plotroom's ⌃⌥⇧Q row is not listed);
     # the `plugins run` calls below (snooze, toggle-snoozed, sort) prove an unlisted command still runs by its action name.
-    s.ctl_ok("palette", "Plotroom:")
-    s.wait_until("Tern's palette lists Plotroom: Open", lambda: "Plotroom: Open" in s.palette_rows())
+    s.ctl_ok("palette")
+    s.wait_until("Tern's palette has the Plotroom group", lambda: "Open" in s.palette_group("Plotroom"))
     time.sleep(0.5)
-    listed = sorted(t for t in s.palette_rows() if t.startswith("Plotroom: "))
     s.shot("tern-palette")
-    s.eq("Tern's palette lists only Open, Open item by URL, Message an agent and, while something needs you, Now",
-         ["Plotroom: Draft review smoke", "Plotroom: Message an agent with the selection…", "Plotroom: Open", "Plotroom: Open item by URL", "Plotroom: Self-test", "Plotroom: Show what needs you (Now)", "Plotroom: Worktree smoke"], listed)
+    group = s.palette_group("Plotroom")
+    s.eq("Tern's palette lists only Open, Open item by URL and Message an agent (and, while something needs you, Now), under the Plotroom group",
+         ["Draft review smoke", "Message an agent with the selection…", "Open", "Open item by URL", "Self-test", "Worktree smoke"],
+         sorted(t for t in group if not t.startswith("Show what needs you")))
+    s.eq("Now's row, when listed, shows its default key", [], [t for t in group if t.startswith("Show what needs you") and t != "Show what needs you (Now) ⌃ ⌥ ⇧ I"])
     s.ctl_ok("key", "Escape")
     s.wait_until("Tern's palette is closed", lambda: not s.palette_rows())
     s.eq("Tern's palette left the selection alone", chosen, s.selection())
@@ -2554,6 +2577,24 @@ def sc_view_board(s: Smoke) -> None:
     s.wait_until("Show as List goes back", lambda: len(s.matches(lane)) == 0 and bool(s.selection()))
 
 
+def sc_keys(s: Smoke) -> None:
+    """Go to Plotroom's default key, ⌃⌥⇧Q (a chord Tern's default keymap leaves free, so Tern keeps the plugin's bind), moves focus from a new
+    tab's shell to an earlier scenario's Plotroom block in another tab, and opens no block beside the shell."""
+    s.ctl_ok("tab", "new")
+    s.ctl_ok("ready")
+    shell_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
+
+    def plotroom_focused() -> bool:
+        return str(s.state()["focused"].get("label") or "").startswith("Plotroom")  # type: ignore[union-attr]
+
+    s.eq("a shell is focused in the new tab", False, plotroom_focused())
+    s.ctl_ok("key", "Control+Alt+Shift+q")
+    s.wait_until("the key focuses a Plotroom block", plotroom_focused)
+    s.ctl_ok("tab", str(shell_tab))
+    s.wait_until("back in the shell's tab", lambda: not plotroom_focused())
+    s.eq("the shell's tab still holds the shell alone: no block was opened", 1, len(s.state()["panes"]))  # type: ignore[arg-type]
+
+
 SCENARIOS = [
     ("create", sc_create),
     ("reuse", sc_reuse),
@@ -2587,6 +2628,7 @@ SCENARIOS = [
     ("Now as a Board", sc_now_board),
     ("arrival ring", sc_arrival),
     ("a view as a Board", sc_view_board),
+    ("Go to Plotroom's key", sc_keys),
 ]
 
 
