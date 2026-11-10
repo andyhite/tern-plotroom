@@ -4724,6 +4724,74 @@ windowCase("window tabs: a worktree's tab is titled after its item, unless the u
 	eq(title({ cwd = "/wt/other" }), nil, "another directory keeps the default")
 end)
 
+-- A worktree's tab for PR 5 at /wt/pr5, titled; returns its pane.
+local function labelledTab(w: World): number
+	local st = flowHost(w)
+	local link = h.prLink("worktree", "o/r", 5)
+	st.link("layer.queue.buttons.worktree", link)
+	w.click(link)
+	w.flush()
+	st.reply("worktree", { path = "/wt/pr5", summary = "ready", created = false, current = true, title = "Fix the thing" })
+	w.flush()
+	for id, p in w.window.panes do
+		if p.cwd == "/wt/pr5" then
+			return id
+		end
+	end
+	error("no tab opened at /wt/pr5")
+end
+
+windowCase("window tabs: a worktree's tab title survives a plugin reload and is dropped once no tab works there", function(w: World)
+	w.load("window")
+	local pane = labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/pr5", label = "#5 Fix the thing", name = "PR #5 · r" } }, "kept in kv")
+	w.reload("window")
+	local title: any = w.window.tabTitle
+	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), "#5 Fix the thing", "the restored tab keeps its title after a reload")
+	w.window.panes[pane] = nil
+	w.window.handlers.pane_closed({ pane = pane }, w.cx)
+	eq(#(w.kv.get("tab-labels") :: any), 0, "its tab closed: the label leaves kv")
+	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), nil, "and the title")
+end)
+
+windowCase("window tabs: kv keeps the newest 50 titles", function(w: World)
+	local rows: { any } = {}
+	for i = 1, 50 do
+		table.insert(rows, { path = "/wt/old" .. i, label = "#" .. i .. " old", name = "PR #" .. i .. " · r" })
+	end
+	w.kv.put("tab-labels", array(rows))
+	w.load("window")
+	labelledTab(w)
+	local stored: any = w.kv.get("tab-labels")
+	eq(#stored, 50, "still 50")
+	eq(stored[1].path, "/wt/old2", "the oldest was dropped")
+	eq(stored[50].path, "/wt/pr5", "the newest is last")
+end)
+
+windowCase("window tabs: a tab-labels store that is not a list is never written over", function(w: World)
+	w.kv.put("tab-labels", "garbage")
+	w.load("window")
+	labelledTab(w)
+	eq(w.kv.get("tab-labels"), "garbage", "the store stays")
+	eq((w.window.tabTitle :: any)({ cwd = "/wt/pr5" }), "#5 Fix the thing", "the tab is still titled for this session")
+end)
+
+windowCase("window tabs: a tab-labels list with a malformed entry is read but never written over", function(w: World)
+	w.kv.put("tab-labels", array({ { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } }))
+	w.load("window")
+	eq((w.window.tabTitle :: any)({ cwd = "/wt/a" }), "#1 a", "the well-formed entries are read")
+	labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" }, { path = 7 } :: any }, "the store stays")
+end)
+
+windowCase("window tabs: an unreadable tab-labels store is never written over", function(w: World)
+	w.kv.put("tab-labels", array({ { path = "/wt/a", label = "#1 a", name = "PR #1 · r" } }))
+	w.kv.failGet["tab-labels"] = "disk offline"
+	w.load("window")
+	labelledTab(w)
+	same(w.kv.get("tab-labels"), { { path = "/wt/a", label = "#1 a", name = "PR #1 · r" } }, "the store stays")
+end)
+
 case("host worktrees board: opening the list again reads git again, and a worktree whose folder is gone is not opened", function(w: World)
 	local s = asks.hx.boardScene(w)
 	local b = openQueue(w)

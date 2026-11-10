@@ -487,10 +487,45 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 end
 
 -- Worktree path -> the title its tab shows (`#123 title`) and the name nameTab gave the tab, so a tab the user renamed
--- keeps theirs. ponytail: in memory, newest TAB_LABELS kept; a plugin reload forgets them and the tab shows its plain name.
+-- keeps theirs. Kept in kv `tab-labels` (oldest first, newest TAB_LABELS), read at load, so restored tabs keep their
+-- titles across a plugin reload; a store that cannot be read, or is not a list of labels, is never written over.
 local TAB_LABELS = 50
-local tabLabels: { [string]: { label: string, name: string } } = {}
+local TAB_LABELS_KEY = "tab-labels"
+type TabLabel = { path: string, label: string, name: string }
+local tabLabels: { [string]: TabLabel } = {}
 local tabLabelOrder: { string } = {}
+local tabLabelsWritable = false
+
+do
+	local ok, v = pcall(tern.kv.get, TAB_LABELS_KEY)
+	tabLabelsWritable = ok and (v == nil or type(v) == "table")
+	if ok and type(v) == "table" then
+		for _, e in v do
+			if type(e) == "table" and type(e.path) == "string" and type(e.label) == "string" and type(e.name) == "string" then
+				if tabLabels[e.path] == nil then
+					table.insert(tabLabelOrder, e.path)
+				end
+				tabLabels[e.path] = { path = e.path, label = e.label, name = e.name }
+			else
+				tabLabelsWritable = false
+			end
+		end
+		while #tabLabelOrder > TAB_LABELS do
+			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
+		end
+	end
+end
+
+local function saveTabLabels()
+	if not tabLabelsWritable then
+		return
+	end
+	local rows: { TabLabel } = {}
+	for _, path in tabLabelOrder do
+		table.insert(rows, tabLabels[path])
+	end
+	pcall(tern.kv.set, TAB_LABELS_KEY, tern.json.array(rows)) -- best effort: a failed write only loses the titles at a reload
+end
 
 local function labelTab(r: Ready, t: Target)
 	if not r.title then
@@ -504,8 +539,25 @@ local function labelTab(r: Ready, t: Target)
 			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
 		end
 	end
-	tabLabels[r.path] = { label = ref .. " " .. title, name = t.tab }
+	tabLabels[r.path] = { path = r.path, label = ref .. " " .. title, name = t.tab }
+	saveTabLabels()
 	tern.chrome.refresh()
+end
+
+-- Drops the labels of worktrees no tab works in any more (a pane or tab closed).
+local function syncTabLabels(cx: WindowCx)
+	local kept: { string } = {}
+	for _, path in tabLabelOrder do
+		if targetPane(cx, path) then
+			table.insert(kept, path)
+		else
+			tabLabels[path] = nil
+		end
+	end
+	if #kept ~= #tabLabelOrder then
+		tabLabelOrder = kept
+		saveTabLabels()
+	end
 end
 
 tern.chrome.tab_title(function(tab: TabInfo): string?
@@ -1741,6 +1793,7 @@ end)
 -- blocks so their "In tab" marks follow (the host renders after any event).
 tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	flows.agentSync(cx)
+	syncTabLabels(cx)
 	for _, p in cx.session:panes() do
 		if isPlotroom(cx, p.pane) then
 			pcall(function()
@@ -1749,6 +1802,10 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 		end
 	end
 	checkProtocol(cx)
+end)
+
+tern.on("tab_closed", function(_ev: any, cx: WindowCx)
+	syncTabLabels(cx)
 end)
 
 -- A Plotroom block beside the focused pane, or in a tab of its own when none is focused; `folder` (the Files pane's
