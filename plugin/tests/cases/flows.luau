@@ -1934,6 +1934,18 @@ case("lens: gh pr checks output with no checks table stays raw", function(w: Wor
 	eq(odd, nil, "a row with a mark gh does not print ends the table before it")
 end)
 
+case("lens: a shell starts with GLAMOUR_STYLE=dark, so gh asks the terminal nothing that aborts its lens; a style already set is kept", function(w: World)
+	w.load("host")
+	local spawn: any = w.window.handlers.spawn
+	local function styleOf(env: { [string]: string }): string?
+		return spawn({ program = "/bin/zsh", args = { "-l" }, cwd = "/work", env = env }).env.GLAMOUR_STYLE
+	end
+	eq(styleOf({ TERN_PANE = "3" }), "dark", "unset: dark")
+	eq(styleOf({ GLAMOUR_STYLE = "light" }), "light", "the pane's own value is kept")
+	w.env.GLAMOUR_STYLE = "notty"
+	eq(styleOf({}), nil, "so is the environment's")
+end)
+
 case("lens: a git push that GitHub answers with its Create a pull request line offers that page and Show in Plotroom; other output stays raw", function(w: World)
 	w.load("host")
 	local def: any = w.lenses["git-push"]
