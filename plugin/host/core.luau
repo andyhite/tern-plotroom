@@ -276,6 +276,7 @@ export type State = {
 	flakyBusy: { [string]: boolean }, -- item keys whose evidence is being read
 	notes: { [string]: Note }, -- worktree cards by item key
 	descOpen: string?, -- key of the item whose description is unfolded; the view mirrors it so Show less can fold it again
+	previewTab: string?, -- the pull request preview's active tab (render.TABS); nil: Overview
 	removing: string?, -- key of the item whose worktree the user is asked to remove (a confirm overlay); nil: none
 	removeFate: string?, -- what removal does to that worktree's branch, as git lists it now; nil while it is read
 	removeRefusal: string?, -- why that removal will be refused (no repository, git no longer lists it, locked/prunable/missing, git failed); nil: none known
@@ -598,7 +599,8 @@ local KINDS: { [string]: Kind } = {
 			{ keys = {}, actions = { "sort" }, text = "Switch this view to its next sort order (saved with the view)" },
 			{ keys = {}, actions = { "more" }, text = "Commands: every action above, your actions or a typed prompt, rerun failed checks, guided draft pull request, export and import, open by URL" },
 			{ keys = {}, actions = { "search" }, text = "Search the loaded pull requests; Esc clears the search, a second Esc closes it" },
-			{ keys = { "Tab" }, text = "Switch between the views and the pull requests" },
+			{ keys = { "Tab" }, text = "Next tab of the preview: Overview, Checks, Threads, Reviewers (Shift+Tab: the previous one); on the views, back to the pull requests" },
+			{ keys = { "←" }, text = "Move to the views (→, Tab, Enter or Esc: back to the pull requests)" },
 			{ keys = {}, actions = { "refresh" }, text = "Refresh now" },
 			{ keys = {}, actions = { "settings" }, text = "Settings" },
 			{ keys = {}, actions = { "help" }, text = "Show or hide this list" },
@@ -656,6 +658,7 @@ local KINDS: { [string]: Kind } = {
 			{ keys = {}, actions = { "more" }, text = "Commands: every action above, your actions or a typed prompt, assign to me, labels, guided draft PR, export and import, open by URL" },
 			{ keys = {}, actions = { "search" }, text = "Search the loaded issues; Esc clears the search, a second Esc closes it" },
 			{ keys = { "Tab" }, text = "Switch between the views and the issues" },
+			{ keys = { "←" }, text = "Move to the views (→, Tab, Enter or Esc: back to the issues)" },
 			{ keys = {}, actions = { "refresh" }, text = "Refresh now" },
 			{ keys = {}, actions = { "settings" }, text = "Settings" },
 			{ keys = {}, actions = { "help" }, text = "Show or hide this list" },

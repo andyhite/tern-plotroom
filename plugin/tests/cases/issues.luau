@@ -170,7 +170,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	w.flush()
 	eq(requestsOf(s.gh, "pr")[1].login, "work", "and its worktree reads the PR as it")
 	-- the keys walk the scopes in the order shown
-	b.press("tab")
+	b.press("left")
 	b.press("up")
 	eq(pickerOf(b).scope, "prs:v1@octocat", "Up moves to the scope above")
 	w.flush()
@@ -681,11 +681,11 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	table.insert(w.panes, { pane = 9, cwd = target .. "/src" })
 	b.render()
 	same(hx.inTab(w, b), { pickerOf(b).items[1].id }, "a tab in the worktree is known to work in the issue: the directory keeps the key's case")
-	local head: any = findKey(pickerNode(b), "head")
-	yes(head ~= nil, "the preview has a head row")
-	eq(findKey(head, "integration").p.text, "Jira", "naming the tracker")
-	eq(findKey(head, "integration").p.tone, "muted", "neutral, as GitHub's")
-	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row no longer carries it")
+	local head: any = findKey(pickerNode(b), "head", "card")
+	yes(head ~= nil, "the preview has a head card")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[2].t }, { "ABC-12 · ABC", " · Jira" }, "naming the key, the project and the tracker")
+	eq(findKey(head, "integration"), nil, "with no badge for it")
 	-- a format saved for the repository applies, with its {project}
 	w.kv.put("branch-formats", { ["o/r"] = "{project}/{key}" })
 	request(b, "j2", freshAsk("ABC", "ABC-13"))
@@ -781,7 +781,8 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 		end
 		return out
 	end
-	same(factKeys(), { "Project", "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
+	same(factKeys(), { "Reporter", "Assignees", "Type", "Priority" }, "only the rows with a value; the details' rows wait for them")
+	eq(h.statOf(b, "Comments"), "—", "a Jira search carries no comment count: the stat waits for the details")
 	eq(factOf(b, "Stage"), "Not started", "the stage leads the status part, above the facts")
 	eq(factOf(b, "Reporter"), "Ann Lee", "the reporter is a name, not a login")
 	eq(factOf(b, "Assignees"), "Bob Ray", "assignees")
@@ -796,9 +797,9 @@ case("host: the Jira preview shows the union rows and Jira's own", function(w: W
 	eq(factOf(b, "Sprint"), "Sprint 2", "the active sprint")
 	eq(table.find(factKeys(), "Components"), nil, "no components row without components")
 	eq(factOf(b, "Fix versions"), "v2", "the fix version")
-	eq(factOf(b, "Comments"), "2", "the comment count")
-	eq(factOf(b, "Opened"), "4h ago", "when it was opened")
-	eq(factOf(b, "Updated"), "30m ago", "and last updated")
+	eq(h.statOf(b, "Comments"), "2", "the comment count, a stat")
+	eq(h.statOf(b, "Age"), "4h", "so is how long ago it was opened")
+	eq(factOf(b, "Updated"), "30m ago", "and last updated is a fact")
 	local preview = pickerNode(b)
 	local head = findKey(preview, "head")
 	eq(findKey(head, "copy", "button").p.href, "https://acme.atlassian.net/browse/ABC-12", "the head's copy button takes the browse link")

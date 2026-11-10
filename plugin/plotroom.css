@@ -33,6 +33,28 @@
 	margin-left: 0;
 }
 
+/* A preview's head card (host/render's itemHead): the title column keeps at least 12em, and the end (state, Next move,
+   Copy link, Open) wraps onto a line of its own under it when both do not fit, instead of squeezing the title to a
+   letter per line. Smoke's "the head card's title is not squeezed" checks the drawn title.
+   ponytail: `.sf-card-head`, `.sf-head` and `.sf-card-end` are Tern's inner card classes ("may change"); a card prop
+   that wraps its end would replace these rules. */
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.head'] > .sf-card-head {
+	flex-wrap: wrap;
+}
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.head'] > .sf-card-head > .sf-head {
+	flex: 1 1 12em;
+	min-width: 12em;
+}
+[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.head'] > .sf-card-head > .sf-card-end {
+	margin-left: auto;
+	max-width: 100%;
+}
+
+/* The preview's tabs wrap onto a second line in a narrow preview rather than clip the last tab (Tern's strip clips). */
+[data-surface='plugin.plotroom.prs'] .sf-tabs[data-role='plotroom.tabs'] {
+	flex-wrap: wrap;
+}
+
 /* The scope rail folds into the scope dropdown (the two rules `.narrow` applies) once the block is 127 terminal columns
    or less. host/render adds `.narrow` to the queue's role from the block's own `cx.cols`: Tern's CSS sees the window's
    width, and container queries are not applied here. */

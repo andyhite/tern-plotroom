@@ -9,17 +9,21 @@ type World = h.World
 local EPOCH, array, asks, case, eq, factOf = h.EPOCH, h.array, h.asks, h.case, h.eq, h.factOf
 local findKey, has, hostScene, issueHost, jiraHost, lacks = h.findKey, h.has, h.hostScene, h.issueHost, h.jiraHost, h.lacks
 local leaveIssueWt, leaveWt, openIssues, openQueue, pickScope, pickerNode = h.leaveIssueWt, h.leaveWt, h.openIssues, h.openQueue, h.pickScope, h.pickerNode
-local same, searchItem, yes = h.same, h.searchItem, h.yes
+local pickerOf, same, searchItem, showTab, statOf, yes = h.pickerOf, h.same, h.searchItem, h.showTab, h.statOf, h.yes
 
--- docs/reference.md › Finer points › Preview: the parts under every preview's head and title, in order.
-local ORDER = { "status", "worktree", "agent", "description", "properties", "linked", "headpr", "reviewers", "checks" }
+-- docs/reference.md › Finer points › Preview: the parts under every preview's head, in order (a pull request's under
+-- its Overview tab).
+local ORDER = { "status", "worktree", "agent", "description", "properties", "linked", "headpr" }
+-- What may sit between the head and the parts: the title row (worktree, agent, Now), the stats and the tabs.
+local TOP = { titlerow = true, stats = true, tabs = true }
 
--- The selected item's preview as its head, its title, then each part (by its rule), in the order shown.
+-- The selected item's preview as its head, its title row, stats and tabs, then each part (by its rule), in the order
+-- shown.
 local function partsOf(b: Block): { string }
 	local out: { string } = {}
 	for _, kid in pickerNode(b).c do
 		local key = kid.p and kid.p.key
-		if key == "head" or key == "titlerow" then
+		if key == "head" or TOP[key] then
 			table.insert(out, key)
 		elseif type(key) == "string" and string.sub(key, 1, 5) == "rule-" then
 			table.insert(out, string.sub(key, 6))
@@ -28,18 +32,20 @@ local function partsOf(b: Block): { string }
 	return out
 end
 
--- Whether `parts` start with the head and title and keep ORDER after them.
+-- Whether `parts` start with the head and keep ORDER after what sits on top.
 local function shared(parts: { string }): boolean
-	if parts[1] ~= "head" or parts[2] ~= "titlerow" then
+	if parts[1] ~= "head" then
 		return false
 	end
 	local at = 0
-	for i = 3, #parts do
-		local slot = table.find(ORDER, parts[i])
-		if not slot or slot <= at then
-			return false
+	for i = 2, #parts do
+		if not TOP[parts[i]] then
+			local slot = table.find(ORDER, parts[i])
+			if not slot or slot <= at then
+				return false
+			end
+			at = slot
 		end
-		at = slot
 	end
 	return true
 end
@@ -64,8 +70,13 @@ case("preview: every variant shows its parts in the one shared order", function(
 	local b = openQueue(w)
 	w.advance(300)
 	local pr = partsOf(b)
-	same(pr, { "head", "titlerow", "status", "worktree", "description", "properties", "linked", "reviewers", "checks" }, "a pull request")
+	same(pr, { "head", "stats", "tabs", "status", "worktree", "description", "properties", "linked" }, "a pull request: its Overview")
 	yes(shared(pr), "in the shared order")
+	for _, tab in { "checks", "threads", "reviewers" } do
+		showTab(b, tab)
+		same(partsOf(b), { "head", "stats", "tabs", tab }, "its " .. tab .. " tab draws only its own part")
+	end
+	showTab(b, "overview")
 	-- the Agents scope
 	asks.hx.agents(b, { ["o/r#1"] = { state = "idle", action = "Implement", branch = "feature", outcome = "pr", verdict = "not", last = "Done" } })
 	pickScope(b, "agents")
@@ -91,7 +102,7 @@ case("preview: a GitHub issue keeps the shared order", function(w: World)
 	local b = openIssues(w)
 	w.advance(300)
 	local issue = partsOf(b)
-	same(issue, { "head", "titlerow", "status", "worktree", "description", "properties", "linked" }, "a GitHub issue")
+	same(issue, { "head", "stats", "status", "worktree", "description", "properties", "linked" }, "a GitHub issue: no tabs")
 	yes(shared(issue), "in the shared order")
 end)
 
@@ -101,9 +112,9 @@ case("preview: a Jira issue keeps the shared order", function(w: World)
 	local b = openIssues(w)
 	w.advance(300)
 	local jira = partsOf(b)
-	same(jira, { "head", "titlerow", "status", "description", "properties", "linked" }, "a Jira issue")
+	same(jira, { "head", "stats", "status", "description", "properties", "linked" }, "a Jira issue")
 	yes(shared(jira), "in the shared order")
-	eq(findKey(findKey(pickerNode(b), "head"), "integration").p.text, "Jira", "its head names its tracker")
+	eq(findKey(findKey(pickerNode(b), "head", "card"), "meta", "text").p.spans[2].t, " · Jira", "its head names its tracker")
 end)
 
 case("preview: a worktree made for a pull request lists it under Linked pull requests, after its facts", function(w: World)
@@ -161,18 +172,24 @@ case("preview: loading sections are Tern skeletons shaped like them, a failed lo
 		return nil
 	end
 	local b = openQueue(w)
+	-- the tab each section is drawn under
+	local tabOf: { [string]: string } = { linked = "overview", description = "overview", reviewers = "reviewers", runs = "checks", threads = "threads" }
+	local function under(key: string): any
+		showTab(b, tabOf[key])
+		return pickerNode(b)
+	end
 	local shapes: { [string]: string } = { linked = "rows", reviewers = "rows", runs = "rows", threads = "rows", description = "text" }
 	for key, shape in shapes do
-		local sk = findKey(pickerNode(b), key, "skeleton")
+		local sk = findKey(under(key), key, "skeleton")
 		yes(sk ~= nil, key .. " loads as a skeleton, keyed like the part it stands for")
 		eq(sk.p.shape, shape, key .. "'s skeleton is shaped like it")
+		lacks(texts(b), "Loading", key .. "'s tab: no Loading… text: the shapes say it")
 	end
-	lacks(texts(b), "Loading", "no Loading… text: the shapes say it")
 	w.advance(300)
-	eq(findKey(pickerNode(b), "runs", "skeleton"), nil, "the skeletons go once the read ends")
-	local whats: { [string]: string } = { linked = "linked issues", reviewers = "reviewers", runs = "checks" }
+	eq(findKey(under("runs"), "runs", "skeleton"), nil, "the skeletons go once the read ends")
+	local whats: { [string]: string } = { linked = "linked issues", reviewers = "reviewers", runs = "checks", threads = "unresolved threads" }
 	for key, what in whats do
-		local e = findKey(pickerNode(b), key .. "-state", "empty")
+		local e = findKey(under(key), key .. "-state", "empty")
 		yes(e ~= nil, key .. ": a failed load is an empty")
 		eq(e.p.tone, "error", key .. ": in the error tone")
 		eq(e.p.variant, "inline", key .. ": one row in the section")
@@ -182,12 +199,12 @@ case("preview: loading sections are Tern skeletons shaped like them, a failed lo
 		eq(findKey(e, key .. "-retry", "button").p.actions.click, "retry-checks", key .. ": its Retry child asks again")
 	end
 	failing = false
-	b.event({ ev = "action", id = "layer.queue.runs-state.runs-retry", act = "retry-checks" })
+	b.event({ ev = "action", id = "layer.queue.threads-state.threads-retry", act = "retry-checks" })
 	w.advance(300)
-	lacks(texts(b), "Could not load", "Retry loaded them")
-	local missing: { [string]: string } = { linked = "No linked issues", reviewers = "No reviewers", runs = "No checks" }
+	local missing: { [string]: string } = { linked = "No linked issues", reviewers = "No reviewers", runs = "No checks", threads = "No unresolved threads" }
 	for key, what in missing do
-		local e = findKey(pickerNode(b), key, "empty")
+		local e = findKey(under(key), key, "empty")
+		lacks(texts(b), "Could not load", key .. ": Retry loaded them")
 		yes(e ~= nil, key .. ": nothing in it is an empty")
 		eq(e.p.title, what, key .. ": saying what is missing")
 		eq(e.p.tone, nil, key .. ": not an error")
@@ -232,7 +249,7 @@ case("preview: a pull request lists the issues it closes and the one noted for i
 	has(texts(b), "Linked issues", "under the Linked issues heading")
 end)
 
-case("preview: your blocked pull request leads with what blocks it; a review asked of you leads with its author and size", function(w: World)
+case("preview: your blocked pull request leads with what blocks it; a review asked of you leads with its author, its size a stat", function(w: World)
 	local s = hostScene(w, 0)
 	s.gh.items.octocat = {
 		searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" }),
@@ -248,19 +265,103 @@ case("preview: your blocked pull request leads with what blocks it; a review ask
 	w.advance(300)
 	local asked: any = findKey(pickerNode(b), "stage", "kv")
 	eq(asked.p.items[2].k, "Author", "a review asked of you puts its author under the stage")
-	yes(findKey(asked, "diff") == nil and findKey(findKey(pickerNode(b), "about"), "diff") == nil, "the size sits in the status part, not the facts")
+	eq(statOf(b, "Changes"), "+10 −5", "its size is the Changes stat")
+	eq(findKey(pickerNode(b), "diff"), nil, "and no diff meter is left")
 	local facts: any = findKey(pickerNode(b), "facts", "kv")
 	for _, f in facts.p.items do
 		yes(f.k ~= "Author", "the author is not repeated among the facts")
 	end
-	local parts = pickerNode(b).c
-	local statusAt, diffAt, propsAt = 0, 0, 0
-	for i, kid in parts do
-		statusAt = if kid.p and kid.p.key == "rule-status" then i else statusAt
-		diffAt = if kid.p and kid.p.key == "diff" then i else diffAt
-		propsAt = if kid.p and kid.p.key == "rule-properties" then i else propsAt
+end)
+
+case("preview: a pull request's head is one card, four stats sit under it, and its tabs draw only the active panel; Tab and Shift+Tab switch them, wrapping, and ← reaches the views", function(w: World)
+	local s = hostScene(w, 0)
+	local done = "2026-01-01T00:00:00Z"
+	local runs = array({
+		h.checkRun("build", "COMPLETED", "FAILURE", done, { id = "A" }),
+		h.checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "B" }),
+		h.checkRun("test", "COMPLETED", "SUCCESS", done, { id = "C" }),
+	})
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 3 * 86400, { title = "Fix the race", author = "octocat", checks = "FAILURE", runs = runs, runTotal = 3, additions = 214, deletions = 37, comments = 14 }),
+		searchItem(2, "o/r", EPOCH - 5 * 86400, { title = "Docs" }),
+	}
+	s.gh.checks["o/r#1"] = runs
+	s.gh.about["o/r#1"] = {
+		reviews = array({ { login = "ann", state = "CHANGES_REQUESTED" } }),
+		requested = array({ "bob" }),
+		threads = array({ { path = "src/a.lua", line = 12, by = "ann", body = "Rename this", url = "https://github.com/o/r/pull/1#discussion_r1" } }),
+	}
+	local b = openQueue(w)
+	w.advance(300)
+	-- the head card: the kind's icon, the title, the ref and where it lives, then at its end the state, the Next move,
+	-- Copy link and Open
+	local head: any = findKey(pickerNode(b), "head", "card")
+	eq(head.p.icon, "merge", "a pull request's icon")
+	eq(head.p.head, "layer.queue.head.top", "the card's head is its own column")
+	eq(findKey(head, "title", "text").p.spans[1].t, "Fix the race", "the title first")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[1].s, meta[2].t }, { "#1 · o/r", "mono", " · GitHub" }, "then the meta line: number and repository in mono, then the integration")
+	eq(head.p["end"], "layer.queue.head.end", "its end is the card's own row")
+	local tail: { string } = {}
+	for _, n in findKey(head, "end", "row").c do
+		table.insert(tail, n.k .. ":" .. n.p.key)
 	end
-	yes(statusAt < diffAt and diffAt < propsAt, "the diff meter sits in the status part, above the facts")
+	same(tail, { "badge:state", "button:next", "button:copy", "icon:open" }, "the state, the Next move, Copy link and Open, in one row")
+	eq(findKey(head, "next", "button").p.size, "sm", "the Next move is a small button")
+	eq(findKey(pickerNode(b), "titlerow"), nil, "no title row of its own")
+	-- the stats: four tiles, the failing checks in red
+	local strip: any = findKey(pickerNode(b), "stats", "stats")
+	eq(#strip.p.items, 4, "four tiles")
+	same({ statOf(b, "Checks") }, { "1 of 3 failing", "error" }, "Checks: how many fail of all, in red")
+	eq(strip.p.items[2].label, "Changes · 3 files", "Changes names how many files")
+	eq(statOf(b, "Changes"), "+214 −37", "and the lines added and removed")
+	eq(statOf(b, "Comments"), "14", "Comments")
+	eq(statOf(b, "Age"), "3d", "Age: since it was opened")
+	local facts: { string } = {}
+	for _, f in findKey(pickerNode(b), "facts", "kv").p.items do
+		table.insert(facts, f.k)
+	end
+	same(facts, { "Merge", "Author", "Updated" }, "no fact repeats a stat or the head: no Repository, Checks, Comments or Opened")
+	-- the tabs: counts once known, only the active panel drawn
+	local function tabs(): any
+		return findKey(pickerNode(b), "tabs", "tabs").p
+	end
+	local labels: { string } = {}
+	for _, t in tabs().items do
+		local text: { string } = {}
+		for _, sp in t.label do
+			table.insert(text, sp.t)
+		end
+		table.insert(labels, t.id .. "=" .. table.concat(text))
+	end
+	same(labels, { "overview=Overview", "checks=Checks 3", "threads=Threads 1", "reviewers=Reviewers 2" }, "Overview, then each tab with its count")
+	eq(tabs().active, "overview", "Overview is shown first")
+	eq(tabs().variant, nil, "the underline strip, Tern's default")
+	yes(findKey(pickerNode(b), "runs") == nil and findKey(pickerNode(b), "threads") == nil and findKey(pickerNode(b), "reviewers") == nil, "Overview draws neither the checks, the threads nor the reviewers")
+	b.press("tab")
+	eq(tabs().active, "checks", "Tab: the next tab")
+	yes(findKey(pickerNode(b), "failing", "table") ~= nil, "the Checks tab draws the checks")
+	eq(findKey(pickerNode(b), "description"), nil, "and nothing of Overview")
+	b.press("tab")
+	eq(findKey(pickerNode(b), "run1", "item").p.label, "Rename this", "the Threads tab draws the unresolved threads")
+	b.press("tab")
+	eq(#findKey(pickerNode(b), "reviewers", "list").c, 2, "the Reviewers tab, each reviewer a row")
+	b.press("tab")
+	eq(tabs().active, "overview", "Tab wraps round to Overview")
+	b.press("tab", "s")
+	eq(tabs().active, "reviewers", "Shift+Tab goes back, wrapping the other way")
+	eq(pickerOf(b).focus, "list", "and the keys stay in the list")
+	b.event({ ev = "select", id = "layer.queue.tabs", item = "threads" })
+	eq(tabs().active, "threads", "a click on a tab shows it")
+	b.event({ ev = "select", id = "layer.queue.tabs", item = "bogus" })
+	eq(tabs().active, "threads", "a tab that does not exist changes nothing")
+	b.press("down")
+	eq(tabs().active, "threads", "the tab stays as the selection moves")
+	b.press("left")
+	eq(pickerOf(b).focus, "scopes", "← moves to the views")
+	b.press("tab")
+	eq(pickerOf(b).focus, "list", "Tab there goes back to the pull requests")
+	eq(tabs().active, "threads", "without switching the tab")
 end)
 
 return {}

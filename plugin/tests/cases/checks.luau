@@ -20,7 +20,7 @@ local newAcli, newGit, nodes, openIssues, openQueue, pickScope = h.newAcli, h.ne
 local pickerNode, pickerOf, porcelain, prLink, prefsOf, pressCard = h.pickerNode, h.pickerOf, h.porcelain, h.prLink, h.prefsOf, h.pressCard
 local promptOf, refreshNow, request, requestsOf, rowIn, same = h.promptOf, h.refreshNow, h.request, h.requestsOf, h.rowIn, h.same
 local saveIssuePrompts, savePrompts, searchItem, sectionIn, sha, show = h.saveIssuePrompts, h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.show
-local showPr, snapshot, windowCase, yes = h.showPr, h.snapshot, h.windowCase, h.yes
+local showPr, showTab, snapshot, windowCase, yes = h.showPr, h.showTab, h.snapshot, h.windowCase, h.yes
 local asks, cardSurface, requestsSent, viewSearchesOf = h.asks, h.cardSurface, h.requestsSent, h.viewSearchesOf
 
 -- The worktree card's buttons as "key:label", in order; none for a failed attempt.
@@ -100,6 +100,7 @@ end
 case("host: the full checks load once the cursor rests, never while it moves or a render repeats it, and a PR with current checks asks for nothing", function(w: World)
 	local s = checksScene(w)
 	local b = openQueue(w)
+	showTab(b, "checks")
 	eq(#requestsOf(s.gh, "checks"), 0, "nothing loads the moment a PR is selected")
 	w.advance(100)
 	b.press("down")
@@ -139,6 +140,7 @@ case("host: checks that finish while the PR's updatedAt does not move replace th
 	local s = hostScene(w, 0)
 	serveChecks(s, "PENDING", { job("build", "queued"), job("test", "queued"), job("lint", "queued") })
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	same(runRows(b), { "build — Queued", "test — Queued", "lint — Queued" }, "the full list loads queued")
 	serveChecks(s, "SUCCESS", { job("build", "passed"), job("test", "passed"), job("lint", "passed") })
@@ -152,11 +154,12 @@ case("host: jobs that move on while the rollup stays pending replace the list th
 	local s = hostScene(w, 0)
 	serveChecks(s, "PENDING", { job("build", "passed"), job("test", "running"), job("lint", "queued") })
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	same(runRows(b), { "test — In progress", "lint — Queued", "build — Passed" }, "the full list loads, pending first")
 	serveChecks(s, "PENDING", { job("build", "passed"), job("test", "passed"), job("lint", "running") })
 	w.advance(62000)
-	has(b.text(), "Pending", "the rollup did not change")
+	same({ h.statOf(b, "Checks") }, { "1 of 3 running", "warning" }, "the Checks stat counts what still runs, in amber")
 	same(runRows(b), { "lint — In progress", "build — Passed", "test — Passed" }, "the third job's progress is only in the full list, and it is shown")
 end)
 
@@ -175,6 +178,7 @@ case("host: the preview groups checks as Failing, Running and Queued with counts
 	local status = { context = "ci/circleci", state = "EXPECTED", targetUrl = "https://circleci.com/gh/o/r/1", id = "ctx" }
 	serveChecks(s, "FAILURE", { build, gate, test, job("lint", "queued"), status, job("docs", "passed"), skipped })
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	-- A row as "check | workflow | took | dot | menu", the check's muted notes after its name.
 	local function rows(grid: any): { string }
@@ -225,6 +229,7 @@ case("host: while a check is unfinished the previewed PR's checks are read every
 	local s = hostScene(w, 0)
 	serveChecks(s, "PENDING", { job("build", "running"), job("lint", "queued") })
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "checks"), 1, "the first read")
 	w.advance(29500)
@@ -281,13 +286,18 @@ case("host: the preview shows skeletons while the detail loads, then the merge s
 		return nil
 	end
 	eq(merge(), nil, "no merge state before the detail loads")
+	eq(findKey(pickerNode(b), "description", "skeleton").p.shape, "text", "lines where the description goes")
+	showTab(b, "reviewers")
 	eq(findKey(pickerNode(b), "reviewers", "list"), nil, "nor reviewers")
 	eq(findKey(pickerNode(b), "reviewers", "skeleton").p.shape, "rows", "but a skeleton of rows under the heading")
+	showTab(b, "checks")
 	eq(findKey(pickerNode(b), "runs", "skeleton").p.shape, "rows", "and under the checks'")
-	eq(findKey(pickerNode(b), "description", "skeleton").p.shape, "text", "and lines where the description goes")
+	showTab(b, "overview")
 	w.advance(300)
 	eq(merge().t, "Conflicts", "a conflicting PR says so")
 	eq(merge().s, "error", "in red")
+	eq(findKey(pickerNode(b), "description", "skeleton"), nil, "the description's skeleton is gone")
+	showTab(b, "reviewers")
 	local rows: { string } = {}
 	for _, item in findKey(pickerNode(b), "reviewers", "list").c do
 		eq(item.p.value, nil, "no status word: the icon is the verdict")
@@ -295,8 +305,9 @@ case("host: the preview shows skeletons while the detail loads, then the merge s
 	end
 	same(rows, { "@ann — Approved check success", "@bob — Requested clock muted" }, "each reviewer with a verdict, then those still asked (no colour: waiting on someone else); the tooltip spells it out")
 	eq(findKey(pickerNode(b), "reviewers", "skeleton"), nil, "the skeleton is gone")
+	showTab(b, "checks")
 	eq(findKey(pickerNode(b), "runs", "skeleton"), nil, "from the checks too")
-	eq(findKey(pickerNode(b), "description", "skeleton"), nil, "and the description")
+	showTab(b, "overview")
 	local function card(): any
 		return findKey(pickerNode(b), "description", "card")
 	end
@@ -317,6 +328,7 @@ case("host: Refresh reloads the checks the preview already showed, without waiti
 	local s = hostScene(w, 0)
 	serveChecks(s, "PENDING", { job("build", "passed"), job("test", "running"), job("lint", "queued") })
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	same(runRows(b), { "test — In progress", "lint — Queued", "build — Passed" }, "the full list loads")
 	serveChecks(s, "PENDING", { job("build", "passed"), job("test", "passed"), job("lint", "running") })
@@ -340,6 +352,7 @@ case("host: a checks load that a refresh outdated never shows its answer, and th
 		return nil
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "checks"), 1, "the slow load is out and answers at 5.3 s")
 	serveChecks(s, "PENDING", { job("build", "passed"), job("test", "passed"), job("lint", "running") })
@@ -366,6 +379,7 @@ case("host: a reload that fails keeps the last list with its error and Retry, an
 		return nil
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	local loaded = { "test — In progress", "lint — Queued", "build — Passed" }
 	same(runRows(b), loaded, "the full list loads")
@@ -395,6 +409,7 @@ case("host: a failed checks load offers Retry, backs off 15 s doubling to 5 minu
 		return nil
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	yes(findKey(pickerNode(b), "runs-retry") ~= nil, "a failed load offers Retry")
 	local gaps = { 15000, 30000, 60000, 120000, 240000, 300000, 300000 }
@@ -425,6 +440,7 @@ case("host: a sign-in failure on the checks waits for Retry, and Retry loads the
 		return nil
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "checks"), 1, "one attempt")
 	w.advance(2 * 60 * 60 * 1000)
@@ -449,6 +465,7 @@ case("host: a rate-limited checks load waits for the limit's end instead of the 
 		return nil
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300 + 90 * 1000)
 	local sent = requestsOf(s.gh, "checks")
 	eq(#sent, 2, "the second attempt came after the limit")
@@ -470,6 +487,7 @@ case("host: checks loading or loaded under one account never show under another"
 		return { stdout = body, delay = if req.login == "work" then 0 else 5000 }
 	end
 	local b = openQueue(w)
+	showTab(b, "checks")
 	w.advance(300)
 	eq(#requestsOf(s.gh, "checks"), 1, "the old account's checks are on their way")
 	-- another block saves the shown view with a login of its own: this one reloads the views
@@ -1808,10 +1826,10 @@ case("host: an issue row names its number, the repository only when the view spa
 	eq(row(1).mark.text, "octo", "the author's mark, the one place the row names them")
 	eq(row(1).facts, nil, "the rows carry no facts column: no comment count, no assignee")
 	eq(pickerOf(b).columns, nil, "and the picker has no columns")
-	local head: any = findKey(pickerNode(b), "head")
-	eq(findKey(head, "integration").p.text, "GitHub", "the head row names GitHub")
-	eq(findKey(head, "integration").p.tone, "muted", "muted for GitHub")
-	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row has no badge")
+	local head: any = findKey(pickerNode(b), "head", "card")
+	local meta = findKey(head, "meta", "text").p.spans
+	same({ meta[1].t, meta[2].t }, { "#12 · o/r", " · GitHub" }, "the head card's meta line names the number, the repository and GitHub")
+	eq(findKey(head, "integration"), nil, "with no integration badge")
 	eq(badges(1), "Not started/muted", "the rows lead with the stage, leave the labels to the preview and wear no integration badge")
 	eq(badges(2), "Closed/muted Completed/success", "a completed issue")
 	eq(badges(3), "Closed/muted Not planned/muted", "one closed as not planned")
@@ -1857,15 +1875,16 @@ case("host: the issue preview shows its body, assignees, milestone, linked pull 
 	w.kv.put("branch-format", "{key}-{slug}")
 	b.render()
 	eq(findKey(findKey(pickerNode(b), "branch"), "v").p.spans[1].t, "12-fix-login", "a format saved in Settings shows through")
-	local head = findKey(preview, "head")
+	local head = findKey(preview, "head", "card")
 	eq(findKey(head, "copy", "button").p.href, "https://github.com/o/r/issues/12", "the head's copy button takes the issue's link")
 	eq(findKey(head, "state", "badge").p.text, "Open", "the state")
-	eq(findKey(preview, "title").p.spans[1].t, "Fix login", "the title")
+	eq(findKey(head, "title", "text").p.spans[1].t, "Fix login", "the title")
 	eq(findKey(preview, "buttons").p.hidden, true, "the buttons' links sit in an unseen node")
 	eq(factOf(b, "Author"), "@octo", "author")
 	eq(factOf(b, "Assignees"), "@ann, @bob", "assignees")
 	eq(factOf(b, "Milestone"), "v2", "milestone, from the details")
-	eq(factOf(b, "Comments"), "3", "comments")
+	eq(h.statOf(b, "Comments"), "3", "comments, a stat")
+	eq(h.statOf(b, "Linked"), "3", "and how many items are linked")
 	local function card(): any
 		return findKey(pickerNode(b), "description", "card")
 	end
@@ -2087,6 +2106,9 @@ case("host stage: a Blocked pull request shows one chip per reason, most severe 
 		"Fix checks · 1/3 failing — build failing",
 		"Resolve conflicts — Conflicts with main",
 	}, "the preview lists every reason: its job, then who or what")
+	eq(findKey(preview, "threads", "list"), nil, "the threads are not drawn under Overview")
+	showTab(b, "threads")
+	preview = pickerNode(b)
 	local list: any = findKey(preview, "threads", "list")
 	yes(list ~= nil, "the unresolved threads are listed")
 	eq(#list.c, 2, "a thread whose link is not on github.com is left out")
@@ -2128,6 +2150,7 @@ case("host stage: a pull request failing only ignored checks of its repository i
 	eq(stage("no_2fr_232"), "Blocked", "another check fails too")
 	eq(stage("no_2fr_233"), "Blocked", "checks the search did not list may fail: the failure still counts")
 	eq(stage("nx_2fy_234"), "Blocked", "the check is ignored only in its own repository")
+	showTab(b, "checks")
 	local run, name = checkRow(b, "run1")
 	eq(name, "approval · Ignored", "the ignored check is still listed, marked Ignored")
 	eq(run.menu, nil, "it has no page, and its menu cannot ignore it again")
@@ -2288,6 +2311,7 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 		local move: any = findKey(preview, "next", "button")
 		return (if move then move.p.text else nil), preview
 	end
+	showTab(b, "checks") -- the Next move is the head card's, whichever tab shows
 	local move = show("no_2fr_231")
 	local build, buildName = checkRow(b, "run1")
 	local _, testName = checkRow(b, "run2")
@@ -3485,11 +3509,21 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	local next: any = findKey(preview, "next", "button")
 	eq(next.p.text, "Re-run failed checks", "a failed run's Next move")
 	eq(next.p.size, "sm", "a small button: it sits in the preview")
+	for _, tab in { "checks", "threads", "reviewers" } do
+		showTab(b, tab)
+		same(hx.miscued(b.view().layer), {}, "the " .. tab .. " tab: every click and link has its look, nothing else does")
+		same(hx.offPalette(b.view().layer), {}, "and nothing in the " .. tab .. " tab is coloured outside the Color Meaning Rule")
+	end
+	showTab(b, "checks")
+	preview = pickerNode(b)
 	same(checkRow(b, "run1").menu, { "open", "ignore-in-this-repo…" }, "a failing check with a page: its row's menu opens it or ignores it")
 	eq(findKey(preview, "open1").p.href, "plotroom://github/check/1/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Factions%2Fruns%2F123%2Fjob%2F9", "through the hidden link the window honours")
 	eq(checkRow(b, "run2").menu, nil, "a passing check without a page offers nothing but Tern's Copy row")
 	eq(findKey(preview, "open2"), nil, "and has no link")
-	eq(findKey(preview, "r1", "item").p.role, nil, "nor is a reviewer's verdict")
+	showTab(b, "reviewers")
+	eq(findKey(pickerNode(b), "r1", "item").p.role, nil, "nor is a reviewer's verdict")
+	showTab(b, "overview")
+	preview = pickerNode(b)
 	local copy: any = findKey(findKey(preview, "head"), "copy", "button")
 	eq(copy.p.text, "", "the head's Copy link is an icon-only button")
 	eq(copy.p.title, "Copy link", "named by its tooltip")
@@ -3564,6 +3598,7 @@ windowCase("window: a check row's click and Open open its page beside the block,
 	})
 	w.advance(300)
 	w.flush()
+	showTab(b, "checks")
 	cardSurface(w, b) -- the layer the window reads, as Tern publishes it
 	b.event({ ev = "select", id = "layer.queue.failing", item = "run1" })
 	w.flush()

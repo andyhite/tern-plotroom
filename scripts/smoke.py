@@ -538,6 +538,21 @@ class Smoke:
         """The text of each visible element matching CSS selector `sel`."""
         return [str(n.get("text") or "") for n in json.loads(self.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict)]
 
+    def head_fits(self, title: str) -> None:
+        """The preview's head card draws `title` on one line: the card's end (state, Next move, Copy link, Open) wraps under it rather than squeezing
+        it to a letter per line (plotroom.css). One line of a title of a dozen or more letters is over 3× as wide as tall; wrapped, it is far less."""
+        sel = "[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.head'] [data-id$='.head.top.title']"
+
+        def drawn() -> List[List[float]]:
+            return [[float(v) for v in n["rect"][:4]] for n in json.loads(self.ctl("tree", sel)).get("nodes") or []
+                    if isinstance(n, dict) and n.get("rect") and str(n.get("text") or "") == title]
+
+        deadline = time.monotonic() + SMOKE_TIMEOUT
+        while not any(r[3] > 0 and r[2] >= 3 * r[3] for r in drawn()):
+            if time.monotonic() > deadline or not self.alive():
+                self.fail("the head card's title is not squeezed: %r" % title, "drawn on one line, over 3× as wide as tall ([x, y, w, h])", drawn())
+            time.sleep(0.2)
+
     def palette_rows(self) -> List[str]:
         """The option rows of Tern's open command palette (it is drawn outside the UI tree; the accessibility tree has it); empty when it is closed."""
         out: List[str] = []
@@ -2381,10 +2396,11 @@ def sc_now_settings(s: Smoke) -> None:
 
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
-    branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as Tern's button kind
-    (.sf-button, small); its checks are rows of Tern's native table (Check, Workflow, Took) and never a button or link. Nothing is clicked: the
-    shot shows them. The failing check's log excerpt is drawn open under its error line, clamped by Tern's code preview with its visible
-    "K more lines" button (a collapsible section would hide both)."""
+    branch's last 20 runs of its workflow) says so on its row and, in the preview's Checks tab, on its check, and its head card's end holds its
+    Next move, Re-run failed checks, as Tern's button kind (.sf-button, small); its checks are rows of Tern's native table (Check, Workflow, Took)
+    and never a button or link; its Threads tab draws the unresolved thread as a link. Tab switches the tabs. Nothing is clicked: the shots show
+    them. The failing check's log excerpt is drawn open under its error line, clamped by Tern's code preview with its visible "K more lines"
+    button (a collapsible section would hide both)."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -2420,33 +2436,45 @@ def sc_controls(s: Smoke) -> None:
     s.wait_until("its native preview is rendered", lambda: len(s.selection()) == 1 and s.previewing())
     s.wait_text("the row's chip says every failing check is Likely flaky", "Re-run · likely flaky")
     s.wait_text("the row's detail says why, in plain text", "build failed 3 of the last 20 runs on main")
-    s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
     s.wait_text("the Next move of a Likely flaky failure", "Re-run failed checks")
     scope = "[data-surface='plugin.plotroom.prs'] "
     button, link = scope + ".sf-button[data-size='sm']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
+    s.wait_until("the head is a card: the title, then the number", lambda: any("Controls PR 7" in t and "#7" in t for t in s.matches(scope + ".sf-card")))
+    s.wait_until("the Checks stat counts the failure", lambda: any("1 of 2 failing" in t for t in s.matches(scope + ".sf-stats")))
+    s.wait_until("the tabs are drawn, Overview first", lambda: any(t.startswith("Overview") for t in s.matches(scope + ".sf-tab.on")))
+    s.head_fits("Controls PR 7")
     s.shot("controls")
+    s.ctl_ok("key", "Tab")
+    s.wait_until("Tab shows the Checks tab", lambda: any(t.startswith("Checks") for t in s.matches(scope + ".sf-tab.on")))
+    s.wait_text("the check says it and why", "Likely flaky · failed 3 of the last 20 runs on main")
     table = scope + ".sf-table"
     s.wait_until("the failed check is a row of a native checks table", lambda: any("build" in t and "Workflow" in t and "Took" in t for t in s.matches(table)))
     s.wait_until("keyed by its row id", lambda: any("build" in t for t in s.matches(table + " [data-key='run1']")))
-    s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
-    s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
-    s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the checks table under the threads
-    time.sleep(0.5)
-    s.shot("controls-loaded")
-    s.ctl_ok("resize", "2200", "1000")
-    time.sleep(0.5)
-    s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
     s.wait_until("the failing check's excerpt is drawn, clamped, with the error line in it",
                  lambda: any("error TS2322" in t for t in s.matches(scope + ".sf-code.clamped")))
     s.wait_until("its K more lines button shows", lambda: any("more line" in t for t in s.matches(scope + ".sf-code-more:not(.sf-hidden)")))
+    s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
+    s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the excerpt under the checks table
+    time.sleep(0.5)
+    s.head_fits("Controls PR 7")
+    s.shot("controls-loaded")
+    s.ctl_ok("resize", "2200", "1000")
+    time.sleep(0.5)
+    s.ctl_ok("key", "Tab")
+    s.wait_until("Tab again shows the Threads tab", lambda: any(t.startswith("Threads") for t in s.matches(scope + ".sf-tab.on")))
+    s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
+    s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
+    for _ in range(2):  # Reviewers, then round to Overview for the scenarios after
+        s.ctl_ok("key", "Tab")
+    s.wait_until("Tab wraps round to Overview", lambda: any(t.startswith("Overview") for t in s.matches(scope + ".sf-tab.on")))
     (s.smoke / "log-failed.txt").unlink()
     s.ctl_ok("key", "Escape")
 def sc_previews(s: Smoke) -> None:
     """Every preview in one order (docs/reference.md › Finer points › Preview): a pull request with failing checks, a GitHub issue and a Jira issue, each
-    pinned by URL, and a worktree made for the pull request, each read back in the order its parts are drawn (head, title, Summary, status, description,
-    facts, linked items, reviewers and checks), with a headless shot of each. acli is a local fake installed here, so the scenarios before run without Jira;
-    the Summary is the fake model's answer to the real `omp -p` call."""
+    pinned by URL, and a worktree made for the pull request, each read back in the order its parts are drawn (the head card, the stats, then Summary,
+    status, description, facts and linked items; a pull request's checks and reviewers under their tabs), with a headless shot of each. acli is a
+    local fake installed here, so the scenarios before run without Jira; the Summary is the fake model's answer to the real `omp -p` call."""
     acli = s.tmp / "bin" / "acli"
     acli.write_text("#!%s\nSMOKE = %r\n" % (sys.executable, str(s.smoke)) + FAKE_ACLI, encoding="utf-8")
     acli.chmod(0o755)
@@ -2505,11 +2533,10 @@ def sc_previews(s: Smoke) -> None:
         s.select_row()
         s.wait_until("its preview, loaded", lambda: s.previewing() and any(loaded in t for t in s.preview_texts()))
 
-    pin("https://github.com/f/low/pull/31", "Preview PR 31", "build")
+    pin("https://github.com/f/low/pull/31", "Preview PR 31", "Moves the login redirect")
     s.wait_until("its Summary, made by the fake small model", lambda: any(t.startswith("Smoke summary") for t in s.preview_texts()))
-    in_order("a pull request with failing checks: summary, status, description, facts, linked issues, reviewers, checks",
-             ["#31", "Preview PR 31", "Summary", SMOKE_SUMMARY, "Stage", "Blocked by", "Moves the login redirect", "Branch", "Linked issues", "Reviewers",
-              "Failing 1", "build"])
+    in_order("a pull request's Overview: head card, stats, summary, status, description, facts, linked issues",
+             ["Preview PR 31", "#31", "1 of 2 failing", "Summary", SMOKE_SUMMARY, "Stage", "Blocked by", "Moves the login redirect", "Branch", "Linked issues"])
     asked = [r for r in map(json.loads, (s.smoke / "llm.jsonl").read_text(encoding="utf-8").splitlines()) if "Title: Preview PR 31" in json.dumps(r)]
     # The local and loopback hosts keep separate Summary caches but share this model log; earlier queues still refresh.
     # Per-host deduplication is covered by the Summary regressions, not a global request count across both hosts.
@@ -2519,14 +2546,30 @@ def sc_previews(s: Smoke) -> None:
     s.contains("the prompt carries the changed files", "src/login.ts", json.dumps(asked[0]["messages"][1:]))
     s.contains("and the newest comment", "Please keep the old redirect", json.dumps(asked[0]["messages"][1:]))
     s.wait_text("the issue it closes", "Preview issue 32")
+    s.head_fits("Preview PR 31")
+    strip = [n["rect"] for n in json.loads(s.ctl("tree", "[data-surface='plugin.plotroom.prs'] .sf-tabs[data-role='plotroom.tabs']")).get("nodes") or [] if n.get("rect")]
+    last = [n["rect"] for n in json.loads(s.ctl("tree", "[data-surface='plugin.plotroom.prs'] .sf-tab[data-tab='reviewers']")).get("nodes") or [] if n.get("rect")]
+    s.eq("the Reviewers tab is drawn inside the strip, not clipped at its right edge", True,
+         bool(strip and last) and float(last[0][0]) + float(last[0][2]) <= float(strip[0][0]) + float(strip[0][2]) + 0.5)
     s.shot("preview-pr")
+    s.ctl_ok("key", "Tab")
+    s.wait_until("Tab shows its checks", lambda: any(t.startswith("Failing 1") for t in s.preview_texts()))
+    in_order("its Checks tab: the head, then the checks alone", ["Preview PR 31", "Failing 1", "build"])
+    s.eq("the Checks tab draws no Overview part", False, any(t.startswith("Moves the login redirect") for t in s.preview_texts()))
+    s.shot("preview-pr-checks")
+    for _ in range(2):
+        s.ctl_ok("key", "Tab")
+    s.wait_until("two more Tabs show its reviewers", lambda: any(t.startswith("@ann") for t in s.preview_texts()))
+    s.ctl_ok("key", "Tab")  # round to Overview
     pin("https://github.com/f/low/issues/32", "Preview issue 32", "Login fails after the redirect.")
-    in_order("a GitHub issue: status, description, facts, linked pull requests",
-             ["#32", "Preview issue 32", "Stage", "Login fails after the redirect.", "Branch", "Linked pull requests", "Preview PR 31"])
+    in_order("a GitHub issue: head card, stats, status, description, facts, linked pull requests",
+             ["Preview issue 32", "#32", "Comments", "Stage", "Login fails after the redirect.", "Branch", "Linked pull requests", "Preview PR 31"])
+    s.head_fits("Preview issue 32")
     s.shot("preview-issue")
     pin("https://acme.atlassian.net/browse/ABC-7", "Preview Jira 7", "Sign-in loops")
-    in_order("a Jira issue: status, description, facts, linked issues",
-             ["ABC-7", "Preview Jira 7", "Stage", "Sign-in loops", "Project", "Linked issues", "Login API"])
+    in_order("a Jira issue: head card, stats, status, description, facts, linked issues",
+             ["Preview Jira 7", "ABC-7", "Comments", "Stage", "Sign-in loops", "Reporter", "Linked issues", "Login API"])
+    s.head_fits("Preview Jira 7")
     s.shot("preview-jira")
     made = s.tmp / "wts" / "flow-preview"
     s.out(root, "worktree", "add", "-q", "-b", "preview-31", str(made))

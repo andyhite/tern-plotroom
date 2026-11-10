@@ -2718,6 +2718,30 @@ local function pickerNode(b: Block): any
 end
 M.pickerNode = pickerNode
 
+-- A click on the pull request preview's tab `tab` (overview, checks, threads, reviewers); it stays as the selection moves.
+function M.showTab(b: Block, tab: string)
+	b.event({ ev = "select", id = "layer.queue.tabs", item = tab })
+end
+
+-- The value of the preview's stat tile `label` (its first word suffices: "Changes" for "Changes · 3 files") as text,
+-- with its tone; nil when there is none.
+function M.statOf(b: Block, label: string): (string?, string?)
+	local strip: any = M.findKey(pickerNode(b), "stats", "stats")
+	for _, t in if strip then strip.p.items else {} do
+		if t.label == label or string.find(t.label, label .. " · ", 1, true) == 1 then
+			if type(t.value) == "string" then
+				return t.value, t.tone
+			end
+			local out: { string } = {}
+			for _, s in t.value do
+				table.insert(out, if type(s) == "table" then s.t else s)
+			end
+			return table.concat(out), t.tone
+		end
+	end
+	return nil
+end
+
 local function pickerOf(b: Block): any
 	return pickerNode(b).p
 end

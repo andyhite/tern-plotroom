@@ -270,6 +270,11 @@ function M.keyList(state: State, queue: { QueueAction }): { KeyEntry }
 		end
 		add(a.key, a.label, "kb:" .. a.id, "queue:" .. a.id, KEY_BAR_FIRST[a.id], false)
 	end
+	-- A pull request's preview tabs: Tab and Shift+Tab, after the Next move.
+	if render.tabsShown(state) then
+		add("Tab", "Next tab", "kb:tab-next", "queue:tab-next", 4, false)
+		add("⇧Tab", "Previous tab", "kb:tab-prev", "queue:tab-prev", 5, false)
+	end
 	table.sort(list, function(x: KeyEntry, y: KeyEntry): boolean
 		if x.first ~= y.first then
 			return x.first < y.first

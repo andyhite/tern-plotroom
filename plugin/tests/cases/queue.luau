@@ -78,9 +78,9 @@ case("host: the queue resolves the repository, searches inside it, lists the PRs
 	eq(pickerOf(b).selected, "no_2fr_231", "the first PR is selected as the list arrives")
 	eq(pickerOf(b).state, "ready", "the list is ready")
 	eq(b.title(), "Plotroom · My PRs · 3 reviews requested", "the title names the filter, not its count (the sidebar has it), then what needs you")
-	local prHead: any = findKey(pickerNode(b), "head")
-	eq(findKey(prHead, "integration").p.text, "GitHub", "the preview's head row carries the integration badge")
-	eq(findKey(findKey(pickerNode(b), "titlerow"), "integration"), nil, "and the title row does not")
+	local prHead: any = findKey(pickerNode(b), "head", "card")
+	eq(findKey(prHead, "meta", "text").p.spans[2].t, " · GitHub", "the preview's head card names the integration in its meta line")
+	eq(prHead.p.icon, "merge", "under a pull request's icon")
 	for _, item in pickerOf(b).items do
 		for _, badge in item.badges or {} do
 			eq(badge.text == "GitHub", false, "a row carries no integration badge")
@@ -161,9 +161,17 @@ case("host: Escape clears the search, then closes it, and is left to the pane wh
 	eq(b.press("escape"), false, "with nothing to cancel Escape is not consumed")
 	eq(pickerOf(b).selected, "no_2fr_232", "and Escape never closes the preview")
 	b.press("tab")
-	eq(pickerOf(b).focus, "scopes", "Tab moves to the filter list")
+	eq(pickerOf(b).focus, "list", "Tab on a pull request stays in the list")
+	eq(findKey(pickerNode(b), "tabs", "tabs").p.active, "checks", "and shows the preview's next tab")
+	b.press("tab", "s")
+	eq(findKey(pickerNode(b), "tabs", "tabs").p.active, "overview", "Shift+Tab the previous one")
+	b.press("left")
+	eq(pickerOf(b).focus, "scopes", "← moves to the filter list")
 	eq(b.press("escape"), true, "Escape leaves the filter list")
 	eq(pickerOf(b).focus, "list", "back to the pull requests")
+	b.press("left")
+	b.press("right")
+	eq(pickerOf(b).focus, "list", "→ goes back too")
 end)
 
 case("host: the first item is selected on arrival; a refresh, a search or a view switch keeps the selection on a listed item, and Escape never closes it", function(w: World)
@@ -268,8 +276,8 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	b.typeText("r")
 	w.flush()
 	eq(#viewSearchesOf(s.gh, "search"), 2, "r refreshes")
-	b.press("tab")
-	eq(pickerOf(b).focus, "scopes", "Tab moves to the filters")
+	b.press("left")
+	eq(pickerOf(b).focus, "scopes", "← moves to the filters")
 	b.press("down")
 	eq(pickerOf(b).scope, "prs:v2", "Down in the filter list switches view")
 	b.typeText("s")
@@ -338,7 +346,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	for _, r in helpRows(b.view().layer) do
 		table.insert(shown, r.keys)
 	end
-	same(shown, { "↑ ↓ j", "Enter", "w", ".", "Tab", "h" }, "the list shows every key there is")
+	same(shown, { "↑ ↓ j", "Enter", "w", ".", "Tab", "←", "h" }, "the list shows every key there is")
 	eq(b.press("h", nil, "h"), true, "its key closes it")
 	eq(findKey(b.view().layer, "help"), nil, "and it is gone")
 	b.event({ ev = "action", id = "layer.queue", act = "settings" })
@@ -453,7 +461,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands
 	for _, r in helpRows(b.view().layer) do
 		table.insert(shown, r.keys)
 	end
-	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "o", "Tab", "r", "s", "?" }, "the list leaves out what has no key")
+	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "o", "Tab", "←", "r", "s", "?" }, "the list leaves out what has no key")
 	b.press("escape")
 	goToSettings(b, "general")
 	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
@@ -1654,7 +1662,7 @@ case("host: view prompts limit the menu", function(w: World)
 	same(first.items, {
 		{ id = "p2", label = "Anywhere", detail = "Look at https://github.com/o/r/pull/1", group = "For My PRs", send = "Look at {url}\nTwice", worktree = true },
 	}, "a view that lists a prompt offers only it, in the group For the view")
-	b.press("tab")
+	b.press("left")
 	b.press("down")
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v2", "the second view is active")
@@ -1734,7 +1742,7 @@ case("host: the queue has no action bar: the PR's Worktree and Go to tab are Com
 	yes(table.find(ids(), "goto") ~= nil, "a tab in the pull request's worktree adds Go to tab")
 	eq(link("goto"), prLink("goto", "o/r", 1), "with its link")
 	table.remove(w.panes)
-	b.press("tab")
+	b.press("left")
 	b.press("down")
 	w.flush()
 	eq(table.find(ids(), "goto"), nil, "under Review requested no tab works in it")
@@ -1841,7 +1849,7 @@ case("host: a prompt's key opens its run link for the selected pull request, but
 	eq(#w.opened, opened, "and opens nothing")
 	b.press("escape")
 	b.press("escape")
-	b.press("tab")
+	b.press("left")
 	b.press("down")
 	w.flush()
 	eq(pickerOf(b).scope, "prs:v2", "under the second view")
@@ -1891,7 +1899,7 @@ case("host keys footer: Commands and Shortcut list first, then every bound key f
 	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { author = "octocat", review = "CHANGES_REQUESTED" })
 	local b = openQueue(w)
 	local first = footerOf(b) or {}
-	same({ table.unpack(first, 1, 5) }, { ". Commands", "? Shortcut list", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the selection's keys in Commands' order after Commands and Shortcut list")
+	same({ table.unpack(first, 1, 7) }, { ". Commands", "? Shortcut list", "Tab Next tab", "⇧Tab Previous tab", "a Agent picker", "w Worktree", "m Mark seen" }, "no use yet: the preview's tab keys, then the selection's keys in Commands' order after Commands and Shortcut list")
 	yes(#first > 5, "not cut at five: Tern's strip drops the lowest priority when narrow (" .. #first .. " keys)")
 	has(pickerOf(b).role, ".keys", "the picker ends above the footer")
 	for _ = 1, 3 do
@@ -1899,7 +1907,7 @@ case("host keys footer: Commands and Shortcut list first, then every bound key f
 		w.flush()
 	end
 	b.typeText("o")
-	same({ table.unpack(footerOf(b) or {}, 1, 5) }, { ". Commands", "? Shortcut list", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
+	same({ table.unpack(footerOf(b) or {}, 1, 7) }, { ". Commands", "? Shortcut list", "Tab Next tab", "⇧Tab Previous tab", "r Refresh", "o Next sort order", "a Agent picker" }, "the most used come next, most used first")
 	local saved: any = w.kv.get("keys")
 	saved.next = "x"
 	w.kv.put("keys", saved)
@@ -1928,21 +1936,26 @@ case("host keys footer: a click on a seg runs what its key runs, and a seg no lo
 	b.event({ ev = "action", id = "dock.keybar." .. refresh.p.key, act = refresh.p.actions.click })
 	usage = w.kv.get("usage")
 	eq(usage.counts["queue:refresh"].n, before + 1, "Refresh ran and counted as its key's use")
+	local nextTab = footerSeg(b, "Tab Next tab")
+	b.event({ ev = "action", id = "dock.keybar." .. nextTab.p.key, act = nextTab.p.actions.click })
+	eq(findKey(pickerNode(b), "tabs", "tabs").p.active, "checks", "the Tab seg shows the preview's next tab, as Tab does")
+	local prevTab = footerSeg(b, "⇧Tab Previous tab")
+	b.event({ ev = "action", id = "dock.keybar." .. prevTab.p.key, act = prevTab.p.actions.click })
+	eq(findKey(pickerNode(b), "tabs", "tabs").p.active, "overview", "and the ⇧Tab seg the previous one")
 	w.kv.put("keys", { more = "." })
 	b.press("down")
 	b.event({ ev = "action", id = "dock.keybar.k9", act = refresh.p.actions.click })
 	eq(w.kv.get("usage").counts["queue:refresh"].n, before + 1, "unbound, Refresh is off the footer and its old seg runs nothing")
 end)
 
-case("host keys footer: with the default keys only Commands shows, an unbound Commands too leaves no footer", function(w: World)
+case("host keys footer: with the default keys only Commands and the preview's tab keys show; an unbound Commands leaves the tab keys", function(w: World)
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
-	same(footerOf(b), { ". Commands" }, "only . is bound by default: Shortcut list and the rest have no key, so are not listed")
+	same(footerOf(b), { ". Commands", "Tab Next tab", "⇧Tab Previous tab" }, "only . is bound by default, and Tab works on a pull request: Shortcut list and the rest have no key, so are not listed")
 	w.kv.put("keys", { more = "" })
 	b.press("down")
-	eq(footerOf(b), nil, "no key bound: no footer")
-	lacks(pickerOf(b).role, ".keys", "and the picker reaches the bottom")
+	same(footerOf(b), { "Tab Next tab", "⇧Tab Previous tab" }, "no key bound: the tab keys alone")
 end)
 
 case("host keys footer: a saved action's key shows the action where it beats the built-in key, and the built-in where that wins", function(w: World)
@@ -1953,7 +1966,7 @@ case("host keys footer: a saved action's key shows the action where it beats the
 	}) })
 	local b = openQueue(w)
 	local bar = footerOf(b) or {}
-	same({ table.unpack(bar, 1, 5) }, { ". Commands", "? Shortcut list", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
+	same({ table.unpack(bar, 1, 7) }, { ". Commands", "? Shortcut list", "Tab Next tab", "⇧Tab Previous tab", "m Mine", "e Extra", "a Agent picker" }, "m runs the saved action, not Mark seen; the action that loses w to Worktree is not shown")
 	lacks(table.concat(bar, "|"), "Hand edited", "anywhere in the footer")
 	local saved: any = w.kv.get("keys")
 	saved.agent = ""
@@ -2458,7 +2471,7 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 		{ keys = "T", text = "Run the action “Anywhere” on the selected pull request" },
 	}, "each prompt offered under My PRs that has a key, in the menu's order; none without a key, with no text or for another view")
 	b.press("escape")
-	b.press("tab")
+	b.press("left")
 	b.press("down")
 	w.flush()
 	b.typeText("?")
