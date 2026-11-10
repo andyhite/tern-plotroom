@@ -1006,12 +1006,17 @@ local function blockDef(): BlockDef<State>
 				return true
 			end
 			if act == "retry-checks" then
+				-- A preview section's Retry; on the Worktrees board it is the board's Refresh (its linked reads).
 				local chosen = selected(state)
 				local key = if chosen then detailKey(state, chosen) else nil
-				if key then
+				if state.boardOn then
+					engine.boardAct(state, "retry")
+				elseif key then
 					state.detailFail[key] = nil
 					cancelDetails(state)
 				end
+			elseif act == "retry-summary" then
+				engine.retrySummary(state)
 			elseif act == "rpc" then
 				rpc(state, ev.value)
 			elseif act == "show-pr" then

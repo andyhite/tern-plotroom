@@ -1717,13 +1717,13 @@ def sc_workflow(s: Smoke) -> None:
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
             s.wait_until("the both-linked preview's fetched titles", lambda: any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts()))
             seen_both = True
-            s.eq("no placeholder is left in the both-linked preview", False, any(t.startswith("Loading") and ("#2" in t or "#9" in t) for t in s.texts()))
+            s.eq("no skeleton is left in the both-linked preview", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-both-preview")
         elif "#1" in pt:
             # the tracker's answer, not the placeholder
             s.wait_until("the linked preview's fetched title", lambda: any("Flow PR 1" in t for t in s.texts()))
             seen_linked = True
-            s.eq("the fetched title replaced Loading #1", False, any(t.startswith("Loading #1") for t in s.texts()))
+            s.eq("the fetched title replaced its skeleton", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-linked-preview")
         # An unlinked worktree's preview is titled by its branch: that text at least twice (the row's title and the preview's title),
         # with its folder path under the row.
@@ -2419,7 +2419,8 @@ def sc_now_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    # a column is its card list, or Tern's empty row when it has no card
+    lane, chosen = scope + ".sf-list[data-role='plotroom.lane'], " + scope + ".sf-picker[data-role*='.board'] .sf-empty", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
     s.ctl_ok("resize", "2200", "1000")
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
@@ -2531,7 +2532,7 @@ def sc_view_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane']", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    lane, chosen = scope + ".sf-list[data-role='plotroom.lane'], " + scope + ".sf-picker[data-role*='.board'] .sf-empty", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
     cards = scope + ".sf-list[data-role='plotroom.lane'] .sf-item"
 
     def command(label: str) -> None:

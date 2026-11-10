@@ -530,6 +530,9 @@ local function detailNode(state: State): Node
 		if card.excerpt then
 			-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
 			table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
+		elseif state.loading then
+			-- the diff is still being read: its shape, where it will go
+			table.insert(kids, ui.node("skeleton", { key = "diff", shape = "block", min = { h = "8lines" } }))
 		end
 		if state.editing then
 			table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
@@ -617,9 +620,7 @@ local function view(state: State): BlockView
 			ui.span(" since this review: Send asks the agent to check the new commits first.", "muted"),
 		} }))
 	end
-	if state.loading then
-		table.insert(main, ui.node("row", { key = "loading", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
-	elseif state.diffProblem then
+	if state.diffProblem then
 		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
 	end
 	-- Regular panes put the navigator beside the detail, compact ones above it.

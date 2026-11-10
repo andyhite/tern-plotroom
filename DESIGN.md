@@ -83,6 +83,10 @@ What a click does shows on the node. A **button** does something: an `item` with
 
 A `card` in the preview while the item has a worktree: neutral badges (Up to date or Not at PR head; Clean, Uncommitted changes or Changes unchecked; N unpushed), the branch and path with copy icons, the update commands folded away when behind, then buttons (Open in new tab or Go to tab, Remove worktree, Open Git view). The card takes the `error` tone only when the worktree could not be made, and then shows why and no buttons. It is a cache of git, never the source.
 
+### Loading, empty and error
+
+Tern's four states, in the place of what they stand for and under its key, so the loaded part replaces them without a jump. **Loading:** a `skeleton` (default `shimmer` variant, no tone) shaped like the part: `rows` for a list (Checks 3, Reviewers, Unresolved threads and linked items 2), `text` lines for the Summary, the description and a worktree's linked items, and a `block` 8 lines tall where the Draft review's diff goes. **Empty:** an `empty` with `variant = "inline"`, no tone, its `title` saying what is missing ("No checks", a Board column's "None"). **Error:** the same inline `empty` with `tone = "error"` (needs fixing), `title` `Could not load <what>`, `text` the tool's message and when it is tried again, and one child: a Retry button (render's `button()`, `icon = "redo"`; its row height is Tern's `sm`). The queue picker's own `state = "loading" | "error"` stays.
+
 ### Commands
 
 `.` opens Tern's picker as an overlay: grouped rows filtered to what applies now, **Next** first, each with its key as keycaps. Every queue action has a Commands row; there is no action bar or strip.
