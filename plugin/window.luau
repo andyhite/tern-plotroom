@@ -832,10 +832,12 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local over, heard, waited = false, false, 0
 	local function finish(c: WindowCx, why: string?, title: string?)
 		over, cx = true, c -- the window context of this call is spent
-		if why then
+		local started = start()
+		-- After start's own toast: Tern shows only the newest toast, and this one says the agent started too.
+		if why and started then
 			cx:toast(if title then "info" else "error", (title or "Setup did not finish for ") .. t.label, why .. " The agent started anyway.")
 		end
-		done(start(), cx)
+		done(started, cx)
 	end
 	local function exited(status: number?): string?
 		return if status and status ~= 0 then "It exited with status " .. status .. "." else nil

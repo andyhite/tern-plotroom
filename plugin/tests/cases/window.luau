@@ -936,14 +936,11 @@ for _, c in {
 			w.advance(1)
 		end
 		eq(#w.window.agents, 1, "the agent starts anyway")
-		local said: any = nil
-		for _, t in w.toasts do
-			if t.text == c.title then
-				said = t
-			end
-		end
-		yes(said ~= nil, "a toast says so")
+		-- Tern shows only the newest toast: the setup toast comes after the agent's own.
+		local said: any = w.toasts[#w.toasts]
+		eq(said.text, c.title, "the newest toast says so")
 		has(said.sub, c.why, "with the reason")
+		has(said.sub, "The agent started anyway.", "and that the agent started")
 	end)
 end
 

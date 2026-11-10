@@ -7,7 +7,8 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
         before it (read from git), then makes its worktree through the real link flow. Last, setup_wait: a second `tern serve` under zsh
-        (shell integration) starts an agent on a new worktree once its setup command finishes.
+        (shell integration) starts an agent on a new worktree once its setup command finishes, and one on another once its setup fails,
+        with the setup toast the one on screen.
 Smoke prerequisites: Tern >= 0.9.13, the minimum supported (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
@@ -2775,7 +2776,8 @@ SCENARIOS = [
 def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
     """Its own `tern serve` under zsh with an empty HOME (Tern's shell integration only; smoke's /bin/sh reports no command): an agent on a new
     worktree whose setup command takes 4 s starts once the setup shell reports it finished, not at cx.session:settle's 2-minute ceiling, and no
-    toast says setup did not finish."""
+    toast says setup did not finish. Then an agent on a second new worktree whose setup command fails starts once it failed, and the toast on
+    screen (Tern shows only the newest) says setup did not finish, with the reason."""
     zsh = shutil.which("zsh")
     if not zsh:
         WARNINGS.append("no zsh: the setup wait under a shell with integration was not run")
@@ -2783,7 +2785,7 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
     tmp.mkdir()
     s = Smoke(tern, git, omp, tmp)
     try:
-        s.repo("a", "gent", "agent", (1,))
+        s.repo("a", "gent", "agent", (1, 2))
         (tmp / "zhome").mkdir()
         s.env.update(SHELL=zsh, HOME=str(tmp / "zhome"))
         s.env.pop("ZDOTDIR", None)
@@ -2794,32 +2796,59 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
         pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
               "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
               "labels": [], "runs": [], "runTotal": 0}
-        (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
+        (s.smoke / "search.json").write_text(json.dumps([pr, dict(pr, number=2, title="Agent PR 2", url="https://github.com/a/gent/pull/2", head="feature-2")]), encoding="utf-8")
         s.ctl_ok("tab", "new")
         s.ctl_ok("ready")
+        queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
         s.cd(s.checkout("agent"))
         s.ctl_ok("plugins", "run", "plugin.plotroom.open")
         s.leave_now()
         s.wait_text("the pull request", "Agent PR 1")
         stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
         s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
+        # The block saves the checkout it opened in; a kv.json read before that and written back would drop it (the agent would ask for one).
+        s.wait_until("the block saved its checkout", lambda: "a/gent" in (json.loads(stores[0].read_text(encoding="utf-8")).get("checkouts") or {}))
         kv = json.loads(stores[0].read_text(encoding="utf-8"))
-        marker = tmp / "setup-done"
-        kv["setup-commands"] = {"a/gent": ["sleep 4 && touch %s" % marker]}
+        marker, failed = tmp / "setup-done", tmp / "setup-failed"
+        # The first worktree's setup passes; the second's (the marker is there by then) fails.
+        kv["setup-commands"] = {"a/gent": ["if [ -e {0} ]; then sleep 2 && touch {1} && false; else sleep 4 && touch {0}; fi".format(marker, failed)]}
         stores[0].write_text(json.dumps(kv), encoding="utf-8")
+
+        def agent(again: str) -> None:
+            """An agent on the selected row with a typed prompt; each field is filled once it shows what was typed, as a user sees it."""
+            s.wait_until("the selected row's preview is rendered" + again, s.previewing)
+            s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+            s.wait_text("the action picker" + again, "Run on ")
+            s.ctl_ok("picker", "enter")  # Type a prompt… is first: only saved actions are ever Recent
+            s.wait_text("the prompt" + again, "Prompt for an agent on")
+            s.ctl_ok("type", json.dumps("smoke prompt"))
+            s.wait_text("the typed prompt" + again, "smoke prompt")
+            s.ctl_ok("key", "Enter")
+
         s.select_row()
-        s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
-        s.wait_text("the action picker", "Run on ")
-        s.ctl_ok("picker", "enter")
-        s.wait_text("the prompt", "Prompt for an agent on")
-        s.ctl_ok("type", json.dumps("smoke prompt"))
-        s.ctl_ok("key", "Enter")
+        first = s.selection()
+        agent("")
         started = s.smoke / "agents.jsonl"
         s.wait_until("the agent starts", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
         late = started.stat().st_mtime - marker.stat().st_mtime if marker.exists() else None
         s.eq("the agent starts after setup finished, within 3 s of it (took %r s)" % late, True, late is not None and 0 <= late < 3)
         s.eq("no toast says setup did not finish", [], [t for t in s.texts() if "Setup did not finish" in t or "Setup may still be running" in t])
-        return "setup wait under zsh (agent %.1f s after setup)" % late
+        s.ctl_ok("tab", str(queue_tab))
+        s.select_row()
+        if s.selection() == first:
+            s.ctl_ok("key", "Down")
+            time.sleep(0.7)
+        if s.selection() == first:  # it was the last row
+            s.ctl_ok("key", "Up")
+        s.wait_until("the other pull request is selected", lambda: len(s.selection()) == 1 and s.selection() != first)
+        other = "a/gent#2" if "Agent PR 2" in str(s.selection()) else "a/gent#1"
+        agent(" again")
+        s.wait_until("the second agent starts", lambda: len(started.read_text(encoding="utf-8").strip().splitlines()) == 2)
+        s.wait_text("the toast on screen says setup did not finish", "Setup did not finish for " + other)
+        s.wait_text("with the reason", "It exited with status 1. The agent started anyway.")
+        lag = started.stat().st_mtime - failed.stat().st_mtime if failed.exists() else None
+        s.eq("the second agent starts after setup failed, within 3 s of it (took %r s)" % lag, True, lag is not None and 0 <= lag < 3)
+        return "setup wait under zsh (agent %.1f s after setup; %.1f s after a failed setup, its toast shown)" % (late, lag)
     except BaseException:
         s.dump()
         raise
