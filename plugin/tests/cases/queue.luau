@@ -275,7 +275,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 			page = p
 		end
 	end
-	same(page, { id = "general", label = "General", group = "General", icon = "gauge" }, "the keys are on the General page")
+	same(page, { id = "general", label = "General", group = "General", icon = "gauge", changed = 1 }, "the keys are on the General page, which counts Summaries off (the harness's) as changed")
 	local ids: { string } = {}
 	for _, r in prefsOf(b).sections[1].rows do
 		table.insert(ids, r.id)
@@ -754,11 +754,90 @@ case("settings: Now's switches saved malformed are shown as the defaults Now run
 	yes(reviewed, "Now runs with every reason on")
 	goToSettings(b, "views")
 	expand(b, "nopen:now")
-	eq(rowIn(b, "now:review").control.value, "on", "shown as the default")
+	eq(rowIn(b, "now:review").control.on, true, "shown as the default")
 	has(rowIn(b, "now:review").disabled, "malformed", "and says why it cannot change")
-	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = "off" })
+	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = false })
 	same(w.kv.get("now"), { off = "review" }, "the saved store is untouched")
 	has(rowIn(b, "now:review").warning, "malformed", "the row says why")
+end)
+
+-- Settings' nav: page id -> its `changed` count.
+local function changedCounts(b: Block): { [string]: number }
+	local out: { [string]: number } = {}
+	for _, p in prefsOf(b).pages do
+		out[p.id] = p.changed
+	end
+	return out
+end
+
+case("settings: an on/off row is a switch: a click sends a boolean, Enter flips it, and a string changes nothing", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	expand(b, "nopen:now")
+	same({ rowIn(b, "now:teams").control.k, rowIn(b, "now:teams").control.on }, { "switch", false } :: { any }, "team review requests: a switch, off by default")
+	eq(rowIn(b, "now:teams").control.options, nil, "with no On/Off segments")
+	b.event({ ev = "change", id = "layer.settings", item = "now:teams", value = "on" })
+	eq(w.kv.get("now"), nil, "the old segment's string saves nothing")
+	b.event({ ev = "select", id = "layer.settings", item = "now:teams" })
+	b.press("enter")
+	eq(w.kv.get("now").teams, true, "Enter on the row flips it on")
+	eq(rowIn(b, "now:teams").control.on, true, "and the switch shows it")
+	b.press("enter")
+	eq(w.kv.get("now").teams, false, "and off again")
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = false })
+	same(w.kv.get("now").off, { "blocked" }, "a click's false switches a reason off")
+	eq(rowIn(b, "now:blocked").control.on, false, "shown off")
+end)
+
+case("settings: each page counts the settings, views, actions and formats on it that differ from the defaults", function(w: World)
+	hostScene(w, 3)
+	local store: any = w.kv.store
+	store["views-prs"], store["views-issues"], store.keys = nil, nil, nil
+	local b = openQueue(w)
+	goToSettings(b, "views")
+	same(changedCounts(b), { views = 0, prompts = 0, repos = 1, general = 1 }, "fresh: the default views and actions count nothing; the checkout saved at launch and Summaries off (the harness's) count one each")
+	-- Views: a Now switch, a view's layout, a deleted default.
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = false })
+	b.event({ ev = "change", id = "layer.settings", item = "now:board", value = "board" })
+	eq(changedCounts(b).views, 1, "a reason switched off counts; a row Now does not have changes nothing")
+	b.event({ ev = "change", id = "layer.settings", item = "vlayout:prs:v1", value = "board" })
+	eq(changedCounts(b).views, 2, "a default view laid out as a Board differs from its default")
+	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = true })
+	eq(changedCounts(b).views, 1, "switched back on, the reason no longer counts")
+	-- Actions: an edited default of each kind; saving the stores keeps every other default (next and checker by name) unchanged.
+	b.event({ ev = "change", id = "layer.settings", item = "peffort:prs:p1", value = "high" })
+	eq(changedCounts(b).prompts, 1, "Review with an effort differs")
+	b.event({ ev = "change", id = "layer.settings", item = "pwhere:issues:p3", value = "worktree" })
+	eq(changedCounts(b).prompts, 2, "Plan run in the worktree differs; Implement and Fix still lead to Watch and are checked by Check")
+	yes(w.kv.get("prompts-issues") ~= nil and w.kv.get("prompts-prs") ~= nil, "both stores were saved")
+	local issues: any = w.kv.get("prompts-issues")
+	local items: { any } = {}
+	for i, p in issues.items do
+		if i ~= 4 then
+			table.insert(items, p)
+		end
+	end
+	issues.items = array(items)
+	w.kv.put("prompts-issues", issues) -- as another machine's edit: shown at the next render
+	goToSettings(b, "prompts")
+	eq(changedCounts(b).prompts, 5, "a deleted default (Check) counts, and Implement and Fix, whose checker it was, now differ too")
+	-- Repositories: a name format and a repository's branch format.
+	w.kv.put("branch-format", "{key}")
+	w.kv.put("branch-formats", { ["o/r"] = "x/{key}" })
+	goToSettings(b, "repos")
+	eq(changedCounts(b).repos, 3, "the checkout, a name format and the repository's branch format")
+	-- General: Summaries switched back on, then a shortcut and an action's key.
+	goToSettings(b, "general")
+	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = true })
+	eq(changedCounts(b).general, 0, "Summaries on is the default")
+	bindKey(b, "worktree", "w")
+	eq(changedCounts(b).general, 1, "a bound shortcut counts")
+	local prs: any = w.kv.get("prompts-prs")
+	prs.items[2].key = "q"
+	w.kv.put("prompts-prs", prs)
+	goToSettings(b, "general")
+	same({ changedCounts(b).general, changedCounts(b).prompts }, { 2, 5 }, "an action's key counts on General, where it is set, and not as a changed action")
 end)
 
 case("host: a view that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)
@@ -1173,8 +1252,8 @@ case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories
 	for _, p in prefsOf(b).pages do
 		byId[p.id] = p
 	end
-	same(byId.repos, { id = "repos", label = "Repositories", group = "Code", icon = "folder" }, "Repositories is a page of the Code group")
-	same(byId.general, { id = "general", label = "General", group = "General", icon = "gauge" }, "and General the General group's")
+	same({ byId.repos.id, byId.repos.label, byId.repos.group, byId.repos.icon }, { "repos", "Repositories", "Code", "folder" }, "Repositories is a page of the Code group")
+	same({ byId.general.id, byId.general.label, byId.general.group, byId.general.icon }, { "general", "General", "General", "gauge" }, "and General the General group's")
 	b.press("escape")
 	pickScope(b, "issues:v1")
 	b.typeText("s")
