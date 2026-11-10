@@ -277,7 +277,7 @@ local function clockRow(state: State, key: string): Node?
 	if fraction then
 		table.insert(kids, ui.node("meter", { key = "bar", value = fraction, tone = "pending" }))
 	end
-	return ui.node("row", { key = "working" }, kids)
+	return ui.node("row", { key = "working", gap = "sm", align = "center" }, kids)
 end
 
 -- A preview's agent part: the Working line while its agent works, then `facts` (the agent's action, ...).
