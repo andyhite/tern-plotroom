@@ -1,10 +1,12 @@
 --!strict
 -- How often each command ran and how each agent run ended, on this machine only: kv `usage` (id -> count and last use,
--- and the day counting began) and kv `runs` (one record per agent run, newest first, at most RUNS_CAP). Ids are
--- "<where>:<what>": "queue:<action id>" (the host's queue actions), "row:<command id>" (Commands rows the window runs),
--- "palette:<command id>" (Tern palette commands) and "action:<name>" (saved actions started). Neither store holds item
--- titles or prompt text, and of an agent's output a run keeps only its end-of-run report (reportOf), cut to the caps
--- below. A store that cannot be read or is malformed is never written over.
+-- and the day counting began), one file per agent run (`<data>/runs/<run>/run.json`, beside a Draft review's
+-- review.json) and kv `runs`, the run log's index: one entry per run, newest first, at most RUNS_CAP, with only the
+-- fields its readers use (INDEXED). Ids are "<where>:<what>": "queue:<action id>" (the host's queue actions),
+-- "row:<command id>" (Commands rows the window runs), "palette:<command id>" (Tern palette commands) and
+-- "action:<name>" (saved actions started). Nothing here holds item titles or prompt text, and of an agent's output a
+-- run keeps only its end-of-run report (reportOf), cut to the caps below. A store that cannot be read or is malformed
+-- is never written over.
 
 local M = {}
 
@@ -15,8 +17,7 @@ local IDS_CAP = 500 -- ids kept; the least recently used goes first
 local ID_CAP = 200
 local TEXT_CAP = 200
 local COMMIT_CAP, PR_CAP, EVIDENCE_N = 64, 500, 20 -- a SHA-256 commit id; a pull request URL; evidence strings kept
--- A run's saved acceptance criteria (tracker.CRITERIA_CHARS characters, up to 4 bytes each). ponytail: kept on every
--- run that has them, so a full log of such runs is ~8 MB; keep them on the newest runs only if kv `runs` gets slow.
+-- A run's saved acceptance criteria (tracker.CRITERIA_CHARS characters, up to 4 bytes each); kept in its file only.
 M.CRITERIA_CAP = 8000
 M.ATTENTION = { ok = true, stuck = true, ["needs-human"] = true }
 M.VERDICTS = { verified = true, ["not"] = true, unchecked = true }
@@ -36,7 +37,8 @@ export type Usage = { since: number, counts: { [string]: Count } }
 -- reason you gave for disagreeing with it ("" for none; nil: no disagreement); `merged`, true once its work merged.
 -- `depth`: its place in a chain (0 or nil: started by hand); `checking`: it is a checker's run; `starts`: how many times
 -- the step after it failed to start. The chain's limits are counted from these (strikes).
-export type Run = { key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean?, depth: number?, checking: boolean?, starts: number? }
+-- `id`: the run's file (`<data>/runs/<id>/run.json`): the agent's run id when it has one; set on index entries only.
+export type Run = { id: string?, key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean?, depth: number?, checking: boolean?, starts: number? }
 -- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome. A checker's
 -- report also has `check` (pass | fail; prompts.checkBlock) and `findings`.
 export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string?, check: string?, findings: { string } }
@@ -192,7 +194,8 @@ local function runOf(r: any): Run?
 	local evidence = if r.evidence ~= nil then strings(r.evidence) else nil
 	local findings = if r.findings ~= nil then strings(r.findings) else nil
 	if
-		not textOk(r.key, ID_CAP)
+		(r.id ~= nil and not M.validId(r.id))
+		or not textOk(r.key, ID_CAP)
 		or not textOk(r.action, TEXT_CAP)
 		or not textOk(r.result, TEXT_CAP)
 		or not whole(r.ended)
@@ -231,10 +234,75 @@ local function runOf(r: any): Run?
 			end
 		end
 	end
-	return { key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean?, depth = r.depth, checking = r.checking, starts = r.starts }
+	return { id = r.id, key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean?, depth = r.depth, checking = r.checking, starts = r.starts }
 end
 
--- The run log, newest first, or nil and why when it cannot be read or is malformed.
+-- A run id as a file name: the agent's run id (window's agentCommand) or one made here.
+function M.validId(id: any): boolean
+	return type(id) == "string" and #id <= 64 and string.match(id, "^[%w_%-]+$") ~= nil
+end
+
+-- The fields of a run its index entry keeps: what the usage report, medians, strikes and the merge sweep read, and
+-- what a change matches a run by. The rest (criteria, report text, where and how it ran) is in its file only.
+local INDEXED = { "key", "action", "started", "ended", "result", "commit", "outcome", "verdict", "check", "findings", "login", "ghRepo", "number", "branch", "checkedAt", "disagree", "merged", "depth", "checking", "starts" }
+local FILE_BYTES = 64 * 1024 -- a run file is under 20 KB at the caps above
+
+function M.runFile(id: string): string
+	return tern.plugin.data .. "/runs/" .. id .. "/run.json"
+end
+
+-- The index entry of `run`, whose file is `id`.
+local function entryOf(run: Run, id: string): Run
+	local e: any = { id = id }
+	for _, f in INDEXED do
+		e[f] = (run :: any)[f]
+	end
+	return e
+end
+
+-- Writes the whole record `run` to the file of run `id`; whether it was written. tern.fs has no rename, so a crash
+-- mid-write can leave a torn file: readFile skips it.
+local function writeFile(id: string, run: Run): boolean
+	local full: any = table.clone(run :: any)
+	full.id = nil
+	local ok, why = pcall(function()
+		tern.fs.mkdir(tern.plugin.data .. "/runs/" .. id)
+		tern.fs.write(M.runFile(id), tern.json.encode(full))
+	end)
+	if not ok then
+		tern.log.warn("plotroom: run file " .. id .. " not written: " .. tostring(why))
+	end
+	return ok
+end
+
+-- The whole record of run `id` from its file, or nil (with a log line) when it is missing, torn or malformed.
+local function readFile(id: string): Run?
+	local ok, raw = pcall(tern.fs.read, M.runFile(id), FILE_BYTES)
+	local decoded, v = false, nil
+	if ok then
+		decoded, v = pcall(tern.json.decode, raw)
+	end
+	local run = if decoded then runOf(v) else nil
+	if not run then
+		tern.log.warn("plotroom: run file " .. id .. " is unreadable or malformed; skipped")
+	end
+	return run
+end
+
+-- Removes the file of run `id`, and its folder once nothing else (a Draft review) is in it.
+local function removeFile(id: string)
+	pcall(function()
+		local dir = tern.plugin.data .. "/runs/" .. id
+		tern.fs.remove(M.runFile(id))
+		if #tern.fs.list(dir) == 0 then
+			tern.fs.remove(dir)
+		end
+	end)
+end
+
+-- The run log's index, newest first, or nil and why when it cannot be read or is malformed. A log from before the
+-- index (kv `runs` holding whole records, none with an id) is split into one file per run and replaced by its index
+-- here, once; while a file cannot be written the old log stays as it was, and reads as "could not be moved to files".
 function M.readRuns(): ({ Run }?, string?)
 	local ok, v = pcall(tern.kv.get, M.RUNS_KEY)
 	if not ok then
@@ -245,17 +313,33 @@ function M.readRuns(): ({ Run }?, string?)
 		return nil, "is malformed"
 	end
 	local out: { Run } = {}
+	local old = false
 	for _, r in v do
 		local run = runOf(r)
 		if not run then
 			return nil, "is malformed"
 		end
+		old = old or run.id == nil
 		table.insert(out, run)
 	end
-	return out, nil
+	if not old then
+		return out, nil
+	end
+	local index: { any } = {}
+	for i, r in out do
+		local id = r.id or string.format("%d-m%d", r.ended, i)
+		if not r.id and not writeFile(id, r) then
+			return nil, "could not be moved to files"
+		end
+		table.insert(index, entryOf(r, id))
+	end
+	pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(index))
+	return index, nil
 end
 
--- Puts `run` first in the log, keeping the newest RUNS_CAP. Nothing is written when the log cannot be read or is malformed.
+-- Puts `run` first in the log (its file, then its index entry), keeping the newest RUNS_CAP; `run.id`: the agent's run
+-- id (nil or invalid: one is made). The files of runs pushed out are removed. Nothing is written when the log cannot be
+-- read or is malformed.
 function M.appendRun(run: Run)
 	local runs = M.readRuns()
 	local clean = runOf({
@@ -289,11 +373,23 @@ function M.appendRun(run: Run)
 	if not runs or not clean then
 		return
 	end
-	local rows: { any } = { clean }
+	local taken: { [string]: boolean } = {}
+	for _, r in runs do
+		taken[r.id :: string] = true
+	end
+	local id = if M.validId(run.id) and not taken[run.id :: string] then run.id :: string else string.format("%d-%06x", clean.ended, math.random(0, 0xFFFFFF))
+	if taken[id] or not writeFile(id, clean) then
+		return
+	end
+	local rows: { any } = { entryOf(clean, id) }
 	for i = 1, math.min(#runs, M.RUNS_CAP - 1) do
 		table.insert(rows, runs[i])
 	end
-	pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(rows))
+	if pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(rows)) then
+		for i = M.RUNS_CAP, #runs do
+			removeFile(runs[i].id :: string)
+		end
+	end
 end
 
 -- `s` cut to at most `cap` bytes at a character boundary, line breaks kept; nil when it is no string or blank.
@@ -308,35 +404,10 @@ function M.text(s: any, cap: number): string?
 	return text
 end
 
--- Records what a checker found (`check`: pass | fail, with `findings`) on the run of item `key` that started at
--- `started` (never a checker's own run), now: it is a checked run from then, and a disagreement with an earlier verdict
--- is dropped (it was about that verdict). Nothing is written when the log cannot be read or is malformed, the run is not
--- in it, or `check` is not one of CHECKS.
-function M.setCheck(key: string, started: number?, check: string, findings: { string })
-	local runs = M.readRuns()
-	if not runs or not M.CHECKS[check] then
-		return
-	end
-	for _, r in runs do
-		if r.key == key and r.started == started and not r.checking then
-			local kept: { string } = {}
-			for _, f in findings do
-				local l = M.line(f, TEXT_CAP)
-				if l and #kept < EVIDENCE_N then
-					table.insert(kept, l)
-				end
-			end
-			r.check, r.findings = check, if #kept > 0 then tern.json.array(kept) :: any else nil
-			r.checkedAt, r.disagree = os.time(), nil
-			pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any))
-			return
-		end
-	end
-end
-
 -- Changes the run of item `key` that started at `started` (the newest such; `built`: the newest that is no checker's)
--- by `edit`, which says whether it changed anything, and saves the log; whether it was saved. Nothing is written when
--- the log cannot be read or is malformed, or the run is not in it.
+-- by `edit`, which says whether it changed anything, and saves its file and the index; whether it was saved. A file
+-- that cannot be read is rebuilt from the index entry (its file-only fields are lost; readFile logs it). Nothing is
+-- written when the log cannot be read or is malformed, or the run is not in it.
 local function patchRun(key: string, started: number?, edit: (Run) -> boolean, built: boolean?): boolean
 	local runs = M.readRuns()
 	if not runs then
@@ -344,10 +415,40 @@ local function patchRun(key: string, started: number?, edit: (Run) -> boolean, b
 	end
 	for _, r in runs do
 		if r.key == key and r.started == started and not (built and r.checking) then
-			return edit(r) and (pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any)))
+			if not edit(r) then
+				return false
+			end
+			local id = r.id :: string
+			local full: any = readFile(id) or table.clone(r :: any)
+			for _, f in INDEXED do
+				full[f] = (r :: any)[f]
+			end
+			return writeFile(id, full) and (pcall(tern.kv.set, M.RUNS_KEY, tern.json.array(runs :: any)))
 		end
 	end
 	return false
+end
+
+-- Records what a checker found (`check`: pass | fail, with `findings`) on the run of item `key` that started at
+-- `started` (never a checker's own run), now: it is a checked run from then, and a disagreement with an earlier verdict
+-- is dropped (it was about that verdict). Nothing is written when the log cannot be read or is malformed, the run is not
+-- in it, or `check` is not one of CHECKS.
+function M.setCheck(key: string, started: number?, check: string, findings: { string })
+	if not M.CHECKS[check] then
+		return
+	end
+	local kept: { string } = {}
+	for _, f in findings do
+		local l = M.line(f, TEXT_CAP)
+		if l and #kept < EVIDENCE_N then
+			table.insert(kept, l)
+		end
+	end
+	patchRun(key, started, function(r: Run): boolean
+		r.check, r.findings = check, if #kept > 0 then tern.json.array(kept) :: any else nil
+		r.checkedAt, r.disagree = os.time(), nil
+		return true
+	end, true)
 end
 
 -- Records that you disagree with the checker's verdict on the checked run of item `key` that started at `started`,
