@@ -58,16 +58,6 @@
 	max-width: none;
 }
 
-/* The Draft review's prose is Tern's sans (DESIGN.md › Typography); the pinned SDK has no BlockDef font. Mono spans keep --mono. */
-[data-surface='plugin.plotroom.review'] {
-	font-family: var(--sans);
-}
-
-[data-surface='plugin.plotroom.review'] .sf-diff,
-[data-surface='plugin.plotroom.review'] .sf-editor {
-	font-family: var(--mono);
-}
-
 /* What a click does shows on the node (host/render's BUTTON and LINK roles): an action is a button, sized to its label
    with a button's ring (items: Plotroom does not use Tern's button kind yet); what opens something is a link, its label underlined
    in a hairline that darkens under the pointer. Links stay neutral: colour is for DESIGN.md's Color Meaning Rule only.

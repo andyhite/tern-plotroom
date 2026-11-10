@@ -266,7 +266,7 @@ local function agentClock(state: State, key: string): { any }?
 		end
 		table.insert(out, " ")
 	end
-	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "num"))
+	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "mono"))
 	return out
 end
 
@@ -1938,7 +1938,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
-	local title: { any } = { ui.span(if view then view.name else "Plotroom", "strong") }
+	local title: { any } = { ui.span(if view then view.name else "Plotroom", "title") }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "muted"))
 	elseif snap and not snap.complete then

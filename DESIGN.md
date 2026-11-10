@@ -10,7 +10,7 @@ Words on screen come from [PRODUCT.md › Glossary](PRODUCT.md#glossary). Behavi
 
 | Meaning | Tone (Tern) | Draws as | Where today |
 | --- | --- | --- | --- |
-| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading |
+| Your turn | `accent` | Tern's accent | **Needs you**, Needs input, Report: needs human, Not verified, Check failed, a stopped chain, **New** and **Changed**, Now's reasons that ask you (Review requested, Mention, Assigned, …), Now's `N need you` heading, a worktree tab's tint while its agent needs input (tab colours are named labels, not tones: `blue`) |
 | Needs fixing | `error` | `--bad` | **Blocked** and its chips (Address changes, Reply, Fix checks, Re-run, Resolve conflicts), Conflicts, Changes requested, Checks failing, a failed check run, Report: stuck, a worktree that could not be made or is missing, a load or read that failed, a security alert |
 | Done | `success` | `--ok` | **Ready to merge**, **Merged**, Approved, Verified, Checked, Passing, Done or Completed issues, a done Get started line |
 | Agent working | `pending` | `--live` | **Agent working**, Working, the filled cells of a working agent's bar |
@@ -38,9 +38,9 @@ All Tern variables; the plugin declares none.
 
 ## Typography
 
-- **Prose:** `var(--sans)`, Tern's default for every kind; no font stack is declared.
-- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, counts): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values.
-- **Weight:** `strong` spans for a heading's view name and a linked item's title; nothing else is bold.
+- **Prose:** Tern's sans face, set by `font = "sans"` on both blocks (Tern's Designing Views › Typography); no font stack is declared and no plugin CSS sets a block's face.
+- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, SHAs, counts, times): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values. A number in a kv value or running text is `mono`, never `num` (it paints the code-number colour).
+- **Weight:** the `title` token for the queue's view name (the page's name), `strong` for a linked item's title; nothing else is bold.
 - Text is never coloured for emphasis; only a meaning colours it.
 
 ## Spacing and radii
