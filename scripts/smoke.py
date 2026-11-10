@@ -2106,7 +2106,7 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     def n(sel: str) -> int:
         return int(json.loads(s.ctl("tree", sel)).get("count") or 0)
 
-    done = scope + " [data-id='main.body.detail.buttons.done']"
+    done = scope + " [data-id='main.body.detail.end.done']"
 
     def has(aria: str) -> int:
         return n(scope + " [aria-label='%s']" % aria)
@@ -2128,7 +2128,20 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     s.wait_text("the first finding selected", "Smoke comment on the diff")
     s.wait_text("the diff around it, from git", "smoke review line 3")
     s.eq("the on-diff comment starts kept", True, kept("c1"))
+    s.eq("the navigator and the finding sit in Tern's split", 1, n(scope + " .sf-split"))
+    s.eq("the finding is a card with Drop at its head's end", 1, n(scope + " .sf-card [data-id='main.body.detail.end.keep']"))
     s.shot("review-finding")
+    # Drag the split's handle 120 px right: the navigator's pane widens, and keeps that width when the block draws again.
+    handle, nav_w = rects(scope + " .sf-split-handle")[0], rects(scope + " .sf-split-pane")[0][2]
+    x, y = str(handle[0] + handle[2] / 2), str(handle[1] + handle[3] / 2)
+    s.ctl_ok("down", x, y)
+    s.ctl_ok("move", str(float(x) + 120), y)
+    s.ctl_ok("up", str(float(x) + 120), y)
+    s.wait_until("the drag widens the navigator", lambda: rects(scope + " .sf-split-pane")[0][2] > nav_w + 60)
+    s.ctl_ok("key", "e")
+    s.ctl_ok("key", "Escape")
+    time.sleep(0.5)
+    s.eq("the dragged width is kept when the block draws again", True, rects(scope + " .sf-split-pane")[0][2] > nav_w + 60)
     s.ctl_ok("key", "e")
     s.wait_until("the comment's editor opens (Done is offered)", lambda: n(done) == 1)
     s.ctl_ok("type", json.dumps(" Smoke comment edit."))
