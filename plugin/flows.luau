@@ -2230,11 +2230,11 @@ export type Command = { id: string, title: string, label: string, group: string?
 local usageReport: (WindowCx, number) -> () -- below: it names the commands of this list
 
 M.COMMANDS = {
-	{ id = "open-url", title = "Plotroom: Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
-	{ id = "get-started", title = "Plotroom: Get started", label = "Get started", group = "Configuration", run = send("get-started", nil) },
+	{ id = "open-url", title = "Open item by URL", label = "Open item by URL…", group = "Views", run = M.openByUrl, anywhere = true },
+	{ id = "get-started", title = "Get started", label = "Get started", group = "Configuration", run = send("get-started", nil) },
 	{
 		id = "agent-message-selection",
-		title = "Plotroom: Message an agent with the selection…",
+		title = "Message an agent with the selection…",
 		label = "Message an agent with the selection…",
 		group = "Actions",
 		run = function(cx: WindowCx, _pane: number)
@@ -2242,10 +2242,10 @@ M.COMMANDS = {
 		end,
 		anywhere = true,
 	},
-	{ id = "mark-read", title = "Plotroom: Mark all of Now's notifications read", label = "Mark all notifications read…", group = "Now", run = markRead },
+	{ id = "mark-read", title = "Mark all of Now's notifications read", label = "Mark all notifications read…", group = "Now", run = markRead },
 	{
 		id = "agent-go",
-		title = "Plotroom: Go to the selected item's agent",
+		title = "Go to the selected item's agent",
 		label = "Go to agent",
 		group = "Actions",
 		keyed = true,
@@ -2253,34 +2253,34 @@ M.COMMANDS = {
 			e().follow(cx, pane, AGENTGO_NODE, "The selected item has no agent")
 		end,
 	},
-	{ id = "assign-me", title = "Plotroom: Assign the selected issue to me", label = "Assign to me", run = assignMe },
-	{ id = "comment", title = "Plotroom: Comment on the selected item", label = "Comment…", run = comment },
-	{ id = "issue-close", title = "Plotroom: Close the selected GitHub issue", label = "Close issue…", run = issueClose },
-	{ id = "issue-reopen", title = "Plotroom: Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
-	{ id = "pr-ready", title = "Plotroom: Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
-	{ id = "pr-draft", title = "Plotroom: Convert the selected PR to a draft", label = "Convert to draft…", run = prDraft },
-	{ id = "pr-merge", title = "Plotroom: Merge the selected PR", label = "Merge…", run = prMerge },
-	{ id = "pr-approve", title = "Plotroom: Approve the selected PR", label = "Approve…", run = prApprove },
-	{ id = "pr-request-changes", title = "Plotroom: Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
-	{ id = "pr-update-branch", title = "Plotroom: Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
-	{ id = "pr-empty-commit", title = "Plotroom: Push an empty commit to the selected PR's branch so its checks run again", label = "Push empty commit…", run = prEmptyCommit },
-	{ id = "rerun-failed", title = "Plotroom: Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
-	{ id = "ignore-check", title = "Plotroom: Ignore a failing check of the selected PR", label = "Ignore this check…", run = ignoreCheck },
-	{ id = "draft-pr", title = "Plotroom: Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
+	{ id = "assign-me", title = "Assign the selected issue to me", label = "Assign to me", run = assignMe },
+	{ id = "comment", title = "Comment on the selected item", label = "Comment…", run = comment },
+	{ id = "issue-close", title = "Close the selected GitHub issue", label = "Close issue…", run = issueClose },
+	{ id = "issue-reopen", title = "Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
+	{ id = "pr-ready", title = "Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
+	{ id = "pr-draft", title = "Convert the selected PR to a draft", label = "Convert to draft…", run = prDraft },
+	{ id = "pr-merge", title = "Merge the selected PR", label = "Merge…", run = prMerge },
+	{ id = "pr-approve", title = "Approve the selected PR", label = "Approve…", run = prApprove },
+	{ id = "pr-request-changes", title = "Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
+	{ id = "pr-update-branch", title = "Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
+	{ id = "pr-empty-commit", title = "Push an empty commit to the selected PR's branch so its checks run again", label = "Push empty commit…", run = prEmptyCommit },
+	{ id = "rerun-failed", title = "Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },
+	{ id = "ignore-check", title = "Ignore a failing check of the selected PR", label = "Ignore this check…", run = ignoreCheck },
+	{ id = "draft-pr", title = "Open a draft PR from the selected item's worktree", label = "Draft PR…", run = draftPr },
 	{
 		id = "usage-report",
-		title = "Plotroom: Copy usage report",
+		title = "Copy usage report",
 		label = "Copy usage report",
 		group = "Configuration",
 		run = function(cx: WindowCx, pane: number)
 			usageReport(cx, pane)
 		end,
 	},
-	{ id = "mark-seen", title = "Plotroom: Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
-	{ id = "snooze", title = "Plotroom: Snooze the selected item until tomorrow", label = "Snooze until tomorrow", group = "Triage", run = send("triage", "snooze"), keyed = true },
-	{ id = "toggle-snoozed", title = "Plotroom: Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
-	{ id = "sort", title = "Plotroom: Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
-	{ id = "worktrees-open", title = "Plotroom: Open Worktrees", label = "Worktrees", group = "Views", run = send("open-worktrees", nil), keyed = true },
+	{ id = "mark-seen", title = "Mark the selected item seen", label = "Mark seen", group = "Triage", run = send("triage", "seen"), keyed = true },
+	{ id = "snooze", title = "Snooze the selected item until tomorrow", label = "Snooze until tomorrow", group = "Triage", run = send("triage", "snooze"), keyed = true },
+	{ id = "toggle-snoozed", title = "Show or hide snoozed items", label = "Show or hide snoozed", group = "Filter & Sort", run = send("triage", "toggle-snoozed"), keyed = true },
+	{ id = "sort", title = "Next sort order", label = "Next sort order", group = "Filter & Sort", run = send("sort", "next"), keyed = true },
+	{ id = "worktrees-open", title = "Open Worktrees", label = "Worktrees", group = "Views", run = send("open-worktrees", nil), keyed = true },
 } :: { Command }
 
 -- ---------------------------------------------------------------- usage report
