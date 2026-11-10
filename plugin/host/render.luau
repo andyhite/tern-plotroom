@@ -1204,7 +1204,7 @@ function M.scopeRows(state: State): ({ any }, string?)
 	table.insert(scopes, {
 		id = "agents",
 		label = "Agents",
-		icon = "bot",
+		icon = "sparkle",
 		count = if not dropdown then #engine.agentRows(state) else nil,
 		group = if grouped then "Agents" else nil,
 	})
@@ -1445,7 +1445,7 @@ local function agentsProps(state: State, props: { [string]: any })
 			table.insert(order, id)
 		end
 	end
-	props.icon, props.title, props.noun = "bot", { ui.span("Agents", "strong") }, "agents"
+	props.icon, props.title, props.noun = "sparkle", { ui.span("Agents", "strong") }, "agents"
 	props.subtitle = { ui.span(#rows .. " agent" .. (if #rows == 1 then "" else "s"), "muted") }
 	props.placeholder = "Agents are not searched"
 	props.state = "ready"
