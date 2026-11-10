@@ -2114,23 +2114,60 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	return ui.node("picker", props, if shown then preview else {})
 end
 
--- Every confirm (DESIGN.md › Confirm overlay): a modal overlay keyed `confirm`, the trash icon, the question as its
--- head, the consequence in one sentence, the facts, and in its foot Cancel first (quiet, Esc) and then the action
--- (`danger`, its key `actKeys`). `o.act` nil: the action is refused (the sentence says why) and only Cancel is offered.
-local function confirmOverlay(o: { head: string, meta: string?, body: string, facts: { { [string]: any } }?, warn: string?, label: string, actKeys: { string }, cancel: string, act: string? }): Node
+-- Every confirm (DESIGN.md › Confirm overlay): a modal overlay keyed `confirm`, its icon (`trash` unless `o.icon`), the
+-- question as its head, the consequence in one sentence, the facts (a kv, or `o.lines` as they will be sent), and in
+-- its foot Cancel first (quiet, Esc) and then the action (`danger` unless `o.calm`, its key `actKeys`). `o.act` nil: the
+-- action is refused (the sentence says why) and only Cancel is offered.
+local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, warn: string?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
+	local icon = o.icon or "trash"
 	local kids: { Node } = { ui.node("text", { key = "body", spans = { ui.span(o.body, "muted") } }) }
 	if o.facts and #o.facts > 0 then
 		table.insert(kids, ui.node("kv", { key = "facts", items = o.facts }))
+	end
+	if o.lines then
+		for i, line in o.lines do
+			table.insert(kids, ui.node("text", { key = "line-" .. i, spans = { ui.span(line) } }))
+		end
 	end
 	if o.warn then
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span(o.warn) } }))
 	end
 	local buttons: { Node } = { button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = o.cancel } }) }
 	if o.act then
-		table.insert(buttons, button(o.label, { key = "act", size = "md", variant = "danger", icon = "trash", keys = o.actKeys, actions = { click = o.act } }))
+		table.insert(buttons, button(o.label, { key = "act", size = "md", variant = if o.calm then nil else "danger", icon = icon, keys = o.actKeys, actions = { click = o.act } }))
 	end
 	table.insert(kids, ui.node("row", { key = "foot", gap = "sm", justify = "end", align = "center" }, buttons))
-	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", icon = "trash", head = o.head, meta = o.meta, foot = "layer.confirm.foot" }, kids)
+	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", icon = icon, head = o.head, meta = o.meta, foot = "layer.confirm.foot" }, kids)
+end
+
+-- A guided mutation's plan (requests.offer), asked in the block: Enter commits it with the plan's own token, Esc drops
+-- it. Not `danger`: it changes GitHub or Jira as shown, and destroys nothing Plotroom holds.
+local function planConfirm(state: State): Node
+	local plan = state.plan
+	return confirmOverlay({
+		head = plan.confirm.head,
+		icon = "merge",
+		body = "Sent once, exactly as shown; a change to the selection or the view first cancels it.",
+		lines = plan.confirm.lines,
+		label = plan.confirm.label,
+		actKeys = { "enter" },
+		calm = true,
+		cancel = "plan-cancel",
+		act = "plan-commit=" .. plan.token,
+	})
+end
+
+-- Stop agent… on an item's live agent (`state.stopping`), asked in the block: Enter stops it, Esc keeps it working.
+local function stopConfirm(key: string): Node
+	return confirmOverlay({
+		head = "Stop the agent for " .. key .. "?",
+		icon = "x",
+		body = "Its turn ends at once; its worktree and changes are kept.",
+		label = "Stop agent",
+		actKeys = { "enter" },
+		cancel = "stop-cancel",
+		act = "stop-agent",
+	})
 end
 
 -- Settings' Delete or Remove row `s.confirm` asks here, in the block: Enter deletes, Esc keeps it.
@@ -2229,7 +2266,7 @@ end
 -- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
 function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
-	local removing = state.removing
+	local removing, stopping = state.removing, state.stopping
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
 		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
@@ -2250,6 +2287,10 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 		}))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
+	elseif state.plan then
+		table.insert(layer, planConfirm(state))
+	elseif stopping then
+		table.insert(layer, stopConfirm(stopping.key))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

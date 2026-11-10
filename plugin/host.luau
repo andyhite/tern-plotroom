@@ -40,6 +40,25 @@ local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg
 -- The preview's checks tables (render's checksNodes), by the last part of their node id.
 local CHECK_TABLES = { failing = true, running = true, queued = true, passed = true, skipped = true }
 
+-- The Confirm overlay of a plan or of Stop agent… (render's planConfirm, stopConfirm), `act` being its button's or
+-- key's: plan-commit commits with `token`, the plan's own (a key takes the shown plan's); stop-agent opens the link
+-- that stops the agent; plan-cancel and stop-cancel drop the question.
+local function confirmAsked(state: State, act: string, token: any?)
+	if act == "plan-commit" then
+		requests.commitPlan(state, if token ~= nil then token elseif state.plan then state.plan.token else nil)
+	elseif act == "plan-cancel" then
+		state.plan = nil
+	elseif act == "stop-agent" then
+		local stopping = state.stopping
+		state.stopping = nil
+		if stopping then
+			state.cx:open(stopping.href)
+		end
+	else
+		state.stopping = nil
+	end
+end
+
 -- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
 local function askRemove(state: State)
 	local chosen = selected(state)
@@ -697,6 +716,15 @@ local function blockDef(): BlockDef<State>
 				end
 				return true
 			end
+			if not s and (state.plan or state.stopping) then
+				-- A plan's or Stop agent's confirm: Enter does it, Esc drops it; it is modal, so no other key reaches the queue.
+				if name == "enter" then
+					confirmAsked(state, if state.plan then "plan-commit" else "stop-agent")
+				elseif name == "escape" then
+					confirmAsked(state, if state.plan then "plan-cancel" else "stop-cancel")
+				end
+				return true
+			end
 			if state.help then
 				if name == "escape" or name == "enter" or (plain and keys.action((keys.load()), k) == "help") then
 					state.help = false
@@ -1116,6 +1144,8 @@ local function blockDef(): BlockDef<State>
 				end
 			elseif act == "cancel-remove" then
 				state.removing = nil
+			elseif act == "plan-commit" or act == "plan-cancel" or act == "stop-agent" or act == "stop-cancel" then
+				confirmAsked(state, act, ev.value)
 			elseif act == "goto" or act == "worktree" or act == "open-git" then
 				-- The worktree card's rows: a click in the preview carries the row's own id.
 				queueAction(state, act)
@@ -1145,9 +1175,14 @@ local function blockDef(): BlockDef<State>
 				end
 				engine.propagate(state)
 			elseif act == "queue" then
-				-- The command palette's pick: only an action it offers now runs.
+				-- The command palette's pick: only an action it offers now runs. Stop agent… asks over the queue, which
+				-- Settings' sheet does not draw: Settings closes first.
 				for _, a in requests.paletteActions(state) do
 					if a.id == ev.value then
+						if a.id == "agentstop" and s then
+							discardEdit(state)
+							state.settings = nil
+						end
 						queueAction(state, a.id)
 					end
 				end

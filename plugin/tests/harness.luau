@@ -3601,7 +3601,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "37" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "48" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
@@ -3829,6 +3829,21 @@ end
 function asks.hx.ask(w: World, b: Block, body: { [string]: any }): any
 	asks.hx.seq += 1
 	return hx.ask(w, b, "h" .. asks.hx.seq, body)
+end
+
+-- Chooses the action of block `b`'s plan Confirm overlay with `token` (as its button does, the plan's own token): what
+-- the block toasted of it once everything has run, as {ok, message, url} or {problem}; {} when it toasted nothing.
+function asks.hx.commit(w: World, b: Block, token: any): any
+	local from = #w.toasts
+	b.event({ ev = "action", act = "plan-commit", value = token })
+	w.flush()
+	local t = if #w.toasts > from then w.toasts[#w.toasts] else nil
+	if not t then
+		return {}
+	elseif t.level == "success" then
+		return { ok = true, message = t.text, url = t.sub }
+	end
+	return { problem = t.sub or t.text }
 end
 
 -- Makes gh answer every command no model reads (issue edit, pr create, run view and rerun) and returns the command

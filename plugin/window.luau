@@ -1657,7 +1657,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local ignoreIndex, ignoreName = string.match(url, "^plotroom://github/ignore/(%d+)/(.+)$")
 	if ignoreIndex and ignoreName then
-		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the palette.
+		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the block.
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then

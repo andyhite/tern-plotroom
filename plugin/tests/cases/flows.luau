@@ -9,13 +9,13 @@ type GhReq = h.GhReq
 type Reply = h.Reply
 type World = h.World
 
-local EPOCH, JIRA_ASSIGNED, acliCount, answerOf, array = h.EPOCH, h.JIRA_ASSIGNED, h.acliCount, h.answerOf, h.array
+local EPOCH, JIRA_ASSIGNED, acliCount, array = h.EPOCH, h.JIRA_ASSIGNED, h.acliCount, h.array
 local asks, buttonLink, case, checkRun, collectTexts, confirmOf = h.asks, h.buttonLink, h.case, h.checkRun, h.collectTexts, h.confirmOf
 local countLog, detailText, eq, expand, findKey, goToSettings = h.countLog, h.detailText, h.eq, h.expand, h.findKey, h.goToSettings
 local has, hostScene, hx, issueHost, issueItem, jiraHost = h.has, h.hostScene, h.hx, h.issueHost, h.issueItem, h.jiraHost
 local jiraItem, jsonDecode, jsonEncode, lacks, listed, manyItems = h.jiraItem, h.jsonDecode, h.jsonEncode, h.lacks, h.listed, h.manyItems
 local openIssues, openQueue, pickScope, pickerNode, pickerOf, prLink = h.openIssues, h.openQueue, h.pickScope, h.pickerNode, h.pickerOf, h.prLink
-local ranSince, refreshNow, request, requestsOf, requestsSent = h.ranSince, h.refreshNow, h.request, h.requestsOf, h.requestsSent
+local ranSince, refreshNow, requestsOf, requestsSent = h.ranSince, h.refreshNow, h.requestsOf, h.requestsSent
 local rowIn, runLink, same, searchItem, sha = h.rowIn, h.runLink, h.same, h.searchItem, h.sha
 local show, windowCase, yes = h.show, h.windowCase, h.yes
 local iso, loggedRuns = h.iso, h.loggedRuns
@@ -1055,7 +1055,7 @@ windowCase("window flows: a Jira issue's agentgo link goes to the agent recorded
 	eq(w.window.focused, 50, "the recorded pane is focused")
 end)
 
-windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop's Cancel stops nothing, and an exited agent, a blank message or a refused one only toasts", function(w: World)
+windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop asks nothing in the palette (the block asked), and an exited agent, a blank message or a refused one only toasts", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	for _, act in { "agentint", "agentstop", "agentmsg" } do
@@ -1067,15 +1067,11 @@ windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's
 	w.click(h.prLink("agentint", "o/r", 5))
 	same(calls, { { op = "interrupt", pane = 51 } }, "Interrupt reaches the recorded pane, not its neighbour")
 	eq(w.window.agentStates[51], "working", "and closes nothing")
-	w.window.choose = "Cancel"
+	local picks = #w.window.picks
 	w.click(h.prLink("agentstop", "o/r", 5))
 	w.flush()
-	eq(#calls, 1, "Stop's Cancel stops nothing")
-	eq(w.window.picks[#w.window.picks].items[1].label, "Cancel", "Cancel is the first row")
-	w.window.choose = "Stop agent"
-	w.click(h.prLink("agentstop", "o/r", 5))
-	w.flush()
-	same(calls[2], { op = "stop", pane = 51 }, "the Stop row stops it")
+	same(calls[2], { op = "stop", pane = 51 }, "Stop's link stops it: the block's Confirm overlay asked before opening it")
+	eq(#w.window.picks, picks, "and no palette confirm is shown")
 	w.window.typed = "  keep going  "
 	w.click(h.prLink("agentmsg", "o/r", 5))
 	w.flush()
@@ -1173,40 +1169,28 @@ windowCase("window flows: a live agent is offered before another is started", fu
 	same(st.ops(), {}, "and the host still asked nothing")
 end)
 
-windowCase("window flows: a plan is confirmed Cancel first, and nothing is committed on Cancel, dismissal or a target row", function(w: World)
+windowCase("window flows: a plan is confirmed in its block, so the window shows no confirm and sends no commit; a refusal or a reply that is no plan is an error toast", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	local function plan(token: string)
-		w.command("assign-me")
-		w.flush()
-		st.reply("act", { token = token, confirm = { head = "Assign o/r#7 to you?", label = "Assign", lines = { "o/r#7", "as octocat" } } })
-	end
-	plan("t1")
-	same(flowRows(w.window.picks[1]), { "Cancel", "Assign", "o/r#7", "as octocat" }, "Cancel, the commit choice, then the target lines")
-	eq(w.window.picks[1].placeholder, "Assign o/r#7 to you?", "the host's head")
-	w.window.choose = nil
-	plan("t2")
-	w.window.choose = "Cancel"
-	plan("t3")
-	w.window.choose = "o/r#7"
-	plan("t4")
-	same(st.ops(), { "act", "act", "act", "act" }, "no commit for a dismissal, Cancel or a target row")
-	w.window.choose = "Assign"
-	plan("t5")
-	local ops = st.ops()
-	eq(ops[#ops], "commit", "the choice commits")
-	local commit = st.reply("commit", { ok = true, message = "Assigned", url = "https://github.com/o/r/issues/7" })
-	eq(commit.token, "t5", "with the token of this very plan")
-	eq(w.toasts[#w.toasts].text, "Assigned", "the result is told")
-	eq(w.toasts[#w.toasts].sub, "https://github.com/o/r/issues/7", "with its link")
+	local picks, said = #w.window.picks, #w.toasts
+	w.command("assign-me")
+	w.flush()
+	st.reply("act", { token = "t1", confirm = { head = "Assign o/r#7 to you?", label = "Assign", lines = { "o/r#7", "as octocat" } } })
+	eq(#w.window.picks, picks, "no palette confirm")
+	same(st.ops(), { "act" }, "and nothing more is asked of the host")
+	eq(#w.toasts, said, "nor toasted")
 	w.command("assign-me")
 	w.flush()
 	st.reply("act", { problem = "Already assigned" })
 	eq(w.toasts[#w.toasts].level, "error", "a refusal is an error")
 	eq(w.toasts[#w.toasts].sub, "Already assigned", "that says why")
+	w.command("assign-me")
+	w.flush()
+	st.reply("act", { ok = true })
+	eq(w.toasts[#w.toasts].text, "Plotroom: nothing to confirm", "a reply with no plan says so")
 end)
 
-windowCase("window flows: the draft PR flow asks info, destination, bases, preview, edits, plan, confirm, then commits", function(w: World)
+windowCase("window flows: the draft PR flow asks info, destination, bases, preview, edits and the plan; the block confirms and commits it", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local reviews = 0
@@ -1241,7 +1225,7 @@ windowCase("window flows: the draft PR flow asks info, destination, bases, previ
 	eq(plan.title, "New title", "the edited title is planned")
 	eq(plan.body, "Body", "the body as the host made it")
 	eq(plan.token, "d1", "under the preview's token")
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Create draft PR", "Repository: o/r", "Push feat to origin" }, "the plan's confirm, Cancel first")
+	eq(w.window.picks[#w.window.picks].placeholder, "Draft PR: New title", "the plan shows no confirm in the palette: the block asks it")
 	local phases: { string } = {}
 	for _, q in requestsSent(w) do
 		if q.op == "draft" then
@@ -1249,11 +1233,7 @@ windowCase("window flows: the draft PR flow asks info, destination, bases, previ
 		end
 	end
 	same(phases, { "info", "bases", "preview", "plan" }, "phases in order")
-	local ops = st.ops()
-	eq(ops[#ops], "commit", "then the commit")
-	local commit = st.reply("commit", { ok = true, message = "Draft PR created", url = "https://github.com/o/r/pull/9" })
-	eq(commit.token, "p1", "with the plan's token")
-	eq(w.toasts[#w.toasts].sub, "https://github.com/o/r/pull/9", "the toast links the PR")
+	same(st.ops(), { "draft", "draft", "draft", "draft" }, "and the window commits nothing")
 end)
 
 windowCase("window flows: several draft destinations are all offered, the chosen one gets the bases, and cancelling sends nothing more", function(w: World)
@@ -1541,41 +1521,27 @@ windowCase("window flows: the Next row leads Commands, and plotroom://next runs 
 	eq(w.toasts[#w.toasts].text, "Plotroom: that move is no longer offered here", "and says so")
 end)
 
-windowCase("window flows: comment, close, reopen, ready for review and convert to draft ask the host to plan and only a confirmed plan is committed, Cancel first", function(w: World)
+windowCase("window flows: comment, close, reopen, ready for review and convert to draft ask the host to plan, and the window commits none of them (the block confirms)", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
+	local picks = #w.window.picks
 	local function plan(command: string, head: string, label: string): any
 		w.command(command)
 		w.flush()
 		return st.reply("act", { token = "t-" .. command, confirm = { head = head, label = label, lines = { "o/r#7: Fix login", "Account: @octocat" } } })
 	end
-	local asked = plan("issue-close", "Close o/r#7?", "Close issue")
-	eq(asked.name, "issue-close", "Close issue asks for the issue-close plan")
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Close issue", "o/r#7: Fix login", "Account: @octocat" }, "Cancel first, then the choice, then the plan's lines")
-	eq(w.window.picks[#w.window.picks].placeholder, "Close o/r#7?", "under the host's question")
-	same(st.ops(), { "act" }, "nothing is committed before it is confirmed")
-	w.window.choose = "Cancel"
-	asked = plan("issue-reopen", "Reopen o/r#7?", "Reopen issue")
-	eq(asked.name, "issue-reopen", "Reopen issue asks for issue-reopen")
-	asked = plan("pr-ready", "Mark o/r#7 ready for review?", "Ready for review")
-	eq(asked.name, "pr-ready", "Ready for review asks for pr-ready")
-	asked = plan("pr-draft", "Convert o/r#7 to a draft?", "Convert to draft")
-	eq(asked.name, "pr-draft", "Convert to draft asks for pr-draft")
-	same(st.ops(), { "act", "act", "act", "act" }, "Cancel committed none of the four")
-	w.window.choose = "Close issue"
-	plan("issue-close", "Close o/r#7?", "Close issue")
-	local ops = st.ops()
-	eq(ops[#ops], "commit", "the confirming row commits")
-	eq(st.reply("commit", { ok = true, message = "Closed o/r#7" }).token, "t-issue-close", "with the token of that very plan")
-	eq(w.toasts[#w.toasts].text, "Closed o/r#7", "and the result is told")
+	eq(plan("issue-close", "Close o/r#7?", "Close issue").name, "issue-close", "Close issue asks for the issue-close plan")
+	eq(plan("issue-reopen", "Reopen o/r#7?", "Reopen issue").name, "issue-reopen", "Reopen issue asks for issue-reopen")
+	eq(plan("pr-ready", "Mark o/r#7 ready for review?", "Ready for review").name, "pr-ready", "Ready for review asks for pr-ready")
+	eq(plan("pr-draft", "Convert o/r#7 to a draft?", "Convert to draft").name, "pr-draft", "Convert to draft asks for pr-draft")
+	eq(#w.window.picks, picks, "no plan is confirmed in the palette")
 	w.window.typed = "  Thanks, merging\nsoon  "
-	w.window.choose = "Add comment"
 	w.command("comment")
 	w.flush()
 	local commentAsk = st.reply("act", { token = "t-comment", confirm = { head = "Comment on o/r#7?", label = "Add comment", lines = { "o/r#7: Fix login", "Comment (20 characters): Thanks, merging ⏎ soon" } } })
 	eq(commentAsk.name, "comment", "Comment asks for a comment plan")
 	eq(commentAsk.text, "Thanks, merging\nsoon", "with the typed text, trimmed")
-	eq(st.reply("commit", { ok = true, message = "Commented on o/r#7" }).token, "t-comment", "and commits only once confirmed")
+	same(st.ops(), { "act", "act", "act", "act", "act" }, "the window commits none")
 	w.window.typed = "   "
 	local before = #requestsSent(w)
 	w.command("comment")
@@ -1584,31 +1550,21 @@ windowCase("window flows: comment, close, reopen, ready for review and convert t
 	w.window.typed = nil
 end)
 
-windowCase("window flows: Mark read… asks the host to plan Now's threads and commits only a confirmed plan, Cancel first, with the account in the confirm", function(w: World)
+windowCase("window flows: Mark read… asks the host to plan Now's threads, and the window commits nothing (the block confirms)", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	local function plan(): any
-		w.command("mark-read")
-		w.flush()
-		return st.reply("act", { token = "t-read", confirm = { head = "Mark 3 notifications read?", label = "Mark 3 read", lines = { "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" } } })
-	end
-	w.window.choose = "Cancel"
-	eq(plan().name, "mark-read", "asks for the mark-read plan")
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Mark 3 read", "Account: @octocat", "Mark 3 notifications read (GitHub keeps them in the inbox; none is marked done)", "o/r: 3" }, "Cancel first, then the choice, then the account and what happens")
-	same(st.ops(), { "act" }, "Cancel commits nothing")
-	w.window.choose = "Mark 3 read"
-	plan()
-	local ops = st.ops()
-	eq(ops[#ops], "commit", "the confirming row commits")
-	eq(st.reply("commit", { ok = true, message = "Marked 3 notifications read as @octocat" }).token, "t-read", "with the token of that very plan")
-	eq(w.toasts[#w.toasts].text, "Marked 3 notifications read as @octocat", "the result is told")
+	w.command("mark-read")
+	w.flush()
+	local asked = st.reply("act", { token = "t-read", confirm = { head = "Mark 3 notifications read?", label = "Mark 3 read", lines = { "Account: @octocat", "o/r: 3" } } })
+	eq(asked.name, "mark-read", "asks for the mark-read plan")
+	same(st.ops(), { "act" }, "and nothing more")
 	w.command("mark-read")
 	w.flush()
 	st.reply("act", { problem = "Now lists no notifications to mark read." })
 	eq(w.toasts[#w.toasts].text, "Not marked read", "a refusal is titled for the command")
 end)
 
-windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch and Push empty commit plan; every plan is Cancel first and nothing commits unconfirmed", function(w: World)
+windowCase("window flows: Merge picks one of the host's methods (or auto-merge), Approve's comment is optional, Request changes needs one, Update branch and Push empty commit plan; the window commits none of them", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local function lastAsk(): any
@@ -1621,22 +1577,18 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	st.reply("act", { methods = { { id = "squash", label = "Squash and merge" }, { id = "rebase", label = "Rebase and merge" } }, auto = true })
 	same(flowRows(w.window.picks[#w.window.picks]), { "Squash and merge", "Rebase and merge", "Auto-merge when checks pass", "Auto-merge when checks pass" }, "the allowed methods, then auto-merge for each while checks are pending")
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().method) .. ":" .. tostring(lastAsk().auto), "pr-merge:rebase:false", "the picked method is planned, not auto")
-	w.window.choose = "Cancel"
 	st.reply("act", { token = "t-merge", confirm = { head = "Merge o/r#7?", label = "Merge", lines = lines } })
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Merge", "o/r#7: Fix login", "Account: @octocat" }, "Cancel first, then the choice, then the plan's lines")
 	w.window.choose = "Auto-merge when checks pass"
 	w.command("pr-merge")
 	w.flush()
 	st.reply("act", { methods = { { id = "squash", label = "Squash and merge" } }, auto = true })
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().method) .. ":" .. tostring(lastAsk().auto), "pr-merge:squash:true", "auto-merge plans its method with auto")
-	w.window.choose = "Cancel"
 	st.reply("act", { problem = "stop" })
 	w.window.typed = "  Ship it  "
 	w.command("pr-approve")
 	w.flush()
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-approve:Ship it", "Approve sends the trimmed comment")
 	st.reply("act", { token = "t-approve", confirm = { head = "Approve o/r#7?", label = "Approve", lines = lines } })
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Approve", "o/r#7: Fix login", "Account: @octocat" }, "Approve is Cancel first")
 	w.window.typed = "   "
 	w.command("pr-approve")
 	w.flush()
@@ -1651,21 +1603,21 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	w.flush()
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-request-changes:Please add tests", "Request changes sends its comment")
 	st.reply("act", { token = "t-changes", confirm = { head = "Request changes on o/r#7?", label = "Request changes", lines = lines } })
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Request changes", "o/r#7: Fix login", "Account: @octocat" }, "Request changes is Cancel first")
 	w.window.typed = nil
 	w.command("pr-update-branch")
 	w.flush()
 	eq(lastAsk().name, "pr-update-branch", "Update branch asks for its plan")
 	st.reply("act", { token = "t-update", confirm = { head = "Update the branch of o/r#7?", label = "Update branch", lines = lines } })
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Update branch", "o/r#7: Fix login", "Account: @octocat" }, "Update branch is Cancel first")
 	w.window.typed = nil
 	w.command("pr-empty-commit")
 	w.flush()
 	eq(lastAsk().name, "pr-empty-commit", "Push empty commit asks for its plan")
 	st.reply("act", { token = "t-empty", confirm = { head = "Push an empty commit to o/r#7?", label = "Push empty commit", lines = lines } })
-	same(flowRows(w.window.picks[#w.window.picks]), { "Cancel", "Push empty commit", "o/r#7: Fix login", "Account: @octocat" }, "Push empty commit is Cancel first")
+	for _, p in w.window.picks do
+		yes(p.items[1].label ~= "Cancel", "no palette pick is a plan's confirm: " .. tostring(p.placeholder))
+	end
 	for _, op in st.ops() do
-		yes(op ~= "commit", "Cancel committed nothing")
+		yes(op ~= "commit", "the window commits nothing")
 	end
 end)
 
@@ -2273,7 +2225,7 @@ case("host mutations: assign-me offers a plan naming the issue and the account t
 	has(p.confirm.lines[2], "octocat", "the second is the account")
 	eq(p.confirm.lines[3], "Current assignees: ann, bob", "the third what it has now")
 	eq(#seen, 0, "a plan sends nothing")
-	local done = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local done = asks.hx.commit(w, b, p.token)
 	eq(done.ok, true, "the commit answers ok")
 	eq(done.message, "Assigned o/r#12 to you", "and what it did")
 	same(seen, { "gh issue edit 12 --repo github.com/o/r --add-assignee=@me" }, "one gh call: assign me, nothing else")
@@ -2284,7 +2236,7 @@ case("host mutations: assign-me offers a plan naming the issue and the account t
 	eq(pr.problem, "Plotroom does not know that command.", "an unknown command is refused")
 end)
 
-case("host mutations: a commit with no token, a made-up or replaced token, after the selection, the view or five minutes changed, or twice sends nothing", function(w: World)
+case("host mutations: a commit with a made-up or replaced token, after the selection, the view or five minutes changed, or twice sends nothing", function(w: World)
 	local s = issueHost(w)
 	local seen = asks.hx.writes(s.gh)
 	local b = openIssues(w)
@@ -2292,20 +2244,20 @@ case("host mutations: a commit with no token, a made-up or replaced token, after
 		return asks.hx.ask(w, b, { op = "act", name = "assign-me" })
 	end
 	local function commit(token: any): any
-		return asks.hx.ask(w, b, { op = "commit", token = token })
+		return asks.hx.commit(w, b, token)
 	end
-	request(b, "n1", { op = "commit" })
-	w.flush()
-	eq(answerOf(b, "n1"), nil, "a commit with no token is not answered")
 	has(commit("p1_1_123456").problem, "no longer valid", "a made-up token")
 	local first = plan()
 	local second = plan()
 	has(commit(first.token).problem, "no longer valid", "the token of a replaced plan")
 	has(commit(second.token).problem, "no longer valid", "a refused commit drops the pending plan as well")
+	local rows = pickerOf(b).items
 	local moved = plan()
 	b.typeText("j")
+	eq(pickerOf(b).selected, rows[1].id, "the confirm is modal: j does not move the selection under it")
+	b.event({ ev = "select", id = "layer.queue", item = rows[2].id })
 	has(commit(moved.token).problem, "selection or the view changed", "after the selection moved")
-	b.typeText("k")
+	b.event({ ev = "select", id = "layer.queue", item = rows[1].id })
 	local viewed = plan()
 	pickScope(b, "issues:v2")
 	w.flush()
@@ -2347,7 +2299,7 @@ case("host mutations: close and reopen run gh issue close or reopen on the plann
 		return asks.hx.ask(w, b, { op = "act", name = name })
 	end
 	local function commit(p: any): any
-		return asks.hx.ask(w, b, { op = "commit", token = p.token })
+		return asks.hx.commit(w, b, p.token)
 	end
 	local function refused(name: string, why: string)
 		local p = plan(name)
@@ -2393,7 +2345,7 @@ case("host mutations: ready for review and convert to draft run gh pr ready, wit
 		return asks.hx.ask(w, b, { op = "act", name = name })
 	end
 	local function commit(p: any): any
-		return asks.hx.ask(w, b, { op = "commit", token = p.token })
+		return asks.hx.commit(w, b, p.token)
 	end
 	local function refused(name: string, why: string)
 		local p = plan(name)
@@ -2429,7 +2381,7 @@ case("host mutations: switching gh's active account between plan and commit stil
 	has(p.confirm.lines[2], "octocat", "the plan names the account gh was using")
 	s.gh.active = "work" -- `gh auth switch` before the confirm
 	w.advance(30 * 1000)
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed within five minutes")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "committed within five minutes")
 	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r" }, "the issue is read and closed")
 	local sent = requestsOf(s.gh, "other")
 	eq(#sent, 2, "both commands ran")
@@ -2456,7 +2408,7 @@ case("host mutations: on a Jira issue assign-me runs acli", function(w: World)
 	eq(p.confirm.lines[2], "Jira account: ann@example.com at https://acme.atlassian.net", "the account and site")
 	has(p.confirm.lines[3], "Current assignee:", "and what it has now")
 	eq(#ran, 0, "a plan runs nothing")
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).message, "Assigned ABC-12 to you", "committed")
+	eq(asks.hx.commit(w, b, p.token).message, "Assigned ABC-12 to you", "committed")
 	same(ran, { "acli jira workitem assign --key ABC-12 --assignee @me --yes" }, "one acli call for the signed-in user")
 end)
 
@@ -2485,16 +2437,16 @@ case("host mutations: a Jira comment shows the whole text and the full account a
 	has(long.problem, "too long to show", "a text that would not show in full is refused")
 	eq(#ran, 0, "planning wrote nothing")
 	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@other.org\n"
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "account changed", "the same local part at another domain is another account")
+	has(asks.hx.commit(w, b, p.token).problem, "account changed", "the same local part at another domain is another account")
 	eq(#ran, 0, "and nothing was written")
 	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
 	p = asks.hx.ask(w, b, { op = "act", name = "comment", text = "Looks good" })
 	auth = "✓ Authenticated\n  Site: elsewhere.atlassian.net\n  Email: ann@example.com\n"
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "account changed", "the same email on another site is refused too")
+	has(asks.hx.commit(w, b, p.token).problem, "account changed", "the same email on another site is refused too")
 	eq(#ran, 0, "nothing was written there either")
 	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
 	p = asks.hx.ask(w, b, { op = "act", name = "comment", text = "Looks good" })
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).message, "Commented on ABC-12", "the same account and site commits")
+	eq(asks.hx.commit(w, b, p.token).message, "Commented on ABC-12", "the same account and site commits")
 	same(ran, { "acli jira workitem comment create --key ABC-12 --body=Looks good" }, "one comment, as shown")
 end)
 
@@ -2517,7 +2469,7 @@ case("host mutations: a Jira assign names the account and site and is refused wh
 	has(p.confirm.lines[2], "ann@example.com", "assign names the full email")
 	has(p.confirm.lines[2], "https://acme.atlassian.net", "and the site")
 	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@other.org\n"
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "account changed", "another account is refused")
+	has(asks.hx.commit(w, b, p.token).problem, "account changed", "another account is refused")
 	eq(#ran, 0, "and nothing was assigned")
 end)
 
@@ -2538,7 +2490,7 @@ case("host mutations: a Jira assign works for a signed-in email whose local part
 	local p = asks.hx.ask(w, b, { op = "act", name = "assign-me" })
 	eq(p.problem, nil, "the sign-in names its email")
 	eq(p.confirm.lines[2], "Jira account: pat.o'brien@corp.com at https://acme.atlassian.net", "the whole email, apostrophe and all")
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).message, "Assigned ABC-12 to you", "committed as that account")
+	eq(asks.hx.commit(w, b, p.token).message, "Assigned ABC-12 to you", "committed as that account")
 	same(ran, { "acli jira workitem assign --key ABC-12 --assignee @me --yes" }, "acli assigned it")
 end)
 
@@ -2575,7 +2527,7 @@ case("host mutations: rerun-failed plans the failed runs by their real run ids, 
 	eq(p.confirm.lines[1], "o/r#1: PR 1", "the pull request")
 	eq(p.confirm.lines[3], "Rerun the failed jobs of workflow run 123 (build, lint)", "the one run that has an id, with its failed checks; a check-run link has none")
 	eq(#seen, 0, "a plan runs nothing")
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "committed")
 	same(seen, {
 		"gh run view 123 --repo github.com/o/r --json databaseId,status,conclusion,url",
@@ -2619,7 +2571,7 @@ case("host mutations: rerun-failed with several failed workflow runs lists them,
 	eq(p.confirm.lines[3], "Rerun the failed jobs of workflow run 205 (job5)", "the plan names the picked run alone")
 	eq(#p.confirm.lines, 3, "and no other")
 	eq(#seen, 0, "a plan sends nothing")
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "committed")
 	same(seen, {
 		"gh run view 205 --repo github.com/o/r --json databaseId,status,conclusion,url",
 		"gh run rerun 205 --repo github.com/o/r --failed",
@@ -2640,7 +2592,7 @@ case("host mutations: a gh account that cannot sign in fails the commit closed: 
 	eq(p.confirm.lines[2], "Account: @work", "the plan names the view's account")
 	s.gh.tokens["work"] = nil :: any
 	w.advance(61000) -- the token cached by the plan's reads has expired
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	has(r.problem, "not signed in", "the commit says the account is not signed in")
 	eq(r.ok, nil, "and is no success")
 	eq(#seen, 0, "no gh mutation was spawned")
@@ -2688,7 +2640,7 @@ case("host draft: info, preview, plan and commit push the previewed commit unfor
 	eq(#s.git.pushes, 0, "a plan pushes nothing")
 	eq(#seen, 0, "and creates nothing")
 	local mark = #w.calls
-	local done = asks.hx.ask(w, b, { op = "commit", token = plan.token })
+	local done = asks.hx.commit(w, b, plan.token)
 	eq(done.ok, true, "the commit answers ok")
 	eq(done.url, created, "with the new pull request's URL")
 	same(s.git.pushes, { "push --no-force-with-lease origin " .. sha("c") .. ":refs/heads/12-fix-login" }, "the previewed commit was pushed, not forced")
@@ -2754,7 +2706,7 @@ case("host draft: a repository that is not one of the worktree's remotes is refu
 	eq(plan.confirm.lines[1], "Repository: u/r", "the plan names it")
 	eq(plan.confirm.lines[2], "First pushes 12-fix-login to upstream (never forced)", "and the remote it pushes to")
 	eq(#s.git.pushes, 0, "a plan pushes nothing")
-	local done = asks.hx.ask(w, b, { op = "commit", token = plan.token })
+	local done = asks.hx.commit(w, b, plan.token)
 	eq(done.url, created, "the pull request is created")
 	same(s.git.pushes, { "push --no-force-with-lease upstream " .. sha("c") .. ":refs/heads/12-fix-login" }, "the branch went to THAT remote")
 	same(seen, { "gh pr create --repo github.com/u/r --draft --base=main --head=12-fix-login --title=Fix login flow --body=Issue: https://github.com/o/r/issues/12" }, "on that repository")
@@ -2804,7 +2756,7 @@ case("host draft: only an issue with a worktree starts a draft, the commit reads
 	lacks(table.concat(plan2.confirm.lines, "\n"), "First pushes", "or listed")
 	s.git.counts[sha("d")] = 3
 	tree.head = sha("d")
-	has(asks.hx.ask(w, b, { op = "commit", token = plan2.token }).problem, "moved since the preview", "a HEAD that moved is caught though no push was planned")
+	has(asks.hx.commit(w, b, plan2.token).problem, "moved since the preview", "a HEAD that moved is caught though no push was planned")
 	eq(#s.git.pushes, 0, "nothing was pushed")
 	eq(#seen, 0, "and no pull request was created")
 end)
@@ -2820,14 +2772,14 @@ case("host draft: the commit is refused when the remote's copy of the branch cha
 	end
 	local p = planned()
 	s.git.refs["refs/remotes/origin/12-fix-login"] = sha("c")
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "moved since the preview", "someone pushed the branch meanwhile: needsPush changed")
+	has(asks.hx.commit(w, b, p.token).problem, "moved since the preview", "someone pushed the branch meanwhile: needsPush changed")
 	eq(#s.git.pushes, 0, "nothing was pushed")
 	eq(#seen, 0, "nothing was created")
 	s.git.refs["refs/remotes/origin/12-fix-login"] = nil
 	local q = planned()
 	pickScope(b, "issues:v2")
 	w.flush()
-	has(asks.hx.ask(w, b, { op = "commit", token = q.token }).problem, "selection or the view changed", "the view changed after the plan")
+	has(asks.hx.commit(w, b, q.token).problem, "selection or the view changed", "the view changed after the plan")
 	eq(#s.git.pushes, 0, "still nothing was pushed")
 	eq(#seen, 0, "and nothing created")
 end)
@@ -2845,10 +2797,10 @@ case("host draft: a draft previewed again while the commit pushes does not stop 
 	local b = openIssues(w)
 	local pv = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
 	local plan = asks.hx.ask(w, b, { op = "draft", phase = "plan", token = pv.token, title = "T", body = "B" })
-	request(b, "late", { op = "commit", token = plan.token })
+	b.event({ ev = "action", act = "plan-commit", value = plan.token })
 	local again = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
 	w.flush()
-	eq(answerOf(b, "late").ok, true, "the commit went through")
+	eq(asks.toasted(w, "Draft pull request created: " .. created), 1, "the commit went through")
 	yes(again.token ~= pv.token, "the second preview is a draft of its own")
 	eq(pickerOf(b).scopes[2].label, "o/r#21", "and the new pull request is pinned")
 end)
@@ -3006,6 +2958,81 @@ case("host agents: Interrupt, Stop and Message agent are palette rows and hidden
 	eq(w.opened[#w.opened], prLink("agentint", "o/r", 1), "and the pick opens it")
 	asks.hx.agents(b, {})
 	yes(not has3(hx.palette(w, b)), "no agent listed: no rows")
+end)
+
+-- The text of a text node's spans.
+local function textOf(node: any): string
+	local out: { string } = {}
+	for _, s in node.p.spans do
+		table.insert(out, s.t)
+	end
+	return table.concat(out)
+end
+
+-- The Confirm overlay's foot of block `b`: its buttons as "label|variant|keys", in order.
+local function confirmFoot(b: Block): { string }
+	local out: { string } = {}
+	for _, n in findKey(h.confirmOf(b), "foot").c do
+		table.insert(out, n.p.text .. "|" .. tostring(n.p.variant) .. "|" .. table.concat(n.p.keys or {}, "+"))
+	end
+	return out
+end
+
+case("host agents: Stop agent… asks in the block's Confirm overlay, Cancel first; Esc keeps the agent, Enter or Stop opens the window's stop link", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	asks.hx.agents(b, { ["o/r#1"] = "working" })
+	local opened = #w.opened
+	b.event({ ev = "action", act = "queue", value = "agentstop" })
+	eq(#w.opened, opened, "the pick opens nothing yet")
+	local o = h.confirmOf(b)
+	eq(o.p.head, "Stop the agent for o/r#1?", "the overlay names the item")
+	has(textOf(findKey(o, "body")), "worktree and changes are kept", "and says what stopping does")
+	same(confirmFoot(b), { "Cancel|quiet|esc", "Stop agent|danger|enter" }, "Cancel first, then the action")
+	same(hx.offPalette(b.view().layer), {}, "one danger, inside the confirm")
+	b.typeText("j")
+	eq(pickerOf(b).selected, "no_2fr_231", "it is modal: j does not move the selection")
+	b.press("escape")
+	eq(h.confirmOf(b), nil, "Esc closes it")
+	eq(#w.opened, opened, "and stops nothing")
+	b.event({ ev = "action", act = "queue", value = "agentstop" })
+	b.press("enter")
+	eq(w.opened[#w.opened], prLink("agentstop", "o/r", 1), "Enter opens the stop link the window follows")
+	eq(h.confirmOf(b), nil, "and closes it")
+	b.event({ ev = "action", act = "queue", value = "agentstop" })
+	b.event({ ev = "action", act = "stop-agent" })
+	eq(#w.opened, opened + 2, "so does its Stop button")
+	goToSettings(b, "general")
+	b.event({ ev = "action", act = "queue", value = "agentstop" })
+	eq(b.state().settings, nil, "picked over Settings, Settings closes so the confirm shows")
+	yes(h.confirmOf(b) ~= nil, "and it asks")
+end)
+
+case("host mutations: a plan is asked in the block's Confirm overlay, Cancel first: Esc drops it, Enter commits it with its own token and toasts what came of it", function(w: World)
+	local s = issueHost(w)
+	local seen = asks.hx.writes(s.gh)
+	local b = openIssues(w)
+	goToSettings(b, "general")
+	local p = asks.hx.ask(w, b, { op = "act", name = "assign-me" })
+	eq(b.state().settings, nil, "a plan asked over Settings closes it, so the confirm shows")
+	local o = h.confirmOf(b)
+	eq(o.p.head, "Assign o/r#12 to you?", "the overlay's head is the plan's question")
+	has(textOf(findKey(o, "body")), "exactly as shown", "one sentence says what confirming does")
+	same({ textOf(findKey(o, "line-1")), textOf(findKey(o, "line-3")) }, { "o/r#12: Fix login", "Current assignees: ann, bob" }, "then the plan's lines")
+	same(confirmFoot(b), { "Cancel|quiet|esc", "Assign to me|nil|enter" }, "Cancel first, then the action; no danger: nothing Plotroom holds is destroyed")
+	same(hx.offPalette(b.view().layer), {}, "within the palette")
+	b.typeText("j")
+	yes(h.confirmOf(b) ~= nil, "it is modal: other keys do nothing")
+	b.press("escape")
+	eq(h.confirmOf(b), nil, "Esc drops it")
+	has(asks.hx.commit(w, b, p.token).problem, "no longer valid", "and its token commits nothing")
+	eq(#seen, 0, "nothing was sent")
+	asks.hx.ask(w, b, { op = "act", name = "assign-me" })
+	b.press("enter")
+	w.flush()
+	eq(h.confirmOf(b), nil, "Enter commits it and closes the overlay")
+	same(seen, { "gh issue edit 12 --repo github.com/o/r --add-assignee=@me" }, "the planned call, once")
+	eq(w.toasts[#w.toasts].text, "Assigned o/r#12 to you", "and the block toasts what it did")
 end)
 
 case("host agents: Now's row and preview show what an agent that needs input last said, with Reply… and Go to agent, and the row leaves once the agent stops waiting", function(w: World)
@@ -4918,7 +4945,7 @@ case("host mutations: a confirmation older than five minutes says it expired", f
 	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close" })
 	local before = #seen
 	w.advance(301 * 1000)
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "That confirmation expired after 5 minutes; nothing was sent.", "the age is named, not a changed selection")
+	eq(asks.hx.commit(w, b, p.token).problem, "That confirmation expired after 5 minutes; nothing was sent.", "the age is named, not a changed selection")
 	eq(#seen, before, "and nothing was sent")
 end)
 

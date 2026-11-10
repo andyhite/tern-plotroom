@@ -276,7 +276,7 @@ case("now: Mark read… plans Now's listed threads as the login captured then, a
 	eq(#s.gh.inboxRead, 0, "nothing is sent before the commit")
 	s.gh.active = "other" -- gh's active account changes after the plan
 	s.gh.inbox.octocat = {}
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "committed")
 	eq(r.message, "Marked 3 notifications read as @octocat", "told with the account")
 	same(s.gh.inboxRead, { "11", "12", "13" }, "exactly the planned threads, one request each")
@@ -284,7 +284,7 @@ case("now: Mark read… plans Now's listed threads as the login captured then, a
 		eq(req.login, "octocat", "as the login of the plan, not gh's active one")
 		yes(table.find(req.call.argv, "PATCH") ~= nil, "a PATCH: read, never done (no DELETE)")
 	end
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "no longer valid", "a plan commits once")
+	has(asks.hx.commit(w, b, p.token).problem, "no longer valid", "a plan commits once")
 end)
 
 case("now: Mark read… plans every thread Now read, also one about an item listed higher", function(w: World)
@@ -307,7 +307,7 @@ case("now: a mark-read plan is refused off Now, after Now was left, and stops at
 	local p = asks.hx.ask(w, b, { op = "act", name = "mark-read" })
 	pickScope(b, "prs:v1")
 	w.flush()
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "selection or the view changed", "after Now was left")
+	has(asks.hx.commit(w, b, p.token).problem, "selection or the view changed", "after Now was left")
 	eq(#s.gh.inboxRead, 0, "nothing was sent")
 	pickScope(b, "now")
 	w.flush()
@@ -318,7 +318,7 @@ case("now: a mark-read plan is refused off Now, after Now was left, and stops at
 		end
 		return nil
 	end
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	has(r.problem, "Marked 1 of 3 read, then stopped", "a failure says how far it got")
 	same(s.gh.inboxRead, { "11" }, "and stops there")
 end)
@@ -471,7 +471,7 @@ case("now: Mark read… across two logins names each account with its threads pe
 		"@work w/z: 1",
 	}, "each account, and each one's threads per repository")
 	s.gh.active = "work" -- gh's active account changes after the plan
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "committed")
 	eq(r.message, "Marked 4 notifications read as @octocat and @work", "told with both accounts")
 	local as: { string } = {}

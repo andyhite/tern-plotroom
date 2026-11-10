@@ -68,7 +68,6 @@ type StatusRow = { state: string, action: string?, branch: string?, title: strin
 -- `findings`), at chain `depth`, from Plotroom block `block`, with the run's saved `criteria`.
 export type Step = { step: string, chain: Chain, key: string, agent: number, host: HostId, started: number?, commit: string?, criteria: string?, findings: string?, block: number, depth: number }
 type Notes = { [number]: { last: string?, err: string? } }
-type Plan = { token: string, head: string, label: string, lines: { string } }
 
 local LINKS_KEY = "agent-links"
 local LINKS_CAP = 200
@@ -89,7 +88,6 @@ M.NO_COMMIT = "The last run named no new commit on its branch, so there was noth
 local INFO_BYTES = 30000
 local SYNC_MS = 4000
 local ACT_MS = 30 * 1000
-local COMMIT_MS = 3 * 60 * 1000
 local EXPECTED_S = 300 -- the run log's medians are read again at most this often, and after every run it gains
 local DRAFT_MS = 3 * 60 * 1000 -- the host's ls-remote/fetch may take 120 s
 local OPEN_URL_TRIES = 20 -- of 500 ms: a launched or not yet rendered block has 10 seconds to say its protocol
@@ -1398,27 +1396,9 @@ function M.openGit(cx: WindowCx, pane: number, url: string)
 	end)
 end
 
--- ---------------------------------------------------------------- confirmation
-
--- Cancel FIRST (Enter keeps it), then the destructive choice, then the plan's target lines as rows. onConfirm runs
--- only for the confirm row: a dismissed picker, Cancel or a target row does nothing.
-local function confirmPick(cx: WindowCx, head: string, label: string, lines: { string }, onConfirm: (WindowCx) -> ())
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = label, confirm = true } }
-	for i, line in lines do
-		if i > MAX_ROWS then
-			break
-		end
-		table.insert(items, { label = line, group = "Target" })
-	end
-	cx:pick({ items = items, placeholder = head, icon = "merge", action = "confirm" }):next(function(item, _, cx2)
-		if cx2 and item and item.confirm == true then
-			onConfirm(cx2)
-		end
-	end)
-end
-
 -- Interrupt, Stop, Message or Reply (`act`: agentint | agentstop | agentmsg | agentreply) the live agent recorded for
--- `key`. Stop asks first; each step looks the agent up again, so one that exited meanwhile only toasts. Reply is Now's
+-- `key`. Stop was asked in the block's Confirm overlay, whose Stop opens this link; each step looks the agent up again,
+-- so one that exited meanwhile only toasts. Reply is Now's
 -- Message agent… for an agent that needs input: one that stopped waiting gets the same toast and nothing is sent.
 -- agentdisagree is Disagree with check… (M.disagree) and agentreview Show Draft review (M.showReview); neither needs a
 -- live agent.
@@ -1451,10 +1431,8 @@ function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 			cx.agents:interrupt(agent)
 		end)
 	elseif act == "agentstop" then
-		confirmPick(cx, "Stop the agent for " .. key .. "?", "Stop agent", { key }, function(cx2)
-			run(cx2, "stop", function(agent)
-				cx2.agents:stop(agent)
-			end)
+		run(cx, "stop", function(agent)
+			cx.agents:stop(agent)
 		end)
 	elseif act == "agentmsg" or waiting then
 		cx:prompt({ placeholder = (if waiting then "Reply to the agent of " else "Message for the agent of ") .. key, icon = "merge", action = "send" }):next(function(text, _, cx2)
@@ -1928,56 +1906,23 @@ function M.messageSelection(cx: WindowCx)
 	end)
 end
 
-local function planOf(a: any): Plan?
-	local c = a.confirm
-	if type(a.token) ~= "string" or a.token == "" or type(c) ~= "table" or type(c.head) ~= "string" or type(c.label) ~= "string" then
-		return nil
+-- A plan reply: the block asks it in its Confirm overlay and commits from there, so only a reply that is no plan (the
+-- problem, or nothing usable) is toasted here.
+local function planned(cx: WindowCx, a: any)
+	if type(a) ~= "table" or type(a.token) ~= "string" or a.token == "" then
+		local why = if type(a) == "table" then problemOf(a) else nil
+		cx:toast("error", "Plotroom: nothing to confirm", why or "The block's host gave no plan.")
 	end
-	local lines: { string } = {}
-	if type(c.lines) == "table" then
-		for _, line in c.lines do
-			if type(line) == "string" and line ~= "" then
-				table.insert(lines, line)
-			end
-		end
-	end
-	return { token = a.token, head = c.head, label = c.label, lines = lines }
 end
 
--- Shows the host's plan reply `plan` (`{token, confirm = {head, label, lines}}`): Cancel first, then the commit choice
--- and its lines. Only a confirmed plan sends `commit` with its own token (never kept past this call), and the result
--- or problem is toasted; `done` runs after a commit that succeeded.
-function M.confirmPlan(cx: WindowCx, pane: number, plan: any, done: ((WindowCx, any) -> ())?)
-	local p = if type(plan) == "table" then planOf(plan) else nil
-	if not p then
-		local why = if type(plan) == "table" then problemOf(plan) else nil
-		return cx:toast("error", "Plotroom: nothing to confirm", why or "The block's host gave no plan.")
-	end
-	local token = p.token
-	confirmPick(cx, p.head, p.label, p.lines, function(cx2: WindowCx)
-		e().ask(cx2, pane, "commit", { token = token }, COMMIT_MS, function(a: any, cx3: WindowCx)
-			local why = problemOf(a)
-			if why then
-				return cx3:toast("error", "Not done", why)
-			elseif a.ok ~= true then
-				return cx3:toast("error", "Not done", "The block's host gave no result")
-			end
-			cx3:toast("success", if type(a.message) == "string" then a.message else "Done", if type(a.url) == "string" then a.url else nil)
-			if done then
-				done(cx3, a)
-			end
-		end)
-	end)
-end
-
--- Asks the host for an `act`; a plan reply is confirmed, a problem is toasted under `title`.
+-- Asks the host for an `act`; a plan reply is confirmed in the block, a problem is toasted under `title`.
 local function planAct(cx: WindowCx, pane: number, title: string, args: { [string]: any })
 	e().ask(cx, pane, "act", args, ACT_MS, function(a: any, cx2: WindowCx)
 		local why = problemOf(a)
 		if why then
 			return cx2:toast("error", title, why)
 		end
-		M.confirmPlan(cx2, pane, a, nil)
+		planned(cx2, a)
 	end)
 end
 
@@ -1994,7 +1939,7 @@ local function runAction(cx: WindowCx, pane: number, name: string, title: string
 		if why then
 			return cx2:toast("error", title, why)
 		elseif type(a.runs) ~= "table" then
-			return M.confirmPlan(cx2, pane, a, nil)
+			return planned(cx2, a)
 		end
 		local items: { PickItem } = {}
 		for _, r in a.runs do
@@ -2025,7 +1970,7 @@ local function ignoreCheck(cx: WindowCx, pane: number)
 		if why then
 			return cx2:toast("error", title, why)
 		elseif type(a.checks) ~= "table" then
-			return M.confirmPlan(cx2, pane, a, nil)
+			return planned(cx2, a)
 		end
 		local items: { PickItem } = {}
 		for _, name in a.checks do
@@ -2193,7 +2138,7 @@ local function reviewDraft(cx: WindowCx, pane: number, p: any, title: string, bo
 			if why then
 				return cx3:toast("error", "Draft PR not planned", why)
 			end
-			M.confirmPlan(cx3, pane, a, nil)
+			planned(cx3, a)
 		end)
 	end)
 end

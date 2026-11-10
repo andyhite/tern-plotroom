@@ -2214,9 +2214,14 @@ function M.viewOf(state: State, id: string): View?
 	return nil
 end
 
+-- Opens the selected item's link for `act`; Stop agent… asks first in the block (render's stopConfirm), whose Stop
+-- opens the link.
 function M.openSelected(state: State, act: string, rerender: boolean)
 	local item = M.selected(state)
-	if item then
+	if item and act == "agentstop" then
+		state.stopping = { key = item.key, href = hrefOf(state, item, act) }
+		state.cx:render()
+	elseif item then
 		if rerender then
 			state.cx:render() -- sends the new preview before the open request
 		end
@@ -3126,11 +3131,15 @@ function M.agentHref(key: string, act: string?): string?
 	return nil
 end
 
--- Runs agent command `act` (agentgo by default) on the previewed agent: the window follows the link its hidden node carries.
+-- Runs agent command `act` (agentgo by default) on the previewed agent: the window follows the link its hidden node
+-- carries. Stop agent… asks first in the block, as openSelected does.
 function M.agentGo(state: State, act: string?)
 	local row = M.agentSelected(state)
 	local href = if row then M.agentHref(row.key, act) else nil
-	if href then
+	if row and href and act == "agentstop" then
+		state.stopping = { key = row.key, href = href }
+		state.cx:render()
+	elseif href then
 		state.cx:open(href)
 	end
 end

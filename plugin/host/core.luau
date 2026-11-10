@@ -22,7 +22,7 @@ M.SUMMARY_TIMEOUT_MS = 90 * 1000 -- a Summary's omp call that runs longer is giv
 M.NOTE_CAP = 20 -- worktree attempt reports kept per block; the worktrees git lists are all kept
 M.NAME_CAP = 120 -- characters of an action's or view's name
 M.STATUS_CAP = 100 -- bytes of an action's target status name
-M.COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows: the window shows 40 (flows.luau MAX_ROWS), 3 are the target, account and count
+M.COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows; 3 more are the target, account and count
 M.ISSUE_ICON = "list-checks" -- the icon of issue views, as in window.luau; a name outside Tern's icon set (`circle-dot` is one) draws blank
 -- How an issue view lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
 export type TrackerApi = {
@@ -303,7 +303,8 @@ export type State = {
 	agentAt: string?, -- the item key of the Agents row previewed
 	clocked: boolean?, -- the view being drawn shows a working agent's clock (render's agentClock)
 	clockTimer: TimerHandle?, -- the redraw that moves the shown clocks on, at most one a second
-	plan: any, -- the one mutation plan waiting for the window's confirmation (requests.offer), nil: none
+	plan: any, -- the one mutation plan waiting for confirmation in the block's Confirm overlay (requests.offer), nil: none
+	stopping: { key: string, href: string }?, -- the item whose agent Stop agent… asks about (a Confirm overlay), and the link that stops it
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
 	boardOn: boolean, -- the Worktrees scope is shown instead of a view

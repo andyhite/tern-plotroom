@@ -95,7 +95,7 @@ case("arrive: a change your own confirmed command made is no arrival, in that re
 	local p = asks.hx.ask(w, b, { op = "act", name = "pr-approve" })
 	eq(p.confirm.head, "Approve o/r#1?", "an approval of the selected pull request is planned")
 	s.gh.items.octocat = { pr(1, READY), pr(2, READY) }
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "and committed: " .. tostring(r.problem))
 	eq(#seen, 2, "the pull request was read, then one review sent")
 	same(rings(b), { "no_2fr_232/success" }, "the approved one is yours, the other moved on its own")
