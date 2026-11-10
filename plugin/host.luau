@@ -1288,6 +1288,46 @@ local function blockDef(): BlockDef<State>
 	}
 end
 
+-- A `git …` command finished in a pane inside a worktree some block has a note of: that card is read again at its
+-- next render, so its badges follow `git commit` or `git pull` at once. Only the selected card is ever read.
+-- ponytail: a read already under way when the command ends may predate it; the next finish or refresh corrects it.
+tern.on("command_finished", function(ev: any, _cx: any)
+	if type(ev) ~= "table" or type(ev.line) ~= "string" or type(ev.pane) ~= "number" then
+		return
+	end
+	-- A `git push` or a `gh pr|issue|run …` command that succeeded in any shell changed what GitHub lists: every
+	-- queue refreshes now instead of at its timer, still never inside the server's cooldown (`engine.refreshAll`).
+	local line: string = ev.line
+	if ev.status == 0 and (string.find(line, "^git push") or string.find(line, "^gh pr ") or string.find(line, "^gh issue ") or string.find(line, "^gh run ")) then
+		engine.refreshAll()
+	end
+	if string.sub(ev.line, 1, 4) ~= "git " then
+		return
+	end
+	local cwd: string? = nil
+	for _, p in tern.pane.list() do
+		if p.pane == ev.pane then
+			cwd = p.cwd
+		end
+	end
+	if not cwd then
+		return
+	end
+	for _, s in running do
+		local hit = false
+		for _, note in s.notes do
+			if note.ok and note.path and worktree.within(cwd, note.path) then
+				note.checked = nil
+				s.scanned = nil -- the sync badge and update command come from the scan: it runs again too
+				hit = true
+			end
+		end
+		if hit and alive(s) then
+			s.cx:render()
+		end
+	end
+end)
+
 tern.block.define("prs", blockDef())
 lens.define()
 review.define()

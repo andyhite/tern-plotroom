@@ -67,7 +67,7 @@ A Blocked pull request's reasons, one Tern `badge` each, right after the Blocked
 
 ### Arrival ring
 
-A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level.
+A queue row whose item a refresh just moved into Needs you, Blocked or Ready to merge takes that stage's tone as the picker row's `tone` (`accent`, `error`, `success`) for 1.4 s. `plotroom.css` rings it with a 2px inset `var(--tc)` box shadow, held, then faded, and only on the queue picker's rows; while Tern hides the pane (`.sf-paused`) the fade pauses where it was; under reduced motion (`prefers-reduced-motion`, Tern's `.sf-still`) the row is tinted instead. The colour is the stage's, so it means what the stage badge means. At most one toast per refresh goes with it, Tern's `error` level. A new animation in `plotroom.css` gets the same `.sf-still` and `.sf-paused` rules; `scripts/check.py test` fails without them.
 
 ### Preview card
 

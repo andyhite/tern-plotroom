@@ -1724,6 +1724,15 @@ function M.reloadViews(state: State)
 	end
 end
 
+-- Every live block refreshes now, still never inside the server's cooldown.
+function M.refreshAll()
+	for _, s in running do
+		if M.alive(s) then
+			schedule(s, 0)
+		end
+	end
+end
+
 -- Every other live block of this runtime follows a change made in `origin`. Closed panes are retired, not rendered.
 function M.propagate(origin: State)
 	for _, s in running do
@@ -2975,36 +2984,6 @@ tern.on("cwd", function(_ev: any, _cx: any)
 end)
 tern.on("pane_exited", function(_ev: any, _cx: any)
 	redrawQueues()
-end)
--- A `git …` command finished in a pane inside a worktree some block has a note of: that card is read again at its
--- next render, so its badges follow `git commit` or `git pull` at once. Only the selected card is ever read.
--- ponytail: a read already under way when the command ends may predate it; the next finish or refresh corrects it.
-tern.on("command_finished", function(ev: any, _cx: any)
-	if type(ev) ~= "table" or type(ev.line) ~= "string" or type(ev.pane) ~= "number" or string.sub(ev.line, 1, 4) ~= "git " then
-		return
-	end
-	local cwd: string? = nil
-	for _, p in tern.pane.list() do
-		if p.pane == ev.pane then
-			cwd = p.cwd
-		end
-	end
-	if not cwd then
-		return
-	end
-	for _, s in running do
-		local hit = false
-		for _, note in s.notes do
-			if note.ok and note.path and worktree.within(cwd, note.path) then
-				note.checked = nil
-				s.scanned = nil -- the sync badge and update command come from the scan: it runs again too
-				hit = true
-			end
-		end
-		if hit and M.alive(s) then
-			s.cx:render()
-		end
-	end
 end)
 -- The window's report of its agents (`agent-status`: JSON of item key -> { state, action?, branch?, title?, last?, err?,
 -- result?, ended?, attention?, reason?, blocker?, outcome?, verdict?, check?, findings?, stop?, since?, expected? }):

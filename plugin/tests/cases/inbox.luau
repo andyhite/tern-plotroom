@@ -741,9 +741,9 @@ local function nowAsks(s: h.HostScene, from: number): { string }
 end
 
 -- Sets Now's switch `id` (a reason, "teams", "jira" or "login:<login>") as its row in Settings › Views › Now does.
-local function flip(w: World, b: h.Block, id: string, value: string)
+local function flip(w: World, b: h.Block, id: string, on: boolean)
 	goToSettings(b, "views")
-	b.event({ ev = "change", id = "layer.settings", item = "now:" .. id, value = value })
+	b.event({ ev = "change", id = "layer.settings", item = "now:" .. id, value = on })
 	w.flush()
 end
 
@@ -755,9 +755,9 @@ case("now: a reason switched off is not read, and its rows, heading part and cou
 	goToSettings(b, "views")
 	expand(b, "nopen:now")
 	eq(h.prefsOf(b).focus, "now:blocked", "Now's card opens on its first switch")
-	eq(rowIn(b, "now:review").control.value, "on", "every reason is on by default")
+	same({ rowIn(b, "now:review").control.k, rowIn(b, "now:review").control.on }, { "switch", true } :: { any }, "every reason is a switch, on by default")
 	local from = #s.gh.requests
-	flip(w, b, "review", "off")
+	flip(w, b, "review", false)
 	same(w.kv.get("now").off, { "review" }, "saved as a reason that is off")
 	eq(b.title(), "Plotroom · Now · 3 notifications", "its heading part is gone")
 	same(listed(b), { "no_2fr_232", "no_2fr_237", "t13" }, "and its row")
@@ -775,7 +775,7 @@ case("now: with Blocked off and Ready to merge on, your pull requests are still 
 	same(whys(b), { "no_2fr_232 Ready to merge" }, "the Blocked one is not listed")
 	has(table.concat(nowAsks(s, 0), ","), "octocat mine", "your pull requests were searched")
 	local from = #s.gh.requests
-	flip(w, b, "ready", "off")
+	flip(w, b, "ready", false)
 	refreshNow(w, b)
 	same(nowAsks(s, from), { "octocat assigned", "octocat dismissed", "octocat review" }, "with both off, they are not")
 	same(listed(b), {}, "and nothing of theirs is listed")
@@ -813,9 +813,9 @@ case("now: a login switched off is neither searched nor asked for notifications;
 	has(table.concat(nowAsks(s, 0), ","), "later notices", "a login that signs in later is read")
 	goToSettings(b, "views")
 	expand(b, "nopen:now")
-	eq(rowIn(b, "now:login:later").control.value, "on", "and its switch is on")
-	eq(rowIn(b, "now:login:work").control.value, "off", "work's is off")
-	flip(w, b, "login:work", "on")
+	eq(rowIn(b, "now:login:later").control.on, true, "and its switch is on")
+	eq(rowIn(b, "now:login:work").control.on, false, "work's is off")
+	flip(w, b, "login:work", true)
 	eq(#w.kv.get("now").logins, 0, "only logins that are off are saved")
 	has(table.concat(listed(b), ","), "nw_2fz_234", "work's thread is read and listed at once")
 end)
@@ -824,7 +824,7 @@ case("now: Jira switched off is not searched for Now", function(w: World)
 	local _, b, acli = nowScene(w, {})
 	yes(askedJql(acli, h.JIRA_NOW), "on by default")
 	acli.requests = {}
-	flip(w, b, "jira", "off")
+	flip(w, b, "jira", false)
 	refreshNow(w, b)
 	yes(not askedJql(acli, h.JIRA_NOW), "off: not asked")
 	eq(w.kv.get("now").jira, false, "saved")
@@ -838,7 +838,7 @@ case("now: with team review requests on, a request asked only of your team is li
 	end)
 	same(listed(b), { "no_2fr_234" }, "off: only the request asked of you")
 	local from = #s.gh.requests
-	flip(w, b, "teams", "on")
+	flip(w, b, "teams", true)
 	eq(w.kv.get("now").teams, true, "saved")
 	same(nowAsks(s, from), { "octocat assigned", "octocat dismissed", "octocat mine", "octocat teams" }, "the review search asks for your teams' requests too")
 	same(whys(b), { "no_2fr_234 Review requested", "no_2fr_236 Review requested" }, "the team's request is listed under Review requested")
@@ -847,7 +847,7 @@ case("now: with team review requests on, a request asked only of your team is li
 	has(textOf(h.pickerNode(b)), "Your team's review is requested: @acme/web", "its Why line names the team")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_234" })
 	has(textOf(h.pickerNode(b)), "Your review is requested", "one asked of you too says so")
-	flip(w, b, "teams", "off")
+	flip(w, b, "teams", false)
 	same(listed(b), { "no_2fr_234" }, "off again: the team's request is gone")
 end)
 
@@ -886,7 +886,7 @@ case("now: a switch changed in one block applies at once to every other block", 
 	local c = w.open(2, { "/work/r" })
 	w.flush()
 	eq(c.title(), "Plotroom · Now · 3 notifications", "the other block lists the notifications")
-	flip(w, b, "notices", "off")
+	flip(w, b, "notices", false)
 	eq(c.title(), "Plotroom · Now", "and drops them at once")
 	same(listed(c), {}, "from its list too")
 end)
