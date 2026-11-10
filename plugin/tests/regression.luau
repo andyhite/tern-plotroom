@@ -171,6 +171,16 @@ function M.bench(instantiate: Loader)
 		b.render()
 		w.flush()
 	end)
+	-- The run log's index at its cap: what an agent's turn end, the merge sweep and the usage report read (files untouched).
+	local usage: any = w.load("usage")
+	local index: { any } = {}
+	for i = 1, usage.RUNS_CAP do
+		table.insert(index, { id = string.format("%d-%06x", EPOCH - i * 600, i), key = "o/r#" .. i % 50, action = if i % 2 == 0 then "Implement" else "Review", started = EPOCH - i * 600 - 300, ended = EPOCH - i * 600, result = "done", commit = string.rep("a", 40), outcome = "pr", verdict = "verified", login = "octocat", ghRepo = "o/r", number = i, branch = "fix-" .. i, depth = i % 3 })
+	end
+	w.kv.put("runs", array(index))
+	timed("runs-index", 20, function(_i: number)
+		usage.medians(usage.readRuns())
+	end)
 	print(string.format("BENCH payload bytes=%d items=%d", #payload, #shown))
 end
 
