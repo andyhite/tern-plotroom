@@ -54,6 +54,8 @@ local MENU_MS = 30 * 1000
 -- How often a waiting request looks for its answer on screen, in case the host's link to it never arrives.
 local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
+-- How long an agent on a new worktree waits for its setup commands (the most cx.session:settle waits).
+local SETUP_MS = 120 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
@@ -624,18 +626,18 @@ end
 -- agentCommand says (omp with Plotroom's extension, the prompt's model and effort). `split`: as a block beside the queue (pane `pane`), in its tab,
 -- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
 -- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
--- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
--- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
+-- tab, which a `join` agent joins, and the agent starts once they finish (settle, up to SETUP_MS); a setup that fails,
+-- is still running or cannot be waited on still starts it, with a toast saying why. `done` gets whether it started.
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo, done: (boolean, WindowCx) -> ())
 	local model, effort, split = job.model, job.effort, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
 	info.kind, info.model, info.runsIn = t.kind, model, if join then "worktree" else "main checkout"
 	if model and not worktree.validModel(model) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
-		return false
+		return done(false, cx)
 	elseif effort and not worktree.validEffort(effort) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's effort is not one omp takes: " .. effort)
-		return false
+		return done(false, cx)
 	end
 	-- A model or effort adds its flags to the command line agentCommand builds.
 	local flags = (if model then " --model " .. model else "") .. (if effort then " --thinking " .. effort else "")
@@ -657,13 +659,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local session = found or sourceSession(cx, pane)
 	if not session then
 		cx:toast("success", if join then "Worktree ready" else "Checkout ready", path .. " (the source pane closed, so no agent was started)")
-		return false
+		return done(false, cx)
 	end
 	cx.sessions:switch(session)
 	local setup = if join then r.setup else nil
 	labelTab(r, t)
+	local shell: number? = nil
 	if setup then
-		local shell = cx.layout:new_tab({ cwd = path })
+		shell = cx.layout:new_tab({ cwd = path })
 		if shell then
 			cx:run(shell, setup .. "\r")
 			nameTab(cx, shell, t)
@@ -674,62 +677,84 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			cx:toast("error", "Setup did not run for " .. t.label, "Its tab did not open.")
 		end
 	end
-	-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
-	local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
-	-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
-	local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
-	if split then
-		cx.layout:focus(pane)
-	end
-	local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
-	local command, without = agentCommand(cx, pane, flags, run)
-	local ok, agent = pcall(function()
-		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
-	end)
-	if not ok or type(agent) ~= "number" then
-		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
-		return false
-	end
-	if without then
-		cx:toast("info", "Agent started without Plotroom's omp extension", without)
-	else
-		info.run = run
-	end
-	local chain: any = nil
-	if job.id then
-		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane, checker = job.checker }
-		usage.bump("action:" .. (job.name or job.id))
-	end
-	info.cwd = path
-	info.criteria, info.from = job.criteria, job.from
-	if job.check then
-		info.checkAgent, info.checkStarted = job.check.agent, job.check.started
-	end
-	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
-	if split then
-		if target and side then
-			cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
+	local function start(): boolean
+		-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
+		local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
+		-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
+		local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
+		if split then
+			cx.layout:focus(pane)
 		end
-		cx:toast("success", "Agent started beside the queue for " .. t.label, named)
-		return true
-	end
-	if tab then
-		if target and side and cx.layout:move(agent, target, side) then
-			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+		local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
+		local command, without = agentCommand(cx, pane, flags, run)
+		local ok, agent = pcall(function()
+			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
+		end)
+		if not ok or type(agent) ~= "number" then
+			cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
+			return false
+		end
+		if without then
+			cx:toast("info", "Agent started without Plotroom's omp extension", without)
+		else
+			info.run = run
+		end
+		local chain: any = nil
+		if job.id then
+			chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane, checker = job.checker }
+			usage.bump("action:" .. (job.name or job.id))
+		end
+		info.cwd = path
+		info.criteria, info.from = job.criteria, job.from
+		if job.check then
+			info.checkAgent, info.checkStarted = job.check.agent, job.check.started
+		end
+		flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
+		if split then
+			if target and side then
+				cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
+			end
+			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
 			return true
 		end
-		local moved, why = cx.layout:move_to_tab(agent, tab)
-		if moved then
-			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+		if tab then
+			if target and side and cx.layout:move(agent, target, side) then
+				cx:toast("success", "Agent started in the tab of " .. t.label, named)
+				return true
+			end
+			local moved, why = cx.layout:move_to_tab(agent, tab)
+			if moved then
+				cx:toast("success", "Agent started in the tab of " .. t.label, named)
+				return true
+			end
+			nameTab(cx, agent, t)
+			cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 			return true
 		end
 		nameTab(cx, agent, t)
-		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
+		cx:toast("success", "Agent started for " .. t.label, named)
 		return true
 	end
-	nameTab(cx, agent, t)
-	cx:toast("success", "Agent started for " .. t.label, named)
-	return true
+	if not shell then
+		return done(start(), cx)
+	end
+	local sh: number = shell
+	cx.session:settle(sh, SETUP_MS):next(function(_, err, cx2)
+		if not cx2 then
+			return -- no window to start it in
+		end
+		cx = cx2 -- the window context of this call is spent
+		local p = if err then nil else cx.session:pane(sh)
+		local why = if err then tostring(err)
+			elseif not p then "Its tab closed."
+			elseif p.running then "Still running after " .. SETUP_MS // 60000 .. " minutes."
+			elseif p.last and p.last.status ~= 0 then "It exited with status " .. p.last.status .. "."
+			else nil
+		if why then
+			cx:toast("error", "Setup did not finish for " .. t.label, why .. " The agent started anyway.")
+		end
+		done(start(), cx)
+	end)
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.
@@ -978,7 +1003,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 					text ..= "\n\n{findings}"
 				end
 				local block, found = prompts.criteriaBlock(criteria), prompts.findingsBlock(prompt.findings)
-				local started: boolean
+				local function after(started: boolean, cx4: WindowCx)
+					if started and t.kind == "issue" and prompt and prompt.status then
+						moveStatus(cx4, pane, t, prompt.status)
+					elseif not started then
+						failed(cx4)
+					end
+				end
 				if t.kind == "pr" then
 					local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
 					a.criteria, a.findings = block, found
@@ -986,19 +1017,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 					if type(a.merge) == "table" then
 						filled ..= "\n\n" .. prompts.mergeBlock(a.merge)
 					end
-					started = finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
+					finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) }, after)
 				else
 					local vars: any = a.vars
 					if type(vars) == "table" then
 						vars.criteria, vars.findings = block, found
 					end
-					started = finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) })
-					if started and prompt.status then
-						moveStatus(cx3, pane, t, prompt.status)
-					end
-				end
-				if not started then
-					failed(cx3)
+					finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) }, after)
 				end
 			end)
 		end

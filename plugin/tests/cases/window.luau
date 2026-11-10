@@ -853,6 +853,60 @@ windowCase("window: an agent on a new worktree joins the tab where its setup run
 	eq(inTab, 2, "and joins the setup shell's tab")
 end)
 
+windowCase("window: an agent on a new worktree starts only once its setup commands finish", function(w: World)
+	agentScene(w)
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	w.window.setup.ms = 30000
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 1, "setup runs")
+	eq(#w.window.settles, 1, "and is waited on")
+	eq(w.window.settles[1].pane, w.window.runs[1].pane, "in its shell")
+	eq(w.window.settles[1].ms, 120000, "for up to 2 minutes")
+	eq(#w.window.agents, 0, "no agent while setup runs")
+	w.advance(29999)
+	eq(#w.window.agents, 0, "still none just before it finishes")
+	w.advance(1)
+	eq(#w.window.agents, 1, "the agent starts once setup finishes")
+	for _, t in w.toasts do
+		lacks(t.text, "Setup did not finish", "a setup that finished says nothing more")
+	end
+	eq(w.toasts[#w.toasts].text, "Agent started in the tab of o/r#5", "it joins the setup shell's tab")
+end)
+
+-- A setup that fails, is still running or cannot be waited on (`setup` as Win.setup) still starts the agent, and a
+-- toast says setup did not finish, with `why`.
+for _, c in { { name = "fails", setup = { status = 1 }, why = "It exited with status 1." }, { name = "is still running", setup = { running = true, ms = 120000 }, why = "Still running after 2 minutes." }, { name = "cannot be waited on", setup = { err = "pane closed" }, why = "pane closed" } } :: { any } do
+	windowCase("window: a setup that " .. c.name .. " still starts the agent, and a toast says why", function(w: World)
+		agentScene(w)
+		w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+		w.window.setup = c.setup
+		w.window.choose, w.window.typed = "Type a prompt…", "go"
+		w.click(prLink("agent", "o/r", 5))
+		w.flush()
+		w.advance(c.setup.ms or 0)
+		eq(#w.window.agents, 1, "the agent starts anyway")
+		local said: any = nil
+		for _, t in w.toasts do
+			if t.text == "Setup did not finish for o/r#5" then
+				said = t
+			end
+		end
+		yes(said ~= nil, "a toast says setup did not finish")
+		has(said.sub, c.why, "with the reason")
+	end)
+end
+
+windowCase("window: an agent on a worktree with no setup commands starts without waiting", function(w: World)
+	agentScene(w)
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.settles, 0, "nothing to wait on")
+	eq(#w.window.agents, 1, "the agent starts at once")
+end)
+
 windowCase("window: an answer that arrives without a window context starts nothing", function(w: World)
 	agentScene(w)
 	local ran = #w.calls

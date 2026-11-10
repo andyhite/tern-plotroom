@@ -344,7 +344,7 @@ export type Reply = {
 export type Responder = (Call) -> Reply?
 export type PaneRow = { pane: number, cwd: string? }
 export type Event = { at: number, seq: number, run: () -> (), live: boolean }
-export type WinPane = { block: string?, cwd: string, tab: number, kind: string?, url: string?, title: string?, parked: boolean? }
+export type WinPane = { block: string?, cwd: string, tab: number, kind: string?, url: string?, title: string?, parked: boolean?, running: { line: string, ms: number }?, last: { line: string, status: number, took_ms: number }? }
 
 -- The window half of the world: sessions, tabs and panes that answer like cx.session/layout/hosts do. A nil from
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
@@ -376,6 +376,8 @@ export type Win = {
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
 	handlers: { [string]: any }, -- tern.on registrations by event name
 	runs: { { pane: number, text: string } }, -- every cx:run (text typed into a pane)
+	settles: { { pane: number, ms: number? } }, -- every cx.session:settle
+	setup: { ms: number?, err: string?, running: boolean?, status: number? }, -- how cx.session:settle resolves: after `ms` (default 0) with error `err`, else with the pane's command still running or its last status `status` (default 0)
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
 	tabTitle: ((any) -> string?)?, -- the tern.chrome.tab_title formatter
 	refreshes: number, -- tern.chrome.refresh calls
@@ -624,6 +626,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		picks = {},
 		agents = {},
 		runs = {},
+		settles = {},
+		setup = {},
 		agentStates = {},
 		agentCalls = {},
 		askFails = false,
@@ -725,7 +729,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				if p == nil then
 					return nil
 				end
-				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "" }
+				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "", running = p.running, last = p.last }
 			end,
 			surface = function(_self: any, id: number, opts: any): any
 				-- The need-you poll (every Plotroom pane, on its own timer) is counted apart from the protocol check's reads.
@@ -743,6 +747,25 @@ local function newWorld(instantiate: Loader, context: string): World
 			tab_of = function(_self: any, id: number): number?
 				local p = win.panes[id]
 				return if p then p.tab else nil
+			end,
+			settle = function(_self: any, id: number, ms: number?): any
+				table.insert(win.settles, { pane = id, ms = ms })
+				return {
+					next = function(_self2: any, fn: (any, any, any) -> ())
+						schedule(win.setup.ms or 0, function()
+							local p = win.panes[id]
+							if win.setup.err or not p then
+								return fn(nil, win.setup.err or "pane closed", windowCx)
+							end
+							if win.setup.running then
+								p.running = { line = "setup", ms = ms or 30000 }
+							else
+								p.last = { line = "setup", status = win.setup.status or 0, took_ms = win.setup.ms or 0 }
+							end
+							fn("", nil, windowCx)
+						end)
+					end,
+				}
 			end,
 			layout = function(_self: any, tab: number): any
 				local root = treeOf(tab)
