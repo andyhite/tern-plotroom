@@ -463,6 +463,8 @@ local function blockDef(): BlockDef<State>
 		end)
 	end
 	return {
+		-- Tern's sans face for people's text; mono/code/path spans and code kinds stay mono (Designing Views › Typography).
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
 			local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }
@@ -1006,9 +1008,12 @@ local function blockDef(): BlockDef<State>
 				return true
 			end
 			if act == "retry-checks" then
+				-- A preview section's Retry; on the Worktrees board it is the board's Refresh (its linked reads).
 				local chosen = selected(state)
 				local key = if chosen then detailKey(state, chosen) else nil
-				if key then
+				if state.boardOn then
+					engine.boardAct(state, "retry")
+				elseif key then
 					state.detailFail[key] = nil
 					cancelDetails(state)
 				end
@@ -1019,6 +1024,8 @@ local function blockDef(): BlockDef<State>
 				if link then
 					state.cx:open(link)
 				end
+			elseif act == "retry-summary" then
+				engine.retrySummary(state)
 			elseif act == "rpc" then
 				rpc(state, ev.value)
 			elseif act == "show-pr" then

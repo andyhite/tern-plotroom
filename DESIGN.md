@@ -38,9 +38,9 @@ All Tern variables; the plugin declares none.
 
 ## Typography
 
-- **Prose:** `var(--sans)`, Tern's default for every kind; no font stack is declared.
-- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, counts): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values.
-- **Weight:** `strong` spans for a heading's view name and a linked item's title; nothing else is bold.
+- **Prose:** Tern's sans face, set by `font = "sans"` on both blocks (Tern's Designing Views › Typography); no font stack is declared and no plugin CSS sets a block's face.
+- **Identifiers** (author, branch, path, repository, `#N`, Jira keys, SHAs, counts, times): `mono` or `code` spans, 12px `var(--mono)` wherever they show, so a row's detail matches the preview's kv values. A number in a kv value or running text is `mono`, never `num` (it paints the code-number colour).
+- **Weight:** the `title` token for the queue's view name (the page's name), `strong` for a linked item's title; nothing else is bold.
 - Text is never coloured for emphasis; only a meaning colours it.
 
 ## Spacing and radii
@@ -86,6 +86,10 @@ The preview's checks, one Tern `table` per group (Failing, Running, Queued; Pass
 ### Worktree card
 
 A `card` in the preview while the item has a worktree: neutral badges (Up to date or Not at PR head; Clean, Uncommitted changes or Changes unchecked; N unpushed), the branch and path with copy icons, the update commands folded away when behind, then buttons (Open in new tab or Go to tab, Remove worktree, Open Git view). The card takes the `error` tone only when the worktree could not be made, and then shows why and no buttons. It is a cache of git, never the source.
+
+### Loading, empty and error
+
+Tern's four states, in the place of what they stand for and under its key, so the loaded part replaces them without a jump. **Loading:** a `skeleton` (default `shimmer` variant, no tone) shaped like the part: `rows` for a list (Checks 3, Reviewers, Unresolved threads and linked items 2), `text` lines for the Summary, the description and a worktree's linked items, and a `block` 8 lines tall where the Draft review's diff goes. **Empty:** an `empty` with `variant = "inline"`, no tone, its `title` saying what is missing ("No checks", a Board column's "None"). **Error:** the same inline `empty` with `tone = "error"` (needs fixing), `title` `Could not load <what>`, `text` the tool's message and when it is tried again, and one child: a Retry button (render's `button()`, `icon = "redo"`; its row height is Tern's `sm`). The queue picker's own `state = "loading" | "error"` stays.
 
 ### Commands
 
