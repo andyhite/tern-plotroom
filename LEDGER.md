@@ -143,3 +143,4 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Polite refresh and rate-limit backoff | Engine | Keep | — | Approved | |
 | Developer commands (`PLOTROOM_SELFTEST=1`) | Tern's palette | Keep | — | Approved | Hidden unless the variable is set |
 | DESIGN.md: one meaning per colour (your turn, needs fixing, done, agent working, checks running), everything else neutral | Every surface | New | 1 | Approved | Trust and coherence: a colour you can read at a glance; adopted from tern-pr-guide |
+| Loading, empty and failed preview sections as Tern's `skeleton` and `empty` kinds; a failed read (or Summary) offers Retry in place; the Draft review's diff loads as a skeleton; an empty Board column is an `empty` | Preview, Board, Draft review | New | — | Approved | Trust: one look for the four states (Tern's Designing Views › The four states); tern-plotroom#eav9 |

@@ -2674,13 +2674,14 @@ function hx.board(b: Block): ({ string }?, string?)
 	for _, group in node.c do
 		if group.p.key == "lanes" or group.p.key == "fold" then
 			for _, col in group.c do
+				-- an empty lane is an `empty` node in the list's place
 				local list = findKey(col, "list", "list")
 				local ids: { string } = {}
-				for _, card in list.c do
+				for _, card in (if list then list.c else {}) :: { any } do
 					table.insert(ids, card.p.key)
 				end
 				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = list.p.selected or selected
+				selected = if list then list.p.selected or selected else selected
 			end
 		end
 	end
