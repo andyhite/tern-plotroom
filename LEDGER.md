@@ -88,6 +88,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Message an agent with the selection… | Tern's palette | Keep | — | Approved | Sends context to an agent from any pane |
 | Send a Browser page element to an agent… | Commands, Tern's palette | Cut | 1 | Approved | Rarely in the loop; refused on remote hosts |
 | Worktree tabs named after their item | Tab bar | Keep | — | Approved | |
+| Worktree tab names survive a plugin reload: kept in kv `tab-labels` (newest 50), read at load, a closed tab's name dropped when a tab closes | Tab bar | New | — | Approved | Tern's Lifecycle and Reload: window state that must survive a reload belongs in kv; restored tabs kept losing their `#123 title`. tern-plotroom#vr4v |
 | Paused-hook notice | Toast, status bar | Keep | — | Approved | |
 | Run log and usage report | Commands › Configuration | New | 0 | Approved | Evidence for Review rows and for metrics 5 and 6 |
 | Agent questions answered in Now | Now | New | 2 | Approved | Taken from CuLoRA's build loop. Done: a waiting agent's Now row shows its last message, with Reply… and Go to agent |
