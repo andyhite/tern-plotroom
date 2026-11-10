@@ -3288,7 +3288,7 @@ case("host worktrees board: a preview read that lands while a cleanup runs leave
 	b.typeText("r")
 	w.flush()
 	yes(not b.state().boardBusy, "the reload is over")
-	has(b.text(), "Loading #5…", "and the preview reads pull request 5 again")
+	eq(findKey(pickerNode(b), "pr", "skeleton").p.shape, "text", "and the preview reads pull request 5 again")
 	b.typeText("u")
 	w.flush()
 	yes(b.state().boardBusy, "the cleanup holds the board")

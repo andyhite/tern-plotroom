@@ -120,7 +120,37 @@ case("preview: a worktree made for a pull request lists it under Linked pull req
 	eq(findKey(findKey(pickerNode(b), "head"), "integration").p.text, "Worktree", "its head names what it is")
 end)
 
-case("preview: the loading sections say Loading, then on a failed load why with Retry, else No <what>, all alike", function(w: World)
+case("preview: a worktree's linked read that fails is an error row with the tool's message, and its Retry reads it again", function(w: World)
+	local s = asks.hx.boardScene(w)
+	s.gh.pulls["https://github.com/o/r/pull/5"] = searchItem(5, "o/r", EPOCH - 60, { title = "Fix the board" })
+	local failing = true
+	s.gh.override = function(req: h.GhReq): h.Reply?
+		if req.kind == "pull" and req.fields.q == "https://github.com/o/r/pull/5" and failing then
+			return { status = 1, stderr = "gh: Server Error (HTTP 502)\n" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	pickScope(b, "worktrees")
+	w.flush()
+	w.advance(300)
+	w.flush()
+	local failed: any = findKey(pickerNode(b), "pr-state", "empty")
+	yes(failed ~= nil, "the failed read is an empty under Linked pull requests")
+	eq(failed.p.tone, "error", "in the error tone")
+	eq(failed.p.title, "Could not load #5", "saying what failed")
+	has(failed.p.text, "HTTP 502", "with the tool's message")
+	local retry: any = findKey(failed, "pr-retry", "item")
+	failing = false
+	b.event({ ev = "action", id = "layer.queue.pr-state.pr-retry", act = retry.p.actions.click })
+	w.flush()
+	w.advance(300)
+	w.flush()
+	eq(findKey(pickerNode(b), "pr-state", "empty"), nil, "Retry read it again")
+	has(texts(b), "Fix the board", "and the pull request shows")
+end)
+
+case("preview: loading sections are Tern skeletons shaped like them, a failed load an error empty with the tool's message and Retry, nothing an empty saying what is missing, all alike", function(w: World)
 	local s = hostScene(w, 0)
 	local failing = true
 	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60) }
@@ -131,26 +161,37 @@ case("preview: the loading sections say Loading, then on a failed load why with 
 		return nil
 	end
 	local b = openQueue(w)
-	local loading = texts(b)
-	has(loading, "Loading linked issues…", "the linked issues shimmer")
-	has(loading, "Loading reviewers…", "the reviewers")
-	has(loading, "Loading checks…", "and the checks")
+	local shapes: { [string]: string } = { linked = "rows", reviewers = "rows", runs = "rows", threads = "rows", description = "text" }
+	for key, shape in shapes do
+		local sk = findKey(pickerNode(b), key, "skeleton")
+		yes(sk ~= nil, key .. " loads as a skeleton, keyed like the part it stands for")
+		eq(sk.p.shape, shape, key .. "'s skeleton is shaped like it")
+	end
+	lacks(texts(b), "Loading", "no Loading… text: the shapes say it")
 	w.advance(300)
-	local failed = texts(b)
-	has(failed, "Could not load linked issues: ", "a failed load says so under Linked issues")
-	has(failed, "Could not load reviewers: ", "under Reviewers: they no longer vanish")
-	has(failed, "Could not load checks: ", "and under Checks")
-	for _, key in { "linked-retry", "reviewers-retry", "runs-retry" } do
-		eq(findKey(pickerNode(b), key, "item").p.actions.click, "retry-checks", key .. " asks again")
+	eq(findKey(pickerNode(b), "runs", "skeleton"), nil, "the skeletons go once the read ends")
+	local whats: { [string]: string } = { linked = "linked issues", reviewers = "reviewers", runs = "checks" }
+	for key, what in whats do
+		local e = findKey(pickerNode(b), key .. "-state", "empty")
+		yes(e ~= nil, key .. ": a failed load is an empty")
+		eq(e.p.tone, "error", key .. ": in the error tone")
+		eq(e.p.variant, "inline", key .. ": one row in the section")
+		eq(e.p.title, "Could not load " .. what, key .. ": saying what failed")
+		has(e.p.text, "HTTP 502", key .. ": with the tool's message")
+		has(e.p.text, "Trying again at ", key .. ": and when it is tried again")
+		eq(findKey(e, key .. "-retry", "item").p.actions.click, "retry-checks", key .. ": its Retry child asks again")
 	end
 	failing = false
-	h.refreshNow(w, b)
+	b.event({ ev = "action", id = "layer.queue.runs-state.runs-retry", act = "retry-checks" })
 	w.advance(300)
-	local empty = texts(b)
-	lacks(empty, "Could not load", "the retry loaded them")
-	has(empty, "No linked issues", "an empty section says so")
-	has(empty, "No reviewers", "Reviewers too")
-	has(empty, "No checks", "and Checks")
+	lacks(texts(b), "Could not load", "Retry loaded them")
+	local missing: { [string]: string } = { linked = "No linked issues", reviewers = "No reviewers", runs = "No checks" }
+	for key, what in missing do
+		local e = findKey(pickerNode(b), key, "empty")
+		yes(e ~= nil, key .. ": nothing in it is an empty")
+		eq(e.p.title, what, key .. ": saying what is missing")
+		eq(e.p.tone, nil, key .. ": not an error")
+	end
 end)
 
 case("preview: the merge state shows what the search carried until the details load, Unknown when GitHub has not computed it, and none for a merged pull request", function(w: World)
