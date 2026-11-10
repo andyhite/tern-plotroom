@@ -346,7 +346,7 @@ local function rowsOf(state: State, snap: Snap): { any }
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected|review;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -358,7 +358,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. "|" .. (info.review or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -594,6 +594,10 @@ local function itemActions(state: State, item: any, open: { [string]: boolean })
 	-- Disagree with check… (palette only): while the item's newest agent is a checker with a verdict, exited or not.
 	if (state.agentInfo[item.key] or {} :: core.AgentInfo).check then
 		table.insert(out, { id = "agentdisagree", label = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
+	end
+	-- Show Draft review (palette only): while the item's newest run has a Draft review that opened, its agent exited or not.
+	if (state.agentInfo[item.key] or {} :: core.AgentInfo).review then
+		table.insert(out, { id = "agentreview", label = "agentreview", href = hrefOf(state, item, "agentreview") })
 	end
 	-- Triage is the block's own (no link).
 	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
@@ -1412,6 +1416,9 @@ local function agentsPreview(state: State): { Node }
 		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
 		for _, act in AGENT_COMMANDS do
 			table.insert(links, ui.node("text", { key = act, href = engine.agentHref(row.key, act) }))
+		end
+		if (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+			table.insert(links, ui.node("text", { key = "agentreview", href = engine.agentHref(row.key, "agentreview") }))
 		end
 		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	end

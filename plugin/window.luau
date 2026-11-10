@@ -46,8 +46,8 @@ local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.t
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE
-local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree: the hidden links of the agent commands
-local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check
+local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree | agentreview: the hidden links of the agent commands
+local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check, Show Draft review
 local MORE_NODE = "main.more" -- hidden: the command palette
 local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
@@ -66,7 +66,7 @@ local RECENT_CAP = 5
 local strOf = flows.strOf
 
 -- The valid link actions of an item (a PR link also takes open and show).
-local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, run = true }
+local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true, run = true }
 
 -- The hidden node whose href a link of action `act` must match (`id`: a saved prompt's id for `run`).
 local function nodeOf(act: string, id: string?): string

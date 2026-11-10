@@ -2046,8 +2046,9 @@ function M.rpc(state: State, raw: any)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
 	elseif q.op == "review" and review.validRun(q.run) then
-		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none.
-		reply(state, id, { at = review.fileAt(q.run) })
+		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none; with
+		-- `glimpse` when Settings › General has a Draft review open Over the agent's tab.
+		reply(state, id, { at = review.fileAt(q.run), glimpse = if storage.readReview() then true else nil })
 	else
 		M.workflowRpc(state, id, q)
 	end
@@ -2076,7 +2077,7 @@ function M.paletteActions(state: State): { QueueAction }
 		end
 	end
 	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
-	labels.agentint, labels.agentstop, labels.agentmsg, labels.agentdisagree = "Interrupt agent", "Stop agent…", "Message agent…", "Disagree with check…"
+	labels.agentint, labels.agentstop, labels.agentmsg, labels.agentdisagree, labels.agentreview = "Interrupt agent", "Stop agent…", "Message agent…", "Disagree with check…", "Show Draft review"
 	local function addAgentCommands(group: string)
 		for _, id in { "agentint", "agentstop", "agentmsg" } do
 			add(id, group)
@@ -2125,11 +2126,18 @@ function M.paletteActions(state: State): { QueueAction }
 		if info and info.check then
 			add("agentdisagree", "Actions")
 		end
+		if info and info.review then
+			add("agentreview", "Actions")
+		end
 	end
 	if state.agentsOn then
 		if select(2, engine.agentSelected(state)) > 0 then
 			add("agentgo", "Agents")
 			addAgentCommands("Agents")
+			local row = engine.agentSelected(state)
+			if row and (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+				add("agentreview", "Agents")
+			end
 		end
 		add("nownext", "Now")
 		views()
