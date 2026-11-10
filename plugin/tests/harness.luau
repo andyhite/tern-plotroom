@@ -350,7 +350,7 @@ export type WinPane = { block: string?, cwd: string, tab: number, kind: string?,
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
 export type Win = {
 	panes: { [number]: WinPane },
-	tabs: { { id: number, session: number } },
+	tabs: { { id: number, session: number, color: string? } },
 	sessions: { number },
 	focused: number?,
 	surfaces: { [number]: any }, -- pane -> { main, dock, layer } regions of TSP nodes
@@ -456,7 +456,7 @@ export type World = {
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
-	click: (string, number?) -> any,
+	click: (string, number?, { alt: boolean? }?) -> any, -- a link click in `pane` (default 1); `{alt = true}` holds Alt
 	command: (string) -> (),
 	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
@@ -731,10 +731,10 @@ local function newWorld(instantiate: Loader, context: string): World
 				end)
 			end
 		end,
-		-- A block of `kind` in the tab of `opts.target` (else a new tab), as cx:new_block opens it: its launch records the
-		-- kind, args, how and opts (`newBlock` true).
+		-- A block of `kind` in the tab of `opts.target` (a glimpse: the focused pane's tab; else a new tab), as cx:new_block
+		-- opens it: its launch records the kind, args, how and opts (`newBlock` true).
 		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
-			local target = if opts then win.panes[opts.target] else nil
+			local target = if opts and opts.target then win.panes[opts.target] elseif how == "glimpse" and win.focused then win.panes[win.focused] else nil
 			return addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
 		end,
 		session = {
@@ -782,7 +782,7 @@ local function newWorld(instantiate: Loader, context: string): World
 			tabs = function(_self: any): any
 				local rows: { any } = {}
 				for _, t in win.tabs do
-					table.insert(rows, { id = t.id, session = t.session })
+					table.insert(rows, { id = t.id, session = t.session, color = t.color })
 				end
 				return rows
 			end,
@@ -842,6 +842,13 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			name_tab = function(_self: any, tab: number, name: string)
 				win.tabNames[tab] = name
+			end,
+			color_tab = function(_self: any, tab: number, color: string?)
+				for _, t in win.tabs do
+					if t.id == tab then
+						t.color = color
+					end
+				end
 			end,
 			focus = function(_self: any, pane: number)
 				win.focused = pane
@@ -1327,6 +1334,33 @@ local function newWorld(instantiate: Loader, context: string): World
 			node = function(kind: string, props: any?, children: any?): any
 				return { k = kind, p = props, c = children }
 			end,
+			-- As Tern's builder outputs it (docs: UI Builders › table): each row's cells keyed by column id, a cell list's row
+			-- id "r<i-1>", a TableRow keeping its id, disabled, menu and title.
+			table = function(cols: { any }, rows: { any }, opts: any?): any
+				local out: { any } = {}
+				for i, row in rows do
+					local list = if row.cells then row.cells else row
+					local cells: { [string]: any } = {}
+					for j, col in cols do
+						cells[col.id] = list[j]
+					end
+					table.insert(out, { id = row.id or ("r" .. (i - 1)), cells = cells, disabled = row.disabled, menu = row.menu, title = row.title })
+				end
+				local p: { [string]: any } = { cols = cols, rows = out }
+				for k, v in opts or {} do
+					p[k] = v
+				end
+				return { k = "table", p = p }
+			end,
+			-- As Tern builds it: a `button` node whose props carry the label as `text`.
+			button = function(text: string?, props: any?): any
+				local p: { [string]: any } = {}
+				for k, v in props or {} do
+					p[k] = v
+				end
+				p.text = text or ""
+				return { k = "button", p = p }
+			end,
 			el = function(tag: string, props: any?, children: any?): any
 				local p: { [string]: any } = { tag = tag }
 				for k, v in props or {} do
@@ -1579,12 +1613,13 @@ local function newWorld(instantiate: Loader, context: string): World
 		link = function(block: Block)
 			linked[block.pane] = block
 		end,
-		click = function(url: string, pane: number?): any
+		click = function(url: string, pane: number?, mods: { alt: boolean? }?): any
 			local handler = routes.link
 			if handler == nil then
 				error("load \"window\" before clicking a link", 2)
 			end
-			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = false, shift = false, ctrl = false } }, windowCx)
+			local alt = mods ~= nil and mods.alt == true
+			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = alt, shift = false, ctrl = false } }, windowCx)
 		end,
 		command = function(id: string)
 			local def = commands[id]
@@ -2692,7 +2727,16 @@ M.pickerOf = pickerOf
 local hx = {}
 M.hx = hx
 
--- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
+-- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that Plotroom
+-- uses; add one only after finding it in Tern's set (a `<name><svg` entry in the Tern binary).
+local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle", "pen", "warn", "chev", "chev-r" }
+
+-- Whether `name` is an icon Tern draws.
+function hx.ternIcon(name: any): boolean
+	return table.find(TERN_ICONS, name) ~= nil
+end
+
+-- A Board's columns as "column: card ids" (the fold's only while it is open) and the node id of its selected card;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
 	local node = findKey(pickerNode(b), "board", "col")
@@ -2704,13 +2748,16 @@ function hx.board(b: Block): ({ string }?, string?)
 	for _, group in node.c do
 		if group.p.key == "lanes" or group.p.key == "fold" then
 			for _, col in group.c do
-				local list = findKey(col, "list", "list")
+				-- each column is a card; an empty one holds an `empty` node in its scroller's place
+				local list = findKey(col, "list", "scroll")
 				local ids: { string } = {}
-				for _, card in list.c do
+				for _, card in (if list then list.c else {}) :: { any } do
 					table.insert(ids, card.p.key)
+					if card.p.selected then
+						selected = "layer.queue.board." .. group.p.key .. "." .. col.p.key .. ".list." .. card.p.key
+					end
 				end
 				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = list.p.selected or selected
 			end
 		end
 	end
@@ -2834,7 +2881,7 @@ M.chipsOf = chipsOf
 
 -- A click on the card's button `key`, as Tern sends it: the button's own id, with the action it was given.
 local function pressCard(b: Block, key: string)
-	local item: any = findKey(cardOf(b), key, "item")
+	local item: any = findKey(cardOf(b), key, "button")
 	b.event({ ev = "action", id = "layer.queue.worktree.actions." .. key, act = item.p.actions.click })
 end
 M.pressCard = pressCard
@@ -3196,9 +3243,10 @@ end
 M.helpRows = helpRows
 
 -- The nodes under `node` whose look disagrees with what a click does there, as "path (kind, role)": a node with a
--- click action or an href must wear render's button or link role, and no other node may. Hidden subtrees are skipped:
--- Tern draws none of them (they are the links the window reads by key).
-local CLICK_ROLES = { ["plotroom.button"] = true, ["plotroom.link"] = true }
+-- click action or an href must be Tern's `button` kind or wear render's link role, and no other node may (a button
+-- that does nothing is miscued too). A `seg` (the key footer's status strip) and a selectable `card` (one with a
+-- `selected` prop: a Board card, which draws its own hover and selection ring) are Tern's own clickable controls, so
+-- they are neither. Hidden subtrees are skipped: Tern draws none of them (they are the links the window reads by key).
 function hx.miscued(node: any): { string }
 	local out: { string } = {}
 	local function walk(n: any, path: string)
@@ -3211,7 +3259,8 @@ function hx.miscued(node: any): { string }
 		end
 		local here = path .. "." .. tostring(p.key or n.k)
 		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
-		if clicks ~= (CLICK_ROLES[p.role] == true) then
+		local own = n.k == "seg" or (n.k == "card" and type(p.selected) == "boolean")
+		if not own and clicks ~= (n.k == "button" or p.role == "plotroom.link") then
 			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
 		end
 		if type(n.c) == "table" then
@@ -3247,7 +3296,7 @@ function hx.offPalette(node: any): { string }
 		local tone = p.tone
 		if type(tone) == "string" and not MEANING_TONES[tone] and not NEUTRAL_TONES[tone] then
 			table.insert(out, tone .. ": " .. text)
-		elseif type(tone) == "string" and MEANING_TONES[tone] and p.role == "plotroom.button" then
+		elseif type(tone) == "string" and MEANING_TONES[tone] and n.k == "button" then
 			table.insert(out, "button " .. tone .. ": " .. text)
 		end
 		if type(n.k) == "string" then

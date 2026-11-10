@@ -21,7 +21,7 @@ type Prompt = core.Prompt
 type Snap = core.Snap
 type State = core.State
 
-local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_ICON, RUN_TONE, SETTINGS_KEYS, STAGE, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_ICON, core.RUN_TONE, core.SETTINGS_KEYS, core.STAGE, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
+local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_TONE, SETTINGS_KEYS, STAGE, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_TONE, core.SETTINGS_KEYS, core.STAGE, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
 local kindAndId, loadPrompts, promptById, readCheckouts = storage.kindAndId, storage.loadPrompts, storage.promptById, storage.readCheckouts
 local TERMINAL, activeView, cancelDetails, codeRepoOf, detailKey, filtered, headOf, helpOf, pickerId, offered, openItems, orderedViews, selected, snapKey, viewOf, waitOf, wantDetails, ghActive, me = engine.TERMINAL, engine.activeView, engine.cancelDetails, engine.codeRepoOf, engine.detailKey, engine.filtered, engine.headOf, engine.helpOf, engine.pickerId, engine.offered, engine.openItems, engine.orderedViews, engine.selected, engine.snapKey, engine.viewOf, engine.waitOf, engine.wantDetails, engine.ghActive, engine.me
 
@@ -266,7 +266,7 @@ local function agentClock(state: State, key: string): { any }?
 		end
 		table.insert(out, " ")
 	end
-	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "num"))
+	table.insert(out, ui.span(string.format("%d:%02d", elapsed // 60, elapsed % 60), "mono"))
 	return out
 end
 
@@ -346,7 +346,7 @@ local function rowsOf(state: State, snap: Snap): { any }
 	return rows
 end
 
--- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
+-- The agent map this block holds as one string, "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected|review;"
 -- per entry in key order: the hidden `main.agents` node says it, so a window that sent its map to an earlier run of this
 -- block (a reload) sees the block no longer holds it and sends again. flows.luau's `signature` spells it the same.
 local function agentSig(state: State): string
@@ -358,7 +358,7 @@ local function agentSig(state: State): string
 	local out: { string } = {}
 	for _, k in names do
 		local info: core.AgentInfo = state.agentInfo[k] or {}
-		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. ";")
+		table.insert(out, k .. "=" .. state.agents[k] .. "|" .. (info.action or "") .. "|" .. (info.branch or "") .. "|" .. (info.title or "") .. "|" .. (info.last or "") .. "|" .. (info.err or "") .. "|" .. (info.result or "") .. "|" .. (info.ended or "") .. "|" .. (info.attention or "") .. "|" .. (info.reason or "") .. "|" .. (info.blocker or "") .. "|" .. (info.outcome or "") .. "|" .. (info.verdict or "") .. "|" .. (info.check or "") .. "|" .. (info.findings or "") .. "|" .. (info.stop or "") .. "|" .. (info.since or "") .. "|" .. (info.expected or "") .. "|" .. (info.review or "") .. ";")
 	end
 	return table.concat(out)
 end
@@ -390,14 +390,34 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	return out
 end
 
--- What a click does is drawn on the node itself (plotroom.css): an action is a button (BUTTON, a ring sized to its label),
--- a row or icon that opens something is a link (LINK, the accent label). A node with no click and no href has neither.
-local BUTTON, LINK = "plotroom.button", "plotroom.link"
+-- What a click does is drawn on the node itself (DESIGN.md › Buttons and links): an action is Tern's `button` kind, a
+-- row or icon that opens something is a link (LINK, plotroom.css underlines it). A node with no click and no href is
+-- neither.
+local LINK = "plotroom.link"
 
--- An action `item` drawn as a button; `p` is its props.
-local function button(p: { [string]: any }): Node
-	p.role, p.basis = BUTTON, "content"
-	return ui.node("item", p)
+-- Key names as Tern's keycaps read them: a keycap upper-cases every letter, so an upper-case key is Shift and its letter.
+local function keyNames(ks: { string }?): { string }?
+	if not ks then
+		return nil
+	end
+	local out: { string } = {}
+	for _, k in ks do
+		if string.match(k, "^%u$") then
+			table.insert(out, "shift")
+			table.insert(out, string.lower(k))
+		else
+			table.insert(out, k)
+		end
+	end
+	return out
+end
+
+-- A Tern button labelled `text` ("" with an `icon`: icon-only, named by `title`); `p` its props, `keys` the key names
+-- of the key that does the same. Size `sm` (rows, the preview, cards) unless `p.size` says `md` (bars, overlays, heads).
+local function button(text: string, p: { [string]: any }): Node
+	p.size = p.size or "sm"
+	p.keys = keyNames(p.keys)
+	return ui.button(text, p)
 end
 M.button = button
 
@@ -406,29 +426,86 @@ local function buttonRow(key: string, buttons: { Node }): Node
 	return ui.node("row", { key = key, gap = "sm", wrap = true, align = "center" }, buttons)
 end
 
--- One section of a preview whose rows load, the same for every section: its heading, then while loading Tern's shimmer
--- (`Loading <what>…`), after a failed detail load (`fail`) why, when it is tried again and a Retry button, after another
--- failed read (`problem`, retried by its own Refresh) why, else `body` or, with nothing in it, `No <what>`. `key`
--- prefixes each node's key.
+-- Tern's four states of a part that loads (docs/reference.md › Finer points › Preview): a skeleton shaped like what is
+-- on its way (`shape` "rows" or "text", `n` of them), keyed like the part, so the loaded part takes its place.
+local function skeleton(key: string, shape: string, n: number): Node
+	return ui.node("skeleton", { key = key, shape = shape, rows = if shape == "rows" then n else nil, lines = if shape == "text" then n else nil })
+end
+
+-- Nothing to show: one inline row saying what is missing.
+local function emptyNode(key: string, title: string): Node
+	return ui.node("empty", { key = key, variant = "inline", title = title })
+end
+
+-- A failed read: an inline error row (key `<key>-state`) with what failed, the tool's message and a Retry button (key
+-- `<key>-retry`, click `act`).
+local function failNode(key: string, title: string, message: string, aria: string, act: string): Node
+	return ui.node("empty", { key = key .. "-state", variant = "inline", tone = "error", title = title, text = message }, {
+		button("Retry", { key = key .. "-retry", icon = "redo", aria = aria, actions = { click = act } }),
+	})
+end
+
+-- One section of a preview whose rows load, the same for every section: its heading, then while loading a skeleton
+-- (`shape`, `n`: see skeleton), after a failed detail load (`fail`) or another failed read (`problem`) an error with why,
+-- when it is tried again and Retry, else `body` or, with nothing in it, `No <what>`. `key` prefixes each node's key.
 type Load = { loading: boolean?, fail: DetailFail?, problem: string? }
-local function section(key: string, head: string, what: string, body: { Node }, load: Load): { Node }
+local function section(key: string, head: string, what: string, body: { Node }, load: Load, shape: string, n: number): { Node }
 	local out: { Node } = { ui.node("text", { key = key .. "-head", spans = { ui.span(head, "strong") } }) }
 	local fail = load.fail
 	if load.loading then
-		table.insert(out, ui.node("shimmer", { key = key .. "-loading", text = "Loading " .. what .. "…" }))
+		table.insert(out, skeleton(key, shape, n))
 		return out
 	elseif fail then
 		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
-		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(fail.problem.message), "error"), ui.span("  " .. when, "muted") } }))
-		table.insert(out, button({ key = key .. "-retry", label = "Retry", icon = "redo", aria = "Retry loading " .. what, actions = { click = "retry-checks" } }))
+		table.insert(out, failNode(key, "Could not load " .. what, brief(fail.problem.message) .. "  " .. when, "Retry loading " .. what, "retry-checks"))
 	elseif load.problem then
-		table.insert(out, ui.node("text", { key = key .. "-state", spans = { ui.span("Could not load " .. what .. ": " .. brief(load.problem), "error") } }))
+		-- the Worktrees board's read: its Retry is the board's Refresh (host's retry-checks)
+		table.insert(out, failNode(key, "Could not load " .. what, brief(load.problem), "Retry loading " .. what, "retry-checks"))
 	elseif #body == 0 then
-		table.insert(out, ui.node("text", { key = key .. "-empty", spans = { ui.span("No " .. what, "muted") } }))
+		table.insert(out, emptyNode(key, "No " .. what))
 	end
 	table.move(body, 1, #body, #out + 1, out)
 	return out
 end
+
+-- The check row `item` of the selected pull request's Checks section names ("run<i>"), with that pull request.
+local function checkOf(state: State, item: string): (github.Run?, github.Pr?)
+	local i = tonumber(string.match(item, "^run(%d+)$"))
+	local pr = if state.kind.id == "prs" then selected(state) else nil
+	if not i or not pr then
+		return nil, nil
+	end
+	local key = detailKey(state, pr)
+	local d = if key then state.details[key] else nil
+	return (if d then d.runs else pr.runs)[i], pr
+end
+
+-- The window link a check row's `act` follows (`open` its page, `ignore` the plan to ignore it), nil when the row does
+-- not offer it. The hidden `checks` col carries the same links, so the window honours only these.
+local function checkLink(state: State, act: string, item: string): string?
+	local r, pr = checkOf(state, item)
+	if not r or not pr then
+		return nil
+	end
+	local i = string.sub(item, 4)
+	if act == "open" then
+		return if r.url then "plotroom://github/check/" .. i .. "/" .. pct(r.url) else nil
+	elseif act == "ignore" then
+		return if r.status == "failure" and not engine.ignored(state, pr, r) then "plotroom://github/ignore/" .. i .. "/" .. pct(r.name) else nil
+	end
+	return nil
+end
+M.checkLink = checkLink
+
+-- A check row's right-click menu: each entry's action, labelled by Tern from it ("open" reads Open); Tern adds Copy row.
+M.CHECK_MENU = { open = "open", ignore = "ignore-in-this-repo…" }
+local CHECK_COLS: { Col } = {
+	{ id = "check", head = "Check", grow = 1, priority = 2 },
+	{ id = "workflow", head = "Workflow", priority = 0 },
+	{ id = "took", head = "Took", align = "end", mono = true, priority = 1 },
+}
+-- How many lines of a failing check's excerpt show before its "N more lines".
+local LOG_PREVIEW = 12
 
 -- The Checks section of the selected PR (`section`): what the search carried stays listed under a failed load.
 local function checksNodes(state: State, pr: github.Pr): { Node }
@@ -440,83 +517,88 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local total = if d then d.total else pr.runTotal
 
 	-- Every check, grouped by state: Failing, Running and Queued, each headed with its count, then Passed and Skipped in
-	-- one fold, folded ("Passed 12 · Skipped 1"); required first within a group (github.runs' order). The icon and its
-	-- tone are the status (the tooltip spells it out), the value how long it ran or has been running. A `workflow / job`
-	-- name shows the job; the detail is Required, a Likely flaky mark and why, then the CI that ran it. Only `item`
-	-- rows go in a list: other kinds get no row behaviour.
+	-- one fold, folded ("Passed 12 · Skipped 1"); required first within a group (github.runs' order). Each group is a
+	-- table: the check (a `workflow / job` name shows the job) after a dot in its status's tone, Required, a Likely flaky
+	-- mark and why, and Ignored after it; the CI that ran it; how long it ran or has been running. A click opens its
+	-- page; its menu also ignores a failing check in this repository (`checkLink`). The tooltip spells it all out.
 	local marks = engine.flakyMarks(state, pr)
-	local groups: { [string]: { Node } } = { failing = {}, running = {}, queued = {}, passed = {}, skipped = {} }
+	local groups: { [string]: { TableRow } } = { failing = {}, running = {}, queued = {}, passed = {}, skipped = {} }
+	local links: { Node } = {}
 	local now = os.time()
 	for i, r in runs do
 		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
-		-- An ignored failing check still shows failing; its value says Ignored (it blocks nothing).
+		-- An ignored failing check still shows failing, marked Ignored (it blocks nothing).
 		local ignored = r.status == "failure" and engine.ignored(state, pr, r)
 		local mark = if marks and r.status == "failure" and r.url then marks[r.url] else nil
 		local flaky = if mark then "Likely flaky · " .. mark.reason else nil
 		local ci = r.ci or workflow
 		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "") .. (if flaky then " — " .. flaky else "") .. (if ci then " · " .. ci else "")
-		local detail: { string } = {}
-		if r.required then
-			table.insert(detail, "Required")
+		local name: { any } = { job or r.name }
+		for _, note in { if r.required then "Required" else nil, flaky, if ignored then "Ignored" else nil } :: { string? } do
+			if note then
+				table.insert(name, ui.span(" · " .. note, "muted"))
+			end
 		end
-		if flaky then
-			table.insert(detail, flaky)
+		local id = "run" .. i
+		local menu: { string } = {}
+		for _, act in { "open", "ignore" } do
+			local href = checkLink(state, act, id)
+			if href then
+				table.insert(menu, M.CHECK_MENU[act])
+				table.insert(links, ui.node("text", { key = act .. i, href = href, hidden = true }))
+			end
 		end
-		if ci then
-			table.insert(detail, ci)
-		end
-		local props: { [string]: any } = {
-			key = "run" .. i,
-			label = job or r.name,
-			detail = if #detail > 0 then table.concat(detail, " · ") else nil,
-			value = if ignored then "Ignored" elseif r.started then github.took(now - r.started) else r.took,
-			icon = RUN_ICON[r.status],
-			tone = RUN_TONE[r.status],
+		table.insert(groups[r.phase] or groups.skipped, {
+			id = id,
+			cells = { { text = name, dot = RUN_TONE[r.status] }, ci or "", if r.started then github.took(now - r.started) else r.took or "" },
+			menu = if #menu > 0 then menu else nil,
 			title = what,
-			aria = what,
-		}
-		if r.url then
-			props.href = "plotroom://github/check/" .. i .. "/" .. pct(r.url)
-			props.actions, props.role = { click = "open" }, LINK
-		end
-		table.insert(groups[r.phase] or groups.skipped, ui.node("item", props))
+		})
+	end
+	local function grid(k: string, rows: { TableRow }): Node
+		local t = ui.table(CHECK_COLS, rows, { selectable = true })
+		local p: { [string]: any } = t.p or {}
+		p.key = k
+		t.p = p
+		return t
 	end
 	for _, g in { { "failing", "Failing" }, { "running", "Running" }, { "queued", "Queued" } } do
-		local list = groups[g[1]]
-		if #list > 0 then
-			table.insert(out, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #list, "muted") } }))
-			table.insert(out, ui.node("list", { key = g[1] }, list))
+		local rows = groups[g[1]]
+		if #rows > 0 then
+			table.insert(out, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #rows, "muted") } }))
+			table.insert(out, grid(g[1], rows))
 		end
 	end
 	local done: { Node } = {}
 	local count: { string } = {}
 	for _, g in { { "passed", "Passed" }, { "skipped", "Skipped" } } do
-		local list = groups[g[1]]
-		if #list > 0 then
-			table.insert(count, g[2] .. " " .. #list)
-			table.insert(done, ui.node("list", { key = g[1] }, list))
+		local rows = groups[g[1]]
+		if #rows > 0 then
+			table.insert(count, g[2] .. " " .. #rows)
+			table.insert(done, grid(g[1], rows))
 		end
 	end
 	if #done > 0 then
 		table.insert(out, ui.node("section", { key = "done", head = { ui.span(table.concat(count, " · "), "muted") }, collapsible = true, collapsed = true }, done))
 	end
-	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
-	-- engine.failures). No log viewer: the check's row above opens its page.
+	if #links > 0 then
+		table.insert(out, ui.node("col", { key = "checks", hidden = true }, links))
+	end
+	-- Each failing check's first error line, its log excerpt under it (read once per check and head commit,
+	-- engine.failures): code with that line marked, clamped to its first lines with Tern's "K more lines". Not in a
+	-- collapsible section: Tern applies a code preview only while its disclosure is folded, and a folded section draws
+	-- no body. No log viewer: the check's row above opens its page.
 	local sha = if d and d.about then d.about.head else nil
 	for i, r in runs do
 		local log = if r.status == "failure" and sha then engine.ciLog(state, sha, r) else nil
 		if log and log.lines then
 			local line = log.first or "No error line: its last lines are kept"
-			local text = table.concat(log.lines, "\n")
-			local fence = "```"
-			while string.find(text, fence, 1, true) do
-				fence ..= "`"
-			end
-			local body = { ui.node("md", { key = "log", text = fence .. "text\n" .. text .. "\n" .. fence }) }
+			local at = if log.first then table.find(log.lines, log.first) else nil
+			local body = { ui.node("code", { key = "log", text = table.concat(log.lines, "\n"), lang = "text", marks = if at then { { line = at, tone = "error" } } else nil, preview = { lines = LOG_PREVIEW } }) }
 			if #log.refs > 0 then
 				table.insert(body, 1, ui.node("text", { key = "refs", spans = { ui.span("Changed files it names: ", "muted"), ui.span(table.concat(log.refs, ", "), "code") } }))
 			end
-			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") }, collapsible = true, collapsed = true }, body))
+			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") } }, body))
 		elseif log and log.problem then
 			table.insert(out, ui.node("text", { key = "fail" .. i, spans = { ui.span(r.name .. ": log not read: " .. log.problem, "muted") } }))
 		end
@@ -524,7 +606,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	if total > #runs then
 		table.insert(out, ui.node("text", { key = "runs-more", spans = { ui.span((total - #runs) .. " more not loaded", "muted") } }))
 	end
-	return section("runs", "Checks", "checks", out, { loading = key ~= nil and d == nil and fail == nil, fail = fail })
+	return section("runs", "Checks", "checks", out, { loading = key ~= nil and d == nil and fail == nil, fail = fail }, "rows", 3)
 end
 
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
@@ -556,6 +638,10 @@ local function itemActions(state: State, item: any, open: { [string]: boolean })
 	-- Disagree with check… (palette only): while the item's newest agent is a checker with a verdict, exited or not.
 	if (state.agentInfo[item.key] or {} :: core.AgentInfo).check then
 		table.insert(out, { id = "agentdisagree", label = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
+	end
+	-- Show Draft review (palette only): while the item's newest run has a Draft review that opened, its agent exited or not.
+	if (state.agentInfo[item.key] or {} :: core.AgentInfo).review then
+		table.insert(out, { id = "agentreview", label = "agentreview", href = hrefOf(state, item, "agentreview") })
 	end
 	-- Triage is the block's own (no link).
 	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
@@ -600,10 +686,10 @@ local function refRow(key: string, label: string, name: string, full: string?): 
 		ui.node("text", { key = "k", grow = 1, shrink = 0, spans = { ui.span(label, "muted") } }),
 		-- Cut in the middle (prefix and ticket suffix both matter), at most 28 cells; Tern's tooltip shows it whole.
 		ui.node("text", { key = "v", truncate = "middle", shrink = 1, max = { w = "28ch" }, title = full, spans = { ui.span(name, "code") } }),
-		ui.node("icon", {
+		button("", {
 			key = "copy",
-			name = "copy",
-			role = BUTTON,
+			icon = "copy",
+			variant = "quiet",
 			href = whole,
 			actions = { click = "copy" },
 			title = "Copy " .. string.lower(label),
@@ -689,13 +775,13 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	-- Buttons sized to their label, left to right: the tab, then Remove.
 	local buttons: { Node } = {}
 	if tab then
-		table.insert(buttons, button({ key = "go", label = "Go to tab", icon = "arrow-right", hint = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
+		table.insert(buttons, button("Go to tab", { key = "go", icon = "arrow-right", keys = tab.keys, aria = "Go to the tab working in this worktree", actions = { click = "goto" } }))
 	else
-		table.insert(buttons, button({ key = "open", label = "Open in new tab", icon = "plus", hint = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
+		table.insert(buttons, button("Open in new tab", { key = "open", icon = "plus", keys = if fresh then fresh.keys else nil, aria = "Open a new tab in this worktree", actions = { click = "worktree" } }))
 	end
-	table.insert(buttons, button({ key = "remove", label = "Remove worktree", icon = "trash", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
+	table.insert(buttons, button("Remove worktree", { key = "remove", icon = "trash", aria = "Remove this worktree", actions = { click = "remove-worktree" } }))
 	if note.path and tern.fs.exists(note.path) then
-		table.insert(buttons, button({ key = "git", label = "Open Git view", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
+		table.insert(buttons, button("Open Git view", { key = "git", icon = "merge", aria = "Open Tern's Git view on this worktree", actions = { click = "open-git" } }))
 	end
 	table.insert(body, buttonRow("actions", buttons))
 	return { ui.node("card", { key = "worktree", tone = noteTone(note) }, body) }
@@ -704,9 +790,11 @@ end
 -- The description part of the item with key `key`. A folded bare card shows its first lines under a fade and Tern's
 -- own "N more lines" button; its head row is hidden by plotroom.css, so the text stands alone. `collapsed` mirrors
 -- state.descOpen (set by the card's toggle event), so Show less, a value the card has not been sent yet, folds it again.
--- Nothing for a blank body.
-local function descNodes(state: State, key: string, body: string?): { Node }
-	if not body or not string.find(body, "%S") then
+-- While the details load (`loading`), a skeleton of its first lines; nothing for a blank body.
+local function descNodes(state: State, key: string, body: string?, loading: boolean): { Node }
+	if loading then
+		return { skeleton("description", "text", 3) }
+	elseif not body or not string.find(body, "%S") then
 		return {}
 	end
 	local unfolded = state.descOpen == key
@@ -723,7 +811,7 @@ local function descNodes(state: State, key: string, body: string?): { Node }
 		}),
 	}
 	if unfolded then
-		table.insert(nodes, button({ key = "less", label = "Show less", icon = "chev-up", tone = "muted", actions = { click = "fold-description" } }))
+		table.insert(nodes, button("Show less", { key = "less", icon = "chev-up", variant = "quiet", actions = { click = "fold-description" } }))
 	end
 	return nodes
 end
@@ -736,9 +824,9 @@ local function summaryNodes(state: State, item: any, pr: boolean): { Node }
 	if status == "done" then
 		return { head, ui.node("text", { key = "summary", spans = { ui.span(text or "") } }) }
 	elseif status == "busy" then
-		return { head, ui.node("shimmer", { key = "summary-loading", text = "Summarizing…" }) }
+		return { head, skeleton("summary", "text", 3) }
 	elseif status == "failed" then
-		return { head, ui.node("text", { key = "summary-state", spans = { ui.span("Summary not made: " .. brief(text or ""), "muted") } }) }
+		return { head, failNode("summary", "Summary not made", brief(text or ""), "Make the Summary again", "retry-summary") }
 	end
 	return {}
 end
@@ -810,15 +898,15 @@ local function previewControls(state: State, item: any): Node?
 	local map = keys.load()
 	local move = engine.nextMove(state, state.kind.id, item)
 	if move then
-		table.insert(rows, button({ key = "next", label = move.label, value = "Next", icon = "arrow-right", hint = keys.caps(map, "next"), aria = "Next move: " .. move.label, actions = { click = "next" } }))
+		table.insert(rows, button(move.label, { key = "next", icon = "arrow-right", keys = keys.caps(map, "next"), title = "Next move: " .. move.label, aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	if engine.pinFor(state.pins, item.key) then
-		table.insert(rows, button({ key = "unpin", label = "Unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
+		table.insert(rows, button("Unpin", { key = "unpin", icon = "x", aria = "Unpin " .. item.key .. " from the Pins group", actions = { click = "unpin" } }))
 	end
 	local st = if state.snap then engine.status(state, state.snap.kind, item) else nil
 	if st and st.snoozed then
 		-- Snooze until tomorrow on a snoozed item ends its snooze (engine.mark), so its key is this button's.
-		table.insert(rows, button({ key = "unsnooze", label = "Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", icon = "x", hint = keys.caps(map, "snooze"), aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
+		table.insert(rows, button("Snoozed until " .. os.date("%a %H:%M", st.snoozeUntil) .. " · Unsnooze", { key = "unsnooze", icon = "x", keys = keys.caps(map, "snooze"), aria = "End the snooze of " .. item.key, actions = { click = "unsnooze" } }))
 	end
 	if #rows > 0 then
 		return buttonRow("controls", rows)
@@ -831,7 +919,7 @@ end
 local function headNodes(ref: string, tag: { text: string, tone: string }, page: { copy: string, open: string, what: string }?, badge: any, title: string): { Node }
 	local head: { Node } = { ui.text({ ui.span(ref, "mono") }), ui.node("badge", { key = "integration", text = tag.text, tone = tag.tone }) }
 	if page then
-		table.insert(head, ui.node("icon", { key = "copy", name = "copy", role = BUTTON, href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
+		table.insert(head, button("", { key = "copy", icon = "copy", variant = "quiet", href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
 		table.insert(head, ui.node("icon", { key = "open", name = "globe", role = LINK, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
 	end
 	table.insert(head, ui.node("col", { key = "fill", grow = 1 }))
@@ -914,7 +1002,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	end
 	addPart(out, "status", status)
 	addPart(out, "worktree", worktreeNodes(state, pr.key, acts))
-	addPart(out, "description", descNodes(state, pr.key, if about then about.body else nil))
+	addPart(out, "description", descNodes(state, pr.key, if about then about.body else nil, loading))
 	local properties: { Node } = {
 		ui.node("col", { key = "about", gap = "sm" }, {
 			refRow("branch", "Branch", pr.head),
@@ -931,7 +1019,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 	end
 	addPart(out, "properties", properties)
 	local load: Load = { loading = loading, fail = fail }
-	addPart(out, "linked", section("linked", "Linked issues", "linked issues", linkedIssues(if about then about.closing else {}, if detail then detail.noted else nil), load))
+	addPart(out, "linked", section("linked", "Linked issues", "linked issues", linkedIssues(if about then about.closing else {}, if detail then detail.noted else nil), load, "rows", 2))
 	local reviewers: { Node } = {}
 	local reviews: { github.Review } = if about then about.reviews else {}
 	for i, r in reviews do
@@ -941,9 +1029,9 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 			table.insert(reviewers, ui.node("item", { key = "r" .. i, label = "@" .. r.login, icon = v.icon, tone = v.tone, title = what, aria = what }))
 		end
 	end
-	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load))
+	addPart(out, "reviewers", section("reviewers", "Reviewers", "reviewers", if #reviewers > 0 then { ui.node("list", { key = "reviewers" }, reviewers) } else {}, load, "rows", 2))
 	-- Unresolved review threads, read-only: who started each, where, its first line; each opens its thread on GitHub
-	-- through the check link route (window.luau's CHECK_LISTS). Nothing when none is open.
+	-- through the check link route (window.luau's CHECK_LISTS). A skeleton while the details load; nothing when none is open.
 	local threads: { Node } = {}
 	for i, t in (if about then about.threads else {}) :: { github.Thread } do
 		local where = if t.path then printable(t.path) .. (if t.line then ":" .. t.line else "") else nil
@@ -961,7 +1049,12 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 			actions = { click = "open" },
 		}))
 	end
-	if #threads > 0 then
+	if loading then
+		addPart(out, "threads", {
+			ui.node("text", { key = "threads-head", spans = { ui.span("Unresolved threads", "strong") } }),
+			skeleton("threads", "rows", 2),
+		})
+	elseif #threads > 0 then
 		addPart(out, "threads", {
 			ui.node("text", { key = "threads-head", spans = { ui.span("Unresolved threads · " .. #threads, "strong") } }),
 			ui.node("list", { key = "threads" }, threads),
@@ -1093,7 +1186,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 	addPart(out, "summary", summaryNodes(state, issue, false))
 	addPart(out, "status", { stageFact(state, "issues", issue) })
 	addPart(out, "worktree", worktreeNodes(state, issue.key, acts))
-	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil))
+	addPart(out, "description", descNodes(state, issue.key, if detail then detail.body else nil, loading))
 	addPart(out, "properties", properties)
 	-- The PR whose head is the issue's worktree branch joins a GitHub issue's linked pull requests; a Jira issue's
 	-- linked items are issues, so it has a Linked pull requests section of its own while there is one.
@@ -1103,7 +1196,7 @@ local function issuePreview(state: State, issue: tracker.Issue?, acts: { Action 
 		table.insert(linked, headPr)
 	end
 	local heading = INTEGRATIONS[issue.tracker].linked
-	addPart(out, "linked", section("linked", heading, string.lower(heading), linked, { loading = loading, fail = fail }))
+	addPart(out, "linked", section("linked", heading, string.lower(heading), linked, { loading = loading, fail = fail }, "rows", 2))
 	if headPr and issue.tracker ~= "github" then
 		addPart(out, "headpr", { ui.node("text", { key = "headpr-head", spans = { ui.span(INTEGRATIONS.github.linked, "strong") } }), headPr })
 	end
@@ -1154,7 +1247,7 @@ function M.helpOverlay(state: State): Node
 	return ui.node("overlay", { key = "help", modal = true, size = "md", head = "Keyboard shortcuts" }, {
 		ui.node("col", { key = "keys", gap = "xs" }, lines),
 		buttonRow("buttons", {
-			button({ key = "close", label = "Close", icon = "x", hint = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
+			button("Close", { key = "close", size = "md", icon = "x", keys = { "esc" }, aria = "Close the shortcut list", actions = { click = "close-help" } }),
 		}),
 	})
 end
@@ -1273,7 +1366,7 @@ local function boardPreview(state: State): { Node }
 		local info = sec.info
 		local body: { Node } = {}
 		if sec.state == "empty" or (sec.state == "ready" and not info) then
-			table.insert(body, ui.node("text", { key = key .. "-empty", spans = { ui.span(sec.ref .. " was not found by its tracker.", "muted") } }))
+			table.insert(body, emptyNode(key .. "-empty", sec.ref .. " was not found by its tracker."))
 		elseif sec.state == "ready" and info then
 			table.insert(body, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
 				ui.text({ ui.span(sec.ref, "mono") }),
@@ -1289,7 +1382,7 @@ local function boardPreview(state: State): { Node }
 				table.insert(body, ui.node("text", { key = key .. "-excerpt", spans = { ui.span(printable(info.excerpt), "muted") } }))
 			end
 		end
-		local nodes = section(key, heading, sec.ref, body, { loading = sec.state == "loading", problem = if sec.state == "error" then sec.problem or "no answer" else nil })
+		local nodes = section(key, heading, sec.ref, body, { loading = sec.state == "loading", problem = if sec.state == "error" then sec.problem or "no answer" else nil }, "text", 2)
 		table.move(nodes, 1, #nodes, #linked + 1, linked)
 	end
 	half("pr", INTEGRATIONS.github.linked, p.pr)
@@ -1367,6 +1460,9 @@ local function agentsPreview(state: State): { Node }
 		local links: { Node } = { ui.node("text", { key = "agentgo", href = href }) }
 		for _, act in AGENT_COMMANDS do
 			table.insert(links, ui.node("text", { key = act, href = engine.agentHref(row.key, act) }))
+		end
+		if (state.agentInfo[row.key] or {} :: core.AgentInfo).review then
+			table.insert(links, ui.node("text", { key = "agentreview", href = engine.agentHref(row.key, "agentreview") }))
 		end
 		table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	end
@@ -1675,21 +1771,30 @@ local function nowProps(state: State, props: { [string]: any })
 	props.columns, props.query, props.cursor = {}, nil, nil
 end
 
--- A Board (engine.laneColumns, Now's or a view's): a row of columns, each a heading and a native list of its rows as
--- items, the fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps
--- its height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
+-- A card's right-click menu, as ids its `action` events carry (host.luau's Board card events): a view's card offers
+-- what its keys do on the selected item; Now's only Open, Enter's: Worktree, Agent and Snooze act on a view's
+-- selected item, which Now's row is not.
+local CARD_MENU, NOW_CARD_MENU = { "open", "worktree", "agent", "snooze" }, { "open" }
+
+-- A Board (engine.laneColumns, Now's or a view's): a row of columns, each a `card` headed by its name and count whose
+-- cards scroll inside it, the fold's columns under a button that shows or hides them (open while the selection is in
+-- it). A `scroll` has no selected item to keep in view and plugins get no scroll events, so each time the selection
+-- moves to another card the block sends a `reveal` op for it once the view is drawn.
 local function boardNode(state: State, bar: boolean?): Node
 	local cols = engine.laneColumns(state)
 	local at = engine.laneAt(state)
 	local chosen = engine.laneSelected(state)
 	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
-	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one line plus
-	-- 6px, about three quarters of a cell row, under the picker's head, the column headings, the fold's button and,
-	-- with `bar`, the key footer (32px, about two cell rows).
-	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.75))
-	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
-	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
-	-- lists them all).
+	-- A column caps its height so its cards scroll in it, in the block's sans lines (18px; a cell row is about nine
+	-- tenths of one): the block's rows less the picker's head, the column's head and padding, the fold's button and, with
+	-- `bar`, the key footer in the dock (24px). Measured in smoke's "Now as a Board", with a line or two to spare.
+	local lines = math.max(6, math.floor(state.cx.rows * 0.9) - (if bar then 11 else 9))
+	local menu = if state.nowOn then NOW_CARD_MENU else CARD_MENU
+	local shown: string? = nil
+	-- A card: its number (and Snoozed) as its head, and on Now why Now lists it; on a view what blocks it, else New or
+	-- Changed, as its List row's badges say, as one badge under the head (a head `end` is drawn over the number in a
+	-- narrow column); its title under it, clamped to two lines ending in `…`. A Blocked card has room for one badge: its
+	-- most severe chip (the tooltip lists them all).
 	local function card(row: any): Node
 		local badge: { text: string, tone: string, title: string? }? = nil
 		local snoozed = row.snoozed
@@ -1719,24 +1824,37 @@ local function boardNode(state: State, bar: boolean?): Node
 				else nil
 		end
 		local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
-		local detail: { any } = { ui.span(ref, "mono") }
+		local head: { any } = { ui.span(ref, "mono") }
 		if snoozed then
-			table.insert(detail, ui.span(" · Snoozed", "muted"))
+			table.insert(head, ui.span(" · Snoozed", "muted"))
 		end
-		return ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = if badge then { ui.span(badge.text, badge.tone) } else nil, title = if badge then badge.title else nil })
+		local kids: { Node } = {}
+		if badge then
+			table.insert(kids, ui.node("row", { key = "tags" }, { ui.node("badge", { key = "badge", text = badge.text, tone = badge.tone }) }))
+		end
+		table.insert(kids, ui.node("text", { key = "title", spans = { ui.span(printable(row.title)) }, lines = 2 }))
+		local p: { [string]: any } = {
+			key = row.id,
+			head = head,
+			selected = row.id == chosen,
+			title = if badge then badge.title else nil,
+			actions = { click = "lane-pick", dblclick = "open", menu = menu },
+		}
+		return ui.node("card", p, kids)
 	end
 	local function column(group: string, col: any): Node
 		local cards: { Node } = {}
-		local selected: string? = nil
+		local list = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list"
 		for _, row in col.rows do
+			local id = list .. "." .. row.id
 			table.insert(cards, card(row))
 			if row.id == chosen then
-				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
+				shown = id
 			end
 		end
-		return ui.node("col", { key = col.id, grow = 1, basis = 0, gap = "xs" }, {
-			ui.node("text", { key = "head", spans = { ui.span(col.label, "strong"), ui.span("  " .. #col.rows, "muted") } }),
-			ui.node("list", { key = "list", role = "plotroom.lane", selected = selected, max = { lines = lines }, empty = { ui.span("None", "muted") } }, cards),
+		-- An empty lane is Tern's empty row in the scroller's place (and key).
+		return ui.node("card", { key = col.id, head = col.label, meta = tostring(#col.rows), role = "plotroom.lane", grow = 1, basis = 0 }, {
+			if #cards == 0 then emptyNode("list", "None") else ui.node("scroll", { key = "list", gap = "sm", max = { h = lines .. "lines" } }, cards),
 		})
 	end
 	local lanes: { Node } = {}
@@ -1753,11 +1871,20 @@ local function boardNode(state: State, bar: boolean?): Node
 	local kids: { Node } = {
 		ui.node("row", { key = "lanes", gap = "md", align = "start" }, lanes),
 		buttonRow("foldbar", {
-			button({ key = "fold", label = (if open then "Hide " else "Show ") .. table.concat(hidden, " · "), icon = if open then "chevron-down" else "chevron-right", actions = { click = "lanes-fold" } }),
+			button((if open then "Hide " else "Show ") .. table.concat(hidden, " · "), { key = "fold", size = "md", icon = if open then "chev" else "chev-r", actions = { click = "lanes-fold" } }),
 		}),
 	}
 	if open then
 		table.insert(kids, ui.node("row", { key = "fold", gap = "md", align = "start" }, folded))
+	end
+	if shown and shown ~= state.laneShown then
+		local id: string = shown
+		state.laneShown = id
+		tern.timer(0, function()
+			if engine.alive(state) and state.laneShown == id then
+				state.cx:frame({ { "reveal", id, "nearest" } })
+			end
+		end)
 	end
 	return ui.node("col", { key = "board", role = "plotroom.board", gap = "sm" }, kids)
 end
@@ -1798,20 +1925,26 @@ local function checklist(state: State): Node?
 		elseif how == "wait" then
 			asking = true
 		end
-		local props: { [string]: any } = {
+		local icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil
+		-- A line's one action: a setup guide is a page it opens (a link row); anything else does the step (a button,
+		-- with what it names beside it).
+		if click and not string.find(click, "^setup%-guide=") then
+			table.insert(lines, ui.node("row", { key = key, gap = "sm", wrap = true, align = "center" }, {
+				button(label, { key = "do", icon = icon, href = href, actions = { click = click } }),
+				ui.node("text", { key = "what", spans = { ui.span(value or "", "muted") } }),
+			}))
+			return
+		end
+		table.insert(lines, ui.node("item", {
 			key = key,
 			label = label,
 			value = value,
-			icon = if how == "done" then "check" elseif how == "todo" then "arrow-right" else nil,
+			icon = icon,
 			tone = if how == "done" then "success" elseif how == "wait" then "muted" else nil,
 			href = href,
-		}
-		-- A line's one action: a setup guide is a page it opens, anything else does the step.
-		if click then
-			props.actions = { click = click }
-			props.role = if string.find(click, "^setup%-guide=") then LINK else BUTTON
-		end
-		table.insert(lines, ui.node("item", props))
+			actions = if click then { click = click } else nil,
+			role = if click then LINK else nil,
+		}))
 	end
 	local gh = cli.installed.github
 	if gh == nil or (gh and setup.signedIn == nil) then
@@ -1855,8 +1988,8 @@ local function checklist(state: State): Node?
 		end
 		shortcuts = ui.node("row", { key = "keys", gap = "sm", wrap = true, align = "center" }, {
 			ui.node("text", { key = "what", spans = { ui.span("One-key shortcuts (" .. table.concat(letters, " ") .. ")") } }),
-			button({ key = "use", label = "Use them", icon = "check", actions = { click = "setup-keys=use" } }),
-			button({ key = "no", label = "No thanks", icon = "x", actions = { click = "setup-keys=no" } }),
+			button("Use them", { key = "use", icon = "check", actions = { click = "setup-keys=use" } }),
+			button("No thanks", { key = "no", icon = "x", actions = { click = "setup-keys=no" } }),
 		})
 	end
 	if not state.getStarted and (asking or todo == 0) then
@@ -1864,10 +1997,10 @@ local function checklist(state: State): Node?
 	end
 	return ui.node("card", { key = "get-started" }, {
 		ui.node("text", { key = "head", spans = { ui.span("Get started", "strong"), ui.span("  " .. (if todo == 0 and not asking then "All set" else todo .. " to do"), "muted") } }),
-		ui.node("list", { key = "lines" }, lines),
+		ui.node("col", { key = "lines", gap = "xs" }, lines),
 		shortcuts,
 		buttonRow("end", {
-			button({ key = "dismiss", label = if todo == 0 then "Close" else "Dismiss", icon = "x", tone = "muted", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
+			button(if todo == 0 then "Close" else "Dismiss", { key = "dismiss", icon = "x", variant = "quiet", aria = "Hide the Get started checklist; Commands › Get started shows it again", actions = { click = "setup-dismiss" } }),
 		}),
 	})
 end
@@ -1883,7 +2016,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
-	local title: { any } = { ui.span(if view then view.name else "Plotroom", "strong") }
+	local title: { any } = { ui.span(if view then view.name else "Plotroom", "title") }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "muted"))
 	elseif snap and not snap.complete then
@@ -2012,6 +2145,9 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
 	end
+	if not laid then
+		state.laneShown = nil -- a Board drawn again starts at its scrollers' tops: its selected card is revealed anew
+	end
 	-- Narrow: the scope dropdown beside the title names the view or list, so the title keeps only its markers.
 	if dropdown and activeScope and type(props.title) == "table" then
 		local rest: { any } = {}
@@ -2050,10 +2186,10 @@ local function removeOverlay(head: string, body: string, facts: { { [string]: an
 		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span("A tab works in it and will be left in a folder that no longer exists.") } }))
 	end
 	local buttons: { Node } = {
-		button({ key = "keep", label = "Keep", icon = "check", hint = { "enter" }, actions = { click = keepAct } }),
+		button("Keep", { key = "keep", size = "md", variant = "primary", icon = "check", keys = { "enter" }, actions = { click = keepAct } }),
 	}
 	if dropAct then
-		table.insert(buttons, button({ key = "delete", label = "Remove", icon = "trash", hint = { "d" }, actions = { click = dropAct } }))
+		table.insert(buttons, button("Remove", { key = "delete", size = "md", icon = "trash", keys = { "d" }, actions = { click = dropAct } }))
 	end
 	table.insert(kids, buttonRow("buttons", buttons))
 	return ui.node("overlay", { key = "confirm", modal = true, size = "sm", head = head }, kids)
@@ -2103,12 +2239,9 @@ local function finishedConfirm(state: State): Node
 	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
--- `bar`: requests' keyBar, the key footer pinned under the picker (plotroom.css lifts the picker's bottom for it).
+-- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
 function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
-	if bar then
-		table.insert(layer, bar)
-	end
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
@@ -2125,7 +2258,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end
-	return { main = ui.col(M.rpcNodes(state, palette)), layer = ui.col(layer) }
+	return { main = ui.col(M.rpcNodes(state, palette)), dock = if bar then ui.col({ bar }) else nil, layer = ui.col(layer) }
 end
 
 return M

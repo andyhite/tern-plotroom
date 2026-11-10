@@ -212,7 +212,7 @@ local function pageContent(state: State): ({ any }, { Node })
 		-- cannot be read, or malformed, are shown as the defaults Now runs with, and say why instead of changing.
 		local prefs, unreadable = storage.readNow()
 		local function switch(on: boolean): { [string]: any }
-			return { k = "choice", style = "segmented", value = if on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) }
+			return { k = "switch", on = on }
 		end
 		-- List or Board, for Now and for each view (engine.lanesShown).
 		local function layout(board: boolean): { [string]: any }
@@ -705,7 +705,7 @@ local function pageContent(state: State): ({ any }, { Node })
 			label = "Summaries",
 			hint = sproblem or "A few sentences about the selected item, written by a small model",
 			disabled = sproblem,
-			control = { k = "choice", style = "segmented", value = if sp.on then "on" else "off", options = tern.json.array({ { value = "on", label = "On" }, { value = "off", label = "Off" } }) },
+			control = { k = "switch", on = sp.on },
 		})
 		-- Picked from omp's list in the window's picker, as an action's Model is; a text field while omp lists no models.
 		local smodel = sp.model
@@ -720,6 +720,21 @@ local function pageContent(state: State): ({ any }, { Node })
 				else { k = "action", act = "pick-model", label = smodel or sdefault },
 			changed = smodel ~= nil,
 			defaultLabel = sdefault .. " (omp's small model)",
+		})
+		-- Where a turn end's Draft review opens (Settings › General › Draft review).
+		local glimpse, rproblem = storage.readReview()
+		section("review", "Draft review")
+		row({
+			id = "review:opens",
+			label = "Draft review opens",
+			hint = rproblem or "Over the agent's tab, it shows until you click outside it; Show Draft review brings it back",
+			disabled = rproblem,
+			control = {
+				k = "choice",
+				style = "segmented",
+				value = if glimpse then "glimpse" else "split",
+				options = tern.json.array({ { value = "split", label = "Beside the agent" }, { value = "glimpse", label = "Over the agent's tab" } }),
+			},
 		})
 		local now = os.time()
 		local wait = waitOf(state)
@@ -1157,8 +1172,8 @@ local function deleteJira(state: State, s: Settings, key: string)
 	end
 end
 
--- Saves row `row`'s new value as its control sends it: a choice row's option (a string: a view's type and group-by,
--- where a prompt runs and opens) or a chips row's options now on (an array).
+-- Saves row `row`'s new value as its control sends it: a switch row's state (a boolean), a choice row's option (a
+-- string: a view's type and group-by, where a prompt runs and opens) or a chips row's options now on (an array).
 -- A value of another shape, or an option the row does not offer, changes nothing.
 function M.setValue(state: State, row: string, value: any)
 	local s = state.settings
@@ -1166,6 +1181,7 @@ function M.setValue(state: State, row: string, value: any)
 		return
 	end
 	local choice: string? = if type(value) == "string" then value else nil
+	local switched: boolean? = if type(value) == "boolean" then value else nil
 	local values: { any } = if isTable(value) then value else {}
 	local kind, id = string.match(row, "^(%a+):(.+)$")
 	if not kind or not id then
@@ -1183,10 +1199,10 @@ function M.setValue(state: State, row: string, value: any)
 		for _, r in core.NOW_REASONS do
 			reason = reason or r.id == id
 		end
-		if (choice ~= "on" and choice ~= "off") or not (who or reason or id == "teams" or id == "jira") then
+		if switched == nil or not (who or reason or id == "teams" or id == "jira") then
 			return
 		end
-		local on = choice == "on"
+		local on: boolean = switched
 		s.errors[row] = storage.editNow(function(p)
 			if who then
 				p.logins[string.lower(who)] = not on -- editNow saves only the ones that are off
@@ -1202,12 +1218,21 @@ function M.setValue(state: State, row: string, value: any)
 			engine.nowPrefsChanged(state)
 		end
 	elseif kind == "summary" and id == "on" then
-		if choice ~= "on" and choice ~= "off" then
+		if switched == nil then
 			return
 		end
+		local on: boolean = switched
 		s.errors[row] = storage.editSummary(function(p)
-			p.on = choice == "on"
+			p.on = on
 		end)
+		if not s.errors[row] then
+			propagate(state)
+		end
+	elseif kind == "review" and id == "opens" then
+		if choice ~= "split" and choice ~= "glimpse" then
+			return
+		end
+		s.errors[row] = storage.saveReview(choice == "glimpse")
 		if not s.errors[row] then
 			propagate(state)
 		end
@@ -1668,9 +1693,9 @@ function M.runAction(state: State, act: string, row: string)
 	end
 end
 
--- Enter on a row, or a click on its field or popup: edits a text row, presses a button, switches a segmented choice to
--- its next option (its segments show no keyboard highlight), or hands the keys to a menu choice (opened on the current
--- option) or chips row (on its first option).
+-- Enter on a row, or a click on its field or popup: edits a text row, presses a button, flips a switch, switches a
+-- segmented choice to its next option (its segments show no keyboard highlight), or hands the keys to a menu choice
+-- (opened on the current option) or chips row (on its first option).
 function M.runRow(state: State, row: string?)
 	local s = state.settings
 	if not row or not s or (s.edit and s.edit.row == row) then
@@ -1685,6 +1710,9 @@ function M.runRow(state: State, row: string?)
 		beginEdit(state, row)
 	elseif c.k == "action" then
 		M.runAction(state, c.act, row)
+	elseif c.k == "switch" then
+		s.focus = row
+		M.setValue(state, row, not c.on)
 	elseif c.k == "choice" and c.style == "segmented" then
 		local at = 0
 		for i, o in c.options do
@@ -2035,13 +2063,146 @@ function M.addJira(state: State, raw: any)
 	M.openSettings(state, "repos", "jrepos:" .. key, false)
 end
 
+-- The name of the action a `next` or checker reference `ref` names, prefixed by its kind ("prs:Watch"): `ids` maps each
+-- kind's ids to names. nil for no reference or one that names nothing.
+local function refName(kind: Kind, ref: string?, ids: { [string]: { [string]: string } }): string?
+	if not ref then
+		return nil
+	end
+	local target, id = storage.nextOf(kind, ref)
+	local name = ids[target.id][id]
+	return if name then target.id .. ":" .. name else nil
+end
+
+-- How many of `kind`'s saved actions (`items`) differ from its default actions: one not named like a default, or named
+-- like one but with another prompt, model, effort, status, place, outcome, next action or checker (references compared
+-- by the name they lead to), and each default no saved action is named like. A key is counted on General instead.
+local function changedActions(kind: Kind, items: { Prompt }, prItems: { Prompt }): number
+	local seedIds: { [string]: { [string]: string } } = { prs = {}, issues = {} }
+	local savedIds: { [string]: { [string]: string } } = { prs = {}, issues = {} }
+	for _, k in { KINDS.prs, KINDS.issues } do
+		for _, d in k.prompts do
+			seedIds[k.id][d.id] = d.name
+		end
+	end
+	for _, p in prItems do
+		savedIds.prs[p.id] = p.name
+	end
+	for _, p in items do
+		savedIds[kind.id][p.id] = p.name
+	end
+	local function outcome(o: string?): string?
+		return if o == "none" then nil else o
+	end
+	local n = #defaults.missing(kind.prompts, items)
+	for _, p in items do
+		local d: PromptSeed? = nil
+		for _, seed in kind.prompts do
+			if seed.name == p.name then
+				d = seed
+			end
+		end
+		if
+			not d
+			or d.text ~= p.text
+			or (d.worktree ~= false) ~= (p.worktree ~= false)
+			or (d.split == true) ~= (p.split == true)
+			or d.model ~= p.model
+			or p.effort ~= nil
+			or p.status ~= nil
+			or outcome(d.outcome) ~= outcome(p.outcome)
+			or refName(kind, d.next, seedIds) ~= refName(kind, p.next, savedIds)
+			or refName(kind, d.checker, seedIds) ~= refName(kind, p.checker, savedIds)
+		then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- Page id -> how many of the settings, views, actions and formats on that page differ from the defaults, for the
+-- count beside each page in Settings' nav. Views: Now's switches and Layout, and the views (as changedActions counts
+-- actions: query, group, sort, layout, accounts and actions offered). Actions: the actions. Repositories: the name
+-- formats and each repository's checkout and branch format (the rows with a changed dot). General: the keyboard
+-- shortcuts, the actions' keys, the Summary settings and where a Draft review opens. A store that cannot be read counts as its defaults.
+local function pageChanges(state: State): { [string]: number }
+	local now = storage.readNow()
+	local views = 0
+	for _, r in core.NOW_REASONS do
+		views += if now.off[r.id] then 1 else 0
+	end
+	views += (if now.teams then 1 else 0) + (if now.board then 1 else 0) + (if cli.on("jira") and not now.jira then 1 else 0)
+	if cli.on("github") then
+		for _, who in ghActive.accounts do
+			views += if now.logins[string.lower(who)] then 1 else 0
+		end
+	end
+	for _, kind in { KINDS.prs, KINDS.issues } do
+		for _, d in kind.seeds do
+			local seen = false
+			for _, v in state.views do
+				seen = seen or (v.kind == kind.id and v.name == d.name)
+			end
+			if not seen and cli.on(d.integration) and (not d.sprint or cli.sprints == true) then
+				views += 1
+			end
+		end
+	end
+	for _, v in state.views do
+		local d: core.Seed? = nil
+		for _, seed in KINDS[v.kind].seeds do
+			if seed.name == v.name then
+				d = seed
+			end
+		end
+		if not d or d.integration ~= v.integration or d.query ~= v.query or d.group ~= v.group or d.sort ~= v.sort or v.layout ~= nil or #v.logins > 0 or #v.prompts > 0 then
+			views += 1
+		end
+	end
+	local actions, keyed = 0, 0
+	local prSaved = if usable(KINDS.prs) then loadPrompts(KINDS.prs) else nil
+	for _, kind in { KINDS.prs, KINDS.issues } do
+		local saved = if kind == KINDS.prs then prSaved elseif usable(kind) then loadPrompts(kind) else nil
+		if saved then
+			actions += changedActions(kind, saved.items, if prSaved then prSaved.items else {})
+			for _, p in saved.items do
+				keyed += if p.key and p.key ~= "" then 1 else 0
+			end
+		end
+	end
+	local repos = 0
+	for _, f in { "branch", "prdir", "issuedir" } do
+		if f ~= "prdir" or cli.on("github") then
+			repos += if formats.saved(f) ~= "" then 1 else 0
+		end
+	end
+	for repo, path in readCheckouts() do
+		if type(repo) == "string" then
+			repos += (if type(path) == "string" and path ~= "" then 1 else 0) + (if formats.repoOf(repo) then 1 else 0)
+		end
+	end
+	local general = keyed
+	local map = keys.load()
+	for _, a in keys.ACTIONS do
+		general += if map[a.id] ~= a.default then 1 else 0
+	end
+	local summary = storage.readSummary()
+	general += (if summary.on then 0 else 1) + (if summary.model then 1 else 0) + (if storage.readReview() then 1 else 0)
+	return { views = views, prompts = actions, repos = repos, general = general }
+end
+
 function M.settingsView(state: State, palette: Node): BlockView
 	local s = state.settings :: Settings
 	local sections, extra = pageContent(state)
+	local changes = pageChanges(state)
+	local pages: { any } = {}
+	for _, p in cli.pages() do
+		table.insert(pages, { id = p.id, label = p.label, group = p.group, icon = p.icon, changed = changes[p.id] or 0 })
+	end
 	local props: { [string]: any } = {
 		key = "settings",
 		title = "Plotroom",
-		pages = tern.json.array(cli.pages()),
+		pages = tern.json.array(pages),
 		page = s.page,
 		sections = sections,
 		focus = s.focus,

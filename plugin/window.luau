@@ -41,13 +41,15 @@ local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
 local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
--- The lists a GitHub page row can sit in (required checks, the other checks, unresolved review threads); ".run<i>" follows.
-local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.threads" }
+-- Where a GitHub page row's link is: the checks' hidden links ("open<i>", render's checksNodes) and the unresolved
+-- review threads (".run<i>").
+local CHECK_NODES = { "layer.queue.checks.open", "layer.queue.threads.run" }
+local IGNORE_NODE = "layer.queue.checks.ignore" -- .. <i>: a failing check's hidden Ignore in this repo… link
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE
-local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree: the hidden links of the agent commands
-local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check
+local BUTTONS_PREFIX = "layer.queue.buttons." -- .. agentint | agentstop | agentmsg | agentreply | agentdisagree | agentreview: the hidden links of the agent commands
+local AGENT_CMD = { agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true } -- Interrupt, Stop, Message, Reply (Now), Disagree with check, Show Draft review
 local MORE_NODE = "main.more" -- hidden: the command palette
 local WTOPEN_PREFIX = "plotroom://worktrees/open/"
 local PROMPT_NODE = "layer.queue.buttons.prompt-" -- .. a saved prompt's id: the hidden link its shortcut opens
@@ -71,7 +73,7 @@ local RECENT_CAP = 5
 local strOf = flows.strOf
 
 -- The valid link actions of an item (a PR link also takes open and show).
-local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, run = true }
+local VALID_ACTS = { worktree = true, goto = true, agent = true, agentgo = true, agentint = true, agentstop = true, agentmsg = true, agentreply = true, agentdisagree = true, agentreview = true, run = true }
 
 -- The hidden node whose href a link of action `act` must match (`id`: a saved prompt's id for `run`).
 local function nodeOf(act: string, id: string?): string
@@ -340,11 +342,11 @@ arm(0)
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
 	if mismatched and pane.pane == mismatched.pane then
-		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warn", tone = "error" })
 	end
 	local paused = next(pausedHooks)
 	if paused ~= nil then
-		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warn", tone = "error" })
 	end
 	-- One count covers the agents that need input and the rest of Now: a click shows Now.
 	local need = flows.needCount()
@@ -492,10 +494,45 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 end
 
 -- Worktree path -> the title its tab shows (`#123 title`) and the name nameTab gave the tab, so a tab the user renamed
--- keeps theirs. ponytail: in memory, newest TAB_LABELS kept; a plugin reload forgets them and the tab shows its plain name.
+-- keeps theirs. Kept in kv `tab-labels` (oldest first, newest TAB_LABELS), read at load, so restored tabs keep their
+-- titles across a plugin reload; a store that cannot be read, or is not a list of labels, is never written over.
 local TAB_LABELS = 50
-local tabLabels: { [string]: { label: string, name: string } } = {}
+local TAB_LABELS_KEY = "tab-labels"
+type TabLabel = { path: string, label: string, name: string }
+local tabLabels: { [string]: TabLabel } = {}
 local tabLabelOrder: { string } = {}
+local tabLabelsWritable = false
+
+do
+	local ok, v = pcall(tern.kv.get, TAB_LABELS_KEY)
+	tabLabelsWritable = ok and (v == nil or type(v) == "table")
+	if ok and type(v) == "table" then
+		for _, e in v do
+			if type(e) == "table" and type(e.path) == "string" and type(e.label) == "string" and type(e.name) == "string" then
+				if tabLabels[e.path] == nil then
+					table.insert(tabLabelOrder, e.path)
+				end
+				tabLabels[e.path] = { path = e.path, label = e.label, name = e.name }
+			else
+				tabLabelsWritable = false
+			end
+		end
+		while #tabLabelOrder > TAB_LABELS do
+			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
+		end
+	end
+end
+
+local function saveTabLabels()
+	if not tabLabelsWritable then
+		return
+	end
+	local rows: { TabLabel } = {}
+	for _, path in tabLabelOrder do
+		table.insert(rows, tabLabels[path])
+	end
+	pcall(tern.kv.set, TAB_LABELS_KEY, tern.json.array(rows)) -- best effort: a failed write only loses the titles at a reload
+end
 
 local function labelTab(r: Ready, t: Target)
 	if not r.title then
@@ -509,8 +546,25 @@ local function labelTab(r: Ready, t: Target)
 			tabLabels[table.remove(tabLabelOrder, 1) :: string] = nil
 		end
 	end
-	tabLabels[r.path] = { label = ref .. " " .. title, name = t.tab }
+	tabLabels[r.path] = { path = r.path, label = ref .. " " .. title, name = t.tab }
+	saveTabLabels()
 	tern.chrome.refresh()
+end
+
+-- Drops the labels of worktrees no tab works in any more (a pane or tab closed).
+local function syncTabLabels(cx: WindowCx)
+	local kept: { string } = {}
+	for _, path in tabLabelOrder do
+		if targetPane(cx, path) then
+			table.insert(kept, path)
+		else
+			tabLabels[path] = nil
+		end
+	end
+	if #kept ~= #tabLabelOrder then
+		tabLabelOrder = kept
+		saveTabLabels()
+	end
 end
 
 tern.chrome.tab_title(function(tab: TabInfo): string?
@@ -547,6 +601,7 @@ local function finishWorktree(cx: WindowCx, pane: number, t: Target, r: Ready)
 		return cx:toast("error", "Worktree ready, but its tab did not open", r.path .. " · choose Worktree again to retry")
 	end
 	nameTab(cx, newPane, t)
+	flows.worktreeTab(cx, newPane)
 	labelTab(r, t)
 	if r.setup then
 		cx:run(newPane, r.setup .. "\r")
@@ -681,6 +736,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		if shell then
 			cx:run(shell, setup .. "\r")
 			nameTab(cx, shell, t)
+			flows.worktreeTab(cx, shell)
 			if not split then
 				tab = cx.session:tab_of(shell)
 			end
@@ -739,10 +795,16 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 				return true
 			end
 			nameTab(cx, agent, t)
+			if join then
+				flows.worktreeTab(cx, agent)
+			end
 			cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 			return true
 		end
 		nameTab(cx, agent, t)
+		if join then
+			flows.worktreeTab(cx, agent)
+		end
 		cx:toast("success", "Agent started for " .. t.label, named)
 		return true
 	end
@@ -1427,8 +1489,8 @@ end
 
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
-	for _, list in CHECK_LISTS do
-		if nodeProp(readNode(cx, pane, list .. ".run" .. index), "href") == url then
+	for _, node in CHECK_NODES do
+		if nodeProp(readNode(cx, pane, node .. index), "href") == url then
 			return true
 		end
 	end
@@ -1557,6 +1619,15 @@ local function palette(cx: WindowCx, pane: number)
 	end)
 end
 
+-- "pull" or "issues" when `page` is a GitHub pull request or issue page, else nil.
+local function githubItem(page: string): string?
+	if #page > 2048 then
+		return nil
+	end
+	local kind = string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/(%a+)/%d+$")
+	return if kind == "pull" or kind == "issues" then kind else nil
+end
+
 -- Validates a plotroom:// link against the pane's live surface and runs it. `typed`: an agent link asks for a typed
 -- prompt straight away (the command palette's Type a prompt…), not the agent picker. An action link ends in the host's
 -- `?k=<token>`: it is parsed without it but compared with the node's href whole, so a link without the host's token
@@ -1570,10 +1641,10 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local shown = string.match(url, "^plotroom://lens/show/(.+)$")
 	if shown then
-		-- The one link a pane that is not a Plotroom block may send (the shell lens's Show in Plotroom): it only shows a
-		-- pull request page, which the block's host validates again.
+		-- The one link a pane that is not a Plotroom block may send (a shell lens's Show in Plotroom): it only shows a
+		-- pull request page, or a branch's new pull request page (`git push`), which the block's host validates again.
 		local page = unpct(shown)
-		if #page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/%d+$") then
+		if githubItem(page) ~= "pull" and (#page > 2048 or not string.match(page, "^https://github%.com/[%w%._%-]+/[%w%._%-]+/pull/new/[%w%._%-/]+$")) then
 			cx:toast("error", "Plotroom: malformed link")
 		else
 			flows.showUrl(cx, pane, page)
@@ -1678,6 +1749,18 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, target)
+		end
+		return true
+	end
+	local ignoreIndex, ignoreName = string.match(url, "^plotroom://github/ignore/(%d+)/(.+)$")
+	if ignoreIndex and ignoreName then
+		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the palette.
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then
+			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
+		else
+			flows.ignoreCheck(cx, pane, unpct(ignoreName))
 		end
 		return true
 	end
@@ -1794,6 +1877,17 @@ end
 
 tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
 	if string.sub(link.url, 1, #SCHEME) ~= SCHEME then
+		-- Alt-click on a GitHub pull request or issue link in any pane shows it as the lens's Show in Plotroom does,
+		-- while the window has a Plotroom block; anything else is Tern's to open.
+		if not (link.mods and link.mods.alt) or not githubItem(link.url) then
+			return nil
+		end
+		for _, p in cx.session:panes() do
+			if isPlotroom(cx, p.pane) then
+				flows.showUrl(cx, link.pane, link.url)
+				return { handled = true }
+			end
+		end
 		return nil
 	end
 	handle(cx, link.url, link.pane)
@@ -1804,6 +1898,7 @@ end)
 -- blocks so their "In tab" marks follow (the host renders after any event).
 tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 	flows.agentSync(cx)
+	syncTabLabels(cx)
 	for _, p in cx.session:panes() do
 		if isPlotroom(cx, p.pane) then
 			pcall(function()
@@ -1812,6 +1907,10 @@ tern.on("pane_closed", function(_ev: any, cx: WindowCx)
 		end
 	end
 	checkProtocol(cx)
+end)
+
+tern.on("tab_closed", function(_ev: any, cx: WindowCx)
+	syncTabLabels(cx)
 end)
 
 -- A Plotroom block beside the focused pane, or in a tab of its own when none is focused; `folder` (the Files pane's

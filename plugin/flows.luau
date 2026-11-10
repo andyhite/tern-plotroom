@@ -61,7 +61,8 @@ type Link = { key: string, agent: number, host: HostId, at: number, chain: Chain
 export type AgentInfo = { action: string?, branch: string?, title: string?, code: string?, cwd: string?, kind: string?, model: string?, runsIn: string?, outcome: string?, login: string?, ghRepo: string?, number: number?, criteria: string?, checkAgent: number?, checkStarted: number?, from: Step?, run: string? }
 -- `since` and `expected` (whole seconds as text) only while the agent is working: when its run or turn began on this
 -- machine's clock, and the median of its action's finished runs (usage.medians; nil: too few, or a later turn).
-type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string? }
+-- `review`: when the newest Draft review file of its run opened was written (Link.reviewed), for Show Draft review.
+type StatusRow = { state: string, action: string?, branch: string?, title: string?, last: string?, err: string?, result: string?, ended: string?, attention: string?, reason: string?, blocker: string?, outcome: string?, verdict: string?, check: string?, findings: string?, stop: string?, since: string?, expected: string?, review: string? }
 -- A chain step due to start (dueSteps), from the run of `agent` (its link's `host` and `started`) on item `key`:
 -- `step` "check" (checker `chain.checker` on `commit`), "next" (`chain.next`) or "fix" (`chain.action` again, with
 -- `findings`), at chain `depth`, from Plotroom block `block`, with the run's saved `criteria`.
@@ -362,8 +363,8 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 		if map[l.key] == nil and hostSame(l.host, host) and count < LINKS_CAP then
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
-			local row: StatusRow = { state = state, check = l.check }
-			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil, stop = l.stop }
+			local row: StatusRow = { state = state, check = l.check, review = l.reviewed }
+			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil, stop = l.stop, review = l.reviewed }
 			if state == "working" then
 				local first = l.result == nil and l.started ~= nil
 				local since = if first then l.started else workingSince[l.agent]
@@ -383,7 +384,7 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 	return map
 end
 
--- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected;"
+-- "key=state|action|branch|title|last|err|result|ended|attention|reason|blocker|outcome|verdict|check|findings|stop|since|expected|review;"
 -- per key in order: host/render's `agentSig` spells it the same.
 local function signature(map: { [string]: StatusRow }): string
 	local keys: { string } = {}
@@ -394,7 +395,7 @@ local function signature(map: { [string]: StatusRow }): string
 	local parts: { string } = {}
 	for _, k in keys do
 		local r = map[k]
-		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. ";")
+		table.insert(parts, k .. "=" .. r.state .. "|" .. (r.action or "") .. "|" .. (r.branch or "") .. "|" .. (r.title or "") .. "|" .. (r.last or "") .. "|" .. (r.err or "") .. "|" .. (r.result or "") .. "|" .. (r.ended or "") .. "|" .. (r.attention or "") .. "|" .. (r.reason or "") .. "|" .. (r.blocker or "") .. "|" .. (r.outcome or "") .. "|" .. (r.verdict or "") .. "|" .. (r.check or "") .. "|" .. (r.findings or "") .. "|" .. (r.stop or "") .. "|" .. (r.since or "") .. "|" .. (r.expected or "") .. "|" .. (r.review or "") .. ";")
 	end
 	return table.concat(parts, "")
 end
@@ -514,6 +515,54 @@ local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: s
 	end
 end
 
+-- The tab colour label of your turn (DESIGN.md › Color Meaning Rule): tab colours are named labels, not tones.
+local TINT: TabColor = "blue"
+-- Tabs Plotroom opened for a worktree, and the colour Plotroom set on each tab it tinted. ponytail: in memory; a plugin
+-- reload forgets them, leaving a tint the user clears by hand; keep them in kv if reloads mid-wait are common.
+local worktreeTabs: { [number]: boolean } = {}
+local tints: { [number]: TabColor } = {}
+
+-- Notes that the tab holding `pane` was opened by Plotroom for a worktree, so syncTints may tint it.
+function M.worktreeTab(cx: WindowCx, pane: number)
+	local tab = cx.session:tab_of(pane)
+	if tab then
+		worktreeTabs[tab] = true
+	end
+end
+
+-- Tints each worktree tab Plotroom opened while an agent of `links` in it waits for input, and clears the tint once
+-- none does (`states` nil: none does). A colour Plotroom did not set is never cleared or overwritten.
+local function syncTints(cx: WindowCx, links: { Link }, states: { [number]: string }?, cwds: { [number]: string })
+	local want: { [number]: boolean } = {}
+	if states then
+		for _, l in links do
+			local tab = if stateOf(l, states, cwds) == "waiting_input" then cx.session:tab_of(l.agent) else nil
+			if tab and worktreeTabs[tab] then
+				want[tab] = true
+			end
+		end
+	end
+	local open: { [number]: boolean } = {}
+	for _, t in cx.session:tabs() do
+		open[t.id] = true
+		local ours = tints[t.id]
+		if ours ~= nil and t.color ~= ours then
+			tints[t.id] = nil -- the user changed it since: theirs now
+		elseif want[t.id] and t.color == nil then
+			cx.layout:color_tab(t.id, TINT)
+			tints[t.id] = TINT
+		elseif ours ~= nil and not want[t.id] then
+			cx.layout:color_tab(t.id, nil)
+			tints[t.id] = nil
+		end
+	end
+	for tab in worktreeTabs do
+		if not open[tab] then
+			worktreeTabs[tab], tints[tab] = nil, nil
+		end
+	end
+end
+
 -- Focuses the first agent that waits for input.
 function M.goWaiting(cx: WindowCx)
 	local agent = waiting[1]
@@ -536,6 +585,7 @@ function M.agentSync(cx: WindowCx)
 	if #panes == 0 then
 		told = {}
 		trackWaiting(cx, {}, nil, {})
+		syncTints(cx, {}, nil, {})
 		return
 	end
 	local states, notes, cwds = agentStates(cx)
@@ -565,6 +615,7 @@ function M.agentSync(cx: WindowCx)
 		end
 	end
 	trackWaiting(cx, covered, states, cwds)
+	syncTints(cx, covered, states, cwds)
 	local nowTold: { [number]: boolean } = {} -- rebuilt each sync, so a closed pane's id is never remembered
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
@@ -1369,10 +1420,13 @@ end
 -- Interrupt, Stop, Message or Reply (`act`: agentint | agentstop | agentmsg | agentreply) the live agent recorded for
 -- `key`. Stop asks first; each step looks the agent up again, so one that exited meanwhile only toasts. Reply is Now's
 -- Message agent… for an agent that needs input: one that stopped waiting gets the same toast and nothing is sent.
--- agentdisagree is Disagree with check… (M.disagree), which needs no live agent.
+-- agentdisagree is Disagree with check… (M.disagree) and agentreview Show Draft review (M.showReview); neither needs a
+-- live agent.
 function M.agentCommand(cx: WindowCx, pane: number, key: string, act: string)
 	if act == "agentdisagree" then
 		return M.disagree(cx, pane, key)
+	elseif act == "agentreview" then
+		return M.showReview(cx, pane, key)
 	end
 	local waiting = act == "agentreply"
 	local function reachable(cx2: WindowCx): Link?
@@ -1518,9 +1572,45 @@ local function reviewPane(cx: WindowCx, run: string): number?
 	return nil
 end
 
+-- Opens the Draft review block for link `l`'s run as Settings › General › Draft review opens has it: Over the agent's
+-- tab (`glimpse`: Tern's glimpse, over the tab shown, in no split, until a click outside it; focused after it opens, as
+-- a glimpse does not take the keyboard itself) or split to the agent's
+-- right. `show` (Show Draft review) first brings the agent's tab forward; a turn end never does, so a glimpse whose
+-- agent's tab is not shown opens nothing and a toast points at Show Draft review. With the agent's pane gone, a
+-- glimpse shows over the tab shown and a split beside the focused pane.
+local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean)
+	local agent: number? = if cx.session:pane(l.agent) then l.agent else nil
+	if glimpse and agent then
+		if show then
+			pcall(function()
+				cx.layout:focus(agent)
+			end)
+		end
+		local focused = cx.session:focused()
+		if not focused or cx.session:tab_of(focused) ~= cx.session:tab_of(agent) then
+			cx:toast("info", "Draft review ready for " .. l.key, "Show Draft review in Plotroom's Commands opens it over the agent's tab.")
+			return
+		end
+	end
+	local args = { l.run or "", l.cwd or "", l.login or "" }
+	local ok, pane = pcall(function()
+		if glimpse then
+			local p = cx:new_block(REVIEW_BLOCK, args, "glimpse")
+			if p then
+				cx.layout:focus(p)
+			end
+			return p
+		end
+		return cx:new_block(REVIEW_BLOCK, args, "split", if agent then { target = agent, dir = "right" } else nil)
+	end)
+	if not ok or not pane then
+		cx:toast("error", "The Draft review for " .. l.key .. " did not open", if ok then "Tern opened no block." else tostring(pane))
+	end
+end
+
 -- A turn of `agent` ended: when its run (Link.run) has a Draft review file newer than the last one opened (`reviewed`),
--- the Draft review block opens beside the agent, or the one open for that run reloads. The file is on the agent's
--- host, so a Plotroom block there is asked (rpc `review`); with none open there, or an older host, nothing opens.
+-- the Draft review block opens (openReview), or the one open for that run reloads. The file is on the agent's host, so
+-- a Plotroom block there is asked (rpc `review`); with none open there, or an older host, nothing opens.
 function M.reviewAfter(cx: WindowCx, agent: number)
 	local host = hostOf(cx, agent)
 	local link: Link? = nil
@@ -1555,16 +1645,43 @@ function M.reviewAfter(cx: WindowCx, agent: number)
 					end)
 					return
 				end
-				local ok, pane = pcall(function()
-					return cx2:new_block(REVIEW_BLOCK, { run, l.cwd or "", l.login or "" }, "split", { target = agent, dir = "right" })
-				end)
-				if not ok or not pane then
-					cx2:toast("error", "The Draft review for " .. l.key .. " did not open", if ok then "Tern opened no block." else tostring(pane))
-				end
+				openReview(cx2, l, a.glimpse == true, false)
 				return
 			end
 		end
 	end, true)
+end
+
+-- Show Draft review: the Draft review of `key`'s newest run (its link on the host of the Plotroom block in `pane`)
+-- shows again: the block open for that run is focused, else it opens again as a turn end opens it (openReview), once
+-- that block's host says the run's Draft review file is still there (rpc `review`).
+function M.showReview(cx: WindowCx, pane: number, key: string)
+	local host = hostOf(cx, pane)
+	local link: Link? = nil
+	for _, l in (readLinks()) do
+		if host and l.key == key and hostSame(l.host, host) then
+			link = if l.run and l.reviewed then l else nil
+			break
+		end
+	end
+	if not link then
+		return cx:toast("info", "No Draft review for " .. key)
+	end
+	local l = link :: Link
+	local run = l.run :: string
+	local open = reviewPane(cx, run)
+	if open then
+		pcall(function()
+			cx.layout:focus(open)
+		end)
+		return
+	end
+	e().ask(cx, pane, "review", { run = run }, ACT_MS, function(a: any, cx2: WindowCx)
+		if type(a.at) ~= "string" then
+			return cx2:toast("info", "No Draft review for " .. key, "Its file is no longer on the agent's host.")
+		end
+		openReview(cx2, l, a.glimpse == true, true)
+	end)
 end
 
 -- Review/send's message `o`, read off the block in `pane`, goes to its run's agent; `answer` tells the block.
@@ -1642,7 +1759,7 @@ end
 -- is one line, so the note is the editable part) and then every line of `context` as it will be sent, newlines
 -- kept. Nothing is sent but by the Send row; Escape or Cancel sends nothing.
 local function review(cx: WindowCx, agent: number, key: string, head: string, context: { string }, note: string)
-	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pencil", edit = true } }
+	local items: { PickItem } = { { label = "Cancel", icon = "x" }, { label = "Send to " .. key, icon = "merge", confirm = true }, { label = if note == "" then "Add a note…" else "Edit note…", icon = "pen", edit = true } }
 	if note ~= "" then
 		table.insert(items, { label = note, group = "Note", icon = "merge" })
 	end
@@ -1925,6 +2042,11 @@ local function ignoreCheck(cx: WindowCx, pane: number)
 			end
 		end)
 	end)
+end
+
+-- Ignore in this repo… on a failing check's row (window.luau's ignore link): the plan for that check.
+function M.ignoreCheck(cx: WindowCx, pane: number, check: string)
+	planAct(cx, pane, "Check not ignored", { name = "ignore-check", check = check })
 end
 
 -- Now's notifications marked read: the host names the listed threads and the account in the confirm.

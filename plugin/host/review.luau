@@ -27,7 +27,10 @@ local CONTEXT = 8 -- rows of diff a comment's card shows around its line
 M.SEND_TIMEOUT_MS = 15 * 1000
 
 M.VERDICTS = { "comment", "approve", "request_changes" }
-local REGULAR_COLS = 100 -- panes narrower than this stack the navigator above the detail
+local REGULAR_COLS = 100 -- panes narrower than this stack the navigator above the detail (a `col` split)
+-- The split's shares, navigator first, until you drag its handle; and each pane's minimum along it.
+local SIZES: { [string]: { number } } = { row = { 0.3, 0.7 }, col = { 0.3, 0.7 } }
+local MINS: { [string]: { string } } = { row = { "24ch", "40ch" }, col = { "3lines", "8lines" } }
 local VERDICT_LABEL: { [string]: string } = { comment = "Comment", approve = "Approve", request_changes = "Request changes" }
 local KIND_LABEL: { [string]: string } = { problem = "Problem", question = "Question", suggestion = "Suggestion", nit = "Nit" }
 
@@ -39,8 +42,9 @@ export type Proposal = { at: string, repo: string, number: number, head: string,
 type Row = { t: string, text: string, o: number, n: number }
 export type Diff = { [string]: { { Row } } } -- a file's path (its old one when deleted) -> its hunks
 -- A comment's card: `model` its body as edited, `excerpt` the diff around its line (nil: not on a changed line, so
--- GitHub refuses it and it cannot be kept).
-type Card = { c: Comment, model: input.Model, keep: boolean, excerpt: string? }
+-- GitHub refuses it and it cannot be kept), `suggested` its suggestion as a diff of the lines it replaces (nil: shown
+-- as code).
+type Card = { c: Comment, model: input.Model, keep: boolean, excerpt: string?, suggested: string? }
 type State = {
 	cx: BlockCx,
 	run: string,
@@ -64,6 +68,7 @@ type State = {
 	sent: boolean,
 	gone: string?, -- why Send could not reach the agent: Copy is offered
 	message: string?, -- what Send hands the agent (hidden `main.send`)
+	sizes: { [string]: { number } }, -- the split's shares you dragged, by its `dir` ("row" or "col")
 }
 
 local function isTable(v: any): boolean
@@ -76,6 +81,15 @@ end
 
 local function whole(v: any): number?
 	return if type(v) == "number" and v >= 1 and v <= 10000000 and v == math.floor(v) then v else nil
+end
+
+-- A split's two shares (navigator, detail) as Tern's `change` sends them or as saved, or nil when `v` is not that.
+local function sharesOf(v: any): { number }?
+	if not isTable(v) or #v ~= 2 then
+		return nil
+	end
+	local a, b = v[1], v[2]
+	return if type(a) == "number" and type(b) == "number" and a > 0 and a < 1 and b > 0 and b < 1 then { a, b } else nil
 end
 
 -- The Draft review file's text as a Proposal, or nil and why. The extension validated it; this checks the shape again,
@@ -202,6 +216,33 @@ function M.excerpt(diff: Diff, c: Comment): string?
 	return head .. table.concat(out, "\n") .. "\n"
 end
 
+-- Suggestion `c.suggestion` as a unified diff for Tern's `diff` node: the lines it replaces (startLine..line of the new
+-- side, as the diff has them) removed and the suggestion added; nil when it has none, is on the old side (GitHub
+-- applies suggestions to the new one) or its lines are not all on the diff, and then it is shown as code.
+function M.suggestionDiff(diff: Diff, c: Comment): string?
+	local h = locate(diff, c)
+	local suggestion = c.suggestion
+	if not h or not suggestion or c.side ~= "RIGHT" then
+		return nil
+	end
+	local first = c.startLine or c.line
+	local out: { string } = {}
+	for _, r in h do
+		if r.t ~= "-" and r.n >= first and r.n <= c.line then
+			table.insert(out, "-" .. r.text)
+		end
+	end
+	if #out ~= c.line - first + 1 then
+		return nil
+	end
+	local added = 0
+	for line in string.gmatch((string.gsub(suggestion, "\n$", "")) .. "\n", "([^\n]*)\n") do
+		table.insert(out, "+" .. line)
+		added += 1
+	end
+	return "@@ -" .. first .. "," .. #out - added .. " +" .. first .. "," .. added .. " @@\n" .. table.concat(out, "\n") .. "\n"
+end
+
 -- Whether the pull request's head `now` is not the reviewed one. The review may name its head by an abbreviated SHA
 -- (plotroom.ts › validate takes 7 to 64 hex digits), so a head that starts with it has not moved.
 function M.moved(p: Proposal, now: string?): boolean
@@ -272,7 +313,7 @@ local function place(state: State, p: Proposal, diff: Diff?)
 	local off: { Card } = {}
 	for _, c in p.comments do
 		local excerpt = if diff then M.excerpt(diff, c) else nil
-		local card: Card = { c = c, model = input.new(c.body, true), keep = diff == nil or excerpt ~= nil, excerpt = excerpt }
+		local card: Card = { c = c, model = input.new(c.body, true), keep = diff == nil or excerpt ~= nil, excerpt = excerpt, suggested = if diff then M.suggestionDiff(diff, c) else nil }
 		if diff and not excerpt then
 			table.insert(off, card)
 		else
@@ -436,8 +477,9 @@ local function edit(state: State, i: number)
 	state.at, state.editing = i, true
 end
 
-local function caps(k: string): { string }
-	return { k }
+-- The split's direction: side by side in regular panes, stacked in compact ones.
+local function dirOf(state: State): string
+	return if state.cx.cols < REGULAR_COLS then "col" else "row"
 end
 
 local function textNode(key: string, s: string, tone: string?): Node
@@ -463,8 +505,8 @@ local function titleOf(card: Card): string
 end
 
 
--- The navigator: Summary, each finding in file order, Instructions. `compact` shortens it above the detail.
-local function navNode(state: State, compact: boolean): Node
+-- The navigator: Summary, each finding in file order, Instructions. The split around it sizes it.
+local function navNode(state: State): Node
 	local items: { Node } = {
 		ui.node("item", { key = "n0", label = "Summary" }),
 	}
@@ -478,38 +520,34 @@ local function navNode(state: State, compact: boolean): Node
 		}))
 	end
 	table.insert(items, ui.node("item", { key = "n" .. last(state), label = "Instructions", value = if state.note.text ~= "" then { ui.span("Added", "muted") } else nil }))
-	local props: { [string]: any } = { key = "nav", selected = "main.body.nav.n" .. state.at }
-	if compact then
-		props.max = { lines = 6 }
-	else
-		props.min, props.max, props.shrink, props.basis = { w = "26ch" }, { w = "32ch", lines = 12 }, 0, "content"
-	end
-	return ui.node("list", props, items)
+	return ui.node("list", { key = "nav", selected = "main.body.nav.n" .. state.at }, items)
 end
 
--- Edit (or Done) for the selected item, plus Keep/Drop for a finding.
+-- Edit (or Done) for the selected item, plus Keep/Drop for a finding: the card's head controls (`end`).
 local function actionsNode(state: State, i: number): Node
 	local buttons: { Node } = {}
 	local card = state.cards[i]
 	local what = if i == 0 then "the summary" elseif card then "comment " .. card.c.id else "the instructions"
 	if card and card.excerpt or (card and state.diffProblem) then
-		table.insert(buttons, button({ key = "keep", label = if card.keep then "Drop" else "Keep", icon = if card.keep then "x" else "check", hint = caps("Space"), aria = (if card.keep then "Drop " else "Keep ") .. what, actions = { click = "keep=" .. i } }))
+		table.insert(buttons, button(if card.keep then "Drop" else "Keep", { key = "keep", icon = if card.keep then "x" else "check", keys = { "space" }, aria = (if card.keep then "Drop " else "Keep ") .. what, actions = { click = "keep=" .. i } }))
 	end
 	if state.editing then
-		table.insert(buttons, button({ key = "done", label = "Done", icon = "check", hint = caps("esc"), aria = "Finish editing " .. what, actions = { click = "done" } }))
+		table.insert(buttons, button("Done", { key = "done", icon = "check", keys = { "esc" }, aria = "Finish editing " .. what, actions = { click = "done" } }))
 	else
-		table.insert(buttons, button({ key = "edit", label = if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", icon = "pencil", hint = caps("e"), aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
+		table.insert(buttons, button(if i == 0 then "Edit summary" elseif card then "Edit" else "Edit instructions", { key = "edit", icon = "pen", keys = { "e" }, aria = "Edit " .. what, actions = { click = "edit=" .. i } }))
 	end
-	return ui.node("row", { key = "buttons", gap = "sm", wrap = true, align = "center" }, buttons)
+	return ui.node("row", { key = "end", gap = "sm", align = "center" }, buttons)
 end
 
--- The selected item's whole detail: heading and location, diff, feedback, suggestion, controls.
+-- The selected item as one card: its head (Summary, Instructions, or a finding's path with its lines as meta) and the
+-- controls at the head's end, then the diff, feedback and suggestion.
 local function detailNode(state: State): Node
 	local i = state.at
 	local card = state.cards[i]
 	local kids: { Node } = {}
+	local props: { [string]: any } = { key = "detail" }
 	if i == 0 then
-		table.insert(kids, textNode("label", "Summary", "strong"))
+		props.head = { ui.span("Summary") }
 		if state.editing then
 			table.insert(kids, editorOf("text", state.summary, "Summary", 10))
 		elseif state.summary.text ~= "" then
@@ -519,17 +557,16 @@ local function detailNode(state: State): Node
 		end
 	elseif card then
 		local c = card.c
-		table.insert(kids, ui.node("row", { key = "head", gap = "sm", align = "center", wrap = true }, {
-			ui.node("badge", { key = "kind", text = KIND_LABEL[c.kind], tone = "muted" }),
-			ui.node("text", { key = "where", spans = { ui.span(c.path, "mono"), ui.span(" · " .. whereOf(c), "muted") } }),
-			ui.node("badge", { key = "keep", text = if card.keep then "Kept" else "Dropped", tone = "muted" }),
-		}))
+		props.head, props.meta = { ui.span(c.path, "mono") }, { ui.span(whereOf(c)) }
 		if not card.excerpt and not state.loading and not state.diffProblem then
 			table.insert(kids, textNode("why", "Not on a changed line: GitHub refuses a comment outside the pull request's diff, so it cannot be kept.", "muted"))
 		end
 		if card.excerpt then
 			-- Tern's diff builder makes the node; a keyed col holds it (the builder's node is not ours to change).
 			table.insert(kids, ui.node("col", { key = "diff" }, { ui.diff(card.excerpt, c.path) }))
+		elseif state.loading then
+			-- the diff is still being read: its shape, where it will go
+			table.insert(kids, ui.node("skeleton", { key = "diff", shape = "block", min = { h = "8lines" } }))
 		end
 		if state.editing then
 			table.insert(kids, editorOf("body", card.model, "Comment " .. c.id, 12))
@@ -537,12 +574,14 @@ local function detailNode(state: State): Node
 			table.insert(kids, ui.node("md", { key = "body", text = input.clean(card.model.text, true) }))
 		end
 		if c.suggestion then
-			table.insert(kids, ui.node("section", { key = "suggestion", head = { ui.span("Suggested change", "muted") }, collapsible = true, collapsed = true }, {
-				ui.node("md", { key = "text", text = "````text\n" .. c.suggestion .. "\n````" }),
-			}))
+			-- The lines it replaces and the suggestion as a diff when the diff has them all, else the suggestion as code.
+			local shown = if card.suggested
+				then ui.node("diff", { key = "diff", text = card.suggested, path = c.path })
+				else ui.node("code", { key = "code", text = c.suggestion, lang = string.match(c.path, "%.(%w+)$") })
+			table.insert(kids, ui.node("section", { key = "suggestion", head = { ui.span("Suggested change", "muted") }, collapsible = true, collapsed = true }, { shown }))
 		end
 	else
-		table.insert(kids, textNode("label", "Instructions for the agent (optional)", "strong"))
+		props.head = { ui.span("Instructions for the agent (optional)") }
 		if state.editing then
 			table.insert(kids, editorOf("note", state.note, "Instructions for the agent", 1))
 		else
@@ -551,8 +590,9 @@ local function detailNode(state: State): Node
 	end
 	if not state.sent and not state.sending and not (card and state.loading) then
 		table.insert(kids, actionsNode(state, i))
+		props["end"] = "main.body.detail.end"
 	end
-	return ui.node("col", { key = "detail", grow = 1, basis = 0, gap = "sm" }, kids)
+	return ui.node("card", props, kids)
 end
 
 local function view(state: State): BlockView
@@ -569,7 +609,8 @@ local function view(state: State): BlockView
 	end
 	table.insert(main, ui.node("text", { key = "head", spans = {
 		ui.span(p.repo .. "#" .. p.number, "mono"),
-		ui.span("  ·  Draft review of " .. string.sub(p.head, 1, 7), "muted"),
+		ui.span("  ·  Draft review of ", "muted"),
+		ui.span(string.sub(p.head, 1, 7), "mono"),
 	} }))
 	table.insert(main, ui.node("text", { key = "moves", spans = { ui.span("j/k move  ·  Space keep or drop  ·  e edit", "muted") } }))
 	-- The decision row: verdict, count, then Send (or its status).
@@ -581,20 +622,20 @@ local function view(state: State): BlockView
 	if state.sent or state.sending then
 		table.insert(bar, textNode("verdict", "Verdict: " .. VERDICT_LABEL[state.verdict], "muted"))
 	else
+		local choices: { Node } = {}
 		for i, v in M.VERDICTS do
 			if v == "comment" or not state.own then
-				local on = state.verdict == v
-				table.insert(bar, button({ key = v, label = VERDICT_LABEL[v], icon = if on then "check" else nil, hint = caps(tostring(i)), aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
+				table.insert(choices, button(VERDICT_LABEL[v], { key = v, on = state.verdict == v, keys = { tostring(i) }, aria = "Verdict: " .. VERDICT_LABEL[v], actions = { click = "verdict=" .. v } }))
 			end
 		end
+		table.insert(bar, ui.node("buttons", { key = "verdict", size = "md", label = "Verdict" }, choices))
 	end
 	table.insert(bar, textNode("count", kept .. " kept · " .. (#state.cards - kept) .. " dropped", "muted"))
 	if state.sent then
 		table.insert(bar, ui.node("badge", { key = "sent", text = "Sent", tone = "muted" }))
-	elseif state.sending then
-		table.insert(bar, ui.node("row", { key = "sending", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Sending…", "muted") }))
 	elseif not state.loading then
-		table.insert(bar, button({ key = "send", label = "Send to agent", icon = "arrow-right", hint = { "⌘↵" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
+		-- Busy while the window carries it to the agent: a spinner in the icon's place, and it sends nothing more.
+		table.insert(bar, button(if state.sending then "Sending…" else "Send to agent", { key = "send", size = "md", icon = "arrow-right", busy = state.sending == true, keys = { "cmd", "enter" }, aria = "Send your choices to the agent", actions = { click = "send" } }))
 	end
 	table.insert(main, ui.node("row", { key = "bar", gap = "sm", wrap = true, align = "center" }, bar))
 	if state.own and not state.sent and not state.sending then
@@ -606,20 +647,23 @@ local function view(state: State): BlockView
 	if state.gone then
 		table.insert(main, ui.node("row", { key = "gone", gap = "sm", wrap = true, align = "center" }, {
 			textNode("why", state.gone, "error"),
-			button({ key = "copy", label = "Copy", icon = "copy", hint = caps("c"), aria = "Copy the message for the agent", actions = { click = "copy" } }),
+			button("Copy", { key = "copy", size = "md", icon = "copy", keys = { "c" }, aria = "Copy the message for the agent", actions = { click = "copy" } }),
 		}))
 	end
 	if state.head and M.moved(p, state.head) then
-		table.insert(main, textNode("moved", "The pull request's head moved to " .. string.sub(state.head, 1, 7) .. " since this review: Send asks the agent to check the new commits first.", "muted"))
+		table.insert(main, ui.node("text", { key = "moved", spans = {
+			ui.span("The pull request's head moved to ", "muted"),
+			ui.span(string.sub(state.head, 1, 7), "mono"),
+			ui.span(" since this review: Send asks the agent to check the new commits first.", "muted"),
+		} }))
 	end
-	if state.loading then
-		table.insert(main, ui.node("row", { key = "loading", gap = "sm", align = "center" }, { ui.node("spinner", { key = "s" }), textNode("t", "Reading the diff…", "muted") }))
-	elseif state.diffProblem then
+	if state.diffProblem then
 		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
 	end
-	-- Regular panes put the navigator beside the detail, compact ones above it.
-	local compact = state.cx.cols < REGULAR_COLS
-	table.insert(main, ui.node(if compact then "col" else "row", { key = "body", gap = "md", align = "start" }, { navNode(state, compact), detailNode(state) }))
+	-- The navigator and the selected item in a split you resize. It grows into the pane's height, so a long item
+	-- scrolls in its own pane.
+	local dir = dirOf(state)
+	table.insert(main, ui.node("split", { key = "body", dir = dir, sizes = state.sizes[dir] or SIZES[dir], min = MINS[dir], grow = 1 }, { navNode(state), detailNode(state) }))
 	return { main = ui.col(main) }
 end
 
@@ -633,6 +677,7 @@ end
 
 function M.define()
 	tern.block.define("review", {
+		font = "sans",
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local a: any = args
 			if (not a or not a[1]) and isTable(saved) and saved.version == 1 then
@@ -656,7 +701,16 @@ function M.define()
 				sending = false,
 				sends = 0,
 				sent = false,
+				sizes = {},
 			}
+			if isTable(saved) and saved.version == 1 and isTable(saved.sizes) then
+				for _, dir in { "row", "col" } do
+					local shares = sharesOf(saved.sizes[dir])
+					if shares then
+						state.sizes[dir] = shares
+					end
+				end
+			end
 			if state.run == "" or state.cwd == "" then
 				state.problem = "This block was opened without a run and its folder."
 			else
@@ -728,6 +782,11 @@ function M.define()
 					state.at, state.editing = i, false
 				end
 				return
+			elseif ev.ev == "change" and ev.id == "main.body" then
+				-- You dragged the split's handle: its shares, kept for the block in its direction (saved, so a restart keeps them).
+				local dir = dirOf(state)
+				state.sizes[dir] = sharesOf(ev.value) or state.sizes[dir]
+				return
 			elseif ev.ev ~= "action" then
 				return
 			end
@@ -765,7 +824,7 @@ function M.define()
 
 		save = function(state: State): any
 			local p = state.p
-			return { version = 1, run = state.run, cwd = state.cwd, login = state.login, sent = if p and state.sent then p.at else nil }
+			return { version = 1, run = state.run, cwd = state.cwd, login = state.login, sent = if p and state.sent then p.at else nil, sizes = state.sizes }
 		end,
 	})
 end

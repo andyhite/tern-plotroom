@@ -97,7 +97,7 @@ windowCase("window: clicking Worktree coalesces repeats, notes the worktree on t
 	has(w.toasts[6].sub, "Current", "and is current")
 	has(w.toasts[6].sub, "Clean", "and clean")
 	eq(commandsOf(b, "update"), nil, "no update commands: the worktree is current")
-	yes(findKey(cardOf(b), "remove", "item") ~= nil, "the card offers to remove it")
+	yes(findKey(cardOf(b), "remove", "button") ~= nil, "the card offers to remove it")
 	-- the card's Open in new tab is the Worktree button: its click reaches the window's flow, which opens another tab
 	local tabs = #w.window.launches
 	pressCard(b, "open")
@@ -1190,6 +1190,7 @@ windowCase("window: a host one protocol older serves the ops it knows and refuse
 	nodes[1].p.text = tostring(current - 2)
 	w.advance(2100)
 	eq((w.window.status :: any)({ pane = 1 })[1].text, "Plotroom on host1 is a different version from this window's", "a host below the range shows the mismatch, naming the host")
+	yes(h.hx.ternIcon((w.window.status :: any)({ pane = 1 })[1].icon), "with an icon Tern draws")
 	said = #w.toasts
 	w.click(prLink("agent", "o/r", 5))
 	eq(w.toasts[said + 1].text, "Plotroom on host1 is another version", "and is refused as another version")
