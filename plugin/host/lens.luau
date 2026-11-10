@@ -88,7 +88,7 @@ function M.checksView(state: Checks): Node?
 		rows[i] = {
 			{ ui.span(r.name) },
 			{ ui.span("● ", core.RUN_TONE[m.status]), ui.span(m.word) },
-			{ ui.span(r.took, "num") },
+			{ ui.span(r.took) },
 			{ if r.href then ui.link(r.url, r.href) else ui.span(r.url, "muted") },
 		}
 	end
@@ -96,7 +96,7 @@ function M.checksView(state: Checks): Node?
 		ui.table({
 			{ id = "check", head = "Check", grow = 1 },
 			{ id = "status", head = "Status" },
-			{ id = "took", head = "Took", align = "end" },
+			{ id = "took", head = "Took", align = "end", mono = true },
 			{ id = "link", head = "Link", grow = 1, truncate = "middle", priority = -1 },
 		}, rows),
 	})

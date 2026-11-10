@@ -1838,6 +1838,7 @@ case("lens: gh pr checks on a wide terminal is a table of Check, Status as a dot
 		{ "Lint/lint (pull_request)", "warning", "Pending", "2m50s", "https://github.com/cli/cli/actions/runs/41720843855/job/126212878043", "https://github.com/cli/cli/actions/runs/41720843855/job/126212878043" },
 		{ "PR Triaging/ready-for-review (pull_request_target)", "muted", "Skipped", "", "https://github.com/cli/cli/actions/runs/41722208901/job/126217716143", "https://github.com/cli/cli/actions/runs/41722208901/job/126217716143" },
 	}, "every row in gh's order, the dot in core.RUN_TONE's tone for its status (exit 1 for the failure changes nothing)")
+	same(hx.offPalette(view), {}, "only the dots wear a colour, as in the preview: Took is neutral")
 end)
 
 case("lens: gh pr checks on a narrow terminal keeps gh's cut names, and a cut URL is shown unlinked", function(w: World)
