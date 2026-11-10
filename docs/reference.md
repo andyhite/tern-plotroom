@@ -34,6 +34,8 @@ One Plotroom block holds every saved view in its sidebar: GitHub pull requests a
 
 Settings are shared by every Plotroom block on the host: a change saved in one (a view, an action or Add missing defaults, a repository, its checkout, setup commands or branch format, a Jira project or its repositories, a name format, a key, the Summary settings) shows at once in every other open Plotroom block, its Commands and Settings included.
 
+**What you changed.** Every on/off setting (Now's reasons, team review requests and accounts in Settings › Views › Now; Summaries in Settings › General) is a switch: a click flips it, and so does Enter on its row. Each Settings page's entry in the nav shows how many things on it differ from the defaults, hidden at zero: on **Views**, Now's switches and Layout off their defaults, each view not identical to the default view of that type and name (its query, group, sort, layout, accounts or actions offered) and each default view deleted; on **Actions**, each action not identical to the default action of that name (its prompt, model, effort, status, Runs in, Opens in, outcome, next action or checker) and each default action deleted; on **Repositories**, each name format set and each repository's checkout and branch format set; on **General**, each keyboard shortcut off its default, each action's key and the Summary settings off their defaults. A store that cannot be read counts as its defaults.
+
 The Files pane's **Open Plotroom** header button opens the same block beside the focused pane, starting in the folder Files shows. If that folder belongs to another host, focus a pane on that host first; Plotroom never interprets one host's path on another.
 
 Update later with the same command plus `--force`.
