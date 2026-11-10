@@ -2113,6 +2113,18 @@ def placed(s: Smoke) -> None:
         nodes = json.loads(s.ctl("tree", ".tn-stage > section.tn-pane")).get("nodes") or []
         return sorted((n["rect"] for n in nodes if isinstance(n, dict) and n.get("rect")), key=lambda r: (round(r[0]), round(r[1])))
 
+    def settled(what: str) -> List[List[float]]:
+        """rects() once the queue's width has read the same for 1 s of polls: a split animates its width, so an early read can catch the
+        queue at its old width or halfway (2194 and 1139 px for a queue that ends at 1097 px under load)."""
+        seen: List[List[List[float]]] = []
+
+        def still() -> bool:
+            seen.append(rects())
+            return len(seen) >= 6 and len({round(r[0][2], 1) for r in seen[-6:]}) == 1
+
+        s.wait_until("%s settles" % what, still)
+        return seen[-1]
+
     # The queue opened beside the tab's shell: close the shell, so the queue fills its tab.
     s.ctl_ok("focus", "left")
     s.eq("the shell is left of the queue", True, s.state()["focused"]["id"] != queue)  # type: ignore[index]
@@ -2135,10 +2147,9 @@ def placed(s: Smoke) -> None:
         s.wait_until("agent %d's pane beside the queue" % n, lambda: len(rects()) == n + 1)
         s.eq("agent %d opened no tab" % n, tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
         if n == 1:
-            first = rects()[0][2]
-    time.sleep(1.0)  # let the last split settle
+            first = settled("the queue's first split")[0][2]
+    shown = settled("the last split")
     s.shot("placement-5")
-    shown = rects()
     s.contains("the newest agent (focused) runs Plotroom's command line (the fake omp, not the agent setting)", "PLOTROOM_RUN=", json.dumps(s.state()["focused"]))  # type: ignore[index]
     cols = next(p["cols"] for p in s.state()["panes"] if p["id"] == queue)  # type: ignore[union-attr]
     cell = shown[0][2] / max(1, cols)
