@@ -81,6 +81,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 - The arrival ring pauses while Tern hides Plotroom's pane (`.sf-paused`) and resumes where it was when the pane shows again.
 - The sidebar's Agents entry, and the Agents list's field, show an icon (`sparkle`) instead of a blank square: `bot` is not a Tern icon.
+- The Draft review's Edit buttons and the agent review's Edit note (`pen`), the status line's paused and version-mismatch warnings (`warn`), and the Board fold's button (`chev`, `chev-r`) show an icon instead of a blank square: `pencil`, `warning`, `chevron-down` and `chevron-right` are not Tern icons.
 - Open item by URL and the shell lens's Show in Plotroom wait up to 10 s for an open Plotroom block that has not shown yet (one an earlier request just launched, or one still connecting to its host), as for a block they launch, instead of failing at once with "Plotroom did not start in time".
 - The worktree card's Remove worktree confirm for a locked, prunable or missing worktree now says why removal is refused and offers no `d`, instead of promising a removal that then failed with an error toast.
 - A gh login's repository list that a failed page cut short now says so in an error toast and is no longer kept for 10 minutes as if whole: opening the list again asks GitHub again.

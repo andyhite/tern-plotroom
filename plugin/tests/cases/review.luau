@@ -279,6 +279,8 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(findKey(b.view().main, "comment", "item").p.icon, nil, "and only it has the check")
 	has(textOf(findKey(b.view().main, "count")), "2 kept · 2 dropped", "the count follows")
 	-- The instructions are last: Edit instructions opens them.
+	local edit: any = findKey(b.view().main, "edit", "item")
+	yes(h.hx.ternIcon(edit.p.icon), "the Edit button wears an icon Tern draws: " .. tostring(edit.p.icon))
 	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n5" })
 	b.event({ ev = "action", act = "edit", value = "5" })
 	b.typeText("tone down c1")

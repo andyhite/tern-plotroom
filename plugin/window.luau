@@ -335,11 +335,11 @@ arm(0)
 tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	local out: { StatusSegment } = {}
 	if mismatched and pane.pane == mismatched.pane then
-		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom on " .. mismatched.host .. " is a different version from this window's", icon = "warn", tone = "error" })
 	end
 	local paused = next(pausedHooks)
 	if paused ~= nil then
-		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warning", tone = "error" })
+		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warn", tone = "error" })
 	end
 	-- One count covers the agents that need input and the rest of Now: a click shows Now.
 	local need = flows.needCount()

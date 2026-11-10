@@ -2662,6 +2662,15 @@ M.pickerOf = pickerOf
 local hx = {}
 M.hx = hx
 
+-- Tern draws an unknown icon name as a blank square. These are names of Tern's built-in icon set (0.9.8) that Plotroom
+-- uses; add one only after finding it in Tern's set (a `<name><svg` entry in the Tern binary).
+local TERN_ICONS = { "inbox", "merge", "list-checks", "folder", "sparkle", "pen", "warn", "chev", "chev-r" }
+
+-- Whether `name` is an icon Tern draws.
+function hx.ternIcon(name: any): boolean
+	return table.find(TERN_ICONS, name) ~= nil
+end
+
 -- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
