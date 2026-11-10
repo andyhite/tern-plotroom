@@ -2671,7 +2671,7 @@ function hx.ternIcon(name: any): boolean
 	return table.find(TERN_ICONS, name) ~= nil
 end
 
--- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
+-- A Board's columns as "column: card ids" (the fold's only while it is open) and the node id of its selected card;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
 	local node = findKey(pickerNode(b), "board", "col")
@@ -2683,14 +2683,16 @@ function hx.board(b: Block): ({ string }?, string?)
 	for _, group in node.c do
 		if group.p.key == "lanes" or group.p.key == "fold" then
 			for _, col in group.c do
-				-- an empty lane is an `empty` node in the list's place
-				local list = findKey(col, "list", "list")
+				-- each column is a card; an empty one holds an `empty` node in its scroller's place
+				local list = findKey(col, "list", "scroll")
 				local ids: { string } = {}
 				for _, card in (if list then list.c else {}) :: { any } do
 					table.insert(ids, card.p.key)
+					if card.p.selected then
+						selected = "layer.queue.board." .. group.p.key .. "." .. col.p.key .. ".list." .. card.p.key
+					end
 				end
 				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = if list then list.p.selected or selected else selected
 			end
 		end
 	end

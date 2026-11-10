@@ -613,7 +613,7 @@ case("now: snoozing a comment-Changed Jira issue keeps it Changed after the snoo
 		pickScope(b, "issues:v3")
 		w.flush()
 		local _, selected = h.hx.board(b)
-		local card: any = h.findKey(h.pickerNode(b), ROW, "item")
+		local card: any = h.findKey(h.pickerNode(b), ROW, "card")
 		return selected and string.match(selected, "[^.]+$"), card and card.p.title
 	end
 	local CHANGED = "Changed since you marked it seen"
@@ -1094,10 +1094,24 @@ case("now: on the Board the arrows and h/j/k/l move in and across columns, into 
 	b.press("left")
 	b.press("left")
 	eq(at(), "needs.list.no_2fr_231", "and Left stops at the first column")
-	b.event({ ev = "select", id = "layer.queue.board.lanes.waiting.list", item = "layer.queue.board.lanes.waiting.list.no_2fr_234" })
+	b.event({ ev = "action", id = "layer.queue.board.lanes.waiting.list.no_2fr_234", act = "lane-pick" })
 	eq(at(), "waiting.list.no_2fr_234", "a click on a card selects it")
+	eq(b.state().nowOn, true, "and shows nothing else")
 	b.press("enter")
 	eq(b.state().nowOn, false, "Enter shows its item, as in the List")
+end)
+
+case("now: a Now card's menu offers only Open, which does what Enter does; a double click too", function(w: World)
+	local b = boardScene(w)
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
+	local card: any = h.findKey(h.pickerNode(b), "no_2fr_234", "card")
+	same(card.p.actions.menu, { "open" }, "Now's rows are no view's selection, so Worktree, Agent and Snooze are not offered")
+	eq(card.p.actions.dblclick, "open", "a double click is Open")
+	b.event({ ev = "action", id = "layer.queue.board.lanes.waiting.list.no_2fr_234", act = "snooze" })
+	eq(w.kv.get("triage"), nil, "a Snooze sent anyway snoozes nothing")
+	eq(b.state().nowOn, true, "and leaves Now")
+	b.event({ ev = "action", id = "layer.queue.board.lanes.waiting.list.no_2fr_234", act = "open" })
+	eq(b.state().nowOn, false, "Open shows the card's item, as Enter does")
 end)
 
 case("now: below 80 columns the Board shows as the List; the choice is Now's Layout, which every block shows", function(w: World)

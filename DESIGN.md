@@ -57,6 +57,10 @@ Each is built from Tern kinds; `plotroom.css` touches only what no kind or prop 
 
 A picker `item` per pull request, issue, Now entry, agent or worktree. Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
 
+### Board
+
+Now or a view laid out in columns by stage, in the queue picker's preview pane (the one place `plotroom.css` touches Tern's inner picker classes). Each column is a `card` (`role = "plotroom.lane"`), its name as `head` and its count as `meta`, holding a `scroll` bounded to the block's height; an empty column holds the inline `empty` "None" instead. Each item is a compact `card` with `role = "plotroom.button"` (a click selects it): its number or Jira key (`mono`, then muted " · Snoozed") as `head`, one `badge` as its `end` (Now's reason, or a view's first chip in `error`, else New / Changed in `accent`; its tooltip on the card), the title under them as a `text` with `max = { h = "2lines" }`. The selected card is `selected` (Tern's accent ring). Double click is Enter; right-click is `actions.menu`: Open, Worktree, Agent, Snooze on a view, Open alone on Now. No CSS: the look is Tern's card.
+
 ### Badges
 
 Tern's `badge` (picker rows: the item's `badges`). One word or a short phrase, title case, the reason in its tooltip. The stage badge leads, a Blocked PR's chips next; agent state, checked outcome, checker verdict, New / Changed / Snoozed, Worktree and Draft follow. Tone by the Color Meaning Rule; a badge that is no meaning is `muted`.

@@ -37,6 +37,8 @@ local runAction, runRow, setValue, settingsView, showPage = settings.runAction, 
 local preparing, rpc = requests.preparing, requests.rpc
 
 local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg = true }
+-- What a Board card's `action` events say (render's boardNode): its click, and its double click and menu entries.
+local CARD_ACTS = { ["lane-pick"] = true, open = true, worktree = true, agent = true, snooze = true }
 
 -- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
 local function askRemove(state: State)
@@ -1031,19 +1033,21 @@ local function blockDef(): BlockDef<State>
 				engine.openNow(state)
 			elseif act == "lanes-fold" then
 				state.lanesFold = not state.lanesFold
-			elseif (ev.ev == "select" or ev.ev == "activate") and item and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." and engine.lanesShown(state) then
-				-- A Board card: its node id ends in its row's picker id.
-				local id = string.match(item, "([^%.]+)$")
+			elseif act and CARD_ACTS[act] and string.sub(ev.id or "", 1, #QUEUE_ID + 7) == QUEUE_ID .. ".board." and engine.lanesShown(state) then
+				-- A Board card (render's boardNode): its node id ends in its row's picker id. A click selects it; a
+				-- double click or its menu's Open does what Enter does; Worktree, Agent and Snooze what their keys do (a
+				-- view's cards only: Now's rows are no view's selection).
+				local id = string.match(ev.id or "", "([^%.]+)$")
 				for _, r in engine.laneRows(state) do
 					if r.id == id then
 						engine.lanePick(state, r)
 						state.focus = "list"
-						if ev.ev == "activate" then
-							if state.nowOn then
-								openNowRow(state)
-							else
-								openSelected(state, "open", false)
-							end
+						if act == "open" and state.nowOn then
+							openNowRow(state)
+						elseif act == "open" then
+							openSelected(state, "open", false)
+						elseif act ~= "lane-pick" and not state.nowOn then
+							queueAction(state, act)
 						end
 					end
 				end

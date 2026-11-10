@@ -44,7 +44,9 @@
 }
 
 /* A Board, Now's or a view's (host/render's boardNode): the picker's row list is emptied and hidden, and the Board is
-   drawn in its preview pane, which then spans the picker beside the scope rail.
+   drawn in its preview pane, which then spans the picker beside the scope rail. Its columns and cards are Tern's own
+   `card` and `scroll` kinds and need no rule; these two stay because no picker prop puts custom content in the list's
+   place or widens the preview.
    ponytail: `.pk-main` and `.pk-pv` are Tern's inner picker classes ("may change"); a picker prop for custom content,
    or a board kind, would replace these two rules. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.board'] .pk-main {
@@ -54,31 +56,6 @@
 	flex: 1 1 auto;
 	width: auto;
 	max-width: none;
-}
-
-/* A Board card is a native list item; its title wraps to two lines over the whole card instead of truncating to a word
-   in a narrow column, and its number and why it is listed go under it. */
-[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item {
-	flex-wrap: wrap;
-	height: auto;
-	align-items: flex-start;
-	padding-top: 4px;
-	padding-bottom: 4px;
-}
-[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-label {
-	flex: 1 1 100%;
-	white-space: normal;
-	line-clamp: 2;
-	overflow: hidden;
-}
-/* Why it is listed (the item's value, at most 40% of a row by Tern's rule) takes its own line when it doesn't fit beside
-   the number. */
-[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-detail {
-	flex: 0 1 auto;
-}
-[data-surface='plugin.plotroom.prs'] .sf-list[data-role='plotroom.lane'] .sf-item-value {
-	max-width: 100%;
-	margin-left: auto;
 }
 
 /* The Draft review's prose is Tern's sans (DESIGN.md › Typography); the pinned SDK has no BlockDef font. Mono spans keep --mono. */
