@@ -5,6 +5,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
+- Alt-click a GitHub pull request or issue link in any pane to show it in Plotroom, as the shell lens's Show in Plotroom does (fetched, then pinned). It applies only while the window has a Plotroom block; a plain click, any other page, or a window without one opens the link as before.
 - Shell lens after `git push`: when GitHub prints its "Create a pull request" line for a newly pushed branch, the output shows **Create pull request** (GitHub's `/pull/new/<branch>` page) and **Show in Plotroom**, which looks up the branch's pull request when clicked and shows it, or says there is none yet.
 - Both Plotroom blocks open in Tern's sans face (`font = "sans"`), and the Draft review drops its own CSS font rules: people's text is in the UI face, while ids, refs, branches, SHAs (now also the Draft review's head and moved-head SHAs), paths and the agent clock stay mono. The queue's view name takes Tern's `title` token, and the agent clock is `mono` instead of `num`.
 - Worktree tab names survive a plugin reload: a worktree tab's `#123 title` is kept in kv `tab-labels` (the newest 50) and read at load, so restored tabs keep it. A closed tab's name is dropped when a pane or tab closes; a malformed store is never written over.

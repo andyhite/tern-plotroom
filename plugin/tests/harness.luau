@@ -454,7 +454,7 @@ export type World = {
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
-	click: (string, number?) -> any,
+	click: (string, number?, { alt: boolean? }?) -> any, -- a link click in `pane` (default 1); `{alt = true}` holds Alt
 	command: (string) -> (),
 	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
@@ -1556,12 +1556,13 @@ local function newWorld(instantiate: Loader, context: string): World
 		link = function(block: Block)
 			linked[block.pane] = block
 		end,
-		click = function(url: string, pane: number?): any
+		click = function(url: string, pane: number?, mods: { alt: boolean? }?): any
 			local handler = routes.link
 			if handler == nil then
 				error("load \"window\" before clicking a link", 2)
 			end
-			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = false, shift = false, ctrl = false } }, windowCx)
+			local alt = mods ~= nil and mods.alt == true
+			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = alt, shift = false, ctrl = false } }, windowCx)
 		end,
 		command = function(id: string)
 			local def = commands[id]

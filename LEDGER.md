@@ -24,6 +24,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Linked pull requests and issues | Preview | Keep | — | Approved | Navigation between the halves of one piece of work |
 | Inbox (GitHub notifications) and Mark read | Sidebar | Merge into **Now** | 2 | Approved | One of the six partial answers to "what needs me". Done: Now lists the notifications and offers Mark all notifications read… |
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
+| Alt-click a GitHub pull request or issue link in any pane to show it in Plotroom | Any pane's links | New | — | Approved | tern-plotroom#cfd8: intake of an item met anywhere in the window without copying its URL; a plain click still opens the browser |
 | Open Plotroom button in the Files pane | Files pane | Keep | — | Approved | Entry point |
 | Plotroom: Open | Tern's palette | Keep | — | Approved | Entry point |
 
