@@ -50,7 +50,7 @@ tern plugin install github.com/andyhite/tern-plotroom/plugin
 ```
 
 1. Open the repository you work on in a Tern tab.
-2. Tern's palette → **Plotroom: Open**.
+2. Tern's palette → **Plotroom › Open** (or press ⌃⌥⇧Q).
 3. Follow **Get started** above the preview: it lists what is left before an agent can run (`gh`, `omp`, a checkout, the one-key shortcuts), one action per line.
 4. Select an item and press **Worktree**, or pick an action from Commands (`.`): the agent starts in the item's worktree.
 

@@ -803,6 +803,44 @@ windowCase("window: Tern's palette lists only Open, Open item by URL and Message
 	same(w.palette(), { "agent-message-selection", "open", "open-url" }, "and the same from any other pane")
 end)
 
+windowCase("window: every Tern palette command sits under the Plotroom group with no Plotroom prefix, and the cross-pane jumps have default keys", function(w: World)
+	w.load("window")
+	local ids = { "open", "focus", "now", "agents-waiting", "open-selected", "worktree-selected", "goto-selected", "agent-selected" }
+	for _, c in (w.load("flows") :: any).COMMANDS do
+		table.insert(ids, c.id)
+	end
+	for _, id in ids do
+		local def = w.commandDef(id)
+		yes(def ~= nil, id .. " is registered")
+		eq(def.group, "Plotroom", id .. ": under the Plotroom group")
+		eq(string.find(def.title, "Plotroom:", 1, true), nil, id .. ": its title does not repeat the group")
+	end
+	eq(w.commandDef("open").title, "Open", "the entry point reads Plotroom › Open")
+	same(w.commandDef("focus").keys, { "ctrl+alt+shift+q" }, "Go to Plotroom has a default key")
+	same(w.commandDef("now").keys, { "ctrl+alt+shift+i" }, "and Show what needs you (Now)")
+	same(w.commandDef("agents-waiting").keys, { "ctrl+alt+shift+a" }, "and Go to the first agent that needs input")
+	eq(w.commandDef("open").keys, nil, "Open keeps no key: Go to Plotroom's opens one when none is there")
+end)
+
+windowCase("window: Go to Plotroom focuses the session's Plotroom block, opens one when none is in a tab, and does nothing on one", function(w: World)
+	w.load("window")
+	w.window.panes[5] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[7] = { cwd = "/work/s", tab = 2 }
+	w.window.focused = 7
+	w.command("focus")
+	eq(w.window.focused, 1, "from a shell, the lowest Plotroom block takes focus")
+	same(w.window.launches, {}, "and none is opened")
+	w.window.focused = 5
+	w.command("focus")
+	eq(w.window.focused, 5, "on a Plotroom block, focus stays")
+	same(w.window.launches, {}, "and nothing opens")
+	w.window.panes[1].parked = true
+	w.window.panes[5] = nil
+	w.window.focused = 7
+	w.command("focus")
+	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/s", args = { "/work/s" } } }, "a parked block is not gone to: one opens beside the shell, in its folder")
+end)
+
 windowCase("window: a new worktree runs its repository's setup commands in its tab; a reused one does not", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	w.load("window")
