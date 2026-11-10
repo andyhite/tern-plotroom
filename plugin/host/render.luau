@@ -1710,7 +1710,7 @@ local function boardNode(state: State, bar: boolean?): Node
 	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
 	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one sans line
 	-- (18px, the block's `font = "sans"`) plus 6px, about seven tenths of a cell row, under the picker's head, the column
-	-- headings, the fold's button and, with `bar`, the key footer (32px, about two cell rows).
+	-- headings, the fold's button and, with `bar`, the key footer (24px, about one and a half cell rows).
 	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.7))
 	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
 	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
@@ -2129,12 +2129,9 @@ local function finishedConfirm(state: State): Node
 	return removeOverlay("Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?", body, withValue(items), tabbed, "wt-cancel-remove", "wt-confirm-remove")
 end
 
--- `bar`: requests' keyBar, the key footer pinned under the picker (plotroom.css lifts the picker's bottom for it).
+-- `bar`: requests' keyBar, the key footer in the dock under the picker (plotroom.css ends the picker's sheet above it).
 function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local layer: { Node } = { M.queuePicker(state, bar ~= nil) }
-	if bar then
-		table.insert(layer, bar)
-	end
 	local removing = state.removing
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
@@ -2151,7 +2148,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end
-	return { main = ui.col(M.rpcNodes(state, palette)), layer = ui.col(layer) }
+	return { main = ui.col(M.rpcNodes(state, palette)), dock = if bar then ui.col({ bar }) else nil, layer = ui.col(layer) }
 end
 
 return M
