@@ -514,6 +514,54 @@ local function trackWaiting(cx: WindowCx, links: { Link }, states: { [number]: s
 	end
 end
 
+-- The tab colour label of your turn (DESIGN.md › Color Meaning Rule): tab colours are named labels, not tones.
+local TINT: TabColor = "blue"
+-- Tabs Plotroom opened for a worktree, and the colour Plotroom set on each tab it tinted. ponytail: in memory; a plugin
+-- reload forgets them, leaving a tint the user clears by hand; keep them in kv if reloads mid-wait are common.
+local worktreeTabs: { [number]: boolean } = {}
+local tints: { [number]: TabColor } = {}
+
+-- Notes that the tab holding `pane` was opened by Plotroom for a worktree, so syncTints may tint it.
+function M.worktreeTab(cx: WindowCx, pane: number)
+	local tab = cx.session:tab_of(pane)
+	if tab then
+		worktreeTabs[tab] = true
+	end
+end
+
+-- Tints each worktree tab Plotroom opened while an agent of `links` in it waits for input, and clears the tint once
+-- none does (`states` nil: none does). A colour Plotroom did not set is never cleared or overwritten.
+local function syncTints(cx: WindowCx, links: { Link }, states: { [number]: string }?, cwds: { [number]: string })
+	local want: { [number]: boolean } = {}
+	if states then
+		for _, l in links do
+			local tab = if stateOf(l, states, cwds) == "waiting_input" then cx.session:tab_of(l.agent) else nil
+			if tab and worktreeTabs[tab] then
+				want[tab] = true
+			end
+		end
+	end
+	local open: { [number]: boolean } = {}
+	for _, t in cx.session:tabs() do
+		open[t.id] = true
+		local ours = tints[t.id]
+		if ours ~= nil and t.color ~= ours then
+			tints[t.id] = nil -- the user changed it since: theirs now
+		elseif want[t.id] and t.color == nil then
+			cx.layout:color_tab(t.id, TINT)
+			tints[t.id] = TINT
+		elseif ours ~= nil and not want[t.id] then
+			cx.layout:color_tab(t.id, nil)
+			tints[t.id] = nil
+		end
+	end
+	for tab in worktreeTabs do
+		if not open[tab] then
+			worktreeTabs[tab], tints[tab] = nil, nil
+		end
+	end
+end
+
 -- Focuses the first agent that waits for input.
 function M.goWaiting(cx: WindowCx)
 	local agent = waiting[1]
@@ -536,6 +584,7 @@ function M.agentSync(cx: WindowCx)
 	if #panes == 0 then
 		told = {}
 		trackWaiting(cx, {}, nil, {})
+		syncTints(cx, {}, nil, {})
 		return
 	end
 	local states, notes, cwds = agentStates(cx)
@@ -565,6 +614,7 @@ function M.agentSync(cx: WindowCx)
 		end
 	end
 	trackWaiting(cx, covered, states, cwds)
+	syncTints(cx, covered, states, cwds)
 	local nowTold: { [number]: boolean } = {} -- rebuilt each sync, so a closed pane's id is never remembered
 	for _, pane in panes do
 		local host = hostOf(cx, pane)
