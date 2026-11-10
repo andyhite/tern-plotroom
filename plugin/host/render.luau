@@ -21,7 +21,7 @@ type Prompt = core.Prompt
 type Snap = core.Snap
 type State = core.State
 
-local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_ICON, RUN_TONE, SETTINGS_KEYS, STAGE, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_ICON, core.RUN_TONE, core.SETTINGS_KEYS, core.STAGE, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
+local CHECK, INTEGRATIONS, ISSUE_ICON, KINDS, MERGE_STATE, REVIEW_BADGE, RPC_PROTOCOL, RUN_TONE, SETTINGS_KEYS, STAGE, STATE_BADGE, VERDICT_ROW, brief, duration, hrefOf, issueBadge, pct, printable, runHrefOf, spans, stateKind, cli = core.CHECK, core.INTEGRATIONS, core.ISSUE_ICON, core.KINDS, core.MERGE_STATE, core.REVIEW_BADGE, core.RPC_PROTOCOL, core.RUN_TONE, core.SETTINGS_KEYS, core.STAGE, core.STATE_BADGE, core.VERDICT_ROW, core.brief, core.duration, core.hrefOf, core.issueBadge, core.pct, core.printable, core.runHrefOf, core.spans, core.stateKind, core.cli
 local kindAndId, loadPrompts, promptById, readCheckouts = storage.kindAndId, storage.loadPrompts, storage.promptById, storage.readCheckouts
 local TERMINAL, activeView, cancelDetails, codeRepoOf, detailKey, filtered, headOf, helpOf, pickerId, offered, openItems, orderedViews, selected, snapKey, viewOf, waitOf, wantDetails, ghActive, me = engine.TERMINAL, engine.activeView, engine.cancelDetails, engine.codeRepoOf, engine.detailKey, engine.filtered, engine.headOf, engine.helpOf, engine.pickerId, engine.offered, engine.openItems, engine.orderedViews, engine.selected, engine.snapKey, engine.viewOf, engine.waitOf, engine.wantDetails, engine.ghActive, engine.me
 
@@ -439,6 +439,45 @@ local function section(key: string, head: string, what: string, body: { Node }, 
 	return out
 end
 
+-- The check row `item` of the selected pull request's Checks section names ("run<i>"), with that pull request.
+local function checkOf(state: State, item: string): (github.Run?, github.Pr?)
+	local i = tonumber(string.match(item, "^run(%d+)$"))
+	local pr = if state.kind.id == "prs" then selected(state) else nil
+	if not i or not pr then
+		return nil, nil
+	end
+	local key = detailKey(state, pr)
+	local d = if key then state.details[key] else nil
+	return (if d then d.runs else pr.runs)[i], pr
+end
+
+-- The window link a check row's `act` follows (`open` its page, `ignore` the plan to ignore it), nil when the row does
+-- not offer it. The hidden `checks` col carries the same links, so the window honours only these.
+local function checkLink(state: State, act: string, item: string): string?
+	local r, pr = checkOf(state, item)
+	if not r or not pr then
+		return nil
+	end
+	local i = string.sub(item, 4)
+	if act == "open" then
+		return if r.url then "plotroom://github/check/" .. i .. "/" .. pct(r.url) else nil
+	elseif act == "ignore" then
+		return if r.status == "failure" and not engine.ignored(state, pr, r) then "plotroom://github/ignore/" .. i .. "/" .. pct(r.name) else nil
+	end
+	return nil
+end
+M.checkLink = checkLink
+
+-- A check row's right-click menu: each entry's action, labelled by Tern from it ("open" reads Open); Tern adds Copy row.
+M.CHECK_MENU = { open = "open", ignore = "ignore-in-this-repo…" }
+local CHECK_COLS: { Col } = {
+	{ id = "check", head = "Check", grow = 1, priority = 2 },
+	{ id = "workflow", head = "Workflow", priority = 0 },
+	{ id = "took", head = "Took", align = "end", mono = true, priority = 1 },
+}
+-- How many lines of a failing check's excerpt show before its "N more lines".
+local LOG_PREVIEW = 12
+
 -- The Checks section of the selected PR (`section`): what the search carried stays listed under a failed load.
 local function checksNodes(state: State, pr: github.Pr): { Node }
 	local out: { Node } = {}
@@ -449,83 +488,88 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 	local total = if d then d.total else pr.runTotal
 
 	-- Every check, grouped by state: Failing, Running and Queued, each headed with its count, then Passed and Skipped in
-	-- one fold, folded ("Passed 12 · Skipped 1"); required first within a group (github.runs' order). The icon and its
-	-- tone are the status (the tooltip spells it out), the value how long it ran or has been running. A `workflow / job`
-	-- name shows the job; the detail is Required, a Likely flaky mark and why, then the CI that ran it. Only `item`
-	-- rows go in a list: other kinds get no row behaviour.
+	-- one fold, folded ("Passed 12 · Skipped 1"); required first within a group (github.runs' order). Each group is a
+	-- table: the check (a `workflow / job` name shows the job) after a dot in its status's tone, Required, a Likely flaky
+	-- mark and why, and Ignored after it; the CI that ran it; how long it ran or has been running. A click opens its
+	-- page; its menu also ignores a failing check in this repository (`checkLink`). The tooltip spells it all out.
 	local marks = engine.flakyMarks(state, pr)
-	local groups: { [string]: { Node } } = { failing = {}, running = {}, queued = {}, passed = {}, skipped = {} }
+	local groups: { [string]: { TableRow } } = { failing = {}, running = {}, queued = {}, passed = {}, skipped = {} }
+	local links: { Node } = {}
 	local now = os.time()
 	for i, r in runs do
 		local workflow, job = string.match(r.name, "^(.*) / (.+)$")
-		-- An ignored failing check still shows failing; its value says Ignored (it blocks nothing).
+		-- An ignored failing check still shows failing, marked Ignored (it blocks nothing).
 		local ignored = r.status == "failure" and engine.ignored(state, pr, r)
 		local mark = if marks and r.status == "failure" and r.url then marks[r.url] else nil
 		local flaky = if mark then "Likely flaky · " .. mark.reason else nil
 		local ci = r.ci or workflow
 		local what = r.name .. " — " .. r.detail .. (if r.required then " (required)" else "") .. (if ignored then " (ignored)" else "") .. (if flaky then " — " .. flaky else "") .. (if ci then " · " .. ci else "")
-		local detail: { string } = {}
-		if r.required then
-			table.insert(detail, "Required")
+		local name: { any } = { job or r.name }
+		for _, note in { if r.required then "Required" else nil, flaky, if ignored then "Ignored" else nil } :: { string? } do
+			if note then
+				table.insert(name, ui.span(" · " .. note, "muted"))
+			end
 		end
-		if flaky then
-			table.insert(detail, flaky)
+		local id = "run" .. i
+		local menu: { string } = {}
+		for _, act in { "open", "ignore" } do
+			local href = checkLink(state, act, id)
+			if href then
+				table.insert(menu, M.CHECK_MENU[act])
+				table.insert(links, ui.node("text", { key = act .. i, href = href, hidden = true }))
+			end
 		end
-		if ci then
-			table.insert(detail, ci)
-		end
-		local props: { [string]: any } = {
-			key = "run" .. i,
-			label = job or r.name,
-			detail = if #detail > 0 then table.concat(detail, " · ") else nil,
-			value = if ignored then "Ignored" elseif r.started then github.took(now - r.started) else r.took,
-			icon = RUN_ICON[r.status],
-			tone = RUN_TONE[r.status],
+		table.insert(groups[r.phase] or groups.skipped, {
+			id = id,
+			cells = { { text = name, dot = RUN_TONE[r.status] }, ci or "", if r.started then github.took(now - r.started) else r.took or "" },
+			menu = if #menu > 0 then menu else nil,
 			title = what,
-			aria = what,
-		}
-		if r.url then
-			props.href = "plotroom://github/check/" .. i .. "/" .. pct(r.url)
-			props.actions, props.role = { click = "open" }, LINK
-		end
-		table.insert(groups[r.phase] or groups.skipped, ui.node("item", props))
+		})
+	end
+	local function grid(k: string, rows: { TableRow }): Node
+		local t = ui.table(CHECK_COLS, rows, { selectable = true })
+		local p: { [string]: any } = t.p or {}
+		p.key = k
+		t.p = p
+		return t
 	end
 	for _, g in { { "failing", "Failing" }, { "running", "Running" }, { "queued", "Queued" } } do
-		local list = groups[g[1]]
-		if #list > 0 then
-			table.insert(out, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #list, "muted") } }))
-			table.insert(out, ui.node("list", { key = g[1] }, list))
+		local rows = groups[g[1]]
+		if #rows > 0 then
+			table.insert(out, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #rows, "muted") } }))
+			table.insert(out, grid(g[1], rows))
 		end
 	end
 	local done: { Node } = {}
 	local count: { string } = {}
 	for _, g in { { "passed", "Passed" }, { "skipped", "Skipped" } } do
-		local list = groups[g[1]]
-		if #list > 0 then
-			table.insert(count, g[2] .. " " .. #list)
-			table.insert(done, ui.node("list", { key = g[1] }, list))
+		local rows = groups[g[1]]
+		if #rows > 0 then
+			table.insert(count, g[2] .. " " .. #rows)
+			table.insert(done, grid(g[1], rows))
 		end
 	end
 	if #done > 0 then
 		table.insert(out, ui.node("section", { key = "done", head = { ui.span(table.concat(count, " · "), "muted") }, collapsible = true, collapsed = true }, done))
 	end
-	-- Each failing check's first error line, its log excerpt in a fold under it (read once per check and head commit,
-	-- engine.failures). No log viewer: the check's row above opens its page.
+	if #links > 0 then
+		table.insert(out, ui.node("col", { key = "checks", hidden = true }, links))
+	end
+	-- Each failing check's first error line, its log excerpt under it (read once per check and head commit,
+	-- engine.failures): code with that line marked, clamped to its first lines with Tern's "K more lines". Not in a
+	-- collapsible section: Tern applies a code preview only while its disclosure is folded, and a folded section draws
+	-- no body. No log viewer: the check's row above opens its page.
 	local sha = if d and d.about then d.about.head else nil
 	for i, r in runs do
 		local log = if r.status == "failure" and sha then engine.ciLog(state, sha, r) else nil
 		if log and log.lines then
 			local line = log.first or "No error line: its last lines are kept"
-			local text = table.concat(log.lines, "\n")
-			local fence = "```"
-			while string.find(text, fence, 1, true) do
-				fence ..= "`"
-			end
-			local body = { ui.node("md", { key = "log", text = fence .. "text\n" .. text .. "\n" .. fence }) }
+			local at = if log.first then table.find(log.lines, log.first) else nil
+			local body = { ui.node("code", { key = "log", text = table.concat(log.lines, "\n"), lang = "text", marks = if at then { { line = at, tone = "error" } } else nil, preview = { lines = LOG_PREVIEW } }) }
 			if #log.refs > 0 then
 				table.insert(body, 1, ui.node("text", { key = "refs", spans = { ui.span("Changed files it names: ", "muted"), ui.span(table.concat(log.refs, ", "), "code") } }))
 			end
-			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") }, collapsible = true, collapsed = true }, body))
+			table.insert(out, ui.node("section", { key = "fail" .. i, head = { ui.span(r.name .. ": ", "muted"), ui.span(core.clip(line, 160), if log.first then "error" else "muted") } }, body))
 		elseif log and log.problem then
 			table.insert(out, ui.node("text", { key = "fail" .. i, spans = { ui.span(r.name .. ": log not read: " .. log.problem, "muted") } }))
 		end

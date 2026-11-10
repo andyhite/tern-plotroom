@@ -21,7 +21,7 @@ local pickerNode, pickerOf, porcelain, prLink, prefsOf, pressCard = h.pickerNode
 local promptOf, refreshNow, request, requestsOf, rowIn, same = h.promptOf, h.refreshNow, h.request, h.requestsOf, h.rowIn, h.same
 local saveIssuePrompts, savePrompts, searchItem, sectionIn, sha, show = h.saveIssuePrompts, h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.show
 local showPr, snapshot, windowCase, yes = h.showPr, h.snapshot, h.windowCase, h.yes
-local asks, viewSearchesOf = h.asks, h.viewSearchesOf
+local asks, cardSurface, requestsSent, viewSearchesOf = h.asks, h.cardSurface, h.requestsSent, h.viewSearchesOf
 
 -- The worktree card's buttons as "key:label", in order; none for a failed attempt.
 local function buttonsOf(b: Block): { string }
@@ -65,18 +65,36 @@ local function serveChecks(s: HostScene, rollup: string, list: { any })
 	s.gh.checks["o/r#1"] = list
 end
 
--- The preview's check rows as "name — detail", in the order shown: failing, running, queued, then passed and skipped.
+-- The preview's check rows as "name — detail" (each row's tooltip), in the order shown: failing, running, queued, then
+-- passed and skipped.
 local function runRows(b: Block): { string }
 	local out: { string } = {}
 	for _, key in { "failing", "running", "queued", "passed", "skipped" } do
-		local list: any = findKey(pickerNode(b), key)
-		if list then
-			for _, row in list.c do
-				table.insert(out, row.p.title)
+		local grid: any = findKey(pickerNode(b), key, "table")
+		if grid then
+			for _, row in grid.p.rows do
+				table.insert(out, row.title)
 			end
 		end
 	end
 	return out
+end
+
+-- The preview's check row `id` ("run<i>") in whichever checks table holds it, and the check's name as its cell reads.
+local function checkRow(b: Block, id: string): (any, string)
+	for _, key in { "failing", "running", "queued", "passed", "skipped" } do
+		local grid: any = findKey(pickerNode(b), key, "table")
+		for _, row in if grid then grid.p.rows else {} do
+			if row.id == id then
+				local name: { string } = {}
+				for _, s in row.cells.check.text do
+					table.insert(name, if type(s) == "table" then s.t else s)
+				end
+				return row, table.concat(name)
+			end
+		end
+	end
+	return nil, ""
 end
 
 case("host: the full checks load once the cursor rests, never while it moves or a render repeats it, and a PR with current checks asks for nothing", function(w: World)
@@ -158,26 +176,38 @@ case("host: the preview groups checks as Failing, Running and Queued with counts
 	serveChecks(s, "FAILURE", { build, gate, test, job("lint", "queued"), status, job("docs", "passed"), skipped })
 	local b = openQueue(w)
 	w.advance(300)
-	local function rows(list: any): { string }
+	-- A row as "check | workflow | took | dot | menu", the check's muted notes after its name.
+	local function rows(grid: any): { string }
 		local out: { string } = {}
-		for _, row in list.c do
-			eq(row.k, "item", "only rows in a list: other kinds get no row behaviour")
-			table.insert(out, table.concat({ row.p.label, row.p.detail or "-", row.p.value or "-", row.p.icon, row.p.tone }, " | "))
+		for _, row in grid.p.rows do
+			local name: { string } = {}
+			for _, s in row.cells.check.text do
+				table.insert(name, if type(s) == "table" then s.t else s)
+			end
+			table.insert(out, table.concat({ table.concat(name), row.cells.workflow, row.cells.took, row.cells.check.dot, table.concat(row.menu or {}, ",") }, " | "))
 		end
 		return out
 	end
 	local preview = pickerNode(b)
+	local failing: any = findKey(preview, "failing", "table")
+	local cols: { any } = {
+		{ id = "check", head = "Check", grow = 1, priority = 2 },
+		{ id = "workflow", head = "Workflow", priority = 0 },
+		{ id = "took", head = "Took", align = "end", mono = true, priority = 1 },
+	}
+	same(failing.p.cols, cols, "each group is a native table: the check grows, Took is right-aligned and mono")
+	eq(failing.p.selectable, true, "its rows take clicks")
 	eq(findKey(preview, "failing-head").p.spans[1].t, "Failing 1", "each group headed with its count")
-	same(rows(findKey(preview, "failing", "list")), { "build | Required · ci | 45s | x | error" }, "the job, Required, its CI, how long it ran, its status as an icon")
+	same(rows(failing), { "build · Required | ci | 45s | error | ignore-in-this-repo…" }, "the job, Required, its CI, how long it ran, a dot in its status's tone; a failing check without a page can only be ignored")
 	eq(findKey(preview, "running-head").p.spans[1].t, "Running 1", "running next")
-	same(rows(findKey(preview, "running", "list")), { "test | CI | 6m 24s | clock | warning" }, "a running check says how long it has been running, and its workflow")
+	same(rows(findKey(preview, "running", "table")), { "test | CI | 6m 24s | warning | " }, "a running check says how long it has been running, and its workflow")
 	eq(findKey(preview, "queued-head").p.spans[1].t, "Queued 2", "then queued")
-	same(rows(findKey(preview, "queued", "list")), { "lint | - | - | clock | warning", "ci/circleci | circleci.com | - | clock | warning" }, "a commit status's CI is its target's host")
+	same(rows(findKey(preview, "queued", "table")), { "lint |  |  | warning | ", "ci/circleci | circleci.com |  | warning | open" }, "a commit status's CI is its target's host; one with a page opens it")
 	local fold: any = findKey(preview, "done", "section")
 	same({ fold.p.head[1].t, fold.p.collapsible, fold.p.collapsed }, { "Passed 2 · Skipped 1", true, true } :: { any }, "passed and skipped fold by default, the fold's head counting both")
-	same(rows(findKey(fold, "passed", "list")), { "gate | Required | 1h 05m | check | success", "docs | - | - | check | success" }, "passed ones are listed in the fold")
-	same(rows(findKey(fold, "skipped", "list")), { "deploy | Vercel | - | minus | muted" }, "skipped after them, with the app that ran it")
-	eq(findKey(preview, "failing", "list") ~= nil and findKey(fold, "failing") == nil, true, "only passed and skipped are folded")
+	same(rows(findKey(fold, "passed", "table")), { "gate · Required |  | 1h 05m | success | ", "docs |  |  | success | " }, "passed ones are listed in the fold")
+	same(rows(findKey(fold, "skipped", "table")), { "deploy | Vercel |  | muted | " }, "skipped after them, with the app that ran it")
+	eq(findKey(preview, "failing", "table") ~= nil and findKey(fold, "failing") == nil, true, "only passed and skipped are folded")
 	local many: { any } = {}
 	for i = 1, 30 do
 		table.insert(many, job("job" .. i, "passed"))
@@ -185,9 +215,8 @@ case("host: the preview groups checks as Failing, Running and Queued with counts
 	serveChecks(s, "SUCCESS", many)
 	w.advance(62000)
 	preview = pickerNode(b)
-	local all: any = findKey(preview, "passed", "list")
-	eq(#all.c, 30, "thirty: every one is a row")
-	eq(all.p.max, nil, "in the preview's own scroll, not a list of its own")
+	local all: any = findKey(preview, "passed", "table")
+	eq(#all.p.rows, 30, "thirty: every one is a row")
 	eq(findKey(preview, "done", "section").p.head[1].t, "Passed 30", "no Skipped when none is")
 	eq(findKey(preview, "failing-head"), nil, "an empty group has no heading")
 end)
@@ -2099,11 +2128,11 @@ case("host stage: a pull request failing only ignored checks of its repository i
 	eq(stage("no_2fr_232"), "Blocked", "another check fails too")
 	eq(stage("no_2fr_233"), "Blocked", "checks the search did not list may fail: the failure still counts")
 	eq(stage("nx_2fy_234"), "Blocked", "the check is ignored only in its own repository")
-	local run: any = findKey(pickerNode(b), "run1", "item")
-	eq(run.p.label, "approval", "the ignored check is still listed")
-	eq(run.p.value, "Ignored", "marked Ignored")
-	has(run.p.title, "Failed", "still failing")
-	has(run.p.title, "(ignored)", "and says it is ignored")
+	local run, name = checkRow(b, "run1")
+	eq(name, "approval · Ignored", "the ignored check is still listed, marked Ignored")
+	eq(run.menu, nil, "it has no page, and its menu cannot ignore it again")
+	has(run.title, "Failed", "still failing")
+	has(run.title, "(ignored)", "and says it is ignored")
 	eq(hx.palette(w, b).next, nil, "no Next move: nothing blocks it")
 end)
 
@@ -2259,19 +2288,20 @@ case("host likely flaky: a failing check that failed 3 of the last 20 base runs 
 		local move: any = findKey(preview, "next", "button")
 		return (if move then move.p.text else nil), preview
 	end
-	local move, preview = show("no_2fr_231")
-	local build, test = findKey(preview, "run1", "item").p, findKey(preview, "run2", "item").p
-	eq(build.detail, "Likely flaky · failed 3 of the last 20 runs on main", "the check shows the mark and its reason")
+	local move = show("no_2fr_231")
+	local build, buildName = checkRow(b, "run1")
+	local _, testName = checkRow(b, "run2")
+	eq(buildName, "build · Likely flaky · failed 3 of the last 20 runs on main", "the check shows the mark and its reason")
 	has(build.title, "Likely flaky · failed 3 of the last 20 runs on main", "and its tooltip says it")
-	eq(test.detail, nil, "a failure an annotation puts on a file the PR changed is not flaky, whatever the base branch does")
+	eq(testName, "test", "a failure an annotation puts on a file the PR changed is not flaky, whatever the base branch does")
 	eq(move, nil, "someone else's PR with a failure that is not flaky: no move")
 	move = show("no_2fr_232")
 	eq(move, "Re-run failed checks", "every failing check Likely flaky: re-run them")
 	eq(hx.palette(w, b).next, "rerun-failed", "the window's own command")
 	move = show("no_2fr_233")
 	eq(move, "Watch", "your own PR with a failure that is not flaky goes to Watch, which fixes checks")
-	move, preview = show("no_2fr_234")
-	eq(findKey(preview, "run1", "item").p.detail, "Likely flaky · passed earlier on this commit", "the reason names the earlier pass")
+	move = show("no_2fr_234")
+	eq(select(2, checkRow(b, "run1")), "e2e · Likely flaky · passed earlier on this commit", "the reason names the earlier pass")
 	eq(move, "Re-run failed checks", "and it is re-run")
 	-- what an action starting on the PR gets as `{flaky}` (the default Watch's checks step reads it)
 	for n, c in { [3] = "c", [4] = "d" } do
@@ -3455,8 +3485,10 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	local next: any = findKey(preview, "next", "button")
 	eq(next.p.text, "Re-run failed checks", "a failed run's Next move")
 	eq(next.p.size, "sm", "a small button: it sits in the preview")
-	eq(findKey(preview, "run1", "item").p.role, "plotroom.link", "a check with a page is a link to it")
-	eq(findKey(preview, "run2", "item").p.role, nil, "a check without one is neither")
+	same(checkRow(b, "run1").menu, { "open", "ignore-in-this-repo…" }, "a failing check with a page: its row's menu opens it or ignores it")
+	eq(findKey(preview, "open1").p.href, "plotroom://github/check/1/https%3A%2F%2Fgithub.com%2Fo%2Fr%2Factions%2Fruns%2F123%2Fjob%2F9", "through the hidden link the window honours")
+	eq(checkRow(b, "run2").menu, nil, "a passing check without a page offers nothing but Tern's Copy row")
+	eq(findKey(preview, "open2"), nil, "and has no link")
 	eq(findKey(preview, "r1", "item").p.role, nil, "nor is a reviewer's verdict")
 	local copy: any = findKey(findKey(preview, "head"), "copy", "button")
 	eq(copy.p.text, "", "the head's Copy link is an icon-only button")
@@ -3520,6 +3552,44 @@ case("host: everything clickable in an issue preview and the shortcut list is a 
 	ib.typeText("?")
 	yes(findKey(ib.view().layer, "help", "overlay") ~= nil, "the shortcut list is open")
 	same(hx.miscued(ib.view().layer), {}, "its Close is a button; its keycaps are neither")
+end)
+
+windowCase("window: a check row's click and Open open its page beside the block, Ignore in this repo… plans ignoring that check, and a link no row shows is refused", function(w: World)
+	local s, b = agentScene(w)
+	local done = "2026-01-01T00:00:00Z"
+	local page = "https://github.com/o/r/actions/runs/123/job/9"
+	s.gh.checks["o/r#5"] = array({
+		checkRun("build", "COMPLETED", "FAILURE", done, { id = "A", detailsUrl = page }),
+		checkRun("lint", "COMPLETED", "SUCCESS", done, { id = "B" }),
+	})
+	w.advance(300)
+	w.flush()
+	cardSurface(w, b) -- the layer the window reads, as Tern publishes it
+	b.event({ ev = "select", id = "layer.queue.failing", item = "run1" })
+	w.flush()
+	same(w.window.browser, { { url = page, how = "beside", beside = 1 } }, "a click on the row opens the check's page beside the block")
+	b.event({ ev = "action", id = "layer.queue.failing", act = "open", item = "run1" })
+	w.flush()
+	eq(#w.window.browser, 2, "and so does its menu's Open")
+	local before = #requestsSent(w)
+	b.event({ ev = "action", id = "layer.queue.done.passed", act = "ignore-in-this-repo…", item = "run2" })
+	w.flush()
+	eq(#requestsSent(w), before, "a passing check cannot be ignored: nothing is asked")
+	w.window.choose = "Ignore check"
+	b.event({ ev = "action", id = "layer.queue.failing", act = "ignore-in-this-repo…", item = "run1" })
+	w.flush()
+	local asked = requestsSent(w)[before + 1]
+	same({ asked.op, asked.name, asked.check }, { "act", "ignore-check", "build" }, "Ignore in this repo… asks the host's plan for that check, with no picker")
+	eq(w.window.picks[#w.window.picks].placeholder, "Ignore build in o/r?", "the confirm names the check and the repository")
+	same(w.kv.get("ignored-checks")["o/r"], { "build" }, "confirmed, it is saved")
+	eq(checkRow(b, "run1").menu[2], nil, "and the row no longer offers it")
+	cardSurface(w, b)
+	local said = #w.toasts
+	w.click("plotroom://github/ignore/1/build")
+	eq(w.toasts[said + 1].text, "Plotroom: that check is no longer listed", "an ignore link the block no longer shows is refused")
+	w.click("plotroom://github/check/1/" .. "https%3A%2F%2Fexample.com")
+	eq(w.toasts[said + 2].text, "Plotroom: that check is no longer listed", "so is a check link to another page")
+	eq(#w.window.browser, 2, "nothing more opened")
 end)
 
 return {}

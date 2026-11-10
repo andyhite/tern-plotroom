@@ -118,6 +118,12 @@ if a[:2] == ["run", "list"] and "--repo" in a:  # a workflow's last runs on a br
     key = "%s@%s@%s" % (a[a.index("--repo") + 1].replace("github.com/", "", 1), opt.get("branch"), opt.get("workflow"))
     sys.stdout.write(json.dumps((json.load(open(f)) if os.path.exists(f) else {}).get(key, [])))
     sys.exit(0)
+if a[:2] == ["run", "view"] and "--log-failed" in a:  # a failed job's log, from log-failed.txt; none: gh fails
+    f = os.path.join(SMOKE, "log-failed.txt")
+    if not os.path.exists(f):
+        sys.exit(1)
+    sys.stdout.write(open(f, encoding="utf-8").read())
+    sys.exit(0)
 if a[:2] == ["pr", "list"] and any(x.startswith("--head=") for x in a):  # the pull request on an issue's worktree branch: none
     sys.stdout.write("[]")
     sys.exit(0)
@@ -2344,8 +2350,9 @@ def sc_now_settings(s: Smoke) -> None:
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
     branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as Tern's button kind
-    (.sf-button, small) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
-    the shot shows them."""
+    (.sf-button, small); its checks are rows of Tern's native table (Check, Workflow, Took) and never a button or link. Nothing is clicked: the
+    shot shows them. The failing check's log excerpt is drawn open under its error line, clamped by Tern's code preview with its visible
+    "K more lines" button (a collapsible section would hide both)."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -2358,7 +2365,12 @@ def sc_controls(s: Smoke) -> None:
           "labels": [], "checks": "FAILURE", "merge": "BLOCKED", "mergeable": "MERGEABLE", "runs": runs, "runTotal": len(runs), "headSha": "1" * 40}
     (s.smoke / "search.json").write_text(json.dumps([pr]), encoding="utf-8")
     thread = {"path": "src/app.py", "line": 12, "by": "maria-k", "body": "Rename this helper", "url": "https://github.com/a/gent/pull/7#discussion_r1"}
-    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": [], "threads": [thread]}
+    about = {"mergeable": "MERGEABLE", "merge": "BLOCKED", "body": "", "reviews": [], "requested": [], "threads": [thread], "head": "1" * 40}
+    log = ["build\tRun tests\t2026-01-01T00:00:00.0000000Z ##[group]Run npm test"]
+    log += ["build\tRun tests\t2026-01-01T00:00:01.0000000Z line %d" % i for i in range(1, 21)]
+    log += ["build\tRun tests\t2026-01-01T00:00:02.0000000Z src/app.py(3,1): error TS2322: Type 'number' is not assignable"]
+    log += ["build\tRun tests\t2026-01-01T00:00:03.0000000Z after %d" % i for i in range(1, 21)]
+    (s.smoke / "log-failed.txt").write_text("\n".join(log) + "\n", encoding="utf-8")
     (s.smoke / "checks.json").write_text(json.dumps({"a/gent#7": {"total": len(runs), "next": None, "nodes": runs, "about": about}}), encoding="utf-8")
     job = "https://github.com/a/gent/actions/runs/123/job/9"
     (s.smoke / "flaky.json").write_text(json.dumps({"a/gent#7": {"head": "1" * 40, "files": ["src/app.py"], "runs": [
@@ -2382,11 +2394,21 @@ def sc_controls(s: Smoke) -> None:
     button, link = scope + ".sf-button[data-size='sm']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
     s.shot("controls")
-    s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))
+    table = scope + ".sf-table"
+    s.wait_until("the failed check is a row of a native checks table", lambda: any("build" in t and "Workflow" in t and "Took" in t for t in s.matches(table)))
+    s.wait_until("keyed by its row id", lambda: any("build" in t for t in s.matches(table + " [data-key='run1']")))
     s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
     s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
+    s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the checks table under the threads
+    time.sleep(0.5)
     s.shot("controls-loaded")
-    s.eq("the check without a page is neither", False, any("lint" in t for t in s.matches(button + ", " + link)))
+    s.ctl_ok("resize", "2200", "1000")
+    time.sleep(0.5)
+    s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
+    s.wait_until("the failing check's excerpt is drawn, clamped, with the error line in it",
+                 lambda: any("error TS2322" in t for t in s.matches(scope + ".sf-code.clamped")))
+    s.wait_until("its K more lines button shows", lambda: any("more line" in t for t in s.matches(scope + ".sf-code-more:not(.sf-hidden)")))
+    (s.smoke / "log-failed.txt").unlink()
     s.ctl_ok("key", "Escape")
 def sc_previews(s: Smoke) -> None:
     """Every preview in one order (docs/reference.md › Finer points › Preview): a pull request with failing checks, a GitHub issue and a Jira issue, each

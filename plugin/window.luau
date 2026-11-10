@@ -41,8 +41,10 @@ local WORKTREE_NODE = "layer.queue.buttons.worktree"
 local LINKED_NODE = "layer.queue.linked" -- the issue sidebar's linked pull requests; ".pr<i>" follows
 local HEADPR_NODE = "layer.queue.headpr" -- the issue preview's head pull request row
 local NOTED_NODE = "layer.queue.noted" -- the PR preview's noted issue row
--- The lists a GitHub page row can sit in (required checks, the other checks, unresolved review threads); ".run<i>" follows.
-local CHECK_LISTS = { "layer.queue.required", "layer.queue.runs", "layer.queue.threads" }
+-- Where a GitHub page row's link is: the checks' hidden links ("open<i>", render's checksNodes) and the unresolved
+-- review threads (".run<i>").
+local CHECK_NODES = { "layer.queue.checks.open", "layer.queue.threads.run" }
+local IGNORE_NODE = "layer.queue.checks.ignore" -- .. <i>: a failing check's hidden Ignore in this repo… link
 local GOTO_NODE = "layer.queue.buttons.goto"
 local AGENT_NODE = "layer.queue.buttons.agent" -- hidden: the `a` key's and palette command's link
 local AGENTGO_NODE = flows.AGENTGO_NODE
@@ -1392,8 +1394,8 @@ end
 
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
-	for _, list in CHECK_LISTS do
-		if nodeProp(readNode(cx, pane, list .. ".run" .. index), "href") == url then
+	for _, node in CHECK_NODES do
+		if nodeProp(readNode(cx, pane, node .. index), "href") == url then
 			return true
 		end
 	end
@@ -1650,6 +1652,18 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			openUrl(cx, pane, target)
+		end
+		return true
+	end
+	local ignoreIndex, ignoreName = string.match(url, "^plotroom://github/ignore/(%d+)/(.+)$")
+	if ignoreIndex and ignoreName then
+		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the palette.
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then
+			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
+		else
+			flows.ignoreCheck(cx, pane, unpct(ignoreName))
 		end
 		return true
 	end
