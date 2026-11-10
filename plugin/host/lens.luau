@@ -1,13 +1,30 @@
 --!strict
--- The shell lens for `gh pr create` (manifest lens `pr-create`): when the output holds the new pull request's URL, the
--- lens view offers to show it in Plotroom, copy it or open it in the browser; any other output stays raw. Tern lenses
--- only simple commands, never pipelines or redirects.
+-- Plotroom's shell lenses. `pr-create` (`gh pr create`): when the output holds the new pull request's URL, the lens
+-- view offers to show it in Plotroom, copy it or open it in the browser; any other output stays raw. `pr-checks`
+-- (`gh pr checks`): gh's checks table as a native table in the preview's check tones; output it cannot read stays raw.
+-- Tern lenses only simple commands, never pipelines or redirects. Lens handlers have no side effects: Tern may run them
+-- again to rebuild their state.
 
 local core = require("./core")
 
 local ui = tern.ui
 
 type Lens = { url: string? }
+
+-- One `gh pr checks` row as the terminal shows it.
+type Check = { mark: string, name: string, took: string, url: string, href: string? }
+-- `at`: the first character of NAME, DESCRIPTION, ELAPSED and URL in gh's header; nil until a header arrives.
+-- `open`: rows still belong to the last header.
+type Checks = { at: { number }?, open: boolean, rows: { Check } }
+
+-- gh's mark for each check state, read as the preview reads a run's status (core.RUN_TONE). gh marks a cancelled check
+-- as it marks a skipped one.
+local MARK: { [string]: { status: string, word: string } } = {
+	["✓"] = { status = "success", word = "Pass" },
+	X = { status = "failure", word = "Fail" },
+	["*"] = { status = "pending", word = "Pending" },
+	["-"] = { status = "neutral", word = "Skipped" },
+}
 
 local M = {}
 
@@ -18,6 +35,68 @@ function M.urlIn(text: string): string?
 		found = url
 	end
 	return found
+end
+
+-- Characters `from` to `to` (to the end when nil) of `text`, trimmed. gh pads columns in characters and its pass mark
+-- is three bytes, so offsets count characters.
+-- ponytail: one character per cell; a wide (CJK) check name shifts the columns after it, add a width table if gh prints them.
+local function cut(text: string, from: number, to: number?): string
+	local a = utf8.offset(text, from)
+	if not a or a > #text then
+		return ""
+	end
+	local b = if to then utf8.offset(text, to + 1) else nil
+	return (string.gsub(string.sub(text, a, if b then b - 1 else -1), "^%s*(.-)%s*$", "%1"))
+end
+
+-- Reads one line of `gh pr checks` as a terminal shows it: a header starts a table (again under `--watch`), a row
+-- with a known mark joins it, anything else ends it.
+function M.checksLine(state: Checks, text: string, links: { LensLink })
+	-- The header is ASCII, so its byte positions are character positions.
+	local atName, atDesc, atTook, atUrl = string.match(text, "^%s*()NAME%s+()DESCRIPTION%s+()ELAPSED%s+()URL$")
+	if atName and atDesc and atTook and atUrl then
+		state.at = { tonumber(atName) :: number, tonumber(atDesc) :: number, tonumber(atTook) :: number, tonumber(atUrl) :: number }
+		state.open, state.rows = true, {}
+		return
+	end
+	local at = state.at
+	if not at or not state.open then
+		return
+	end
+	local mark, name = cut(text, 1, at[1] - 1), cut(text, at[1], at[2] - 1)
+	if not MARK[mark] or name == "" then
+		state.open = false
+		return
+	end
+	local url = cut(text, at[4])
+	-- A link gh printed wins; a URL the terminal width cut (ending in "...") opens nothing.
+	local href = if links[1] then links[1].href elseif string.match(url, "^https://%S+$") and not string.find(url, "...", 1, true) then url else nil
+	table.insert(state.rows, { mark = mark, name = name, took = cut(text, at[3], at[4] - 1), url = url, href = href })
+end
+
+-- The checks table, or nil (raw output) when no row was read.
+function M.checksView(state: Checks): Node?
+	if #state.rows == 0 then
+		return nil
+	end
+	local rows: { { Cell } } = {}
+	for i, r in state.rows do
+		local m = MARK[r.mark]
+		rows[i] = {
+			{ ui.span(r.name) },
+			{ ui.span("● ", core.RUN_TONE[m.status]), ui.span(m.word) },
+			{ ui.span(r.took, "num") },
+			{ if r.href then ui.link(r.url, r.href) else ui.span(r.url, "muted") },
+		}
+	end
+	return ui.col({
+		ui.table({
+			{ id = "check", head = "Check", grow = 1 },
+			{ id = "status", head = "Status" },
+			{ id = "took", head = "Took", align = "end" },
+			{ id = "link", head = "Link", grow = 1, truncate = "middle", priority = -1 },
+		}, rows),
+	})
 end
 
 function M.define()
@@ -52,6 +131,18 @@ function M.define()
 			})
 		end,
 	}
+	local checks: LensDef<Checks> = {
+		open = function(_run: LensRun, _cx: EffectCx): Checks
+			return { at = nil, open = false, rows = {} }
+		end,
+		line = function(state: Checks, l: LensLine)
+			M.checksLine(state, l.text, l.links)
+		end,
+		-- gh exits 1 with a failing check and 8 with a pending one; the table says which, so the status changes nothing.
+		finish = function(_state: Checks, _status: number) end,
+		view = M.checksView,
+	}
+	tern.lens.define("pr-checks", checks)
 	tern.lens.define("pr-create", def)
 end
 

@@ -1293,6 +1293,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			col = function(children: any): any
 				return { k = "col", c = children }
 			end,
+			table = function(cols: any, rows: any): any
+				return { k = "table", p = { cols = cols, rows = rows } }
+			end,
 			node = function(kind: string, props: any?, children: any?): any
 				return { k = kind, p = props, c = children }
 			end,

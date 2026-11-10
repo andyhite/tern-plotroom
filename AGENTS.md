@@ -19,7 +19,7 @@ Host layers (`plugin/host/`; each module may require only those to its left, no 
 
 `core` (types, constants, `KINDS`/`GROUPS`, badges, the `cli` table, `running`, pure text/href helpers) ← `storage` (kv stores, name `formats`) ← `engine` (lifecycle, identity/refresh, triage, pins, Worktrees board glue, navigation, details, worktree notes, `me`, `ghActive`, CLI probing) ← `render` (rows, previews, checks, help, scopes, hidden rpc nodes) ← `settings` (Settings sheet) ← `requests` (window requests, workflow requests, palette actions).
 
-`lens` (the `gh pr create` shell lens, manifest lens `pr-create`; requires only `core`, outside the chain above, and `host.luau` calls `lens.define()`). Its show link `plotroom://lens/show/<pct URL>` is the one link the window accepts from a non-Plotroom pane, besides the Draft review block's `plotroom://review/send`.
+`lens` (the shell lenses: `gh pr create`, manifest lens `pr-create`, and `gh pr checks`, manifest lens `pr-checks`; requires only `core`, outside the chain above, and `host.luau` calls `lens.define()`). Its show link `plotroom://lens/show/<pct URL>` is the one link the window accepts from a non-Plotroom pane, besides the Draft review block's `plotroom://review/send`.
 
 `review` (the Draft review block, manifest block `review`; requires `core` and `render`'s `button`, outside the chain above; `host.luau` calls `review.define()`, and `requests` asks it when a run's Draft review file was written for the rpc op `review`). It reads `<data>/runs/<run>/review.json`, the pull request's head and base (`github.pr`) and the diff (`worktree.reviewDiff`), and publishes hidden `main.run` and, on Send, `main.send`.
 
@@ -84,7 +84,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
 - `CHANGELOG.md` — Keep a Changelog: an Unreleased section and one `## [<version>]` heading per release of `plugin/plugin.toml`'s `version`.
 - `plugin/rpc.luau` — the rpc protocol: `PROTOCOL` (what a host announces in `main.rpc`), `MIN` (the oldest host a window asks) and `SINCE` (op → protocol that added it).
-- `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, two blocks `prs` (title Plotroom, icon `merge`) and `review` (title Draft review, icon `check`), one `[[lenses]]` entry `pr-create` (`match = ["gh pr create*"]`).
+- `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, two blocks `prs` (title Plotroom, icon `merge`) and `review` (title Draft review, icon `check`), two `[[lenses]]` entries `pr-create` (`match = ["gh pr create*"]`) and `pr-checks` (`match = ["gh pr checks", "gh pr checks *"]`).
 - `plugin/host.luau` — block entry point; `plugin/host/*.luau` — host logic by layer (see Architecture).
 - `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows, and the Draft review's opening at an agent's turn end and its Send. No consent step: agents start once the worktree is ready. `selftest`/`smoke`/`review-smoke` commands only when `PLOTROOM_SELFTEST=1`.
 - `plugin/flows.luau` — window workflow flows and `COMMANDS`.

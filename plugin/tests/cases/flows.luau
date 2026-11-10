@@ -1759,6 +1759,107 @@ case("lens: a gh pr create transcript offers to show, copy and open the new pull
 	eq(exists, nil, "gh's already-exists failure (exit 1) shows its raw output, not the old pull request")
 end)
 
+-- `gh pr checks` as gh 2.102 prints it on a terminal (captured with `script`): a spinner, a summary, then a table cut to
+-- the terminal width, the pass mark three bytes wide.
+local function checksLens(w: World, lines: { string }, status: number?): (any, any)
+	w.load("host")
+	local def: any = w.lenses["pr-checks"]
+	yes(def ~= nil, "the manifest's lens is defined")
+	local function refuse(name: string): () -> ()
+		return function()
+			error("a lens handler called cx:" .. name, 0)
+		end
+	end
+	local cx = { toast = refuse("toast"), open = refuse("open"), copy = refuse("copy") }
+	local state = def.open({ line = "gh pr checks 45", typed = "gh pr checks 45", program = "gh", args = { "pr", "checks", "45" } }, cx)
+	for _, text in lines do
+		def.line(state, { text = text, links = {} })
+	end
+	def.finish(state, status or 0)
+	eq(def.event, nil, "the lens handles no events of its own")
+	return state, def.view(state)
+end
+
+local function checksRows(view: any): { { string } }
+	local tbl = view.c[1]
+	eq(tbl.k, "table", "the checks are one table")
+	local heads: { string } = {}
+	for _, c in tbl.p.cols do
+		table.insert(heads, c.head)
+	end
+	same(heads, { "Check", "Status", "Took", "Link" }, "its columns")
+	local out: { { string } } = {}
+	for _, r in tbl.p.rows do
+		table.insert(out, { r[1][1].t, r[2][1].s, r[2][2].t, r[3][1].t, r[4][1].t, r[4][1].href or "-" })
+	end
+	return out
+end
+
+case("lens: gh pr checks on a wide terminal is a table of Check, Status as a dot and a word in the preview's tones, Took and Link", function(w: World)
+	local _, view = checksLens(w, {
+		"Some checks were not successful",
+		"0 cancelled, 1 failing, 1 successful, 1 skipped, and 1 pending checks",
+		"",
+		"   NAME                                                                                        DESCRIPTION  ELAPSED  URL",
+		"X  Unit and Integration Tests/build (windows-latest) (pull_request)                                         6m53s    https://github.com/cli/cli/actions/runs/41720844033/job/126212878432",
+		"✓  CodeQL                                                                                                   3s       https://github.com/cli/cli/runs/126213975170",
+		"*  Lint/lint (pull_request)                                                                                 2m50s    https://github.com/cli/cli/actions/runs/41720843855/job/126212878043",
+		"-  PR Triaging/ready-for-review (pull_request_target)                                                                https://github.com/cli/cli/actions/runs/41722208901/job/126217716143",
+	}, 1)
+	same(checksRows(view), {
+		{ "Unit and Integration Tests/build (windows-latest) (pull_request)", "error", "Fail", "6m53s", "https://github.com/cli/cli/actions/runs/41720844033/job/126212878432", "https://github.com/cli/cli/actions/runs/41720844033/job/126212878432" },
+		{ "CodeQL", "success", "Pass", "3s", "https://github.com/cli/cli/runs/126213975170", "https://github.com/cli/cli/runs/126213975170" },
+		{ "Lint/lint (pull_request)", "warning", "Pending", "2m50s", "https://github.com/cli/cli/actions/runs/41720843855/job/126212878043", "https://github.com/cli/cli/actions/runs/41720843855/job/126212878043" },
+		{ "PR Triaging/ready-for-review (pull_request_target)", "muted", "Skipped", "", "https://github.com/cli/cli/actions/runs/41722208901/job/126217716143", "https://github.com/cli/cli/actions/runs/41722208901/job/126217716143" },
+	}, "every row in gh's order, the dot in core.RUN_TONE's tone for its status (exit 1 for the failure changes nothing)")
+end)
+
+case("lens: gh pr checks on a narrow terminal keeps gh's cut names, and a cut URL is shown unlinked", function(w: World)
+	local _, view = checksLens(w, {
+		"All checks were successful",
+		"0 cancelled, 0 failing, 2 successful, 7 skipped, and 0 pending checks",
+		"",
+		"   NAME                         DESCRIPTION  ELAPSED  URL",
+		"-  PR Triaging/close-no-hel...                        https://github.com/cli/...",
+		"✓  PR Triaging/check-requir...               4s       https://github.com/cli/...",
+	})
+	same(checksRows(view), {
+		{ "PR Triaging/close-no-hel...", "muted", "Skipped", "", "https://github.com/cli/...", "-" },
+		{ "PR Triaging/check-requir...", "success", "Pass", "4s", "https://github.com/cli/...", "-" },
+	}, "a URL ending in ... opens nothing")
+end)
+
+case("lens: gh pr checks --watch shows the last table it printed; a link gh printed wins over the cut text", function(w: World)
+	local state, view = checksLens(w, {
+		"Refreshing checks status every 10 seconds. Press Ctrl+C to quit.",
+		"",
+		"   NAME    DESCRIPTION  ELAPSED  URL",
+		"*  build                1m       https://github.com/o/r/runs/1",
+		"",
+		"Refreshing checks status every 10 seconds. Press Ctrl+C to quit.",
+		"   NAME    DESCRIPTION  ELAPSED  URL",
+		"X  build                2m       https://github.com/o/r/runs/1",
+		"stray text after the table",
+		"✓  build                3m       https://github.com/o/r/runs/1",
+	}, 1)
+	same(checksRows(view), { { "build", "error", "Fail", "2m", "https://github.com/o/r/runs/1", "https://github.com/o/r/runs/1" } }, "only the newest table, ended by the first line that is no row")
+	local lens = w.load("host/lens") :: any
+	lens.checksLine(state, "   NAME    DESCRIPTION  ELAPSED  URL", {})
+	lens.checksLine(state, "✓  build                3m       https://github.com/o/...", { { from = 34, to = 56, href = "https://github.com/o/r/runs/9" } })
+	same(checksRows(lens.checksView(state)), { { "build", "success", "Pass", "3m", "https://github.com/o/...", "https://github.com/o/r/runs/9" } }, "the OSC 8 link's target")
+end)
+
+case("lens: gh pr checks output with no checks table stays raw", function(w: World)
+	local _, none = checksLens(w, { "no checks reported on the 'fix' branch" }, 1)
+	eq(none, nil, "no rows: the raw output")
+	local _, piped = checksLens(w, { "build\tpass\t4s\thttps://github.com/o/r/runs/1\t" })
+	eq(piped, nil, "gh's tab-separated form (no header) is not read")
+	local _, json = checksLens(w, { "[{\"name\":\"build\",\"state\":\"SUCCESS\"}]" })
+	eq(json, nil, "nor --json")
+	local _, odd = checksLens(w, { "   NAME    DESCRIPTION  ELAPSED  URL", "?  build                3m       https://github.com/o/r/runs/1" })
+	eq(odd, nil, "a row with a mark gh does not print ends the table before it")
+end)
+
 windowCase("window flows: the lens's show link works from a shell pane, while an item link from it is still refused", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

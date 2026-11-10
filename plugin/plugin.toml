@@ -24,3 +24,7 @@ palette = false
 id = "pr-create"
 match = ["gh pr create*"]
 
+[[lenses]]
+id = "pr-checks"
+match = ["gh pr checks", "gh pr checks *"]
+
