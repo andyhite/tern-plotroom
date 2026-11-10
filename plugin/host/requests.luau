@@ -30,7 +30,8 @@ type State = core.State
 type Prompt = core.Prompt
 -- A queue action Commands offers (paletteActions); `key` "" when none.
 type QueueAction = { id: string, label: string, key: string, group: string, detail: string? }
-type KeyEntry = { key: string, label: string, first: number, use: number, at: number }
+-- `run`: what a click on its seg runs, as its key does: "kb:<queue action id>" or "kbrun:<saved action id>".
+type KeyEntry = { key: string, label: string, run: string, first: number, use: number, at: number }
 
 local COMMENT_ROWS, KINDS, clip, printable, cli = core.COMMENT_ROWS, core.KINDS, core.clip, core.printable, core.cli
 local checkoutOf, editJiraRepos, isTable, jiraReposOf, loadPrompts, promptById = storage.checkoutOf, storage.editJiraRepos, storage.isTable, storage.jiraReposOf, storage.loadPrompts, storage.promptById
@@ -207,15 +208,14 @@ function M.paletteNode(state: State, queue: { QueueAction }): Node
 	return ui.node("text", { key = "palette", text = text, hidden = true })
 end
 
-local KEY_BAR_MAX = 5
 local KEY_BAR_FIRST = { more = 1, help = 2, next = 3 } -- Commands, Shortcut list, the Next move, in this order
 
--- The key footer under the queue: at most KEY_BAR_MAX keys that work now, each with what it does. From `queue`
--- (paletteActions(state)) plus Commands, the Agent picker and the selected item's saved actions with a key of their
--- own: Commands, Shortcut list and the Next move first, then the most used (this host's usage counts), ties in
--- Commands' order. An action with no key is not listed, and a key shows only what it runs: a saved action's key over a
--- built-in one only where it beats it (keys.YIELDS). Nil when no key is bound.
-function M.keyBar(state: State, queue: { QueueAction }): Node?
+-- The keys that work now, each with what it does, in the key footer's order. From `queue` (paletteActions(state)) plus
+-- Commands, the Agent picker and the selected item's saved actions with a key of their own: Commands, Shortcut list and
+-- the Next move first, then the most used (this host's usage counts), ties in Commands' order. An action with no key is
+-- not listed, and a key shows only what it runs: a saved action's key over a built-in one only where it beats it
+-- (keys.YIELDS).
+function M.keyList(state: State, queue: { QueueAction }): { KeyEntry }
 	local map = keys.load()
 	local u = usage.readUsage()
 	local counts = if u then u.counts else {}
@@ -228,9 +228,9 @@ function M.keyBar(state: State, queue: { QueueAction }): Node?
 	local list: { KeyEntry } = {}
 	local n = 0
 	-- `use`: its usage count id; `first`: its place among KEY_BAR_FIRST, else after them.
-	local function add(key: string, label: string, use: string, first: number?, isSaved: boolean)
+	local function add(key: string, label: string, run: string, use: string, first: number?, isSaved: boolean)
 		n += 1
-		local e: KeyEntry = { key = key, label = label, first = first or 99, use = used(use), at = n }
+		local e: KeyEntry = { key = key, label = label, run = run, first = first or 99, use = used(use), at = n }
 		byKey[key] = e
 		saved[key] = isSaved
 		table.insert(list, e)
@@ -249,7 +249,7 @@ function M.keyBar(state: State, queue: { QueueAction }): Node?
 		for _, o in mine do
 			local p = o.prompt
 			if p.key and last[p.key] == p then
-				add(p.key, clip(printable(p.name), 40), "action:" .. p.name, nil, true)
+				add(p.key, clip(printable(p.name), 40), "kbrun:" .. p.id, "action:" .. p.name, nil, true)
 			end
 		end
 	end
@@ -268,7 +268,7 @@ function M.keyBar(state: State, queue: { QueueAction }): Node?
 			-- A built-in key that is not one of keys.YIELDS runs before the saved action holding it.
 			table.remove(list, table.find(list, held))
 		end
-		add(a.key, a.label, "queue:" .. a.id, KEY_BAR_FIRST[a.id], false)
+		add(a.key, a.label, "kb:" .. a.id, "queue:" .. a.id, KEY_BAR_FIRST[a.id], false)
 	end
 	table.sort(list, function(x: KeyEntry, y: KeyEntry): boolean
 		if x.first ~= y.first then
@@ -278,12 +278,25 @@ function M.keyBar(state: State, queue: { QueueAction }): Node?
 		end
 		return x.at < y.at
 	end)
-	local nodes: { Node } = {}
-	for i = 1, math.min(#list, KEY_BAR_MAX) do
-		local e = list[i]
-		table.insert(nodes, ui.node("text", { key = "k" .. i, spans = { ui.span(e.key, "key"), ui.span(" " .. e.label, "muted") } }))
+	return list
+end
+
+-- The key footer: Tern's status strip in the block's dock, one seg per key in keyList's order. A narrow pane drops the
+-- lowest `priority` first, so the least used go before Commands, Shortcut list and the Next move; a click on a seg runs
+-- what its key runs (host.luau's "kb:"/"kbrun:" actions). Nil when no key is bound.
+function M.keyBar(state: State, queue: { QueueAction }): Node?
+	local list = M.keyList(state, queue)
+	local segs: { Node } = {}
+	for i, e in list do
+		table.insert(segs, ui.node("seg", {
+			key = "k" .. i,
+			role = "plotroom.button",
+			spans = { ui.span(e.key, "key"), ui.span(" " .. e.label, "muted") },
+			priority = #list - i + 1,
+			actions = { click = e.run },
+		}))
 	end
-	return if #nodes > 0 then ui.node("row", { key = "keybar", role = "plotroom.keys", gap = "md", align = "center" }, nodes) else nil
+	return if #segs > 0 then ui.node("status", { key = "keybar", aria = "Keys" }, segs) else nil
 end
 
 -- Marks `key` busy and runs `open`, which starts a worktree and answers `id` itself; if it raises, the mark is cleared
