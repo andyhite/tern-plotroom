@@ -1653,10 +1653,8 @@ function M.runAction(state: State, act: string, row: string)
 	elseif act == "edit-prompt" then
 		beginEdit(state, row)
 	elseif act == "delete" or act == "reset-all" then
-		-- The window's palette asks (window.luau's `confirmDelete`); its answer comes back as confirm-delete for this row.
+		-- Asked in the block (render's `deleteConfirm` overlay); its Enter or button runs confirmDelete, Esc or Cancel drops it.
 		s.confirm = row
-		state.cx:render() -- the question is on screen before the window is told to read it
-		state.cx:open("plotroom://confirm")
 	elseif act == "refresh" then
 		retry(state)
 	elseif act == "add-repo" then
@@ -2264,7 +2262,10 @@ function M.settingsView(state: State, palette: Node): BlockView
 	end
 	-- In the layer, prefs is Tern's side sheet docked at the right, over the queue.
 	local layer: { Node } = { queuePicker(state), ui.node("prefs", props, extra) }
-	if state.help then
+	local ask = render.deleteConfirm(state)
+	if ask then
+		table.insert(layer, ask)
+	elseif state.help then
 		table.insert(layer, helpOverlay(state))
 	end
 	return { main = ui.col(rpcNodes(state, palette)), layer = ui.col(layer) }

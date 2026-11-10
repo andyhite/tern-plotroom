@@ -138,16 +138,19 @@ case("now: snoozed items leave Now and its count until Show or hide snoozed list
 	eq(pickerOf(b).items[1].badges[1].text, "Agent needs input", "first")
 end)
 
-case("now: an item whose agent works shows the agent's bar and clock on its Now row and in its preview", function(w: World)
+case("now: an item whose agent works shows the agent's bar and clock columns on its Now row and in its preview", function(w: World)
 	local _, b = nowScene(w, {}, function(s: h.HostScene)
 		s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
 	end)
 	asks.hx.agents(b, { ["o/r#4"] = { state = "working", action = "Review", since = tostring(w.seconds() - 125), expected = "100" } })
-	eq(h.detailText(pickerOf(b).items[1]), "#4 · o/r · ━━━━━━━━━━ 2:05", "its row ends with the bar and the clock")
-	eq(h.detailText(pickerOf(b).items[2]), "#5 · o/r", "a row with no working agent has neither")
-	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 2:05", "and so does its preview")
+	same(pickerOf(b).columns, { { id = "bar", format = "bar" }, { id = "clock", format = "elapsed" } }, "Now has the bar and clock columns")
+	eq(h.clockFacts(pickerOf(b).items[1]), "clock 125 bar 94", "its row fills them")
+	eq(h.detailText(pickerOf(b).items[1]), "#4 · o/r", "and its detail carries no clock")
+	eq(h.clockFacts(pickerOf(b).items[2]), nil, "a row with no working agent has neither")
+	eq(h.workingOf(b), "clock 125 bar 94", "and so does its preview")
+	local drawn = b.renders()
 	w.advance(1000)
-	eq(h.factOf(b, "Working"), "━━━━━━━━━━ 2:06", "a second later the clock moved on")
+	eq(b.renders(), drawn, "a second later nothing is drawn: Tern ticks the clock")
 end)
 
 case("now: an empty Now says nothing needs you, and the view's own filters are gone", function(w: World)
@@ -276,7 +279,7 @@ case("now: Mark read… plans Now's listed threads as the login captured then, a
 	eq(#s.gh.inboxRead, 0, "nothing is sent before the commit")
 	s.gh.active = "other" -- gh's active account changes after the plan
 	s.gh.inbox.octocat = {}
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "committed")
 	eq(r.message, "Marked 3 notifications read as @octocat", "told with the account")
 	same(s.gh.inboxRead, { "11", "12", "13" }, "exactly the planned threads, one request each")
@@ -284,7 +287,7 @@ case("now: Mark read… plans Now's listed threads as the login captured then, a
 		eq(req.login, "octocat", "as the login of the plan, not gh's active one")
 		yes(table.find(req.call.argv, "PATCH") ~= nil, "a PATCH: read, never done (no DELETE)")
 	end
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "no longer valid", "a plan commits once")
+	has(asks.hx.commit(w, b, p.token).problem, "no longer valid", "a plan commits once")
 end)
 
 case("now: Mark read… plans every thread Now read, also one about an item listed higher", function(w: World)
@@ -307,7 +310,7 @@ case("now: a mark-read plan is refused off Now, after Now was left, and stops at
 	local p = asks.hx.ask(w, b, { op = "act", name = "mark-read" })
 	pickScope(b, "prs:v1")
 	w.flush()
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "selection or the view changed", "after Now was left")
+	has(asks.hx.commit(w, b, p.token).problem, "selection or the view changed", "after Now was left")
 	eq(#s.gh.inboxRead, 0, "nothing was sent")
 	pickScope(b, "now")
 	w.flush()
@@ -318,7 +321,7 @@ case("now: a mark-read plan is refused off Now, after Now was left, and stops at
 		end
 		return nil
 	end
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	has(r.problem, "Marked 1 of 3 read, then stopped", "a failure says how far it got")
 	same(s.gh.inboxRead, { "11" }, "and stops there")
 end)
@@ -471,7 +474,7 @@ case("now: Mark read… across two logins names each account with its threads pe
 		"@work w/z: 1",
 	}, "each account, and each one's threads per repository")
 	s.gh.active = "work" -- gh's active account changes after the plan
-	local r = asks.hx.ask(w, b, { op = "commit", token = p.token })
+	local r = asks.hx.commit(w, b, p.token)
 	eq(r.ok, true, "committed")
 	eq(r.message, "Marked 4 notifications read as @octocat and @work", "told with both accounts")
 	local as: { string } = {}

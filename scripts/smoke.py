@@ -6,7 +6,9 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
         the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
         through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
         with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
-        before it (read from git), then makes its worktree through the real link flow.
+        before it (read from git), then makes its worktree through the real link flow. Last, setup_wait: a second `tern serve` under zsh
+        (shell integration) starts an agent on a new worktree once its setup command finishes, and one on another once its setup fails,
+        with the setup toast the one on screen.
 Smoke prerequisites: Tern >= 0.9.13, the minimum supported (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
@@ -1858,6 +1860,12 @@ def sc_agent(s: Smoke) -> None:
         s.select_row()
 
     back_to_queue()
+    # A working agent's clock in the item's preview is Tern's own elapsed node (m:ss): Tern moves it on, Plotroom does not redraw for it.
+    clock = "[data-surface='plugin.plotroom.prs'] .sf-elapsed"
+    s.wait_until("the preview's Working clock", lambda: any(re.match(r"^\d+:\d\d$", t) for t in s.matches(clock)))
+    first = s.matches(clock)[0]
+    s.wait_until("Tern ticks the clock on", lambda: s.matches(clock)[:1] not in ([], [first]))
+    s.shot("agent-clock")
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")
     s.wait_until("agent-go focuses the pane the link names", agent_focused)
     s.shot("agent")
@@ -1886,7 +1894,7 @@ def sc_agent(s: Smoke) -> None:
     # agent) runs in the focused pane, with or without the plugin. Real lifecycle transitions are used instead (launch -> working, pane close ->
     # exited). waiting_input is not proved by this smoke; the regression cases cover event-triggered updates.
 
-    # Selection message: review the actual selected text, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
+    # Selection message: review the actual selected text in the Plotroom block's Confirm overlay, then cancel. Delivery is checked in the regression harness; this fake agent has no transcript.
     picked = s.tmp / "selected.txt"
     picked.write_text("é😀\nsmoke selected text\n", encoding="utf-8")
     back_to_queue()
@@ -1894,19 +1902,30 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("file", "open", str(picked), "split")
     s.ctl_ok("file", "wait")
     s.ctl_ok("key", "Meta+a")  # the opened file block holds focus: select all
+    file_pane = s.state()["focused"]["id"]  # type: ignore[index]
+    file_tab = [t["active"] for t in s.state()["tabs"]].index(True) + 1  # type: ignore[index,union-attr]  # ctl tab numbers from 1
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-message-selection")
     s.wait_text("the agent picker counts the selection", "Send the selection (")
     s.ctl_ok("picker", "enter")
-    s.wait_text("the review picker", "Send the selection to the agent of")
+    s.wait_text("the review, in the Plotroom block's Confirm overlay", "Send the selection to the agent of")
     s.wait_text("the review shows the non-ASCII line (native byte offsets)", "é😀")
     s.wait_text("the review shows the whole last line (a UTF-16 head would cut it)", "smoke selected text")
+    s.wait_text("the review offers a note", "Add a note…")
     s.wait_text("the review offers Cancel", "Cancel")
+    s.eq("the review is no palette picker", [], s.palette_rows())
+    time.sleep(0.6)  # the overlay's card slides in before the shot
     s.shot("agent-message-confirm")
-    s.ctl_ok("picker", "esc")
-    time.sleep(0.7)
-    s.eq("the review is gone", False, any("Send the selection to the agent of" in t for t in s.texts()))
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the review", lambda: not any("Send the selection to the agent of" in t for t in s.texts()))
     s.eq("cancelling shows no success toast", False, any(t.startswith("Sent to the agent of") for t in s.texts()))
     s.eq("cancelling opened no tab", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("the review took the focus to the Plotroom block", True, s.state()["focused"]["id"] != file_pane)  # type: ignore[index]
+    s.ctl_ok("tab", str(file_tab))  # the review may have shown in a Plotroom block of another tab
+    for _ in range(8):  # ctl focuses by direction only: step through the tab's panes back to the file block
+        if s.state()["focused"]["id"] == file_pane:  # type: ignore[index]
+            break
+        s.ctl_ok("focus", "next")
+    s.eq("back on the file block", file_pane, s.state()["focused"]["id"])  # type: ignore[index]
     s.ctl_ok("close")  # the file block
 
     # Files header button: opens a Plotroom beside the pane whose cwd is the Files root.
@@ -2322,7 +2341,8 @@ def sc_outcome(s: Smoke) -> None:
 
 def sc_now_settings(s: Smoke) -> None:
     """Settings › Views in real Tern: Now's card is first, and its open form has a switch per reason (Include team review requests under
-    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that."""
+    Review requested) and Accounts. What a switch reads and drops needs a fake gh's answers, so the regression cases cover that. Then General's
+    Reset all settings asks in the block: a confirm overlay over the sheet, Cancel then the red action in its foot; Esc keeps everything."""
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
     s.cd(s.checkout("agent"))
@@ -2341,6 +2361,21 @@ def sc_now_settings(s: Smoke) -> None:
     s.wait_text("and Now's Layout", "A narrow block shows the List")
     s.wait_text("and the accounts", "Accounts")
     s.shot("settings-now")
+    for _ in range(3):  # Views → Actions → Repositories → General
+        s.ctl_ok("key", "Tab")
+    s.wait_text("General's Reset row", "Reset all settings")
+    s.ctl_ok("click", "[data-surface='plugin.plotroom.prs'] .pf-row[data-row='reset:all'] .btn")
+    foot = "[data-surface='plugin.plotroom.prs'] .sf-overlay .sf-ov-foot .sf-button"
+    s.wait_text("Reset asks in the block", "Reset all settings?")
+    s.wait_until("its foot holds Cancel, then the action", lambda: len(s.matches(foot)) == 2 and "Cancel" in s.matches(foot)[0]
+                 and "Reset all settings" in s.matches(foot)[1])
+    s.eq("the action is the red danger button", True, any("Reset all settings" in t for t in s.matches(foot + "[data-variant='danger']")))
+    s.eq("Cancel is quiet", True, any("Cancel" in t for t in s.matches(foot + "[data-variant='quiet']")))
+    time.sleep(0.6)  # the overlay's card slides in before the shot
+    s.shot("settings-confirm")
+    s.ctl_ok("key", "Escape")
+    s.wait_until("Esc closes the confirm", lambda: not any("Reset all settings?" in t for t in s.texts()))
+    s.wait_text("and leaves Settings open", "Repositories")
     s.ctl_ok("key", "Escape")
 
 
@@ -2771,6 +2806,89 @@ SCENARIOS = [
 ]
 
 
+def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
+    """Its own `tern serve` under zsh with an empty HOME (Tern's shell integration only; smoke's /bin/sh reports no command): an agent on a new
+    worktree whose setup command takes 4 s starts once the setup shell reports it finished, not at cx.session:settle's 2-minute ceiling, and no
+    toast says setup did not finish. Then an agent on a second new worktree whose setup command fails starts once it failed, and the toast on
+    screen (Tern shows only the newest) says setup did not finish, with the reason."""
+    zsh = shutil.which("zsh")
+    if not zsh:
+        WARNINGS.append("no zsh: the setup wait under a shell with integration was not run")
+        return "setup wait NOT RUN"
+    tmp.mkdir()
+    s = Smoke(tern, git, omp, tmp)
+    try:
+        s.repo("a", "gent", "agent", (1, 2))
+        (tmp / "zhome").mkdir()
+        s.env.update(SHELL=zsh, HOME=str(tmp / "zhome"))
+        s.env.pop("ZDOTDIR", None)
+        s.start()
+        s.selftest()
+        s.label = "setup wait (zsh)"
+        stamp = "2026-01-01T00:00:00Z"
+        pr = {"number": 1, "title": "Agent PR 1", "url": "https://github.com/a/gent/pull/1", "author": "octo", "state": "OPEN", "isDraft": False,
+              "updatedAt": stamp, "createdAt": stamp, "head": "feature-1", "base": "main", "additions": 1, "deletions": 0, "changedFiles": 1, "comments": 0,
+              "labels": [], "runs": [], "runTotal": 0}
+        (s.smoke / "search.json").write_text(json.dumps([pr, dict(pr, number=2, title="Agent PR 2", url="https://github.com/a/gent/pull/2", head="feature-2")]), encoding="utf-8")
+        s.ctl_ok("tab", "new")
+        s.ctl_ok("ready")
+        queue_tab = len(s.state()["tabs"])  # type: ignore[arg-type]
+        s.cd(s.checkout("agent"))
+        s.ctl_ok("plugins", "run", "plugin.plotroom.open")
+        s.leave_now()
+        s.wait_text("the pull request", "Agent PR 1")
+        stores = [p for p in s.tmp.rglob("kv.json") if "views-prs" in p.read_text(encoding="utf-8")]
+        s.eq("one Plotroom kv.json: %r" % stores, 1, len(stores))
+        # The block saves the checkout it opened in; a kv.json read before that and written back would drop it (the agent would ask for one).
+        s.wait_until("the block saved its checkout", lambda: "a/gent" in (json.loads(stores[0].read_text(encoding="utf-8")).get("checkouts") or {}))
+        kv = json.loads(stores[0].read_text(encoding="utf-8"))
+        marker, failed = tmp / "setup-done", tmp / "setup-failed"
+        # The first worktree's setup passes; the second's (the marker is there by then) fails.
+        kv["setup-commands"] = {"a/gent": ["if [ -e {0} ]; then sleep 2 && touch {1} && false; else sleep 4 && touch {0}; fi".format(marker, failed)]}
+        stores[0].write_text(json.dumps(kv), encoding="utf-8")
+
+        def agent(again: str) -> None:
+            """An agent on the selected row with a typed prompt; each field is filled once it shows what was typed, as a user sees it."""
+            s.wait_until("the selected row's preview is rendered" + again, s.previewing)
+            s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
+            s.wait_text("the action picker" + again, "Run on ")
+            s.ctl_ok("picker", "enter")  # Type a prompt… is first: only saved actions are ever Recent
+            s.wait_text("the prompt" + again, "Prompt for an agent on")
+            s.ctl_ok("type", json.dumps("smoke prompt"))
+            s.wait_text("the typed prompt" + again, "smoke prompt")
+            s.ctl_ok("key", "Enter")
+
+        s.select_row()
+        first = s.selection()
+        agent("")
+        started = s.smoke / "agents.jsonl"
+        s.wait_until("the agent starts", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
+        late = started.stat().st_mtime - marker.stat().st_mtime if marker.exists() else None
+        s.eq("the agent starts after setup finished, within 3 s of it (took %r s)" % late, True, late is not None and 0 <= late < 3)
+        s.eq("no toast says setup did not finish", [], [t for t in s.texts() if "Setup did not finish" in t or "Setup may still be running" in t])
+        s.ctl_ok("tab", str(queue_tab))
+        s.select_row()
+        if s.selection() == first:
+            s.ctl_ok("key", "Down")
+            time.sleep(0.7)
+        if s.selection() == first:  # it was the last row
+            s.ctl_ok("key", "Up")
+        s.wait_until("the other pull request is selected", lambda: len(s.selection()) == 1 and s.selection() != first)
+        other = "a/gent#2" if "Agent PR 2" in str(s.selection()) else "a/gent#1"
+        agent(" again")
+        s.wait_until("the second agent starts", lambda: len(started.read_text(encoding="utf-8").strip().splitlines()) == 2)
+        s.wait_text("the toast on screen says setup did not finish", "Setup did not finish for " + other)
+        s.wait_text("with the reason", "It exited with status 1. The agent started anyway.")
+        lag = started.stat().st_mtime - failed.stat().st_mtime if failed.exists() else None
+        s.eq("the second agent starts after setup failed, within 3 s of it (took %r s)" % lag, True, lag is not None and 0 <= lag < 3)
+        return "setup wait under zsh (agent %.1f s after setup; %.1f s after a failed setup, its toast shown)" % (late, lag)
+    except BaseException:
+        s.dump()
+        raise
+    finally:
+        s.stop()
+
+
 def sdk_drift(tern: str, tmp: Path) -> None:
     """Warn (never fail) when the installed Tern's own SDK types differ from the pinned snapshot."""
     out = tmp / "sdk"
@@ -2813,7 +2931,8 @@ def check_smoke() -> str:
             except GateError as why:
                 raise GateError("%s\n  last smoke result: %s" % (why, json.dumps(s.last)))
         s.final()
-        return "selftest toast, css clean, %d real-git scenarios (%.1f s)" % (len(SCENARIOS), time.monotonic() - started)
+        took = setup_wait(tern, git, omp, tmp / "zsh")
+        return "selftest toast, css clean, %d real-git scenarios, %s (%.1f s)" % (len(SCENARIOS), took, time.monotonic() - started)
     except BaseException:
         s.dump()
         raise

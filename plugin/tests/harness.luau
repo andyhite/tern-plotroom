@@ -344,7 +344,7 @@ export type Reply = {
 export type Responder = (Call) -> Reply?
 export type PaneRow = { pane: number, cwd: string? }
 export type Event = { at: number, seq: number, run: () -> (), live: boolean }
-export type WinPane = { block: string?, cwd: string, tab: number, kind: string?, url: string?, title: string?, parked: boolean? }
+export type WinPane = { block: string?, cwd: string, tab: number, kind: string?, url: string?, title: string?, parked: boolean?, running: { line: string, ms: number }?, last: { line: string, status: number, took_ms: number }? }
 
 -- The window half of the world: sessions, tabs and panes that answer like cx.session/layout/hosts do. A nil from
 -- new_tab is the SDK's "no pane" answer; "raise" is a failing call.
@@ -376,6 +376,8 @@ export type Win = {
 	hostOf: { [number]: number }, -- pane -> host id (default 1)
 	handlers: { [string]: any }, -- tern.on registrations by event name
 	runs: { { pane: number, text: string } }, -- every cx:run (text typed into a pane)
+	settles: { { pane: number, ms: number? } }, -- every cx.session:settle
+	setup: { ms: number?, err: string?, running: boolean?, status: number?, silent: boolean? }, -- what a shell does with a cx:run, as real Tern 0.9.14 reports it: `running` at once, then after `ms` (default 0) `last` with status `status` (default 0); `running` true: it never finishes; `silent`: no shell integration, so neither is ever reported. cx.session:settle resolves only at its deadline (as real Tern does), or with `err` at once
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
 	tabTitle: ((any) -> string?)?, -- the tern.chrome.tab_title formatter
 	refreshes: number, -- tern.chrome.refresh calls
@@ -625,6 +627,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		picks = {},
 		agents = {},
 		runs = {},
+		settles = {},
+		setup = {},
 		agentStates = {},
 		agentCalls = {},
 		askFails = false,
@@ -713,6 +717,19 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 		run = function(_self: any, pane: number, text: string)
 			table.insert(win.runs, { pane = pane, text = text })
+			local p = win.panes[pane]
+			if p == nil or win.setup.silent then
+				return
+			end
+			local line = string.gsub(text, "\r$", "")
+			schedule(0, function()
+				p.running = { line = line, ms = 0 }
+			end)
+			if not win.setup.running then
+				schedule(win.setup.ms or 0, function()
+					p.running, p.last = nil, { line = line, status = win.setup.status or 0, took_ms = win.setup.ms or 0 }
+				end)
+			end
 		end,
 		-- A block of `kind` in the tab of `opts.target` (a glimpse: the focused pane's tab; else a new tab), as cx:new_block
 		-- opens it: its launch records the kind, args, how and opts (`newBlock` true).
@@ -726,7 +743,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				if p == nil then
 					return nil
 				end
-				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "" }
+				return { pane = id, block = p.block, cwd = p.cwd, kind = p.kind, url = p.url, title = p.title or "", running = p.running, last = p.last }
 			end,
 			surface = function(_self: any, id: number, opts: any): any
 				-- The need-you poll (every Plotroom pane, on its own timer) is counted apart from the protocol check's reads.
@@ -744,6 +761,19 @@ local function newWorld(instantiate: Loader, context: string): World
 			tab_of = function(_self: any, id: number): number?
 				local p = win.panes[id]
 				return if p then p.tab else nil
+			end,
+			settle = function(_self: any, id: number, ms: number?): any
+				table.insert(win.settles, { pane = id, ms = ms })
+				return {
+					next = function(_self2: any, fn: (any, any, any) -> ())
+						schedule(if win.setup.err then 0 else ms or 30000, function()
+							if win.setup.err or not win.panes[id] then
+								return fn(nil, win.setup.err or "pane closed", windowCx)
+							end
+							fn("", nil, windowCx)
+						end)
+					end,
+				}
 			end,
 			layout = function(_self: any, tab: number): any
 				local root = treeOf(tab)
@@ -2693,6 +2723,30 @@ local function pickerOf(b: Block): any
 end
 M.pickerOf = pickerOf
 
+-- The preview's Working line as "clock <s>" or "clock <s> bar <percent>": the age its `elapsed` node was sent and its
+-- `meter`'s value; nil when the preview has none.
+local function workingOf(b: Block): string?
+	local row = findKey(pickerNode(b), "working", "row")
+	if not row then
+		return nil
+	end
+	local clock, bar = findKey(row, "clock", "elapsed"), findKey(row, "bar", "meter")
+	local out = "clock " .. (clock.p.age / 1000)
+	return if bar then out .. string.format(" bar %d", math.floor(bar.p.value * 100)) else out
+end
+M.workingOf = workingOf
+
+-- A picker row's clock facts as workingOf reads them; nil when it has none.
+local function clockFacts(item: any): string?
+	local facts = item.facts
+	if not facts then
+		return nil
+	end
+	local out = "clock " .. (facts.clock / 1000)
+	return if facts.bar then out .. string.format(" bar %d", math.floor(facts.bar * 100)) else out
+end
+M.clockFacts = clockFacts
+
 -- Helpers shared by several case files, in one table.
 local hx = {}
 M.hx = hx
@@ -3246,17 +3300,16 @@ end
 -- What under `node` breaks DESIGN.md's Color Meaning Rule, as "<tone or style>: <text>": a tone other than the five
 -- meaning colours (accent, error, success, pending, warning) or neutral ones (muted, neutral), a span style that colours
 -- text outside those (num, ins, del, info, link), a button wearing a meaning colour, or a node of Tern's accent
--- (`variant = "primary"`) or red (`danger`) variant: primary is allowed once per confirm overlay (key `confirm`), on
--- the button Enter presses, and nowhere else; danger never. Walks every table, so picker rows' badges and spans count
--- as nodes do.
+-- (`variant = "primary"`) or red (`danger`) variant: danger is allowed once per confirm overlay (key `confirm`), on
+-- its action, and nowhere else; primary never. Walks every table, so picker rows' badges and spans count as nodes do.
 local MEANING_TONES = { accent = true, error = true, success = true, pending = true, warning = true }
 local NEUTRAL_TONES = { muted = true, neutral = true }
 local OFF_STYLES = { num = true, ins = true, del = true, info = true, link = true, user = true }
 function hx.offPalette(node: any): { string }
 	local out: { string } = {}
 	local seen: { [any]: boolean } = {}
-	-- `confirm`: the confirm overlay `n` sits in (counting its primaries), nil outside one.
-	local function walk(n: any, confirm: { primaries: number }?)
+	-- `confirm`: the confirm overlay `n` sits in (counting its danger buttons), nil outside one.
+	local function walk(n: any, confirm: { dangers: number }?)
 		if type(n) ~= "table" or seen[n] then
 			return
 		end
@@ -3271,16 +3324,16 @@ function hx.offPalette(node: any): { string }
 		end
 		if type(n.k) == "string" then
 			if n.k == "overlay" and p.key == "confirm" then
-				confirm = { primaries = 0 }
+				confirm = { dangers = 0 }
 			end
-			if p.variant == "danger" then
-				table.insert(out, "button danger: " .. text)
-			elseif p.variant == "primary" and not confirm then
-				table.insert(out, "button primary outside a confirm: " .. text)
-			elseif p.variant == "primary" and confirm then
-				confirm.primaries += 1
-				if confirm.primaries > 1 then
-					table.insert(out, "button primary twice: " .. text)
+			if p.variant == "primary" then
+				table.insert(out, "button primary: " .. text)
+			elseif p.variant == "danger" and not confirm then
+				table.insert(out, "button danger outside a confirm: " .. text)
+			elseif p.variant == "danger" and confirm then
+				confirm.dangers += 1
+				if confirm.dangers > 1 then
+					table.insert(out, "button danger twice: " .. text)
 				end
 			end
 		end
@@ -3606,7 +3659,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "37" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "49" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }
@@ -3834,6 +3887,21 @@ end
 function asks.hx.ask(w: World, b: Block, body: { [string]: any }): any
 	asks.hx.seq += 1
 	return hx.ask(w, b, "h" .. asks.hx.seq, body)
+end
+
+-- Chooses the action of block `b`'s plan Confirm overlay with `token` (as its button does, the plan's own token): what
+-- the block toasted of it once everything has run, as {ok, message, url} or {problem}; {} when it toasted nothing.
+function asks.hx.commit(w: World, b: Block, token: any): any
+	local from = #w.toasts
+	b.event({ ev = "action", act = "plan-commit", value = token })
+	w.flush()
+	local t = if #w.toasts > from then w.toasts[#w.toasts] else nil
+	if not t then
+		return {}
+	elseif t.level == "success" then
+		return { ok = true, message = t.text, url = t.sub }
+	end
+	return { problem = t.sub or t.text }
 end
 
 -- Makes gh answer every command no model reads (issue edit, pr create, run view and rerun) and returns the command

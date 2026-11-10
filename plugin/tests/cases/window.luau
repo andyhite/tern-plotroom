@@ -452,6 +452,7 @@ windowCase("window: a prompt set to open in this tab starts its agent beside the
 	end
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
+	w.advance(500) -- the setup shell reports its command finished at the first look
 	eq(w.window.agents[1].cwd, s.target, "the agent runs in the worktree")
 	local queueTab = w.window.panes[1].tab
 	eq(w.window.panes[agent :: number].tab, queueTab, "as a block in the queue's tab")
@@ -878,6 +879,7 @@ windowCase("window: an agent on a new worktree joins the tab where its setup run
 	w.window.choose, w.window.typed = "Type a prompt…", "go"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	w.advance(500) -- the setup shell reports its command finished at the first look
 	eq(#w.window.runs, 1, "setup runs")
 	local shell = w.window.panes[w.window.runs[1].pane]
 	eq(shell.cwd, s.target, "in a shell in the worktree")
@@ -889,6 +891,66 @@ windowCase("window: an agent on a new worktree joins the tab where its setup run
 		end
 	end
 	eq(inTab, 2, "and joins the setup shell's tab")
+end)
+
+windowCase("window: an agent on a new worktree starts only once its setup commands finish", function(w: World)
+	agentScene(w)
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	w.window.setup.ms = 30000
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.runs, 1, "setup runs")
+	eq(#w.window.settles, 1, "and is waited on")
+	eq(w.window.settles[1].pane, w.window.runs[1].pane, "in its shell")
+	eq(w.window.settles[1].ms, 120000, "for up to 2 minutes")
+	eq(#w.window.agents, 0, "no agent while setup runs")
+	w.advance(29999)
+	eq(#w.window.agents, 0, "still none just before it finishes")
+	w.advance(501)
+	eq(#w.window.agents, 1, "the agent starts once its shell reports setup finished, not at settle's 2-minute deadline")
+	for _, t in w.toasts do
+		lacks(t.text, "Setup did not finish", "a setup that finished says nothing more")
+	end
+	eq(w.toasts[#w.toasts].text, "Agent started in the tab of o/r#5", "it joins the setup shell's tab")
+end)
+
+-- A setup that fails, is still running, cannot be waited on, or runs in a shell that reports no command (`setup` as
+-- Win.setup) still starts the agent at `at` ms, and a toast `title` says why.
+for _, c in {
+	{ name = "fails", setup = { status = 1 }, at = 500, title = "Setup did not finish for o/r#5", why = "It exited with status 1." },
+	{ name = "is still running", setup = { running = true }, at = 120000, title = "Setup did not finish for o/r#5", why = "Still running after 2 minutes." },
+	{ name = "cannot be waited on", setup = { err = "pane closed" }, at = 0, title = "Setup did not finish for o/r#5", why = "pane closed" },
+	{ name = "runs in a shell that reports no command", setup = { silent = true }, at = 10000, title = "Setup may still be running for o/r#5", why = "Its shell does not report when a command finishes." },
+} :: { any } do
+	windowCase("window: a setup that " .. c.name .. " still starts the agent, and a toast says why", function(w: World)
+		agentScene(w)
+		w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+		w.window.setup = c.setup
+		w.window.choose, w.window.typed = "Type a prompt…", "go"
+		w.click(prLink("agent", "o/r", 5))
+		w.flush()
+		if c.at > 0 then
+			w.advance(c.at - 1)
+			eq(#w.window.agents, 0, "no agent before then")
+			w.advance(1)
+		end
+		eq(#w.window.agents, 1, "the agent starts anyway")
+		-- Tern shows only the newest toast: the setup toast comes after the agent's own.
+		local said: any = w.toasts[#w.toasts]
+		eq(said.text, c.title, "the newest toast says so")
+		has(said.sub, c.why, "with the reason")
+		has(said.sub, "The agent started anyway.", "and that the agent started")
+	end)
+end
+
+windowCase("window: an agent on a worktree with no setup commands starts without waiting", function(w: World)
+	agentScene(w)
+	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.click(prLink("agent", "o/r", 5))
+	w.flush()
+	eq(#w.window.settles, 0, "nothing to wait on")
+	eq(#w.window.agents, 1, "the agent starts at once")
 end)
 
 windowCase("window: an answer that arrives without a window context starts nothing", function(w: World)

@@ -59,6 +59,11 @@ local MENU_MS = 30 * 1000
 -- How often a waiting request looks for its answer on screen, in case the host's link to it never arrives.
 local POLL_MS = 500
 local PREPARE_MS = 5 * 60 * 1000
+-- How long an agent on a new worktree waits for its setup commands (the most cx.session:settle waits), how often it
+-- looks at the setup shell, and how long a shell that reports no command (no shell integration) is waited on.
+local SETUP_MS = 120 * 1000
+local SETUP_POLL_MS = 500
+local SETUP_SILENT_MS = 10 * 1000
 -- Listing a gh login's repositories: a token read, then the REST API's pages (30 seconds each at most).
 local REPOS_MS = 70 * 1000
 -- A clone for a checkout asked in the palette may run this long (longer than github.luau's CLONE_MS).
@@ -684,18 +689,21 @@ end
 -- agentCommand says (omp with Plotroom's extension, the prompt's model and effort). `split`: as a block beside the queue (pane `pane`), in its tab,
 -- where `placement` puts it. Else `join` (a worktree): in the target's open tab when there is one (where `placement`
 -- puts it there), else in a new tab. Not `join` (the main checkout): a new tab. A new worktree's setup commands run first in a shell
--- tab, which a `join` agent joins. ponytail: the agent starts without waiting for the setup commands; poll the
--- shell's `last` status if agents trip over a half-done setup.
-local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo): boolean
+-- tab, which a `join` agent joins, and the agent starts once the shell reports them finished (its pane's `running`
+-- and `last`, looked at every SETUP_POLL_MS: cx.session:settle alone resolves only at its deadline in Tern 0.9.14),
+-- with settle's SETUP_MS deadline as the ceiling. A setup that fails, is still running at the ceiling or cannot be
+-- waited on still starts it, with a toast saying why; a shell that reports no command within SETUP_SILENT_MS starts
+-- it then, with a toast that setup may still be running. `done` gets whether it started.
+local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo, done: (boolean, WindowCx) -> ())
 	local model, effort, split = job.model, job.effort, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
 	info.kind, info.model, info.runsIn = t.kind, model, if join then "worktree" else "main checkout"
 	if model and not worktree.validModel(model) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's model is not one omp takes: " .. model)
-		return false
+		return done(false, cx)
 	elseif effort and not worktree.validEffort(effort) then
 		cx:toast("error", "Agent not started for " .. t.label, "The action's effort is not one omp takes: " .. effort)
-		return false
+		return done(false, cx)
 	end
 	-- A model or effort adds its flags to the command line agentCommand builds.
 	local flags = (if model then " --model " .. model else "") .. (if effort then " --thinking " .. effort else "")
@@ -717,13 +725,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local session = found or sourceSession(cx, pane)
 	if not session then
 		cx:toast("success", if join then "Worktree ready" else "Checkout ready", path .. " (the source pane closed, so no agent was started)")
-		return false
+		return done(false, cx)
 	end
 	cx.sessions:switch(session)
 	local setup = if join then r.setup else nil
 	labelTab(r, t)
+	local shell: number? = nil
 	if setup then
-		local shell = cx.layout:new_tab({ cwd = path })
+		shell = cx.layout:new_tab({ cwd = path })
 		if shell then
 			cx:run(shell, setup .. "\r")
 			nameTab(cx, shell, t)
@@ -735,68 +744,132 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			cx:toast("error", "Setup did not run for " .. t.label, "Its tab did not open.")
 		end
 	end
-	-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
-	local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
-	-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
-	local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
-	if split then
-		cx.layout:focus(pane)
-	end
-	local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
-	local command, without = agentCommand(cx, pane, flags, run)
-	local ok, agent = pcall(function()
-		return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
-	end)
-	if not ok or type(agent) ~= "number" then
-		cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
-		return false
-	end
-	if without then
-		cx:toast("info", "Agent started without Plotroom's omp extension", without)
-	else
-		info.run = run
-	end
-	local chain: any = nil
-	if job.id then
-		chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane, checker = job.checker }
-		usage.bump("action:" .. (job.name or job.id))
-	end
-	info.cwd = path
-	info.criteria, info.from = job.criteria, job.from
-	if job.check then
-		info.checkAgent, info.checkStarted = job.check.agent, job.check.started
-	end
-	flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
-	if split then
-		if target and side then
-			cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
+	local function start(): boolean
+		-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
+		local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
+		-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
+		local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
+		if split then
+			cx.layout:focus(pane)
 		end
-		cx:toast("success", "Agent started beside the queue for " .. t.label, named)
-		return true
-	end
-	if tab then
-		if target and side and cx.layout:move(agent, target, side) then
-			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+		local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
+		local command, without = agentCommand(cx, pane, flags, run)
+		local ok, agent = pcall(function()
+			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
+		end)
+		if not ok or type(agent) ~= "number" then
+			cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
+			return false
+		end
+		if without then
+			cx:toast("info", "Agent started without Plotroom's omp extension", without)
+		else
+			info.run = run
+		end
+		local chain: any = nil
+		if job.id then
+			chain = { action = job.id, name = job.name or "", next = job.next, kind = t.kind, repo = t.repo, ref = t.ref, depth = job.depth or 0, code = info.code, branch = info.branch, pane = pane, checker = job.checker }
+			usage.bump("action:" .. (job.name or job.id))
+		end
+		info.cwd = path
+		info.criteria, info.from = job.criteria, job.from
+		if job.check then
+			info.checkAgent, info.checkStarted = job.check.agent, job.check.started
+		end
+		flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
+		if split then
+			if target and side then
+				cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
+			end
+			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
 			return true
 		end
-		local moved, why = cx.layout:move_to_tab(agent, tab)
-		if moved then
-			cx:toast("success", "Agent started in the tab of " .. t.label, named)
+		if tab then
+			if target and side and cx.layout:move(agent, target, side) then
+				cx:toast("success", "Agent started in the tab of " .. t.label, named)
+				return true
+			end
+			local moved, why = cx.layout:move_to_tab(agent, tab)
+			if moved then
+				cx:toast("success", "Agent started in the tab of " .. t.label, named)
+				return true
+			end
+			nameTab(cx, agent, t)
+			if join then
+				flows.worktreeTab(cx, agent)
+			end
+			cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
 			return true
 		end
 		nameTab(cx, agent, t)
 		if join then
 			flows.worktreeTab(cx, agent)
 		end
-		cx:toast("info", "Agent started in a new tab for " .. t.label, "It could not join the tab: " .. (why or "unknown reason"))
+		cx:toast("success", "Agent started for " .. t.label, named)
 		return true
 	end
-	nameTab(cx, agent, t)
-	if join then
-		flows.worktreeTab(cx, agent)
+	if not shell then
+		return done(start(), cx)
 	end
-	cx:toast("success", "Agent started for " .. t.label, named)
-	return true
+	local sh: number = shell
+	local function key(p: PaneInfo?): string?
+		local l = if p then p.last else nil
+		return if l then l.line .. "\0" .. l.status .. "\0" .. l.took_ms else nil
+	end
+	local before = key(cx.session:pane(sh))
+	-- What the setup shell says: "closed", "running", "done" (with its status), or nil (nothing yet).
+	local function look(c: WindowCx): (string?, number?)
+		local p = c.session:pane(sh)
+		if not p then
+			return "closed", nil
+		elseif p.running then
+			return "running", nil
+		elseif p.last and key(p) ~= before then
+			return "done", p.last.status
+		end
+		return nil, nil
+	end
+	local over, heard, waited = false, false, 0
+	local function finish(c: WindowCx, why: string?, title: string?)
+		over, cx = true, c -- the window context of this call is spent
+		local started = start()
+		-- After start's own toast: Tern shows only the newest toast, and this one says the agent started too.
+		if why and started then
+			cx:toast(if title then "info" else "error", (title or "Setup did not finish for ") .. t.label, why .. " The agent started anyway.")
+		end
+		done(started, cx)
+	end
+	local function exited(status: number?): string?
+		return if status and status ~= 0 then "It exited with status " .. status .. "." else nil
+	end
+	local function poll(c: WindowCx?)
+		if over or not c then
+			return
+		end
+		local state, status = look(c)
+		if state == "closed" then
+			return finish(c, "Its tab closed.")
+		elseif state == "done" then
+			return finish(c, exited(status))
+		end
+		heard = heard or state == "running"
+		waited += SETUP_POLL_MS
+		if not heard and waited >= SETUP_SILENT_MS then
+			return finish(c, "Its shell does not report when a command finishes.", "Setup may still be running for ")
+		end
+		tern.timer(SETUP_POLL_MS, poll)
+	end
+	tern.timer(SETUP_POLL_MS, poll)
+	cx.session:settle(sh, SETUP_MS):next(function(_, err, cx2)
+		if over or not cx2 then
+			return -- started already, or no window to start it in
+		end
+		local state, status = look(cx2)
+		finish(cx2, if err then tostring(err)
+			elseif state == "closed" then "Its tab closed."
+			elseif state == "done" then exited(status)
+			else "Still running after " .. SETUP_MS // 60000 .. " minutes.")
+	end)
 end
 
 -- The worktree exists whatever `step` does: a failing tab call must not hide its path.
@@ -1045,7 +1118,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 					text ..= "\n\n{findings}"
 				end
 				local block, found = prompts.criteriaBlock(criteria), prompts.findingsBlock(prompt.findings)
-				local started: boolean
+				local function after(started: boolean, cx4: WindowCx)
+					if started and t.kind == "issue" and prompt and prompt.status then
+						moveStatus(cx4, pane, t, prompt.status)
+					elseif not started then
+						failed(cx4)
+					end
+				end
 				if t.kind == "pr" then
 					local owner, name = string.match(t.repo, "^([^/]+)/([^/]+)$")
 					a.criteria, a.findings = block, found
@@ -1053,19 +1132,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 					if type(a.merge) == "table" then
 						filled ..= "\n\n" .. prompts.mergeBlock(a.merge)
 					end
-					started = finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) })
+					finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) }, after)
 				else
 					local vars: any = a.vars
 					if type(vars) == "table" then
 						vars.criteria, vars.findings = block, found
 					end
-					started = finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) })
-					if started and prompt.status then
-						moveStatus(cx3, pane, t, prompt.status)
-					end
-				end
-				if not started then
-					failed(cx3)
+					finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) }, after)
 				end
 			end)
 		end
@@ -1392,30 +1465,6 @@ local function pickModel(cx: WindowCx, pane: number, qid: string)
 	end)
 end
 
--- plotroom://confirm: asks in the palette before the Plotroom block in `pane` deletes what its hidden `main.confirm`
--- node names (host/render's `deleteQuestion`). Cancel comes first, so Enter keeps it. The answer goes back to that block,
--- which acts only on the row it asked about.
-local function confirmDelete(cx: WindowCx, pane: number)
-	if not sameVersion(cx, pane) then
-		return
-	end
-	local text = nodeProp(readNode(cx, pane, "main.confirm"), "text")
-	local ok, q = pcall(tern.json.decode, if type(text) == "string" then text else "")
-	if not ok or type(q) ~= "table" or type(q.row) ~= "string" or type(q.head) ~= "string" or type(q.label) ~= "string" then
-		return cx:toast("error", "Plotroom: nothing to delete", "Press Delete again.")
-	end
-	local row: string = q.row
-	local items: { PickItem } = {
-		{ label = "Cancel", icon = "x" },
-		{ label = q.label, detail = if type(q.detail) == "string" then q.detail else nil, icon = "trash", confirm = true },
-	}
-	cx:pick({ items = items, placeholder = q.head, icon = "trash" }):next(function(item, _, cx2)
-		if cx2 then
-			cx2.session:event(pane, { ev = "action", act = if item and item.confirm then "confirm-delete" else "cancel-delete", value = row })
-		end
-	end)
-end
-
 -- Whether check row `index` of the pane's live surface carries exactly `url`.
 local function checkListed(cx: WindowCx, pane: number, index: number, url: string): boolean
 	for _, node in CHECK_NODES do
@@ -1584,15 +1633,22 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		flows.reviewSend(cx, pane)
 		return true
 	end
-	if url == "plotroom://repos" or url == "plotroom://jira-projects" or url == "plotroom://confirm" then
+	local what, token = string.match(url, "^plotroom://message/(%a+)/(%x+)$")
+	if what == "send" or what == "note" then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		else
+			flows.messageLink(cx, pane, what, token :: string)
+		end
+		return true
+	end
+	if url == "plotroom://repos" or url == "plotroom://jira-projects" then
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
-		elseif url == "plotroom://jira-projects" then
-			pickJira(cx, pane)
 		else
-			confirmDelete(cx, pane)
+			pickJira(cx, pane)
 		end
 		return true
 	end
@@ -1683,7 +1739,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	local ignoreIndex, ignoreName = string.match(url, "^plotroom://github/ignore/(%d+)/(.+)$")
 	if ignoreIndex and ignoreName then
-		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the palette.
+		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the block.
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then

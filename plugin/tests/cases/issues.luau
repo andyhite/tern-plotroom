@@ -3170,21 +3170,21 @@ case("host mutations: merge offers the repository's allowed methods, auto-merge 
 	has(plan.confirm.lines[4], string.sub(sha("a"), 1, 7), "the head commit it is bound to")
 	eq(plan.confirm.lines[5], "The branch is kept", "and that the branch stays")
 	eq(#writesOf(seen, "pr merge"), 0, "planning merged nothing")
-	eq(asks.hx.ask(w, b, { op = "commit", token = plan.token }).ok, true, "committed")
+	eq(asks.hx.commit(w, b, plan.token).ok, true, "committed")
 	eq(writesOf(seen, "pr merge")[1], "gh pr merge 1 --repo github.com/o/r --squash --match-head-commit " .. sha("a"), "one squash merge of exactly the planned commit")
 	local auto = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "rebase", auto = true })
 	eq(auto.confirm.head, "Auto-merge o/r#1?", "auto-merge is named as such")
 	eq(auto.confirm.label, "Merge when checks pass", "and confirms as such")
-	asks.hx.ask(w, b, { op = "commit", token = auto.token })
+	asks.hx.commit(w, b, auto.token)
 	eq(writesOf(seen, "pr merge")[2], "gh pr merge 1 --repo github.com/o/r --rebase --auto --match-head-commit " .. sha("a"), "auto-merge adds --auto only")
 	-- a push after planning refuses the commit
 	local moved = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" })
 	live.headRefOid = sha("c")
-	has(asks.hx.ask(w, b, { op = "commit", token = moved.token }).problem, "pushed to since", "a moved head is refused")
+	has(asks.hx.commit(w, b, moved.token).problem, "pushed to since", "a moved head is refused")
 	eq(#writesOf(seen, "pr merge"), 2, "and merged nothing")
 	live.headRefOid = sha("a")
 	live.isDraft = true
-	has(asks.hx.ask(w, b, { op = "commit", token = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" }).token }).problem, "draft", "a draft is not merged")
+	has(asks.hx.commit(w, b, asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" }).token).problem, "draft", "a draft is not merged")
 	settings.squashMergeAllowed = false
 	settings.rebaseMergeAllowed = false
 	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).problem, "allows no merge method", "no allowed method, nothing to offer")
@@ -3204,12 +3204,12 @@ case("host mutations: approve and request changes show their comment in full, re
 	local p = asks.hx.ask(w, b, { op = "act", name = "pr-approve" })
 	eq(p.confirm.head, "Approve o/r#1?", "the question")
 	eq(p.confirm.lines[3], "No comment", "an approval may have none")
-	asks.hx.ask(w, b, { op = "commit", token = p.token })
+	asks.hx.commit(w, b, p.token)
 	eq(writesOf(seen, "pr review")[1], "gh pr review 1 --repo github.com/o/r --approve", "no body without a comment")
 	p = asks.hx.ask(w, b, { op = "act", name = "pr-approve", text = "  Looks good\nto me " })
 	eq(p.confirm.lines[3], "Comment (16 characters):", "the comment's size")
 	eq(p.confirm.lines[4], "Looks good ⏎ to me", "its whole text")
-	asks.hx.ask(w, b, { op = "commit", token = p.token })
+	asks.hx.commit(w, b, p.token)
 	eq(writesOf(seen, "pr review")[2], "gh pr review 1 --repo github.com/o/r --approve --body=Looks good\nto me", "sent as shown")
 	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-changes" }).problem, "needs a comment", "requesting changes needs a comment")
 	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-changes", text = "  " }).problem, "plain text", "a blank one is no comment")
@@ -3218,7 +3218,7 @@ case("host mutations: approve and request changes show their comment in full, re
 	local r = asks.hx.ask(w, b, { op = "act", name = "pr-request-changes", text = "Add tests" })
 	eq(r.confirm.head, "Request changes on o/r#1?", "the question")
 	eq(r.confirm.label, "Request changes", "the confirming choice")
-	asks.hx.ask(w, b, { op = "commit", token = r.token })
+	asks.hx.commit(w, b, r.token)
 	eq(writesOf(seen, "pr review")[3], "gh pr review 1 --repo github.com/o/r --request-changes --body=Add tests", "the verdict and its body")
 	eq(#writesOf(seen, "pr review"), 3, "three reviews were sent, no more")
 end)
@@ -3243,10 +3243,11 @@ case("host mutations: auto-merge is not offered when the preview says the PR can
 	has(plan.confirm.lines[4], "later push", "the confirm says later pushes by writers are merged")
 	for _, state in { "CLEAN", "HAS_HOOKS", "UNSTABLE" } do
 		live.mergeStateStatus = state
-		has(asks.hx.ask(w, b, { op = "commit", token = plan.token }).problem, "without waiting", state .. " would be merged by gh at once, so it is refused")
+		has(asks.hx.commit(w, b, plan.token).problem, "without waiting", state .. " would be merged by gh at once, so it is refused")
 		plan = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true })
 	end
 	eq(#writesOf(seen, "pr merge"), 0, "nothing was merged")
+	b.press("escape") -- the last plan's confirm is dropped, so the queue takes keys again
 	b.typeText("j")
 	w.advance(300)
 	eq(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).auto, false, "no auto row while the preview shows it mergeable now")
@@ -3267,7 +3268,6 @@ case("host mutations: update branch is offered and planned only while the previe
 	end)
 	local b = openQueue(w)
 	w.advance(300)
-	local p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
 	yes(table.find(hx.palette(w, b).commands, "pr-update-branch") ~= nil, "the palette offers it while the preview shows the branch behind")
 	b.typeText("j")
 	w.advance(300)
@@ -3275,13 +3275,14 @@ case("host mutations: update branch is offered and planned only while the previe
 	eq(table.find(hx.palette(w, b).commands, "pr-update-branch"), nil, "and the palette does not offer it")
 	b.typeText("k")
 	w.advance(300)
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
 	eq(p.confirm.head, "Update the branch of o/r#1?", "the question")
 	eq(#writesOf(seen, "update-branch"), 0, "planning sent nothing")
 	live.mergeStateStatus = "CLEAN"
-	has(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "not behind", "a branch that caught up is not updated")
+	has(asks.hx.commit(w, b, p.token).problem, "not behind", "a branch that caught up is not updated")
 	live.mergeStateStatus = "BEHIND"
 	p = asks.hx.ask(w, b, { op = "act", name = "pr-update-branch" })
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "committed")
 	eq(writesOf(seen, "update-branch")[1], "gh pr update-branch 1 --repo github.com/o/r", "GitHub's default update, nothing else")
 end)
 
@@ -3327,6 +3328,7 @@ case("host mutations: push empty commit is offered for an up-to-date own branch,
 	eq(p.confirm.label, "Push empty commit", "the confirming row")
 	same({ p.confirm.lines[1], p.confirm.lines[2], p.confirm.lines[3] }, { "o/r#1: PR 1", "Account: @octocat", "Branch: branch-1" }, "the target, the account and the branch")
 	has(p.confirm.lines[4], "Head: " .. string.sub(sha("a"), 1, 7), "and the head SHA")
+	b.press("escape") -- dropped, so the queue takes keys again
 	for _, n in { 2, 3, 4 } do
 		b.typeText("j")
 		w.advance(300)
@@ -3337,18 +3339,19 @@ case("host mutations: push empty commit is offered for an up-to-date own branch,
 	b.typeText("k")
 	b.typeText("k")
 	w.advance(300)
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
 	eq(#seen, 0, "planning sent nothing")
 	meta.sha = sha("9")
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "The branch moved; refresh and try again.", "a head that moved since the plan is refused")
+	eq(asks.hx.commit(w, b, p.token).problem, "The branch moved; refresh and try again.", "a head that moved since the plan is refused")
 	eq(#seen, 0, "and nothing was written")
 	meta.sha = sha("a")
 	p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
 	refReply = { status = 1, stderr = "gh: Update is not a fast forward (HTTP 422)\n" }
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).problem, "The branch moved; refresh and try again.", "a branch that moves between the read and the ref update is refused too")
+	eq(asks.hx.commit(w, b, p.token).problem, "The branch moved; refresh and try again.", "a branch that moves between the read and the ref update is refused too")
 	refReply = nil
 	table.clear(seen)
 	p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
-	eq(asks.hx.ask(w, b, { op = "commit", token = p.token }).ok, true, "committed")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "committed")
 	same(seen, {
 		"gh api --hostname github.com repos/o/r/git/commits/" .. sha("a") .. " --jq .tree.sha",
 		"gh api --hostname github.com --method POST repos/o/r/git/commits -f message=Empty commit to re-run checks -f tree=" .. sha("f") .. " -f parents[]=" .. sha("a") .. " --jq .sha",
@@ -3385,7 +3388,7 @@ case("host mutations: push empty commit refuses a head branch with # or %, writi
 	for n, head in heads do
 		local p = asks.hx.ask(w, b, { op = "act", name = "pr-empty-commit" })
 		eq(p.confirm.lines[3], "Branch: " .. head, "the confirm names #" .. n .. "'s branch as it is")
-		local c = asks.hx.ask(w, b, { op = "commit", token = p.token })
+		local c = asks.hx.commit(w, b, p.token)
 		table.insert(outcomes, if c.ok then "ok" else tostring(c.problem))
 		b.typeText("j")
 		w.advance(300)

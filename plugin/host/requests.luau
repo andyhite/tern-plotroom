@@ -834,36 +834,53 @@ function M.concrete(state: State): string?
 	return login(state) or ghActive.login
 end
 
--- Keeps `run` as the one plan waiting for the window's confirmation and answers with what to confirm. Nothing is sent
--- anywhere until the window answers `commit` with this token while the selection and the view are as they were.
+-- Keeps `run` as the one plan waiting for confirmation and answers the window with what is asked; the block asks it in
+-- its Confirm overlay (render.planConfirm), over the queue, so Settings closes first. Nothing is sent anywhere until that
+-- overlay's action commits with this token while the selection and the view are as they were.
 function M.offer(state: State, id: string, item: any, confirm: { head: string, label: string, lines: { string } }, run: ((any) -> ()) -> ())
 	M.seq += 1
 	local token = string.format("p%d_%d_%d", os.time(), M.seq, math.random(100000, 999999))
-	state.plan = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run }
+	if state.settings then
+		discardEdit(state)
+		state.settings = nil
+	end
+	state.plan, state.messaging = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil
 	reply(state, id, { token = token, confirm = { head = confirm.head, label = confirm.label, lines = tern.json.array(confirm.lines) } })
 end
 
--- Runs the plan the window confirmed: only the one this block offered last, once, within five minutes, and only while the
--- same item is selected in the same view.
-function M.commit(state: State, id: string, token: any)
+-- Runs the plan the overlay confirmed: only the one this block offered last, once, within five minutes, and only while
+-- the same item is selected in the same view. `done` gets {ok, message, url?} or {problem}.
+local function commit(state: State, token: any, done: (any) -> ())
 	local plan = state.plan
 	state.plan = nil
 	if not plan or plan.token ~= token then
-		return reply(state, id, { problem = "That confirmation is no longer valid; nothing was sent. Ask again." })
+		return done({ problem = "That confirmation is no longer valid; nothing was sent. Ask again." })
 	end
 	local chosen = selected(state)
 	-- Now's plan holds while Now is shown; every other plan, while its item is the selected one.
 	local here = if plan.key == NOW_KEY then state.nowOn else chosen ~= nil and chosen.key == plan.key
 	if os.time() - plan.at > 300 then
-		return reply(state, id, { problem = "That confirmation expired after 5 minutes; nothing was sent." })
+		return done({ problem = "That confirmation expired after 5 minutes; nothing was sent." })
 	elseif plan.gen ~= state.gen or plan.view ~= state.activeId or plan.login ~= state.activeLogin or not here then
-		return reply(state, id, { problem = "The selection or the view changed since you were asked; nothing was sent." })
+		return done({ problem = "The selection or the view changed since you were asked; nothing was sent." })
 	end
 	if plan.key ~= NOW_KEY then
 		state.acted[plan.key] = true -- what the mutation does to its stage is yours, not an arrival (engine.arrive)
 	end
-	plan.run(function(body: any)
-		reply(state, id, body)
+	plan.run(done)
+end
+
+-- The Confirm overlay's action on a plan (`token`, the plan's own): commits it and toasts what came of it.
+function M.commitPlan(state: State, token: any)
+	commit(state, token, function(a: any)
+		if not alive(state) then
+			return
+		elseif type(a.problem) == "string" then
+			state.cx:toast("error", "Not done", a.problem)
+		else
+			state.cx:toast("success", if type(a.message) == "string" then a.message else "Done", if type(a.url) == "string" then a.url else nil)
+		end
+		state.cx:render()
 	end)
 end
 
@@ -1799,8 +1816,6 @@ function M.workflowRpc(state: State, id: string, q: any)
 	local op = q.op
 	if op == "act" and type(q.name) == "string" then
 		M.act(state, id, q)
-	elseif op == "commit" and type(q.token) == "string" then
-		M.commit(state, id, q.token)
 	elseif op == "draft" and type(q.phase) == "string" then
 		M.draft(state, id, q)
 	elseif op == "open-url" and type(q.url) == "string" and #q.url <= 2048 then
@@ -2045,6 +2060,24 @@ function M.rpc(state: State, raw: any)
 		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
+	elseif q.op == "message" and type(q.token) == "string" and string.match(q.token, "^%x+$") and #q.token <= 32 and type(q.head) == "string" and q.head ~= "" and #q.head <= 400 and type(q.lines) == "table" and #q.lines >= 1 and #q.lines <= 50 then
+		-- A message for an agent, asked in the Confirm overlay over the queue (render.messageConfirm), so Settings closes
+		-- first; it replaces any other question there. {shown}.
+		local lines: { string } = {}
+		for _, line in q.lines do
+			if type(line) ~= "string" or #line > 2000 then
+				return
+			end
+			table.insert(lines, line)
+		end
+		if state.settings then
+			discardEdit(state)
+			state.settings = nil
+		end
+		state.plan, state.stopping, state.removing = nil, nil, nil
+		state.messaging = { token = q.token, head = q.head, lines = lines, note = q.note == true }
+		reply(state, id, { shown = true })
+		state.cx:render()
 	elseif q.op == "review" and review.validRun(q.run) then
 		-- When run `run`'s Draft review file on this host was written (review.fileAt): {at}, nil when it has none; with
 		-- `glimpse` when Settings › General has a Draft review open Over the agent's tab.
