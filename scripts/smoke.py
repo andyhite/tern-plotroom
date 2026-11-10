@@ -2250,8 +2250,8 @@ def sc_now_settings(s: Smoke) -> None:
 def sc_controls(s: Smoke) -> None:
     """Everything clickable looks it, in real Tern: a pull request blocked by a failed workflow run that is Likely flaky (it failed 3 of the base
     branch's last 20 runs of its workflow) says so on its row and its check, and previews its Next move, Re-run failed checks, as a button (role
-    plotroom.button, ringed by plotroom.css) and the failed check as a link (plotroom.link); a check without a page is neither. Nothing is clicked:
-    the shot shows them."""
+    plotroom.button, ringed by plotroom.css); its checks are rows of Tern's native table (Check, Workflow, Took) and never a button or link. Nothing
+    is clicked: the shot shows them."""
     stamp = "2026-01-01T00:00:00Z"
 
     def run(name: str, conclusion: str, url: "Optional[str]") -> Dict[str, object]:
@@ -2288,11 +2288,17 @@ def sc_controls(s: Smoke) -> None:
     button, link = scope + ".sf-item[data-role='plotroom.button']", scope + ".sf-item[data-role='plotroom.link']"
     s.wait_until("Re-run failed checks is drawn as a button", lambda: any("Re-run failed checks" in t for t in s.matches(button)))
     s.shot("controls")
-    s.wait_until("the failed check is drawn as a link", lambda: any("build" in t for t in s.matches(link)))
+    table = scope + ".sf-table"
+    s.wait_until("the failed check is a row of a native checks table", lambda: any("build" in t and "Workflow" in t and "Took" in t for t in s.matches(table)))
+    s.wait_until("keyed by its row id", lambda: any("build" in t for t in s.matches(table + " [data-key='run1']")))
     s.wait_until("the unresolved thread is drawn as a link", lambda: any("Rename this helper" in t for t in s.matches(link)))
     s.wait_text("the thread says who started it and where", "@maria-k · src/app.py:12")
+    s.ctl_ok("resize", "2200", "1800")  # tall enough that the shot reaches the checks table under the threads
+    time.sleep(0.5)
     s.shot("controls-loaded")
-    s.eq("the check without a page is neither", False, any("lint" in t for t in s.matches(button + ", " + link)))
+    s.ctl_ok("resize", "2200", "1000")
+    time.sleep(0.5)
+    s.eq("no check is drawn as a button or link", False, any("lint" in t or "build" in t for t in s.matches(button + ", " + link)))
     s.ctl_ok("key", "Escape")
 def sc_previews(s: Smoke) -> None:
     """Every preview in one order (docs/reference.md › Finer points › Preview): a pull request with failing checks, a GitHub issue and a Jira issue, each

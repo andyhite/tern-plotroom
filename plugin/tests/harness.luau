@@ -1297,6 +1297,24 @@ local function newWorld(instantiate: Loader, context: string): World
 			node = function(kind: string, props: any?, children: any?): any
 				return { k = kind, p = props, c = children }
 			end,
+			-- As Tern's builder outputs it (docs: UI Builders › table): each row's cells keyed by column id, a cell list's row
+			-- id "r<i-1>", a TableRow keeping its id, disabled, menu and title.
+			table = function(cols: { any }, rows: { any }, opts: any?): any
+				local out: { any } = {}
+				for i, row in rows do
+					local list = if row.cells then row.cells else row
+					local cells: { [string]: any } = {}
+					for j, col in cols do
+						cells[col.id] = list[j]
+					end
+					table.insert(out, { id = row.id or ("r" .. (i - 1)), cells = cells, disabled = row.disabled, menu = row.menu, title = row.title })
+				end
+				local p: { [string]: any } = { cols = cols, rows = out }
+				for k, v in opts or {} do
+					p[k] = v
+				end
+				return { k = "table", p = p }
+			end,
 			el = function(tag: string, props: any?, children: any?): any
 				local p: { [string]: any } = { tag = tag }
 				for k, v in props or {} do

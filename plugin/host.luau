@@ -37,6 +37,8 @@ local runAction, runRow, setValue, settingsView, showPage = settings.runAction, 
 local preparing, rpc = requests.preparing, requests.rpc
 
 local AGENT_ACTS = { agentgo = true, agentint = true, agentstop = true, agentmsg = true }
+-- The preview's checks tables (render's checksNodes), by the last part of their node id.
+local CHECK_TABLES = { failing = true, running = true, queued = true, passed = true, skipped = true }
 
 -- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
 local function askRemove(state: State)
@@ -1009,6 +1011,13 @@ local function blockDef(): BlockDef<State>
 				if key then
 					state.detailFail[key] = nil
 					cancelDetails(state)
+				end
+			elseif item and string.match(item, "^run%d+$") and CHECK_TABLES[string.match(ev.id or "", "%.(%a+)$") or ""] and (ev.ev == "select" or act == render.CHECK_MENU.open or act == render.CHECK_MENU.ignore) then
+				-- A checks table's row (render's checksNodes): a click or Open opens the check's page, Ignore in this repo…
+				-- asks the window's plan to ignore it; each through the link the hidden `checks` col shows.
+				local link = render.checkLink(state, if act == render.CHECK_MENU.ignore then "ignore" else "open", item)
+				if link then
+					state.cx:open(link)
 				end
 			elseif act == "rpc" then
 				rpc(state, ev.value)
