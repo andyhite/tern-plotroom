@@ -2531,8 +2531,9 @@ def sc_now_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    # a column is its card list, or Tern's empty row when it has no card
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane'], " + scope + ".sf-picker[data-role*='.board'] .sf-empty", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
+    # a column is a card, holding its cards' scroller or Tern's empty row
+    lane = scope + ".sf-card[data-role='plotroom.lane']"
+    chosen = lane + " .sf-card.selected"
     s.ctl_ok("resize", "2200", "1000")
     s.ctl_ok("tab", "new")
     s.ctl_ok("ready")
@@ -2563,6 +2564,9 @@ def sc_now_board(s: Smoke) -> None:
     s.eq("the key footer is Tern's status strip in the dock %r" % (foot,), True, bool(foot) and foot[1] + foot[3] <= 1000)
     s.eq("the fold's button %r sits above the key footer %r" % (fold, foot), True, bool(fold) and fold[1] + fold[3] <= foot[1] + 1)
     s.eq("the picker's sheet %r ends above the key footer %r, so the strip takes clicks" % (sheet, foot), True, bool(sheet) and sheet[1] + sheet[3] <= foot[1] + 1)
+    ref, badge = rect(chosen + " .sf-t-mono"), rect(chosen + " .sf-badge")
+    s.eq("the selected card's number %r and its badge %r do not overlap" % (ref, badge), True,
+         bool(ref and badge) and (badge[1] >= ref[1] + ref[3] - 1 or badge[0] >= ref[0] + ref[2] - 1))
     s.ctl_ok("click", segs + "[data-id='dock.keybar.k1']")  # Commands, always first in the footer's order
     s.wait_text("a click on the footer's Commands opens the palette, as . does", "Refresh")
     s.ctl_ok("key", "Escape")
@@ -2575,7 +2579,7 @@ def sc_now_board(s: Smoke) -> None:
         s.ctl_ok("key", "Down")
     s.wait_until("Down walks the column", lambda: any("Waiting 95: " in t for t in s.matches(chosen)))
     time.sleep(0.5)
-    card, box = rect(chosen), rect(scope + "[data-id='layer.queue.board.lanes.waiting.list'] .sf-list-scroll")
+    card, box = rect(chosen), rect(scope + "[data-id='layer.queue.board.lanes.waiting.list']")
     s.eq("the selected card %r sits inside its column's scroller %r, within the 1000 px window" % (card, box), True,
          bool(card and box) and card[1] >= box[1] - 1 and card[1] + card[3] <= box[1] + box[3] + 1 and card[1] + card[3] <= 1000)
     s.shot("now-board-scrolled")
@@ -2651,8 +2655,8 @@ def sc_view_board(s: Smoke) -> None:
     (s.smoke / "search.json").write_text(json.dumps(prs), encoding="utf-8")
     (s.smoke / "checks.json").write_text("{}", encoding="utf-8")
     scope = "[data-surface='plugin.plotroom.prs'] "
-    lane, chosen = scope + ".sf-list[data-role='plotroom.lane'], " + scope + ".sf-picker[data-role*='.board'] .sf-empty", scope + ".sf-list[data-role='plotroom.lane'] .sf-item.sel"
-    cards = scope + ".sf-list[data-role='plotroom.lane'] .sf-item"
+    lane = scope + ".sf-card[data-role='plotroom.lane']"  # a column is a card, holding its cards' scroller or Tern's empty row
+    chosen, cards = lane + " .sf-card.selected", lane + " .sf-card"
 
     def command(label: str) -> None:
         s.ctl_ok("key", ".")
@@ -2689,6 +2693,15 @@ def sc_view_board(s: Smoke) -> None:
     s.wait_until("Left crosses from Ready to merge to Waiting", lambda: any("Waiting view card 82" in t for t in s.matches(chosen)))
     s.ctl_ok("key", "Right")
     s.wait_until("and Right back (nothing to its right holds cards)", lambda: any("Ready view card" in t for t in s.matches(chosen)))
+    s.ctl_ok("click", cards)  # the first card: Blocked, in Needs you
+    s.wait_until("a click on a card selects it", lambda: any("Blocked view card" in t for t in s.matches(chosen)))
+    s.ctl_ok("click", cards, "right")
+    s.wait_until("right-clicking a card opens its menu", lambda: bool(s.matches("[role='menuitem']")))
+    s.eq("the card's menu", ["Open", "Worktree", "Agent", "Snooze", "Copy"], s.matches("[role='menuitem']"))
+    s.shot("view-board-menu")
+    s.ctl_ok("key", "Escape")  # Tern's node menu is a popover, not a native context menu
+    s.wait_until("the menu closes", lambda: not s.matches("[role='menuitem']"))
+    s.eq("the clicked card is still the selection", True, any("Blocked view card" in t for t in s.matches(chosen)))
     command("Settings")
     s.wait_text("Settings opens", "Repositories")
     s.ctl_ok("click", ".nav-row:nth-child(1)")  # Views

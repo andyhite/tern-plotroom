@@ -2706,7 +2706,7 @@ function hx.ternIcon(name: any): boolean
 	return table.find(TERN_ICONS, name) ~= nil
 end
 
--- A Board's columns as "column: card ids" (the fold's only while it is open) and the id of the card its lists select;
+-- A Board's columns as "column: card ids" (the fold's only while it is open) and the node id of its selected card;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
 	local node = findKey(pickerNode(b), "board", "col")
@@ -2718,14 +2718,16 @@ function hx.board(b: Block): ({ string }?, string?)
 	for _, group in node.c do
 		if group.p.key == "lanes" or group.p.key == "fold" then
 			for _, col in group.c do
-				-- an empty lane is an `empty` node in the list's place
-				local list = findKey(col, "list", "list")
+				-- each column is a card; an empty one holds an `empty` node in its scroller's place
+				local list = findKey(col, "list", "scroll")
 				local ids: { string } = {}
 				for _, card in (if list then list.c else {}) :: { any } do
 					table.insert(ids, card.p.key)
+					if card.p.selected then
+						selected = "layer.queue.board." .. group.p.key .. "." .. col.p.key .. ".list." .. card.p.key
+					end
 				end
 				table.insert(cols, col.p.key .. ": " .. table.concat(ids, " "))
-				selected = if list then list.p.selected or selected else selected
 			end
 		end
 	end
@@ -3212,8 +3214,9 @@ M.helpRows = helpRows
 
 -- The nodes under `node` whose look disagrees with what a click does there, as "path (kind, role)": a node with a
 -- click action or an href must be Tern's `button` kind or wear render's link role, and no other node may (a button
--- that does nothing is miscued too). A `seg` (the key footer's status strip) is Tern's own clickable control, so it is
--- neither. Hidden subtrees are skipped: Tern draws none of them (they are the links the window reads by key).
+-- that does nothing is miscued too). A `seg` (the key footer's status strip) and a selectable `card` (one with a
+-- `selected` prop: a Board card, which draws its own hover and selection ring) are Tern's own clickable controls, so
+-- they are neither. Hidden subtrees are skipped: Tern draws none of them (they are the links the window reads by key).
 function hx.miscued(node: any): { string }
 	local out: { string } = {}
 	local function walk(n: any, path: string)
@@ -3226,7 +3229,8 @@ function hx.miscued(node: any): { string }
 		end
 		local here = path .. "." .. tostring(p.key or n.k)
 		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
-		if n.k ~= "seg" and clicks ~= (n.k == "button" or p.role == "plotroom.link") then
+		local own = n.k == "seg" or (n.k == "card" and type(p.selected) == "boolean")
+		if not own and clicks ~= (n.k == "button" or p.role == "plotroom.link") then
 			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
 		end
 		if type(n.c) == "table" then

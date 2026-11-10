@@ -1771,21 +1771,30 @@ local function nowProps(state: State, props: { [string]: any })
 	props.columns, props.query, props.cursor = {}, nil, nil
 end
 
--- A Board (engine.laneColumns, Now's or a view's): a row of columns, each a heading and a native list of its rows as
--- items, the fold's columns under a button that shows or hides them (open while the selection is in it). Each list caps
--- its height and is told its selected item, so Tern keeps the selection in view: plugins get no scroll events.
+-- A card's right-click menu, as ids its `action` events carry (host.luau's Board card events): a view's card offers
+-- what its keys do on the selected item; Now's only Open, Enter's: Worktree, Agent and Snooze act on a view's
+-- selected item, which Now's row is not.
+local CARD_MENU, NOW_CARD_MENU = { "open", "worktree", "agent", "snooze" }, { "open" }
+
+-- A Board (engine.laneColumns, Now's or a view's): a row of columns, each a `card` headed by its name and count whose
+-- cards scroll inside it, the fold's columns under a button that shows or hides them (open while the selection is in
+-- it). A `scroll` has no selected item to keep in view and plugins get no scroll events, so each time the selection
+-- moves to another card the block sends a `reveal` op for it once the view is drawn.
 local function boardNode(state: State, bar: boolean?): Node
 	local cols = engine.laneColumns(state)
 	local at = engine.laneAt(state)
 	local chosen = engine.laneSelected(state)
 	local open = state.lanesFold or (at > 0 and cols[at].fold == true)
-	-- A column caps its height so its own list scrolls (and keeps the selection in view): a list row is one sans line
-	-- (18px, the block's `font = "sans"`) plus 6px, about seven tenths of a cell row, under the picker's head, the column
-	-- headings, the fold's button and, with `bar`, the key footer (24px, about one and a half cell rows).
-	local lines = math.max(4, math.floor((state.cx.rows - (if bar then 10 else 8)) * 0.7))
-	-- A card: its title, its number (and Snoozed), and on Now why Now lists it; on a view what blocks it, else New or
-	-- Changed, as its List row's badges say. A Blocked card has room for one value: its most severe chip (the tooltip
-	-- lists them all).
+	-- A column caps its height so its cards scroll in it, in the block's sans lines (18px; a cell row is about nine
+	-- tenths of one): the block's rows less the picker's head, the column's head and padding, the fold's button and, with
+	-- `bar`, the key footer in the dock (24px). Measured in smoke's "Now as a Board", with a line or two to spare.
+	local lines = math.max(6, math.floor(state.cx.rows * 0.9) - (if bar then 11 else 9))
+	local menu = if state.nowOn then NOW_CARD_MENU else CARD_MENU
+	local shown: string? = nil
+	-- A card: its number (and Snoozed) as its head, and on Now why Now lists it; on a view what blocks it, else New or
+	-- Changed, as its List row's badges say, as one badge under the head (a head `end` is drawn over the number in a
+	-- narrow column); its title under it, clamped to two lines ending in `…`. A Blocked card has room for one badge: its
+	-- most severe chip (the tooltip lists them all).
 	local function card(row: any): Node
 		local badge: { text: string, tone: string, title: string? }? = nil
 		local snoozed = row.snoozed
@@ -1815,25 +1824,37 @@ local function boardNode(state: State, bar: boolean?): Node
 				else nil
 		end
 		local ref = if row.key then printable(row.key) elseif row.notice then printable(row.notice.repo) else ""
-		local detail: { any } = { ui.span(ref, "mono") }
+		local head: { any } = { ui.span(ref, "mono") }
 		if snoozed then
-			table.insert(detail, ui.span(" · Snoozed", "muted"))
+			table.insert(head, ui.span(" · Snoozed", "muted"))
 		end
-		return ui.node("item", { key = row.id, label = printable(row.title), detail = detail, value = if badge then { ui.span(badge.text, badge.tone) } else nil, title = if badge then badge.title else nil })
+		local kids: { Node } = {}
+		if badge then
+			table.insert(kids, ui.node("row", { key = "tags" }, { ui.node("badge", { key = "badge", text = badge.text, tone = badge.tone }) }))
+		end
+		table.insert(kids, ui.node("text", { key = "title", spans = { ui.span(printable(row.title)) }, lines = 2 }))
+		local p: { [string]: any } = {
+			key = row.id,
+			head = head,
+			selected = row.id == chosen,
+			title = if badge then badge.title else nil,
+			actions = { click = "lane-pick", dblclick = "open", menu = menu },
+		}
+		return ui.node("card", p, kids)
 	end
 	local function column(group: string, col: any): Node
 		local cards: { Node } = {}
-		local selected: string? = nil
+		local list = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list"
 		for _, row in col.rows do
+			local id = list .. "." .. row.id
 			table.insert(cards, card(row))
 			if row.id == chosen then
-				selected = core.QUEUE_ID .. ".board." .. group .. "." .. col.id .. ".list." .. row.id
+				shown = id
 			end
 		end
-		-- An empty lane is Tern's empty row in the list's place (and key).
-		return ui.node("col", { key = col.id, grow = 1, basis = 0, gap = "xs" }, {
-			ui.node("text", { key = "head", spans = { ui.span(col.label, "strong"), ui.span("  " .. #col.rows, "muted") } }),
-			if #cards == 0 then emptyNode("list", "None") else ui.node("list", { key = "list", role = "plotroom.lane", selected = selected, max = { lines = lines } }, cards),
+		-- An empty lane is Tern's empty row in the scroller's place (and key).
+		return ui.node("card", { key = col.id, head = col.label, meta = tostring(#col.rows), role = "plotroom.lane", grow = 1, basis = 0 }, {
+			if #cards == 0 then emptyNode("list", "None") else ui.node("scroll", { key = "list", gap = "sm", max = { h = lines .. "lines" } }, cards),
 		})
 	end
 	local lanes: { Node } = {}
@@ -1855,6 +1876,15 @@ local function boardNode(state: State, bar: boolean?): Node
 	}
 	if open then
 		table.insert(kids, ui.node("row", { key = "fold", gap = "md", align = "start" }, folded))
+	end
+	if shown and shown ~= state.laneShown then
+		local id: string = shown
+		state.laneShown = id
+		tern.timer(0, function()
+			if engine.alive(state) and state.laneShown == id then
+				state.cx:frame({ { "reveal", id, "nearest" } })
+			end
+		end)
 	end
 	return ui.node("col", { key = "board", role = "plotroom.board", gap = "sm" }, kids)
 end
@@ -2114,6 +2144,9 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		props.items, props.order, props.selected, props.hits = tern.json.array({}), tern.json.array({}), nil, nil
 	else
 		preview = if state.kind.id == "issues" then issuePreview(state, item, acts) else previewNodes(state, item, acts)
+	end
+	if not laid then
+		state.laneShown = nil -- a Board drawn again starts at its scrollers' tops: its selected card is revealed anew
 	end
 	-- Narrow: the scope dropdown beside the title names the view or list, so the title keeps only its markers.
 	if dropdown and activeScope and type(props.title) == "table" then

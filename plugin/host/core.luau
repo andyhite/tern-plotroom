@@ -293,6 +293,7 @@ export type State = {
 	nowOn: boolean, -- Now is shown instead of a view
 	nowAt: string?, -- the picker id of the Now row previewed
 	lanesFold: boolean, -- a Board's fold (Not started, Worktree, Merged or closed) is open
+	laneShown: string?, -- the node id of the Board card last scrolled into view (render's boardNode), nil while no Board is drawn
 	lanes: { of: { any }, seq: number, rows: { any }, cols: { any } }?, -- a Board's rows and columns (engine.laneColumns), made from `of` (Now's rows or a view's visible items) at noteSeq `seq`
 	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
