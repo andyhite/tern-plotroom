@@ -173,7 +173,7 @@ case("review: the navigator lists the summary, the comments grouped by file, the
 	b.typeText("j")
 	has(detailText(b), "Why?", "c3 is selected")
 	has(detailText(b), "Not on a changed line", "and says it cannot be kept")
-	lacks(textOf(findKey(findKey(b.view().main, "detail"), "buttons")), "Keep", "with no Keep button")
+	lacks(textOf(findKey(findKey(b.view().main, "detail"), "end")), "Keep", "with no Keep button")
 	b.typeText(" ")
 	eq(w.toasts[#w.toasts].text, "Not on a changed line", "Space on it says why it cannot be kept")
 	eq(navState(b, 4), "Dropped", "and it stays dropped")
@@ -286,8 +286,8 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(navState(b, 2), "Dropped", "Space drops the selected comment")
 	-- Request changes.
 	b.typeText("3")
-	eq(findKey(b.view().main, "request_changes", "button").p.icon, "check", "3 picks Request changes")
-	eq(findKey(b.view().main, "comment", "button").p.icon, nil, "and only it has the check")
+	eq(findKey(b.view().main, "request_changes", "button").p.on, true, "3 picks Request changes")
+	eq(findKey(b.view().main, "comment", "button").p.on, false, "and only it is on")
 	has(textOf(findKey(b.view().main, "count")), "2 kept · 2 dropped", "the count follows")
 	-- The instructions are last: Edit instructions opens them.
 	local edit: any = findKey(b.view().main, "edit", "button")
@@ -331,15 +331,99 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	w.finish()
 end)
 
--- The verdict buttons the decision row offers, in order, and the one with the check.
+case("review: the navigator and the selected item sit in a hairline split, stacked in a compact pane; the shares you drag are kept for the block", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	local split: any = findKey(b.view().main, "body", "split")
+	yes(split, "the body is Tern's split")
+	same({ split.p.dir, split.p.grow } :: { any }, { "row", 1 } :: { any }, "side by side in a regular pane, growing into the pane's height")
+	eq(split.p.variant, nil, "in Tern's default hairline look")
+	same(split.p.sizes, { 0.3, 0.7 }, "the navigator a third until dragged")
+	same(split.p.min, { "24ch", "40ch" }, "neither pane drags narrower than it reads")
+	same({ split.c[1].p.key, split.c[2].p.key }, { "nav", "detail" }, "the navigator, then the selected item")
+	b.event({ ev = "change", id = "main.body", value = array({ 0.45, 0.55 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.45, 0.55 }, "a drag is drawn back as the split's sizes")
+	b.event({ ev = "change", id = "main.body", value = array({ 2, -1 }) })
+	b.event({ ev = "change", id = "main.other", value = array({ 0.1, 0.9 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.45, 0.55 }, "shares that are not two fractions, or another node's, change nothing")
+	-- A compact pane stacks them, with its own shares.
+	b.cx.cols = 80
+	split = findKey(b.render().main, "body", "split")
+	same({ split.p.dir, split.p.sizes } :: { any }, { "col", { 0.3, 0.7 } } :: { any }, "a compact pane stacks the navigator above the item")
+	b.event({ ev = "change", id = "main.body", value = array({ 0.2, 0.8 }) })
+	same(findKey(b.view().main, "body", "split").p.sizes, { 0.2, 0.8 }, "a stacked drag is kept too")
+	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "the whole navigator stays listed")
+	-- A restart restores both.
+	local again = w.openReview(3, nil, b.saved())
+	w.flush()
+	again.cx.cols = 140
+	same(findKey(again.render().main, "body", "split").p.sizes, { 0.45, 0.55 }, "the regular pane's shares after a restart")
+	again.cx.cols = 80
+	same(findKey(again.render().main, "body", "split").p.sizes, { 0.2, 0.8 }, "and the compact pane's")
+	clean(b, "the split")
+	w.finish()
+end)
+
+case("review: the selected item is a card: a finding's path heads it, its lines are the meta and Keep/Drop and Edit sit at the head's end", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	local summary: any = findKey(b.view().main, "detail", "card")
+	eq(summary.p.head[1].t, "Summary", "the summary's card")
+	eq(summary.p["end"], "main.body.detail.end", "its Edit summary at the head's end")
+	eq(findKey(summary, "edit", "button").p.text, "Edit summary", "named for it")
+	b.typeText("j")
+	local card: any = findKey(b.view().main, "detail", "card")
+	same({ card.p.head[1].t, card.p.head[1].s }, { "src/a.lua", "mono" }, "a finding's card is headed by its path, in mono")
+	eq(card.p.meta[1].t, "line 3", "with where it is as the meta")
+	eq(card.p["end"], "main.body.detail.end", "naming its own child for the head's end")
+	local ends: any = findKey(card, "end", "row")
+	same({ ends.c[1].p.key, ends.c[2].p.key, ends.c[1].p.size, ends.c[2].p.size }, { "keep", "edit", "sm", "sm" }, "Keep/Drop then Edit, small")
+	eq(ends.c[1].p.text, "Drop", "a kept finding offers Drop")
+	yes(findKey(card, "diff", "col"), "the diff is inside the card")
+	has(textOf(findKey(card, "body", "md")), "z is unused", "and the feedback")
+	b.typeText("e")
+	eq(findKey(findKey(b.view().main, "detail", "card"), "done", "button").p.text, "Done", "while editing, Done takes Edit's place")
+	b.press("escape")
+	b.press("enter", "m")
+	eq(findKey(b.view().main, "detail", "card").p["end"], nil, "while sending the card has no controls")
+	eq(findKey(b.view().main, "end"), nil, "and no head child")
+	clean(b, "the card")
+	w.finish()
+end)
+
+case("review: a suggestion shows as a diff of the lines it replaces, or as code when those lines are not on the diff", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.comments = array({
+		{ id = "c1", path = "src/a.lua", line = 3, startLine = 2, side = "RIGHT", kind = "suggestion", body = "Merge them", suggestion = "local y, z = 3, 4\n" },
+		{ id = "c4", path = "src/a.lua", line = 2, side = "LEFT", kind = "suggestion", body = "Keep 2", suggestion = "local y = 2" },
+	})
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	b.typeText("j")
+	local suggestion: any = findKey(findKey(b.view().main, "detail"), "suggestion", "section")
+	local d: any = findKey(suggestion, "diff", "diff")
+	eq(d.p.text, "@@ -2,2 +2,1 @@\n-local y = 3\n-local z = 4\n+local y, z = 3, 4\n", "lines 2–3 as the pull request has them, then the suggestion")
+	eq(d.p.path, "src/a.lua", "highlighted as its file")
+	lacks(textOf(suggestion), "````", "no Markdown fence")
+	b.typeText("j")
+	suggestion = findKey(findKey(b.view().main, "detail"), "suggestion", "section")
+	eq(findKey(suggestion, "diff"), nil, "an old-side suggestion is no diff")
+	local code: any = findKey(suggestion, "code", "code")
+	same({ code.p.text, code.p.lang }, { "local y = 2", "lua" }, "it is code in its file's language")
+	w.finish()
+end)
+
+-- The verdict buttons the decision row's `buttons` group offers, in order, and the one that is `on`.
 local function verdicts(b: Block): ({ string }, string?)
 	local keys: { string } = {}
 	local on: string? = nil
+	local group = findKey(findKey(b.view().main, "bar", "row"), "verdict", "buttons")
 	for _, v in { "comment", "approve", "request_changes" } do
-		local node = findKey(findKey(b.view().main, "bar", "row"), v, "button")
+		local node = findKey(group, v, "button")
 		if node then
 			table.insert(keys, v)
-			on = if node.p.icon == "check" then v else on
+			on = if node.p.on then v else on
 		end
 	end
 	return keys, on
