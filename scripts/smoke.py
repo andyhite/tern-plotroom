@@ -2134,7 +2134,11 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
 
     agent_tab = active_tab()  # glimpse_review leaves the agent focused
     agent_pane = s.state()["focused"]["id"]  # type: ignore[index]
-    panes = len(s.state()["panes"])  # type: ignore[arg-type]
+
+    def tab_panes(tab: int) -> int:
+        return int(s.state()["tabs"][tab - 1]["panes"])  # type: ignore[index]
+
+    beside = tab_panes(agent_tab)
     stores = [p for p in s.tmp.rglob("kv.json") if "agent-links" in p.read_text(encoding="utf-8")]
 
     def reviewed() -> bool:
@@ -2144,24 +2148,24 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     # The agent's turn ends while the user is on the queue, in another tab.
     s.ctl_ok("tab", str(queue_tab))
     s.wait_until("the queue's tab is shown", lambda: active_tab() == queue_tab and s.state()["focused"]["id"] != agent_pane)  # type: ignore[index]
-    mine, tabs = s.state()["focused"]["id"], len(s.state()["tabs"])  # type: ignore[index,arg-type]
+    mine, tabs, here = s.state()["focused"]["id"], len(s.state()["tabs"]), tab_panes(queue_tab)  # type: ignore[index,arg-type]
     s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
     s.wait_until("the turn end takes the newer proposal (the link remembers it)", reviewed)
     time.sleep(1.0)
     s.eq("no tab was opened", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
     s.eq("the queue's tab is still shown", queue_tab, active_tab())
     s.eq("the user's pane keeps focus", mine, s.state()["focused"]["id"])  # type: ignore[index]
-    s.eq("nothing opened in the user's tab", 0, n(scope))
+    s.eq("nothing opened in the user's tab", (0, here), (n(scope), tab_panes(queue_tab)))
+    s.eq("one more pane in the agent's tab: the block beside the agent", beside + 1, tab_panes(agent_tab))
     s.select_row()
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")  # not `ctl tab`: it times out on a tab whose focused pane runs the fake agent
     s.wait_until("Go to agent shows the agent's tab", lambda: active_tab() == agent_tab and s.state()["focused"]["id"] == agent_pane)  # type: ignore[index]
     s.wait_text("the Draft review block, in the agent's tab", "Draft review of")
-    s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]
-    s.ctl_ok("focus", "right")
+    s.ctl_ok("click", scope + " [data-id='main.body.nav.n0']")  # not `ctl focus right`: it times out from the fake agent's pane, as `ctl tab` does
     s.wait_text("its head SHA, a mono span of its own", head[:7])
     s.wait_text("the summary, rendered as Markdown", "Review of the change")
     s.wait_text("Send, with its key", "Send to agent")
-    s.eq("the block is right of the agent, focused", "Draft review · a/gent#1", s.state()["focused"].get("label"))  # type: ignore[union-attr]
+    s.wait_until("a click focuses the block", lambda: s.state()["focused"].get("label") == "Draft review · a/gent#1")  # type: ignore[union-attr]
 
     def rects(sel: str) -> List[List[float]]:
         return [[float(v) for v in n["rect"][:4]] for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
