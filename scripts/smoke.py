@@ -2094,11 +2094,11 @@ def glimpse_review(s: Smoke, wt: Path, queue_tab: int) -> None:
 
 def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> None:
     """sc_agent's agent proposes a Draft review (its file, as the omp extension writes it, under PLOTROOM_DATA/runs/<run>): first Over the agent's tab
-    (glimpse_review), then, for a newer proposal, what a turn end of the focused agent runs (plugin.plotroom.review-smoke; the fake agent ends no turn)
-    asks the queue block's host for the file and opens the Draft review block beside the agent, on the pull request's diff read by real git in the
-    worktree: the comment on a changed line is shown with its lines and kept, the one off the diff is listed under Not on a changed line; Space drops
-    and keeps it. ⌘↵ sends; the fake agent is not omp, so Tern refuses the message and the block says so and offers Copy. (sc_agent then checks the
-    same file opens nothing more, and closes the block.)"""
+    (glimpse_review), then, for a newer proposal while the queue's tab is focused, what a turn end runs (plugin.plotroom.review-smoke; the fake agent
+    ends no turn) asks the queue block's host for the file and opens the Draft review block beside the agent, in the agent's tab, leaving the queue's
+    tab shown and focused; on the pull request's diff read by real git in the worktree: the comment on a changed line is shown with its lines and
+    kept, the one off the diff is listed under Not on a changed line; Space drops and keeps it. ⌘↵ sends; the fake agent is not omp, so Tern refuses
+    the message and the block says so and offers Copy. (sc_agent then checks the same file opens nothing more, and closes the block.)"""
     # A real multi-line change: the file's one line becomes twelve, in a new commit on the PR's branch (the fake gh is told the new head).
     target = s.out(wt, "diff", "--name-only", "origin/main...HEAD").split()
     s.eq("the pull request changes one file", 1, len(target))
@@ -2124,21 +2124,47 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     glimpse_review(s, wt, queue_tab)
     review["at"] = "2026-11-04T10:30:00.000Z"  # a newer proposal, so the next turn end opens it again, now beside the agent
     (folder / "review.json").write_text(json.dumps(review), encoding="utf-8")
-    panes = len(s.state()["panes"])  # type: ignore[arg-type]
-    s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
-    s.wait_text("the Draft review block", "Draft review of")
-    s.wait_text("its head SHA, a mono span of its own", head[:7])
-    s.wait_text("the summary, rendered as Markdown", "Review of the change")
-    s.wait_text("Send, with its key", "Send to agent")
-    s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]
-    s.eq("the block is focused beside the agent", "Draft review · a/gent#1", s.state()["focused"].get("label"))  # type: ignore[union-attr]
     scope = "[data-surface='plugin.plotroom.review']"
 
-    def rects(sel: str) -> List[List[float]]:
-        return [[float(v) for v in n["rect"][:4]] for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
+    def active_tab() -> int:
+        return [t["active"] for t in s.state()["tabs"]].index(True) + 1  # type: ignore[index,union-attr]  # ctl tab numbers from 1
 
     def n(sel: str) -> int:
         return int(json.loads(s.ctl("tree", sel)).get("count") or 0)
+
+    agent_tab = active_tab()  # glimpse_review leaves the agent focused
+    agent_pane = s.state()["focused"]["id"]  # type: ignore[index]
+    panes = len(s.state()["panes"])  # type: ignore[arg-type]
+    stores = [p for p in s.tmp.rglob("kv.json") if "agent-links" in p.read_text(encoding="utf-8")]
+
+    def reviewed() -> bool:
+        links = json.loads(stores[0].read_text(encoding="utf-8")).get("agent-links") or []
+        return any(l.get("key") == "a/gent#1" and l.get("reviewed") == review["at"] for l in links)
+
+    # The agent's turn ends while the user is on the queue, in another tab.
+    s.ctl_ok("tab", str(queue_tab))
+    s.wait_until("the queue's tab is shown", lambda: active_tab() == queue_tab and s.state()["focused"]["id"] != agent_pane)  # type: ignore[index]
+    mine, tabs = s.state()["focused"]["id"], len(s.state()["tabs"])  # type: ignore[index,arg-type]
+    s.ctl_ok("plugins", "run", "plugin.plotroom.review-smoke")
+    s.wait_until("the turn end takes the newer proposal (the link remembers it)", reviewed)
+    time.sleep(1.0)
+    s.eq("no tab was opened", tabs, len(s.state()["tabs"]))  # type: ignore[arg-type]
+    s.eq("the queue's tab is still shown", queue_tab, active_tab())
+    s.eq("the user's pane keeps focus", mine, s.state()["focused"]["id"])  # type: ignore[index]
+    s.eq("nothing opened in the user's tab", 0, n(scope))
+    s.select_row()
+    s.ctl_ok("plugins", "run", "plugin.plotroom.agent-go")  # not `ctl tab`: it times out on a tab whose focused pane runs the fake agent
+    s.wait_until("Go to agent shows the agent's tab", lambda: active_tab() == agent_tab and s.state()["focused"]["id"] == agent_pane)  # type: ignore[index]
+    s.wait_text("the Draft review block, in the agent's tab", "Draft review of")
+    s.eq("one more pane: the block beside the agent", panes + 1, len(s.state()["panes"]))  # type: ignore[arg-type]
+    s.ctl_ok("focus", "right")
+    s.wait_text("its head SHA, a mono span of its own", head[:7])
+    s.wait_text("the summary, rendered as Markdown", "Review of the change")
+    s.wait_text("Send, with its key", "Send to agent")
+    s.eq("the block is right of the agent, focused", "Draft review · a/gent#1", s.state()["focused"].get("label"))  # type: ignore[union-attr]
+
+    def rects(sel: str) -> List[List[float]]:
+        return [[float(v) for v in n["rect"][:4]] for n in json.loads(s.ctl("tree", sel)).get("nodes") or [] if isinstance(n, dict) and n.get("rect")]
 
     done = scope + " [data-id='main.body.detail.end.done']"
 

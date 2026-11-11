@@ -731,11 +731,18 @@ local function newWorld(instantiate: Loader, context: string): World
 				end)
 			end
 		end,
-		-- A block of `kind` in the tab of `opts.target` (a glimpse: the focused pane's tab; else a new tab), as cx:new_block
-		-- opens it: its launch records the kind, args, how and opts (`newBlock` true).
+		-- A block of `kind`, as cx:new_block opens it: beside or default (`how` nil) with `opts.target` in that pane's tab;
+		-- any other split, or a glimpse, in the focused pane's tab (Tern ignores `target` there); else a new tab. Unless
+		-- `opts.focus` is false, a split takes focus (a glimpse does not). Its launch records the kind, args, how and opts
+		-- (`newBlock` true).
 		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
-			local target = if opts and opts.target then win.panes[opts.target] elseif how == "glimpse" and win.focused then win.panes[win.focused] else nil
-			return addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
+			local targeted = opts and opts.target and (how == nil or how == "beside" or how == "default")
+			local target = if targeted then win.panes[opts.target] elseif how ~= "tab" and win.focused then win.panes[win.focused] else nil
+			local pane = addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
+			if how ~= "glimpse" and not (opts and opts.focus == false) then
+				win.focused = pane
+			end
+			return pane
 		end,
 		session = {
 			pane = function(_self: any, id: number): any

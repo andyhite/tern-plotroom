@@ -5813,13 +5813,22 @@ windowCase("window flows: Show Draft review focuses the run's open Draft review,
 	st.reply("review", {})
 	local gone: { any } = { w.toasts[#w.toasts].text, w.toasts[#w.toasts].sub, #launches() }
 	same(gone, { "No Draft review for o/r#5", "Its file is no longer on the agent's host.", 1 } :: { any }, "a gone file opens nothing")
-	-- Beside the agent (the default): split to the agent's right.
+	-- Beside the agent (the default): split to the agent's right, in its tab, focused.
 	w.click(link)
 	w.flush()
 	st.reply("review", { at = "2026-11-04T10:00:00.000Z" })
 	made = launches()
-	local beside: { any } = { #made, made[#made].how, made[#made].opts }
-	same(beside, { 2, "split", { target = 50, dir = "right" } } :: { any }, "beside the agent")
+	local beside: { any } = { #made, made[#made].how, made[#made].opts, w.window.panes[made[#made].pane].tab, w.window.focused == made[#made].pane }
+	same(beside, { 2, "beside", { target = 50, dir = "right", focus = true }, 50, true } :: { any }, "beside the agent")
+	-- The agent's pane gone: beside the focused pane, as Tern splits it with no target.
+	w.window.panes[50] = nil
+	w.window.focused = 1
+	w.click(link)
+	w.flush()
+	st.reply("review", { at = "2026-11-04T10:00:00.000Z" })
+	made = launches()
+	local fallback: { any } = { #made, made[#made].how, made[#made].opts == nil, w.window.panes[made[#made].pane].tab }
+	same(fallback, { 3, "split", true, w.window.panes[1].tab } :: { any }, "beside the focused pane")
 	w.finish()
 end)
 

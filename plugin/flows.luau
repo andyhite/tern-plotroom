@@ -1552,8 +1552,9 @@ end
 
 -- Opens the Draft review block for link `l`'s run as Settings › General › Draft review opens has it: Over the agent's
 -- tab (`glimpse`: Tern's glimpse, over the tab shown, in no split, until a click outside it; focused after it opens, as
--- a glimpse does not take the keyboard itself) or split to the agent's
--- right. `show` (Show Draft review) first brings the agent's tab forward; a turn end never does, so a glimpse whose
+-- a glimpse does not take the keyboard itself) or split to the agent's right, in the agent's tab (`beside`: Tern
+-- honors a target only for beside or default). `show` (Show Draft review) first brings the agent's tab forward; a turn
+-- end never does, so a split opens unfocused (the user's tab and pane stay shown and focused) and a glimpse whose
 -- agent's tab is not shown opens nothing and a toast points at Show Draft review. With the agent's pane gone, a
 -- glimpse shows over the tab shown and a split beside the focused pane.
 local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean)
@@ -1579,7 +1580,10 @@ local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean
 			end
 			return p
 		end
-		return cx:new_block(REVIEW_BLOCK, args, "split", if agent then { target = agent, dir = "right" } else nil)
+		if agent then
+			return cx:new_block(REVIEW_BLOCK, args, "beside", { target = agent, dir = "right", focus = show })
+		end
+		return cx:new_block(REVIEW_BLOCK, args, "split")
 	end)
 	if not ok or not pane then
 		cx:toast("error", "The Draft review for " .. l.key .. " did not open", if ok then "Tern opened no block." else tostring(pane))

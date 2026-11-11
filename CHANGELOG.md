@@ -96,6 +96,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 - Open floating preview: Enter and Open show the item's page in Tern's Browser beside the queue.
 
 ### Fixed
+- Draft review, Beside the agent: a turn end of an agent in a background tab opens the Draft review split to the right of the agent's own pane, in the agent's tab, without switching tabs or taking focus; it opened beside whatever pane was focused, in the tab shown. Show Draft review still opens it focused.
 - The arrival ring pauses while Tern hides Plotroom's pane (`.sf-paused`) and resumes where it was when the pane shows again.
 - The sidebar's Agents entry, and the Agents list's field, show an icon (`sparkle`) instead of a blank square: `bot` is not a Tern icon.
 - The Draft review's Edit buttons and the agent review's Edit note (`pen`), the status line's paused and version-mismatch warnings (`warn`), and the Board fold's button (`chev`, `chev-r`) show an icon instead of a blank square: `pencil`, `warning`, `chevron-down` and `chevron-right` are not Tern icons.

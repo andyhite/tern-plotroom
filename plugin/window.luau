@@ -2259,15 +2259,15 @@ if tern.getenv("PLOTROOM_SELFTEST") == "1" then
 			require("./tests/runtime").run(cx)
 		end,
 	})
-	-- Smoke's fake agent ends no turn: this runs what a turn end of the focused agent runs for its Draft review.
+	-- Smoke's fake agent ends no turn: this runs what a turn end of every pane runs for its Draft review (only a linked
+	-- agent's opens one), so the agent's turn can end while another tab is focused.
 	tern.command({
 		id = "review-smoke",
 		title = "Draft review smoke",
 		group = "Plotroom",
 		run = function(cx: WindowCx)
-			local pane = cx.session:focused()
-			if pane then
-				flows.reviewAfter(cx, pane)
+			for _, p in cx.session:panes() do
+				flows.reviewAfter(cx, p.pane)
 			end
 		end,
 	})

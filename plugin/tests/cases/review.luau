@@ -696,16 +696,26 @@ local function reviewLaunches(w: World): { any }
 	return out
 end
 
-windowCase("review: a turn end with a newer Draft review opens the block beside the agent once; an open block reloads", function(w: World)
+windowCase("review: a turn end with a newer Draft review opens the block beside the agent, in the agent's tab, once, without taking focus; an open block reloads", function(w: World)
 	w.load("window")
 	local answer = queueStub(w)
 	seedRun(w)
+	-- The agent works in a background tab; the user is on pane 1 in tab 1.
+	w.window.panes[20].tab = 2
+	w.window.focused = 1
 	finished(w)
 	answer(AT1)
 	local opened = reviewLaunches(w)
 	eq(#opened, 1, "the Draft review opened")
 	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts }
-	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "split", { target = 20, dir = "right" } } :: { any }, "beside the agent, with its run, folder and login")
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "beside", { target = 20, dir = "right", focus = false } } :: { any }, "beside the agent, unfocused, with its run, folder and login")
+	local review = 0
+	for id, p in w.window.panes do
+		if p.block == "plugin.plotroom.review" then
+			review = id
+		end
+	end
+	same({ w.window.panes[review].tab, w.window.focused } :: { any }, { 2, 1 } :: { any }, "in the agent's tab, and the user's pane keeps focus")
 	eq((w.kv.get("agent-links") :: any)[1].reviewed, AT1, "the link remembers which proposal opened")
 	finished(w)
 	answer(AT1)
