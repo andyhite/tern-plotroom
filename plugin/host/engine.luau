@@ -15,8 +15,6 @@ local worktree = require("../worktree")
 local core = require("./core")
 local storage = require("./storage")
 
-local ui = tern.ui
-
 type AgentInfo = core.AgentInfo
 type Attempt = core.Attempt
 type Group = core.Group
@@ -2071,37 +2069,6 @@ function M.boardCheck(state: State): any
 			done("unknown")
 		end
 	end
-end
-
--- The picker's rows and order for the board: a group per repository.
-function M.boardItems(state: State): ({ any }, { any })
-	local open = M.boardOpen(state)
-	local items: { any } = {}
-	local order: { any } = {}
-	local groups: { [string]: { any } } = {}
-	local names: { string } = {}
-	for _, row in M.boardRows(state) do
-		local label = board.label(row)
-		local detail: { any } = { ui.span(row.path, "mono") }
-		if row.key or row.number then
-			table.insert(detail, " · ")
-			table.insert(detail, ui.span(if row.number then "#" .. row.number else row.key, "mono"))
-		end
-		local id = M.pickerId("w", row.id)
-		table.insert(items, { id = id, label = label, title = label, detail = detail, badges = board.badges(row, open[row.path] == true) })
-		if not groups[row.repo] then
-			groups[row.repo] = {}
-			table.insert(names, row.repo)
-		end
-		table.insert(groups[row.repo], id)
-	end
-	for _, name in names do
-		table.insert(order, { group = name, label = name, count = #groups[name] })
-		for _, id in groups[name] do
-			table.insert(order, id)
-		end
-	end
-	return items, order
 end
 
 -- Moves the cursor `delta` rows through the visible items, clamped to the list.

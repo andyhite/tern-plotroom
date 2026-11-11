@@ -55,7 +55,7 @@ Each is built from Tern kinds; `plotroom.css` touches only what no kind or prop 
 
 ### Rows
 
-A picker `item` per pull request, issue, Now entry, agent or worktree. Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
+A picker `item` per pull request, issue, Now entry or agent (a worktree is a Worktrees table row). Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
 
 ### Board
 
@@ -92,6 +92,10 @@ Every confirm Plotroom asks: the worktree card's Remove worktree, the Worktrees 
 ### Checks table
 
 The preview's checks, one Tern `table` per group (Failing, Running, Queued; Passed and Skipped in their fold), each under its muted `Group N` heading. Columns: **Check** (the one `grow` column, a status `dot` in the run's tone: `error` failed, `warning` running or queued, `success` passed, `muted` skipped; Required, Likely flaky and Ignored as muted text after the name), **Workflow** and **Took** (`align = "end"`, `mono`). Rows are `selectable`: a click opens the check's page. Each row's right-click menu offers Open (when the check has a page) and, on a failing check not yet ignored, Ignore in this repo…; Tern adds Copy row. A failing check's excerpt is a `code` node (`lang = "text"`) in a plain section headed by its first error line, that line marked `error`, clamped by `preview` with Tern's "K more lines". Never put it in a collapsible section: Tern applies a code `preview` only while that disclosure is folded, and folded draws no body.
+
+### Worktrees table
+
+The Worktrees scope, laid out like the Board in the queue picker's preview pane (its `.board` role, no new CSS): one Tern `table`, `selectable`, its `selected` the selected worktree (a click selects, a double click opens it in a tab), beside that worktree's card. Columns: **Name** (the worktree's folder name, `grow`, the highest `priority`), **Repository** (`mono`), **Status** (a `dot` and its words: Changes, Clean, Unknown or Reading…, then Merged or Closed, Locked, Missing, In tab, Unnoted; the dot `error` for a missing folder, `success` for Merged, else `muted`), **Linked** (`#N` or the Jira key, `mono`) and **Path** (`mono`, `truncate = "middle"`, the full path as the cell's tooltip, the lowest `priority`, so it hides first; it grows too, since Tern cuts only a column that takes spare width and hides one that does not fit whole). The card beside it: `head` its name, `meta` its branch (`mono`), `end` its **Remove** button (`sm`, default variant, the bound key as keycaps), then the worktree preview's parts.
 
 ### Worktree card
 

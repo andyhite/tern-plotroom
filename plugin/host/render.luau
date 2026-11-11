@@ -1388,31 +1388,47 @@ function M.scopeRows(state: State): ({ any }, string?)
 	return scopes, activeScope
 end
 
--- The board's preview of the selected worktree, in the order every preview shares (docs/reference.md › Finer points ›
--- Preview): its repository and changes, its folder's name, what it needs (cleanup, a refusal), its git facts, the pull
--- request and issue it was made for (each as the tracker answered, or why not) and, hidden, the link the window opens
--- its folder with.
-local function boardPreview(state: State): { Node }
+-- The Worktrees table's node id (host.luau names its select and activate events by it) and its columns
+-- (DESIGN.md › Worktrees table): Name hides last, Path is cut in the middle and hides first. Path grows with Name: Tern
+-- cuts only a column that takes spare width, and hides one that does not fit whole (smoke's "some width shows Path cut").
+M.WORKTREES_TABLE = core.QUEUE_ID .. ".worktrees.list.table"
+local WORKTREES_CARD = core.QUEUE_ID .. ".worktrees.side.worktree"
+local WORKTREE_COLS: { Col } = {
+	{ id = "name", head = "Name", grow = 1, priority = 4 },
+	{ id = "repo", head = "Repository", mono = true, priority = 1 },
+	{ id = "status", head = "Status", priority = 3 },
+	{ id = "linked", head = "Linked", mono = true, priority = 2 },
+	{ id = "path", head = "Path", mono = true, truncate = "middle", grow = 2, priority = 0 },
+}
+
+-- The card beside the Worktrees table, of the selected worktree, in the order every preview shares (docs/reference.md
+-- › Finer points › Preview): its name as the head, its branch as the meta and Remove at the head's end, then what it
+-- needs (cleanup, a refusal), its git facts, the pull request and issue it was made for (each as the tracker answered,
+-- or why not) and, hidden, the links the window opens its folder and the Git view with.
+local function worktreeCard(state: State): Node?
 	local row, at = engine.boardSelected(state)
 	if not row then
-		return {}
+		return nil
 	end
 	local p = board.preview(state.board, row)
-	local changes: { text: string, tone: string, title: string? } = if row.missing then { text = "Missing", tone = "error" }
-		elseif row.dirty == true then { text = "Changes", tone = "muted" }
-		elseif row.dirty == false then { text = "Clean", tone = "muted" }
-		elseif row.scannedAt then { text = "Unknown", tone = "muted" }
-		else { text = "Reading…", tone = "muted" }
 	local facts: { { [string]: any } } = {}
 	for _, f in p.facts do
-		local style: string? = if f[1] == "Repository" then "mono" elseif f[1] == "Branch" or f[1] == "Path" or f[1] == "Head" then "code" else nil
-		if f[1] == "Status" then
-			changes.title = f[2] -- the head's badge says it
-		else
+		-- The changes are the table's Status cell (its tooltip spells them out), not a fact here too.
+		if f[1] ~= "Status" then
+			local style: string? = if f[1] == "Repository" then "mono" elseif f[1] == "Branch" or f[1] == "Path" or f[1] == "Head" then "code" else nil
 			table.insert(facts, { k = f[1], v = { ui.span(f[2], style) } })
 		end
 	end
-	local kids: { Node } = headNodes(row.repo, { text = "Worktree", tone = "muted" }, changes, p.title)
+	local kids: { Node } = {}
+	local removable = not row.locked and not row.missing -- the guard of engine.boardAct's wt-remove
+	table.insert(kids, button("Remove", {
+		key = "remove",
+		icon = "trash",
+		keys = keys.caps(keys.load(), "wt-remove"),
+		aria = "Remove this worktree",
+		disabled = if removable then nil else "Locked or missing worktrees are not removed here.",
+		actions = { click = "wt-remove" },
+	}))
 	local cleanup = if row.candidate == "merged" then "Its pull request is merged" elseif row.candidate == "closed" then "Its item is closed" elseif row.candidateChecked then "Its item is still open" else nil
 	local status: { Node } = {}
 	local needs = withValue({
@@ -1462,14 +1478,32 @@ local function boardPreview(state: State): { Node }
 		table.insert(links, ui.node("text", { key = "git", href = core.withToken(core.GIT_LINK) }))
 	end
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
-	return kids
+	return ui.node("card", {
+		key = "worktree",
+		role = "plotroom.worktree",
+		head = { ui.span(board.name(row), "strong") },
+		meta = { ui.span(board.label(row), "mono") },
+		["end"] = WORKTREES_CARD .. ".remove",
+	}, kids)
 end
 
--- Turns the queue's picker props into the Worktrees board's: its rows and subtitle.
-local function boardProps(state: State, props: { [string]: any })
-	local items, order = engine.boardItems(state)
-	local row = engine.boardSelected(state)
+-- The Worktrees table's Linked cell: a pull request's or GitHub issue's `#N` (an issue key is `repo#N` or `N`), else the
+-- Jira key, else nothing (an unnoted worktree).
+local function linkedOf(row: any): string
+	if row.number then
+		return "#" .. row.number
+	end
+	local key: string = row.key or ""
+	local n = string.match(key, "#(%d+)$") or string.match(key, "^(%d+)$")
+	return if n then "#" .. n else key
+end
+
+-- The Worktrees scope: its subtitle (the count, or that it is reading, and the first problems) in the picker's head,
+-- and in the preview pane, which the `.board` role widens over the hidden list (plotroom.css), the table of every
+-- linked worktree beside the selected one's card (DESIGN.md › Worktrees table).
+local function boardView(state: State, props: { [string]: any }): Node
 	local rows = engine.boardRows(state)
+	local chosen = engine.boardSelected(state)
 	local sub: { any } = {}
 	if state.boardBusy then
 		local busy: any = ui.span("Reading checkouts…", "muted")
@@ -1486,11 +1520,37 @@ local function boardProps(state: State, props: { [string]: any })
 	end
 	props.icon, props.title, props.subtitle, props.noun = "folder", { ui.span("Worktrees", "strong") }, sub, "worktrees"
 	props.placeholder = "Worktrees are not searched"
-	props.state = if state.boardBusy and not state.board.loaded then "loading" else "ready"
-	props.empty = { ui.span(if next(readCheckouts()) == nil then "No checkouts yet: add a repository's checkout in Settings › Repositories." else "No worktrees found.", "muted") }
-	props.items, props.order, props.hits, props.message = tern.json.array(items), tern.json.array(order), nil, nil
-	props.selected = if row then pickerId("w", row.id) else nil
-	props.columns, props.query, props.cursor = {}, nil, nil
+	props.state, props.message, props.columns, props.query, props.cursor = "ready", nil, {}, nil, nil
+	props.role ..= ".board"
+	props.items, props.order, props.selected, props.hits = tern.json.array({}), tern.json.array({}), nil, nil
+	local open = engine.boardOpen(state)
+	local list: { TableRow } = {}
+	for _, row in rows do
+		local st = board.status(row, open[row.path] == true)
+		table.insert(list, {
+			id = pickerId("w", row.id),
+			cells = {
+				{ ui.span(board.name(row)) },
+				{ ui.span(row.repo) },
+				{ text = { ui.span(table.concat(st.words, " · ")) }, dot = st.tone, title = table.concat(st.titles, " · ") },
+				{ ui.span(linkedOf(row)) },
+				{ text = { ui.span(row.path) }, title = row.path },
+			},
+		})
+	end
+	local empty = if state.boardBusy and not state.board.loaded then "Reading checkouts…"
+		elseif next(readCheckouts()) == nil then "No checkouts yet: add a repository's checkout in Settings › Repositories."
+		else "No worktrees found."
+	local t = ui.table(WORKTREE_COLS, list, { selectable = true, selected = if chosen then pickerId("w", chosen.id) else nil, empty = { ui.span(empty, "muted") } })
+	local tp: { [string]: any } = t.p or {}
+	tp.key = "table"
+	t.p = tp
+	local cols: { Node } = { ui.node("col", { key = "list", grow = 2, basis = 0 }, { t }) }
+	local side = worktreeCard(state)
+	if side then
+		table.insert(cols, ui.node("col", { key = "side", grow = 1, basis = 0 }, { side }))
+	end
+	return ui.node("row", { key = "worktrees", gap = "md", align = "start" }, cols)
 end
 
 -- The Agents scope's preview of the selected agent, in the order every preview shares (docs/reference.md › Finer points
@@ -2176,8 +2236,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local laid = false -- Now is drawn as a Board
 	if state.boardOn then
 		cancelDetails(state) -- no checks load for a queue preview that is not shown
-		preview = boardPreview(state)
-		boardProps(state, props)
+		preview = { boardView(state, props) }
 	elseif state.agentsOn then
 		cancelDetails(state)
 		preview = agentsPreview(state)
@@ -2213,12 +2272,12 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		props.title = if #rest > 0 then rest else nil
 	end
 	-- Tern: `preview = "none"` hides the pane; with no children it would say "Nothing to preview" in a big pane. The Board
-	-- fills the pane: Get started stays with the List.
+	-- and the Worktrees table fill the pane: Get started stays with the List.
 	local guide = if laid then nil else checklist(state)
 	if guide then
 		table.insert(preview, 1, guide)
 	end
-	local shown = props.selected ~= nil or guide ~= nil or laid
+	local shown = props.selected ~= nil or guide ~= nil or laid or state.boardOn
 	props.preview = if shown then "side" else "none"
 	-- Tern ticks the clocks; an estimated bar moves only by a redraw, so draw again when the soonest shown bar reaches
 	-- its next step (this draw replaces the one planned before it), and never without a bar to move.

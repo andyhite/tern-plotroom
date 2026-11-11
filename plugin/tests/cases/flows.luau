@@ -3282,23 +3282,11 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	eq(pickerOf(b).scope, "worktrees", "opening it makes it the active scope")
 	eq(pickerOf(b).noun, "worktrees", "the board lists worktrees")
 	same(asks.hx.board(b), { "o/r/feature", "o/r/lk", "x/y/yb" }, "every checkout's linked worktrees, sorted by repository then branch, the other repository's too, never a main checkout")
-	local groups: { string } = {}
-	local headingOf: { [string]: string } = {}
-	local heading = ""
-	for _, entry in pickerOf(b).order do
-		if type(entry) == "table" then
-			heading = entry.group
-			table.insert(groups, heading)
-		else
-			headingOf[entry] = heading
-		end
-	end
-	local under: { [string]: string } = {}
+	local repoOf: { [string]: string } = {}
 	for _, name in asks.hx.board(b) do
-		under[name] = headingOf[asks.hx.rowId(b, name)]
+		repoOf[name] = asks.hx.rowItem(b, name).cells.repo[1].t
 	end
-	same(groups, { "o/r", "x/y" }, "one group per repository")
-	same(under, { ["o/r/feature"] = "o/r", ["o/r/lk"] = "o/r", ["x/y/yb"] = "x/y" }, "each row under its repository's group")
+	same(repoOf, { ["o/r/feature"] = "o/r", ["o/r/lk"] = "o/r", ["x/y/yb"] = "x/y" }, "each row names its repository in the Repository column")
 	scopes = pickerOf(b).scopes
 	eq(scopes[#scopes - 1].count, 3, "the scope counts them")
 	for _, name in asks.hx.board(b) do
@@ -3308,19 +3296,20 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	has(asks.hx.badges(b, "o/r/lk"), "Unnoted", "and one no item was noted for")
 	lacks(asks.hx.badges(b, "o/r/feature"), "Unnoted", "a pull request's is linked")
 	lacks(asks.hx.badges(b, "o/r/feature"), "In tab", "no tab works in it yet")
-	eq(detailText(asks.hx.rowItem(b, "o/r/feature")), "/wt/pr5 · #5", "a row shows its folder and its pull request")
+	local feature = asks.hx.rowItem(b, "o/r/feature")
+	same({ feature.cells.name[1].t, feature.cells.linked[1].t, feature.cells.path.title }, { "pr5", "#5", "/wt/pr5" }, "a row shows its folder's name, its pull request and its folder")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/pr5/src" })
 	b.render()
 	has(asks.hx.badges(b, "o/r/feature"), "In tab", "a tab working in it marks the row")
 	lacks(asks.hx.badges(b, "x/y/yb"), "In tab", "and no other")
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
 	eq(findKey(pickerNode(b), "wtopen").p.href, h.tokened("plotroom://worktrees/open/1"), "its hidden link carries the row's number")
 	eq(b.press("enter"), true, "Enter opens it")
 	eq(w.opened[#w.opened], h.tokened("plotroom://worktrees/open/1"), "through that link")
 	b.press("end")
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "x/y/yb"), "End jumps to the last worktree")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "x/y/yb"), "End jumps to the last worktree")
 	b.press("home")
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "Home jumps back to the first")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "Home jumps back to the first")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 1 }).path, "/wt/pr5", "the window asks the host for the folder by number")
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = 3 }).path, "/wt/yb", "another repository's too")
 	eq(findKey(pickerNode(b), "git").p.href, h.tokened("plotroom://worktrees/git"), "the row has its Open in Git link")
@@ -3331,7 +3320,7 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	eq(asks.hx.ask(w, b, { op = "worktree-path", n = "1" }), nil, "a number that is no number is not answered")
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
 	eq(b.press("escape"), false, "Escape closes no preview: it is left to the pane")
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the row stays selected")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "the row stays selected")
 	eq(pickerOf(b).scope, "worktrees", "and the list is still shown")
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves it")
@@ -3341,6 +3330,81 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the board too")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "with its rows")
+end)
+
+case("host worktrees table: Worktrees is a native table beside the selected worktree's card, its Path cut in the middle and hidden first, and ↑/↓, j/k, Enter, d and clicks drive its selection", function(w: World)
+	local s = asks.hx.boardScene(w)
+	w.kv.put("keys", { down = "j", up = "k", ["wt-remove"] = "d" })
+	local b = openQueue(w)
+	pickScope(b, "worktrees")
+	w.flush()
+	local p = pickerOf(b)
+	has(p.role, ".board", "the picker's list gives way to its pane, as for a Board")
+	eq(#p.items, 0, "no picker rows")
+	local t = asks.hx.table(b)
+	eq(t.p.selectable, true, "the table's rows take clicks")
+	local cols: { [string]: any } = {}
+	local heads: { string } = {}
+	local grows: { string } = {}
+	for _, c in t.p.cols do
+		cols[c.id] = c
+		table.insert(heads, c.head)
+		if (c.grow or 0) > 0 then
+			table.insert(grows, c.id)
+		end
+	end
+	same(heads, { "Name", "Repository", "Status", "Linked", "Path" }, "its columns")
+	same(grows, { "name", "path" }, "Name takes spare width, and Path, so Tern cuts it rather than hiding it")
+	for id, c in cols do
+		if id ~= "name" then
+			yes(cols.name.priority > (c.priority or 0), "Name hides last, after " .. id)
+		end
+		if id ~= "path" then
+			yes((cols.path.priority or 0) < (c.priority or 0), "Path hides first, before " .. id)
+		end
+	end
+	eq(cols.path.truncate, "middle", "a long path is cut in the middle")
+	eq(cols.path.mono, true, "in the mono face")
+	local lk = asks.hx.rowItem(b, "o/r/lk").cells
+	same({ lk.name[1].t, lk.path.text[1].t, lk.path.title }, { "lk", "/wt/lk", "/wt/lk" }, "a row: its name, and its full path as the Path cell and its tooltip")
+	eq(lk.status.dot, "muted", "a status dot")
+	has(asks.hx.badges(b, "o/r/lk"), "Unnoted", "Status says a worktree no item was noted for is Unnoted")
+	eq(lk.linked[1].t, "", "and its Linked is empty")
+
+	local card = findKey(pickerNode(b), "worktree", "card")
+	same({ card.p.head[1].t, card.p.meta[1].t }, { "pr5", "feature" }, "the selected worktree's card: its name, then its branch")
+	local remove = findKey(card, "remove", "button")
+	eq(card.p["end"], "layer.queue.worktrees.side.worktree.remove", "Remove at its head's end")
+	same({ remove.p.text, remove.p.keys[1], remove.p.actions.click }, { "Remove", "d", "wt-remove" }, "with its key")
+	eq(remove.p.disabled, nil, "and on for a linked worktree")
+
+	b.typeText("j")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/lk"), "j selects the next row")
+	eq(findKey(pickerNode(b), "worktree", "card").p.head[1].t, "lk", "and the card follows it")
+	has(findKey(findKey(pickerNode(b), "worktree", "card"), "remove", "button").p.disabled, "Locked", "a locked worktree's Remove is off, saying why")
+	b.press("down")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "x/y/yb"), "Down the next")
+	b.press("up")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/lk"), "Up the one before")
+	b.typeText("k")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "k too")
+	asks.hx.pick(b, "x/y/yb")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "x/y/yb"), "a click selects a row")
+	b.press("enter")
+	eq(w.opened[#w.opened], h.tokened("plotroom://worktrees/open/3"), "Enter opens the selected worktree")
+	asks.hx.pick(b, "o/r/feature", "activate")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "a double click selects its row")
+	eq(w.opened[#w.opened], h.tokened("plotroom://worktrees/open/1"), "and opens it")
+	b.event({ ev = "action", id = "layer.queue.worktrees.side.worktree.remove", act = "wt-remove" })
+	eq(confirmOf(b).p.head, "Remove this worktree?", "the card's Remove asks first")
+	b.press("escape")
+	eq(confirmOf(b), nil, "Esc keeps it")
+	b.typeText("d")
+	eq(confirmOf(b).p.head, "Remove this worktree?", "d asks too")
+	b.press("escape")
+	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
+	same(hx.offPalette(b.view().layer), {}, "no colour outside the Color Meaning Rule")
+	same(hx.miscued(b.view().layer), {}, "every clickable node is a button or a link")
 end)
 
 case("host worktrees board: the changes of every worktree are read on their own and again every 30 seconds while the board is shown, never after it is left; u marks closed and merged items as cleanup candidates without removing anything", function(w: World)
@@ -3356,6 +3420,7 @@ case("host worktrees board: the changes of every worktree are read on their own 
 	pickScope(b, "worktrees")
 	w.flush()
 	same(asks.hx.board(b), { "o/r/12-fix", "o/r/feature", "o/r/lk", "x/y/yb" }, "the rows")
+	eq(asks.hx.rowItem(b, "o/r/12-fix").cells.linked[1].t, "#12", "an issue's worktree links its issue by number")
 	has(asks.hx.badges(b, "o/r/feature"), "Changes", "a worktree with uncommitted changes says so with no key pressed")
 	for _, name in { "o/r/12-fix", "o/r/lk", "x/y/yb" } do
 		lacks(asks.hx.badges(b, name), "Changes", name .. ": has none")
@@ -3444,21 +3509,17 @@ case("host worktrees board: the preview of a row names its branch, the pull requ
 	pickScope(b, "worktrees")
 	w.flush()
 	local seenBefore = w.kv.store["triage"]
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
-	eq(pickerOf(b).preview, "side", "and its preview is open")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
+	eq(pickerOf(b).preview, "side", "and the pane beside the hidden list is open")
 	w.advance(300)
 	w.flush()
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "a row event selects it")
-	eq(findKey(findKey(pickerNode(b), "titlerow"), "title").p.spans[1].t, "feature", "the preview's title is its branch")
-	local row: any = nil
-	for _, item in pickerOf(b).items do
-		if item.id == asks.hx.rowId(b, "o/r/feature") then
-			row = item
-		end
-	end
-	eq(row.title, "feature", "the row's title is its branch")
-	eq(row.detail[1].t, "/wt/pr5", "the line under it is the worktree's full path")
-	eq(row.detail[3].t, "#5", "then the pull request's number")
+	local card = findKey(pickerNode(b), "worktree", "card")
+	eq(card.p.head[1].t, "pr5", "the card's head is the worktree's name")
+	eq(card.p.meta[1].t, "feature", "its meta its branch")
+	eq(card.p["end"], "layer.queue.worktrees.side.worktree.remove", "and its head's end its Remove button")
+	local row = asks.hx.rowItem(b, "o/r/feature")
+	eq(row.cells.path.text[1].t, "/wt/pr5", "the row's Path is the worktree's full path")
+	eq(row.cells.linked[1].t, "#5", "its Linked the pull request's number")
 	has(b.text(), "Linked pull requests", "the pull request it was made for is under the linked pull requests")
 	has(b.text(), "#5", "named by its number")
 	has(b.text(), "Fix the board", "with the title the tracker answered")
@@ -3471,15 +3532,15 @@ case("host worktrees board: the preview of a row names its branch, the pull requ
 	eq(facts.Path, "/wt/pr5", "the path")
 	yes(facts.Head ~= nil and #facts.Head <= 8, "a short head")
 	eq(facts.Status, nil, "the changes are not a fact")
-	local state: any = findKey(findKey(pickerNode(b), "head"), "state", "badge")
-	yes(state ~= nil and state.p.title ~= nil, "they are the head's badge, the status in its tooltip")
+	has(row.cells.status.title, "No uncommitted changes", "they are the row's Status, spelled out in its tooltip")
 	eq(findKey(pickerNode(b), "close-preview"), nil, "no Close preview row is offered")
 	eq(b.press("escape"), false, "Escape closes nothing")
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the preview stays open")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "the card stays")
 	eq(pickerOf(b).scope, "worktrees", "on the list")
-	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/lk") })
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/lk"), "another row can be picked")
-	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/feature") })
+	asks.hx.pick(b, "o/r/lk")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/lk"), "a click picks another row")
+	eq(findKey(pickerNode(b), "worktree", "card").p.head[1].t, "lk", "and the card follows it")
+	asks.hx.pick(b, "o/r/feature")
 	b.event({ ev = "action", id = "layer.queue", act = "refresh" })
 	w.flush()
 	eq(pickerOf(b).scope, "worktrees", "a refresh keeps the board")
@@ -3539,7 +3600,7 @@ case("host worktrees board: a preview read that lands while a cleanup runs leave
 	w.flush()
 	w.advance(300)
 	w.flush()
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "pull request 5's worktree is previewed")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "pull request 5's worktree is previewed")
 	has(b.text(), "Fix the board", "and its pull request was read")
 	s.gh.override = function(req: GhReq): Reply?
 		if req.kind == "checks" and req.fields.o == "o" and req.fields.r == "r" and req.fields.n == "5" then
@@ -3601,7 +3662,7 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 	local b = openQueue(w)
 	pickScope(b, "worktrees")
 	w.flush()
-	eq(pickerOf(b).selected, asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
+	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/feature"), "the first row is selected on arrival")
 	eq(table.find(hx.palette(w, b).ids, "wt-remove") ~= nil, true, "so Commands offers Remove for its linked worktree")
 	b.typeText("d")
 	local overlay = confirmOf(b)
@@ -3642,8 +3703,8 @@ case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d aga
 		end
 	end
 	same(asks.hx.board(b), { "o/r/lk", "x/y/yb" }, "the row left the board")
-	yes(pickerOf(b).selected ~= nil, "the row that took its place is previewed")
-	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/lk") })
+	yes(asks.hx.chosen(b) ~= nil, "the row that took its place is selected")
+	asks.hx.pick(b, "o/r/lk")
 	b.typeText("d")
 	eq(confirmOf(b), nil, "a locked row: d asks nothing")
 	eq(w.toasts[#w.toasts].text, "Not removed here", "and says why")

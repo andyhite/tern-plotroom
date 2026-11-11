@@ -260,18 +260,19 @@ function M.run()
 	(pending :: () -> ())()
 	assert(not oldDone and b7.rows[1].path == "/w")
 
-	-- badges
-	local bd = board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", locked = true, missing = true, dirty = true, candidate = "merged" } :: board.Row, true)
-	local texts: { string } = {}
-	for _, x in bd do
-		table.insert(texts, x.text)
-	end
-	assert(table.concat(texts, ",") == "In tab,Changes,Merged,Locked,Missing,Unnoted")
-	for _, x in board.badges({ id = "i", repo = "r", checkout = "c", path = "/p", number = 5, locked = false, missing = false } :: board.Row, false) do
-		assert(x.text ~= "Unnoted")
-	end
+	-- status: the change state first (a missing folder over its stale dirty flag), the dot by the Color Meaning Rule
+	local st = board.status({ id = "i", repo = "r", checkout = "c", path = "/p", locked = true, missing = true, dirty = true, candidate = "merged" } :: board.Row, true)
+	assert(table.concat(st.words, ",") == "Missing,Merged,Locked,In tab,Unnoted")
+	assert(st.tone == "error" and #st.titles == #st.words)
+	local merged = board.status({ id = "i", repo = "r", checkout = "c", path = "/p", number = 5, dirty = false, candidate = "merged" } :: board.Row, false)
+	assert(table.concat(merged.words, ",") == "Clean,Merged" and merged.tone == "success")
+	local plain = board.status({ id = "i", repo = "r", checkout = "c", path = "/p", key = "o/r#12", dirty = true } :: board.Row, false)
+	assert(table.concat(plain.words, ",") == "Changes" and plain.tone == "muted")
+	assert(board.status({ id = "i", repo = "r", checkout = "c", path = "/p", number = 5 } :: board.Row, false).words[1] == "Reading…")
 	assert(board.label({ path = "/w/feature-x/", branch = "b" } :: any) == "b")
 	assert(board.label({ path = "/w/feature-x/", branch = nil } :: any) == "(detached)")
+	assert(board.name({ path = "/w/feature-x/", branch = "b" } :: any) == "feature-x")
+	assert(board.name({ path = "/wt/pr5" } :: any) == "pr5")
 
 	-- automatic dirty scan: sequential, deduped, selected first, due-gated, failures never clean
 	local fs = fake({ ["/a"] = { entry("/a", { main = true }), entry("/w1"), entry("/w2"), entry("/gone", { prunable = true }) } })
@@ -333,7 +334,7 @@ function M.run()
 	end
 	board.scan(bf, ff.api, 0, yes, function() end)
 	assert(bf.rows[1].dirty == nil and bf.rows[1].scannedAt == 0)
-	assert(board.badges(bf.rows[1], false)[1].text == "Unknown")
+	assert(board.status(bf.rows[1], false).words[1] == "Unknown")
 
 	-- boundaries: non-ASCII excerpt, reload mid-read, changed link, repeated select, scan stop/dedup, missing never clean
 	local fb = fake({ ["/m"] = { entry("/m/a", { number = 1 }), entry("/m/gone", { prunable = true }) } })

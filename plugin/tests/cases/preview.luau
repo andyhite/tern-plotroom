@@ -32,6 +32,18 @@ local function partsOf(b: Block): { string }
 	return out
 end
 
+-- The Worktrees table's card as partsOf reads a preview: "head" (the card's own), then each part by its rule.
+local function cardParts(b: Block): { string }
+	local out: { string } = { "head" }
+	for _, kid in findKey(pickerNode(b), "worktree", "card").c do
+		local key = kid.p and kid.p.key
+		if type(key) == "string" and string.sub(key, 1, 5) == "rule-" then
+			table.insert(out, string.sub(key, 6))
+		end
+	end
+	return out
+end
+
 -- Whether `parts` start with the head and keep ORDER after what sits on top.
 local function shared(parts: { string }): boolean
 	if parts[1] ~= "head" then
@@ -84,13 +96,13 @@ case("preview: every variant shows its parts in the one shared order", function(
 	local agent = partsOf(b)
 	same(agent, { "head", "titlerow", "status", "agent" }, "an agent: what needs you, then the agent's own facts")
 	yes(shared(agent), "in the shared order")
-	-- the Worktrees board
+	-- the Worktrees table's card: its parts in the shared order under its own head
 	pickScope(b, "worktrees")
 	w.flush()
-	local wt = partsOf(b)
+	local wt = cardParts(b)
 	yes(shared(wt), "a worktree, in the shared order: " .. table.concat(wt, ","))
-	b.event({ ev = "select", id = "layer.queue", item = asks.hx.rowId(b, "o/r/free") })
-	local free = partsOf(b)
+	asks.hx.pick(b, "o/r/free")
+	local free = cardParts(b)
 	yes(shared(free), "a worktree made for no item, in the shared order: " .. table.concat(free, ","))
 	eq(free[#free], "properties", "a worktree made for no item ends with its git facts")
 end)
@@ -125,10 +137,9 @@ case("preview: a worktree made for a pull request lists it under Linked pull req
 	w.flush()
 	w.advance(300)
 	w.flush()
-	local parts = partsOf(b)
-	same(parts, { "head", "titlerow", "properties", "linked" }, "facts, then the item it was made for")
+	local parts = cardParts(b)
+	same(parts, { "head", "properties", "linked" }, "facts, then the item it was made for")
 	eq(findKey(pickerNode(b), "pr-head").p.spans[1].t, "Linked pull requests", "under the heading every preview uses")
-	eq(findKey(findKey(pickerNode(b), "head"), "integration").p.text, "Worktree", "its head names what it is")
 end)
 
 case("preview: a worktree's linked read that fails is an error row with the tool's message, and its Retry reads it again", function(w: World)

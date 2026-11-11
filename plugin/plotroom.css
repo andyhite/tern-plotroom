@@ -65,10 +65,10 @@
 	display: inline-flex;
 }
 
-/* A Board, Now's or a view's (host/render's boardNode): the picker's row list is emptied and hidden, and the Board is
-   drawn in its preview pane, which then spans the picker beside the scope rail. Its columns and cards are Tern's own
-   `card` and `scroll` kinds and need no rule; these two stay because no picker prop puts custom content in the list's
-   place or widens the preview.
+/* A Board, Now's or a view's (host/render's boardNode), and the Worktrees table with its card (host/render's boardView):
+   the picker's row list is emptied and hidden, and they are drawn in its preview pane, which then spans the picker
+   beside the scope rail. Their columns, cards and table are Tern's own kinds and need no rule; these two stay because
+   no picker prop puts custom content in the list's place or widens the preview.
    ponytail: `.pk-main` and `.pk-pv` are Tern's inner picker classes ("may change"); a picker prop for custom content,
    or a board kind, would replace these two rules. */
 [data-surface='plugin.plotroom.prs'] .sf-picker[data-role*='.board'] .pk-main {

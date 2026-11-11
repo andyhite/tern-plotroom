@@ -634,6 +634,38 @@ class Smoke:
         inside = self.preview_texts()
         return bool(chosen) and bool(inside) and any(c in t for c in chosen for t in inside) and not any("Nothing to preview" in t for t in inside)
 
+    def wt_chosen(self) -> List[str]:
+        """The text of each Worktrees table row drawn selected (render's boardView)."""
+        return self.matches("[data-surface='plugin.plotroom.prs'] .pk-pv .sf-tbl-row[aria-selected='true']")
+
+    def wt_card(self) -> List[str]:
+        """The texts of the selected worktree's card beside the Worktrees table, in the order drawn; empty when none is drawn."""
+        out: List[str] = []
+
+        def collect(node: object) -> None:
+            if isinstance(node, dict):
+                for key in ("text", "value", "label", "title"):
+                    if isinstance(node.get(key), str) and node[key].strip():
+                        out.append(node[key])
+                collect(node.get("children") or [])
+            elif isinstance(node, list):
+                for child in node:
+                    collect(child)
+
+        def walk(node: object, slot: bool) -> bool:
+            if isinstance(node, dict):
+                tokens = str(node.get("class") or "").split()
+                if slot and "sf-card" in tokens:
+                    collect(node)
+                    return True
+                return walk(node.get("children") or [], slot or "pk-pv-slot" in tokens)
+            if isinstance(node, list):
+                return any(walk(child, slot) for child in node)
+            return False
+
+        walk(json.loads(self.ctl("tree")).get("tree"), False)
+        return out
+
     def select_row(self) -> None:
         """A nonempty list opens with its first row selected; if none is (an empty or still-loading list), choose one (Down) as a user does; a selection already held is kept."""
         if not self.selection():
@@ -1718,50 +1750,50 @@ def sc_workflow(s: Smoke) -> None:
     s.ctl_ok("type", json.dumps("Worktrees"))
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
-    s.wait_text("the Worktrees list lists the worktree git has, unnoted", "Unnoted")
-    s.wait_text("and the linked worktrees, titled by branch", "board-linked")
+    s.wait_text("the Worktrees table lists the worktree git has, unnoted", "Unnoted")
+    s.wait_text("and the linked worktrees, named by their folders", "flow-linked")
     s.eq("no Main badge: the checkout itself is not listed", False, any(t == "Main" for t in s.texts()))
     s.eq("nor its folder", False, any(t == str(root) for t in s.texts()))
     s.wait_text("the dirty worktree says so by itself", "Changes")
-    s.wait_until("the list opens with a row selected and previewed", lambda: len(s.selection()) == 1 and s.previewing())
+    s.wait_until("the table opens with a row selected and its card beside it", lambda: len(s.wt_chosen()) == 1 and bool(s.wt_card()))
+    s.eq("the picker's own rows are hidden", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .pk-row")))
     s.eq("no empty preview pane", False, any("Nothing to preview" in t for t in s.texts()))
     s.eq("no Close preview control", False, any("Close preview" in t for t in s.texts()))
+    s.wait_until("the card's head ends in its Remove button", lambda: any(t.startswith("Remove") for t in s.matches("[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.worktree'] .sf-button")))
     s.shot("board-initial")
     seen_linked = seen_plain = seen_both = False
-    for n in range(9):  # walk the rows from the auto-selected first one: each selection shows its preview
+    for n in range(9):  # walk the rows from the auto-selected first one: each selection shows its card
         if n:
             s.ctl_ok("key", "Down")
         time.sleep(0.7)
-        ts = s.texts()
-        if len(s.selection()) != 1 or not s.preview_texts():  # one visible row, and its native preview slot holds content
+        card = s.wt_card()
+        if len(s.wt_chosen()) != 1 or not card:
             continue
-        pt = s.preview_texts()
-        if "#2" in pt:
+        if "flow-both" in card[0]:
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
-            s.wait_until("the both-linked preview's fetched titles", lambda: any("Flow PR 2" in t for t in s.texts()) and any("Flow issue 9" in t for t in s.texts()))
+            s.wait_until("the both-linked card's fetched titles", lambda: any("Flow PR 2" in t for t in s.wt_card()) and any("Flow issue 9" in t for t in s.wt_card()))
             seen_both = True
-            s.eq("no skeleton is left in the both-linked preview", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
+            s.eq("no skeleton is left in the both-linked card", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-both-preview")
-        elif "#1" in pt:
+        elif "flow-linked" in card[0]:
             # the tracker's answer, not the placeholder
-            s.wait_until("the linked preview's fetched title", lambda: any("Flow PR 1" in t for t in s.texts()))
+            s.wait_until("the linked card's fetched title", lambda: any("Flow PR 1" in t for t in s.wt_card()))
             seen_linked = True
             s.eq("the fetched title replaced its skeleton", 0, len(s.matches("[data-surface='plugin.plotroom.prs'] .sf-skeleton")))
             s.shot("board-linked-preview")
-        # An unlinked worktree's preview is titled by its branch: that text at least twice (the row's title and the preview's title),
-        # with its folder path under the row.
-        elif sum(1 for t in ts if t == "board-branch") >= 2 and any(t == str(wt) for t in ts):
+        # An unlinked worktree's card: its folder's name as its head, its branch as its meta, its full path among its facts.
+        elif "flow-board" in card[0] and "board-branch" in card and str(wt) in card:
             seen_plain = True
             s.shot("board-unlinked-preview")
         if seen_linked and seen_plain and seen_both:
             break
-    s.eq("a worktree linked to both a pull request and an issue previews both fetched titles", True, seen_both)
-    s.eq("the linked worktree's preview names its pull request by the fetched title", True, seen_linked)
-    s.eq("the unlinked worktree's preview and row are titled by its branch, its path under the row", True, seen_plain)
+    s.eq("a worktree linked to both a pull request and an issue shows both fetched titles", True, seen_both)
+    s.eq("the linked worktree's card names its pull request by the fetched title", True, seen_linked)
+    s.eq("the unlinked worktree's card is headed by its folder's name, its branch beside it, its path among its facts", True, seen_plain)
     s.ctl_ok("key", "Escape")
     time.sleep(1.0)
-    s.eq("Escape keeps the list's selection", 1, len(s.selection()))
-    s.eq("and its preview", True, s.previewing())
+    s.eq("Escape keeps the table's selection", 1, len(s.wt_chosen()))
+    s.eq("and its card", True, bool(s.wt_card()))
     # Views jump back to a normal view by its sidebar name.
     s.ctl_ok("key", ".")
     s.wait_text("the palette", "Refresh")
@@ -2610,16 +2642,42 @@ def sc_previews(s: Smoke) -> None:
     s.ctl_ok("type", json.dumps("Worktrees"))
     time.sleep(0.5)
     s.ctl_ok("key", "Enter")
-    s.wait_text("the Worktrees list", "preview-31")
+    s.wait_text("the Worktrees table", "flow-preview")
     for n in range(12):  # walk the rows to the worktree made for #31
         if n:
             s.ctl_ok("key", "Down")
         time.sleep(0.7)
-        if "preview-31" in s.preview_texts():
+        if any("flow-preview" in t for t in s.wt_card()[:1]):
             break
-    s.wait_until("the worktree's preview, its pull request read", lambda: any("Preview PR 31" in t for t in s.preview_texts()))
-    in_order("a worktree: head, title, facts, linked pull requests", ["f/low", "Worktree", "preview-31", "Branch", "Linked pull requests", "#31", "Preview PR 31"])
+    s.wait_until("the worktree's card, its pull request read", lambda: any("Preview PR 31" in t for t in s.wt_card()))
+    card = s.wt_card()
+    at = [next((i for i, t in enumerate(card) if t == n or t.startswith(n)), -1) for n in ["flow-preview", "preview-31", "Remove", "Branch", "Linked pull requests", "#31", "Preview PR 31"]]
+    s.eq("a worktree's card: its name, its branch, Remove, then facts and linked pull requests, in order (%r)" % card, sorted(at), at if -1 not in at else [])
     s.shot("preview-worktree")
+    # Path is cut in the middle, never at its end, when it is shown narrower than it is; a block too narrow for every column hides Path first (its
+    # lowest priority) and keeps Name (its highest). The block shares its tab with a shell, so the window is widened to fit them all.
+    heads = "[data-surface='plugin.plotroom.prs'] .pk-pv .sf-tbl-row.head .sf-tbl-h"
+    paths = "[data-surface='plugin.plotroom.prs'] .pk-pv .sf-tbl-row:not(.head) .sf-tbl-c.mono.c-text"
+
+    def shown() -> List[str]:
+        return [t.strip() for t in s.matches(heads)]
+
+    cut: List[str] = []
+    for width in (5200, 4600, 4000, 3600, 3200, 2800, 2400):
+        s.ctl_ok("resize", str(width), "1000")
+        time.sleep(0.7)
+        if width == 5200:
+            s.wait_until("a wide table shows every column", lambda: shown()[:5] == ["Name", "Repository", "Status", "Linked", "Path"])
+        cut = [t for t in s.matches(paths) if "…" in t] if "Path" in shown() else []
+        if cut:
+            s.shot("worktrees-path-cut")
+            break
+    s.eq("some width shows Path cut (%r)" % cut, True, bool(cut))
+    s.eq("cut in the middle: its start and its end are kept (%r)" % cut, True, all(t.startswith("/") and not t.endswith("…") for t in cut))
+    s.ctl_ok("resize", "1100", "800")
+    s.wait_until("a narrow table hides Path first and keeps Name", lambda: "Path" not in shown() and "Name" in shown())
+    s.shot("worktrees-narrow")
+    s.ctl_ok("resize", "2200", "1000")
 
 
 def sc_now_board(s: Smoke) -> None:

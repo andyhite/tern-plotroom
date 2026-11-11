@@ -401,6 +401,11 @@ function M.label(row: Row): string
 	return row.branch or "(detached)"
 end
 
+-- The worktree's name: its folder's, the name git gives a linked worktree (the Worktrees table's Name).
+function M.name(row: Row): string
+	return string.match(row.path, "([^/]+)/*$") or row.path
+end
+
 local function short(s: string, n: number): string
 	return if #s > n then string.sub(s, 1, n) else s
 end
@@ -656,36 +661,41 @@ function M.scan(board: Board, api: Api, now: number, live: () -> boolean, done: 
 	return true
 end
 
-function M.badges(row: Row, openTab: boolean): { { text: string, tone: string, title: string? } }
-	local out: { { text: string, tone: string, title: string? } } = {}
-	if openTab then
-		table.insert(out, { text = "In tab", tone = "muted", title = "A tab works in this worktree" })
+-- What the Worktrees table's Status cell says of a row: its words, the change state first (Missing, Changes, Clean,
+-- Unknown or Reading…), then Merged or Closed, Locked, In tab and Unnoted, each with what it means for the tooltip.
+-- The dot's tone: `error` for a missing folder, `success` for a merged item, else `muted` (DESIGN.md › Worktrees table).
+function M.status(row: Row, openTab: boolean): { words: { string }, titles: { string }, tone: string }
+	local words: { string } = {}
+	local titles: { string } = {}
+	local function add(word: string, title: string)
+		table.insert(words, word)
+		table.insert(titles, title)
 	end
-	if row.dirty == true then
-		table.insert(out, { text = "Changes", tone = "muted", title = "Uncommitted changes" })
+	if row.missing then
+		add("Missing", "The folder is gone")
+	elseif row.dirty == true then
+		add("Changes", "Uncommitted changes")
 	elseif row.dirty == false then
-		table.insert(out, { text = "Clean", tone = "muted", title = nil })
-	elseif row.scannedAt and not row.missing then
-		table.insert(out, { text = "Unknown", tone = "muted", title = "Changes could not be read" })
+		add("Clean", "No uncommitted changes")
+	elseif row.scannedAt then
+		add("Unknown", "Changes could not be read")
+	else
+		add("Reading…", "Its changes are being read")
 	end
 	if row.candidate then
 		local c: string = row.candidate
-		table.insert(out, {
-			text = if c == "merged" then "Merged" else "Closed",
-			tone = if c == "merged" then "success" else "muted",
-			title = "Cleanup candidate: its pull request or issue is " .. c,
-		})
+		add(if c == "merged" then "Merged" else "Closed", "Cleanup candidate: its pull request or issue is " .. c)
 	end
 	if row.locked then
-		table.insert(out, { text = "Locked", tone = "muted", title = "Locked with git worktree lock" })
+		add("Locked", "Locked with git worktree lock")
 	end
-	if row.missing then
-		table.insert(out, { text = "Missing", tone = "error", title = "The folder is gone" })
+	if openTab then
+		add("In tab", "A tab works in this worktree")
 	end
 	if not row.key and not row.number then
-		table.insert(out, { text = "Unnoted", tone = "muted", title = "Not linked to an item" })
+		add("Unnoted", "Not linked to an item")
 	end
-	return out
+	return { words = words, titles = titles, tone = if row.missing then "error" elseif row.candidate == "merged" then "success" else "muted" }
 end
 
 return M

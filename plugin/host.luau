@@ -1092,6 +1092,17 @@ local function blockDef(): BlockDef<State>
 				if link then
 					state.cx:open(link)
 				end
+			elseif state.boardOn and ev.id == render.WORKTREES_TABLE and item and (ev.ev == "select" or ev.ev == "activate") then
+				-- A Worktrees table row (render's boardView): a click selects it, a double click opens it in a tab.
+				for _, r in engine.boardRows(state) do
+					if engine.pickerId("w", r.id) == item then
+						engine.boardPick(state, r)
+						state.focus = "list"
+						if ev.ev == "activate" then
+							engine.boardAct(state, "wt-open")
+						end
+					end
+				end
 			elseif act == "retry-summary" then
 				engine.retrySummary(state)
 			elseif act == "rpc" then
@@ -1313,23 +1324,6 @@ local function blockDef(): BlockDef<State>
 								if ev.ev == "activate" then
 									engine.agentGo(state)
 								end
-							end
-						end
-						return
-					end
-					if state.boardOn then
-						-- The Worktrees board's rows are not the queue's items.
-						local row: any = nil
-						for _, r in engine.boardRows(state) do
-							if item and engine.pickerId("w", r.id) == item then
-								row = r
-							end
-						end
-						if row then
-							engine.boardPick(state, row)
-							state.focus = "list"
-							if ev.ev == "activate" then
-								engine.boardAct(state, "wt-open")
 							end
 						end
 						return

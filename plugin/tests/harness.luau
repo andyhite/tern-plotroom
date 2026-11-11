@@ -3976,62 +3976,61 @@ function asks.hx.draftScene(w: World): (HostScene, any)
 	return s, tree
 end
 
--- The name "repo/branch" of picker row `item` of the Worktrees board: its label is the folder's name now, so the row is
--- found in the block's board by the folder its detail line starts with.
-function asks.hx.nameOf(b: Block, item: any): string
-	local path: string = item.detail[1].t
-	for _, row in b.state().board.rows do
-		if row.path == path then
-			return row.repo .. "/" .. (row.branch or "(detached)")
+-- The Worktrees table (render's boardView), nil when the block shows none.
+function asks.hx.table(b: Block): any
+	return findKey(findKey(pickerNode(b), "worktrees", "row"), "table", "table")
+end
+
+-- The name "repo/branch" of Worktrees table row `row`, found in the block's board by the folder its Path cell names.
+local function nameOf(b: Block, row: any): string
+	local path: string = row.cells.path.title
+	for _, r in b.state().board.rows do
+		if r.path == path then
+			return r.repo .. "/" .. (r.branch or "(detached)")
 		end
 	end
 	error("no board row at " .. path, 2)
 end
 
--- The picker items by id.
-local function byId(b: Block): { [string]: any }
-	local out: { [string]: any } = {}
-	for _, item in pickerOf(b).items do
-		out[item.id] = item
-	end
-	return out
-end
-
--- The Worktrees board's rows as "repo/branch", in the order listed (group headings skipped).
+-- The Worktrees table's rows as "repo/branch", in the order listed.
 function asks.hx.board(b: Block): { string }
-	local items = byId(b)
 	local out: { string } = {}
-	for _, entry in pickerOf(b).order do
-		if type(entry) ~= "table" then
-			table.insert(out, asks.hx.nameOf(b, items[entry]))
-		end
+	for _, row in asks.hx.table(b).p.rows do
+		table.insert(out, nameOf(b, row))
 	end
 	return out
 end
 
--- The picker id of the board row `name` ("o/r/feature").
-function asks.hx.rowId(b: Block, name: string): string
-	local items = byId(b)
-	for _, entry in pickerOf(b).order do
-		if type(entry) ~= "table" and asks.hx.nameOf(b, items[entry]) == name then
-			return entry
+-- The Worktrees table row `name` ("o/r/feature").
+function asks.hx.rowItem(b: Block, name: string): any
+	for _, row in asks.hx.table(b).p.rows do
+		if nameOf(b, row) == name then
+			return row
 		end
 	end
 	error("no board row " .. name, 2)
 end
 
--- The picker item of the board row `name`.
-function asks.hx.rowItem(b: Block, name: string): any
-	return byId(b)[asks.hx.rowId(b, name)]
+-- The id of the Worktrees table row `name`.
+function asks.hx.rowId(b: Block, name: string): string
+	return asks.hx.rowItem(b, name).id
 end
 
--- The badges of the board row `name`, joined by commas.
+-- The id of the Worktrees table's selected row (nil with none).
+function asks.hx.chosen(b: Block): string?
+	local t = asks.hx.table(b)
+	return if t then t.p.selected else nil
+end
+
+-- A click (`ev` "select", the default) or double click ("activate") on the Worktrees table row `name`.
+function asks.hx.pick(b: Block, name: string, ev: string?)
+	b.event({ ev = ev or "select", id = "layer.queue.worktrees.list.table", item = asks.hx.rowId(b, name) })
+end
+
+-- The words of the Status cell of the Worktrees table row `name`, joined by commas.
 function asks.hx.badges(b: Block, name: string): string
-	local out: { string } = {}
-	for _, badge in asks.hx.rowItem(b, name).badges or {} do
-		table.insert(out, badge.text)
-	end
-	return table.concat(out, ",")
+	local cell = asks.hx.rowItem(b, name).cells.status
+	return (string.gsub(cell.text[1].t, " · ", ","))
 end
 
 -- Two saved checkouts, o/r at /work/r (main, /wt/pr5 on feature for pull request 5, a locked /wt/lk) and x/y at /work/y
