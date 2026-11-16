@@ -3029,9 +3029,9 @@ function M.boardAct(state: State, act: string): boolean
 		end
 		if ids and not state.boardBusy then
 			state.boardBusy = true
-			board.removeFinished(state.board, M.boardApi(state), ids, live, function(removed: number, kept: number)
+			board.removeFinished(state.board, M.boardApi(state), M.boardCheck(state), ids, live, function(removed: number, kept: number, rechecked: number)
 				state.boardBusy = false
-				state.cx:toast(if removed > 0 then "success" else "error", "Removed " .. removed .. ", kept " .. kept, if kept > 0 then "Kept worktrees have changes or could not be removed; nothing is forced" else nil)
+				state.cx:toast(if removed > 0 then "success" else "error", "Removed " .. removed .. ", kept " .. kept, if rechecked > 0 then rechecked .. " no longer closed or merged, or could not be checked again; the rest have changes or could not be removed. Nothing is forced" elseif kept > 0 then "Kept worktrees have changes or could not be removed; nothing is forced" else nil)
 				landed()
 			end)
 			state.cx:render()

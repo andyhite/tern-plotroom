@@ -397,18 +397,38 @@ function M.unchecked(board: Board): number
 	return n
 end
 
--- Removes `ids` one at a time through `remove` (never forced): a refused row stays. done(removed, kept).
-function M.removeFinished(board: Board, api: Api, ids: { string }, live: () -> boolean, done: (removed: number, kept: number) -> ())
-	local removed = 0
+-- Removes `ids` one at a time through `remove` (never forced): a refused row stays. Each row is asked of `check` again
+-- just before it goes, since the Find verdict may be old: a row no longer merged or closed (reopened), or that cannot be
+-- read again, stays, and a reopened one loses its candidate mark. done(removed, kept, rechecked): `rechecked` of the
+-- kept ones were kept for that reason.
+function M.removeFinished(board: Board, api: Api, check: Check, ids: { string }, live: () -> boolean, done: (removed: number, kept: number, rechecked: number) -> ())
+	local removed, rechecked = 0, 0
 	local function step(i: number)
 		if i > #ids then
-			return done(removed, #ids - removed)
+			return done(removed, #ids - removed, rechecked)
 		end
-		M.remove(board, api, ids[i], live, function(ok)
-			if ok then
-				removed += 1
+		local row = find(board, ids[i])
+		if not row then
+			return step(i + 1)
+		end
+		check(row, function(state)
+			if not live() then
+				return
 			end
-			step(i + 1)
+			if state ~= "closed" and state ~= "merged" then
+				if state == "open" then
+					row.candidate = nil
+				end
+				rechecked += 1
+				return step(i + 1)
+			end
+			row.candidate = state
+			M.remove(board, api, ids[i], live, function(ok)
+				if ok then
+					removed += 1
+				end
+				step(i + 1)
+			end)
 		end)
 	end
 	step(1)

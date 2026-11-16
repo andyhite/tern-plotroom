@@ -151,14 +151,30 @@ function M.run()
 	row("/shared").candidate = "merged"
 	local fin, keptBusy = board.finished(b, f.api.busy)
 	assert(#fin == 0 and keptBusy == 1)
-	local rm, kp = -1, -1
-	board.removeFinished(b, f.api, { row("/shared").id }, yes, function(r, k)
-		rm, kp = r, k
+	local rm, kp, rc = -1, -1, -1
+	local stillMerged = function(_: board.Row, d: (string) -> ())
+		d("merged")
+	end :: board.Check
+	board.removeFinished(b, f.api, stillMerged, { row("/shared").id }, yes, function(r, k, c)
+		rm, kp, rc = r, k, c
 	end)
-	assert(rm == 0 and kp == 1 and #f.removed == 1)
+	assert(rm == 0 and kp == 1 and rc == 0 and #f.removed == 1)
 	f.busy["/shared"] = nil
 	local finNow = board.finished(b, f.api.busy)
 	assert(#finNow == 1 and finNow[1].path == "/shared")
+	-- an old verdict is asked again just before removal: a reopened item (or one that cannot be read) keeps its worktree
+	for _, state in { "open", "unknown" } do
+		local rechecked: { string } = {}
+		board.removeFinished(b, f.api, function(r: board.Row, d: (string) -> ())
+			table.insert(rechecked, r.path)
+			d(state)
+		end :: board.Check, { row("/shared").id }, yes, function(r, k, c)
+			rm, kp, rc = r, k, c
+		end)
+		assert(rm == 0 and kp == 1 and rc == 1 and #f.removed == 1 and rechecked[1] == "/shared")
+		assert(row("/shared").candidate == (if state == "open" then nil else "merged"))
+		row("/shared").candidate = "merged"
+	end
 	row("/shared").candidate = nil
 
 	-- reload keeps dirty info for rows still present

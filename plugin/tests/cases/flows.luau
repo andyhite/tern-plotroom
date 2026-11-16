@@ -3776,6 +3776,36 @@ case("host worktrees board: Remove finished worktrees asks once for only the row
 	eq(table.find(asks.hx.board(b), "o/r/12-fix"), nil, "the clean one left")
 end)
 
+case("host worktrees board: Remove finished worktrees asks the tracker again before each removal and keeps a worktree whose item was reopened since Find", function(w: World)
+	local s = asks.hx.boardScene(w)
+	asks.bk.tree(w, s.git, "/wt/iss", "12-fix")
+	s.git.notes["branch.12-fix.plotroomkey"] = "o/r#12"
+	s.git.notes["branch.12-fix.plotroomrepo"] = "o/r"
+	s.gh.pulls["https://github.com/o/r/pull/5"] = searchItem(5, "o/r", EPOCH - 60, { state = "MERGED" })
+	s.gh.pulls["https://github.com/o/r/issues/12"] = issueItem(12, "o/r", EPOCH - 60, { state = "CLOSED", reason = "COMPLETED" })
+	w.kv.put("keys", { ["wt-cleanup"] = "u" })
+	local b = openQueue(w)
+	pickScope(b, "worktrees")
+	w.flush()
+	b.typeText("u")
+	w.flush()
+	b.event({ ev = "action", act = "queue", value = "wt-remove-finished" })
+	w.flush()
+	has(table.concat((function()
+		local texts: { string } = {}
+		collectTexts(confirmOf(b), texts)
+		return texts
+	end)(), " "), "Remove 2 finished worktrees", "both were marked when it asked")
+	s.gh.pulls["https://github.com/o/r/issues/12"] = issueItem(12, "o/r", EPOCH - 60, {})
+	b.typeText("d")
+	w.flush()
+	eq(countLog(s.git, "worktree remove /wt/iss"), 0, "the reopened issue's worktree was not touched")
+	eq(countLog(s.git, "worktree remove /wt/pr5"), 1, "the one still merged went")
+	eq(w.toasts[#w.toasts].text, "Removed 1, kept 1", "the toast counts both")
+	has(w.toasts[#w.toasts].sub, "no longer closed or merged", "and says why one was kept")
+	yes(table.find(asks.hx.board(b), "o/r/12-fix") ~= nil, "the reopened one is still listed")
+end)
+
 case("host worktrees board: a worktree a tab or a live agent works in is kept out of both removals, said in a toast", function(w: World)
 	local s = asks.hx.boardScene(w)
 	asks.bk.tree(w, s.git, "/wt/iss", "12-fix")
