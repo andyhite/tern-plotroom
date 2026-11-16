@@ -1773,8 +1773,9 @@ end
 -- of `repo`, `<remote>` being its remote for `repo`, with three lines of context as GitHub's diff has (the lines a review
 -- comment may sit on). The base branch is fetched first, every time: a stale local base ref would put the merge-base back
 -- before the base commits the pull request merged since, and GitHub's diff is against the base's tip now. When the head
--- commit is missing there, the pull request's head (`refs/pull/<number>/head`) is fetched once and the diff is read
--- again. done(diff, problem, cx).
+-- commit is missing there (git exits 128 naming a bad object or revision), the pull request's head
+-- (`refs/pull/<number>/head`) is fetched once and the diff is read again; any other failure (a timeout, no merge base)
+-- is returned at once. A large diff may need more than LOCAL_MS, so it gets NET_MS. done(diff, problem, cx).
 function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, account: string?, done: Cb<string>)
 	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
 		return process.later(function(cx)
@@ -1791,15 +1792,15 @@ function M.reviewDiff(path: string, repo: string, number: number, base: string, 
 			if berr then
 				return done(nil, berr, cx1)
 			end
-			git(info.root, args, LOCAL_MS, function(out, _, cx2)
-				if out then
-					return done(out, nil, cx2)
+			git(info.root, args, NET_MS, function(out, why, cx2, status)
+				if out or status ~= 128 or not why or not (string.find(why, "bad object", 1, true) or string.find(why, "bad revision", 1, true) or string.find(why, "unknown revision", 1, true) or string.find(why, "Invalid symmetric difference", 1, true)) then
+					return done(out, why, cx2)
 				end
 				netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, account, function(_, ferr, cx3)
 					if ferr then
 						return done(nil, ferr, cx3)
 					end
-					git(info.root, args, LOCAL_MS, done)
+					git(info.root, args, NET_MS, done)
 				end)
 			end)
 		end)

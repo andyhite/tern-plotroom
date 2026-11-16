@@ -259,6 +259,77 @@ case("review: a base that cannot be fetched is said, not read stale", function(w
 	w.finish()
 end)
 
+-- A diff that timed out is not a missing head: no pull request fetch, the error at once.
+case("review: a diff that times out is said at once, with no pull request fetch, and had longer than the local limit", function(w: World)
+	local diffs = reviewScene(w)
+	local reply: h.Reply = { timedOut = true }
+	local pulls = 0
+	local limits: { number } = {}
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" then
+			table.insert(diffs, table.concat(a, " "))
+			table.insert(limits, call.timeoutMs or 0)
+			return reply
+		elseif a[1] == "git" and a[4] == "fetch" and a[8] == "refs/pull/5/head" then
+			pulls += 1
+			return { stderr = "" }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	has(textOf(b.view().main), "git diff timed out", "the timeout is said")
+	eq(#diffs, 1, "one diff")
+	eq(pulls, 0, "and no pull request fetch")
+	yes(limits[1] > 10 * 1000, "a large diff gets longer than the local limit")
+	w.finish()
+end)
+
+case("review: a diff with no merge base is said at once, with no pull request fetch", function(w: World)
+	local diffs = reviewScene(w)
+	local pulls = 0
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" then
+			table.insert(diffs, table.concat(a, " "))
+			return { status = 128, stderr = "fatal: main...abc: no merge base\n" }
+		elseif a[1] == "git" and a[4] == "fetch" and a[8] == "refs/pull/5/head" then
+			pulls += 1
+			return { stderr = "" }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	has(textOf(b.view().main), "no merge base", "no merge base is said")
+	eq(#diffs, 1, "one diff")
+	eq(pulls, 0, "and no pull request fetch")
+	w.finish()
+end)
+
+case("review: a head commit the checkout lacks is fetched from the pull request once and the diff read again", function(w: World)
+	local diffs = reviewScene(w)
+	local pulls = 0
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" then
+			table.insert(diffs, table.concat(a, " "))
+			if pulls == 0 then
+				return { status = 128, stderr = "fatal: Invalid symmetric difference expression refs/remotes/origin/main..." .. HEAD .. "\n" }
+			end
+			return { stdout = DIFF }
+		elseif a[1] == "git" and a[4] == "fetch" and a[8] == "refs/pull/5/head" then
+			pulls += 1
+			return { stderr = "" }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	eq(pulls, 1, "the pull request head is fetched once")
+	eq(#diffs, 2, "and the diff read again")
+	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "the review loads")
+	w.finish()
+end)
+
 case("review: keys and clicks pick, edit, keep and drop; Send carries the kept comments as edited, the dropped ids, verdict, summary and instructions", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
