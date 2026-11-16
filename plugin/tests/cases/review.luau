@@ -35,6 +35,12 @@ local DIFF = table.concat({
 	" outro",
 	"",
 }, "\n")
+local STAT = " 2 files changed, 3 insertions(+), 1 deletion(-)\n" -- `git diff --shortstat` of DIFF
+
+-- Whether `a` reads the diff's text (not its --shortstat count).
+local function isDiff(a: { string }): boolean
+	return a[1] == "git" and a[4] == "diff" and a[5] ~= "--shortstat"
+end
 
 local function proposal(at: string?): { [string]: any }
 	return {
@@ -71,7 +77,9 @@ local function reviewScene(w: World, prHead: string?, active: string?): ({ strin
 			return { stdout = jsonEncode({ hosts = { ["github.com"] = array({ { login = active or "octocat", active = true, state = "success" } }) } }) }
 		elseif a[1] == "gh" and a[2] == "auth" and a[3] == "token" then
 			return { stdout = "gho_token\n" }
-		elseif a[1] == "git" and a[4] == "diff" then
+		elseif a[1] == "git" and a[4] == "diff" and a[5] == "--shortstat" then
+			return { stdout = STAT }
+		elseif isDiff(a) then
 			table.insert(diffs, table.concat(a, " "))
 			return { stdout = DIFF }
 		end
@@ -149,7 +157,7 @@ case("review: the navigator lists the summary, the comments grouped by file, the
 	local diffs = reviewScene(w)
 	local b = openReview(w)
 	eq(b.title(), "Draft review · o/r#5", "titled by its pull request")
-	same(diffs, { "git -C /wt/r5 diff --no-color --no-ext-diff -U3 --src-prefix=a/ --dst-prefix=b/ refs/remotes/origin/main..." .. HEAD .. " --" }, "the diff of the reviewed head against the base, where the agent worked, argv only")
+	same(diffs, { "git -C /wt/r5 diff --no-color --no-textconv --no-ext-diff -U3 --src-prefix=a/ --dst-prefix=b/ refs/remotes/origin/main..." .. HEAD .. " --" }, "the diff of the reviewed head against the base, where the agent worked, argv only, with no textconv")
 	local main = b.view().main
 	eq(findKey(main, "run", "text").p.text, "r1", "the run is published for the window")
 	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "summary, four comments, instructions")
@@ -190,7 +198,7 @@ case("review: with a stale local base ref the diff is read against the base's ti
 	local stale = DIFF .. table.concat({ "diff --git a/src/base.lua b/src/base.lua", "--- a/src/base.lua", "+++ b/src/base.lua", "@@ -4,2 +4,3 @@", " four", "+five", " six", "" }, "\n")
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
-		if a[1] == "git" and a[4] == "diff" then
+		if isDiff(a) then
 			table.insert(diffs, table.concat(a, " "))
 			return { stdout = if g.refs[tracking] == sha("1") then DIFF else stale }
 		end
@@ -224,7 +232,7 @@ case("review: a comment on a file whose path has a space is placed, though git e
 	local spaced = DIFF .. table.concat({ "diff --git a/a b.txt b/a b.txt", "new file mode 100644", "index 0000000..587be6b", "--- /dev/null", "+++ b/a b.txt\t", "@@ -0,0 +1 @@", "+x", "" }, "\n")
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
-		if a[1] == "git" and a[4] == "diff" then
+		if isDiff(a) then
 			table.insert(diffs, table.concat(a, " "))
 			return { stdout = spaced }
 		end
@@ -267,7 +275,7 @@ case("review: a diff that times out is said at once, with no pull request fetch,
 	local limits: { number } = {}
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
-		if a[1] == "git" and a[4] == "diff" then
+		if isDiff(a) then
 			table.insert(diffs, table.concat(a, " "))
 			table.insert(limits, call.timeoutMs or 0)
 			return reply
@@ -290,7 +298,7 @@ case("review: a diff with no merge base is said at once, with no pull request fe
 	local pulls = 0
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
-		if a[1] == "git" and a[4] == "diff" then
+		if isDiff(a) then
 			table.insert(diffs, table.concat(a, " "))
 			return { status = 128, stderr = "fatal: main...abc: no merge base\n" }
 		elseif a[1] == "git" and a[4] == "fetch" and a[8] == "refs/pull/5/head" then
@@ -307,16 +315,17 @@ case("review: a diff with no merge base is said at once, with no pull request fe
 end)
 
 case("review: a head commit the checkout lacks is fetched from the pull request once and the diff read again", function(w: World)
-	local diffs = reviewScene(w)
+	reviewScene(w)
 	local pulls = 0
+	local reads: { string } = {}
 	w.respond(function(call: h.Call): h.Reply?
 		local a = call.argv
 		if a[1] == "git" and a[4] == "diff" then
-			table.insert(diffs, table.concat(a, " "))
+			table.insert(reads, a[5])
 			if pulls == 0 then
 				return { status = 128, stderr = "fatal: Invalid symmetric difference expression refs/remotes/origin/main..." .. HEAD .. "\n" }
 			end
-			return { stdout = DIFF }
+			return { stdout = if a[5] == "--shortstat" then STAT else DIFF }
 		elseif a[1] == "git" and a[4] == "fetch" and a[8] == "refs/pull/5/head" then
 			pulls += 1
 			return { stderr = "" }
@@ -325,8 +334,42 @@ case("review: a head commit the checkout lacks is fetched from the pull request 
 	end)
 	local b = openReview(w)
 	eq(pulls, 1, "the pull request head is fetched once")
-	eq(#diffs, 2, "and the diff read again")
+	same(reads, { "--shortstat", "--shortstat", "--no-color" }, "the count failed, then once fetched the count and the diff are read")
 	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "the review loads")
+	w.finish()
+end)
+
+case("review: a diff over the line cap is never written; the block says it is too large and keeps every comment", function(w: World)
+	local diffs = reviewScene(w)
+	w.respond(function(call: h.Call): h.Reply?
+		local a = call.argv
+		if a[1] == "git" and a[4] == "diff" and a[5] == "--shortstat" then
+			return { stdout = " 3 files changed, 900000 insertions(+), 300000 deletions(-)\n" }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	has(textOf(b.view().main), "The diff is too large to show. Every comment is listed without its lines.", "the block says so")
+	lacks(textOf(b.view().main), "could not be read", "as too large, not as a failed read")
+	same(diffs, {}, "and the diff is never read")
+	same({ navState(b, 1), navState(b, 2), navState(b, 3), navState(b, 4) }, { "Kept", "Kept", "Kept", "Kept" }, "every comment can be kept")
+	w.finish()
+end)
+
+case("review: a diff Tern cut at its 16 MiB cap is refused as too large, not parsed as if whole", function(w: World)
+	reviewScene(w)
+	w.respond(function(call: h.Call): h.Reply?
+		if isDiff(call.argv) then
+			return { stdout = DIFF .. string.rep("+", 16 * 1024 * 1024 - #DIFF) }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	has(textOf(b.view().main), "The diff is too large to show. Every comment is listed without its lines.", "the block says so")
+	same({ navState(b, 1), navState(b, 2), navState(b, 3), navState(b, 4) }, { "Kept", "Kept", "Kept", "Kept" }, "no comment is called off the diff")
+	b.typeText("jj")
+	has(detailText(b), "Why?", "the comment past the cut is selected")
+	lacks(detailText(b), "Not on a changed line", "and is not said to be off the diff")
 	w.finish()
 end)
 

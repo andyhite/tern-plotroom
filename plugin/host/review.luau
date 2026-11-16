@@ -20,7 +20,6 @@ local M = {}
 -- per UTF-16 unit, so its largest proposal (100 comments of 10000-unit bodies and suggestions, all CJK) is ~6.4 MB.
 M.FILE_BYTES = 8 * 1000 * 1000 -- tests/extension.luau's `file`: plotroom.ts writes no larger file
 local SUMMARY_BYTES, BODY_BYTES, PATH_BYTES = 3 * 20000, 3 * 10000, 3 * 1000
-local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comments are listed without their lines)
 local CONTEXT = 8 -- rows of diff a comment's card shows around its line
 -- How long Sending waits for the window's sent or gone (the window looks for the message for 3 s): a link that never
 -- arrives (a remote host's lost link) then falls back to Copy.
@@ -391,9 +390,7 @@ local function load(state: State)
 				if not alive(state, gen) then
 					return
 				elseif not out then
-					return diffFailed("The diff could not be read: " .. (problem2 or "git gave no answer."))
-				elseif #out > DIFF_BYTES then
-					return diffFailed("The diff is too large to show.")
+					return diffFailed(if problem2 == worktree.DIFF_TOO_LARGE then problem2 else "The diff could not be read: " .. (problem2 or "git gave no answer."))
 				end
 				state.loading = false
 				place(state, p, M.parseDiff(out))

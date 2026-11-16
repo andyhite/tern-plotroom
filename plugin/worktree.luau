@@ -1791,13 +1791,25 @@ function M.remoteBranches(checkout: string, repo: string, account: string?, done
 	end)
 end
 
+-- Tern returns at most 16 MiB of a process's stdout (ProcessResult.stdout), so a diff that long may be cut: it is
+-- refused as too large rather than parsed as if whole.
+M.DIFF_BYTES = 16 * 1024 * 1024
+-- ponytail: a line count, not bytes, bounds what git writes; a diff of a few very long lines still reaches the byte cap
+-- (and is refused there). 16 bytes a changed line on average is far shorter than any real diff's rows.
+local DIFF_LINES = M.DIFF_BYTES // 16
+-- reviewDiff's problem for a diff over either cap.
+M.DIFF_TOO_LARGE = "The diff is too large to show."
+
 -- The diff a Draft review is about (host only): `git diff <remote>/<base>...<head>` in the checkout or worktree at `path`
 -- of `repo`, `<remote>` being its remote for `repo`, with three lines of context as GitHub's diff has (the lines a review
--- comment may sit on). The base branch is fetched first, every time: a stale local base ref would put the merge-base back
--- before the base commits the pull request merged since, and GitHub's diff is against the base's tip now. When the head
--- commit is missing there (git exits 128 naming a bad object or revision), the pull request's head
--- (`refs/pull/<number>/head`) is fetched once and the diff is read again; any other failure (a timeout, no merge base)
--- is returned at once. A large diff may need more than LOCAL_MS, so it gets NET_MS. done(diff, problem, cx).
+-- comment may sit on) and no textconv or external diff (GitHub's diff has neither, and a user's filter would run). The
+-- base branch is fetched first, every time: a stale local base ref would put the merge-base back before the base commits
+-- the pull request merged since, and GitHub's diff is against the base's tip now. `git diff --shortstat` is read before
+-- the diff: over DIFF_LINES changed lines, the diff is never written and the problem is M.DIFF_TOO_LARGE, as it is for a
+-- diff of M.DIFF_BYTES or more (cut by Tern). When the head commit is missing there (git exits 128 naming a bad object
+-- or revision), the pull request's head (`refs/pull/<number>/head`) is fetched once and the count read again; any other
+-- failure (a timeout, no merge base) is returned at once. A large diff may need more than LOCAL_MS, so it gets NET_MS.
+-- done(diff, problem, cx).
 function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, account: string?, done: Cb<string>)
 	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
 		return process.later(function(cx)
@@ -1809,22 +1821,37 @@ function M.reviewDiff(path: string, repo: string, number: number, base: string, 
 			return done(nil, why, cx)
 		end
 		local tracking = "refs/remotes/" .. info.remote .. "/" .. base
-		local args = { "diff", "--no-color", "--no-ext-diff", "-U3", "--src-prefix=a/", "--dst-prefix=b/", tracking .. "..." .. head, "--" }
+		local range = tracking .. "..." .. head
+		local function read(fetched: boolean)
+			git(info.root, { "diff", "--shortstat", "--no-textconv", "--no-ext-diff", range, "--" }, NET_MS, function(stat, why2, cx2, status)
+				if not stat then
+					if fetched or status ~= 128 or not why2 or not (string.find(why2, "bad object", 1, true) or string.find(why2, "bad revision", 1, true) or string.find(why2, "unknown revision", 1, true) or string.find(why2, "Invalid symmetric difference", 1, true)) then
+						return done(nil, why2, cx2)
+					end
+					return netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, account, function(_, ferr, cx3)
+						if ferr then
+							return done(nil, ferr, cx3)
+						end
+						read(true)
+					end)
+				end
+				local changed = (tonumber(string.match(stat, "(%d+) insertion")) or 0) + (tonumber(string.match(stat, "(%d+) deletion")) or 0)
+				if changed > DIFF_LINES then
+					return done(nil, M.DIFF_TOO_LARGE, cx2)
+				end
+				git(info.root, { "diff", "--no-color", "--no-textconv", "--no-ext-diff", "-U3", "--src-prefix=a/", "--dst-prefix=b/", range, "--" }, NET_MS, function(out, why3, cx3)
+					if out and #out >= M.DIFF_BYTES then
+						return done(nil, M.DIFF_TOO_LARGE, cx3)
+					end
+					done(out, why3, cx3)
+				end)
+			end)
+		end
 		netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, account, function(_, berr, cx1)
 			if berr then
 				return done(nil, berr, cx1)
 			end
-			git(info.root, args, NET_MS, function(out, why, cx2, status)
-				if out or status ~= 128 or not why or not (string.find(why, "bad object", 1, true) or string.find(why, "bad revision", 1, true) or string.find(why, "unknown revision", 1, true) or string.find(why, "Invalid symmetric difference", 1, true)) then
-					return done(out, why, cx2)
-				end
-				netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, account, function(_, ferr, cx3)
-					if ferr then
-						return done(nil, ferr, cx3)
-					end
-					git(info.root, args, NET_MS, done)
-				end)
-			end)
+			read(false)
 		end)
 	end)
 end
