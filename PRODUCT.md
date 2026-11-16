@@ -103,10 +103,10 @@ All local; nothing is sent anywhere.
 | 1 | Places to look to answer "what needs me" | Counting surfaces | 6 (badges, the attention filter, Inbox, the Agents list, two status segments) | 1 (Now) |
 | 2 | Tern palette `Plotroom:` commands | Counting `tern.command` registrations | 37 | ≤ 10 |
 | 3 | Settings pages, with both CLIs installed | Counting | 7 | 4 |
-| 4 | New user: from install to a running agent | Timed on a clean profile | Requires Settings › Repositories | Under 5 minutes, Settings never opened |
-| 5 | Default-action runs with a Verified outcome | Run log | No outcomes yet | ≥ 80% |
+| 4 | New user: from install to a running agent | Timed on a clean profile; the usage report's First use (first start to first agent, Settings opened before it) | Requires Settings › Repositories | Under 5 minutes, Settings never opened |
+| 5 | Default-action runs with a Verified outcome | Run log: the usage report's `Default actions Verified` (unedited shipped actions only) | No outcomes yet | ≥ 80% |
 | 6 | Checker agreement | Run log plus disagreements you record | None yet | ≥ 80% over 20 checked runs (the Autopilot gate) |
-| 7 | Weekly users besides the author | Design partners | 0 | 3–5 |
+| 7 | Weekly users besides the author | Design partners' pasted usage reports (Days used per week) | 0 | 3–5 |
 
 ## Decisions
 

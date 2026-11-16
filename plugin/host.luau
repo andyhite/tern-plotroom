@@ -232,7 +232,7 @@ end
 -- runQueueAction, counting each one that ran in this host's usage (a scope by kind, not by which).
 local function queueAction(state: State, act: string): boolean
 	local ran = runQueueAction(state, act)
-	if ran then
+	if ran and act ~= "settings" then -- openSettings counts every opening itself
 		usage.bump("queue:" .. (if string.sub(act, 1, 6) == "scope:" then "scope" else act))
 	end
 	return ran
@@ -569,6 +569,7 @@ local function blockDef(): BlockDef<State>
 			if previous then
 				retire(previous)
 			end
+			usage.start() -- this host's first start, for the usage report
 			-- State saved by another Plotroom version is ignored: a fresh start.
 			local mine = isTable(saved) and saved.version == 2
 			-- The saved view id is the view's own in its kv store (the pin's is "pin"); `activeKind` says which store: what

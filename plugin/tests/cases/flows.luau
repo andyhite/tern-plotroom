@@ -313,7 +313,7 @@ windowCase("window status: an agent that leaves the covered set while still wait
 end)
 
 -- Starts the saved action Review (model opus, in its worktree) on o/r#5 through the agent picker; the new link.
-local function startReview(w: World): any
+local function startReview(w: World, text: string?, outcome: string?): any
 	local url = "plotroom://github/agent/o/r/5"
 	local st = flowHost(w)
 	st.link("layer.queue.buttons.agent", url)
@@ -321,7 +321,7 @@ local function startReview(w: World): any
 	w.window.choose = "Review"
 	w.click(url)
 	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, model = "opus" } } })
+	st.reply("menu", { items = { { id = "p1", label = "Review", send = text or "Review {url}", worktree = true, model = "opus", outcome = outcome } } })
 	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing" })
 	return (w.kv.get("agent-links") :: any)[1]
 end
@@ -340,7 +340,7 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	w.flush()
 	local runs: any = loggedRuns(w)
 	eq(#runs, 1000, "the cap holds")
-	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none", ghRepo = "o/r", number = 5, branch = "fix-5", depth = 0 }, "the run: item key, action, kind, model, where it ran, start, end, result, what GitHub knows its work by, no report, and depth 0: started by hand")
+	same(runs[1], { key = "o/r#5", action = "Review", kind = "pr", model = "opus", runsIn = "worktree", started = link.started, ended = link.started + 90, result = "failed", attention = "none", ghRepo = "o/r", number = 5, branch = "fix-5", depth = 0, default = false }, "the run: item key, action, kind, model, where it ran, start, end, result, what GitHub knows its work by, no report, depth 0 (started by hand) and not a default action's")
 	eq(runs[2].key, "o/r#1", "the earlier runs follow")
 	eq(runs[1000].key, "o/r#999", "and the oldest one went")
 	lacks(jsonEncode(runs[1]), "Fix the thing", "no item title is kept")
@@ -5027,12 +5027,109 @@ case("usage: the report counts each action's outcomes as verified, not verified 
 		{ key = "o/r#4", action = "Implement", result = "failed", ended = EPOCH, outcome = "pr" },
 		{ key = "o/r#5", action = "Plan", result = "done", ended = EPOCH },
 	}
-	local text = usage.report({ host = { value = { since = 0, counts = {} } }, here = { value = { since = 0, counts = {} } }, runs = { value = runs }, name = function(id: string): string
+	local text = usage.report({ host = { value = { since = 0, counts = {}, weeks = {} } }, here = { value = { since = 0, counts = {}, weeks = {} } }, runs = { value = runs }, name = function(id: string): string
 		return id
 	end, outcome = prompts.outcomeLabel })
 	has(text, "Implement · 4 runs", "the action's runs")
 	has(text, "  Outcome PR opened · verified 2, not verified 1, unchecked 1", "and its outcome counts: a run never checked counts as unchecked")
 	lacks(string.match(text, "Plan[^\n]*\n[^\n]*") or "", "Outcome", "an action with no outcome has no outcome line")
+end)
+
+case("usage: the report gives Default actions Verified over unedited default runs only, and lists an edited action's runs apart", function(w: World)
+	local usage: any = w.load("usage")
+	local prompts: any = w.load("prompts")
+	local function report(runs: { any }): string
+		return usage.report({ host = { value = { since = 0, counts = {}, weeks = {} } }, here = { value = { since = 0, counts = {}, weeks = {} } }, runs = { value = runs }, name = function(id: string): string
+			return id
+		end, outcome = prompts.outcomeLabel })
+	end
+	has(report({}), "Default actions Verified: unknown", "no run: unknown, not 0%")
+	local runs: { any } = {
+		{ key = "o/r#1", action = "Review", result = "done", ended = EPOCH, outcome = "review", verdict = "verified", default = true },
+		{ key = "o/r#2", action = "Review", result = "done", ended = EPOCH, outcome = "review", verdict = "verified", default = true },
+		{ key = "o/r#3", action = "Review", result = "done", ended = EPOCH, outcome = "review", verdict = "not", default = true },
+		{ key = "o/r#4", action = "Review", result = "done", ended = EPOCH, outcome = "review", default = true }, -- never checked: Unchecked
+		{ key = "o/r#5", action = "Review", result = "done", ended = EPOCH, outcome = "review", verdict = "verified", default = false }, -- edited
+		{ key = "o/r#6", action = "Review", result = "done", ended = EPOCH, outcome = "review", verdict = "verified" }, -- logged before default was kept
+		{ key = "o/r#7", action = "Plan", result = "done", ended = EPOCH, default = true }, -- no outcome
+	}
+	local text = report(runs)
+	has(text, "Default actions Verified: 2 of 4 (50%) · target 80% · not met", "only runs of unedited defaults with an outcome count")
+	has(text, "Review · 5 runs", "default runs and runs logged before keep their action's name")
+	has(text, "Review (custom) · 1 run", "an edited action's run is listed apart")
+	table.remove(runs, 4)
+	table.remove(runs, 3)
+	has(report(runs), "Default actions Verified: 2 of 2 (100%) · target 80% · met", "every default run verified meets the target")
+end)
+
+case("prompts: isDefault is true only for a shipped action's name, text and outcome together", function(w: World)
+	local prompts: any = w.load("prompts")
+	local review = prompts.prs[1]
+	yes(prompts.isDefault(review.name, review.text, review.outcome), "a shipped action as it stands")
+	yes(prompts.isDefault(prompts.issues[3].name, prompts.issues[3].text, "none"), "none is no outcome")
+	yes(not prompts.isDefault(review.name, review.text .. " Be brief.", review.outcome), "an edited text")
+	yes(not prompts.isDefault(review.name, review.text, "pushed"), "an edited outcome")
+	yes(not prompts.isDefault("My review", review.text, review.outcome), "another name")
+	yes(not prompts.isDefault(nil, review.text, review.outcome), "a prompt typed by hand has none")
+end)
+
+windowCase("window flows: a run of an unedited default action is logged as default, one of an edited action is not", function(w: World)
+	w.load("window")
+	local prompts: any = w.load("prompts")
+	local review = prompts.prs[1]
+	local link = startReview(w, review.text, review.outcome)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq((loggedRuns(w) :: any)[1].default, true, "the saved text and outcome are the shipped ones")
+end)
+
+case("usage: a count keeps its first use and a day counts once in its ISO week, through a year's end", function(w: World)
+	local usage: any = w.load("usage")
+	usage.start()
+	eq((w.kv.get("usage") :: any).since, EPOCH, "the first start is recorded without any count")
+	w.advance(3600 * 1000)
+	usage.start()
+	eq((w.kv.get("usage") :: any).since, EPOCH, "a later start moves nothing")
+	usage.bump("queue:settings")
+	w.advance(3600 * 1000)
+	usage.bump("queue:settings")
+	local u: any = w.kv.get("usage")
+	same({ u.since, u.counts["queue:settings"].n, u.counts["queue:settings"].first, u.counts["queue:settings"].at }, { EPOCH, 2, EPOCH + 3600, EPOCH + 7200 } :: { any }, "the count's first use stays; its last use moves")
+	same(u.weeks, { ["2026-W42"] = 1 }, "two uses on one day are one day (EPOCH is Monday 2026-10-12)")
+	w.advance(86400 * 1000)
+	usage.bump("queue:refresh")
+	w.advance(6 * 86400 * 1000)
+	usage.bump("queue:refresh")
+	same((w.kv.get("usage") :: any).weeks, { ["2026-W42"] = 2, ["2026-W43"] = 1 }, "the next day is the week's second; a Monday starts the next week")
+	w.advance(74 * 86400 * 1000)
+	usage.bump("queue:refresh") -- Friday 2027-01-01: the last week of 2026, which has 53
+	w.advance(3 * 86400 * 1000)
+	usage.bump("queue:refresh") -- Monday 2027-01-04
+	local weeks: any = (w.kv.get("usage") :: any).weeks
+	same({ weeks["2026-W53"], weeks["2027-W01"] }, { 1, 1 } :: { any }, "ISO weeks follow the year's own 53rd week")
+end)
+
+case("usage: the report gives the first start to the first agent, whether Settings opened before it, and the days used per week", function(w: World)
+	local usage: any = w.load("usage")
+	local prompts: any = w.load("prompts")
+	local function report(host: any, runs: { any }, here: any?): string
+		return usage.report({ host = host, here = here or { value = { since = EPOCH - 60, counts = {}, weeks = { ["2026-W42"] = 3, ["2026-W41"] = 1 } } }, runs = { value = runs }, name = function(id: string): string
+			return id
+		end, outcome = prompts.outcomeLabel })
+	end
+	local run = { key = "o/r#1", action = "Review", result = "done", started = EPOCH + 200, ended = EPOCH + 300 }
+	local function hostWith(counts: any): any
+		return { value = { since = EPOCH, counts = counts, weeks = { ["2026-W42"] = 5 } } }
+	end
+	local text = report(hostWith({ ["queue:settings"] = { n = 1, at = EPOCH + 100, first = EPOCH + 100 } }), { run })
+	has(text, "First start to first agent: 4m 20s · target under 5 minutes", "the earliest first start on either machine to the first run")
+	has(text, "Settings opened before the first agent: yes · Settings first opened " .. os.date("!%Y-%m-%d %H:%M", EPOCH + 100), "Settings opened first")
+	has(text, "2026-W42 · 5 days\n2026-W41 · 1 day\n", "weeks newest first, the busier machine's count")
+	has(report(hostWith({ ["queue:settings"] = { n = 1, at = EPOCH + 400, first = EPOCH + 400 } }), { run }), "Settings opened before the first agent: no · Settings first opened " .. os.date("!%Y-%m-%d %H:%M", EPOCH + 400) .. ", after the first agent", "Settings opened after it")
+	has(report(hostWith({}), { run }), "Settings opened before the first agent: no · Settings never opened", "never opened")
+	has(report(hostWith({ ["queue:settings"] = { n = 1, at = EPOCH } }), { run }), "Settings opened before the first agent: unknown · its first opening was not recorded", "a count from before first uses were kept")
+	has(report({ problem = "could not be read" }, { run }), "Settings opened before the first agent: unknown · the block's host counts are missing", "host counts missing: not claimed")
+	has(report(hostWith({}), {}), "First start to first agent: unknown · no agent run yet", "no run yet")
 end)
 
 -- ---------------------------------------------------------------- agent events, Files, selection
@@ -5893,7 +5990,7 @@ case("usage: a checked run is agreed once merged or a week after its verdict, di
 	eq(usage.agreement({ checkedAt = now - 2 * week, merged = true, disagree = "" }, now), "disagreed", "a disagreement wins over both")
 	eq(usage.agreement({ check = "pass" }, now), nil, "a run with no recorded verdict is no checked run")
 	local function report(runs: { any }): string
-		return usage.report({ host = { value = { since = 0, counts = {} } }, here = { value = { since = 0, counts = {} } }, runs = { value = runs }, name = function(id: string): string
+		return usage.report({ host = { value = { since = 0, counts = {}, weeks = {} } }, here = { value = { since = 0, counts = {}, weeks = {} } }, runs = { value = runs }, name = function(id: string): string
 			return id
 		end, outcome = function(): string?
 			return nil

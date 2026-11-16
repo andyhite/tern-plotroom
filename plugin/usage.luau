@@ -1,6 +1,6 @@
 --!strict
--- How often each command ran and how each agent run ended, on this machine only: kv `usage` (id -> count and last use,
--- and the day counting began), one file per agent run (`<data>/runs/<run>/run.json`, beside a Draft review's
+-- How often each command ran and how each agent run ended, on this machine only: kv `usage` (id -> count, first use and
+-- last use; the day counting began; the days used per ISO week), one file per agent run (`<data>/runs/<run>/run.json`, beside a Draft review's
 -- review.json) and kv `runs`, the run log's index: one entry per run, newest first, at most RUNS_CAP, with only the
 -- fields its readers use (INDEXED). Ids are "<where>:<what>": "queue:<action id>" (the host's queue actions),
 -- "row:<command id>" (Commands rows the window runs), "palette:<command id>" (Tern palette commands) and
@@ -24,9 +24,15 @@ M.VERDICTS = { verified = true, ["not"] = true, unchecked = true }
 M.CHECKS = { pass = true, fail = true }
 M.AGREE_AFTER_S = 7 * 86400 -- a checked run with no disagreement counts as agreed this long after its verdict
 M.AGREEMENT_N, M.AGREEMENT_GATE = 20, 0.8 -- PRODUCT.md › Metrics row 6: the Autopilot gate
+M.VERIFIED_GATE = 0.8 -- PRODUCT.md › Metrics row 5: default-action runs with a Verified outcome
+local WEEKS_CAP = 104 -- ISO weeks kept (two years); the oldest goes first
 
-export type Count = { n: number, at: number }
-export type Usage = { since: number, counts: { [string]: Count } }
+-- `first`: when the id was first used (nil: counted before first uses were kept).
+export type Count = { n: number, at: number, first: number? }
+-- `since`: when the plugin first started on this machine (0: not yet; a store from before starts were kept holds its first
+-- count). `weeks`: ISO week ("2026-W46") -> the days of it Plotroom was used on (at most 7); `day`: the last such day,
+-- so a day counts once.
+export type Usage = { since: number, counts: { [string]: Count }, weeks: { [string]: number }, day: string? }
 -- `runsIn`: "worktree" or "main checkout"; `started`/`ended`: seconds since the epoch (an old link has no start).
 -- `attention`..`blocker`: the agent's end-of-run report (`attention` "none": it gave no valid one; nil: a run logged
 -- before reports were read). `outcome`: what the action said the run must leave behind (a prompts.OUTCOMES id; nil:
@@ -38,7 +44,9 @@ export type Usage = { since: number, counts: { [string]: Count } }
 -- `depth`: its place in a chain (0 or nil: started by hand); `checking`: it is a checker's run; `starts`: how many times
 -- the step after it failed to start. The chain's limits are counted from these (strikes).
 -- `id`: the run's file (`<data>/runs/<id>/run.json`): the agent's run id when it has one; set on index entries only.
-export type Run = { id: string?, key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean?, depth: number?, checking: boolean?, starts: number? }
+-- `default`: the action's name, text and outcome were a shipped default's when the run started (prompts.isDefault); false:
+-- a saved action that was edited or made here; nil: a run logged before this was kept, or typed by hand.
+export type Run = { id: string?, key: string, action: string, kind: string?, model: string?, runsIn: string?, started: number?, ended: number, result: string, attention: string?, reason: string?, commit: string?, pr: string?, evidence: { string }?, blocker: string?, outcome: string?, default: boolean?, verdict: string?, criteria: string?, check: string?, findings: { string }?, login: string?, ghRepo: string?, number: number?, branch: string?, checkedAt: number?, disagree: string?, merged: boolean?, depth: number?, checking: boolean?, starts: number? }
 -- What the fixed contract (prompts.REPORT) asks an agent to end its turn with: a claim, never an outcome. A checker's
 -- report also has `check` (pass | fail; prompts.checkBlock) and `findings`.
 export type Report = { attention: string, reason: string, commit: string?, pr: string?, evidence: { string }, blocker: string?, check: string?, findings: { string } }
@@ -70,12 +78,28 @@ function M.parseUsage(v: any): Usage?
 	end
 	local counts: { [string]: Count } = {}
 	for id, c in v.counts do
-		if not textOk(id, ID_CAP) or type(c) ~= "table" or not whole(c.n) or not whole(c.at) then
+		if not textOk(id, ID_CAP) or type(c) ~= "table" or not whole(c.n) or not whole(c.at) or (c.first ~= nil and not whole(c.first)) then
 			return nil
 		end
-		counts[id] = { n = c.n, at = c.at }
+		counts[id] = { n = c.n, at = c.at, first = c.first }
 	end
-	return { since = v.since, counts = counts }
+	-- A store from before weeks were kept has none.
+	local weeks: { [string]: number } = {}
+	if v.weeks ~= nil then
+		if type(v.weeks) ~= "table" then
+			return nil
+		end
+		for w, n in v.weeks do
+			if type(w) ~= "string" or not string.match(w, "^%d%d%d%d%-W%d%d$") or not whole(n) or n > 7 then
+				return nil
+			end
+			weeks[w] = n
+		end
+	end
+	if v.day ~= nil and not (type(v.day) == "string" and string.match(v.day, "^%d%d%d%d%-%d%d%-%d%d$")) then
+		return nil
+	end
+	return { since = v.since, counts = counts, weeks = weeks, day = v.day }
 end
 
 -- The saved usage, or nil and why when it cannot be read or is malformed; nothing saved yet is an empty store.
@@ -84,7 +108,7 @@ function M.readUsage(): (Usage?, string?)
 	if not ok then
 		return nil, "could not be read"
 	elseif v == nil then
-		return { since = 0, counts = {} }, nil
+		return { since = 0, counts = {}, weeks = {} }, nil
 	end
 	local u = M.parseUsage(v)
 	return u, if u then nil else "is malformed"
@@ -94,10 +118,67 @@ end
 -- ponytail: one kv read per render; cache in the block's State if it shows up in a profile.
 function M.published(): string
 	local u, why = M.readUsage()
-	return tern.json.encode(if u then { usage = { since = u.since, counts = u.counts } } else { problem = why })
+	return tern.json.encode(if u then { usage = { since = u.since, counts = u.counts, weeks = u.weeks, day = u.day } } else { problem = why })
 end
 
--- Counts one use of `id` now. Nothing is written when the store cannot be read or is malformed.
+local function save(u: Usage)
+	pcall(tern.kv.set, M.USAGE_KEY, { since = u.since, counts = u.counts, weeks = u.weeks, day = u.day })
+end
+
+-- Years with 53 ISO weeks: those starting on a Thursday, and leap years starting on a Wednesday.
+local function weeksIn(y: number): number
+	local function p(x: number): number
+		return (x + x // 4 - x // 100 + x // 400) % 7
+	end
+	return if p(y) == 4 or p(y - 1) == 3 then 53 else 52
+end
+
+-- The local day ("2026-11-16") and ISO week ("2026-W47") of `t`.
+local function dayWeek(t: number): (string, string)
+	local d = os.date("*t", t) :: any
+	local weekday = (d.wday + 5) % 7 + 1 -- Monday 1 .. Sunday 7
+	local y, w = d.year, (d.yday - weekday + 10) // 7
+	if w < 1 then
+		y -= 1
+		w = weeksIn(y)
+	elseif w > weeksIn(y) then
+		y += 1
+		w = 1
+	end
+	return string.format("%04d-%02d-%02d", d.year, d.month, d.day), string.format("%04d-W%02d", y, w)
+end
+
+-- Counts the day of `now` once in its week, and drops the oldest weeks past WEEKS_CAP.
+local function markDay(u: Usage, now: number)
+	local day, week = dayWeek(now)
+	if u.day == day then
+		return
+	end
+	u.day = day
+	u.weeks[week] = math.min(7, (u.weeks[week] or 0) + 1) -- a clock set back could count a week's day twice
+	local all: { string } = {}
+	for w in u.weeks do
+		table.insert(all, w)
+	end
+	if #all > WEEKS_CAP then
+		table.sort(all)
+		for i = 1, #all - WEEKS_CAP do
+			u.weeks[all[i]] = nil
+		end
+	end
+end
+
+-- Records that the plugin started here: `since` is its first start, not its first count. Nothing is written when that
+-- is known already, or the store cannot be read or is malformed.
+function M.start()
+	local u = M.readUsage()
+	if u and u.since == 0 then
+		u.since = os.time()
+		save(u)
+	end
+end
+
+-- Counts one use of `id` now, with its first use and the day. Nothing is written when the store cannot be read or is malformed.
 function M.bump(id: string)
 	local key = M.line(id, ID_CAP)
 	local u = M.readUsage()
@@ -106,10 +187,11 @@ function M.bump(id: string)
 	end
 	local now = os.time()
 	local c = u.counts[key]
-	u.counts[key] = { n = (if c then c.n else 0) + 1, at = now }
+	u.counts[key] = { n = (if c then c.n else 0) + 1, at = now, first = if c then c.first else now }
 	if u.since == 0 then
 		u.since = now
 	end
+	markDay(u, now)
 	local ids: { string } = {}
 	for k in u.counts do
 		table.insert(ids, k)
@@ -122,7 +204,7 @@ function M.bump(id: string)
 			u.counts[ids[i]] = nil
 		end
 	end
-	pcall(tern.kv.set, M.USAGE_KEY, { since = u.since, counts = u.counts })
+	save(u)
 end
 
 -- `v` as a list of strings, or nil when it is no list or holds anything else.
@@ -223,6 +305,7 @@ local function runOf(r: any): Run?
 		or (r.merged ~= nil and r.merged ~= true)
 		or (r.depth ~= nil and not whole(r.depth))
 		or (r.checking ~= nil and type(r.checking) ~= "boolean")
+		or (r.default ~= nil and type(r.default) ~= "boolean")
 		or (r.starts ~= nil and not whole(r.starts))
 	then
 		return nil
@@ -234,7 +317,7 @@ local function runOf(r: any): Run?
 			end
 		end
 	end
-	return { id = r.id, key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean?, depth = r.depth, checking = r.checking, starts = r.starts }
+	return { id = r.id, key = r.key, action = r.action, kind = r.kind, model = r.model, runsIn = r.runsIn, started = r.started, ended = r.ended, result = r.result, attention = r.attention :: string?, reason = r.reason, commit = r.commit, pr = r.pr, evidence = if evidence then tern.json.array(evidence) :: any else nil, blocker = r.blocker, outcome = r.outcome, default = r.default, verdict = r.verdict :: string?, criteria = r.criteria, check = r.check :: string?, findings = if findings then tern.json.array(findings) :: any else nil, login = r.login, ghRepo = r.ghRepo, number = r.number, branch = r.branch, checkedAt = r.checkedAt, disagree = r.disagree, merged = r.merged :: boolean?, depth = r.depth, checking = r.checking, starts = r.starts }
 end
 
 -- A run id as a file name: the agent's run id (window's agentCommand) or one made here.
@@ -244,7 +327,7 @@ end
 
 -- The fields of a run its index entry keeps: what the usage report, medians, strikes and the merge sweep read, and
 -- what a change matches a run by. The rest (criteria, report text, where and how it ran) is in its file only.
-local INDEXED = { "key", "action", "started", "ended", "result", "commit", "outcome", "verdict", "check", "findings", "login", "ghRepo", "number", "branch", "checkedAt", "disagree", "merged", "depth", "checking", "starts" }
+local INDEXED = { "key", "action", "started", "ended", "result", "commit", "outcome", "default", "verdict", "check", "findings", "login", "ghRepo", "number", "branch", "checkedAt", "disagree", "merged", "depth", "checking", "starts" }
 local FILE_BYTES = 64 * 1024 -- a run file is under 20 KB at the caps above
 
 function M.runFile(id: string): string
@@ -358,6 +441,7 @@ function M.appendRun(run: Run)
 		evidence = run.evidence,
 		blocker = M.line(run.blocker, TEXT_CAP),
 		outcome = M.line(run.outcome, ID_CAP),
+		default = run.default,
 		verdict = run.verdict,
 		criteria = M.text(run.criteria, M.CRITERIA_CAP),
 		check = run.check,
@@ -585,6 +669,12 @@ function M.medians(runs: { Run }): { [string]: number }
 	return out
 end
 
+local WEEKS_SHOWN = 12
+
+local function stamp(t: number): string
+	return os.date("%Y-%m-%d %H:%M", t) :: string
+end
+
 local function day(t: number): string
 	return os.date("%Y-%m-%d", t) :: string
 end
@@ -622,11 +712,29 @@ function M.report(i: Inputs): string
 			since = t
 		end
 	end
+	local install: number? = nil -- the earliest first start of the plugin on either machine
+	local settingsSeen, settingsAt = false, nil :: number? -- Settings opened on the host, and when first
+	local weeks: { [string]: number } = {}
 	local function take(u: Usage?, host: boolean)
 		if not u then
 			return
 		end
 		earliest(u.since)
+		if u.since > 0 and (not install or u.since < (install :: number)) then
+			install = u.since
+		end
+		-- ponytail: the busier machine's count per week, not their union (days are kept as a count); keep the days
+		-- themselves if one person uses a remote host and this machine on different days.
+		for w, n in u.weeks do
+			weeks[w] = math.max(weeks[w] or 0, n)
+		end
+		local s = if host then u.counts["queue:settings"] else nil
+		if s then
+			settingsSeen = true
+			if s.first and (not settingsAt or s.first < (settingsAt :: number)) then
+				settingsAt = s.first
+			end
+		end
 		for id, c in u.counts do
 			local where, what = string.match(id, "^(%a+):(.+)$")
 			if where and WHERE[where] and (where == "queue") == host then
@@ -637,8 +745,13 @@ function M.report(i: Inputs): string
 	take(i.host.value, true)
 	take(i.here.value, false)
 	local runs: { Run } = i.runs.value or {}
+	local firstAgent: number? = nil
 	for _, r in runs do
 		earliest(r.started or r.ended)
+		local t = r.started or r.ended
+		if not firstAgent or t < (firstAgent :: number) then
+			firstAgent = t
+		end
 	end
 	table.sort(rows, function(a, b)
 		if a.where ~= b.where then
@@ -668,6 +781,46 @@ function M.report(i: Inputs): string
 		end
 	end
 
+	-- Metric 4 (PRODUCT.md › Metrics): from the plugin's first start to a running agent, with Settings never opened.
+	table.insert(out, "")
+	table.insert(out, "First use")
+	if firstAgent and install then
+		table.insert(out, "First start to first agent: " .. duration(math.max(0, (firstAgent :: number) - (install :: number))) .. " · target under 5 minutes · first start " .. stamp(install :: number) .. " · first agent " .. stamp(firstAgent :: number))
+	else
+		table.insert(out, "First start to first agent: unknown · " .. (if not firstAgent then "no agent run yet" else "no first start recorded"))
+	end
+	local opened = "Settings opened before the first agent: "
+	if i.host.problem then
+		table.insert(out, opened .. "unknown · the block's host counts are missing")
+	elseif not settingsSeen then
+		table.insert(out, opened .. "no · Settings never opened")
+	elseif not settingsAt then
+		table.insert(out, opened .. "unknown · its first opening was not recorded")
+	elseif not firstAgent then
+		table.insert(out, opened .. "no agent run yet · Settings first opened " .. stamp(settingsAt :: number))
+	elseif (settingsAt :: number) <= (firstAgent :: number) then
+		table.insert(out, opened .. "yes · Settings first opened " .. stamp(settingsAt :: number))
+	else
+		table.insert(out, opened .. "no · Settings first opened " .. stamp(settingsAt :: number) .. ", after the first agent")
+	end
+
+	-- Metric 7: the days of each ISO week Plotroom was used on, newest week first.
+	table.insert(out, "")
+	table.insert(out, "Days used per week")
+	local weekIds: { string } = {}
+	for w in weeks do
+		table.insert(weekIds, w)
+	end
+	table.sort(weekIds, function(a, b)
+		return a > b
+	end)
+	for n = 1, math.min(#weekIds, WEEKS_SHOWN) do
+		table.insert(out, weekIds[n] .. " · " .. weeks[weekIds[n]] .. (if weeks[weekIds[n]] == 1 then " day" else " days"))
+	end
+	if #weekIds == 0 then
+		table.insert(out, "None")
+	end
+
 	table.insert(out, "")
 	table.insert(out, "Commands")
 	for _, r in rows do
@@ -681,8 +834,10 @@ function M.report(i: Inputs): string
 	table.insert(out, "Runs")
 	local groups: { [string]: { results: { [string]: number }, times: { number }, n: number, outcomes: { [string]: { [string]: number } } } } = {}
 	local names: { string } = {}
+	local defaults, defaultsVerified = 0, 0 -- runs of an unedited default action that name an outcome, and the Verified ones
 	for _, r in runs do
-		local name = if r.action ~= "" then r.action else "Unnamed"
+		-- A saved action that was edited keeps its name, so its runs are listed apart from the default's.
+		local name = if r.action ~= "" then r.action .. (if r.default == false then " (custom)" else "") else "Unnamed"
 		local g = groups[name]
 		if not g then
 			g = { results = {}, times = {}, n = 0, outcomes = {} }
@@ -701,6 +856,10 @@ function M.report(i: Inputs): string
 			local o = g.outcomes[label] or {}
 			g.outcomes[label] = o
 			o[v] = (o[v] or 0) + 1
+			if r.default == true then
+				defaults += 1
+				defaultsVerified += if v == "verified" then 1 else 0
+			end
 		end
 	end
 	table.sort(names, function(a, b)
@@ -736,6 +895,13 @@ function M.report(i: Inputs): string
 	end
 	if #names == 0 then
 		table.insert(out, "None")
+	end
+	-- Metric 5: of the runs of unedited default actions that name an outcome, how many were Verified.
+	if defaults == 0 then
+		table.insert(out, "Default actions Verified: unknown · no run of an unedited default action with an outcome yet")
+	else
+		local met = defaultsVerified >= M.VERIFIED_GATE * defaults
+		table.insert(out, "Default actions Verified: " .. defaultsVerified .. " of " .. defaults .. " (" .. (defaultsVerified * 100 // defaults) .. "%) · target " .. math.floor(M.VERIFIED_GATE * 100) .. "% · " .. (if met then "met" else "not met"))
 	end
 
 	-- Checker agreement (PRODUCT.md › Metrics row 6): the log is newest first, so the last decided runs lead.

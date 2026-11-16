@@ -564,6 +564,20 @@ M.issues = {
 	{ id = "p4", name = "Check", text = CHECK, model = "@slow" },
 } :: { Seed }
 
+-- Whether an action named `name` with `text` and `outcome` is a shipped default as it stands: some seed of either
+-- kind has the same name, text and outcome (nil and "none" are the same outcome). An edited default keeps its name,
+-- so the name alone says nothing; the usage report counts only runs of the unedited ones (PRODUCT.md › Metrics row 5).
+function M.isDefault(name: string?, text: string, outcome: string?): boolean
+	for _, list in { M.prs, M.issues } do
+		for _, d in list do
+			if d.name == name and d.text == text and (d.outcome or "none") == (outcome or "none") then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 -- A value from GitHub, Jira or a CI run as a prompt holds it (a title, an author, labels, a check's name): control
 -- characters become spaces and a `<` before `/` or a letter gets a space after it, so it can neither close Plotroom's
 -- `<pr>`/`<ticket>` block nor open a block of its own.

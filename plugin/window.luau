@@ -1265,13 +1265,13 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 					if type(a.merge) == "table" then
 						filled ..= "\n\n" .. prompts.mergeBlock(a.merge)
 					end
-					finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) }, after)
+					finishAgent(cx3, pane, t, ready, filled, job, wt, { action = prompt.name, branch = strOf(a.branch), title = strOf(a.title), outcome = prompt.outcome, default = prompts.isDefault(prompt.name, prompt.text, prompt.outcome), login = strOf(a["github.user"]), ghRepo = t.repo, number = tonumber(t.ref) }, after)
 				else
 					local vars: any = a.vars
 					if type(vars) == "table" then
 						vars.criteria, vars.findings = block, found
 					end
-					finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) }, after)
+					finishAgent(cx3, pane, t, ready, fillVars(text, vars), job, wt, { action = prompt.name, branch = if type(vars) == "table" then strOf(vars.branch) else nil, title = if type(vars) == "table" then strOf(vars.title) else nil, code = strOf(a.code), outcome = prompt.outcome, default = prompts.isDefault(prompt.name, prompt.text, prompt.outcome), login = if type(vars) == "table" then strOf(vars["github.user"]) else nil, ghRepo = strOf(a.code) }, after)
 				end
 			end)
 		end
@@ -2190,6 +2190,7 @@ end)
 
 -- A plugin reload fires no lifecycle event (see `arm(0)`): a live linked agent's timer starts again from here.
 tern.timer(0, function(cx: WindowCx?)
+	usage.start() -- this machine's first start, for the usage report
 	if cx then
 		flows.ensureSync(cx)
 	end

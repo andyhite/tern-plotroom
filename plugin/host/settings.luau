@@ -8,6 +8,7 @@ local defaults = require("../prompts")
 local sorting = require("../sorting")
 local process = require("../process")
 local tracker = require("../tracker")
+local usage = require("../usage")
 local worktree = require("../worktree")
 local core = require("./core")
 local storage = require("./storage")
@@ -2035,6 +2036,7 @@ end
 -- Opens Settings on `page`, else the page it last showed, else Views (also for a page it does not show now). With
 -- `row` ("<field>:<item>"), the item's form is open and `row` focused.
 function M.openSettings(state: State, page: string?, row: string?, edit: boolean?)
+	usage.bump("queue:settings") -- every opening counts, whichever way it came: PRODUCT.md › Metrics row 4 needs the first
 	M.discardEdit(state) -- releases the prompt editor's caret, if one was open
 	local s: Settings = { page = "views", errors = {}, open = if row then string.match(row, "^%a+:(.+)$") else nil }
 	state.settings = s

@@ -3553,6 +3553,19 @@ case("host: a queue action that runs counts once in this host's usage, and the b
 	eq(jsonDecode(findKey(b.view().main, "usage").p.text).problem, "is malformed", "and the node says why it is missing")
 end)
 
+case("host: every way Settings opens counts once as queue:settings, with its first use, and a block's start records the first start", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	eq((w.kv.get("usage") :: any).since, EPOCH, "the block's start recorded when counting began")
+	b.event({ ev = "action", act = "queue", value = "settings" })
+	local c: any = (w.kv.get("usage") :: any).counts["queue:settings"]
+	same({ c.n, c.first }, { 1, EPOCH } :: { any }, "Settings from the command palette")
+	b.event({ ev = "action", id = "layer.queue", act = "settings" }) -- its own button closes the sheet it sits beside
+	eq((w.kv.get("usage") :: any).counts["queue:settings"].n, 1, "closing it counts nothing")
+	b.event({ ev = "action", id = "layer.queue", act = "settings" })
+	eq((w.kv.get("usage") :: any).counts["queue:settings"].n, 2, "the button opens it again, and that counts")
+end)
+
 -- Every badge text of row `id`, in order.
 local function badgeTexts(b: Block, id: string): { string }
 	local out: { string } = {}
