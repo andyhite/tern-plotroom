@@ -3350,8 +3350,9 @@ function hx.miscued(node: any): { string }
 		local here = path .. "." .. tostring(p.key or n.k)
 		local clicks = (type(p.actions) == "table" and p.actions.click ~= nil) or (type(p.href) == "string" and p.href ~= "")
 		local own = n.k == "seg" or (n.k == "card" and type(p.selected) == "boolean")
-		if not own and clicks ~= (n.k == "button" or p.role == "plotroom.link") then
-			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. ")")
+		local disabled = n.k == "button" and p.disabled ~= nil
+		if disabled or (not own and clicks ~= (n.k == "button" or p.role == "plotroom.link")) then
+			table.insert(out, here .. " (" .. tostring(n.k) .. ", " .. tostring(p.role) .. (if disabled then ", disabled" else "") .. ")")
 		end
 		if type(n.c) == "table" then
 			for _, kid in n.c do

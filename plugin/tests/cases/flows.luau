@@ -3647,7 +3647,7 @@ case("host worktrees table: Worktrees is a native table beside the selected work
 	b.typeText("j")
 	eq(asks.hx.chosen(b), asks.hx.rowId(b, "o/r/lk"), "j selects the next row")
 	eq(findKey(pickerNode(b), "worktree", "card").p.head[1].t, "lk", "and the card follows it")
-	has(findKey(findKey(pickerNode(b), "worktree", "card"), "remove", "button").p.disabled, "Locked", "a locked worktree's Remove is off, saying why")
+	eq(findKey(findKey(pickerNode(b), "worktree", "card"), "remove", "button"), nil, "a locked worktree's card offers no Remove; its Locked fact says why")
 	b.press("down")
 	eq(asks.hx.chosen(b), asks.hx.rowId(b, "x/y/yb"), "Down the next")
 	b.press("up")

@@ -1452,14 +1452,15 @@ local function worktreeCard(state: State): Node?
 	end
 	local kids: { Node } = {}
 	local removable = not row.locked and not row.missing -- the guard of engine.boardAct's wt-remove
-	table.insert(kids, button("Remove", {
-		key = "remove",
-		icon = "trash",
-		keys = keys.caps(keys.load(), "wt-remove"),
-		aria = "Remove this worktree",
-		disabled = if removable then nil else "Locked or missing worktrees are not removed here.",
-		actions = { click = "wt-remove" },
-	}))
+	if removable then
+		table.insert(kids, button("Remove", {
+			key = "remove",
+			icon = "trash",
+			keys = keys.caps(keys.load(), "wt-remove"),
+			aria = "Remove this worktree",
+			actions = { click = "wt-remove" },
+		}))
+	end
 	local cleanup = if row.candidate == "merged" then "Its pull request is merged" elseif row.candidate == "closed" then "Its item is closed" elseif row.candidateChecked then "Its item is still open" else nil
 	local status: { Node } = {}
 	local needs = withValue({
