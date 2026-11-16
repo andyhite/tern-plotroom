@@ -252,6 +252,22 @@ case("host: ? lists the shortcuts of the current mode, and a ? is plain text whi
 	eq(findKey(b.view().layer, "settings", "prefs"), nil, "Escape closes the list, then Settings")
 end)
 
+case("host: the ? list has a row for every action a key can be bound to", function(w: World)
+	local core: any = w.load("host/core")
+	local actions: any = (w.load("keys") :: any).ACTIONS
+	for _, kind in { "prs", "issues" } do
+		local listed: { [string]: boolean } = {}
+		for _, row in core.KINDS[kind].keys do
+			for _, id in row.actions or {} do
+				listed[id] = true
+			end
+		end
+		for _, a in actions do
+			yes(listed[a.id], kind .. ": the list has a row for " .. a.id)
+		end
+	end
+end)
+
 case("host: the documented queue keys move, open, refresh and switch filters", function(w: World)
 	local s = hostScene(w, 12)
 	local b = openQueue(w)
