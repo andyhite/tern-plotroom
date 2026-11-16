@@ -1782,6 +1782,17 @@ case("host: opening in a linked worktree saves its main checkout, not the worktr
 	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the main checkout is saved, not the worktree")
 end)
 
+case("host: opening in a linked worktree of a --separate-git-dir repository saves the first record of git's worktree list", function(w: World)
+	local s = hostScene(w, 3)
+	s.git.commonDir = "/work/gitdir"
+	table.insert(s.git.worktrees, { path = "/wt/feature", branch = "refs/heads/feature", head = sha("1"), locked = false })
+	w.fs.dirs["/wt/feature"] = true
+	w.kv.put("checkouts", {})
+	w.open(1, { "/wt/feature" })
+	w.flush()
+	eq(w.kv.get("checkouts")["o/r"], "/work/r", "the main worktree, though the common dir does not end in /.git")
+end)
+
 case("host: Add repository saves a picked repository without a checkout and opens its checkout row; the picker gets the saved ones, the gh logins, then a login's repositories", function(w: World)
 	local s = hostScene(w, 3)
 	s.gh.tokens.octocat = "tok-octo"

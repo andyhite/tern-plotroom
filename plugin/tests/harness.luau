@@ -2227,6 +2227,7 @@ M.validRef = validRef
 export type GitWorktree = { path: string, branch: string?, head: string, locked: boolean, prunable: boolean? }
 export type Git = {
 	root: string,
+	commonDir: string?, -- what `rev-parse --git-common-dir` says; nil: `<root>/.git`
 	remotes: { [string]: { string } }, -- name -> urls: `remote get-url --all` lists them, fetch uses the first
 	served: { [string]: string }, -- what the remote serves (refs/pull/N/head, refs/heads/<branch>) -> sha
 	defaultBranch: string?, -- the branch the remote's HEAD points at, as `ls-remote --symref` says; nil: it says none
@@ -2275,6 +2276,7 @@ M.porcelain = porcelain
 local function newGit(w: World, root: string): Git
 	local g: Git = {
 		root = root,
+		commonDir = nil,
 		remotes = {},
 		served = {},
 		defaultBranch = nil,
@@ -2372,7 +2374,7 @@ local function newGit(w: World, root: string): Git
 			if a == "--show-toplevel" then
 				return { stdout = here.path .. "\n" }
 			elseif a == "--path-format=absolute" and args[3] == "--git-common-dir" then
-				return { stdout = g.root .. "/.git\n" }
+				return { stdout = (g.commonDir or g.root .. "/.git") .. "\n" }
 			elseif a == "HEAD" then
 				return { stdout = here.head .. "\n" }
 			elseif a == "--verify" and args[3] == "HEAD" then

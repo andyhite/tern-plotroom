@@ -1530,6 +1530,27 @@ windowCase("worktree: claimCheckout from a linked worktree saves the main checko
 	eq(out.result.root, "/work/r", "the main checkout")
 end)
 
+windowCase("worktree: claimCheckout and findCheckout save the first record of git's worktree list when the common dir does not end in /.git", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local r = issueRepo(w, "ABC-7")
+	r.git.commonDir = "/work/gitdir"
+	asks.bk.tree(w, r.git, "/wt/feature", "feature")
+	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+	worktree.claimCheckout("/wt/feature", "o/r", nil, function(result, problem, cx)
+		out.calls += 1
+		out.result, out.problem, out.cx = result, problem, cx
+	end)
+	w.flush()
+	eq(out.problem, nil, "problem")
+	eq(out.result.root, "/work/r", "claimCheckout: the main worktree")
+	local found: string? = nil
+	worktree.findCheckout({ "/wt/feature" }, "o/r", function(path)
+		found = path
+	end)
+	w.flush()
+	eq(found, "/work/r", "findCheckout: the main worktree")
+end)
+
 windowCase("worktree: claimCheckout answers a folder the runtime cannot look at with a problem, and never clones", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	issueRepo(w, "ABC-7")

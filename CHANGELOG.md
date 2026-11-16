@@ -6,6 +6,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A checkout found from a linked worktree is saved as the main worktree git lists first, also for a repository whose git directory is not `<main>/.git` (`--separate-git-dir`) (tern-plotroom#f77a).
 - Remove finished worktrees asks GitHub or Jira about each pull request or issue again just before removing its worktree, instead of trusting the verdict of an old Find finished worktrees: a pull request or issue reopened since is kept, loses its Merged or Closed mark, and the toast says how many were kept for that.
 - Oldest waiting puts an item whose creation date could not be read last instead of first, and a view applies only a sort its kind offers.
 - Worktree on an issue whose folder holds a detached worktree now says the worktree is detached instead of reporting it on a branch it is not on and writing git config for that branch.

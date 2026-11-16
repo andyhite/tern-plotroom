@@ -448,6 +448,20 @@ local function topLevel(path: string, done: Cb<string>)
 	end)
 end
 
+-- The main checkout of the work tree at `root`: `<main>` when the git common dir is `<main>/.git` (no spawn), else the
+-- first record of `git worktree list` (a `--separate-git-dir` repository, a bare layout, where parseWorktrees puts the
+-- worktree holding `root` first). A list that cannot be read leaves `root` itself.
+local function mainCheckout(root: string, commonDir: string, done: Cb<string>)
+	local plain = string.match(commonDir, "^(/.+)/%.git$")
+	if plain then
+		return done(plain, nil, nil)
+	end
+	git(root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, _, cx)
+		local first = if out then M.parseWorktrees(out, root)[1] else nil
+		done(if first and first.path ~= "" then first.path else root, nil, cx)
+	end)
+end
+
 -- The checkout at `path` (any subdirectory or linked worktree) whose remotes include `repo`; done(info, problem, cx).
 -- cx is nil in the host.
 function M.resolveRepository(path: string, repo: string, done: Cb<Repo>)
@@ -494,7 +508,9 @@ function M.claimCheckout(path: string, repo: string, account: string?, done: Cb<
 			if not info then
 				return done(nil, if cloned then "Cloned " .. repo .. ", but " .. (why or "it could not be read") else why, cx)
 			end
-			done({ root = string.match(info.commonDir, "^(/.+)/%.git$") or info.root, cloned = cloned }, nil, cx)
+			mainCheckout(info.root, info.commonDir, function(main, _, cx2)
+				done({ root = main :: string, cloned = cloned }, nil, cx2 or cx)
+			end)
 		end)
 	end
 	local function clone()
@@ -536,7 +552,9 @@ function M.findCheckout(paths: { string }, repo: string, done: (string?) -> ())
 		end
 		M.resolveRepository(path, repo, function(info)
 			if info then
-				return done(string.match(info.commonDir, "^(/.+)/%.git$") or info.root)
+				return mainCheckout(info.root, info.commonDir, function(main)
+					done(main)
+				end)
 			end
 			try(i + 1)
 		end)
@@ -555,26 +573,27 @@ function M.currentRepository(path: string, done: Cb<{ id: string, checkout: stri
 			if not cd then
 				return done(nil, err1, cx1)
 			end
-			-- `<main>/.git` for a checkout and its linked worktrees; anything else (a bare repository) keeps the top level.
-			local checkout = string.match(trim(cd), "^(/.+)/%.git$") or root
-			rankedRemotes(root, function(names, err2, cx2)
-				if not names then
-					return done(nil, err2, cx2)
-				end
-				local function try(i: number, cxi: WindowCx?)
-					if i > #names then
-						return done(nil, root .. " has no github.com remote.", cxi)
+			-- `<main>/.git` for a checkout and its linked worktrees; otherwise the first record of `git worktree list`.
+			mainCheckout(root, trim(cd), function(checkout)
+				rankedRemotes(root, function(names, err2, cx2)
+					if not names then
+						return done(nil, err2, cx2)
 					end
-					git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
-						scan(lines(urls or ""), nil, cxu, function(id, cx3)
-							if id then
-								return done({ id = id, checkout = checkout }, nil, cx3)
-							end
-							try(i + 1, cx3)
+					local function try(i: number, cxi: WindowCx?)
+						if i > #names then
+							return done(nil, root .. " has no github.com remote.", cxi)
+						end
+						git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls, _, cxu)
+							scan(lines(urls or ""), nil, cxu, function(id, cx3)
+								if id then
+									return done({ id = id, checkout = checkout :: string }, nil, cx3)
+								end
+								try(i + 1, cx3)
+							end)
 						end)
-					end)
-				end
-				try(1, cx2)
+					end
+					try(1, cx2)
+				end)
 			end)
 		end)
 	end)
