@@ -981,6 +981,14 @@ end
 -- A `{name}` variable in a prompt: letters, dots between words (`{github.user}`), as tracker.VAR spells it.
 local VAR = "{([%a%.]+)}"
 
+-- The variables that hold a block Plotroom built, which keeps its own text inside it; every other value is made inert
+-- (prompts.inert) as it fills a prompt, so a title or name from GitHub or Jira cannot close or forge a block.
+local BUILT = { criteria = true, findings = true, failures = true }
+
+local function value(k: string, v: string): string
+	return if BUILT[k] then v else prompts.inert(v)
+end
+
 -- `{name}` variables a prompt may use, from the PR's coordinates and the host's fresh read of it; others stay as typed.
 -- `{flaky}` reads "none" from a host older than protocol 39, which does not send it.
 local function fill(prompt: string, owner: string, repo: string, n: number, a: any): string
@@ -996,7 +1004,10 @@ local function fill(prompt: string, owner: string, repo: string, n: number, a: a
 			vars[k] = a[k]
 		end
 	end
-	return (string.gsub(prompt, VAR, vars))
+	return (string.gsub(prompt, VAR, function(k: string): string
+		local v = vars[k]
+		return if v then value(k, v) else "{" .. k .. "}"
+	end))
 end
 
 -- An issue's prompt variables: the host's `vars` (strings only); others stay as typed.
@@ -1006,7 +1017,7 @@ local function fillVars(prompt: string, vars: any): string
 	end
 	return (string.gsub(prompt, VAR, function(k: string): string
 		local v = vars[k]
-		return if type(v) == "string" then v else "{" .. k .. "}"
+		return if type(v) == "string" then value(k, v) else "{" .. k .. "}"
 	end))
 end
 
