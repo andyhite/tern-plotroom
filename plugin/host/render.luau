@@ -599,6 +599,7 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 		local rows = groups[g[1]]
 		if #rows > 0 then
 			table.insert(count, g[2] .. " " .. #rows)
+			table.insert(done, ui.node("text", { key = g[1] .. "-head", spans = { ui.span(g[2] .. " " .. #rows, "muted") } }))
 			table.insert(done, grid(g[1], rows))
 		end
 	end
