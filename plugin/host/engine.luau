@@ -692,8 +692,8 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	return if M.reviewAsked(state, pr) then action("Review") else nil
 end
 
--- Whether the list shows `item`: everything except snoozed items (unless shown), though an agent that waits for input
--- always surfaces its item.
+-- Whether the list shows `item`: everything except snoozed items (unless shown; a snooze ends when the item changes),
+-- though an agent that waits for input always surfaces its item.
 function M.keep(state: State, kind: string, item: any): boolean
 	local shown = M.activeView(state)
 	if shown and M.isPin(shown.id) then
@@ -703,7 +703,7 @@ function M.keep(state: State, kind: string, item: any): boolean
 		return true
 	end
 	local store = M.store(state)
-	return not (store and triage.snoozed(store, item, os.time()))
+	return not (store and triage.snoozed(store, kind, item, os.time()))
 end
 
 -- How many of `snap`'s items a sidebar scope counts: those its list shows, so snoozed ones are left out (unless shown).
@@ -715,7 +715,7 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	local store = M.store(state)
 	local now = os.time()
 	for _, item in snap.items do
-		if M.needsYou(state, item.key) or not (store and triage.snoozed(store, item, now)) then
+		if M.needsYou(state, item.key) or not (store and triage.snoozed(store, snap.kind, item, now)) then
 			n += 1
 		end
 	end
@@ -918,7 +918,7 @@ function M.mark(state: State, act: string)
 		return state.cx:toast("error", "Not saved", err)
 	end
 	M.triageChanged(state) -- an item that left the list hands the selection to the row that took its place (ensureCursor)
-	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) else "Snooze ended", item.key)
+	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) .. ", or until it changes" else "Snooze ended", item.key)
 end
 
 -- The narrowest block, in terminal columns, that lays a Board out; a narrower one shows the List. Measured in real Tern
@@ -3505,7 +3505,7 @@ function M.nowRows(state: State): { any }
 			return -- a reason switched off lists nothing, even before Now is read again
 		end
 		taken[item.key] = true
-		local snoozed = store ~= nil and triage.snoozed(store, item, clock)
+		local snoozed = store ~= nil and triage.snoozed(store, kind, item, clock)
 		if snoozed and not state.showSnoozed then
 			return
 		end
@@ -3588,7 +3588,7 @@ function M.nowRows(state: State): { any }
 			local found = known[key]
 			taken[key] = true
 			local item = if found then found.item else { key = key }
-			local snoozed = store ~= nil and triage.snoozed(store, item, clock)
+			local snoozed = store ~= nil and triage.snoozed(store, if found then found.kind else nil, item, clock)
 			if not snoozed or state.showSnoozed then
 				table.insert(rows, { id = M.pickerId("n", key), key = key, rank = 5, notice = n, kind = if found then found.kind else nil, item = if found then found.item else nil, title = n.title, url = n.url, snoozed = snoozed })
 			end

@@ -1,11 +1,13 @@
 --!strict
 -- Triage memory for the queue: per item, the signature last marked seen and an optional snooze, in kv "triage".
+-- A snooze ends at `snoozeUntil` or, sooner, when the item's signature is no longer the one recorded as `snoozeSig`.
 -- Seen changes only through markSeen: the host calls it for the Mark seen action and when an item's preview is shown, never for an item that is merely listed or fetched.
 
 local M = {}
 
 -- `seenAt` is when markSeen last ran; `at` is when the entry was last written (seen or snoozed), for pruning.
-export type Entry = { seen: string?, seenAt: number?, snoozeUntil: number?, at: number }
+-- `snoozeSig` is the item's signature when it was snoozed (absent on a snooze saved before it was recorded: that one runs to its time).
+export type Entry = { seen: string?, seenAt: number?, snoozeUntil: number?, snoozeSig: string?, at: number }
 export type Store = { version: number, items: { [string]: Entry } }
 export type Status = { fresh: "new" | "changed" | "seen", snoozed: boolean, snoozeUntil: number? }
 
@@ -101,6 +103,7 @@ local function validate(v: any): string?
 			return BAD
 		end
 		if (e.seen ~= nil and (type(e.seen) ~= "string" or #e.seen > 64))
+			or (e.snoozeSig ~= nil and (type(e.snoozeSig) ~= "string" or #e.snoozeSig > 64))
 			or (e.snoozeUntil ~= nil and type(e.snoozeUntil) ~= "number")
 			or (e.seenAt ~= nil and type(e.seenAt) ~= "number") then
 			return BAD
@@ -165,30 +168,38 @@ function M.save(store: Store): string?
 	return if ok then nil else "Could not save triage state: " .. tostring(err)
 end
 
+-- Whether `e`'s snooze still holds for `item`: its time has not come and the item is as it was when snoozed. The
+-- signature is hashed only for an entry that has a snooze running. A nil `kind` (an item known by its key alone) has
+-- no signature to compare, so its snooze runs to its time.
+local function holds(e: Entry?, kind: string?, item: any, now: number): boolean
+	if not e or e.snoozeUntil == nil or now >= e.snoozeUntil then
+		return false
+	end
+	return e.snoozeSig == nil or kind == nil or e.snoozeSig == M.signature(kind, item)
+end
+
 function M.status(store: Store, kind: string, item: any, now: number): Status
 	local key = M.sanitizeKey(item.key)
 	local e = if key then store.items[key] else nil
+	local snoozed = holds(e, kind, item, now)
+	local until_ = if snoozed and e then e.snoozeUntil else nil
 	if not e or e.seen == nil then
-		return { fresh = "new", snoozed = e ~= nil and e.snoozeUntil ~= nil and now < e.snoozeUntil, snoozeUntil = if e then e.snoozeUntil else nil }
+		return { fresh = "new", snoozed = snoozed, snoozeUntil = until_ }
 	end
-	local snoozed = e.snoozeUntil ~= nil and now < e.snoozeUntil
-	return {
-		fresh = if e.seen == M.signature(kind, item) then "seen" else "changed",
-		snoozed = snoozed,
-		snoozeUntil = if snoozed then e.snoozeUntil else nil,
-	}
+	return { fresh = if e.seen == M.signature(kind, item) then "seen" else "changed", snoozed = snoozed, snoozeUntil = until_ }
 end
 
--- When `item`'s snooze ends, while it is snoozed now (nil otherwise): status without hashing the item's signature.
+-- When `item`'s snooze ends by the clock, while one runs (nil otherwise): no signature is hashed.
 function M.snoozeEnd(store: Store, item: any, now: number): number?
 	local key = M.sanitizeKey(item.key)
 	local e = if key then store.items[key] else nil
 	return if e and e.snoozeUntil and now < e.snoozeUntil then e.snoozeUntil else nil
 end
 
--- Whether `item` is snoozed now.
-function M.snoozed(store: Store, item: any, now: number): boolean
-	return M.snoozeEnd(store, item, now) ~= nil
+-- Whether `item` is snoozed now: it has a snooze running and has not changed since.
+function M.snoozed(store: Store, kind: string?, item: any, now: number): boolean
+	local key = M.sanitizeKey(item.key)
+	return holds(if key then store.items[key] else nil, kind, item, now)
 end
 
 local function entry(store: Store, item: any, now: number): Entry?
@@ -218,6 +229,7 @@ function M.snooze(store: Store, kind: string, item: any, untilTs: number, now: n
 	local e = entry(store, item, now)
 	if e then
 		e.snoozeUntil = untilTs
+		e.snoozeSig = M.signature(kind, item)
 	end
 end
 
@@ -225,6 +237,7 @@ function M.unsnooze(store: Store, key: string)
 	local e = store.items[key]
 	if e then
 		e.snoozeUntil = nil
+		e.snoozeSig = nil
 	end
 end
 

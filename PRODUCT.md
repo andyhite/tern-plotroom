@@ -65,7 +65,7 @@ The UI, README and reference use these words and no others for these things.
 | **Commands** | Plotroom's own menu, opened with `.`. Tern's own palette is **Tern's palette**. | command palette, menu |
 | **Open** | Show the item's web page in Tern's Browser beside the queue. Other destinations are named: **Go to tab**, **Go to agent**, **Open Git view**, **Show in Plotroom**. | Open in GitHub, preview, floating preview |
 | **Needs attention** | New or Changed and not snoozed, or its agent needs input. | attention filter |
-| **Snooze** | Hide an item until 08:00 tomorrow. | — |
+| **Snooze** | Hide an item until 08:00 tomorrow, or until it changes. | — |
 | **Refresh** | Read the view again now. | reload, sync |
 | **Draft review** | Findings an agent proposes for a pull request (comments on lines, a summary, a verdict), opened in Plotroom's review block beside that agent. You keep, edit or drop each one and send them back; the agent posts only what you sent. | proposal, suggested review |
 | **Board** | A view laid out in columns by stage instead of as a list. | kanban, columns |

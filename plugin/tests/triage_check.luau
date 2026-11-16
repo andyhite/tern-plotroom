@@ -51,6 +51,15 @@ function M.run()
 	assert(not triage.status(s, "prs", q, now + 100).snoozed)
 	triage.unsnooze(s, "o/r#9")
 	assert(not triage.status(s, "prs", q, now).snoozed)
+	-- a snooze ends early when the item is no longer as it was snoozed; one saved before that was recorded runs to its time
+	triage.snooze(s, "prs", q, now + 100, now)
+	assert(triage.snoozed(s, "prs", q, now))
+	local worse = pr({ key = "o/r#9", checks = "FAILURE" })
+	assert(not triage.status(s, "prs", worse, now).snoozed and not triage.snoozed(s, "prs", worse, now))
+	assert(triage.snoozed(s, nil, worse, now), "no kind, no signature to compare")
+	s.items["o/r#9"].snoozeSig = nil
+	assert(triage.snoozed(s, "prs", worse, now))
+	triage.unsnooze(s, "o/r#9")
 	-- snoozing a seen item keeps when it was seen: only markSeen moves seenAt
 	triage.markSeen(s, "prs", q, now)
 	assert(s.items["o/r#9"].seenAt == now)
