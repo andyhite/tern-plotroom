@@ -1,5 +1,5 @@
 --!strict
--- Pure assertions over triage.luau; no kv access (load/save are covered through validate/prune).
+-- Pure assertions over triage.luau; no kv access (load/save are covered in tests/cases/basics.luau, with the fake kv).
 
 local triage = require("../triage")
 
@@ -113,6 +113,89 @@ function M.run()
 	-- entries written before seenAt existed still load; a malformed seenAt does not
 	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = "s", snoozeUntil = 2 } } }) == nil)
 	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = "s", seenAt = "x" } } }) ~= nil)
+	-- a seen or snoozeSig longer than 64 is malformed, exactly 64 is not
+	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = string.rep("x", 65) } } }) ~= nil)
+	assert(triage.validate({ version = 1, items = { a = { at = 1, snoozeSig = string.rep("x", 65) } } }) ~= nil)
+	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = string.rep("x", 64), snoozeSig = string.rep("x", 64) } } }) == nil)
+	-- items as a JSON array (integer keys) is malformed
+	assert(triage.validate({ version = 1, items = { { at = 1 } } }) ~= nil)
+
+	-- an item whose key fails sanitizeKey is never recorded or snoozed
+	local nk = triage.empty()
+	for _, bad in { "a\nb", "" } do
+		local unkeyed = pr({ key = bad })
+		triage.markSeen(nk, "prs", unkeyed, now)
+		triage.snooze(nk, "prs", unkeyed, now + 100, now)
+		assert(next(nk.items) == nil, "no entry for an unkeyed item")
+		assert(triage.status(nk, "prs", unkeyed, now).fresh == "new")
+		assert(not triage.snoozed(nk, "prs", unkeyed, now) and triage.snoozeEnd(nk, unkeyed, now) == nil)
+	end
+	local nokey = pr()
+	nokey.key = nil
+	triage.markSeen(nk, "prs", nokey, now)
+	assert(next(nk.items) == nil, "no entry for an item without a key")
+
+	-- snoozeEnd: the clock end while a snooze runs, nil before one is set, after it ends, and once unsnoozed;
+	-- an item changed since the snooze still reports it (only the signature is skipped)
+	local se = triage.empty()
+	local sp = pr({ key = "o/r#20" })
+	assert(triage.snoozeEnd(se, sp, now) == nil)
+	triage.markSeen(se, "prs", sp, now)
+	triage.snooze(se, "prs", sp, now + 100, now)
+	assert(triage.snoozeEnd(se, sp, now) == now + 100)
+	assert(triage.snoozeEnd(se, sp, now + 100) == nil, "ends at the time")
+	local sc = pr({ key = "o/r#20", checks = "FAILURE" })
+	assert(triage.snoozeEnd(se, sc, now) == now + 100, "snoozeEnd ignores the signature")
+	-- seen + changed + snoozed: the snooze is over (the item changed), but it still reads changed
+	local stc = triage.status(se, "prs", sc, now)
+	assert(stc.fresh == "changed" and not stc.snoozed and stc.snoozeUntil == nil)
+	assert(not triage.snoozed(se, "prs", sc, now))
+	local stu = triage.status(se, "prs", sp, now)
+	assert(stu.fresh == "seen" and stu.snoozed and stu.snoozeUntil == now + 100)
+	triage.unsnooze(se, "o/r#20")
+	assert(triage.snoozeEnd(se, sp, now) == nil)
+
+	-- prune: equal `at` falls back to the key, smaller key dropped first
+	local tie = triage.empty()
+	for n = 1, triage.CAP + 2 do
+		tie.items[string.format("k%05d", n)] = { at = 7 }
+	end
+	triage.prune(tie, now)
+	assert(tie.items["k00001"] == nil and tie.items["k00002"] == nil and tie.items["k00003"] ~= nil)
+	-- a snooze that has run out is no longer protected from pruning
+	local lapsed = triage.empty()
+	for n = 1, triage.CAP + 1 do
+		lapsed.items["k" .. n] = { at = n + 10 }
+	end
+	lapsed.items["old"] = { at = 1, snoozeUntil = now - 1 }
+	triage.prune(lapsed, now)
+	assert(lapsed.items["old"] == nil, "an ended snooze is pruned by age")
+
+	-- signatures: every field the item kind lists moves it, and only those
+	local base = pr()
+	local sig = triage.signature("prs", base)
+	for _, over in ({
+		{ draft = true }, { files = 4 }, { runTotal = 3 }, { comments = 2 }, { additions = 9 }, { labels = { "a" } },
+		{ assignees = { "me" } }, { headSha = "def" }, { state = "MERGED" },
+	} :: { { [string]: any } }) do
+		assert(triage.signature("prs", pr(over)) ~= sig, "pr signature moves")
+	end
+	assert(triage.signature("prs", pr({ updated = "2027-01-01" })) == sig, "a PR's updated is not part of its signature")
+	local ib: { [string]: any } = { key = "o/r#7", state = "open", title = "x", status = { text = "To Do" }, updated = 0 }
+	local function issue(over: { [string]: any }): { [string]: any }
+		local t = table.clone(ib)
+		for k, v in over do
+			t[k] = v
+		end
+		return t
+	end
+	local isig = triage.signature("issues", ib)
+	for _, over in ({
+		{ comments = 2 }, { labels = { "bug" } }, { assignees = { "me" } }, { category = "done" }, { reason = "r" }, { updated = 5 },
+	} :: { { [string]: any } }) do
+		assert(triage.signature("issues", issue(over)) ~= isig, "issue signature moves")
+	end
+	assert(triage.signature("issues", issue({ labels = { "b", "a" } })) == triage.signature("issues", issue({ labels = { "a", "b" } })))
 end
 
 return M

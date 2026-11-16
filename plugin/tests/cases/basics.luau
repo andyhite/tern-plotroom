@@ -334,4 +334,56 @@ case("input: selection collapses, extends by word, and meta word keys are not ha
 	eq(input.selected(n), "foo bar", "ctrl+a still selects everything")
 end)
 
+-- ---- triage.luau: load/save against the kv store
+
+type Triage = typeof(require("../../triage"))
+
+case("triage: load reads an absent store as empty, a saved one back, and refuses a failing or malformed one", function(w: World)
+	local triage = w.load("triage") :: Triage
+	local s, why = triage.load()
+	yes(s ~= nil and why == nil and next((s :: any).items) == nil, "no store yet: an empty one, no problem")
+
+	w.kv.put("triage", { version = 1, items = { ["o/r#1"] = { at = 5, seen = "abc" } } })
+	s, why = triage.load()
+	eq((s :: any).items["o/r#1"].seen, "abc", "a saved store reads back")
+
+	w.kv.failGet["triage"] = "disk gone"
+	s, why = triage.load()
+	eq(s, nil, "a read error gives no store")
+	eq(why, "Saved triage state could not be read: disk gone", "the read error is reported")
+	w.kv.failGet["triage"] = nil :: any
+
+	for _, bad in ({ { version = 2, items = {} }, { version = 1, items = { a = { at = "x" } } }, "text" } :: { any }) do
+		w.kv.put("triage", bad)
+		s, why = triage.load()
+		eq(s, nil, "a malformed store gives no store")
+		eq(why, "Saved triage state is malformed; not overwriting it.", "the malformed message")
+	end
+end)
+
+case("triage: save prunes before it validates, refuses a malformed store and reports a kv error", function(w: World)
+	local triage = w.load("triage") :: Triage
+	local big = triage.empty()
+	for n = 1, triage.CAP + 3 do
+		big.items["k" .. n] = { at = n }
+	end
+	eq(triage.save(big), nil, "over the cap is pruned first, so it validates")
+	local saved: any = w.kv.get("triage")
+	local count = 0
+	for _ in saved.items do
+		count += 1
+	end
+	eq(count, triage.CAP, "the saved store is at the cap")
+	yes(saved.items["k1"] == nil and saved.items["k4"] ~= nil, "the oldest went")
+
+	local before = w.kv.store["triage"]
+	local bad: any = { version = 2, items = {} }
+	eq(triage.save(bad), "Saved triage state is malformed; not overwriting it.", "save refuses it")
+	eq(w.kv.store["triage"], before, "a malformed store is not written")
+
+	w.kv.failSet["triage"] = "disk full"
+	eq(triage.save(triage.empty()), "Could not save triage state: disk full", "the kv error is reported")
+	eq(w.kv.store["triage"], before, "a failed write leaves the store as it was")
+end)
+
 return {}
