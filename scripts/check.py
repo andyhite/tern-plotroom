@@ -6,6 +6,7 @@
     python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only
     python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only (`test` also checks plugin.toml's version has a CHANGELOG.md entry)
     python3 scripts/check.py bench      1000-PR queue render benchmark only
+    python3 scripts/check.py ext        the omp extension (plugin/omp/plotroom.ts) over its fixtures only
     python3 scripts/check.py smoke      isolated headless Tern + real git only
     python3 scripts/check.py tools      download the pinned Luau and luau-lsp (sha256-verified)
 
@@ -17,6 +18,9 @@ types   luau-lsp analyze --platform standard against scripts/tern-0.9.13.d.luau 
         `tern plugin types` writes), over plugin/**/*.luau (subfolders included). Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
 bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
+ext     plugin/tests/extension.ts, run by bun (else node >= 23.6, which strips types): the omp extension's two tools
+        over the fixtures it shares with its Luau readers (plugin/tests/extension.luau; the `test` stage reads them
+        back in Luau). NOT RUN when neither runtime is on PATH.
 smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
@@ -75,6 +79,10 @@ TOOLS = {
 
 class GateError(Exception):
     """A check failed or a prerequisite is missing; the message says what to do."""
+
+
+class NotRun(Exception):
+    """A check that needs a runtime this machine lacks; the message says which."""
 
 
 def say(message: str = "") -> None:
@@ -405,6 +413,31 @@ def check_version() -> str:
     return "plugin %s is in CHANGELOG.md" % version.group(1)
 
 
+def ext_runtime() -> List[str]:
+    """bun, else node 23.6 or newer (it runs .ts files as they are); [] when neither is on PATH."""
+    bun = shutil.which("bun")
+    if bun:
+        return [bun]
+    node = shutil.which("node")
+    version = re.match(r"v(\d+)\.(\d+)", run([node, "--version"]).stdout) if node else None
+    return [node] if node and version and (int(version.group(1)), int(version.group(2))) >= (23, 6) else []
+
+
+def check_ext() -> str:
+    runtime = ext_runtime()
+    if not runtime:
+        raise NotRun("needs bun, or node 23.6 or newer, on PATH")
+    banner = run(runtime + ["--version"]).stdout.strip()
+    say("ext: %s %s" % (runtime[0], banner))
+    done = run(runtime + [str(PLUGIN / "tests" / "extension.ts")], cwd=str(ROOT), timeout=300)
+    sys.stdout.write(done.stdout)
+    sys.stderr.write(done.stderr)
+    match = re.search(r"^EXT cases=(\d+) failed=(\d+)$", done.stdout, re.M)
+    if done.returncode != 0 or not match or int(match.group(2)) != 0:
+        raise GateError("plugin/tests/extension.ts failed (exit %d)" % done.returncode)
+    return "%s extension cases (%s %s)" % (match.group(1), Path(runtime[0]).name, banner)
+
+
 def load_smoke():
     sys.modules.setdefault("check", sys.modules[__name__])  # run as __main__: smoke.py must share this module's GateError
     import smoke
@@ -437,14 +470,16 @@ def summarize(results: List[Tuple[str, str, str]]) -> int:
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write("### Plotroom gate\n\n```\n%s\n%s\n```\n" % ("\n".join(lines), verdict))
-    if skipped and os.environ.get("GITHUB_ACTIONS") == "true":
-        say("::notice title=Plotroom gate::%s NOT RUN: real-Tern smoke needs Tern, which is not available on CI" % ", ".join(skipped))
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for name, status, detail in results:
+            if status == "NOT RUN":
+                say("::notice title=Plotroom gate::%s NOT RUN: %s" % (name, detail))
     return 1 if failed else 0
 
 
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Plotroom verification gate", formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", nargs="?", default="all", choices=["all", "test", "types", "bench", "smoke", "tools"])
+    parser.add_argument("command", nargs="?", default="all", choices=["all", "test", "types", "bench", "ext", "smoke", "tools"])
     parser.add_argument("--ci", action="store_true", help="skip the real-Tern smoke and say so (Tern is not available on CI)")
     args = parser.parse_args(argv)
 
@@ -465,6 +500,8 @@ def main(argv: List[str]) -> int:
         plan.append(("types", check_types))
     if args.command in ("all", "bench"):
         plan.append(("bench", check_bench))
+    if args.command in ("all", "ext"):
+        plan.append(("ext", check_ext))
     results: List[Tuple[str, str, str]] = []
     if args.command in ("all", "smoke") and not args.ci:
         plan.append(("smoke", load_smoke().check_smoke))
@@ -478,6 +515,9 @@ def main(argv: List[str]) -> int:
         except GateError as error:
             say("%s: FAIL: %s" % (name, error))
             results.append((name, "FAIL", str(error)))
+        except NotRun as why:
+            say("%s: NOT RUN: %s" % (name, why))
+            results.append((name, "NOT RUN", str(why)))
         except subprocess.TimeoutExpired as error:
             say("%s: FAIL: timed out: %s" % (name, error))
             results.append((name, "FAIL", "timed out"))

@@ -18,7 +18,7 @@ local M = {}
 
 -- The tool (plugin/omp/plotroom.ts) caps texts in UTF-16 units and the file at FILE_BYTES; UTF-8 takes at most 3 bytes
 -- per UTF-16 unit, so its largest proposal (100 comments of 10000-unit bodies and suggestions, all CJK) is ~6.4 MB.
-local FILE_BYTES = 8 * 1000 * 1000
+M.FILE_BYTES = 8 * 1000 * 1000 -- tests/extension.luau's `file`: plotroom.ts writes no larger file
 local SUMMARY_BYTES, BODY_BYTES, PATH_BYTES = 3 * 20000, 3 * 10000, 3 * 1000
 local DIFF_BYTES = 20 * 1000 * 1000 -- a diff over this is not read (the comments are listed without their lines)
 local CONTEXT = 8 -- rows of diff a comment's card shows around its line
@@ -300,7 +300,7 @@ end
 -- When run `run`'s Draft review file was written (its `at`), nil when there is none it can read: the window's
 -- `review` request, which opens the block on a newer one.
 function M.fileAt(run: string): string?
-	local ok, raw = pcall(tern.fs.read, M.fileOf(run), FILE_BYTES)
+	local ok, raw = pcall(tern.fs.read, M.fileOf(run), M.FILE_BYTES)
 	local p = if ok then M.parse(raw) else nil
 	return if p then p.at else nil
 end
@@ -344,7 +344,7 @@ end
 -- one that cannot be read drops the proposal it replaced (and anything it had in flight), so Send never posts it.
 -- Then the pull request's head and base (gh) and the diff the review is about (git, where the agent worked).
 local function load(state: State)
-	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), FILE_BYTES)
+	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), M.FILE_BYTES)
 	local p, why: string? = nil, "There is no Draft review for this run on this host."
 	if ok then
 		p, why = M.parse(raw)

@@ -40,8 +40,8 @@ Invariants (keep when editing):
 
 ## Key Directories
 
-- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled or checked by `check.py`; the host publishes its path as the hidden `main.omp` node) and `omp/fork.yml` (the `omp --config` overlay an agent on a fork's worktree starts with; its path is `main.omp`'s `fork`).
-- `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
+- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled; `check.py ext` runs it; the host publishes its path as the hidden `main.omp` node) and `omp/fork.yml` (the `omp --config` overlay an agent on a fork's worktree starts with; its path is `main.omp`'s `fork`).
+- `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git), `extension.luau` (the fixtures `omp/plotroom.ts` and its Luau readers share, as JSON) and `extension.ts` (runs the extension's tools over them).
 - `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.13.d.luau` (pinned SDK type snapshot of Tern 0.9.13, Plotroom's minimum, sha256-checked).
 - `docs/` — `reference.md` (the user-facing behavior spec) and `images/` (README screenshots; not shipped).
 - `.github/workflows/check.yml` — CI.
@@ -51,8 +51,8 @@ Invariants (keep when editing):
 ```sh
 tern plugin link ./plugin          # install for local use
 python3 scripts/check.py tools     # download pinned luau 0.743 + luau-lsp 1.70.1 (macOS / Linux x86_64)
-python3 scripts/check.py           # all: test + types + bench + smoke
-python3 scripts/check.py test      # regression suite only (also: types | bench | smoke)
+python3 scripts/check.py           # all: test + types + bench + ext + smoke
+python3 scripts/check.py test      # regression suite only (also: types | bench | ext | smoke)
 python3 scripts/check.py --ci      # what CI runs: smoke reported NOT RUN
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
@@ -114,6 +114,7 @@ end)
 - Prefer behavioral assertions (rendered text, argv, kv contents, toasts). Case names are prefixed by module.
 - Pure helpers with no SDK dependency go in `plugin/tests/check.luau` (bare `assert`), which runs in the bundle and in-app via the `selftest` palette command.
 - No coverage tool. Bench rows (`BENCH <name> ms=…`, 1000 PRs) must stay under budget. Smoke (`scripts/smoke.py`) covers real-git worktree scenarios and real Plotroom blocks with a fake gh; its scenarios are listed in `SCENARIOS` in `scripts/smoke.py` (see its header).
+- `ext` runs `plugin/tests/extension.ts` with bun (else node ≥ 23.6) and is NOT RUN without either: it calls the extension's two tools on every input in `tests/extension.luau` and expects its `out` or `refused`; `cases/extension.luau` reads every `out` back through `usage.reportOf` and `host/review`'s parse. A cap or rule changed in `omp/plotroom.ts` or in a Luau reader changes that fixture too. No type check: omp runs the file with its types stripped.
 - Fake-SDK window cases that need the host's answers use `linkQueue`/`agentScene`, which `w.link` a real host block to the window's pane.
 - A block probes `gh --version` and `acli --version` before listing any view: `newWorld` answers them (installed, with sprints) unless a model (`newGh`, `newAcli`) answers first; `hx.uninstalled(w, program)` makes one fail to start.
 - Host scenes save fixture views (ungrouped, unsorted) unless the case saved that store first; a case about default views clears `views-prs`/`views-issues` first.

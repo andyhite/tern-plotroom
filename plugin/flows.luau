@@ -947,7 +947,9 @@ end
 -- The agent pane `agent`'s omp chat transcript, whole (the settle wait counts its prompts from the start); nil when it
 -- cannot be read. ponytail: one full read per settle try (at most SETTLE_TRIES + 1 per turn end); read a window and align
 -- it if long chats make that slow.
-local REPORT_TOOL, REPORT_TITLE, REPORT_BYTES, ALL_MSGS = "plotroom_report", "Plotroom: report", 64 * 1024, 1000000
+-- REPORT_BYTES: the largest plotroom_report result text read (tests/extension.luau's `reportText`).
+local REPORT_TOOL, REPORT_TITLE, ALL_MSGS = "plotroom_report", "Plotroom: report", 1000000
+M.REPORT_BYTES = 64 * 1024
 local function transcriptOf(cx: WindowCx, agent: number): { any }?
 	local ok, msgs = pcall(function()
 		return cx.agents:transcript(agent, { last = ALL_MSGS })
@@ -1018,7 +1020,7 @@ local function turnReport(msgs: { any }?): any
 		for j = #tools, 1, -1 do
 			local t: any = tools[j]
 			if type(t) == "table" and (t.name == REPORT_TOOL or t.title == REPORT_TITLE) and t.status == "done" then
-				if type(t.text) ~= "string" or #t.text > REPORT_BYTES then
+				if type(t.text) ~= "string" or #t.text > M.REPORT_BYTES then
 					return nil
 				end
 				local decoded, r = pcall(tern.json.decode, string.match(t.text, "^[^\n]*") :: string)

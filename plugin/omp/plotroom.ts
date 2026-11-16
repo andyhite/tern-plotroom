@@ -36,7 +36,8 @@ const PATH_CAP = 1000;
 const COMMENTS_CAP = 100;
 const LINE_CAP = 10_000_000;
 // The largest Draft review file the block reads (plugin/host/review.luau FILE_BYTES). The caps above keep a proposal
-// under it; write() refuses one over it rather than leave a file the block cannot read.
+// under it; write() refuses one over it rather than leave a file the block cannot read. These caps and rules are
+// checked against the Luau readers over shared fixtures: plugin/tests/extension.luau (`python3 scripts/check.py ext`).
 const FILE_BYTES = 8_000_000;
 
 export const VERDICTS = ["comment", "approve", "request_changes"] as const;
