@@ -22,6 +22,10 @@ local RULES: { { pattern: string, error: boolean } } = {
 	{ pattern = "^##%[group%]", error = false }, -- an Actions step
 	{ pattern = "^%-%-%- FAIL", error = true }, -- go test
 	{ pattern = "^##%[%a+%]", error = false }, -- any other Actions marker
+	{ pattern = "%f[%a]ERROR%f[%A]", error = true }, -- ERROR: x (pip, CI scripts), [ERROR] x (Maven)
+	{ pattern = "%a+Error[%s:%[]", error = true }, -- TypeError: x, AssertionError: x, CompileError
+	{ pattern = "Exception%f[%A]", error = true }, -- Exception in thread "main", java.lang.NullPointerException
+	{ pattern = "✖", error = true }, -- ESLint's summary mark
 	{ pattern = "%f[%a][Ee]rror[%s:%[]", error = true }, -- Error:, error[E0308], error TS…
 	{ pattern = "error TS%d", error = true },
 	{ pattern = "FAIL", error = true },

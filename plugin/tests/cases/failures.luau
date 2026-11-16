@@ -107,6 +107,18 @@ case("logs: a failed log keeps the lines around its errors, marks the rest as ga
 	eq(#logs.refs(many, { "src/app.ts" }), 5, "at most 5 changed-file lines")
 end)
 
+case("logs: typed errors, ERROR, [ERROR], Exception lines and the ✖ mark read as error lines, a heading naming one does not", function(w: World)
+	local logs = w.load("logs") :: any
+	local function first(text: string): string?
+		return logs.parse("job\tstep\t2026-01-01T00:00:00Z ok\njob\tstep\t2026-01-01T00:00:00Z " .. text .. "\njob\tstep\t2026-01-01T00:00:00Z after")[1].first
+	end
+	for _, text in { "ValueError: bad", "TypeError: x", "AssertionError: x", "CompileError x", "ERROR: x", "[ERROR] x", "Exception in thread \"main\" java.lang.IllegalStateException", "java.lang.NullPointerException", "✖ 3 problems" } do
+		eq(first(text), text, text .. " is an error line")
+	end
+	eq(first("##[group]ERROR handling"), nil, "a step heading that names an error stays a heading")
+	eq(first("all fine, no exceptions"), nil, "plain prose is not one")
+end)
+
 case("logs: the {failures} block fits its cap, names each check and cannot be closed from a log", function(w: World)
 	local logs = w.load("logs") :: any
 	local long: { string } = {}
