@@ -2284,10 +2284,11 @@ windowCase("worktree.premerge: only an action with Merge the base first merges; 
 		h.promptOf("p1", "Untangle", "Resolve the merge conflicts in {url}"),
 		{ id = "p2", name = "Land it", text = "Land {url}", premerge = true },
 	})
-	local s = watchConflicted(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "Why does CI conflict with the lockfile on {url}?"
+	local s, b = watchConflicted(w)
+	w.window.choose = "Type a prompt…"
 	w.click(h.prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "Why does CI conflict with the lockfile on {url}?")
 	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, false, "a typed prompt that says conflict asks for no merge")
 	lacks(w.window.agents[1].prompt, "<merge>", "and gets no merge block")
 	w.window.choose = { "Start another agent", "Untangle" }
