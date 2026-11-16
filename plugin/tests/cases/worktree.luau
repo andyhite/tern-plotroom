@@ -2116,6 +2116,17 @@ local function ranAt(w: World, from: number, line: string): Call?
 	return nil
 end
 
+-- The last toast whose title starts with `prefix`, or nil.
+local function toastFrom(w: World, prefix: string): any
+	local found: any = nil
+	for _, t in w.toasts do
+		if string.sub(t.text, 1, #prefix) == prefix then
+			found = t
+		end
+	end
+	return found
+end
+
 windowCase("worktree.premerge: before Watch resolves conflicts, Plotroom merges the base, regenerates a conflicted lockfile in its folder from the base, and commits when nothing else conflicts; nothing is pushed", function(w: World)
 	local s = watchConflicted(w)
 	local unmerged = mergeModel(w, s, { "web/package-lock.json" }, { npm = { stdout = "up to date\n" } })
@@ -2140,6 +2151,9 @@ windowCase("worktree.premerge: before Watch resolves conflicts, Plotroom merges 
 	has(text, "<merge>\nPlotroom merged `origin/main` into this branch before you started and committed the merge; it is not pushed. Lockfiles taken from the base and regenerated: `web/package-lock.json`.", "the agent is told the merge is done")
 	has(text, "Do not rebase onto `origin/main`.", "and not to redo it")
 	lacks(text, "Still conflicted", "no conflict is left for it")
+	local toast = toastFrom(w, "Merged ")
+	eq(if toast then toast.text else nil, "Merged origin/main into o/r#5's worktree", "a toast names what was merged, and where")
+	eq(if toast then toast.sub else nil, "Regenerated web/package-lock.json. Committed, not pushed.", "and the lockfiles it regenerated, committed and not pushed")
 end)
 
 windowCase("worktree.premerge: a regenerated go.sum is staged with its folder's go.mod, which go mod tidy also rewrites, so the committed merge carries both", function(w: World)
@@ -2218,6 +2232,9 @@ windowCase("worktree.premerge: a conflict Plotroom cannot settle (a source file,
 	has(text, "Still conflicted; resolve each preserving both sides' intent:\n- `go.sum` (Plotroom's lockfile tool failed: go mod tidy failed: go: updates to go.mod needed)\n- `src/app.ts`\n- `yarn.lock`", "and every file left, the failed tool said")
 	has(text, "Then `git commit --no-edit` to finish the merge", "and how to finish it")
 	eq(w.window.agents[1].cwd, s.target, "in the worktree")
+	local toast = toastFrom(w, "Merging ")
+	eq(if toast then toast.text else nil, "Merging origin/main into o/r#5's worktree stopped at conflicts", "the toast says the merge stopped")
+	eq(if toast then toast.sub else nil, "Regenerated Cargo.lock. Left for the agent: go.sum, src/app.ts, yarn.lock.", "and what is left for the agent")
 end)
 
 windowCase("worktree.premerge: no merge for an action that does not resolve conflicts, a PR GitHub does not report conflicting, or a dirty worktree", function(w: World)
@@ -2260,6 +2277,47 @@ windowCase("worktree.premerge: a fork PR is never merged into before its agent s
 	end
 	lacks(w.window.agents[1].prompt, "<merge>", "the agent resolves the conflict itself")
 	eq(w.window.agents[1].cwd, s.target, "in the fork's worktree")
+end)
+
+windowCase("worktree.premerge: only an action with Merge the base first merges; a typed prompt or another action that says conflict does not", function(w: World)
+	h.savePrompts(w, {
+		h.promptOf("p1", "Untangle", "Resolve the merge conflicts in {url}"),
+		{ id = "p2", name = "Land it", text = "Land {url}", premerge = true },
+	})
+	local s = watchConflicted(w)
+	w.window.choose, w.window.typed = "Type a prompt…", "Why does CI conflict with the lockfile on {url}?"
+	w.click(h.prLink("agent", "o/r", 5))
+	w.flush()
+	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, false, "a typed prompt that says conflict asks for no merge")
+	lacks(w.window.agents[1].prompt, "<merge>", "and gets no merge block")
+	w.window.choose = { "Start another agent", "Untangle" }
+	w.click(h.prLink("agent", "o/r", 5))
+	w.flush()
+	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, false, "a saved action that says conflict but has the setting off asks for no merge")
+	lacks(w.window.agents[2].prompt, "<merge>", "and gets no merge block")
+	eq(countLog(s.git, "merge "), 0, "git merge never ran")
+	mergeModel(w, s, {}, {})
+	w.window.choose = { "Start another agent", "Land it" }
+	w.click(h.prLink("agent", "o/r", 5))
+	w.flush()
+	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, true, "an action with the setting on asks for the merge, whatever its text says")
+	has(w.window.agents[3].prompt, "<merge>\nPlotroom merged `origin/main` into this branch", "and the base is merged before its agent starts")
+end)
+
+windowCase("worktree.premerge: a merge that cannot start (the base cannot be fetched) toasts why, and the agent still starts with no merge block", function(w: World)
+	local s = watchConflicted(w)
+	w.respond(function(call: Call): Reply?
+		local a = call.argv
+		return if a[1] == "git" and table.find(a, "fetch") and table.find(a, "+refs/heads/main:refs/remotes/origin/main") then { status = 128, stderr = "fatal: couldn't find remote ref main\n" } else nil
+	end)
+	runWatch(w)
+	eq(countLog(s.git, "merge "), 0, "nothing was merged")
+	local toast = toastFrom(w, "Could not merge")
+	yes(toast ~= nil, "a toast says the base was not merged")
+	eq(if toast then toast.level else nil, "error", "as an error")
+	eq(if toast then toast.text else nil, "Could not merge the base into o/r#5's worktree", "naming the worktree")
+	has(if toast then toast.sub else "", "couldn't find remote ref main", "and why")
+	lacks(w.window.agents[1].prompt, "<merge>", "the agent starts with no merge block")
 end)
 
 return {}

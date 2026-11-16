@@ -12,8 +12,9 @@ local M = {}
 
 -- `checker` (nil: none) is the id of the seed of the same kind that checks its runs (an action's Checked by). `next`
 -- (nil: none) names its Next action the same way, a pull request seed as "prs:<seed id>"; host/storage's seedNext
--- resolves it by name. `model` nil: omp's default; `split` true: opens beside the queue.
-export type Seed = { id: string, name: string, text: string, worktree: boolean?, split: boolean?, model: string?, outcome: string?, checker: string?, next: string? }
+-- resolves it by name. `model` nil: omp's default; `split` true: opens beside the queue; `premerge` true: Merge the
+-- base first (host/core's Prompt).
+export type Seed = { id: string, name: string, text: string, worktree: boolean?, split: boolean?, model: string?, outcome: string?, checker: string?, next: string?, premerge: boolean? }
 
 -- What an action's run must leave behind (an action's Outcome, PRODUCT.md › Glossary › Outcome), in the order Settings
 -- lists them. Plotroom checks it against GitHub when the run's turn ends; "none" is never checked. A saved action
@@ -553,7 +554,7 @@ M.prs = {
 	-- The same review as Review, minus the worktree and running code: same model.
 	{ id = "p2", name = "Quick review", text = QUICK_REVIEW, worktree = false, split = true, model = "@slow", outcome = "review" },
 	{ id = "p3", name = "Address feedback", text = ADDRESS, outcome = "replied" },
-	{ id = "p4", name = "Watch", text = WATCH, outcome = "merged" },
+	{ id = "p4", name = "Watch", text = WATCH, outcome = "merged", premerge = true },
 } :: { Seed }
 
 M.issues = {

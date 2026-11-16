@@ -465,6 +465,14 @@ local function pageContent(state: State): ({ any }, { Node })
 						options = tern.json.array({ { value = "tab", label = "New tab" }, { value = "split", label = "Beside the queue" } }),
 					},
 				})
+				if kind.id == "prs" then
+					row({
+						id = "ppremerge:" .. qid,
+						label = "Merge the base first",
+						hint = "When GitHub reports a conflict, merge the base into the clean worktree before the agent starts; never a fork's",
+						control = { k = "switch", on = p.premerge == true },
+					})
+				end
 				local outcomes: { any } = {}
 				for _, o in require("../prompts").OUTCOMES do
 					table.insert(outcomes, { value = o.id, label = o.label })
@@ -1312,6 +1320,15 @@ function M.setValue(state: State, row: string, value: any)
 			end
 			return nil
 		end)
+	elseif kind == "ppremerge" then
+		if switched == nil then
+			return
+		end
+		local on: boolean = switched
+		s.errors[row] = editPrompt(state, id, function(_, p)
+			p.premerge = on
+			return nil
+		end)
 	elseif kind == "vgroup" or kind == "vkind" then
 		local view = viewOf(state, id)
 		if not view or not choice then
@@ -1609,7 +1626,7 @@ function M.runAction(state: State, act: string, row: string)
 			s.errors[row] = editPrompts(kind, function(store: Prompts): string?
 				local added: { [Prompt]: PromptSeed } = {} -- an added default -> its seed
 				for _, d in require("../prompts").missing(kind.prompts, store.items) do
-					local p: Prompt = { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, split = d.split, model = d.model, outcome = d.outcome }
+					local p: Prompt = { id = "p" .. store.nextId, name = d.name, text = d.text, worktree = d.worktree, split = d.split, model = d.model, outcome = d.outcome, premerge = d.premerge }
 					table.insert(store.items, p)
 					store.nextId += 1
 					added[p] = d
@@ -2105,6 +2122,7 @@ local function changedActions(kind: Kind, items: { Prompt }, prItems: { Prompt }
 			or d.text ~= p.text
 			or (d.worktree ~= false) ~= (p.worktree ~= false)
 			or (d.split == true) ~= (p.split == true)
+			or (d.premerge == true) ~= (p.premerge == true)
 			or d.model ~= p.model
 			or p.effort ~= nil
 			or p.status ~= nil

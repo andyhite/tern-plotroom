@@ -3253,6 +3253,45 @@ case("host: an action saved with the removed carly field still loads, kv is left
 	eq(w.kv.get("prompts-prs").items[1].carly, nil, "and the saved action has no carly field")
 end)
 
+case("host: Merge the base first is a pull request action's switch, on for the default Watch only; an action saved before it takes it from the default of its name, and the menu says it", function(w: World)
+	issueHost(w)
+	w.kv.put("prompts-prs", { version = 1, nextId = 3, items = array({ promptOf("p1", "Watch", "Watch {url}"), promptOf("p2", "Untangle", "Resolve the merge conflicts in {url}") }) })
+	local b = openIssues(w)
+	pickScope(b, "prs:v1")
+	w.flush()
+	local function premerges(id: string): { any }
+		request(b, id, { op = "menu" })
+		w.flush()
+		local out: { any } = {}
+		for _, it in answerOf(b, id).items do
+			table.insert(out, it.premerge or false)
+		end
+		return out
+	end
+	same(premerges("m1"), { true, false }, "a Watch saved before the setting takes the default Watch's; an action that only says conflicts does not merge")
+	eq(w.kv.get("prompts-prs").items[1].premerge, nil, "loading writes nothing")
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p2")
+	local row = rowIn(b, "ppremerge:prs:p2")
+	eq(row.label, "Merge the base first", "the row's label")
+	eq(row.control.k, "switch", "a switch")
+	eq(row.control.on, false, "off for an action that is not Watch")
+	b.event({ ev = "change", id = "layer.settings", item = "ppremerge:prs:p2", value = true })
+	eq(w.kv.get("prompts-prs").items[2].premerge, true, "switching it on saves it")
+	eq(w.kv.get("prompts-prs").items[1].premerge, true, "and the save writes out the Watch's")
+	expand(b, "popen:prs:p1")
+	eq(rowIn(b, "ppremerge:prs:p1").control.on, true, "the Watch's row shows it on")
+	b.event({ ev = "change", id = "layer.settings", item = "ppremerge:prs:p1", value = false })
+	eq(w.kv.get("prompts-prs").items[1].premerge, false, "switched off, saved off: no longer read from the default")
+	b.press("escape")
+	pickScope(b, "prs:v1")
+	w.flush()
+	same(premerges("m2"), { false, true }, "the menu follows the switches")
+	goToSettings(b, "prompts")
+	expand(b, "popen:issues:p1")
+	eq(rowIn(b, "ppremerge:issues:p1"), nil, "an issue action has no such row")
+end)
+
 case("host: the issue's commands, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
 	leaveIssueWt(w, issueHost(w), 12)
 	saveIssuePrompts(w, {

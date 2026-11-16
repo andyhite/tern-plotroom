@@ -182,6 +182,7 @@ local function menuRows(state: State, only: string?, withText: boolean): ({ any 
 			next = p.next, -- the action that starts when its agent finishes
 			outcome = p.outcome, -- what its run must leave behind (prompts.OUTCOMES); omitted: none
 			checker = p.checker, -- the action a fresh agent runs to check a run of it that ends with a commit
+			premerge = if p.premerge then true else nil, -- Merge the base first; omitted: off
 			key = p.key,
 		})
 	end
@@ -348,8 +349,8 @@ end
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
 -- and `failures` the `{failures}` block, for the prompt that runs there; it always carries `{flaky}` (engine.flakyText).
--- `premerge`: an agent will resolve conflicts there, so a clean worktree of a PR GitHub reports conflicting first gets
--- its base merged (worktree.premerge), and the answer carries what that did (`merge`).
+-- `premerge`: the action says Merge the base first, so a clean worktree of a PR GitHub reports conflicting first gets
+-- its base merged (worktree.premerge), and the answer carries what that did (`merge`) or why it did not (`mergeProblem`).
 local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
 	local key = string.lower(repo) .. "#" .. n
@@ -403,7 +404,8 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					noteWorktree(state, key, "prs", nil, why)
 					return reply(state, id, { problem = why })
 				end
-				local function answer(merge: worktree.Merge?)
+				-- `mergeProblem`: the premerge did not happen (its fetch or merge failed; the branch is as it was).
+				local function answer(merge: worktree.Merge?, mergeProblem: string?)
 					local current = r.head == r.prHead
 					local summary = worktree.describe(r)
 					noteWorktree(state, key, "prs", {
@@ -436,6 +438,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						flaky = engine.flakyText(state, key),
 						failures = failed,
 						merge = merge,
+						mergeProblem = mergeProblem,
 					})
 				end
 				-- A fork's code is not trusted: its git hooks and lockfile tools (a Gemfile, a .pnpmfile.cjs, a build
@@ -444,10 +447,10 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					return answer(nil)
 				end
 				preparing[key] = true -- a second request waits for the merge, as for the worktree
-				worktree.premerge(r.path, r.remote, r.prBase, login(state), function(merge)
+				worktree.premerge(r.path, r.remote, r.prBase, login(state), function(merge, problem)
 					preparing[key] = nil
 					if alive(state) then
-						answer(merge)
+						answer(merge, if merge then nil else problem or "The merge failed")
 					end
 				end)
 			end)
@@ -1912,7 +1915,7 @@ local function dispatch(state: State, id: string, q: any)
 		if not p or p.text == "" then
 			return reply(state, id, { problem = why or "That action no longer exists." })
 		end
-		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, effort = p.effort, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, pr = nil :: number? }
+		local answer = { label = clip(printable(p.name), 120), send = p.text, model = p.model, effort = p.effort, worktree = p.worktree ~= false, split = if p.split then true else nil, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, premerge = if p.premerge then true else nil, pr = nil :: number? }
 		if q.repo == nil and q.branch == nil then
 			return reply(state, id, answer)
 		end

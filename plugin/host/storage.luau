@@ -472,7 +472,7 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	if v == nil then
 		local seeds: { Prompt } = {}
 		for _, p in kind.prompts do
-			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, split = p.split, model = p.model, outcome = p.outcome, checker = p.checker })
+			table.insert(seeds, { id = p.id, name = p.name, text = p.text, worktree = p.worktree, split = p.split, model = p.model, outcome = p.outcome, checker = p.checker, premerge = p.premerge })
 		end
 		for i, p in kind.prompts do
 			seeds[i].next = M.seedNext(kind, p.next, seeds)
@@ -498,13 +498,24 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 			or (p.next ~= nil and type(p.next) ~= "string")
 			or (p.outcome ~= nil and type(p.outcome) ~= "string")
 			or (p.checker ~= nil and type(p.checker) ~= "string")
+			or (p.premerge ~= nil and type(p.premerge) ~= "boolean")
 		then
 			return nil, PROMPTS_BAD
 		end
 		-- An outcome or effort this version does not know (or none saved: an action from before them) reads as None.
 		local outcome = if defaults.outcomeLabel(p.outcome) then p.outcome else nil
 		local effort = if p.effort and worktree.validEffort(p.effort) then p.effort else nil
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = effort, status = p.status, next = p.next, outcome = outcome, checker = p.checker })
+		-- An action saved without Merge the base first (from before the setting, or never switched) takes it from the
+		-- default of its name, so a Watch saved earlier still merges; the switch saves it either way.
+		local premerge: boolean? = p.premerge
+		if premerge == nil then
+			for _, d in kind.prompts do
+				if d.name == p.name then
+					premerge = d.premerge
+				end
+			end
+		end
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = effort, status = p.status, next = p.next, outcome = outcome, checker = p.checker, premerge = premerge })
 	end
 	-- A checker that is the action itself, or no action of the store, reads as none: an action never checks itself.
 	local ids: { [string]: boolean } = {}
@@ -531,7 +542,7 @@ function M.editPrompts(kind: Kind, fn: (Prompts) -> string?): string?
 	end
 	local items: { any } = {}
 	for _, p in store.items do
-		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = p.effort, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker })
+		table.insert(items, { id = p.id, name = p.name, text = p.text, key = p.key, worktree = p.worktree, split = p.split, model = p.model, effort = p.effort, status = p.status, next = p.next, outcome = p.outcome, checker = p.checker, premerge = p.premerge })
 	end
 	local werr = kvSet(kind.promptsKey, { version = 1, nextId = store.nextId, items = tern.json.array(items) })
 	return if werr then "Could not save: " .. werr else nil

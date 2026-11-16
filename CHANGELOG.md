@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - A view whose query returns items of the other kind (`is:issue` in a pull request view, `is:pr` in an Issues view) lists the items of its own kind and leaves the rest out of its count, instead of failing the whole view with "the search returned an item that is not a pull request".
+- Plotroom merges a conflicting pull request's base into its worktree before an agent starts only for an action with Settings › Actions › **Merge the base first** on (the default Watch; a Watch saved earlier keeps it), not whenever the prompt contains the word "conflict": a typed prompt, or an action that only mentions conflicts, no longer gets a merge commit and regenerated lockfiles in your worktree. A toast now says what was merged and regenerated, what conflicts are left for the agent, or why the base could not be merged.
 - Now asks `acli` about at most four assigned Jira issues at a time, instead of starting one or two `acli` processes for every assigned issue at once on each read.
 - A failing check's log now reads `TypeError: x`, `ERROR: x`, `[ERROR] x`, `Exception in thread …`, `java.lang.NullPointerException` and ESLint's `✖` as error lines, so the `{failures}` excerpt and the preview's first error line show the cause instead of the last 30 lines.
 - Settings › Repositories › Remove now says so when a saved store (checkouts, branch formats, setup commands) cannot be read, instead of reporting success while the repository stays listed.

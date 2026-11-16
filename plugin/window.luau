@@ -96,12 +96,13 @@ type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, 
 -- also has its `id` and `name`, and `next`, the saved action to start when its agent finishes; `depth` counts the actions
 -- chained before it and `tab` is the tab the previous one ran in, which the next one joins. `outcome` (a saved action's
 -- prompts.OUTCOMES id; nil: none) is what its run must leave behind, checked when the agent's turn ends. `checker` (nil:
--- none) is the saved action a fresh agent runs when a run of this one ends with a commit. `criteria` is the acceptance
+-- none) is the saved action a fresh agent runs when a run of this one ends with a commit. `premerge`: a saved pull
+-- request action's Merge the base first (a typed prompt never has it). `criteria` is the acceptance
 -- criteria snapshot to fill `{criteria}` with ("": none saved; nil: read from the issue now, at dispatch). A check job
 -- has `check`, the run it checks: its agent, start, the commit its report named and its action's name. A fix round
 -- has `findings`, what to fix, for `{findings}`. A chain step's job has `from`, the step it starts, and `fail`, called
 -- when its start fails on the way.
-type Job = { text: string, model: string?, effort: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string?, checker: string?, criteria: string?, check: { agent: number, started: number?, commit: string, action: string }?, findings: string?, from: flows.Step?, fail: ((WindowCx) -> ())? }
+type Job = { text: string, model: string?, effort: string?, split: boolean?, status: string?, id: string?, name: string?, next: string?, depth: number?, tab: number?, outcome: string?, checker: string?, premerge: boolean?, criteria: string?, check: { agent: number, started: number?, commit: string, action: string }?, findings: string?, from: flows.Step?, fail: ((WindowCx) -> ())? }
 
 local function prTarget(owner: string, name: string, n: number): Target
 	local repo = owner .. "/" .. name
@@ -1092,6 +1093,34 @@ local function askCheckout(cx: WindowCx, pane: number, repo: string, found: stri
 	end)
 end
 
+-- One toast for what the host's merge of the base did in `t`'s worktree before its agent starts (the worktree answer
+-- `a`'s `merge` or `mergeProblem`, host/requests' prepare); none when it merged nothing.
+local function mergeToast(cx: WindowCx, t: Target, a: any)
+	local function names(v: any): string
+		local out: { string } = {}
+		for _, f in if type(v) == "table" then v else {} do
+			if type(f) == "string" then
+				table.insert(out, (string.gsub(f, "%c", "")))
+			end
+		end
+		return table.concat(out, ", ")
+	end
+	local m = a.merge
+	if type(a.mergeProblem) == "string" then
+		return cx:toast("error", "Could not merge the base into " .. t.label .. "'s worktree", a.mergeProblem)
+	elseif type(m) ~= "table" or type(m.base) ~= "string" then
+		return
+	end
+	local base = (string.gsub(m.base, "%c", ""))
+	local made = names(m.regenerated)
+	local regenerated = if made ~= "" then "Regenerated " .. made .. ". " else ""
+	if m.committed == true then
+		return cx:toast("info", "Merged " .. base .. " into " .. t.label .. "'s worktree", regenerated .. "Committed, not pushed.")
+	end
+	local left = names(m.remaining)
+	cx:toast("info", "Merging " .. base .. " into " .. t.label .. "'s worktree stopped at conflicts", regenerated .. (if left ~= "" then "Left for the agent: " .. left .. "." elseif type(m.problem) == "string" then "Committing failed: " .. m.problem else ""))
+end
+
 -- Has the block's host prepare the target's directory and run `prompt` there, or without `prompt` create or reuse its
 -- worktree (noted on the block) and open its tab. `wt` false: the repository's main checkout, no worktree.
 -- What the host still needs is asked in the palette, then this runs again with `more`: a checkout folder of the
@@ -1197,6 +1226,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			return cx2:toast("error", "Worktree failed", if type(a.problem) == "string" then a.problem else "The block's host gave no worktree")
 		end
 		local ready: Ready = r
+		if t.kind == "pr" then
+			mergeToast(cx2, t, a)
+		end
 		-- Starts the agent with the run's acceptance criteria `criteria` (Job.criteria) as its `{criteria}` block, added
 		-- at the end when a builder with a checker, or a check, does not name it; a fix round's findings likewise.
 		local function run(cx3: WindowCx, criteria: string?)
@@ -1259,8 +1291,8 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	-- The users cost the host a gh (or acli) call, so they are asked for only when the prompt names one, or its outcome
 	-- is checked as the GitHub login it runs as.
 	local users = prompt ~= nil and (prompt.outcome ~= nil or string.find(prompt.text, "{github.user}", 1, true) ~= nil or string.find(prompt.text, "{jira.user}", 1, true) ~= nil)
-	-- An action that resolves conflicts (its prompt says so, as Watch's does) has the host merge the base first.
-	local premerge = prompt ~= nil and wt and string.find(string.lower(prompt.text), "conflict", 1, true) ~= nil
+	-- Only a saved action with Merge the base first (the default Watch) has the host merge the base first.
+	local premerge = prompt ~= nil and wt and prompt.premerge == true
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
 		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil, premerge = premerge }, PREPARE_MS, done)
@@ -1307,7 +1339,7 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	ask(cx, pane, "menu", { only = id }, MENU_MS, function(a: any, cx2: WindowCx)
 		for _, it in if type(a.items) == "table" then a.items else {} do
 			if type(it) == "table" and it.id == id and type(it.send) == "string" then
-				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, effort = if type(it.effort) == "string" then it.effort else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil, checker = if type(it.checker) == "string" then it.checker else nil }
+				local job: Job = { text = it.send, model = if type(it.model) == "string" then it.model else nil, effort = if type(it.effort) == "string" then it.effort else nil, split = it.split == true, status = if type(it.status) == "string" then it.status else nil, id = id, name = if type(it.label) == "string" then it.label else nil, next = if type(it.next) == "string" then it.next else nil, outcome = if type(it.outcome) == "string" then it.outcome else nil, checker = if type(it.checker) == "string" then it.checker else nil, premerge = it.premerge == true }
 				local function go(cx3: WindowCx)
 					prepareTarget(cx3, pane, t, job, it.worktree ~= false)
 				end
@@ -2259,6 +2291,7 @@ local function startStep(cx: WindowCx, s: flows.Step)
 			next = if not check and type(a.next) == "string" then a.next else nil,
 			outcome = if type(a.outcome) == "string" then a.outcome else nil,
 			checker = if not check and type(a.checker) == "string" then a.checker else nil,
+			premerge = a.premerge == true,
 			depth = s.depth,
 			tab = tab,
 			criteria = if s.step == "next" then nil else s.criteria or "",

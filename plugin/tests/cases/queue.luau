@@ -2148,13 +2148,13 @@ case("host: Add missing defaults restores each default's model and Opens in, and
 	local function rows(key: string): { string }
 		local out: { string } = {}
 		for _, p in w.kv.get(key).items do
-			table.insert(out, table.concat({ p.id, p.name, p.model or "-", if p.split then "split" else "tab", p.next or "-", p.checker or "-" }, " "))
+			table.insert(out, table.concat({ p.id, p.name, p.model or "-", if p.split then "split" else "tab", p.next or "-", p.checker or "-", if p.premerge then "premerge" else "-" }, " "))
 		end
 		return out
 	end
-	same(rows("prompts-prs"), { "p1 Watch - tab - -", "p2 Review @slow tab - -", "p3 Quick review @slow split - -", "p4 Address feedback - tab - -" }, "the pull request defaults come back with their model and Opens in")
+	same(rows("prompts-prs"), { "p1 Watch - tab - - premerge", "p2 Review @slow tab - - -", "p3 Quick review @slow split - - -", "p4 Address feedback - tab - - -" }, "the pull request defaults come back with their model, Opens in and Watch's Merge the base first")
 	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:issues" })
-	same(rows("prompts-issues"), { "p1 Check - tab - -", "p2 Plan - tab - -", "p3 Implement - tab prs:p1 p1", "p4 Fix - tab prs:p1 p1" }, "Implement and Fix lead into the saved Watch (p1, not the seed's p4); edited defaults keep their own options")
+	same(rows("prompts-issues"), { "p1 Check - tab - - -", "p2 Plan - tab - - -", "p3 Implement - tab prs:p1 p1 -", "p4 Fix - tab prs:p1 p1 -" }, "Implement and Fix lead into the saved Watch (p1, not the seed's p4); edited defaults keep their own options")
 end)
 
 case("host: a prompt's shortcut is one free key on the Keys page: the row refuses what the queue uses or another prompt has, and clearing it removes the key", function(w: World)
@@ -2167,7 +2167,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	for _, row in prefsOf(b).sections[1].rows do
 		table.insert(ids, row.id)
 	end
-	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "peffort:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "poutcome:prs:p1", "pnext:prs:p1", "pchecker:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model and effort, where it runs and opens, its outcome, its next action and its checker: no shortcut")
+	same(ids, { "popen:prs:p1", "pdelete:prs:p1", "pname:prs:p1", "ptext:prs:p1", "pmodel:prs:p1", "peffort:prs:p1", "pwhere:prs:p1", "psplit:prs:p1", "ppremerge:prs:p1", "poutcome:prs:p1", "pnext:prs:p1", "pchecker:prs:p1" }, "an open prompt has Done and Delete, then its name, text, model and effort, where it runs and opens, whether it merges the base first, its outcome, its next action and its checker: no shortcut")
 	goToSettings(b, "general")
 	local row = rowIn(b, "pkey:prs:p1")
 	eq(row.label, "Review", "the Keys page has a row for the saved action, named for it")
