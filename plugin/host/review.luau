@@ -50,6 +50,10 @@ type State = {
 	run: string,
 	cwd: string,
 	login: string?,
+	-- The pull request the run was started on (the window's launch args 4 and 5); nil for a run on an issue, whose
+	-- Draft review is then not checked against one.
+	repo: string?,
+	number: number?,
 	gen: number,
 	p: Proposal?,
 	problem: string?, -- the file could not be read
@@ -344,6 +348,9 @@ local function load(state: State)
 	local p, why: string? = nil, "There is no Draft review for this run on this host."
 	if ok then
 		p, why = M.parse(raw)
+	end
+	if p and state.repo and (string.lower(p.repo) ~= string.lower(state.repo) or p.number ~= state.number) then
+		p, why = nil, "This Draft review is for " .. p.repo .. "#" .. p.number .. ", not " .. state.repo .. "#" .. tostring(state.number) .. ", the pull request this run was started on."
 	end
 	if not p then
 		state.gen += 1
@@ -681,14 +688,20 @@ function M.define()
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local a: any = args
 			if (not a or not a[1]) and isTable(saved) and saved.version == 1 then
-				a = { saved.run, saved.cwd, saved.login }
+				a = { saved.run, saved.cwd, saved.login, saved.repo, saved.number }
 			end
 			local run, cwd, login = if a then a[1] else nil, if a then a[2] else nil, if a then a[3] else nil
+			local repo: any, number = if a then a[4] else nil, whole(tonumber(if a then a[5] else nil))
+			if type(repo) ~= "string" or #repo > 200 or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not number then
+				repo, number = nil, nil
+			end
 			local state: State = {
 				cx = cx,
 				run = if M.validRun(run) then run else "",
 				cwd = if type(cwd) == "string" and string.sub(cwd, 1, 1) == "/" and #cwd <= 4096 and not string.find(cwd, "%c") then cwd else "",
 				login = if type(login) == "string" and string.match(login, "^[%w%-]+$") then login else nil,
+				repo = repo,
+				number = number,
 				gen = 0,
 				loading = false,
 				cards = {},
@@ -824,7 +837,7 @@ function M.define()
 
 		save = function(state: State): any
 			local p = state.p
-			return { version = 1, run = state.run, cwd = state.cwd, login = state.login, sent = if p and state.sent then p.at else nil, sizes = state.sizes }
+			return { version = 1, run = state.run, cwd = state.cwd, login = state.login, repo = state.repo, number = state.number, sent = if p and state.sent then p.at else nil, sizes = state.sizes }
 		end,
 	})
 end

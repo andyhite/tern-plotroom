@@ -641,6 +641,53 @@ case("review: a reload onto a file Plotroom cannot read shows why in the error t
 	w.finish()
 end)
 
+case("review: a Draft review of another pull request than the run's is refused, case-insensitively, after a restart too; a run on an issue is not checked", function(w: World)
+	reviewScene(w)
+	w.load("host")
+	local other = proposal()
+	other.number = 7
+	w.fs.files[FILE] = jsonEncode(other)
+	local b = w.openReview(2, { "r1", "/wt/r5", "octocat", "o/r", "5" })
+	w.flush()
+	local why = "This Draft review is for o/r#7, not o/r#5, the pull request this run was started on."
+	local problem: any = findKey(b.view().main, "problem", "text")
+	yes(problem, "the block says why")
+	same({ problem.p.spans[1].t, problem.p.spans[1].s }, { why, "error" }, "it names both pull requests, in the error tone")
+	eq(sendButton(b), nil, "nothing to Send")
+	b.press("enter", "m")
+	b.event({ ev = "action", act = "send" })
+	w.flush()
+	eq(findKey(b.view().main, "send", "text"), nil, "and Send publishes no main.send")
+	local again = w.openReview(3, nil, b.saved())
+	w.flush()
+	eq(findKey(again.view().main, "problem", "text").p.spans[1].t, why, "a restored block still checks it")
+	-- Another repository with the same number is refused too.
+	local elsewhere = proposal()
+	elsewhere.repo = "x/r"
+	w.fs.files[FILE] = jsonEncode(elsewhere)
+	b.event({ ev = "action", act = "reload" })
+	w.flush()
+	eq(findKey(b.view().main, "problem", "text").p.spans[1].t, "This Draft review is for x/r#5, not o/r#5, the pull request this run was started on.", "another repository")
+	-- The run's own pull request, its repository in another case, loads as usual.
+	w.fs.files[FILE] = jsonEncode(proposal())
+	local same5 = w.openReview(4, { "r1", "/wt/r5", "octocat", "O/R", "5" })
+	w.flush()
+	eq(same5.title(), "Draft review · o/r#5", "the run's pull request opens")
+	yes(sendButton(same5), "and is sendable")
+	-- A run on an issue passes no pull request: any Draft review loads as today.
+	w.respond(function(call: h.Call): h.Reply?
+		if call.argv[1] == "gh" and table.find(call.argv, "repos/o/r/pulls/7") then
+			return { stdout = jsonEncode({ base = "o/r", sha = HEAD, ref = "fix-7", headRepo = "o/r", state = "open", baseRef = "main", title = "Other", author = "octo" }) }
+		end
+		return nil
+	end)
+	w.fs.files[FILE] = jsonEncode(other)
+	local issue = w.openReview(5, { "r1", "/wt/r5", "octocat" })
+	w.flush()
+	eq(issue.title(), "Draft review · o/r#7", "not checked without the run's pull request")
+	w.finish()
+end)
+
 case("review: the window's review request answers when the run's Draft review file was written", function(w: World)
 	h.hostScene(w)
 	local b = h.openQueue(w)
@@ -678,7 +725,7 @@ end
 local function seedRun(w: World)
 	w.window.panes[20] = { cwd = "/wt/r5", tab = 1 }
 	w.window.agentStates[20] = "idle"
-	w.kv.put("agent-links", { { key = "o/r#5", agent = 20, host = { id = 1, name = "", address = "" }, at = 1, run = "r1", cwd = "/wt/r5", login = "octocat" } })
+	w.kv.put("agent-links", { { key = "o/r#5", agent = 20, host = { id = 1, name = "", address = "" }, at = 1, run = "r1", cwd = "/wt/r5", login = "octocat", ghRepo = "o/r", number = 5 } })
 end
 
 local function finished(w: World)
@@ -708,7 +755,7 @@ windowCase("review: a turn end with a newer Draft review opens the block beside 
 	local opened = reviewLaunches(w)
 	eq(#opened, 1, "the Draft review opened")
 	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts }
-	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "beside", { target = 20, dir = "right", focus = false } } :: { any }, "beside the agent, unfocused, with its run, folder and login")
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat", "o/r", "5" }, "beside", { target = 20, dir = "right", focus = false } } :: { any }, "beside the agent, unfocused, with its run, folder, login and pull request")
 	local review = 0
 	for id, p in w.window.panes do
 		if p.block == "plugin.plotroom.review" then
@@ -761,7 +808,7 @@ windowCase("review: Over the agent's tab, a turn end glimpses the Draft review o
 	eq(#opened, 1, "a newer proposal while the agent's tab is shown opens")
 	local review = w.window.focused :: number
 	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts == nil, w.window.panes[review].block, w.window.panes[review].tab }
-	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat" }, "glimpse", true, "plugin.plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat", "o/r", "5" }, "glimpse", true, "plugin.plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
 	w.finish()
 end)
 

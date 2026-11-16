@@ -1571,7 +1571,12 @@ local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean
 			return
 		end
 	end
+	-- A pull request run also passes its repository and number: the block refuses a Draft review of another one.
 	local args = { l.run or "", l.cwd or "", l.login or "" }
+	if l.ghRepo and l.number then
+		table.insert(args, l.ghRepo)
+		table.insert(args, tostring(l.number))
+	end
 	local ok, pane = pcall(function()
 		if glimpse then
 			local p = cx:new_block(REVIEW_BLOCK, args, "glimpse")
