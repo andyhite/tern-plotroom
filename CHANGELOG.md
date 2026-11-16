@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - Now asks `acli` about at most four assigned Jira issues at a time, instead of starting one or two `acli` processes for every assigned issue at once on each read.
+- A failing check's log now reads `TypeError: x`, `ERROR: x`, `[ERROR] x`, `Exception in thread …`, `java.lang.NullPointerException` and ESLint's `✖` as error lines, so the `{failures}` excerpt and the preview's first error line show the cause instead of the last 30 lines.
 - Settings › Repositories › Remove now says so when a saved store (checkouts, branch formats, setup commands) cannot be read, instead of reporting success while the repository stays listed.
 - Now keeps being read when the active view's query is rejected or names a repository your login cannot see, and when the block has no active view: it is read again at the poll interval, so the pane title count and the status line's `N need you` stay current instead of freezing until Refresh. A sign-in failure or a missing CLI still holds it.
 - A snooze ends when the item changes (checks going red, a review, a push, a comment since you snoozed it), not only at 08:00 tomorrow: the item is listed, counted and in Now again as Changed. The Snooze toast says "until tomorrow, or until it changes". Snoozes saved before this still run to their time.
