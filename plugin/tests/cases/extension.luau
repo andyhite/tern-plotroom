@@ -69,3 +69,5 @@ windowCase("extension: the run log reads every report plotroom_report gives the 
 		end
 	end
 end)
+
+return {}
