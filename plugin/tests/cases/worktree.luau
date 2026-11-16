@@ -1807,14 +1807,12 @@ windowCase("worktree.openIssue: a worktree already at the plan's folder is reuse
 	same(worktreeWrites(w), {}, "nothing fetched, added or configured")
 	eq(#gh.requests, 0, "the PR was not even read")
 	eq(#w.fs.mkdirs, 0, "no directory was made")
-	-- a detached HEAD has no branch of its own: the plan's is reported
+	-- a detached HEAD has no branch of its own: refused
 	table.insert(r.git.worktrees, { path = "/wt/plotroom-o_r-issue-13", head = sha("e"), locked = false })
 	w.fs.dirs["/wt/plotroom-o_r-issue-13"] = true
 	local detached = openIssuePlan(w, worktree, r, "13", { branch = "13-docs", fresh = false }, nil)
-	eq(detached.problem, nil, "problem for a detached worktree")
-	eq(detached.result.created, false, "created")
-	eq(detached.result.branch, "13-docs", "branch")
-	eq(detached.result.head, sha("e"), "head")
+	eq(detached.result, nil, "no result for a detached worktree")
+	has(detached.problem, "is detached", "problem for a detached worktree")
 end)
 
 windowCase("worktree.openIssue: a plan with a PR puts the worktree on that PR's head branch as worktree.open does, in the plan's folder", function(w: World)
