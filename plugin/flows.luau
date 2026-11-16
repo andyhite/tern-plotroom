@@ -1030,10 +1030,14 @@ local function turnReport(msgs: { any }?): any
 end
 
 -- How long an outcome check may take the block's host (one gh token read and one GraphQL read, 30 s each at most), and
--- how often an Unchecked run, or a Merged one whose agent still runs, is checked again: the default refresh pace
--- (host/core POLL_MS).
+-- how often an Unchecked run, or a Merged one whose agent still runs, is checked again (recheckEvery): at the default
+-- refresh pace (host/core POLL_MS) in its first hour, then every 5 min up to 6 h, then every 30 min; and never once it
+-- is older than RECHECK_STOP_S and its agent is not live.
 local OUTCOME_MS = 90 * 1000
-local RECHECK_S = 60
+local RECHECK_STOP_S = 24 * 3600
+local function recheckEvery(age: number): number
+	return if age < 3600 then 60 elseif age < 6 * 3600 then 5 * 60 else 30 * 60
+end
 local checking: { [string]: number } = {} -- "<host>|<agent>|<started>" -> when its check was asked, while in flight
 
 -- The lowest Plotroom block on `host`, the one outcome checks ask; nil when none is open there.
@@ -1052,18 +1056,10 @@ end
 -- tells the blocks. A run whose chain waits for this verdict moves: Verified makes its next action due, Not verified
 -- ends the chain with a toast (the run is Needs you); Unchecked waits for the next check. Asked quietly: no toasts, as
 -- a background check. Nothing without a block on that host, a check of the same run in flight, or a host too old to
--- check: a later tick asks again.
+-- check: a later tick asks again. A run with no GitHub repository or login (a Jira issue with no code repository, a
+-- login that could not be read) can never be checked: it is recorded Unchecked at once, without asking.
 local function checkOutcome(cx: WindowCx, l: Link)
-	local id = l.host.id .. "|" .. l.host.address .. "|" .. l.agent .. "|" .. (l.started or 0)
-	local block = blockOn(cx, l.host)
-	if not l.outcome or not block or (checking[id] and os.time() - checking[id] < OUTCOME_MS // 1000 * 2) then
-		return
-	end
-	checking[id] = os.time()
-	local args = { outcome = l.outcome, repo = l.ghRepo, number = l.number, branch = l.branch, commit = l.commit, since = l.started or 0, login = l.login }
-	local sent = e().ask(cx, block, "outcome", args, OUTCOME_MS, function(a: any, cx2: WindowCx)
-		checking[id] = nil
-		local verdict = if type(a.verdict) == "string" and usage.VERDICTS[a.verdict] then a.verdict else "unchecked"
+	local function record(verdict: string, cx2: WindowCx)
 		local links, healthy = readLinks()
 		if not healthy then
 			return
@@ -1087,6 +1083,21 @@ local function checkOutcome(cx: WindowCx, l: Link)
 				return
 			end
 		end
+	end
+	if l.outcome and (not l.ghRepo or not l.login) then
+		record("unchecked", cx)
+		return
+	end
+	local id = l.host.id .. "|" .. l.host.address .. "|" .. l.agent .. "|" .. (l.started or 0)
+	local block = blockOn(cx, l.host)
+	if not l.outcome or not block or (checking[id] and os.time() - checking[id] < OUTCOME_MS // 1000 * 2) then
+		return
+	end
+	checking[id] = os.time()
+	local args = { outcome = l.outcome, repo = l.ghRepo, number = l.number, branch = l.branch, commit = l.commit, since = l.started or 0, login = l.login }
+	local sent = e().ask(cx, block, "outcome", args, OUTCOME_MS, function(a: any, cx2: WindowCx)
+		checking[id] = nil
+		record(if type(a.verdict) == "string" and usage.VERDICTS[a.verdict] then a.verdict else "unchecked", cx2)
 	end, true)
 	if not sent then
 		checking[id] = nil
@@ -1129,7 +1140,9 @@ end
 
 -- Checks again what is due: each item's newest link (per host) whose run has ended and whose outcome was never checked
 -- (no block, or an older host, at its turn end), is Unchecked, or is Merged and Not verified while its agent has not
--- exited, once per RECHECK_S; and the merges of undecided checked runs once per MERGE_SWEEP_S.
+-- exited, at the recheckEvery pace for its age, until it is older than RECHECK_STOP_S with its agent not live; a run
+-- with no repository or login, once Unchecked, never again. And the merges of undecided checked runs once per
+-- MERGE_SWEEP_S.
 function M.recheck(cx: WindowCx)
 	local now = os.time()
 	if now - sweptAt >= MERGE_SWEEP_S then
@@ -1147,8 +1160,9 @@ function M.recheck(cx: WindowCx)
 		if not seen[k] then
 			seen[k] = true
 			local live = states ~= nil and (stateOf(l, states, cwds) or "exited") ~= "exited"
-			local due = l.verdict == nil or l.verdict == "unchecked" or (l.outcome == "merged" and l.verdict == "not" and live)
-			if l.outcome and l.result and due and now - (l.checked or 0) >= RECHECK_S then
+			local due = l.verdict == nil or (l.verdict == "unchecked" and l.ghRepo ~= nil and l.login ~= nil) or (l.outcome == "merged" and l.verdict == "not" and live)
+			local age = now - (l.started or 0)
+			if l.outcome and l.result and due and (live or age <= RECHECK_STOP_S) and now - (l.checked or 0) >= recheckEvery(age) then
 				checkOutcome(cx, l)
 			end
 		end

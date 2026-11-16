@@ -650,8 +650,9 @@ windowCase("window flows: a fenced plotroom-report block in the agent's message 
 	lacks(jsonEncode(loggedRuns(w)), "Shipped", "and none of it is kept")
 end)
 
--- Starts the saved action `name` with outcome `outcome` on o/r#5 as gh login cat; its link and the worktree request.
-local function startWithOutcome(w: World, st: FlowStub, name: string, outcome: string): (any, any)
+-- Starts the saved action `name` with outcome `outcome` on o/r#5 as gh login cat (none with `noLogin`: the login could
+-- not be read); its link and the worktree request.
+local function startWithOutcome(w: World, st: FlowStub, name: string, outcome: string, noLogin: boolean?): (any, any)
 	local url = "plotroom://github/agent/o/r/5"
 	st.link("layer.queue.buttons.agent", url)
 	st.palette({ items = { { id = "p1", label = name } } })
@@ -659,7 +660,7 @@ local function startWithOutcome(w: World, st: FlowStub, name: string, outcome: s
 	w.click(url)
 	w.flush()
 	st.reply("menu", { items = { { id = "p1", label = name, send = "Work on {url}", worktree = true, outcome = outcome } } })
-	local asked = st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing", ["github.user"] = "cat" })
+	local asked = st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, branch = "fix-5", title = "Fix the thing", ["github.user"] = if noLogin then nil else "cat" })
 	return (w.kv.get("agent-links") :: any)[1], asked
 end
 
@@ -757,6 +758,62 @@ windowCase("window flows: an Unchecked run is checked again once a refresh, a Me
 	w.advance(130 * 1000)
 	eq(#outcomeAsks(w), 4, "an exited agent's Merged run is not checked again")
 	eq((w.kv.get("agent-links") :: any)[1].verdict, "not", "and stays Not verified")
+end)
+
+windowCase("window flows: a run with no GitHub login is recorded Unchecked once, without asking, and never checked again", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = startWithOutcome(w, st, "Watch", "merged", true)
+	same({ link.outcome, link.login }, { "merged", nil } :: { any }, "the run names an outcome but no login")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#outcomeAsks(w), 0, "the host is not asked: it could only answer Unchecked")
+	local l: any = (w.kv.get("agent-links") :: any)[1]
+	eq(l.verdict, "unchecked", "the link is Unchecked")
+	eq((loggedRuns(w) :: any)[1].verdict, "unchecked", "and so is the run")
+	w.advance(10 * 60 * 1000)
+	eq(#outcomeAsks(w), 0, "not asked at any later refresh")
+	eq((w.kv.get("agent-links") :: any)[1].checked, l.checked, "and its link is not written again")
+end)
+
+windowCase("window flows: an Unchecked run is checked again less often as it ages, and not at all after a day with its agent gone", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local link = startWithOutcome(w, st, "Watch", "merged")
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	st.reply("outcome", { verdict = "unchecked" })
+	local pane = w.window.panes[link.agent]
+	w.window.panes[link.agent] = nil -- the agent exited
+	-- The run started `s` seconds earlier than it did.
+	local function older(s: number)
+		local links: any = w.kv.get("agent-links")
+		links[1].started -= s
+		w.kv.put("agent-links", links)
+	end
+	older(2 * 3600)
+	w.advance(4 * 60 * 1000)
+	eq(#outcomeAsks(w), 1, "two hours old: not again within 5 min")
+	w.advance(65 * 1000)
+	eq(#outcomeAsks(w), 2, "but after 5 min")
+	st.reply("outcome", { verdict = "unchecked" })
+	older(5 * 3600)
+	w.advance(29 * 60 * 1000)
+	eq(#outcomeAsks(w), 2, "seven hours old: not again within 30 min")
+	w.advance(65 * 1000)
+	eq(#outcomeAsks(w), 3, "but after 30 min")
+	st.reply("outcome", { verdict = "unchecked" })
+	older(20 * 3600)
+	w.advance(2 * 3600 * 1000)
+	eq(#outcomeAsks(w), 3, "over a day old with its agent exited: never again")
+	w.window.panes[link.agent] = pane
+	w.advance(5 * 1000)
+	eq(#outcomeAsks(w), 4, "while its agent is live it is still checked")
+	st.reply("outcome", { verdict = "unchecked" })
+	w.advance(29 * 60 * 1000)
+	eq(#outcomeAsks(w), 4, "not again within 30 min")
+	w.advance(65 * 1000)
+	eq(#outcomeAsks(w), 5, "but after 30 min")
 end)
 
 case("usage: reportOf takes only a well-formed report object", function(w: World)
@@ -4184,7 +4241,8 @@ case("host move-status: moves a Jira issue with acli, leaves one already there a
 	eq(#ran, 2, "it was tried once")
 end)
 
--- Starts the action Review (p1, next p2, outcome Review posted) on o/r#5 through the real link flow and returns its link.
+-- Starts the action Review (p1, next p2, outcome Review posted) on o/r#5 as gh login cat through the real link flow
+-- and returns its link.
 local function startChained(w: World, st: FlowStub): any
 	st.link("layer.queue.buttons.agent", "plotroom://github/agent/o/r/5")
 	st.palette({ items = { { id = "p1", label = "Review" } } })
@@ -4192,7 +4250,7 @@ local function startChained(w: World, st: FlowStub): any
 	w.click("plotroom://github/agent/o/r/5")
 	w.flush()
 	st.reply("menu", { items = { { id = "p1", label = "Review", send = "Review {url}", worktree = true, next = "p2", outcome = "review" } } })
-	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true })
+	st.reply("worktree", { path = "/wt/r5", summary = "Created", created = true, current = true, ["github.user"] = "cat" })
 	return (w.kv.get("agent-links") :: any)[1]
 end
 
@@ -4326,7 +4384,7 @@ local function startIssueChained(w: World, st: FlowStub, wt: boolean): any
 	w.click("plotroom://issue/agent/o/r/12")
 	w.flush()
 	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = wt, next = "prs:p2", outcome = "pr" } } })
-	local vars: any = { url = "https://github.com/o/r/issues/12", title = "Fix login" }
+	local vars: any = { url = "https://github.com/o/r/issues/12", title = "Fix login", ["github.user"] = "cat" }
 	if wt then
 		vars.branch = "12-fix"
 	end
@@ -4512,7 +4570,7 @@ windowCase("window flows: a chained issue step reuses the code repository the ch
 	w.click("plotroom://issue/agent/o/r/12")
 	w.flush()
 	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, next = "p2", outcome = "pr" } } })
-	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix" }, code = "x/code" })
+	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", branch = "12-fix", ["github.user"] = "cat" }, code = "x/code" })
 	local first = (w.kv.get("agent-links") :: any)[1]
 	agentFinished(w, first.agent, "done")
 	st.reply("outcome", { verdict = "verified" })
