@@ -431,6 +431,11 @@ local function keyNames(ks: { string }?): { string }?
 	return out
 end
 
+-- A key in running text: an upper-case letter is Shift and its letter ("Shift+Z"), as keyNames draws it as keycaps.
+local function keyText(k: string): string
+	return if string.match(k, "^%u$") then "Shift+" .. k else k
+end
+
 -- A Tern button labelled `text` ("" with an `icon`: icon-only, named by `title`); `p` its props, `keys` the key names
 -- of the key that does the same. Size `sm` (rows, the preview, cards) unless `p.size` says `md` (bars, overlays, heads).
 local function button(text: string, p: { [string]: any }): Node
@@ -1323,7 +1328,12 @@ function M.helpOverlay(state: State): Node
 			if i > 1 then
 				table.insert(caps, " ")
 			end
-			table.insert(caps, ui.span(label, "key"))
+			for j, name in keyNames({ label }) :: { string } do
+				if j > 1 then
+					table.insert(caps, " ")
+				end
+				table.insert(caps, ui.span(name, "key"))
+			end
 		end
 		table.insert(
 			lines,
@@ -2207,7 +2217,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local map = keys.load()
 	local acts: { Action } = if item then itemActions(state, item, open) else {}
 	local hidden = if snap and view and vis and #vis.items == 0 then engine.hiddenCount(state, snap) else 0
-	local hiddenHow = if map.snoozed ~= "" then "press " .. map.snoozed else "pick Show or hide snoozed in Commands"
+	local hiddenHow = if map.snoozed ~= "" then "press " .. keyText(map.snoozed) else "pick Show or hide snoozed in Commands"
 
 	-- Neither integration is on: the setup pages in Settings are all there is.
 	local none = cli.ready() and not cli.on("github") and not cli.on("jira")
@@ -2232,8 +2242,8 @@ function M.queuePicker(state: State, bar: boolean?): Node
 			ui.span(
 				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by snoozing; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
 					else (if none then "Neither gh nor acli is installed on this host. " else "No views yet. ")
-						.. (if map.settings ~= "" then "Press " .. map.settings .. " to "
-							elseif map.more ~= "" then "Press " .. map.more .. " and pick Settings to "
+						.. (if map.settings ~= "" then "Press " .. keyText(map.settings) .. " to "
+							elseif map.more ~= "" then "Press " .. keyText(map.more) .. " and pick Settings to "
 							else "Open Settings to ")
 						.. (if none then "set one up." else "add one."),
 				"muted"

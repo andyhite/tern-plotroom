@@ -461,7 +461,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands
 	for _, r in helpRows(b.view().layer) do
 		table.insert(shown, r.keys)
 	end
-	same(shown, { "↑ ↓", "Enter", "g", "G", "m", "z", "Z", "o", "Tab", "←", "r", "s", "?" }, "the list leaves out what has no key")
+	same(shown, { "↑ ↓", "Enter", "g", "shift g", "m", "z", "shift z", "o", "Tab", "←", "r", "s", "?" }, "the list leaves out what has no key, and draws an upper-case key as Shift and its letter")
 	b.press("escape")
 	goToSettings(b, "general")
 	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
@@ -493,7 +493,7 @@ case("host: the empty queue's hint names the Settings key, or just Settings when
 	eq(pickerOf(b).empty[1].t, "No views yet. Press s to add one.", "the hint names the key")
 	w.kv.put("keys", { settings = "S" })
 	b.render()
-	eq(pickerOf(b).empty[1].t, "No views yet. Press S to add one.", "as it is now")
+	eq(pickerOf(b).empty[1].t, "No views yet. Press Shift+S to add one.", "as it is now")
 	w.kv.put("keys", { settings = "" })
 	b.render()
 	eq(pickerOf(b).empty[1].t, "No views yet. Press . and pick Settings to add one.", "or the Commands key once Settings' is removed")
@@ -2468,7 +2468,7 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	b.typeText("?")
 	same(promptRows(), {
 		{ keys = "m", text = "Run the action “Mine” on the selected pull request" },
-		{ keys = "T", text = "Run the action “Anywhere” on the selected pull request" },
+		{ keys = "shift t", text = "Run the action “Anywhere” on the selected pull request" },
 	}, "each prompt offered under My PRs that has a key, in the menu's order; none without a key, with no text or for another view")
 	b.press("escape")
 	b.press("left")
@@ -2477,7 +2477,7 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	b.typeText("?")
 	same(promptRows(), {
 		{ keys = "x", text = "Run the action “Theirs” on the selected pull request" },
-		{ keys = "T", text = "Run the action “Anywhere” on the selected pull request" },
+		{ keys = "shift t", text = "Run the action “Anywhere” on the selected pull request" },
 	}, "under Review requested the rows follow")
 	b.press("escape")
 	b.typeText("s")
@@ -2821,7 +2821,7 @@ case("host: a list emptied by snoozing says how many rows are hidden and which k
 	w.kv.put("triage", { version = 1, items = { ["o/r#1"] = { at = 1, snoozeUntil = EPOCH + 3600 }, ["o/r#2"] = { at = 1, snoozeUntil = EPOCH + 3600 }, ["o/r#3"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
 	local b = openQueue(w)
 	same(listed(b), {}, "every row is hidden")
-	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; press Z to show them.", "the hint counts them and names the key")
+	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; press Shift+Z to show them.", "the hint counts them and names the key")
 	w.kv.put("keys", { snoozed = "" })
 	b.render()
 	eq(pickerOf(b).empty[1].t, "3 pull requests hidden by snoozing; pick Show or hide snoozed in Commands to show them.", "or the Commands row once the key is gone")
