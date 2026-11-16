@@ -477,7 +477,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands
 	for _, r in helpRows(b.view().layer) do
 		table.insert(shown, r.keys)
 	end
-	same(shown, { "↑ ↓", "Enter", "g", "shift g", "m", "z", "shift z", "o", "Tab", "←", "r", "s", "?" }, "the list leaves out what has no key, and draws an upper-case key as Shift and its letter")
+	same(shown, { "↑ ↓", "Enter", "g", "shift g", "m", "z", "shift z", "o", "h l", "u", "d", "Tab", "←", "r", "s", "?" }, "the list leaves out what has no key, lists the Board's and the Worktrees' keys, and draws an upper-case key as Shift and its letter")
 	b.press("escape")
 	goToSettings(b, "general")
 	eq(bindKey(b, "help", ""), nil, "the list's own key can go")
