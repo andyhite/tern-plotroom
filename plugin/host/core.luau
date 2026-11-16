@@ -310,6 +310,7 @@ export type State = {
 	nowWalk: { at: string?, sig: string }?, -- Next in Now's walk: the row it selected (nil once a hand move stopped it) and Now's row ids then; nil until the first step since Now was shown
 	now: Now,
 	seenTried: string?, -- "<item key>\0<signature>" an automatic mark-seen was last tried for (a failed save is not retried until the item changes)
+	seenWait: { sig: string, ready: boolean, timer: TimerHandle? }?, -- the selection (item key and signature) whose rest before an automatic mark-seen is timed; ready once it has rested
 	agents: { [string]: string }, -- item key -> its agent's state as the window last reported it (working | waiting_input | idle | exited)
 	agentInfo: { [string]: AgentInfo }, -- item key -> what the window recorded about its agent (an old link has none)
 	agentsOn: boolean, -- the Agents scope is shown instead of a view

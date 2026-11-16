@@ -77,6 +77,7 @@ function M.retire(state: State)
 	end
 	dropDetails(state)
 	M.cancelSummary(state)
+	M.cancelSeen(state)
 	state.inflight = nil
 	state.snap, state.vis = nil, nil
 	state.snaps = {}
@@ -953,21 +954,52 @@ function M.lanesShown(state: State): boolean
 	return view ~= nil and view.layout == "board"
 end
 
--- The selected item is marked seen as its preview is shown, with the data it shows now: a later refresh that changes it
--- marks it again while it stays shown. Never on a background fetch, the list's Worktrees or a Board (it has no preview).
+-- Stops timing the rest before an automatic mark-seen.
+function M.cancelSeen(state: State)
+	local wait = state.seenWait
+	if wait then
+		state.seenWait = nil
+		if wait.timer then
+			wait.timer:cancel()
+		end
+	end
+end
+
+-- The selected item is marked seen once its preview has been shown for SUMMARY_REST_MS with the cursor resting on it
+-- (scrolling past marks nothing), with the data it shows then: a later refresh that changes it marks it again after
+-- another rest while it stays shown. Never on a background fetch, the list's Worktrees or a Board (it has no preview).
 function M.autoSeen(state: State)
 	local item, snap = M.selected(state), state.snap
 	if not item or not snap or state.boardOn or state.agentsOn or state.nowOn or M.lanesShown(state) then
-		return
+		return M.cancelSeen(state)
 	end
 	local st = M.status(state, snap.kind, item)
 	if not st or st.fresh == "seen" then
-		return
+		return M.cancelSeen(state)
 	end
 	local sig = item.key .. "\0" .. triage.signature(snap.kind, item) .. "\0" .. tostring(seenAt(M.store(state), item))
 	if state.seenTried == sig then
 		return
 	end
+	local wait = state.seenWait
+	if not wait or wait.sig ~= sig then
+		M.cancelSeen(state)
+		local w = { sig = sig, ready = false, timer = nil :: TimerHandle? }
+		state.seenWait = w
+		w.timer = tern.timer(core.SUMMARY_REST_MS, function()
+			if state.seenWait == w then
+				w.ready, w.timer = true, nil
+				if M.alive(state) then
+					state.cx:render()
+				end
+			end
+		end)
+		return
+	end
+	if not wait.ready then
+		return
+	end
+	M.cancelSeen(state)
 	state.seenTried = sig
 	local store = M.store(state, true)
 	if not store then

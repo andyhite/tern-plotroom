@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - The `?` shortcut list now has rows for Move left and Move right (the Board's columns), Find finished worktrees and Remove worktree, so a bound `h`, `l`, `u` or `d` can be looked up; a test fails when an action a key can be bound to has no row.
+- An item is marked seen only after the selection has rested on its preview for a second (the Summary's rest), not the moment you arrow onto it: an assigned issue you only scrolled past stays New and stays in Now.
 - A view whose query returns items of the other kind (`is:issue` in a pull request view, `is:pr` in an Issues view) lists the items of its own kind and leaves the rest out of its count, instead of failing the whole view with "the search returned an item that is not a pull request".
 - Plotroom merges a conflicting pull request's base into its worktree before an agent starts only for an action with Settings › Actions › **Merge the base first** on (the default Watch; a Watch saved earlier keeps it), not whenever the prompt contains the word "conflict": a typed prompt, or an action that only mentions conflicts, no longer gets a merge commit and regenerated lockfiles in your worktree. A toast now says what was merged and regenerated, what conflicts are left for the agent, or why the base could not be merged.
 - The `?` shortcut list draws an upper-case key as Shift and its letter, so `g`/`G` and `z`/`Z` are no longer the same keycap, and hints name it (`press Shift+Z to show them`).

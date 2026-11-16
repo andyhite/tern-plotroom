@@ -439,6 +439,7 @@ case("host: a Jira filter lists its issues and saves its active view and kind", 
 	same(listed(b), { "nabc_23ABC-12", "nabc_23ABC-13" }, "listed in acli's order")
 	eq(pickerOf(b).selected, "nabc_23ABC-12", "the first issue is selected")
 	eq(pickerOf(b).state, "ready", "the list is ready")
+	h.rest(w)
 	eq(b.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "the title names the filter, then what needs you")
 	local jira: any = nil
 	for _, scope in pickerOf(b).scopes do
@@ -1370,6 +1371,7 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	local b = w.open(1, { "/work/r" }, { version = 2, launchCwd = "/work/r", activeViewId = "v1" })
 	w.flush()
 	same(sidebarOf(b), { "Assigned to me @ - = issues:v1" }, "only the Jira view is listed")
+	h.rest(w)
 	eq(b.title(), "Plotroom · Assigned to me · 1 assigned: new or changed", "and shown in place of the GitHub view restored")
 	eq(#w.kv.get("views-prs").items, 2, "the GitHub views stay saved")
 	goToSettings(b, "views")

@@ -644,6 +644,7 @@ local function blockDef(): BlockDef<State>
 				ciBusy = {},
 				round = 0,
 				summaryWait = nil,
+				seenWait = nil,
 				flaky = {},
 				flakyBusy = {},
 				notes = {},

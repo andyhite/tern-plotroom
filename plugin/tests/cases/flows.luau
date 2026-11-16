@@ -18,7 +18,7 @@ local openIssues, openQueue, pickScope, pickerNode, pickerOf, prLink = h.openIss
 local ranSince, refreshNow, requestsOf, requestsSent = h.ranSince, h.refreshNow, h.requestsOf, h.requestsSent
 local rowIn, runLink, same, searchItem, sha = h.rowIn, h.runLink, h.same, h.searchItem, h.sha
 local show, windowCase, yes = h.show, h.windowCase, h.yes
-local iso, loggedRuns = h.iso, h.loggedRuns
+local iso, loggedRuns, rest = h.iso, h.loggedRuns, h.rest
 
 type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops: () -> { string }, palette: (any) -> (), compose: (string?) -> any }
 
@@ -2176,14 +2176,20 @@ case("host triage: unseen rows are New, the selected row is marked seen on its o
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
 	eq(pickerOf(b).selected, "no_2fr_231", "the first row is selected on arrival")
-	same(asks.hx.marks(b), { "-", "New", "New" }, "and its preview marked it seen: the others are New")
+	same(asks.hx.marks(b), { "New", "New", "New" }, "arrival marks nothing yet: the cursor has not rested")
+	w.advance(999)
+	same(asks.hx.marks(b), { "New", "New", "New" }, "nor just short of a second")
+	w.advance(1)
+	same(asks.hx.marks(b), { "-", "New", "New" }, "a second on it marks it seen: the others are New")
 	eq(#w.toasts, 0, "without a toast")
 	local saved: any = w.kv.get("triage")
 	eq(saved.version, 1, "the store is versioned")
 	same(asks.hx.keys(saved.items), { "o/r#1" }, "and holds the one row")
 	eq(#saved.items["o/r#1"].seen, 16, "by its signature")
 	b.press("down")
-	same(asks.hx.marks(b), { "-", "-", "New" }, "moving on marks the next one too")
+	same(asks.hx.marks(b), { "-", "New", "New" }, "moving on marks nothing at once")
+	rest(w)
+	same(asks.hx.marks(b), { "-", "-", "New" }, "a second on the next one marks it too")
 	eq(b.press("escape"), false, "Escape closes no preview: it is left to the pane")
 	eq(pickerOf(b).selected, "no_2fr_232", "the selection stays")
 	local text = w.kv.store["triage"]
@@ -2195,12 +2201,14 @@ case("host triage: unseen rows are New, the selected row is marked seen on its o
 	same(asks.hx.marks(b), { "Changed", "-", "New" }, "the same update time with new checks is Changed on a row nobody has open")
 	eq(w.kv.store["triage"], text, "showing it writes nothing")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
-	same(asks.hx.marks(b), { "-", "-", "New" }, "opening it marks it seen again")
+	rest(w)
+	same(asks.hx.marks(b), { "-", "-", "New" }, "a second on it marks it seen again")
 	local again = w.kv.store["triage"]
 	yes(again ~= text, "and saves that")
 	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE", review = "REVIEW_REQUIRED" })
 	refreshNow(w, b)
-	same(asks.hx.marks(b), { "-", "-", "New" }, "a new review decision on the row being read is marked at once")
+	rest(w)
+	same(asks.hx.marks(b), { "-", "-", "New" }, "a new review decision on the row being read is marked once it has rested")
 	yes(w.kv.store["triage"] ~= again, "with its new signature saved")
 	b.typeText("m")
 	eq(w.toasts[#w.toasts].text, "Marked seen", "m still marks and says so")
@@ -2210,6 +2218,7 @@ case("host triage: a save that fails is told once and tried again only when the 
 	local s = hostScene(w, 3)
 	w.kv.failSet["triage"] = "read-only file system"
 	local b = openQueue(w)
+	rest(w)
 	eq(w.toasts[#w.toasts].level, "error", "a save that fails is an error toast")
 	eq(w.toasts[#w.toasts].text, "Not saved", "saying nothing was saved")
 	same(asks.hx.marks(b), { "New", "New", "New" }, "the row stays New")
@@ -2223,7 +2232,21 @@ case("host triage: a save that fails is told once and tried again only when the 
 	eq(w.kv.store["triage"], nil, "even once the disk works")
 	s.gh.items.octocat[1] = searchItem(1, "o/r", EPOCH - 60, { checks = "FAILURE" })
 	refreshNow(w, b)
+	rest(w)
 	same(asks.hx.marks(b), { "-", "New", "New" }, "a change to the row tries again, and saves")
+end)
+
+case("host triage: scrolling down the list marks nothing seen; only the row the cursor rests on for a second is", function(w: World)
+	hostScene(w, 4)
+	local b = openQueue(w)
+	for _ = 1, 3 do
+		w.advance(600)
+		b.press("down")
+	end
+	w.advance(600)
+	same(asks.hx.marks(b), { "New", "New", "New", "New" }, "600 ms on each row, and the one it stops on has rested less than a second")
+	w.advance(400)
+	same(asks.hx.marks(b), { "New", "New", "New", "-" }, "a second on the last one marks only it")
 end)
 
 case("host triage: z snoozes the selected row until 08:00 tomorrow and the row that takes its place is selected, Z lists snoozed rows with a Snoozed badge, z on one ends the snooze, and a snooze that ran out hides nothing", function(w: World)
@@ -2231,7 +2254,9 @@ case("host triage: z snoozes the selected row until 08:00 tomorrow and the row t
 	local b = openQueue(w)
 	local all = { "no_2fr_231", "no_2fr_232", "no_2fr_233" }
 	eq(pickerOf(b).selected, "no_2fr_231", "the first row is selected")
+	rest(w)
 	b.typeText("z")
+	rest(w)
 	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "the snoozed row leaves the list")
 	eq(pickerOf(b).selected, "no_2fr_232", "and the row that took its place is selected")
 	has(w.toasts[#w.toasts].text, "Snoozed until", "the toast says so")
@@ -2261,6 +2286,7 @@ end)
 case("host triage: a snoozed row that changes since it was snoozed is listed and counted again, though its time has not come", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)
+	rest(w)
 	b.typeText("z")
 	same(listed(b), { "no_2fr_232", "no_2fr_233" }, "the snoozed row leaves the list")
 	eq(pickerOf(b).scopes[2].count, 2, "and the count")
@@ -2305,10 +2331,12 @@ case("host triage: two blocks share the store: a row seen or snoozed in one reac
 	hostScene(w, 3)
 	local a = openQueue(w, 1)
 	local c = openQueue(w, 2)
+	rest(w)
 	same(asks.hx.marks(c), { "-", "New", "New" }, "the row the first block read is seen in both")
 	eq(pickerOf(c).selected, "no_2fr_231", "and each selects its own first row")
 	local drawn = c.renders()
 	a.press("down")
+	rest(w)
 	yes(c.renders() > drawn, "the other block is drawn again")
 	same(asks.hx.marks(c), { "-", "-", "New" }, "and shows the next row seen")
 	eq(pickerOf(c).selected, "no_2fr_231", "without moving its own selection")
@@ -2405,6 +2433,7 @@ case("host sort: switching to a view with the same query and another sort shows 
 	local b = openQueue(w)
 	same(listed(b), { "no_2fr_231", "no_2fr_233", "no_2fr_232" }, "Mine: recently updated first")
 	eq(pickerOf(b).selected, "no_2fr_231", "on its first item")
+	rest(w)
 	s.gh.override = function(req: GhReq): Reply?
 		return if req.kind == "search" then { delay = 60 * 1000, status = 1, stderr = "HTTP 502: Bad Gateway\n" } else nil
 	end

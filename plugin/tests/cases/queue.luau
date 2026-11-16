@@ -14,7 +14,7 @@ local EPOCH, NULL, answerOf, array = h.EPOCH, h.NULL, h.answerOf, h.array
 local bindKey, case, editorCard, eq, expand, findKey = h.bindKey, h.case, h.editorCard, h.eq, h.expand, h.findKey
 local forgetCheckouts, goToSettings, has, helpEntries, helpRows, hostScene = h.forgetCheckouts, h.goToSettings, h.has, h.helpEntries, h.helpRows, h.hostScene
 local hx, jsonDecode, jsonEncode, lacks, leaveWt = h.hx, h.jsonDecode, h.jsonEncode, h.lacks, h.leaveWt
-local listed, loginsSavedBy, newAcli, newGh, newGit, openQueue = h.listed, h.loginsSavedBy, h.newAcli, h.newGh, h.newGit, h.openQueue
+local listed, loginsSavedBy, newAcli, newGh, newGit, openQueue, rest = h.listed, h.loginsSavedBy, h.newAcli, h.newGh, h.newGit, h.openQueue, h.rest
 local pickScope, pickerNode, pickerOf, prLink, prefsOf, promptOf = h.pickScope, h.pickerNode, h.pickerOf, h.prLink, h.prefsOf, h.promptOf
 local refreshNow, request, requestsOf, rowIn, runLink, same = h.refreshNow, h.request, h.requestsOf, h.rowIn, h.runLink, h.same
 local savePrompts, searchItem, sectionIn, sha, yes = h.savePrompts, h.searchItem, h.sectionIn, h.sha, h.yes
@@ -180,7 +180,9 @@ case("host: the first item is selected on arrival; a refresh, a search or a view
 	eq(pickerOf(b).selected, "no_2fr_231", "the first item is selected as the first search lands")
 	eq(pickerOf(b).preview, "side", "so its preview is open")
 	yes(#(pickerNode(b).c or {}) > 0, "and drawn")
-	yes(w.kv.store["triage"] ~= nil, "reading it marked it seen")
+	eq(w.kv.store["triage"], nil, "a row only scrolled past is not marked seen")
+	rest(w)
+	yes(w.kv.store["triage"] ~= nil, "reading it for a second marked it seen")
 	refreshNow(w, b)
 	eq(pickerOf(b).selected, "no_2fr_231", "a refresh keeps it")
 	b.typeText("/")
@@ -3566,6 +3568,7 @@ case("host stage: a pull request's stage leads its row, Merged or Closed before 
 		searchItem(7, "o/r", EPOCH - 420, { isDraft = true }),
 	}
 	local b = openQueue(w)
+	rest(w)
 	local function stages(): { string }
 		local out: { string } = {}
 		for n = 1, 7 do
@@ -3598,6 +3601,7 @@ case("host stage: badge colours follow DESIGN.md's Color Meaning Rule: your turn
 		searchItem(7, "o/r", EPOCH - 420, { isDraft = true }),
 	}
 	local b = openQueue(w)
+	rest(w)
 	asks.hx.agents(b, { ["o/r#1"] = "waiting_input", ["o/r#2"] = "working", ["o/r#3"] = "working", ["o/r#6"] = "idle" })
 	local function toned(id: string): { string }
 		local out: { string } = {}
@@ -3784,8 +3788,11 @@ case("host review recency: a PR you approved whose head moved says New commits s
 		yes(type(part) == "string" or part.s == "mono", "it asks nothing of you, so it wears no colour (DESIGN.md's Color Meaning Rule)")
 	end
 	eq(nextOf(w, b, "no_2fr_231").row, nil, "approved, nothing asked again: no move, even with new commits")
+	rest(w)
 	eq(nextOf(w, b, "no_2fr_233").row, "Review", "your review was dismissed: Review")
+	rest(w)
 	eq(nextOf(w, b, "no_2fr_234").row, "Review", "asked again after you approved: Review")
+	rest(w)
 	eq(nextOf(w, b, "no_2fr_231").row, nil, "and back on the first, still none")
 	same(asks.hx.marks(b), { "-", "New", "-", "-", "New" }, "the rows read are seen")
 	s.gh.items.octocat[1] = approved(1, sha("a"))
@@ -3794,7 +3801,7 @@ case("host review recency: a PR you approved whose head moved says New commits s
 	same(details(), { "#1", "#2 · New commits since you approved", "#3", "#4 · New commits since you approved", "#5" }, "derived again on every refresh: approving the head clears it, a push raises it")
 	eq(asks.hx.marks(b)[2], "New", "an unseen row stays New")
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_232" })
-	w.advance(300)
+	rest(w)
 	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
 	w.advance(300)
 	s.gh.items.octocat[2] = approved(2, sha("a"), { headSha = sha("d") })

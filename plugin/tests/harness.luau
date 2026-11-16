@@ -3155,6 +3155,11 @@ local function openQueue(w: World, pane: number?): Block
 end
 M.openQueue = openQueue
 
+-- Lets the cursor rest on the selected row for the time an automatic mark-seen waits for (core.SUMMARY_REST_MS).
+function M.rest(w: World)
+	w.advance(1000)
+end
+
 -- Forgets every saved checkout: opening the queue in /work/r saves that one.
 local function forgetCheckouts(w: World)
 	local store: any = w.kv.store

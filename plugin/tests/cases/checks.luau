@@ -2145,6 +2145,7 @@ case("host stage: a Blocked pull request shows one chip per reason, most severe 
 		}),
 	}
 	local b = openQueue(w)
+	h.rest(w)
 	local rows: { [string]: any } = {}
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row

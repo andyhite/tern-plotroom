@@ -641,6 +641,7 @@ case("now: a seen assigned Jira issue someone else comments on is listed as Assi
 	pickScope(b, "issues:v3")
 	w.flush()
 	b.event({ ev = "select", id = "layer.queue", item = ROW }) -- its preview marks it seen
+	h.rest(w)
 	b.event({ ev = "select", id = "layer.queue", item = "nabc_23ABC-6" })
 	w.flush()
 	eq(asks.hx.mark(b, ROW), "-", "seen in the view")
@@ -660,6 +661,7 @@ case("now: a seen assigned Jira issue someone else comments on is listed as Assi
 	eq(asks.hx.mark(b, ROW), "Changed", "and its view row is Changed")
 	b.event({ ev = "select", id = "layer.queue", item = ROW })
 	w.flush()
+	h.rest(w)
 	eq(asks.hx.mark(b, ROW), "-", "seeing it again clears it")
 	pickScope(b, "now")
 	refreshNow(w, b)
@@ -698,6 +700,7 @@ case("now: snoozing a comment-Changed Jira issue keeps it Changed after the snoo
 	w.flush()
 	b.event({ ev = "select", id = "layer.queue", item = ROW }) -- its preview marks it seen
 	w.flush()
+	h.rest(w)
 	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" })
 	w.flush()
 	w.advance(60 * 1000)
@@ -728,6 +731,7 @@ case("now: snoozing a comment-Changed Jira issue keeps it Changed after the snoo
 	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "layout" }) -- the List shows its preview
 	w.flush()
 	eq(pickerOf(b).selected, ROW, "the List selects it")
+	h.rest(w)
 	eq(asks.hx.mark(b, ROW), "-", "showing its preview clears it")
 	w.advance(60 * 1000)
 	same(inNow(), {}, "and Now no longer lists it")
