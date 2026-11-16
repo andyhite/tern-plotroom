@@ -1226,6 +1226,9 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 			return cx2:toast("error", "Worktree failed", if type(a.problem) == "string" then a.problem else "The block's host gave no worktree")
 		end
 		local ready: Ready = r
+		if type(a.warning) == "string" then
+			cx2:toast("error", "Worktree ready for " .. t.label .. ", but not fully set up", a.warning)
+		end
 		if t.kind == "pr" then
 			mergeToast(cx2, t, a)
 		end

@@ -663,16 +663,37 @@ windowCase("worktree.open: the tracking fetch and the upstream write are best ef
 	eq(countLog(t.git, "fetch"), 2, "both fetches were tried")
 	eq(t.git.refs["refs/heads/feature"], sha("b"), "the branch exists")
 	eq(t.git.config["branch.feature.remote"], "origin", "with its upstream")
-	-- a config write that fails leaves the worktree made, without its upstream
+	-- a config write that keeps failing leaves the worktree made, without its upstream or its note, and says so
 	local u = scene(w, worktree, "o", "p", 7)
 	u.git.fail["config"] = { status = 255, stderr = "error: could not lock config file .git/config: File exists\n" }
-	local untracked = openWt(w, worktree, u, nil, nil)
+	local untracked = openWt(w, worktree, u, nil, 5000)
+	eq(untracked.calls, 1, "done calls")
 	eq(untracked.problem, nil, "problem when the upstream cannot be written")
 	eq(untracked.result.created, true, "created")
 	eq(untracked.result.branch, "feature", "branch")
 	eq(untracked.result.head, sha("b"), "head")
-	eq(countLog(u.git, "config"), 3, "the notes were read, then both settings were tried")
+	eq(countLog(u.git, "config"), 5, "the notes were read, then each setting was tried twice")
 	same(u.git.config, {}, "and none was written")
+	has(untracked.result.warning, "Could not set its upstream. Could not lock config file .git/config: File exists.", "the warning says what failed and why")
+	has(untracked.result.warning, "Pull and push will not work there", "and what it costs")
+	has(untracked.result.warning, "Worktrees will show it as Unnoted.", "the failed note is told too")
+end)
+
+windowCase("worktree.open: a config write that fails once, as another window holds the lock, is tried again and succeeds without a warning", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s = scene(w, worktree, "o", "r", 5)
+	s.git.fail["config"] = { status = 255, stderr = "error: could not lock config file .git/config: File exists\n" }
+	local out = openWt(w, worktree, s, nil, 100)
+	eq(out.calls, 0, "the retry waits")
+	s.git.fail["config"] = nil -- the other window let go
+	w.advance(1000)
+	eq(out.calls, 1, "done calls")
+	eq(out.problem, nil, "problem")
+	eq(out.result.warning, nil, "no warning")
+	eq(s.git.config["branch.feature.remote"], "origin", "the upstream was written")
+	eq(s.git.config["branch.feature.merge"], "refs/heads/feature", "both settings")
+	eq(s.git.notes["branch.feature.plotroompr"], "5", "and the note")
+	eq(s.git.notes["branch.feature.plotroomrepo"], "o/r", "of its repository too")
 end)
 
 windowCase("worktree.open: the repository's own remote, whatever its name, is fetched from and tracked", function(w: World)

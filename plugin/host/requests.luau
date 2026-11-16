@@ -440,6 +440,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						failures = failed,
 						merge = merge,
 						mergeProblem = mergeProblem,
+						warning = r.warning,
 					})
 				end
 				-- Neither a fork's nor another author's code is trusted: its git hooks and lockfile tools (a Gemfile, a
@@ -663,6 +664,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 					setup = if r.created and not r.fork then setupLine(code) else nil,
 					fork = if r.fork then true else nil,
 					vars = vars,
+					warning = r.warning,
 					code = code,
 				})
 			end)

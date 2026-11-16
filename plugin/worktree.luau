@@ -49,6 +49,7 @@ export type Result = {
 	fork: boolean, -- the pull request comes from a fork: its checkout runs no hooks, and no setup
 	ahead: number?,
 	conflicts: boolean, -- GitHub reports the pull request conflicts with its base (prBase)
+	warning: string?, -- the worktree is made, but Plotroom could not finish recording it (its upstream, its note): one sentence per failure
 }
 
 -- `ref` and `number` when the worktree is on a linked pull request's branch.
@@ -65,6 +66,7 @@ export type IssueResult = {
 	ref: string?,
 	fork: boolean?, -- the checked-out pull request comes from a fork
 	number: number?,
+	warning: string?, -- as Result's
 }
 
 -- A worktree Plotroom made, as `scan` finds it: `root` the checkout's main worktree, `branch` its short name, `head` its
@@ -84,9 +86,10 @@ export type IssuePlan = { dir: string, branch: string, pr: number?, fresh: boole
 type Spot = { info: Repo, root: string, recs: { Record }, target: string }
 
 -- A pull request checkout: the worktree, its local branch and HEAD, whether this call made it, its changes.
-type Opened = { path: string, branch: string, head: string, created: boolean, dirty: boolean?, ahead: number?, ref: string }
+type Opened = { path: string, branch: string, head: string, created: boolean, dirty: boolean?, ahead: number?, ref: string, warning: string? }
 
 local LOCAL_MS = 10 * 1000
+local CONFIG_RETRY_MS = 300 -- a failed `git config` write is tried once more after this: another window's config.lock is brief
 local NET_MS = 120 * 1000
 local REMOVE_MS = 120 * 1000 -- deleting a worktree's whole folder (node_modules and all) takes a while
 
@@ -810,10 +813,31 @@ function M.remove(t: Target, done: (Removal?, string?, boolean?) -> ())
 	end)
 end
 
+-- `git config` writing into the checkout's config: a failure is tried once more after CONFIG_RETRY_MS (another window's
+-- `git config` or fetch holds `.git/config.lock` for a moment). done(problem, cx): nil when it was written.
+local function setConfig(root: string, args: { string }, done: (string?, WindowCx?) -> ())
+	git(root, args, LOCAL_MS, function(_, err, cx)
+		if not err then
+			return done(nil, cx)
+		end
+		tern.timer(CONFIG_RETRY_MS, function(cx1: WindowCx?)
+			git(root, args, LOCAL_MS, function(_, err2, cx2)
+				done(err2, cx2 or cx1 or cx)
+			end)
+		end)
+	end)
+end
+
+-- Two warnings as one: the first, then the second.
+local function joined(a: string?, b: string?): string?
+	return if a and b then a .. " " .. b else a or b
+end
+
 -- Plotroom notes which item a worktree's branch belongs to in the checkout's own git config (`branch.<b>.plotroomkey`
 -- for an issue, `.plotroompr` for a pull request), so the inventory still knows it once the item leaves the query.
--- Best effort: a failed write only leaves the worktree unlabelled.
-local function note(root: string, branch: string, repo: string, key: string?, pr: number?, done: (WindowCx?) -> ())
+-- Not fatal: done(problem, cx) says in a sentence why a write failed (after setConfig's retry), and the open goes on
+-- with a warning, the worktree unlabelled.
+local function note(root: string, branch: string, repo: string, key: string?, pr: number?, done: (string?, WindowCx?) -> ())
 	local pairs_: { { string } } = { { "plotroomrepo", repo } }
 	if key then
 		table.insert(pairs_, { "plotroomkey", key })
@@ -821,16 +845,16 @@ local function note(root: string, branch: string, repo: string, key: string?, pr
 	if pr then
 		table.insert(pairs_, { "plotroompr", tostring(pr) })
 	end
-	local function set(i: number, cx: WindowCx?)
+	local function set(i: number, cx: WindowCx?, failed: string?)
 		local p = pairs_[i]
 		if not p then
-			return done(cx)
+			return done(if failed then "Could not record which item it is for. " .. reasonOf(failed) .. " Worktrees will show it as Unnoted." else nil, cx)
 		end
-		git(root, { "config", "--local", "branch." .. branch .. "." .. p[1], p[2] }, LOCAL_MS, function(_, _, cx2)
-			set(i + 1, cx2 or cx)
+		setConfig(root, { "config", "--local", "branch." .. branch .. "." .. p[1], p[2] }, function(err, cx2)
+			set(i + 1, cx2 or cx, failed or err)
 		end)
 	end
-	set(1, nil)
+	set(1, nil, nil)
 end
 
 -- One worktree of the checkout, as `inventory` lists it. `key` (issue) and `number` (pull request) only when Plotroom
@@ -1429,9 +1453,9 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 	local branch = M.prBranch(meta.ref, meta.fork)
 	local info = spot.info
 
-	local function inspect(m: github.PrMeta, path: string, created: boolean, want: string?, onBranch: string?)
+	local function inspect(m: github.PrMeta, path: string, created: boolean, want: string?, onBranch: string?, warning: string?)
 		inspectPath(s, path, info.commonDir, want, function(head, dirty, cx, ahead)
-			step({ path = path, branch = onBranch or branch, head = head, created = created, dirty = dirty, ahead = ahead, ref = ref }, m, cx)
+			step({ path = path, branch = onBranch or branch, head = head, created = created, dirty = dirty, ahead = ahead, ref = ref, warning = warning }, m, cx)
 		end)
 	end
 
@@ -1440,10 +1464,11 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 		local remote = if m.forkRepo then "https://github.com/" .. m.forkRepo .. ".git" else info.remote
 		-- A deleted fork took its branch along; the pull request's own ref still holds the head.
 		local merge = if m.fork and not m.forkRepo then "refs/pull/" .. number .. "/head" else "refs/heads/" .. m.ref
-		git(info.root, { "config", "branch." .. branch .. ".remote", remote }, LOCAL_MS, function(_, _, cx)
-			git(info.root, { "config", "branch." .. branch .. ".merge", merge }, LOCAL_MS, function(_, _, cx2)
+		setConfig(info.root, { "config", "branch." .. branch .. ".remote", remote }, function(e1, cx)
+			setConfig(info.root, { "config", "branch." .. branch .. ".merge", merge }, function(e2, cx2)
+				local err = e1 or e2
 				s.attempt(cx2 or cx, function()
-					inspect(m, path, true, m.sha)
+					inspect(m, path, true, m.sha, nil, if err then "Could not set its upstream. " .. reasonOf(err) .. " Pull and push will not work there until it is set." else nil)
 				end)
 			end)
 		end)
@@ -1568,7 +1593,8 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 		if not r then
 			return done(nil, problem, cx)
 		end
-		note(r.root, r.branch, repo, nil, r.number, function(cx2)
+		note(r.root, r.branch, repo, nil, r.number, function(problem, cx2)
+			r.warning = joined(r.warning, problem)
 			done(r, nil, cx2 or cx)
 		end)
 	end)
@@ -1604,6 +1630,7 @@ function M.open(checkout: string, repo: string, number: number, naming: (github.
 						ahead = o.ahead,
 						fork = m.fork ~= nil,
 						conflicts = m.conflicts,
+						warning = o.warning,
 					}, nil, cx2)
 				end)
 			end)
@@ -1904,7 +1931,8 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 		if not r then
 			return done(nil, problem, cx)
 		end
-		note(r.root, r.branch, repo, r.key, r.number, function(cx2)
+		note(r.root, r.branch, repo, r.key, r.number, function(problem, cx2)
+			r.warning = joined(r.warning, problem)
 			done(r, nil, cx2 or cx)
 		end)
 	end)
@@ -1999,7 +2027,7 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 						return finish(nil, "Pull request #" .. n .. " merges into " .. meta.base .. ", not " .. repo .. ".", cx1)
 					end
 					checkoutPr(s, spot, repo, n, meta, account, cx1, function(o, m, cx2)
-						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ahead = o.ahead, ref = o.ref, number = n, fork = m.fork ~= nil }, nil, cx2)
+						finish({ path = o.path, root = spot.root, remote = spot.info.remote, branch = o.branch, key = key, created = o.created, head = o.head, dirty = o.dirty, ahead = o.ahead, ref = o.ref, number = n, fork = m.fork ~= nil, warning = o.warning }, nil, cx2)
 					end)
 				end)
 			end)

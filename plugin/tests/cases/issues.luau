@@ -977,6 +977,25 @@ windowCase("window: Worktree on an issue opens a tab named \"#12 · r\" in plotr
 	eq(#w.window.launches, 2, "and opens its tab again")
 end)
 
+windowCase("window: a worktree the host could not note still opens its tab, and an error toast says it is not fully set up", function(w: World)
+	local s = issueWindow(w)
+	s.git.fail["config"] = { status = 255, stderr = "error: could not lock config file .git/config: File exists\n" }
+	w.window.choose = "main"
+	w.click(issueLink("worktree", "o/r", "12"))
+	w.flush()
+	w.advance(1000)
+	local warned
+	for _, t in w.toasts do
+		if t.text == "Worktree ready for o/r#12, but not fully set up" then
+			warned = t
+		end
+	end
+	yes(warned ~= nil, "the toast names the issue")
+	eq(warned.level, "error", "as an error")
+	has(warned.sub, "Worktrees will show it as Unnoted.", "and says what is missing")
+	eq(#w.window.launches, 1, "the tab opened all the same")
+end)
+
 -- A window whose pane 1 is the Plotroom block of `jiraHost` on its Jira filter (project ABC), linked.
 local function jiraWindow(w: World): (JiraScene, Block)
 	local s, b = issueWindow(w, jiraHost)
