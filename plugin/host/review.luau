@@ -390,7 +390,7 @@ local function load(state: State)
 				if not alive(state, gen) then
 					return
 				elseif not out then
-					return diffFailed(if problem2 == worktree.DIFF_TOO_LARGE then problem2 else "The diff could not be read: " .. (problem2 or "git gave no answer."))
+					return diffFailed(if problem2 == worktree.DIFF_TOO_LARGE then worktree.DIFF_TOO_LARGE else "The diff could not be read: " .. (problem2 or "git gave no answer."))
 				end
 				state.loading = false
 				place(state, p, M.parseDiff(out))
