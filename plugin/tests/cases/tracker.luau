@@ -1397,6 +1397,18 @@ case("github.issue: a paused quota or an unusable account sends nothing, and can
 	eq(bad.problem.kind, "failed", "an unexpected repository name")
 end)
 
+case("github.issue: a paused quota tells when reads resume in local time", function(w: World)
+	w.setZone(function(_at: number): number
+		return -5 * 3600
+	end)
+	local github = w.load("github") :: Github
+	newGh(w)
+	github.record({ remaining = 0, reset = w.seconds() + 60, limit = 30 }, w.seconds(), "limited")
+	local resume = w.seconds() + github.wait(w.seconds(), "limited")
+	local paused = runIssue(w, github, nil, "limited")
+	has(paused.problem.message, "resume at " .. os.date("!%H:%M:%S", resume - 5 * 3600) .. ".", "the wall clock five hours west of UTC")
+end)
+
 -- ---- jira.luau: acli's search, one work item's details and the project list
 
 local function runJira(w: World, jira: Jira, query: string, shouldContinue: (() -> boolean)?): SearchOut

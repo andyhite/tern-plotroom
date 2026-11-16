@@ -2283,6 +2283,61 @@ case("host triage: z snoozes the selected row until 08:00 tomorrow and the row t
 	same(listed(c), { "no_2fr_231", "no_2fr_232" }, "a snooze that ran out hides its row no longer, one still running does")
 end)
 
+type Triage = typeof(require("../../triage"))
+
+-- A UTC instant (this runtime's os.time reads a table as UTC, as Luau does).
+local function utc(year: number, month: number, day: number, hour: number, min: number): number
+	return os.time({ year = year, month = month, day = day, hour = hour, min = min, sec = 0 })
+end
+
+local function fixedZone(hours: number): (number) -> number
+	return function(_at: number): number
+		return math.floor(hours * 3600)
+	end
+end
+
+-- US Pacific in 2026: PDT (-07:00) from 02:00 PST on Sunday 8 March (10:00 UTC) to 02:00 PDT on Sunday 1 November
+-- (09:00 UTC), PST (-08:00) otherwise.
+local function pacific(at: number): number
+	return if at >= utc(2026, 3, 8, 10, 0) and at < utc(2026, 11, 1, 9, 0) then -7 * 3600 else -8 * 3600
+end
+
+case("triage.tomorrow: east of UTC it wakes at 08:00 local on the next local day, from late evening and from just past local midnight", function(w: World)
+	local triage = w.load("triage") :: Triage
+	w.setZone(fixedZone(9))
+	eq(triage.tomorrow(utc(2026, 11, 16, 14, 30)), utc(2026, 11, 16, 23, 0), "23:30 local on the 16th wakes at 08:00 local on the 17th, still the 16th in UTC")
+	eq(triage.tomorrow(utc(2026, 11, 16, 15, 30)), utc(2026, 11, 17, 23, 0), "00:30 local on the 17th, before UTC midnight, wakes on the 18th")
+	w.setZone(fixedZone(5.5))
+	eq(triage.tomorrow(utc(2026, 11, 16, 18, 0)), utc(2026, 11, 17, 2, 30), "23:30 at +05:30 wakes at 08:00 there")
+end)
+
+case("triage.tomorrow: west of UTC it wakes at 08:00 local on the next local day, though the UTC day has already turned", function(w: World)
+	local triage = w.load("triage") :: Triage
+	w.setZone(fixedZone(-8))
+	eq(triage.tomorrow(utc(2026, 11, 17, 7, 30)), utc(2026, 11, 17, 16, 0), "23:30 local on the 16th (07:30 UTC on the 17th) wakes at 08:00 local on the 17th")
+	eq(triage.tomorrow(utc(2026, 11, 17, 1, 0)), utc(2026, 11, 17, 16, 0), "17:00 local on the 16th, past UTC midnight")
+	eq(triage.tomorrow(utc(2026, 11, 17, 14, 0)), utc(2026, 11, 18, 16, 0), "06:00 local, still early morning, waits for the next day's 08:00")
+end)
+
+case("triage.tomorrow: across a DST change it wakes once, at 08:00 of the new local time", function(w: World)
+	local triage = w.load("triage") :: Triage
+	w.setZone(pacific)
+	eq(triage.tomorrow(utc(2026, 3, 8, 7, 30)), utc(2026, 3, 8, 15, 0), "spring forward: 23:30 PST on 7 March wakes at 08:00 PDT on 8 March")
+	eq(triage.tomorrow(utc(2026, 3, 7, 16, 0)), utc(2026, 3, 8, 15, 0), "08:00 PST to 08:00 PDT is 23 hours")
+	eq(triage.tomorrow(utc(2026, 11, 1, 6, 30)), utc(2026, 11, 1, 16, 0), "fall back: 23:30 PDT on 31 October wakes at 08:00 PST on 1 November")
+	eq(triage.tomorrow(utc(2026, 11, 1, 8, 30)), utc(2026, 11, 2, 16, 0), "01:30 PDT on 1 November wakes at 08:00 PST on the 2nd")
+	eq(triage.tomorrow(utc(2026, 11, 1, 9, 30)), utc(2026, 11, 2, 16, 0), "and the repeated 01:30, now PST, wakes at the same moment")
+end)
+
+case("host triage: z in a zone east of UTC snoozes until 08:00 local tomorrow and says 08:00", function(w: World)
+	w.setZone(fixedZone(9))
+	hostScene(w, 3)
+	local b = openQueue(w)
+	b.typeText("z")
+	eq(w.kv.get("triage").items["o/r#1"].snoozeUntil, EPOCH + 11 * 3600, "21:00 local now, so 08:00 local is 11 hours away")
+	has(w.toasts[#w.toasts].text, "08:00", "the toast tells the local time")
+end)
+
 case("host triage: a snoozed row that changes since it was snoozed is listed and counted again, though its time has not come", function(w: World)
 	local s = hostScene(w, 3)
 	local b = openQueue(w)

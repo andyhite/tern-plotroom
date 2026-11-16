@@ -453,6 +453,9 @@ export type World = {
 	-- A block opened with no saved state opens on Now, as in Tern, only after setOpensNow(true): otherwise it opens as a
 	-- restored one that saved no scope (on its first view), so a case about a view never sees Now's searches.
 	setOpensNow: (boolean) -> (),
+	-- The local zone of the fake os (see fakeOs): `offset` maps a UTC instant to the zone's offset east of UTC there, in
+	-- seconds, so a DST change is an offset that changes at its instant; nil is UTC, the default.
+	setZone: (((number) -> number)?) -> (),
 	window: Win,
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
@@ -1037,10 +1040,17 @@ local function newWorld(instantiate: Loader, context: string): World
 		},
 	}
 
+	-- The fake os reproduces what Tern's Luau does with time, in a zone the case picks (`setZone`, else UTC):
+	-- * os.time() is the virtual clock in whole seconds (EPOCH + w.now() // 1000).
+	-- * os.time(table) reads the table as UTC (Luau's timegm, unlike Lua's mktime), filling a missing hour with 12 and
+	--   carrying a day or month past its end; `isdst` is ignored.
+	-- * os.date(fmt, t) formats instant t (default: the virtual now) in the local zone; a "!" prefix formats it in UTC.
+	--   "*t" fields are local, `isdst` is always false, and %z/%Z do not name the zone.
+	local zone: ((number) -> number)? = nil
 	local fakeOs: any = {
 		time = function(t: any?): number
 			if t ~= nil then
-				-- UTC, like the fake os.date: days from civil, with the overflow of a day or month carried (triage.tomorrow).
+				-- days from civil, with the overflow of a day or month carried
 				local d: any = t
 				local y: number, m: number = d.year, d.month
 				y += (m - 1) // 12
@@ -1057,7 +1067,11 @@ local function newWorld(instantiate: Loader, context: string): World
 			return EPOCH + nowMs // 1000
 		end,
 		date = function(fmt: string, t: number?): any
-			return os.date("!" .. fmt, t)
+			local at = t or EPOCH + nowMs // 1000
+			if string.sub(fmt, 1, 1) == "!" then
+				return os.date(fmt, at)
+			end
+			return os.date("!" .. fmt, at + (if zone then zone(at) else 0))
 		end,
 		clock = os.clock,
 		difftime = os.difftime,
@@ -1614,6 +1628,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 		setOpensNow = function(on: boolean)
 			opensNow = on
+		end,
+		setZone = function(offset: ((number) -> number)?)
+			zone = offset
 		end,
 		window = win,
 		cx = windowCx,
