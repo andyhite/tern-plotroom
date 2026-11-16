@@ -554,6 +554,7 @@ local function blockDef(): BlockDef<State>
 	return {
 		-- Tern's sans face for people's text; mono/code/path spans and code kinds stay mono (Designing Views › Typography).
 		font = "sans",
+		features = core.EDIT_FEATURES,
 		init = function(cx: BlockCx, args: { string }, saved: any): State
 			local cwd: string? = nil
 			local from: { any } = { if isTable(saved) then saved.launchCwd else nil, args[1], cx.cwd }
@@ -1135,6 +1136,14 @@ local function blockDef(): BlockDef<State>
 				return
 			end
 			local s = state.settings
+			if ev.ev == "edit" then
+				-- Native editing (the prompt editor's text): Tern selected, placed the caret or replaced text; the same model the keys change.
+				local e = if s then s.edit else nil
+				if e and e.model.multi then
+					input.apply(e.model, ev)
+				end
+				return
+			end
 			local act = if ev.ev == "action" and type(ev.act) == "string" then ev.act else nil
 			local item = if type(ev.item) == "string" then ev.item else nil
 			-- Ends the single-line edit in progress (none: true): saves it, drops an empty draft or a shortcut being captured,

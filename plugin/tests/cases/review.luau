@@ -498,6 +498,53 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	w.finish()
 end)
 
+local function drawn(b: Block, key: string): any
+	return findKey(findKey(b.view().main, "detail"), key, "editor").p
+end
+
+case("review: the summary's editor takes Tern's native edits (select all, replace, a click's caret) as the keys do, and Send carries them", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	b.typeText("e")
+	same(w.frames[#w.frames].ops, { { "focus", "main.body.detail.text" } }, "Edit puts the caret in the summary's editor, which native editing needs")
+	-- ⌘A selects "Two problems." (13 units) and typing replaces it: one edit.
+	b.edit("text", 0, 13, "Fine")
+	eq(drawn(b, "text").text, "Fine", "the edit replaces the selected text")
+	eq(drawn(b, "text").cursor, 4, "with the caret after it")
+	b.edit("text", 1, 1, "", 2) -- a click: no text, the caret moves
+	same({ drawn(b, "text").text, drawn(b, "text").cursor } :: { any }, { "Fine", 2 } :: { any }, "a click only moves the caret")
+	b.edit("text", 4, 4, " 😀 ok", 9) -- one astral character is two units
+	eq(drawn(b, "text").text, "Fine 😀 ok", "typed text with an astral character")
+	eq(drawn(b, "text").cursor, 9, "the caret counted in UTF-16 units")
+	-- A stale edit (computed against other text) changes nothing.
+	b.event({ ev = "edit", id = "text", from = 0, to = 0, text = "x", cursor = 1, len = 3 })
+	eq(drawn(b, "text").text, "Fine 😀 ok", "a stale edit is dropped")
+	b.press("z", "c") -- ⌃Z reaches the keys without the undo feature: it takes the last edit back
+	eq(drawn(b, "text").text, "Fine", "undo steps back one edit")
+	b.press("escape")
+	b.typeText("j")
+	eq(selectedOf(b), "main.body.nav.n1", "Esc leaves the editor")
+	-- A finding: the same edits change its body.
+	b.typeText("e")
+	same(w.frames[#w.frames].ops, { { "focus", "main.body.detail.body" } }, "its editor takes the caret")
+	b.edit("body", 0, 11, "Used twice")
+	eq(drawn(b, "body").text, "Used twice", "a comment's body is replaced as the summary is")
+	b.press("enter", "m")
+	local choices = sentChoices(b)
+	eq(choices.summary, "Fine", "Send carries the summary as edited")
+	eq(choices.comments[1].body, "Used twice", "and the comment's body")
+	w.finish()
+end)
+
+case("review: the instructions' one-line editor takes native edits and drops the line breaks Tern may paste", function(w: World)
+	reviewScene(w)
+	local b = openReview(w)
+	b.event({ ev = "action", act = "edit", value = "5" })
+	b.edit("note", 0, 0, "tone down\nc1")
+	eq(findKey(b.view().main, "note", "editor").p.text, "tone down c1", "a line break becomes a space in the one-line field")
+	w.finish()
+end)
+
 case("review: the navigator and the selected item sit in a hairline split, stacked in a compact pane; the shares you drag are kept for the block", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)

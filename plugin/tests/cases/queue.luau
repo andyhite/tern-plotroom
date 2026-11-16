@@ -1611,6 +1611,32 @@ case("host: a prompt's text that is empty or over 8000 bytes stays in the editor
 	w.flush()
 end)
 
+case("host: the prompt editor takes Tern's native edits (select all, replace, a click's caret) as the keys do; Save keeps them and Esc drops them", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	b.press("down")
+	b.press("enter")
+	b.edit("draft", 0, 12, "Look at {url}") -- ⌘A selected "Review {url}" and typing replaced it
+	eq(draftOf(b), "Look at {url}", "an edit replaces the selected text")
+	b.edit("draft", 4, 4, "", 0) -- a click: only the caret moves
+	b.typeText("> ")
+	eq(draftOf(b), "> Look at {url}", "typing continues at the caret a click placed")
+	b.edit("draft", 0, 2, "") -- Backspace over a selection
+	eq(draftOf(b), "Look at {url}", "deleting a selection is an edit")
+	eq(savedText(w, 1), "Review {url}", "nothing is saved before Save")
+	b.press("z", "c")
+	eq(draftOf(b), "> Look at {url}", "undo steps back one edit")
+	b.event({ ev = "action", id = "layer.settings.prompt.buttons.save", act = "save-prompt" })
+	eq(savedText(w, 1), "> Look at {url}", "Save keeps the edited text")
+	b.press("enter")
+	b.edit("draft", 0, 15, "Dropped")
+	b.press("escape")
+	eq(savedText(w, 1), "> Look at {url}", "Esc drops the edits")
+end)
+
 case("host: a view's Prompts chips keep only prompts that exist, and Enter, Right and Space toggle them from the keyboard", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Triage", "Triage {url}") })

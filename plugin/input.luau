@@ -196,6 +196,40 @@ function M.undo(m: Model): boolean
 	return true
 end
 
+-- Byte offset of UTF-16 unit `units` in `text` (clamped to the text; inside a surrogate pair, the pair's start).
+local function fromU16(text: string, units: number): number
+	local n = 0
+	for p, c in utf8.codes(text) do
+		local w = if c > 0xFFFF then 2 else 1
+		if n + w > units then
+			return p - 1
+		end
+		n += w
+	end
+	return #text
+end
+
+-- Applies a native `edit` event (`{from, to, text, cursor, len}`: replace the UTF-16 range from..to with text, caret at
+-- cursor, len the text length it was computed against). False when the event is malformed or stale (its text is not
+-- this model's), so the caller renders again and the field is drawn with the model's text. A caret move is no undo step.
+function M.apply(m: Model, ev: UiEvent): boolean
+	local from, to, text, cursor = ev.from, ev.to, ev.text, ev.cursor
+	if type(from) ~= "number" or type(to) ~= "number" or type(text) ~= "string" or type(cursor) ~= "number" or ev.len ~= M.u16(m.text, #m.text) then
+		return false
+	end
+	local lo, hi = fromU16(m.text, math.min(from, to)), fromU16(m.text, math.max(from, to))
+	local s = M.clean(text, m.multi)
+	if s == "" and lo == hi then
+		m.cur, m.anchor = fromU16(m.text, cursor), nil
+		return true
+	end
+	splice(m, lo, hi, s)
+	if s == text then
+		m.cur = fromU16(m.text, cursor)
+	end
+	return true
+end
+
 -- SDK props for a drawn text field (picker search, settings row): text, UTF-16 cursor and anchor.
 function M.props(m: Model): { [string]: any }
 	local anchor = m.anchor

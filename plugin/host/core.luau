@@ -25,6 +25,7 @@ M.NAME_CAP = 120 -- characters of an action's or view's name
 M.STATUS_CAP = 100 -- bytes of an action's target status name
 M.COMMENT_ROWS = 36 -- the rows of a comment's text a confirmation shows; 3 more are the target, account and count
 M.ISSUE_ICON = "list-checks" -- the icon of issue views, as in window.luau; a name outside Tern's icon set (`circle-dot` is one) draws blank
+M.EDIT_FEATURES = { "edit" } :: { "edit" | "undo" } -- both blocks' `features`: Tern edits their editors natively (a click places the caret, ⌘A selects all) and sends `edit` events
 -- How an issue view lists a tracker's issues (as a gh login; Jira ignores it) and loads one issue's details.
 export type TrackerApi = {
 	search: (string?, string, () -> boolean, (tracker.IssueResult?, github.Problem?, number) -> ()) -> (),

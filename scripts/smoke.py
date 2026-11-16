@@ -2251,7 +2251,16 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     # The summary is selected first: edit it by keys (e; replace all; type, marker first as the tree caps text at 200 characters; shot while editing; Esc).
     s.ctl_ok("key", "e")
     s.wait_until("the summary's editor opens (Done is offered)", lambda: n(done) == 1)
-    s.ctl_ok("key", "Ctrl+a")  # not Meta+a: Tern 0.9.24 takes ⌘A for its own Select All before the block sees it (input.key selects all on either)
+    # Tern 0.9.24 takes ⌘A for its own Select All: the block's native editing (features edit) lets it select the editor's text and send the replacing edit.
+    s.ctl_ok("key", "Meta+a")
+    s.wait_until("⌘A selects the summary's text in its editor", lambda: n(scope + " .sf-editor.selecting") == 1)
+    s.shot("review-selected-summary")
+    s.ctl_ok("type", json.dumps("Smoke summary edit."))
+    s.wait_until("typing replaces all of the selected text", lambda: s.matches(scope + " .sf-editor") == ["Smoke summary edit."])
+    s.ctl_ok("key", "Ctrl+a")  # still the block's own select all (its key handler), though not Tern's
+    s.ctl_ok("type", json.dumps("Q"))
+    s.wait_until("Ctrl+A selects all and typing replaces it", lambda: s.matches(scope + " .sf-editor") == ["Q"])
+    s.ctl_ok("key", "Ctrl+a")
     s.ctl_ok("type", json.dumps("Smoke summary edit.\n\n" + summary))
     s.wait_text("the summary as typed", "Smoke summary edit.")
     s.shot("review-editing-summary")

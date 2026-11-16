@@ -543,6 +543,8 @@ local function edit(state: State, i: number)
 		return
 	end
 	state.at, state.editing = i, true
+	-- The caret's field (the TSP focus op; a view diff never moves it): native editing places the caret in the focused field.
+	state.cx:frame({ { "focus", "main.body.detail." .. (if i == 0 then "text" elseif i > #state.cards then "note" else "body") } })
 end
 
 -- The split's direction: side by side in regular panes, stacked in compact ones.
@@ -853,7 +855,21 @@ function M.define()
 			return true
 		end,
 
+		features = core.EDIT_FEATURES,
+
 		event = function(state: State, ev: UiEvent, _cx: BlockCx)
+			if ev.ev == "edit" then
+				-- Native editing: Tern selected, placed the caret or replaced text in the editor; the same model the keys change.
+				if state.editing then
+					input.apply(modelAt(state), ev)
+				end
+				return
+			elseif ev.ev == "focus" then
+				if state.editing and type(ev.id) == "string" then
+					state.cx:frame({ { "focus", ev.id } })
+				end
+				return
+			end
 			if ev.ev == "select" then
 				-- A click on the navigator's native list: ev.item is the row's full node id.
 				local i = if ev.id == "main.body.nav" then tonumber(string.match(tostring(ev.item), "^main%.body%.nav%.n(%d+)$")) else nil

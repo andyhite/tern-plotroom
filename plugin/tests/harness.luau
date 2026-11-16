@@ -422,6 +422,7 @@ export type Block = {
 	press: (string, string?, string?) -> boolean?,
 	typeText: (string) -> (),
 	event: ({ [string]: any }) -> (),
+	edit: (string, number, number, string, number?) -> (), -- a native edit: replace UTF-16 units from..to of the editor keyed `key` (as drawn now) with text
 	text: () -> string,
 	title: () -> string?,
 	close: () -> (),
@@ -1629,6 +1630,39 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			event = function(ev: { [string]: any })
 				def.event(state, ev, cx)
+				settle()
+			end,
+			edit = function(key: string, from: number, to: number, text: string, cursor: number?)
+				local function editorKeyed(node: any): any
+					if type(node) ~= "table" then
+						return nil
+					end
+					if node.k == "editor" and node.p.key == key then
+						return node
+					end
+					for _, kid in (node.c or {}) :: { any } do
+						local hit = editorKeyed(kid)
+						if hit ~= nil then
+							return hit
+						end
+					end
+					return nil
+				end
+				local drawn: any = last
+				local field = editorKeyed(drawn.main) or editorKeyed(drawn.layer)
+				-- Tern sends `edit` only to a block whose definition lists the feature, for an editor it draws.
+				if field == nil or not table.find(def.features or {}, "edit") then
+					error("no editor " .. key .. " drawn by a block with the edit feature", 2)
+				end
+				local len = 0
+				for _, cp in utf8.codes(field.p.text or "") do
+					len += if cp > 0xFFFF then 2 else 1
+				end
+				local after = 0
+				for _, cp in utf8.codes(text) do
+					after += if cp > 0xFFFF then 2 else 1
+				end
+				def.event(state, { ev = "edit", id = key, from = from, to = to, text = text, cursor = cursor or (math.min(from, to) + after), len = len }, cx)
 				settle()
 			end,
 			text = function(): string
