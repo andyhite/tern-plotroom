@@ -1875,9 +1875,11 @@ def sc_agent(s: Smoke) -> None:
     s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
     s.wait_text("the action picker", "Run on ")
     s.ctl_ok("picker", "enter")  # "Type a prompt…", first when nothing ran before
-    s.wait_text("the prompt", "Prompt for an agent on")
+    s.wait_text("the prompt, in the block's Compose overlay", "Prompt for an agent on")
     s.ctl_ok("type", json.dumps("smoke prompt"))
-    s.ctl_ok("key", "Enter")
+    s.wait_text("the typed prompt", "smoke prompt")
+    s.shot("compose")
+    s.ctl_ok("key", "Meta+Enter")  # Enter adds a line; ⌘↵ starts the agent
     s.wait_text("the agent toast", "Agent started")
     s.eq("the worktree was made for it", True, wt.is_dir())
 
@@ -2984,10 +2986,10 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
             s.ctl_ok("plugins", "run", "plugin.plotroom.agent-selected")
             s.wait_text("the action picker" + again, "Run on ")
             s.ctl_ok("picker", "enter")  # Type a prompt… is first: only saved actions are ever Recent
-            s.wait_text("the prompt" + again, "Prompt for an agent on")
+            s.wait_text("the prompt, in the block's Compose overlay" + again, "Prompt for an agent on")
             s.ctl_ok("type", json.dumps("smoke prompt"))
             s.wait_text("the typed prompt" + again, "smoke prompt")
-            s.ctl_ok("key", "Enter")
+            s.ctl_ok("key", "Meta+Enter")
 
         s.select_row()
         first = s.selection()

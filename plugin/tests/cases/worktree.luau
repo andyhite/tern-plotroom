@@ -2094,11 +2094,11 @@ local function mergeModel(w: World, s: Scene, files: { string }, tools: { [strin
 end
 
 -- Runs the default Watch on o/r#5 of an agentScene whose PR GitHub reports conflicting with base main.
-local function watchConflicted(w: World): Scene
-	local s = h.agentScene(w)
+local function watchConflicted(w: World): (Scene, h.Block)
+	local s, b = h.agentScene(w)
 	s.gh.meta["o/r#5"].conflicts = true
 	s.git.served["refs/heads/main"] = sha("m")
-	return s
+	return s, b
 end
 
 local function runWatch(w: World)
@@ -2221,10 +2221,11 @@ windowCase("worktree.premerge: a conflict Plotroom cannot settle (a source file,
 end)
 
 windowCase("worktree.premerge: no merge for an action that does not resolve conflicts, a PR GitHub does not report conflicting, or a dirty worktree", function(w: World)
-	local s = watchConflicted(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "Review {url}"
+	local s, b = watchConflicted(w)
+	w.window.choose = "Type a prompt…"
 	w.click(h.prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "Review {url}")
 	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, false, "a prompt that says nothing of conflicts asks for no merge")
 	lacks(w.window.agents[1].prompt, "<merge>", "and gets no merge block")
 	s.gh.meta["o/r#5"].conflicts = false

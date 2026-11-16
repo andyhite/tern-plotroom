@@ -79,6 +79,27 @@ local function confirmAsked(state: State, act: string, token: any?)
 	end
 end
 
+-- The Compose overlay's action (`compose-done`, ⌘↵) or Cancel (`compose-cancel`, Esc): the action hands the text to the
+-- window (hidden `main.compose`, then the plotroom://compose/done/<token> link it follows) unless it is longer than the
+-- overlay takes, which keeps it open saying so; Cancel opens plotroom://compose/cancel/<token>.
+local function composeAsked(state: State, act: string)
+	local c = state.composing
+	if not c then
+		return
+	end
+	local done = act == "compose-done"
+	if done and #c.model.text > c.max then
+		c.error = "Too long: " .. #c.model.text .. " bytes, and this takes at most " .. c.max .. "."
+		return
+	end
+	state.composing = nil
+	if done then
+		state.composed = { token = c.token, text = c.model.text }
+		state.cx:render() -- the text is on screen before the window is told to read it
+	end
+	state.cx:open("plotroom://compose/" .. (if done then "done" else "cancel") .. "/" .. c.token)
+end
+
 -- The card's Remove worktree: asks first (a confirm overlay), and not while the worktree is being prepared or removed.
 local function askRemove(state: State)
 	local chosen = selected(state)
@@ -745,6 +766,20 @@ local function blockDef(): BlockDef<State>
 				end
 				return true
 			end
+			if not s and state.composing then
+				-- The Compose overlay: ⌘↵ (or Ctrl-Enter) hands the text on, Esc cancels, Enter adds a line and every other
+				-- key edits; it is modal, so no other key reaches the queue.
+				if name == "escape" then
+					composeAsked(state, "compose-cancel")
+				elseif name == "enter" and (key.meta or key.ctrl) then
+					composeAsked(state, "compose-done")
+				else
+					input.key(state.composing.model, key, function(t)
+						cx:copy(t)
+					end)
+				end
+				return true
+			end
 			if s and s.confirm then
 				-- Settings' delete confirm: Enter deletes, Esc keeps it; it is modal, so no other key reaches the sheet.
 				if name == "enter" then
@@ -1209,6 +1244,8 @@ local function blockDef(): BlockDef<State>
 				state.removing = nil
 			elseif act == "plan-commit" or act == "plan-cancel" or act == "stop-agent" or act == "stop-cancel" or act == "message-send" or act == "message-note" or act == "message-cancel" or act == "fork-start" or act == "fork-cancel" then
 				confirmAsked(state, act, ev.value)
+			elseif act == "compose-done" or act == "compose-cancel" then
+				composeAsked(state, act)
 			elseif act == "goto" or act == "worktree" or act == "open-git" then
 				-- The worktree card's rows: a click in the preview carries the row's own id.
 				queueAction(state, act)

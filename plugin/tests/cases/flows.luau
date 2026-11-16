@@ -20,11 +20,13 @@ local rowIn, runLink, same, searchItem, sha = h.rowIn, h.runLink, h.same, h.sear
 local show, windowCase, yes = h.show, h.windowCase, h.yes
 local iso, loggedRuns = h.iso, h.loggedRuns
 
-type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops: () -> { string }, palette: (any) -> () }
+type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops: () -> { string }, palette: (any) -> (), compose: (string?) -> any }
 
 -- A Plotroom block's host that answers by hand: `reply(op, answer)` answers the oldest unanswered request of that op
 -- (through the block's hidden r<id> node and its rpc link) and returns the request; `link(node id, href)` keeps a
--- hidden link node the window validates a link against; `palette(rows)` publishes the block's main.palette node.
+-- hidden link node the window validates a link against; `palette(rows)` publishes the block's main.palette node;
+-- `compose(text)` shows the oldest unanswered compose request and hands `text` on as its Compose overlay would (nil:
+-- Esc), returning the request.
 local function flowHost(w: World, pane: number?): FlowStub
 	local at = pane or 1
 	local main: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } }, { id = "main.more", p = { href = h.tokened("plotroom://more"), hidden = true } } }
@@ -59,7 +61,8 @@ local function flowHost(w: World, pane: number?): FlowStub
 	for _, q in requestsSent(w) do
 		done[q.id] = true -- what was asked before this stub is not its to answer
 	end
-	return {
+	local stub: FlowStub
+	stub = {
 		reply = function(op: string, answer: any): any
 			for _, q in requestsSent(w) do
 				if q.op == op and not done[q.id] then
@@ -90,7 +93,22 @@ local function flowHost(w: World, pane: number?): FlowStub
 			end
 			table.insert(main, { id = "main.palette", p = { text = jsonEncode(rows), hidden = true } })
 		end,
+		compose = function(text: string?): any
+			local q = stub.reply("compose", { shown = true })
+			if text then
+				for i = #main, 1, -1 do
+					if main[i].id == "main.compose" then
+						table.remove(main, i)
+					end
+				end
+				table.insert(main, { id = "main.compose", p = { text = jsonEncode({ token = q.token, text = text }), hidden = true } })
+			end
+			w.click("plotroom://compose/" .. (if text then "done" else "cancel") .. "/" .. q.token, at)
+			w.flush()
+			return q
+		end,
 	}
+	return stub
 end
 
 local function flowRows(pick: any): { string }
@@ -1361,6 +1379,39 @@ windowCase("window flows: Esc on the draft title prompt returns to the review wi
 	eq(plan.body, "Body", "and the earlier body")
 end)
 
+windowCase("window flows: a draft's description is written in the block's Compose overlay, every line kept, and Esc there returns to the review with the earlier one", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local reviews = 0
+	w.window.decide = function(opts: any): (string?, boolean?)
+		local ph: string = opts.placeholder or ""
+		if string.find(ph, "^Where should") then
+			return "Open the pull request on o/r", nil
+		elseif string.find(ph, "^Open a draft PR from") then
+			return "main", nil
+		elseif string.find(ph, "^Draft PR: ") then
+			reviews += 1
+			return if reviews <= 2 then "Edit description…" else "Create with this title and description", nil
+		end
+		return "Cancel", nil
+	end
+	w.command("draft-pr")
+	w.flush()
+	st.reply("draft", { repo = "o/r", branch = "feat", destinations = { { repo = "o/r", remote = "origin" } } })
+	st.reply("draft", { repo = "o/r", remote = "origin", bases = { "main" }, defaultBase = "main" })
+	st.reply("draft", { draft = true, token = "d1", repo = "o/r", title = "Add thing", body = "Body", commits = {}, branch = "feat", base = "main", remote = "origin", count = 1, needsPush = false })
+	local first = st.compose("Fixes #12.\n\n- adds the toggle")
+	eq(first.value, "Body", "the editor starts from the description")
+	eq(first.max, 8000, "and takes what a description may hold")
+	eq(first.label, "Save", "its action saves it")
+	eq(#w.window.prompts, 0, "no one-line prompt is asked")
+	eq(st.compose(nil).value, "Fixes #12.\n\n- adds the toggle", "editing again starts from the written description")
+	eq(reviews, 3, "the review came back after the edit and after Esc")
+	local plan = st.reply("draft", { token = "p1", confirm = { head = "Create", label = "Create draft PR", lines = { "Repository: o/r" } } })
+	eq(plan.title, "Add thing", "the title is kept")
+	eq(plan.body, "Fixes #12.\n\n- adds the toggle", "and the written description, every line")
+end)
+
 windowCase("window flows: agent status is resent when the block's acknowledgement is absent or differs", function(w: World)
 	w.load("window")
 	flowHost(w)
@@ -1503,19 +1554,19 @@ windowCase("window flows: palette commands send plain events, and the command pa
 	same(last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
 	palette("Assign to me", issue)
 	eq(st.ops()[#st.ops()], "act", "an item command runs its flow")
-	w.window.typed = "  Looks good to me  "
 	palette("Comment…", issue)
+	local composeAsk = st.compose("  Looks good to me  ")
+	eq(composeAsk.item, true, "Comment asks the block for text about its selected item")
 	local commentAsk = requestsSent(w)[#requestsSent(w)]
-	eq(commentAsk.op, "act", "Comment asks the host")
+	eq(commentAsk.op, "act", "Comment then asks the host")
 	eq(commentAsk.name, "comment", "for a comment")
-	eq(commentAsk.text, "Looks good to me", "with the typed text, trimmed")
-	w.window.typed = nil
+	eq(commentAsk.text, "Looks good to me", "with the written text, trimmed")
 	palette("Review", issue)
 	eq(st.ops()[#st.ops()], "menu", "a saved action runs through its hidden link: the host is asked for it")
 	eq(requestsSent(w)[#requestsSent(w)].only, "p1", "just that one")
 	st.reply("menu", { items = {} })
-	w.window.typed = "Fix the flaky test"
 	palette("Type a prompt…", issue)
+	st.compose("Fix the flaky test")
 	local wt = st.reply("worktree", { path = "/wt/five", summary = "Created", created = true, current = true })
 	eq(wt.number, 5, "a typed prompt prepares the selected item's worktree, with no agent picker")
 	local said = #w.toasts
@@ -1579,19 +1630,31 @@ windowCase("window flows: comment, close, reopen, ready for review and convert t
 	eq(plan("pr-ready", "Mark o/r#7 ready for review?", "Ready for review").name, "pr-ready", "Ready for review asks for pr-ready")
 	eq(plan("pr-draft", "Convert o/r#7 to a draft?", "Convert to draft").name, "pr-draft", "Convert to draft asks for pr-draft")
 	eq(#w.window.picks, picks, "no plan is confirmed in the palette")
-	w.window.typed = "  Thanks, merging\nsoon  "
 	w.command("comment")
 	w.flush()
+	local composed = st.compose("  Thanks, merging\nsoon  ")
+	eq(composed.label, "Continue", "Comment is written in the block's Compose overlay first")
 	local commentAsk = st.reply("act", { token = "t-comment", confirm = { head = "Comment on o/r#7?", label = "Add comment", lines = { "o/r#7: Fix login", "Comment (20 characters): Thanks, merging ⏎ soon" } } })
 	eq(commentAsk.name, "comment", "Comment asks for a comment plan")
-	eq(commentAsk.text, "Thanks, merging\nsoon", "with the typed text, trimmed")
-	same(st.ops(), { "act", "act", "act", "act", "act", "act" }, "the window commits none")
-	w.window.typed = "   "
+	eq(commentAsk.text, "Thanks, merging\nsoon", "with the written text, lines kept, trimmed")
+	same(st.ops(), { "act", "act", "act", "act", "act", "compose", "act" }, "the window commits none")
 	local before = #requestsSent(w)
 	w.command("comment")
 	w.flush()
-	eq(#requestsSent(w), before, "a blank comment asks nothing")
-	w.window.typed = nil
+	st.compose("   ")
+	eq(#requestsSent(w), before + 1, "a blank comment asks nothing more")
+	w.command("comment")
+	w.flush()
+	st.compose(nil)
+	eq(#requestsSent(w), before + 2, "nor does Esc")
+	w.command("comment")
+	w.flush()
+	st.compose("Far\ntoo long")
+	st.reply("act", { problem = "That comment is too long to show in full for confirmation; shorten it." })
+	eq(w.toasts[#w.toasts].text, "Comment not added", "a refused comment says why")
+	local again = requestsSent(w)[#requestsSent(w)]
+	eq(again.op, "compose", "and opens the Compose overlay again")
+	eq(again.value, "Far\ntoo long", "with the text as written, so nothing is lost")
 end)
 
 windowCase("window flows: Mark read… asks the host to plan Now's threads, and the window commits nothing (the block confirms)", function(w: World)
@@ -1628,26 +1691,27 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	st.reply("act", { methods = { { id = "squash", label = "Squash and merge" } }, auto = true })
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().method) .. ":" .. tostring(lastAsk().auto), "pr-merge:squash:true", "auto-merge plans its method with auto")
 	st.reply("act", { problem = "stop" })
-	w.window.typed = "  Ship it  "
 	w.command("pr-approve")
 	w.flush()
+	st.compose("  Ship it  ")
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-approve:Ship it", "Approve sends the trimmed comment")
 	st.reply("act", { token = "t-approve", confirm = { head = "Approve o/r#7?", label = "Approve", lines = lines } })
-	w.window.typed = "   "
 	w.command("pr-approve")
 	w.flush()
+	st.compose("   ")
 	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-approve:nil", "a blank approval comment is none")
 	st.reply("act", { problem = "stop" })
+	eq(lastAsk().op, "act", "a refused approval with no comment opens no empty editor again")
 	local before = #requestsSent(w)
 	w.command("pr-request-changes")
 	w.flush()
-	eq(#requestsSent(w), before, "a blank request for changes asks nothing")
-	w.window.typed = "Please add tests"
+	st.compose("")
+	eq(#requestsSent(w), before + 1, "a blank request for changes asks nothing more")
 	w.command("pr-request-changes")
 	w.flush()
-	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-request-changes:Please add tests", "Request changes sends its comment")
+	st.compose("Please add tests\n\n- a case for the empty list")
+	eq(lastAsk().name .. ":" .. tostring(lastAsk().text), "pr-request-changes:Please add tests\n\n- a case for the empty list", "Request changes sends its comment, every line")
 	st.reply("act", { token = "t-changes", confirm = { head = "Request changes on o/r#7?", label = "Request changes", lines = lines } })
-	w.window.typed = nil
 	w.command("pr-update-branch")
 	w.flush()
 	eq(lastAsk().name, "pr-update-branch", "Update branch asks for its plan")

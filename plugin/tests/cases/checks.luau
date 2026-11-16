@@ -1526,10 +1526,11 @@ end)
 
 windowCase("window: an agent run notes its worktree on the block as the Worktree key does, and the card replaces the failure before it", function(w: World)
 	local s, b = agentScene(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.window.choose = "Type a prompt…"
 	w.fs.denyMkdir["/wt"] = "permission denied"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(cardOf(b).p.tone, "error", "a worktree that cannot be made is a red card")
 	has(cardText(b), "permission denied", "with its reason")
 	eq(badgeOf(b), nil, "and no badge")
@@ -1542,6 +1543,7 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	end
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(#w.window.agents, 1, "the agent starts")
 	eq(toneAtStart, nil, "after the block showed its worktree (uncoloured, not failed)")
 	eq(cardOf(b).p.tone, nil, "the card now says the worktree is ready, no longer failed")
@@ -1554,6 +1556,7 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(commandsOf(b, "update"), "git -C /wt/plotroom-o_r-pr-5 pull --ff-only", "with the command that brings it up to date")
 	w.cx.agents.start = function(_self: any, _opts: any): number
 		error("no agent program", 0)
@@ -1561,6 +1564,7 @@ windowCase("window: an agent run notes its worktree on the block as the Worktree
 	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(w.toasts[#w.toasts].text, "Could not start an agent for o/r#5", "an agent that cannot start is toasted")
 	has(cardText(b), s.target, "and the worktree's card is still on screen")
 end)

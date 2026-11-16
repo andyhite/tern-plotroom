@@ -151,13 +151,14 @@ windowCase("window: Agent lists the saved prompts of the active filter first, ru
 	w.flush()
 	eq(w.window.agents[2].prompt, "Triage https://github.com/o/r/pull/5, then triage https://github.com/o/r/pull/5 again", "every {url} is replaced")
 	same(w.kv.get("agent-recent"), { "Triage", "Review" }, "the newest pick leads")
-	w.window.choose, w.window.typed = { "Start another agent", "Type a prompt…" }, "Fix the flaky test in {url}"
+	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "Fix the flaky test in {url}")
 	eq(w.window.agents[3].prompt, "Fix the flaky test in https://github.com/o/r/pull/5", "typed text gets {url} replaced too")
-	w.window.choose, w.window.typed = { "Start another agent", "Type a prompt…" }, "{owner}/{repo}#{number} {title} by {author}: {branch} into {base} of {remote}, {nope}"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "{owner}/{repo}#{number} {title} by {author}: {branch} into {base} of {remote}, {nope}")
 	eq(w.window.agents[4].prompt, "o/r#5 Add a feature by ann: feature into main of origin, {nope}", "every variable is filled from a fresh read of the PR and its worktree's remote; an unknown one stays")
 	eq(w.toasts[#w.toasts].sub, nil, "a typed prompt has no name, so the toast has no second line")
 end)
@@ -299,9 +300,10 @@ windowCase("window: saved prompts the host cannot read are reported, and a promp
 	local _, b = agentScene(w)
 	w.kv.put("prompts-prs", "garbage")
 	b.render()
-	w.window.choose, w.window.typed = "Type a prompt…", "Look at {url}"
+	w.window.choose = "Type a prompt…"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "Look at {url}")
 	eq(w.toasts[1].level, "error", "the user is told")
 	eq(w.toasts[1].text, "Actions are not listed", "what is missing")
 	has(w.toasts[1].sub, "malformed", "and why")
@@ -619,6 +621,69 @@ windowCase("window: without the fork overlay on the block's host, no agent start
 	has(w.toasts[#w.toasts].sub, "fork's code", "and why")
 end)
 
+-- Block `b`'s Compose overlay, nil when it shows none.
+local function composeOf(b: any): any
+	return findKey(b.view().layer, "compose", "overlay")
+end
+
+windowCase("window: Comment… is written in the block's Compose overlay, Enter adding a line, and ⌘↵ plans it so the Confirm shows every line", function(w: World)
+	local _, b = agentScene(w)
+	w.command("comment")
+	w.flush()
+	local o = composeOf(b)
+	eq(o.p.head, "Comment", "the block asks for the comment in its Compose overlay")
+	eq(o.p.meta, "o/r#5", "naming the selected item")
+	eq(findKey(o, "draft", "editor").p.placeholder, "Comment to add", "in a multi-line editor")
+	local foot: { string } = {}
+	for _, n in findKey(o, "foot").c do
+		table.insert(foot, n.p.text .. "|" .. tostring(n.p.variant) .. "|" .. table.concat(n.p.keys or {}, "+"))
+	end
+	same(foot, { "Cancel|quiet|esc", "Continue|nil|cmd+enter" }, "Cancel first, then Continue on ⌘↵")
+	same(h.hx.miscued(b.view().layer), {}, "every click is a button")
+	same(h.hx.offPalette(b.view().layer), {}, "within the palette")
+	b.typeText("Looks good.")
+	b.press("enter")
+	b.typeText("- rename x")
+	eq(findKey(composeOf(b), "draft", "editor").p.text, "Looks good.\n- rename x", "Enter adds a line")
+	eq(h.confirmOf(b), nil, "and asks nothing yet")
+	b.press("enter", "m")
+	w.flush()
+	eq(composeOf(b), nil, "⌘↵ closes the overlay")
+	local o2: any = h.confirmOf(b)
+	local texts: { string } = {}
+	h.collectTexts(o2, texts)
+	local text = table.concat(texts, "\n")
+	eq(o2.p.head, "Comment on o/r#5?", "and the plan is confirmed in the block")
+	has(text, "Looks good. ⏎ - rename x", "showing every line it will post")
+end)
+
+windowCase("window: the Compose overlay keeps text longer than it takes open and says so, and Esc hands nothing on", function(w: World)
+	local _, b = agentScene(w)
+	request(b, "c1", { op = "compose", token = "ab12", head = "Draft PR description", label = "Save", placeholder = "Why", value = "abcdef", max = 5 })
+	w.flush()
+	eq(answerOf(b, "c1").shown, true, "the block shows it")
+	eq(findKey(composeOf(b), "draft", "editor").p.text, "abcdef", "starting from the text it was given")
+	eq(composeOf(b).p.meta, nil, "naming no item unless asked to")
+	local opened = #w.opened
+	b.press("enter", "m")
+	eq(#w.opened, opened, "text longer than the overlay takes is not handed on")
+	eq(findKey(composeOf(b), "error").p.spans[1].t, "Too long: 6 bytes, and this takes at most 5.", "and the overlay says so")
+	b.press("backspace")
+	b.press("enter", "c")
+	w.flush()
+	eq(w.opened[#w.opened], "plotroom://compose/done/ab12", "Ctrl-Enter hands it on, once it fits")
+	eq(h.jsonDecode(findKey(b.view().main, "compose").p.text).text, "abcde", "with the text published for the window")
+	request(b, "c2", { op = "compose", token = "cd34", head = "Comment", label = "Continue", placeholder = "", item = true })
+	w.flush()
+	b.press("escape")
+	w.flush()
+	eq(composeOf(b), nil, "Esc closes it")
+	eq(w.opened[#w.opened], "plotroom://compose/cancel/cd34", "and hands nothing on")
+	request(b, "c3", { op = "compose", token = "not-hex", head = "Comment", label = "Continue", placeholder = "" })
+	w.flush()
+	eq(composeOf(b), nil, "a malformed request shows nothing")
+end)
+
 -- Split tree `t` as text, panes named by `names` (e.g. "right(q,down(a1,a2))").
 local function shapeOf(t: any, names: { [number]: string }): string
 	if t.pane then
@@ -855,7 +920,7 @@ windowCase("window: a link without the host's token is refused, so text in a des
 end)
 
 windowCase("window: a pull request whose head branch has shell characters is refused for Worktree and agents", function(w: World)
-	local s = agentScene(w)
+	local s, b = agentScene(w)
 	for _, ref in { "x$(id)", "a;b", "-x", ".hidden" } do
 		s.gh.meta["o/r#5"].ref = ref
 		local said, ran = #w.toasts, #w.calls
@@ -863,10 +928,10 @@ windowCase("window: a pull request whose head branch has shell characters is ref
 		w.flush()
 		has(w.toasts[#w.toasts].text .. (w.toasts[#w.toasts].sub or ""), "head branch", ref .. ": the worktree is refused")
 		w.window.choose = "Type a prompt…"
-		w.window.typed = "hi"
 		said = #w.toasts
 		w.click(prLink("agent", "o/r", 5))
 		w.flush()
+		h.hx.compose(w, b, "hi")
 		eq(#w.window.agents, 0, ref .. ": no agent starts")
 		eq(#w.window.launches, 0, ref .. ": no tab opens")
 		yes(#w.toasts > said, ref .. ": the user is told")
@@ -987,11 +1052,12 @@ windowCase("window: a fork PR's new worktree runs no setup commands and says so"
 end)
 
 windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)
-	local s = agentScene(w)
+	local s, b = agentScene(w)
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.window.choose = "Type a prompt…"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	w.advance(500) -- the setup shell reports its command finished at the first look
 	eq(#w.window.runs, 1, "setup runs")
 	local shell = w.window.panes[w.window.runs[1].pane]
@@ -1007,12 +1073,13 @@ windowCase("window: an agent on a new worktree joins the tab where its setup run
 end)
 
 windowCase("window: an agent on a new worktree starts only once its setup commands finish", function(w: World)
-	agentScene(w)
+	local _, b = agentScene(w)
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 	w.window.setup.ms = 30000
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	w.window.choose = "Type a prompt…"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(#w.window.runs, 1, "setup runs")
 	eq(#w.window.settles, 1, "and is waited on")
 	eq(w.window.settles[1].pane, w.window.runs[1].pane, "in its shell")
@@ -1037,12 +1104,13 @@ for _, c in {
 	{ name = "runs in a shell that reports no command", setup = { silent = true }, at = 10000, title = "Setup may still be running for o/r#5", why = "Its shell does not report when a command finishes." },
 } :: { any } do
 	windowCase("window: a setup that " .. c.name .. " still starts the agent, and a toast says why", function(w: World)
-		agentScene(w)
+		local _, b = agentScene(w)
 		w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
 		w.window.setup = c.setup
-		w.window.choose, w.window.typed = "Type a prompt…", "go"
+		w.window.choose = "Type a prompt…"
 		w.click(prLink("agent", "o/r", 5))
 		w.flush()
+		h.hx.compose(w, b, "go")
 		if c.at > 0 then
 			w.advance(c.at - 1)
 			eq(#w.window.agents, 0, "no agent before then")
@@ -1058,10 +1126,11 @@ for _, c in {
 end
 
 windowCase("window: an agent on a worktree with no setup commands starts without waiting", function(w: World)
-	agentScene(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	local _, b = agentScene(w)
+	w.window.choose = "Type a prompt…"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(#w.window.settles, 0, "nothing to wait on")
 	eq(#w.window.agents, 1, "the agent starts at once")
 end)
@@ -1069,7 +1138,6 @@ end)
 windowCase("window: an answer that arrives without a window context starts nothing", function(w: World)
 	agentScene(w)
 	local ran = #w.calls
-	w.window.typed = "go"
 	w.window.decide = function(_opts: any): (string?, boolean?)
 		return "Type a prompt…", true
 	end

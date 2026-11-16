@@ -1813,6 +1813,64 @@ function M.messageLink(cx: WindowCx, pane: number, what: string, token: string)
 	end)
 end
 
+-- ---------------------------------------------------------------- compose
+
+-- What a flow asks the block's Compose overlay to show: its head, the action's label, the editor's placeholder and
+-- text to start from, at most `max` bytes (the host's own cap without), and `item` to name the selected item.
+export type Compose = { head: string, label: string, placeholder: string, value: string?, max: number?, item: boolean? }
+
+-- The text waiting in a Plotroom block's Compose overlay (rpc `compose`): only that block's links with this token act
+-- on it; a newer request replaces it.
+local pendingCompose: { token: string, pane: number, done: (string, WindowCx) -> (), cancel: ((WindowCx) -> ())? }? = nil
+
+-- Asks the Plotroom block in `pane` for text, written in its Compose overlay (a multi-line editor: ⌘↵ hands it on, Esc
+-- cancels): `done(text, cx)` gets it as written, `cancel(cx)` (when given) runs on Esc or Cancel.
+function M.compose(cx: WindowCx, pane: number, o: Compose, done: (string, WindowCx) -> (), cancel: ((WindowCx) -> ())?)
+	local token = string.format("%08x%08x", math.random(0, 0x7FFFFFFF), math.random(0, 0x7FFFFFFF))
+	pendingCompose = { token = token, pane = pane, done = done, cancel = cancel }
+	pcall(function()
+		cx.layout:focus(pane)
+	end)
+	e().ask(cx, pane, "compose", { token = token, head = o.head, label = o.label, placeholder = o.placeholder, value = o.value, max = o.max, item = o.item }, ACT_MS, function() end)
+end
+
+-- plotroom://compose/<what>/<token> from the Plotroom block in `pane`: its Compose overlay's action (`done`) hands the
+-- waiting flow the text the block shows as hidden `main.compose`, looked for again for up to SEND_READ_MS (a remote
+-- host's link can beat its render); Cancel (`cancel`) runs the flow's cancel. A link that is not the waiting one's
+-- (another block, an old token) does nothing.
+function M.composeLink(cx: WindowCx, pane: number, what: string, token: string)
+	local c = pendingCompose
+	if not c or c.token ~= token or c.pane ~= pane then
+		if what == "done" then
+			cx:toast("info", "That text is no longer waiting", "Run the command again.")
+		end
+		return
+	end
+	pendingCompose = nil
+	if what ~= "done" then
+		if c.cancel then
+			c.cancel(cx)
+		end
+		return
+	end
+	local waited = 0
+	local function try(cx2: WindowCx)
+		local ok, o = pcall(tern.json.decode, tostring(e().nodeProp(e().readNode(cx2, pane, "main.compose"), "text")))
+		if ok and type(o) == "table" and o.token == token and type(o.text) == "string" then
+			return c.done(o.text, cx2)
+		elseif waited >= SEND_READ_MS then
+			return cx2:toast("error", "Plotroom: the written text could not be read", "Run the command again.")
+		end
+		waited += SEND_READ_STEP_MS
+		tern.timer(SEND_READ_STEP_MS, function(cx3: WindowCx?)
+			if cx3 then
+				try(cx3)
+			end
+		end)
+	end
+	try(cx)
+end
+
 type Picked = { pane: number, kind: string, text: string, clipped: boolean }
 -- A selected range of a file block: `session:read` gives a file's selection only as `{anchor, head}` byte offsets into
 -- its text, and `session:selection` gives none, so the text is read from the file (`docs:read`, with unsaved edits).
@@ -1964,14 +2022,35 @@ local function planned(cx: WindowCx, a: any)
 	end
 end
 
--- Asks the host for an `act`; a plan reply is confirmed in the block, a problem is toasted under `title`.
-local function planAct(cx: WindowCx, pane: number, title: string, args: { [string]: any })
+-- Asks the host for an `act`; a plan reply is confirmed in the block, a problem is toasted under `title` and then runs
+-- `refused` (when given).
+local function planAct(cx: WindowCx, pane: number, title: string, args: { [string]: any }, refused: ((WindowCx) -> ())?)
 	e().ask(cx, pane, "act", args, ACT_MS, function(a: any, cx2: WindowCx)
 		local why = problemOf(a)
 		if why then
-			return cx2:toast("error", title, why)
+			cx2:toast("error", title, why)
+			if refused then
+				refused(cx2)
+			end
+			return
 		end
 		planned(cx2, a)
+	end)
+end
+
+-- Comment…, Approve… and Request changes…: the text is written in the block's Compose overlay, then planned as `name`
+-- (trimmed; blank is no comment, which only `optional` plans). A refused plan toasts why and opens the overlay again
+-- with the text as written, so nothing written is lost.
+local function composePlan(cx: WindowCx, pane: number, o: Compose, title: string, name: string, optional: boolean)
+	M.compose(cx, pane, o, function(text: string, cx2: WindowCx)
+		local t = trim(text)
+		if t == "" and not optional then
+			return
+		end
+		planAct(cx2, pane, title, { name = name, text = if t == "" then nil else t }, if t == "" then nil else function(cx3: WindowCx)
+			o.value = text
+			composePlan(cx3, pane, o, title, name, optional)
+		end)
 	end)
 end
 
@@ -2110,22 +2189,13 @@ local function prMerge(cx: WindowCx, pane: number)
 	end)
 end
 
--- One-line prompt; an approval's comment is optional (empty sends none), a request for changes needs one.
+-- An approval's comment is optional (empty sends none), a request for changes needs one.
 local function prApprove(cx: WindowCx, pane: number)
-	cx:prompt({ placeholder = "Approval comment (optional)", icon = "merge", action = "plan" }):next(function(text, _, cx2)
-		if cx2 and text then
-			local t = trim(text)
-			planAct(cx2, pane, "Not approved", { name = "pr-approve", text = if t == "" then nil else t })
-		end
-	end)
+	composePlan(cx, pane, { head = "Approve", label = "Continue", placeholder = "Approval comment (optional)", item = true }, "Not approved", "pr-approve", true)
 end
 
 local function prRequestChanges(cx: WindowCx, pane: number)
-	cx:prompt({ placeholder = "What needs to change on the selected PR?", icon = "merge", action = "plan" }):next(function(text, _, cx2)
-		if cx2 and text and trim(text) ~= "" then
-			planAct(cx2, pane, "Changes not requested", { name = "pr-request-changes", text = trim(text) })
-		end
-	end)
+	composePlan(cx, pane, { head = "Request changes", label = "Continue", placeholder = "What needs to change?", item = true }, "Changes not requested", "pr-request-changes", false)
 end
 
 local function prUpdateBranch(cx: WindowCx, pane: number)
@@ -2136,19 +2206,16 @@ local function prEmptyCommit(cx: WindowCx, pane: number)
 	planAct(cx, pane, "No empty commit pushed", { name = "pr-empty-commit" })
 end
 
--- One-line prompt; the host validates the text and shows exactly what it will post when it asks for the confirmation.
+-- The host validates the text and shows exactly what it will post when it asks for the confirmation.
 local function comment(cx: WindowCx, pane: number)
-	cx:prompt({ placeholder = "Comment to add to the selected item", icon = "merge", action = "review" }):next(function(text, _, cx2)
-		if cx2 and text and trim(text) ~= "" then
-			planAct(cx2, pane, "Comment not added", { name = "comment", text = trim(text) })
-		end
-	end)
+	composePlan(cx, pane, { head = "Comment", label = "Continue", placeholder = "Comment to add", item = true }, "Comment not added", "comment", false)
 end
 
 -- ---------------------------------------------------------------- draft PR
 
--- The preview's review picker: Cancel first, then the way on, the edits and what will happen. A prompt left with Esc
--- returns here with the earlier values; only Cancel (or dismissing this picker) ends the flow.
+-- The preview's review picker: Cancel first, then the way on, the edits and what will happen. The title is a one-line
+-- prompt and the description is written in the block's Compose overlay; either left with Esc returns here with the
+-- earlier values. Only Cancel (or dismissing this picker) ends the flow.
 local function reviewDraft(cx: WindowCx, pane: number, p: any, title: string, body: string)
 	local items: { PickItem } = {
 		{ label = "Cancel", icon = "x" },
@@ -2173,26 +2240,25 @@ local function reviewDraft(cx: WindowCx, pane: number, p: any, title: string, bo
 	cx:pick({ items = items, placeholder = "Draft PR: " .. title, icon = "merge", action = "create or edit" }):next(function(item, _, cx2)
 		if not item or not cx2 then
 			return
-		elseif item.edit == "title" or item.edit == "body" then
-			local isTitle = item.edit == "title"
-			-- ponytail: the prompt is one line, so editing the description replaces all of it; a multi-line editor needs a host-side form.
-			return cx2:prompt({ value = if isTitle then title else body, placeholder = if isTitle then "Draft PR title" else "Draft PR description", icon = "merge", action = "save" }):next(function(text, _, cx3)
+		elseif item.edit == "body" then
+			return M.compose(cx2, pane, { head = "Draft PR description", label = "Save", placeholder = "What the pull request changes and why", value = body, max = MAX_BODY }, function(text: string, cx3: WindowCx)
+				reviewDraft(cx3, pane, p, title, text)
+			end, function(cx3: WindowCx)
+				reviewDraft(cx3, pane, p, title, body) -- Esc: back to the review, earlier values intact
+			end)
+		elseif item.edit == "title" then
+			return cx2:prompt({ value = title, placeholder = "Draft PR title", icon = "merge", action = "save" }):next(function(text, _, cx3)
 				if not cx3 then
 					return
 				elseif not text then
 					return reviewDraft(cx3, pane, p, title, body) -- Esc: back to the review, earlier values intact
 				end
-				local t, b = title, body
-				if isTitle then
-					t = trim(text)
-				else
-					b = text
-				end
-				if t == "" or #t > MAX_TITLE or #b > MAX_BODY then
-					cx3:toast("error", "Not changed", "The title takes 1 to " .. MAX_TITLE .. " bytes, the description up to " .. MAX_BODY .. ".")
+				local t = trim(text)
+				if t == "" or #t > MAX_TITLE then
+					cx3:toast("error", "Not changed", "The title takes 1 to " .. MAX_TITLE .. " bytes.")
 					return reviewDraft(cx3, pane, p, title, body)
 				end
-				reviewDraft(cx3, pane, p, t, b)
+				reviewDraft(cx3, pane, p, t, body)
 			end)
 		elseif item.go ~= true then
 			return

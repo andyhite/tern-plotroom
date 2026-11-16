@@ -2808,6 +2808,19 @@ function hx.ternIcon(name: any): boolean
 	return table.find(TERN_ICONS, name) ~= nil
 end
 
+-- Writes `text` in block `b`'s Compose overlay and hands it on with ⌘↵ (nil: Esc instead), then lets the window take
+-- it on through the overlay's link.
+function hx.compose(w: World, b: Block, text: string?)
+	assert(b.state().composing, "the block shows no Compose overlay")
+	if text then
+		b.press("paste", nil, text)
+		b.press("enter", "m")
+	else
+		b.press("escape")
+	end
+	w.flush()
+end
+
 -- A Board's columns as "column: card ids" (the fold's only while it is open) and the node id of its selected card;
 -- nil, nil when the block shows no Board.
 function hx.board(b: Block): ({ string }?, string?)
@@ -3707,7 +3720,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "51" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "52" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

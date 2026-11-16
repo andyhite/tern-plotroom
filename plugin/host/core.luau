@@ -233,6 +233,13 @@ M.NOW_REASONS = {
 	{ id = "assigned", label = "Assigned" },
 }
 
+-- Text the window asks for in the Compose overlay (rpc `compose`, render's composeOverlay): its `head`, the selected
+-- item's ref as `meta` when the window asked for it, the editor's model and placeholder, the action's `label`, at most
+-- `max` bytes, and `error` when the action was refused (too long).
+export type Composing = { token: string, head: string, meta: string?, label: string, placeholder: string, max: number, model: input.Model, error: string? }
+
+M.COMPOSE_MAX = 20000 -- the most bytes the Compose overlay hands the window: even escaped as JSON they fit the window's 64000-character surface read
+
 export type State = {
 	cx: BlockCx,
 	kind: Kind, -- the active view's, as identify keeps it (a block with no view keeps its last)
@@ -312,6 +319,8 @@ export type State = {
 	stopping: { key: string, href: string }?, -- the item whose agent Stop agent… asks about (a Confirm overlay), and the link that stops it
 	messaging: { token: string, head: string, lines: { string }, note: boolean }?, -- a message for an agent the window asks about in the Confirm overlay (rpc `message`); Send and Add a note open the window's links with `token`
 	forking: { token: string, head: string, lines: { string } }?, -- the first agent on a fork's worktree the window asks about in the Confirm overlay (rpc `fork`); Start agent opens the window's link with `token`
+	composing: Composing?, -- text the window asks for in the Compose overlay (rpc `compose`); its action and Cancel open the window's links with its `token`
+	composed: { token: string, text: string }?, -- the text the Compose overlay's action last handed the window, published as hidden `main.compose`
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
 	boardOn: boolean, -- the Worktrees scope is shown instead of a view

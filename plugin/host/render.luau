@@ -401,6 +401,11 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 	for _, r in state.replies do
 		table.insert(out, ui.node("text", { key = "r" .. r.id, text = r.text, hidden = true }))
 	end
+	-- The text the Compose overlay last handed the window (flows.composeLink reads it), until another replaces it.
+	local composed = state.composed
+	if composed then
+		table.insert(out, ui.node("text", { key = "compose", text = tern.json.encode(composed), hidden = true }))
+	end
 	return out
 end
 
@@ -2403,6 +2408,27 @@ local function forkConfirm(f: { head: string, lines: { string } }): Node
 	})
 end
 
+-- Text the window asks for (`state.composing`, rpc `compose`; DESIGN.md › Compose overlay): a modal overlay keyed
+-- `compose` holding the multi-line editor (Enter adds a line), why the action was refused when it was, and in its foot
+-- Cancel first (quiet, Esc) and then the action (⌘↵). Nothing is sent from here: the window takes the text on.
+local function composeOverlay(c: core.Composing): Node
+	local p = input.props(c.model)
+	local kids: { Node } = {
+		ui.node("editor", { key = "draft", text = p.text, cursor = p.cursor, anchor = p.anchor, placeholder = c.placeholder, maxLines = 16, min = { h = "6lines" }, aria = c.head }),
+	}
+	if c.error then
+		table.insert(kids, ui.node("text", { key = "error", spans = { ui.span(c.error, "error") } }))
+	end
+	table.insert(
+		kids,
+		ui.node("row", { key = "foot", gap = "sm", justify = "end", align = "center" }, {
+			button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = "compose-cancel" } }),
+			button(c.label, { key = "act", size = "md", keys = { "cmd", "enter" }, actions = { click = "compose-done" } }),
+		})
+	)
+	return ui.node("overlay", { key = "compose", modal = true, size = "md", icon = "pen", head = c.head, meta = c.meta, foot = "layer.compose.foot" }, kids)
+end
+
 -- Settings' Delete or Remove row `s.confirm` asks here, in the block: Enter deletes, Esc keeps it.
 function M.deleteConfirm(state: State): Node?
 	local row = if state.settings then state.settings.confirm else nil
@@ -2562,6 +2588,8 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 		}))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))
+	elseif state.composing then
+		table.insert(layer, composeOverlay(state.composing))
 	elseif state.plan then
 		table.insert(layer, planConfirm(state))
 	elseif stopping then

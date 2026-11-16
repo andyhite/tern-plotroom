@@ -1321,12 +1321,12 @@ local function runSaved(cx: WindowCx, pane: number, t: Target, id: string, check
 	end)
 end
 
--- Asks for a prompt's text and runs it on the target in an agent in its worktree. `checked`: the caller already asked
--- about a live agent.
+-- Asks for a prompt's text, written in the block's Compose overlay, and runs it on the target in an agent in its
+-- worktree. `checked`: the caller already asked about a live agent.
 local function typePrompt(cx: WindowCx, pane: number, t: Target, checked: boolean?)
 	local function askText(cx2: WindowCx)
-		cx2:prompt({ placeholder = "Prompt for an agent on " .. t.label, icon = "merge", action = "send" }):next(function(text, _, cx3)
-			if cx3 and text and string.find(text, "%S") then
+		flows.compose(cx2, pane, { head = "Prompt for an agent on " .. t.label, label = "Start agent", placeholder = "What the agent should do" }, function(text: string, cx3: WindowCx)
+			if string.find(text, "%S") then
 				prepareTarget(cx3, pane, t, { text = text, name = "Typed prompt" }, true)
 			end
 		end)
@@ -1746,6 +1746,15 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		else
 			flows.messageLink(cx, pane, what, token :: string)
+		end
+		return true
+	end
+	local cwhat, ctoken = string.match(url, "^plotroom://compose/(%a+)/(%x+)$")
+	if cwhat == "done" or cwhat == "cancel" then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		else
+			flows.composeLink(cx, pane, cwhat, ctoken :: string)
 		end
 		return true
 	end

@@ -1120,9 +1120,10 @@ windowCase("window: the Agent picker on an issue runs typed text in its worktree
 	})
 	b.render()
 	cardSurface(w, b)
-	w.window.choose, w.window.typed = { "Type a prompt…", "main" }, "Fix {title} ({key}) on {branch} from {base} of {remote}; {nope}"
+	w.window.choose = { "Type a prompt…", "main" }
 	w.click(issueLink("agent", "o/r", "12"))
 	w.flush()
+	h.hx.compose(w, b, "Fix {title} ({key}) on {branch} from {base} of {remote}; {nope}")
 	local rows = promptPicks(w)[1].items
 	same({ rows[1].label, rows[2].label, rows[3].label }, { "Type a prompt…", "Here", "There" }, "typing, then the saved prompts")
 	eq(#w.window.agents, 1, "the typed prompt started an agent")
@@ -2720,9 +2721,10 @@ windowCase("window: {github.user} in a pull request prompt is filled with the gh
 	eq(#w.window.agents, 2, "an agent started for each")
 	eq(w.window.agents[2].prompt, "Review https://github.com/o/r/pull/5 as octocat; {nope} {no.such}", "{github.user} is the login gh is signed in as; unknown variables, dotted or not, stay as typed")
 	eq(w.window.agents[2].cwd, s.target, "in the PR's worktree")
-	w.window.choose, w.window.typed = { "Start another agent", "Type a prompt…" }, "Ping {github.user} about {number}"
+	w.window.choose = { "Start another agent", "Type a prompt…" }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "Ping {github.user} about {number}")
 	sent = requestsSent(w)
 	eq(sent[#sent].users, true, "typed text that names it asks for the users too")
 	eq(w.window.agents[3].prompt, "Ping octocat about 5", "and gets the login")
@@ -2970,13 +2972,14 @@ windowCase("window: Go to tab on a Jira issue asks for the project's lowercase k
 end)
 
 windowCase("window: an agent joins the tab working in its worktree, not a pane in a sibling folder that shares the path's start", function(w: World)
-	local s = agentScene(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	local s, b = agentScene(w)
+	w.window.choose = "Type a prompt…"
 	-- a pane in /wt/plotroom-o_r-pr-5-old, beside the worktree /wt/plotroom-o_r-pr-5
 	w.window.panes[21] = { block = nil, cwd = s.target .. "-old/src", tab = 21 }
 	table.insert(w.window.tabs, { id = 21, session = 5 })
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(w.toasts[#w.toasts].text, "Agent started for o/r#5", "no tab works in the worktree yet: the agent has a tab of its own")
 	eq(w.window.switches[#w.window.switches], 1, "in the session of the block")
 	eq(w.window.panes[11].cwd, s.target, "that tab works in the worktree")
@@ -2986,6 +2989,7 @@ windowCase("window: an agent joins the tab working in its worktree, not a pane i
 	table.insert(w.window.tabs, { id = 22, session = 6 })
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(w.toasts[#w.toasts].text, "Agent started in the tab of o/r#5", "a tab works in the worktree: the agent joins it")
 	eq(w.window.switches[#w.window.switches], 6, "in its session")
 	eq(w.window.panes[12].tab, 22, "the agent's pane moved into that tab")
@@ -2993,10 +2997,11 @@ windowCase("window: an agent joins the tab working in its worktree, not a pane i
 end)
 
 windowCase("window: a worktree tab Plotroom opened is tinted while its agent needs input, and a colour the user set is left alone", function(w: World)
-	local s = agentScene(w)
-	w.window.choose, w.window.typed = "Type a prompt…", "go"
+	local s, b = agentScene(w)
+	w.window.choose = "Type a prompt…"
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
+	h.hx.compose(w, b, "go")
 	eq(w.window.panes[11].cwd, s.target, "the agent has a worktree tab of its own")
 	local function color(tab: number): string?
 		for _, t in w.window.tabs do

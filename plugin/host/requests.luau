@@ -851,7 +851,7 @@ function M.offer(state: State, id: string, item: any, confirm: { head: string, l
 		discardEdit(state)
 		state.settings = nil
 	end
-	state.plan, state.messaging, state.forking = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil, nil
+	state.plan, state.messaging, state.forking, state.composing = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil, nil, nil
 	reply(state, id, { token = token, confirm = { head = confirm.head, label = confirm.label, lines = tern.json.array(confirm.lines) } })
 end
 
@@ -2110,12 +2110,41 @@ local function dispatch(state: State, id: string, q: any)
 			discardEdit(state)
 			state.settings = nil
 		end
-		state.plan, state.stopping, state.removing, state.messaging, state.forking = nil, nil, nil, nil, nil
+		state.plan, state.stopping, state.removing, state.messaging, state.forking, state.composing = nil, nil, nil, nil, nil, nil
 		if q.op == "fork" then
 			state.forking = { token = q.token, head = q.head, lines = lines }
 		else
 			state.messaging = { token = q.token, head = q.head, lines = lines, note = q.note == true }
 		end
+		reply(state, id, { shown = true })
+		state.cx:render()
+	elseif
+		q.op == "compose"
+		and type(q.token) == "string"
+		and string.match(q.token, "^%x+$")
+		and #q.token <= 32
+		and type(q.head) == "string"
+		and q.head ~= ""
+		and #q.head <= 400
+		and type(q.label) == "string"
+		and q.label ~= ""
+		and #q.label <= 40
+		and type(q.placeholder) == "string"
+		and #q.placeholder <= 200
+		and (q.value == nil or (type(q.value) == "string" and #q.value <= core.COMPOSE_MAX))
+		and (q.max == nil or (type(q.max) == "number" and q.max >= 1 and q.max <= core.COMPOSE_MAX))
+	then
+		-- Text the window asks for (flows.compose), written in the Compose overlay over the queue (render.composeOverlay),
+		-- so Settings closes first; it replaces any other question there. `item`: the selected item's ref is its meta,
+		-- as the plan's confirm names it. {shown}.
+		if state.settings then
+			discardEdit(state)
+			state.settings = nil
+		end
+		state.plan, state.stopping, state.removing, state.messaging, state.forking = nil, nil, nil, nil, nil
+		local item: any = if q.item == true then selected(state) else nil
+		local meta = if not item then nil elseif type(item.number) == "number" then item.repo .. "#" .. item.number elseif item.tracker == "jira" then item.ref else item.repo .. "#" .. item.ref
+		state.composing = { token = q.token, head = q.head, meta = meta, label = q.label, placeholder = q.placeholder, max = math.floor(q.max or core.COMPOSE_MAX), model = input.new(q.value or "", true) }
 		reply(state, id, { shown = true })
 		state.cx:render()
 	elseif q.op == "review" and review.validRun(q.run) then
