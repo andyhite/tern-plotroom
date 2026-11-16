@@ -1,0 +1,5 @@
+# omp settings overlay (`omp --config`) for an agent on a fork pull request's worktree: no MCP server from the
+# project's own files (.omp/mcp.json, .mcp.json, ...). The window adds it with --no-extensions --no-skills --no-rules
+# (docs/reference.md › Trust).
+mcp:
+  enableProjectConfig: false

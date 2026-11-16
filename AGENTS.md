@@ -40,7 +40,7 @@ Invariants (keep when editing):
 
 ## Key Directories
 
-- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, and `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled or checked by `check.py`; the host publishes its path as the hidden `main.omp` node).
+- `plugin/` — everything shipped: `plugin.toml` manifest, `host.luau`, `host/*.luau`, `window.luau`, helper modules, `plotroom.css`, `omp/plotroom.ts` (the omp extension every agent Plotroom starts loads with `omp -e`; TypeScript run by omp, not bundled or checked by `check.py`; the host publishes its path as the hidden `main.omp` node) and `omp/fork.yml` (the `omp --config` overlay an agent on a fork's worktree starts with; its path is `main.omp`'s `fork`).
 - `plugin/tests/` — `regression.luau` (runner), `harness.luau` (fake SDK, `case`/`windowCase`, assertions, shared fixtures), `cases/<area>.luau` (one file per area), `check.luau` (pure assert selftest, also runnable in-app), `runtime.luau` (smoke driver against real Tern/git).
 - `scripts/` — `check.py` (the verification gate), `smoke.py` (smoke stage), `tern-0.9.13.d.luau` (pinned SDK type snapshot of Tern 0.9.13, Plotroom's minimum, sha256-checked).
 - `docs/` — `reference.md` (the user-facing behavior spec) and `images/` (README screenshots; not shipped).
@@ -86,7 +86,7 @@ Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (
 - `plugin/rpc.luau` — the rpc protocol: `PROTOCOL` (what a host announces in `main.rpc`), `MIN` (the oldest host a window asks) and `SINCE` (op → protocol that added it).
 - `plugin/plugin.toml` — manifest: id `plotroom`, `host`, `window`, `styles`, two blocks `prs` (title Plotroom, icon `merge`) and `review` (title Draft review, icon `check`), two `[[lenses]]` entries `pr-create` (`match = ["gh pr create*"]`) and `pr-checks` (`match = ["gh pr checks", "gh pr checks *"]`).
 - `plugin/host.luau` — block entry point; `plugin/host/*.luau` — host logic by layer (see Architecture).
-- `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows, and the Draft review's opening at an agent's turn end and its Send. No consent step: agents start once the worktree is ready. `selftest`/`smoke`/`review-smoke` commands only when `PLOTROOM_SELFTEST=1`.
+- `plugin/window.luau` — link routing, palette commands, requests to the host, worktree/agent flows, and the Draft review's opening at an agent's turn end and its Send. No consent step: agents start once the worktree is ready, except the first agent on each item's fork worktree, which the block's Confirm overlay asks about (rpc `fork`). `selftest`/`smoke`/`review-smoke` commands only when `PLOTROOM_SELFTEST=1`.
 - `plugin/flows.luau` — window workflow flows and `COMMANDS`.
 - `plugin/prompts.luau` — default prompts; every `{var}` one names must be filled where it runs.
 - `scripts/check.py` — pins (SDK sha256, Luau, luau-lsp, Tern), `plugin_files()` (bundles `plugin/**/*.luau`), bundle builder, test/types/bench stages, CLI. `scripts/smoke.py` — the smoke stage.

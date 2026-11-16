@@ -309,6 +309,7 @@ export type State = {
 	plan: any, -- the one mutation plan waiting for confirmation in the block's Confirm overlay (requests.offer), nil: none
 	stopping: { key: string, href: string }?, -- the item whose agent Stop agent… asks about (a Confirm overlay), and the link that stops it
 	messaging: { token: string, head: string, lines: { string }, note: boolean }?, -- a message for an agent the window asks about in the Confirm overlay (rpc `message`); Send and Add a note open the window's links with `token`
+	forking: { token: string, head: string, lines: { string } }?, -- the first agent on a fork's worktree the window asks about in the Confirm overlay (rpc `fork`); Start agent opens the window's link with `token`
 	draft: any, -- the guided pull request draft in progress (host-side preview of the last `draft` request), nil: none
 	board: any, -- the Worktrees board's model (board.Board)
 	boardOn: boolean, -- the Worktrees scope is shown instead of a view
@@ -390,16 +391,19 @@ function M.withToken(href: string): string
 	return href .. "?k=" .. M.TOKEN
 end
 
--- Where this host keeps Plotroom's omp extension and data directory, as the hidden `main.omp` node publishes them:
--- the window starts every agent with them (docs/reference.md › Dispatch). `ext` is left out when the file is not
--- there, so the agent starts without it. Read at the first render: a plugin reload reads it again.
+-- Where this host keeps Plotroom's omp extension, its settings overlay for a fork's worktree and the data directory, as
+-- the hidden `main.omp` node publishes them: the window starts every agent with them (docs/reference.md › Dispatch).
+-- `ext` (`fork`) is left out when the file is not there: the agent starts without it (a fork's not at all). Read at
+-- the first render: a plugin reload reads it again.
 local omp: string? = nil
 function M.omp(): string
 	if omp == nil then
 		local p = tern.plugin
-		local ext = p.dir .. "/omp/plotroom.ts"
-		local ok, here = pcall(tern.fs.exists, ext)
-		omp = tern.json.encode({ ext = if ok and here then ext else nil, data = p.data })
+		local function here(path: string): string?
+			local ok, found = pcall(tern.fs.exists, path)
+			return if ok and found then path else nil
+		end
+		omp = tern.json.encode({ ext = here(p.dir .. "/omp/plotroom.ts"), fork = here(p.dir .. "/omp/fork.yml"), data = p.data })
 	end
 	return omp :: string
 end

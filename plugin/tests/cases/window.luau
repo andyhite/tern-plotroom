@@ -531,6 +531,80 @@ windowCase("window: without Plotroom's omp extension on the block's host, the ag
 	eq(w.window.agents[2].command, nil, "an action with no model runs the agent setting's command")
 end)
 
+-- A window whose Plotroom pane lists o/r#5, a fork's pull request, with saved prompt p1 ("Review {url}", in a worktree).
+local function forkScene(w: World): (any, any)
+	local s, b = agentScene(w)
+	local meta = s.gh.meta["o/r#5"]
+	meta.headRepo, meta.headOwner = "fork/r", "fork"
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}") })
+	b.render()
+	cardSurface(w, b)
+	return s, b
+end
+
+-- Block `b`'s Confirm overlay: its head, every text in it, and its foot's buttons as "label|variant|keys".
+local function confirmShown(b: any): (string?, string, { string })
+	local o: any = h.confirmOf(b)
+	if not o then
+		return nil, "", {}
+	end
+	local texts: { string } = {}
+	h.collectTexts(o, texts)
+	local foot: { string } = {}
+	for _, n in findKey(o, "foot").c do
+		table.insert(foot, n.p.text .. "|" .. tostring(n.p.variant) .. "|" .. table.concat(n.p.keys or {}, "+"))
+	end
+	return o.p.head, table.concat(texts, "\n"), foot
+end
+
+windowCase("window: an agent on a fork PR's worktree starts without the fork's omp project configuration, once the block's Confirm overlay asked, once per pull request", function(w: World)
+	local s, b = forkScene(w)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(#w.window.agents, 0, "no agent starts on a fork's code unasked")
+	local head, text, foot = confirmShown(b)
+	eq(head, "Start an agent on fork code for o/r#5?", "the block asks in its Confirm overlay")
+	has(text, "its tools (.omp/tools) still load and run as you", "saying what still runs")
+	has(text, "Worktree: " .. s.target, "and where")
+	same(foot, { "Cancel|quiet|esc", "Start agent|nil|enter" }, "Cancel first, then Start agent")
+	same(h.hx.offPalette(b.view().layer), {}, "within the palette")
+	b.press("escape")
+	eq(h.confirmOf(b), nil, "Esc drops the question")
+	eq(#w.window.agents, 0, "and starts nothing")
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	local token = b.state().forking.token
+	w.click("plotroom://fork/start/0123abcd", 1)
+	w.flush()
+	eq(#w.window.agents, 0, "a start link with another token starts nothing")
+	eq(w.toasts[#w.toasts].text, "That agent is no longer waiting", "and says so")
+	b.press("enter")
+	w.flush()
+	eq(w.opened[#w.opened], "plotroom://fork/start/" .. token, "Enter opens the start link the window follows")
+	eq(commandOf(w.window.agents[1]), OMP .. " --no-extensions --no-skills --no-rules --config /plugins/plotroom/omp/fork.yml", "omp loads Plotroom's extension and none of the project's extensions, hooks, skills, rules or MCP servers")
+	eq(w.window.agents[1].cwd, s.target, "in the fork's worktree")
+	same(w.kv.get("fork-trust"), { "o/r#5" }, "the pull request is remembered")
+	w.click("plotroom://fork/start/" .. token, 1)
+	w.flush()
+	eq(#w.window.agents, 1, "one start link starts once")
+	w.window.choose = "Start Review anyway"
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(h.confirmOf(b), nil, "the next agent on it is not asked about")
+	eq(commandOf(w.window.agents[2]), OMP .. " --no-extensions --no-skills --no-rules --config /plugins/plotroom/omp/fork.yml", "and starts restricted too")
+end)
+
+windowCase("window: without the fork overlay on the block's host, no agent starts on a fork PR's worktree", function(w: World)
+	w.fs.files["/plugins/plotroom/omp/fork.yml"] = nil
+	local _s, b = forkScene(w)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	eq(#w.window.agents, 0, "nothing starts")
+	eq(h.confirmOf(b), nil, "nor is asked")
+	eq(w.toasts[#w.toasts].text, "Agent not started for o/r#5", "the toast says so")
+	has(w.toasts[#w.toasts].sub, "fork's code", "and why")
+end)
+
 -- Split tree `t` as text, panes named by `names` (e.g. "right(q,down(a1,a2))").
 local function shapeOf(t: any, names: { [number]: string }): string
 	if t.pane then

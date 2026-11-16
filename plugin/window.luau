@@ -87,7 +87,7 @@ local function nodeOf(act: string, id: string?): string
 end
 
 -- A worktree the host prepared, as its answer says.
-type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, title: string? }
+type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, title: string?, fork: boolean }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), its effort
@@ -121,11 +121,14 @@ local pending: { [string]: Pending } = {}
 local requests = 0
 -- Picker labels chosen last, newest first. Kept in tern.kv: Tern reboots plugin VMs now and then, losing module state.
 local RECENT_KEY = "agent-recent"
+-- The items (`<repo>#<ref>`, lowercase) whose fork worktree the user let agents start on, newest first (FORK_CAP).
+local FORK_KEY = "fork-trust"
+local FORK_CAP = 200
 
--- nil when the stored list cannot be read: it is then never written over.
-local function readRecent(): { string }?
+-- kv list `key`'s strings; nil when it cannot be read: it is then never written over.
+local function readStrings(key: string): { string }?
 	local out: { string } = {}
-	local ok, v = pcall(tern.kv.get, RECENT_KEY)
+	local ok, v = pcall(tern.kv.get, key)
 	if not ok or (v ~= nil and type(v) ~= "table") then
 		return nil
 	elseif type(v) == "table" then
@@ -672,17 +675,74 @@ end
 -- The command line an agent starts with (docs/reference.md › Dispatch): omp loading Plotroom's extension, with run id
 -- `run` and Plotroom's data directory in its environment, as the queue block's host publishes them (`main.omp`), and
 -- `--model`/`--thinking` (`flags`, each with a leading space) when the action names them. Without the extension on that
--- host: what started agents before it (nil: the agent setting's command), and why, for a toast.
-local function agentCommand(cx: WindowCx, pane: number, flags: string, run: string): (string?, string?)
+-- host: what started agents before it (nil: the agent setting's command), and why, for a toast. `fork`, the host's omp
+-- settings overlay for a fork's worktree (forkOverlay): omp also loads none of the project's extensions (hooks load as
+-- extensions), skills, rules or MCP servers; Plotroom's own `-e` still loads, and the command is never nil.
+local function agentCommand(cx: WindowCx, pane: number, flags: string, run: string, fork: string?): (string?, string?)
 	-- Smoke runs a fake omp (no model, no network): Tern starts agents with the user's login PATH, which smoke cannot change.
 	local smoke = if tern.getenv("PLOTROOM_SELFTEST") == "1" then tern.getenv("PLOTROOM_SMOKE_OMP") else nil
 	local omp = if smoke then worktree.shellWord(smoke) else "omp"
+	if fork then
+		flags = " --no-extensions --no-skills --no-rules --config " .. worktree.shellWord(fork) .. flags
+	end
 	local ok, o = pcall(tern.json.decode, tostring(nodeProp(readNode(cx, pane, "main.omp"), "text")))
 	if ok and type(o) == "table" and type(o.ext) == "string" and type(o.data) == "string" then
 		return "PLOTROOM_RUN=" .. run .. " PLOTROOM_DATA=" .. worktree.shellWord(o.data) .. " " .. omp .. " -e " .. worktree.shellWord(o.ext) .. flags, nil
 	end
 	local why = if ok and type(o) == "table" then "The extension is not in Plotroom's folder on the block's host, so it cannot propose a Draft review." else "The block's host runs an older Plotroom, which does not say where its omp extension is."
 	return if flags ~= "" then omp .. flags else nil, why
+end
+
+-- The omp settings overlay for a fork's worktree on the host of the Plotroom block in `pane` (`main.omp`'s `fork`,
+-- plugin/omp/fork.yml); nil from a host without it.
+local function forkOverlay(cx: WindowCx, pane: number): string?
+	local ok, o = pcall(tern.json.decode, tostring(nodeProp(readNode(cx, pane, "main.omp"), "text")))
+	return if ok and type(o) == "table" and type(o.fork) == "string" then o.fork else nil
+end
+
+-- Items whose fork worktree the user let agents start on this run of the window, besides kv FORK_KEY: one it cannot
+-- write is not asked about again until the window restarts.
+local forkStarted: { [string]: boolean } = {}
+
+local function forkTrusted(key: string): boolean
+	return forkStarted[key] == true or table.find(readStrings(FORK_KEY) or {}, key) ~= nil
+end
+
+local function trustFork(key: string)
+	forkStarted[key] = true
+	local list = readStrings(FORK_KEY)
+	if list and not table.find(list, key) then
+		table.insert(list, 1, key)
+		list[FORK_CAP + 1] = nil
+		pcall(tern.kv.set, FORK_KEY, tern.json.array(list)) -- best effort: a failed write only asks again after a restart
+	end
+end
+
+-- The first agent on an item's fork worktree waiting for the Confirm overlay of the Plotroom block in `pane` (rpc
+-- `fork`): only that block's Start agent link with this token (plotroom://fork/start/<token>) starts it; Cancel or Esc
+-- there starts nothing, and a newer question replaces it.
+local pendingFork: { token: string, pane: number, key: string, go: (WindowCx) -> () }? = nil
+
+local function askFork(cx: WindowCx, pane: number, t: Target, r: Ready, go: (WindowCx) -> ()): boolean
+	local token = string.format("%08x%08x", math.random(0, 0x7FFFFFFF), math.random(0, 0x7FFFFFFF))
+	pendingFork = { token = token, pane = pane, key = string.lower(t.repo) .. "#" .. t.ref, go = go }
+	pcall(function()
+		cx.layout:focus(pane)
+	end)
+	local lines = { t.label .. (if r.title then ": " .. r.title else ""), "Worktree: " .. r.path }
+	return ask(cx, pane, "fork", { token = token, head = "Start an agent on fork code for " .. t.label .. "?", lines = lines }, MENU_MS, function() end)
+end
+
+-- plotroom://fork/start/<token> from the Plotroom block in `pane`: its Confirm overlay's Start agent starts the
+-- waiting agent and remembers the item (forkTrusted). A link that is not the waiting one's does nothing.
+local function forkLink(cx: WindowCx, pane: number, token: string)
+	local f = pendingFork
+	if not f or f.token ~= token or f.pane ~= pane then
+		return cx:toast("info", "That agent is no longer waiting", "Run the action again.")
+	end
+	pendingFork = nil
+	trustFork(f.key)
+	f.go(cx)
 end
 
 -- Starts an agent at `r.path` with `prompt` and the fixed end-of-run report contract (prompts.REPORT) after it, as
@@ -707,6 +767,24 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	end
 	-- A model or effort adds its flags to the command line agentCommand builds.
 	local flags = (if model then " --model " .. model else "") .. (if effort then " --thinking " .. effort else "")
+	-- A fork's code is not trusted (docs/reference.md › Trust): omp starts there without the project's configuration,
+	-- and the first agent on each item's fork worktree is asked about in the block's Confirm overlay.
+	local fork: string? = nil
+	if r.fork then
+		fork = forkOverlay(cx, pane)
+		if not fork then
+			cx:toast("error", "Agent not started for " .. t.label, "Its worktree holds a fork's code, and the block's host cannot start omp without the fork's project configuration.")
+			return done(false, cx)
+		elseif not forkTrusted(string.lower(t.repo) .. "#" .. t.ref) then
+			local asked = askFork(cx, pane, t, r, function(cx2: WindowCx)
+				finishAgent(cx2, pane, t, r, prompt, job, join, info, done)
+			end)
+			if not asked then
+				done(false, cx)
+			end
+			return
+		end
+	end
 	local path = r.path
 	local tab: number? = nil
 	local found: number? = nil
@@ -753,7 +831,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			cx.layout:focus(pane)
 		end
 		local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
-		local command, without = agentCommand(cx, pane, flags, run)
+		local command, without = agentCommand(cx, pane, flags, run, fork)
 		local ok, agent = pcall(function()
 			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
 		end)
@@ -896,6 +974,7 @@ local function readyOf(a: any): Ready?
 		summary = a.summary,
 		setup = if type(a.setup) == "string" then a.setup else nil,
 		title = if type(a.title) == "string" then a.title elseif type(a.vars) == "table" and type(a.vars.title) == "string" then a.vars.title else nil,
+		fork = a.fork == true,
 	}
 end
 
@@ -1263,7 +1342,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 		end
 	end
 	local items: { PickItem } = {}
-	local recentLabels: { string } = readRecent() or {}
+	local recentLabels: { string } = readStrings(RECENT_KEY) or {}
 	for _, label in recentLabels do
 		for _, c in all do
 			if c.label == label then
@@ -1285,7 +1364,7 @@ local function pickMenu(cx: WindowCx, pane: number, t: Target)
 		if item.typed then
 			return typePrompt(cx3, pane, t, true)
 		end
-		local recent = readRecent()
+		local recent = readStrings(RECENT_KEY)
 		if recent then
 			local at = table.find(recent, item.label)
 			if at then
@@ -1631,6 +1710,15 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	if url == "plotroom://review/send" then
 		flows.reviewSend(cx, pane)
+		return true
+	end
+	local started = string.match(url, "^plotroom://fork/start/(%x+)$")
+	if started then
+		if not isPlotroom(cx, pane) then
+			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
+		else
+			forkLink(cx, pane, started)
+		end
 		return true
 	end
 	local what, token = string.match(url, "^plotroom://message/(%a+)/(%x+)$")

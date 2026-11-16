@@ -2372,6 +2372,22 @@ local function messageConfirm(m: { head: string, lines: { string }, note: boolea
 	})
 end
 
+-- The first agent on a fork's worktree the window asks about (`state.forking`, rpc `fork`): what it starts on; Enter or
+-- Start agent opens the window's link that starts it, Esc drops it. Not `danger`: nothing is destroyed.
+local function forkConfirm(f: { head: string, lines: { string } }): Node
+	return confirmOverlay({
+		head = f.head,
+		icon = "merge",
+		body = "omp starts without the project's extensions, hooks, MCP servers, skills and rules, but its tools (.omp/tools) still load and run as you.",
+		lines = f.lines,
+		label = "Start agent",
+		actKeys = { "enter" },
+		calm = true,
+		cancel = "fork-cancel",
+		act = "fork-start",
+	})
+end
+
 -- Settings' Delete or Remove row `s.confirm` asks here, in the block: Enter deletes, Esc keeps it.
 function M.deleteConfirm(state: State): Node?
 	local row = if state.settings then state.settings.confirm else nil
@@ -2495,6 +2511,8 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 		table.insert(layer, stopConfirm(stopping.key))
 	elseif state.messaging then
 		table.insert(layer, messageConfirm(state.messaging))
+	elseif state.forking then
+		table.insert(layer, forkConfirm(state.forking))
 	elseif state.help then
 		table.insert(layer, M.helpOverlay(state))
 	end

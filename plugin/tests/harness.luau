@@ -1107,9 +1107,9 @@ local function newWorld(instantiate: Loader, context: string): World
 	-- Summaries are off, so a preview spawns no omp; a case about Summaries drops this (`w.kv.store.summary = nil :: any`).
 	kvStore.summary = jsonEncode({ off = true })
 
-	-- fs: absolute paths only; failures raise. Plotroom's omp extension is installed (tern.plugin.dir below); a case
-	-- about it missing removes it before the host loads.
-	local files: { [string]: string } = { ["/plugins/plotroom/omp/plotroom.ts"] = "// Plotroom's omp extension\n" }
+	-- fs: absolute paths only; failures raise. Plotroom's omp extension and its fork overlay are installed
+	-- (tern.plugin.dir below); a case about one missing removes it before the host loads.
+	local files: { [string]: string } = { ["/plugins/plotroom/omp/plotroom.ts"] = "// Plotroom's omp extension\n", ["/plugins/plotroom/omp/fork.yml"] = "mcp:\n  enableProjectConfig: false\n" }
 	local dirs: { [string]: boolean } = { ["/"] = true }
 	local denyMkdir: { [string]: string } = {}
 	local mkdirs: { string } = {}
@@ -3690,7 +3690,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "49" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = "50" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

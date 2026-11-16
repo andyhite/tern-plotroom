@@ -2197,6 +2197,7 @@ windowCase("worktree.premerge: a fork PR is never merged into before its agent s
 	local meta = s.gh.meta["o/r#5"]
 	meta.headRepo, meta.headOwner = "fork/r", "fork"
 	mergeModel(w, s, { "Gemfile.lock", "pnpm-lock.yaml" }, { bundle = { stdout = "" }, pnpm = { stdout = "" } })
+	w.kv.put("fork-trust", h.array({ "o/r#5" })) -- agents were let start on this fork before: no Confirm overlay
 	local from = #w.calls
 	runWatch(w)
 	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, true, "Watch still asks for the merge")

@@ -42,10 +42,11 @@ local CARD_ACTS = { ["lane-pick"] = true, open = true, worktree = true, agent = 
 -- The preview's checks tables (render's checksNodes), by the last part of their node id.
 local CHECK_TABLES = { failing = true, running = true, queued = true, passed = true, skipped = true }
 
--- The Confirm overlay of a plan, of Stop agent… or of a message for an agent (render's planConfirm, stopConfirm,
--- messageConfirm), `act` being its button's or key's: plan-commit commits with `token`, the plan's own (a key takes the
--- shown plan's); stop-agent opens the link that stops the agent; message-send and message-note open the window's link
--- that sends the message or asks for its note; plan-cancel, stop-cancel and message-cancel drop the question.
+-- The Confirm overlay of a plan, of Stop agent…, of a message for an agent or of the first agent on a fork's worktree
+-- (render's planConfirm, stopConfirm, messageConfirm, forkConfirm), `act` being its button's or key's: plan-commit
+-- commits with `token`, the plan's own (a key takes the shown plan's); stop-agent opens the link that stops the agent;
+-- message-send and message-note open the window's link that sends the message or asks for its note; fork-start opens
+-- the window's link that starts the agent; plan-cancel, stop-cancel, message-cancel and fork-cancel drop the question.
 local function confirmAsked(state: State, act: string, token: any?)
 	if act == "plan-commit" then
 		requests.commitPlan(state, if token ~= nil then token elseif state.plan then state.plan.token else nil)
@@ -65,6 +66,14 @@ local function confirmAsked(state: State, act: string, token: any?)
 		end
 	elseif act == "message-cancel" then
 		state.messaging = nil
+	elseif act == "fork-start" then
+		local f = state.forking
+		state.forking = nil
+		if f then
+			state.cx:open("plotroom://fork/start/" .. f.token)
+		end
+	elseif act == "fork-cancel" then
+		state.forking = nil
 	else
 		state.stopping = nil
 	end
@@ -729,12 +738,12 @@ local function blockDef(): BlockDef<State>
 				end
 				return true
 			end
-			if not s and (state.plan or state.stopping or state.messaging) then
-				-- A plan's, Stop agent's or a message's confirm: Enter does it, Esc drops it (`n` adds a message's note);
-				-- it is modal, so no other key reaches the queue.
-				local what = if state.plan then "plan" elseif state.stopping then "stop" else "message"
+			if not s and (state.plan or state.stopping or state.messaging or state.forking) then
+				-- A plan's, Stop agent's, a message's or a fork's confirm: Enter does it, Esc drops it (`n` adds a
+				-- message's note); it is modal, so no other key reaches the queue.
+				local what = if state.plan then "plan" elseif state.stopping then "stop" elseif state.messaging then "message" else "fork"
 				if name == "enter" then
-					confirmAsked(state, if what == "plan" then "plan-commit" elseif what == "stop" then "stop-agent" else "message-send")
+					confirmAsked(state, if what == "plan" then "plan-commit" elseif what == "stop" then "stop-agent" elseif what == "message" then "message-send" else "fork-start")
 				elseif name == "escape" then
 					confirmAsked(state, what .. "-cancel")
 				elseif what == "message" and plain and k == "n" then
@@ -1182,7 +1191,7 @@ local function blockDef(): BlockDef<State>
 				end
 			elseif act == "cancel-remove" then
 				state.removing = nil
-			elseif act == "plan-commit" or act == "plan-cancel" or act == "stop-agent" or act == "stop-cancel" or act == "message-send" or act == "message-note" or act == "message-cancel" then
+			elseif act == "plan-commit" or act == "plan-cancel" or act == "stop-agent" or act == "stop-cancel" or act == "message-send" or act == "message-note" or act == "message-cancel" or act == "fork-start" or act == "fork-cancel" then
 				confirmAsked(state, act, ev.value)
 			elseif act == "goto" or act == "worktree" or act == "open-git" then
 				-- The worktree card's rows: a click in the preview carries the row's own id.

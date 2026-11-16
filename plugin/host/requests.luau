@@ -426,6 +426,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						ahead = r.ahead,
 						summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
 						setup = if r.created and not r.fork then setupLine(repo) else nil,
+						fork = if r.fork then true else nil, -- the window starts omp without the fork's project configuration
 						remote = r.remote,
 						branch = r.prRef,
 						base = r.prBase,
@@ -654,6 +655,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 					ahead = r.ahead,
 					summary = if r.fork and r.created then summary .. " (setup skipped: fork PR)" else summary,
 					setup = if r.created and not r.fork then setupLine(code) else nil,
+					fork = if r.fork then true else nil,
 					vars = vars,
 					code = code,
 				})
@@ -849,7 +851,7 @@ function M.offer(state: State, id: string, item: any, confirm: { head: string, l
 		discardEdit(state)
 		state.settings = nil
 	end
-	state.plan, state.messaging = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil
+	state.plan, state.messaging, state.forking = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil, nil
 	reply(state, id, { token = token, confirm = { head = confirm.head, label = confirm.label, lines = tern.json.array(confirm.lines) } })
 end
 
@@ -2065,9 +2067,10 @@ function M.rpc(state: State, raw: any)
 		github.outcome({ outcome = q.outcome, repo = repo, number = n, branch = branch, commit = commit, since = q.since, login = q.login }, function(verdict: string, why: string?)
 			reply(state, id, { verdict = verdict, why = why })
 		end)
-	elseif q.op == "message" and type(q.token) == "string" and string.match(q.token, "^%x+$") and #q.token <= 32 and type(q.head) == "string" and q.head ~= "" and #q.head <= 400 and type(q.lines) == "table" and #q.lines >= 1 and #q.lines <= 50 then
-		-- A message for an agent, asked in the Confirm overlay over the queue (render.messageConfirm), so Settings closes
-		-- first; it replaces any other question there. {shown}.
+	elseif (q.op == "message" or q.op == "fork") and type(q.token) == "string" and string.match(q.token, "^%x+$") and #q.token <= 32 and type(q.head) == "string" and q.head ~= "" and #q.head <= 400 and type(q.lines) == "table" and #q.lines >= 1 and #q.lines <= 50 then
+		-- A message for an agent, or the first agent on a fork's worktree (`fork`), asked in the Confirm overlay over the
+		-- queue (render.messageConfirm, render.forkConfirm), so Settings closes first; it replaces any other question
+		-- there. {shown}.
 		local lines: { string } = {}
 		for _, line in q.lines do
 			if type(line) ~= "string" or #line > 2000 then
@@ -2079,8 +2082,12 @@ function M.rpc(state: State, raw: any)
 			discardEdit(state)
 			state.settings = nil
 		end
-		state.plan, state.stopping, state.removing = nil, nil, nil
-		state.messaging = { token = q.token, head = q.head, lines = lines, note = q.note == true }
+		state.plan, state.stopping, state.removing, state.messaging, state.forking = nil, nil, nil, nil, nil
+		if q.op == "fork" then
+			state.forking = { token = q.token, head = q.head, lines = lines }
+		else
+			state.messaging = { token = q.token, head = q.head, lines = lines, note = q.note == true }
+		end
 		reply(state, id, { shown = true })
 		state.cx:render()
 	elseif q.op == "review" and review.validRun(q.run) then
