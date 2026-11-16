@@ -2285,7 +2285,7 @@ end)
 
 type Triage = typeof(require("../../triage"))
 
--- A UTC instant (this runtime's os.time reads a table as UTC, as Luau does).
+-- A UTC instant: the real os here, the stock luau CLI's, reads a table as UTC (timegm); only the fake os under test is zoned.
 local function utc(year: number, month: number, day: number, hour: number, min: number): number
 	return os.time({ year = year, month = month, day = day, hour = hour, min = min, sec = 0 })
 end

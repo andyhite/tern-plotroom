@@ -244,16 +244,10 @@ function M.unsnooze(store: Store, key: string)
 	end
 end
 
--- Local 08:00 of the next calendar day. Luau's os.date is local but os.time reads a table as UTC (and normalises day
--- overflow), so the local wall time is shifted back by the zone's offset there: first at now's offset, then at the
--- guess's, so a DST change between now and the target is honoured.
+-- Local 08:00 of the next calendar day (os.time normalises day overflow).
 function M.tomorrow(now: number): number
-	local function offset(t: number): number
-		return os.time(os.date("*t", t) :: any) - t
-	end
 	local d = os.date("*t", now) :: any
-	local wall = os.time({ year = d.year, month = d.month, day = d.day + 1, hour = 8, min = 0, sec = 0 })
-	return wall - offset(wall - offset(now))
+	return os.time({ year = d.year, month = d.month, day = d.day + 1, hour = 8, min = 0, sec = 0 })
 end
 
 return M

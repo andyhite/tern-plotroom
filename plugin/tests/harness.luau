@@ -1042,15 +1042,17 @@ local function newWorld(instantiate: Loader, context: string): World
 
 	-- The fake os reproduces what Tern's Luau does with time, in a zone the case picks (`setZone`, else UTC):
 	-- * os.time() is the virtual clock in whole seconds (EPOCH + w.now() // 1000).
-	-- * os.time(table) reads the table as UTC (Luau's timegm, unlike Lua's mktime), filling a missing hour with 12 and
-	--   carrying a day or month past its end; `isdst` is ignored.
+	-- * os.time(table) reads the table as local time (mktime; Tern measured in America/Chicago reads 1970-01-01 00:00
+	--   as 21600), unlike the stock luau CLI the suite runs on, whose os.time(table) is timegm (UTC). It fills a missing
+	--   hour with 12 and carries a day or month past its end; `isdst` is ignored, and a wall time a DST change skips or
+	--   repeats takes the offset found two steps in (the offset at the time read as UTC, then at that guess).
 	-- * os.date(fmt, t) formats instant t (default: the virtual now) in the local zone; a "!" prefix formats it in UTC.
 	--   "*t" fields are local, `isdst` is always false, and %z/%Z do not name the zone.
 	local zone: ((number) -> number)? = nil
 	local fakeOs: any = {
 		time = function(t: any?): number
 			if t ~= nil then
-				-- days from civil, with the overflow of a day or month carried
+				-- days from civil, with the overflow of a day or month carried; then from local wall time to the instant
 				local d: any = t
 				local y: number, m: number = d.year, d.month
 				y += (m - 1) // 12
@@ -1062,7 +1064,11 @@ local function newWorld(instantiate: Loader, context: string): World
 				local era = y // 400
 				local yoe = y - era * 400
 				local days = era * 146097 + yoe * 365 + yoe // 4 - yoe // 100 + doy - 719468
-				return days * 86400 + (d.hour or 12) * 3600 + (d.min or 0) * 60 + (d.sec or 0)
+				local wall = days * 86400 + (d.hour or 12) * 3600 + (d.min or 0) * 60 + (d.sec or 0)
+				if zone == nil then
+					return wall
+				end
+				return wall - zone(wall - zone(wall))
 			end
 			return EPOCH + nowMs // 1000
 		end,
