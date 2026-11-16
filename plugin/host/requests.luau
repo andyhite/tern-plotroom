@@ -1270,6 +1270,10 @@ function M.act(state: State, id: string, q: any)
 			return no("That pull request is not open.")
 		end
 		local approve = name == "pr-approve"
+		local sha = item.headSha
+		if type(sha) ~= "string" then
+			return no("GitHub did not say which commit this pull request is at; Refresh, then try again.")
+		end
 		local body = if q.text == nil then nil else github.commentText(q.text)
 		if q.text ~= nil and not body then
 			return no("A comment is plain text without control characters, up to 4000 characters.")
@@ -1284,7 +1288,7 @@ function M.act(state: State, id: string, q: any)
 		if not account then
 			return
 		end
-		local lines = { target .. ": " .. printable(item.title), "Account: @" .. account }
+		local lines = { target .. ": " .. printable(item.title), "Account: @" .. account, (if approve then "Approves" else "Requests changes on") .. " commit " .. string.sub(sha, 1, 7) .. "; a push since refuses it" }
 		if body then
 			table.insert(lines, "Comment (" .. (utf8.len(body) or #body) .. " characters):")
 			table.move(rows, 1, #rows, #lines + 1, lines)
@@ -1296,7 +1300,7 @@ function M.act(state: State, id: string, q: any)
 			label = if approve then "Approve" else "Request changes",
 			lines = lines,
 		}, function(done)
-			github.reviewPr(item.repo, item.number, approve, body, account, function(problem: github.Problem?)
+			github.reviewPr(item.repo, item.number, approve, body, sha, account, function(problem: github.Problem?)
 				M.landed(state, done, problem, (if approve then "Approved " else "Requested changes on ") .. target)
 			end)
 		end)

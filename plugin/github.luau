@@ -1977,17 +1977,21 @@ function M.setPrMerge(repo: string, number: number, method: string, auto: boolea
 end
 
 -- Approves (`approve`) or requests changes on the open pull request; `text` (M.commentText) is optional for an approval
--- and required to request changes.
-function M.reviewPr(repo: string, number: number, approve: boolean, text: string?, account: string?, done: (Problem?) -> ())
+-- and required to request changes. `sha` is the head commit the user was shown: a head that moved is refused here
+-- (`gh pr review` has no --match-head-commit, so this pre-read is the only guard).
+function M.reviewPr(repo: string, number: number, approve: boolean, text: string?, sha: string, account: string?, done: (Problem?) -> ())
 	local body = if text == nil then nil else M.commentText(text)
-	if not whole32(number) or (text ~= nil and not body) or (not approve and not body) then
+	if not whole32(number) or (text ~= nil and not body) or (not approve and not body) or type(sha) ~= "string" or #sha ~= 40 or not string.match(sha, "^%x+$") then
 		return later(function()
 			done(bad(if whole32(number) then "The comment is empty, too long or has control characters." else "Unexpected pull request number."))
 		end)
 	end
-	guarded("pr", "number,state,url", { "pull" }, repo, tostring(number), account, function(d)
+	local planned = string.lower(sha)
+	guarded("pr", "number,state,headRefOid,url", { "pull" }, repo, tostring(number), account, function(d)
 		if field(d, "state") ~= "OPEN" then
 			return "Pull request #" .. number .. " is not open."
+		elseif string.lower(tostring(field(d, "headRefOid"))) ~= planned then
+			return "Pull request #" .. number .. " was pushed to since it was planned; nothing was posted."
 		end
 		return nil
 	end, function(_, id)

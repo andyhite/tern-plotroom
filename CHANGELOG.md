@@ -4,6 +4,9 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+- Approve and Request changes are bound to the head commit the confirm shows ("Approves commit abc1234; a push since refuses it"): a pull request pushed to since the plan is refused and nothing is posted, as Merge already was. Both refuse while GitHub has not said the head.
+
 ### Added
 - Checks lens: `gh pr checks` in a shell pane shows its checks as a table (Check; Status as a dot in the preview's check colours and Pass, Fail, Pending or Skipped; Took; Link), the last table under `--watch`. A URL gh cut to the terminal's width gets no link, and output with no checks table stays raw. Shell panes start with `GLAMOUR_STYLE=dark` when it is unset, so gh's background-colour query no longer makes Tern show gh's output raw.
 - The pull request and issue previews are pages: a card heads them (the kind's icon, the title, `#N · repository · GitHub` or the Jira key, and at its end the state, the Next move, Copy link and Open), then a strip of stats (a pull request's Checks, Changes with its file count, Comments and Age; an issue's Comments, Age and Linked) replaces the diff meter and those facts. A pull request's preview then has tabs, **Overview**, **Checks N**, **Threads N** and **Reviewers N**, and draws only the active one; Tab and Shift+Tab (or a click, or the key footer's segs) switch them, and ← moves to the views (→, Tab, Enter or Esc back). Unpin and Unsnooze sit under the Stage.

@@ -85,7 +85,9 @@ end)
 
 case("arrive: a change your own confirmed command made is no arrival, in that refresh only", function(w: World)
 	local s = hostScene(w, 0)
-	s.gh.items.octocat = { pr(1, OPEN), pr(2, OPEN) }
+	local first = pr(1, OPEN)
+	first.headSha = h.sha("a")
+	s.gh.items.octocat = { first, pr(2, OPEN) }
 	local live = { number = 1, state = "OPEN", isDraft = false, headRefOid = h.sha("a"), mergeStateStatus = "BLOCKED", url = "https://github.com/o/r/pull/1" }
 	local seen = asks.hx.writes(s.gh, function(line: string): h.Reply?
 		return if string.find(line, "gh pr view ", 1, true) then { stdout = h.jsonEncode(live) } else nil
