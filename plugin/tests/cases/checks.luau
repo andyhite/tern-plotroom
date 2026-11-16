@@ -1995,6 +1995,7 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 		searchItem(10, "o/r", EPOCH - 600, with({ checks = NULL })),
 		searchItem(11, "o/r", EPOCH - 660, with({ isDraft = true, merge = "DRAFT" })),
 		searchItem(12, "o/r", EPOCH - 720, { review = "APPROVED", checks = "ERROR" }),
+		searchItem(13, "o/r", EPOCH - 780, with({ review = NULL })),
 	}
 	local b = openQueue(w)
 	local function stage(n: number): string
@@ -2012,6 +2013,7 @@ case("host stage: a pull request is Blocked by requested changes, conflicts or f
 	eq(stage(10), "Ready to merge", "no checks at all on a clean, approved PR")
 	eq(stage(11), "PR open", "a draft")
 	eq(stage(12), "Blocked", "an errored check blocks while GitHub's merge state does not say it is optional")
+	eq(stage(13), "Ready to merge", "no review decision (the repository requires no review), otherwise green and mergeable")
 	local rows: { [string]: any } = {}
 	for _, row in pickerOf(b).items do
 		rows[row.id] = row

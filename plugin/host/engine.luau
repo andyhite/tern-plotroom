@@ -386,7 +386,7 @@ function M.stage(state: State, kind: string, item: any): (string, { Blocker }?)
 		local blockers = M.blockers(state, pr)
 		if #blockers > 0 then
 			return "blocked", blockers
-		elseif not pr.draft and pr.review == "approved" and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
+		elseif not pr.draft and (pr.review == "approved" or pr.review == nil) and pr.merge == "ready" and (pr.checks == "success" or pr.checks == nil) then
 			return "ready"
 		end
 		return "pr"
