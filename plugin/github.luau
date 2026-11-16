@@ -1395,7 +1395,9 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		if forkRepo or headRepo == "" then
 			-- A deleted fork's owner is still the head's user.
 			local owner = if forkRepo then string.match(forkRepo, "^([^/]+)/") else text(data.headOwner)
-			fork = if owner and string.match(owner, "^[%w%-_]+$") then owner else text(data.author)
+			-- The author is no login for an app (`name[bot]`): it would become a branch name git refuses, so a plain "fork" stands.
+			local author = text(data.author)
+			fork = if owner and string.match(owner, "^[%w%-_]+$") then owner elseif string.match(author, "^[%w%-_]+$") or author == "" then author else "fork"
 		end
 		done({
 			base = data.base,
