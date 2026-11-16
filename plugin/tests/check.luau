@@ -390,6 +390,8 @@ function M.run()
 	local early, late, ask = { updated = 10, review = "approved" } :: any, { updated = 20, review = "approved" } :: any, { updated = 5, review = "required" } :: any
 	local base = { early, late, ask }
 	assert(sorting.apply(base, "updated")[1] == late and sorting.apply(base, "oldest")[1] == ask and sorting.apply(base, "review")[1] == ask and sorting.apply(base, "review")[2] == late, "updated, oldest and review order")
+	local undated, dated = { created = 0, updated = 0 } :: any, { created = 50 } :: any
+	assert(sorting.apply({ undated, dated }, "oldest")[1] == dated and sorting.apply({ undated, { updated = 7 } :: any }, "oldest")[1].updated == 7, "an item without a date sorts last under oldest")
 	assert(sorting.apply(base, nil)[1] == early and sorting.apply(base, "bogus")[3] == ask and base[1] == early, "no or unknown sort keeps the order and never changes the input")
 	local hi, lo, none = { priority = "High" } :: any, { priority = "Low" } :: any, {} :: any
 	assert(sorting.apply({ lo, none, hi }, "priority")[1] == hi and sorting.apply({ lo, none, hi }, "priority")[3] == none, "priority ranks Jira names, unknown last")

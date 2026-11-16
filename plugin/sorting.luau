@@ -49,7 +49,9 @@ local function rank(item: any, sort: string): number
 	if sort == "updated" then
 		return -(item.updated or 0)
 	elseif sort == "oldest" then
-		return item.created or item.updated or 0
+		-- A missing or unparseable date (nil or 0) is no age: fall back to `updated`, else rank last.
+		local created, updated = item.created or 0, item.updated or 0
+		return if created > 0 then created elseif updated > 0 then updated else math.huge
 	elseif sort == "size" then
 		return -((item.additions or 0) + (item.deletions or 0))
 	elseif sort == "review" then

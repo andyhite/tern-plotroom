@@ -796,7 +796,7 @@ function M.filtered(state: State): Visible?
 		end
 	end
 	local byCategory: ((any) -> number)? = if view and view.integration == "jira" and snap.kind == "issues" then tracker.categoryRank else nil
-	local sorted: { any } = if view and view.sort then sorting.apply(kept, view.sort, byCategory) else kept
+	local sorted: { any } = if view and view.sort and sorting.valid(snap.kind, view.integration, view.sort) then sorting.apply(kept, view.sort, byCategory) else kept
 	if not spec then
 		kept = sorted
 	end
