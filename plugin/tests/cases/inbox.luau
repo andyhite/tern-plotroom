@@ -224,6 +224,30 @@ case("now: a block on a view counts what needs you, and a review request that ar
 	eq(b.title(), "Plotroom · My PRs · 2 reviews requested", "the queue's refresh read Now again and counts the new one")
 end)
 
+case("now: a view whose query is rejected does not stop Now's reads, and the count stays current", function(w: World)
+	local s = hostScene(w, 3)
+	newAcli(w)
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.queries[MINE], s.gh.queries[ASSIGNED] = {}, {}
+	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90) }
+	s.gh.inbox.octocat = {}
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and not string.find(req.fields.q or "", "archived:false", 1, true) then
+			return { status = 1, stderr = "gh: Validation Failed (HTTP 422)\n" }
+		end
+		return nil
+	end
+	local b = w.open(1, { "/work/r" })
+	w.flush()
+	eq(pickerOf(b).state, "error", "the active view's query is rejected")
+	eq(b.title(), "Plotroom · My PRs · 1 review requested", "Now was read once")
+	s.gh.queries[REVIEW] = { searchItem(4, "o/r", EPOCH - 90), searchItem(5, "o/r", EPOCH - 60) }
+	w.advance(10 * 60 * 1000)
+	w.flush()
+	eq(pickerOf(b).state, "error", "the rejected view stays paused")
+	eq(b.title(), "Plotroom · My PRs · 2 reviews requested", "Now was read again without a Refresh")
+end)
+
 case("now: Enter on a pull request shows it in the block as a linked one is, an issue pinned, and a thread about neither says so", function(w: World)
 	local s, b = nowScene(w)
 	s.gh.pulls["https://github.com/o/r/issues/7"] = nil

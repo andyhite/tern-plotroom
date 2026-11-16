@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - Settings › Repositories › Remove now says so when a saved store (checkouts, branch formats, setup commands) cannot be read, instead of reporting success while the repository stays listed.
+- Now keeps being read when the active view's query is rejected or names a repository your login cannot see, and when the block has no active view: it is read again at the poll interval, so the pane title count and the status line's `N need you` stay current instead of freezing until Refresh. A sign-in failure or a missing CLI still holds it.
 - A snooze ends when the item changes (checks going red, a review, a push, a comment since you snoozed it), not only at 08:00 tomorrow: the item is listed, counted and in Now again as Changed. The Snooze toast says "until tomorrow, or until it changes". Snoozes saved before this still run to their time.
 - A run that failed, or whose agent program exited, with no end-of-run report is no longer silent: one error toast names the item (`o/r#5: agent failed`), and after the agent exits its item stays Needs you in Now with an Agent failed or Agent exited badge, and its action offered again as the Next move, until a newer run replaces it.
 - Remotes at `ssh.github.com` (GitHub's SSH over port 443), an SSH alias that `ssh -G` resolves to it, and ssh remotes with an Enterprise-managed user (`org-123@github.com:o/r`) are recognised as GitHub, so Worktree, Draft PR and Draft review diffs work for those checkouts.

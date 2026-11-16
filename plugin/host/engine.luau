@@ -1568,6 +1568,17 @@ function M.gatherFlaky(state: State)
 	end
 end
 
+-- Arms the next automatic refresh after `problem` (the view's, nil: none). A sign-in failure or a missing CLI holds
+-- everything, Now too (nowRead): only Refresh tries again. A view paused by its own query (rejected, or a repository
+-- the login cannot see) is not retried, but Now is still read at the plain minute.
+local function pace(state: State, problem: github.Problem?)
+	if not (problem and TERMINAL[problem.kind]) then
+		schedule(state, state.interval or POLL_MS)
+	elseif problem.kind ~= "auth" and problem.kind ~= "missing" then
+		schedule(state, POLL_MS)
+	end
+end
+
 function M.refresh(state: State)
 	if not M.alive(state) then
 		return
@@ -1580,6 +1591,7 @@ function M.refresh(state: State)
 	M.nowRead(state) -- Now is read with every refresh, shown or not: its count is the pane title's and status line's
 	local halted = state.problem
 	if halted and TERMINAL[halted.kind] then
+		pace(state, halted)
 		return
 	end
 	if state.inflight == state.gen then
@@ -1588,9 +1600,7 @@ function M.refresh(state: State)
 	local v = M.activeView(state)
 	if not v then
 		state.problem = nil
-		if state.nowOn then
-			schedule(state, POLL_MS) -- no view paces the refresh: Now is read again at the plain minute
-		end
+		schedule(state, POLL_MS) -- no view paces the refresh: Now is read again at the plain minute, shown or not
 		return
 	end
 	-- The server's cooldown holds for every trigger, manual refresh included.
@@ -1654,9 +1664,7 @@ function M.refresh(state: State)
 		else
 			state.interval = nil -- nothing was sent (invalid query): no quota to pace
 		end
-		if not (problem and TERMINAL[problem.kind]) then
-			schedule(state, state.interval or POLL_MS)
-		end
+		pace(state, problem)
 		state.cx:render()
 	end
 	if M.isPin(v.id) then
