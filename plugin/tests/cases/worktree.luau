@@ -124,6 +124,29 @@ case("worktree: remote URLs with a trailing slash still identify the repository"
 	eq(gh("https://github.com/o/"), nil, "an owner alone is not a repository")
 end)
 
+case("worktree: ssh.github.com, directly or through an alias, identifies as github.com", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	w.respond(function(call: Call): Reply?
+		if call.argv[1] == "ssh" and call.argv[#call.argv] == "git@gh-443" then
+			return { stdout = "user git\nhostname ssh.github.com\nport 443\n" }
+		end
+		return nil
+	end)
+	local function identify(url: string): string?
+		local got: string? = nil
+		worktree.identify(url, nil, function(id)
+			got = id
+		end)
+		w.flush()
+		return got
+	end
+	eq(identify("ssh://git@ssh.github.com:443/o/r.git"), "o/r", "the literal host")
+	eq(countCalls(w, "ssh -G"), 0, "needs no ssh -G")
+	eq(identify("git@gh-443:o/r.git"), "o/r", "an alias resolved to ssh.github.com by ssh -G")
+	eq(identify("org-123@github.com:o/r.git"), "o/r", "an Enterprise-managed user")
+	eq(identify("https://ssh.github.com/o/r"), nil, "ssh.github.com is no https host")
+end)
+
 local function resultOf(created: boolean, head: string, prHead: string, dirty: boolean?): { [string]: any }
 	return {
 		path = "/wt/plotroom-o_r-pr-5",

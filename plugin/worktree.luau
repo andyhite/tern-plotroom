@@ -240,7 +240,7 @@ function M.parseRemote(url: string): (string?, string?, boolean, string?)
 	if auth then
 		host, path = string.match(auth, "([^@]+)$"), p
 	else
-		local a, p2 = string.match(url, "^ssh://git@([^/]+)/(.+)$")
+		local a, p2 = string.match(url, "^ssh://[%w%-_]+@([^/]+)/(.+)$")
 		if a then
 			local h, pt = string.match(a, "^([^:]+):?(%d*)$")
 			if not h then
@@ -251,7 +251,7 @@ function M.parseRemote(url: string): (string?, string?, boolean, string?)
 				port = pt
 			end
 		else
-			host, path = string.match(url, "^git@([^:/]+):(.+)$")
+			host, path = string.match(url, "^[%w%-_]+@([^:/]+):(.+)$")
 		end
 		ssh = true
 	end
@@ -275,8 +275,14 @@ function M.sshHostname(out: string): string?
 	return if h then string.lower(h) else nil
 end
 
+-- GitHub's SSH hosts: github.com, and ssh.github.com (SSH over port 443, for firewalls).
+local function githubSsh(host: string?): boolean
+	return host == "github.com" or host == "ssh.github.com"
+end
+
 -- Like parseRemote's github.com host, but an SSH host alias counts when `ssh -G` (reads the
--- user's ssh config, opens no connection) resolves it to github.com. The
+-- user's ssh config, opens no connection) resolves it to github.com or ssh.github.com, and so
+-- does an ssh remote written with ssh.github.com itself. The
 -- remote itself is never rewritten, so git keeps using the alias for transport.
 function M.identify(url: string, cx: WindowCx?, done: (string?, WindowCx?) -> ())
 	local host, id, ssh, port = M.parseRemote(url)
@@ -286,6 +292,9 @@ function M.identify(url: string, cx: WindowCx?, done: (string?, WindowCx?) -> ()
 	if not ssh then
 		return done(nil, cx)
 	end
+	if host == "ssh.github.com" then
+		return done(id, cx)
+	end
 	local argv = { "ssh", "-G" }
 	if port then
 		table.insert(argv, "-p")
@@ -294,7 +303,7 @@ function M.identify(url: string, cx: WindowCx?, done: (string?, WindowCx?) -> ()
 	table.insert(argv, "--")
 	table.insert(argv, "git@" .. (host :: string))
 	process.run(argv, { timeout_ms = LOCAL_MS }, function(res, _, cx2)
-		if res and res.status == 0 and not res.timed_out and M.sshHostname(res.stdout) == "github.com" then
+		if res and res.status == 0 and not res.timed_out and githubSsh(M.sshHostname(res.stdout)) then
 			return done(id, cx2 or cx)
 		end
 		done(nil, cx2 or cx)
