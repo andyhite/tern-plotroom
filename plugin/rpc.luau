@@ -6,12 +6,14 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 50
+M.PROTOCOL = 51
 M.MIN = 48
 -- op → the protocol that added it; an op not listed is known to every host in range. 48 (MIN): `commit` is gone and a
 -- plan (act's or draft's answer) is confirmed in the block's own Confirm overlay, not by the window. 49: `message`, a
 -- message for an agent reviewed in the block's Confirm overlay. 50: `fork`, the first agent on a fork's worktree asked
--- in the block's Confirm overlay; the `worktree` and `issue` answers say `fork`.
+-- in the block's Confirm overlay; the `worktree` and `issue` answers say `fork`. 51: act's `issue-close` takes `reason` and
+-- `text` (a closing comment); an older host ignores them and plans the close with GitHub's default reason, which its
+-- confirm says.
 M.SINCE = { message = 49, fork = 50 } :: { [string]: number }
 
 return M

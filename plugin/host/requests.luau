@@ -1166,16 +1166,47 @@ function M.act(state: State, id: string, q: any)
 		if item.state ~= (if close then "open" else "closed") then
 			return no(if close then "That issue is not open." else "That issue is not closed.")
 		end
+		local reason: string?, body: string?, rows: { string }? = nil, nil, nil
+		if close then
+			reason = q.reason
+			if type(reason) ~= "string" or not table.find(github.CLOSE_REASONS, reason) then
+				return no("Choose Completed or Not planned.")
+			end
+			if q.text ~= nil then
+				body = github.commentText(q.text)
+				if not body then
+					return no("A comment is plain text without control characters, up to 4000 characters.")
+				end
+				rows = M.previewRows(body)
+				if not rows then
+					return no("That comment is too long to show in full for confirmation; shorten it.")
+				end
+			end
+		elseif q.reason ~= nil or q.text ~= nil then
+			return no("Reopening takes no reason or comment.")
+		end
 		local account = needAccount()
 		if not account then
 			return
 		end
+		local lines = { target .. ": " .. printable(item.title), "Account: @" .. account }
+		if close then
+			table.insert(lines, "Close the open issue as " .. (if reason == "completed" then "Completed" else "Not planned"))
+			if body and rows then
+				table.insert(lines, "Comment (" .. (utf8.len(body) or #body) .. " characters):")
+				table.move(rows, 1, #rows, #lines + 1, lines)
+			else
+				table.insert(lines, "No comment")
+			end
+		else
+			table.insert(lines, "Reopen the closed issue")
+		end
 		return M.offer(state, id, item, {
 			head = (if close then "Close " else "Reopen ") .. target .. "?",
 			label = if close then "Close issue" else "Reopen issue",
-			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, if close then "Close the open issue (GitHub's default reason)" else "Reopen the closed issue" },
+			lines = lines,
 		}, function(done)
-			github.setIssueState(item.repo, tonumber(item.ref) :: number, if close then "close" else "reopen", account, function(problem: github.Problem?)
+			github.setIssueState(item.repo, tonumber(item.ref) :: number, if close then "close" else "reopen", reason, body, account, function(problem: github.Problem?)
 				M.landed(state, done, problem, (if close then "Closed " else "Reopened ") .. target)
 			end)
 		end)

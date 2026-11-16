@@ -2048,8 +2048,23 @@ local function markRead(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not marked read", { name = "mark-read" })
 end
 
+-- Close issue…: Completed or Not planned, then an optional closing comment (empty sends none); the host plans both.
 local function issueClose(cx: WindowCx, pane: number)
-	planAct(cx, pane, "Issue not closed", { name = "issue-close" })
+	local items: { PickItem } = {
+		{ label = "Completed", reason = "completed" },
+		{ label = "Not planned", reason = "not planned" },
+	}
+	cx:pick({ items = items, placeholder = "Close the selected issue as…", icon = "merge", action = "plan" }):next(function(picked, _, cx2)
+		if not (picked and cx2) then
+			return
+		end
+		cx2:prompt({ placeholder = "Closing comment (optional)", icon = "merge", action = "plan" }):next(function(text, _, cx3)
+			if cx3 and text then
+				local t = trim(text)
+				planAct(cx3, pane, "Issue not closed", { name = "issue-close", reason = picked.reason, text = if t == "" then nil else t })
+			end
+		end)
+	end)
 end
 
 local function issueReopen(cx: WindowCx, pane: number)

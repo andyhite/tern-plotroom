@@ -1561,7 +1561,20 @@ windowCase("window flows: comment, close, reopen, ready for review and convert t
 		w.flush()
 		return st.reply("act", { token = "t-" .. command, confirm = { head = head, label = label, lines = { "o/r#7: Fix login", "Account: @octocat" } } })
 	end
-	eq(plan("issue-close", "Close o/r#7?", "Close issue").name, "issue-close", "Close issue asks for the issue-close plan")
+	w.window.choose = "Not planned"
+	w.window.typed = "  Out of scope for 2.0\n"
+	local closeAsk = plan("issue-close", "Close o/r#7?", "Close issue")
+	eq(closeAsk.name, "issue-close", "Close issue asks for the issue-close plan")
+	eq(closeAsk.reason, "not planned", "with the reason picked")
+	eq(closeAsk.text, "Out of scope for 2.0", "and the closing comment, trimmed")
+	w.window.choose = "Completed"
+	w.window.typed = ""
+	local bare = plan("issue-close", "Close o/r#7?", "Close issue")
+	eq(bare.reason, "completed", "Completed is the other reason")
+	eq(bare.text, nil, "an empty closing comment sends none")
+	w.window.choose = nil
+	w.window.typed = nil
+	picks = #w.window.picks -- the reason picks are the close flow's own; the plans themselves are never picked
 	eq(plan("issue-reopen", "Reopen o/r#7?", "Reopen issue").name, "issue-reopen", "Reopen issue asks for issue-reopen")
 	eq(plan("pr-ready", "Mark o/r#7 ready for review?", "Ready for review").name, "pr-ready", "Ready for review asks for pr-ready")
 	eq(plan("pr-draft", "Convert o/r#7 to a draft?", "Convert to draft").name, "pr-draft", "Convert to draft asks for pr-draft")
@@ -1572,7 +1585,7 @@ windowCase("window flows: comment, close, reopen, ready for review and convert t
 	local commentAsk = st.reply("act", { token = "t-comment", confirm = { head = "Comment on o/r#7?", label = "Add comment", lines = { "o/r#7: Fix login", "Comment (20 characters): Thanks, merging ⏎ soon" } } })
 	eq(commentAsk.name, "comment", "Comment asks for a comment plan")
 	eq(commentAsk.text, "Thanks, merging\nsoon", "with the typed text, trimmed")
-	same(st.ops(), { "act", "act", "act", "act", "act" }, "the window commits none")
+	same(st.ops(), { "act", "act", "act", "act", "act", "act" }, "the window commits none")
 	w.window.typed = "   "
 	local before = #requestsSent(w)
 	w.command("comment")
@@ -2454,35 +2467,59 @@ case("host mutations: close and reopen run gh issue close or reopen on the plann
 	local live: { [string]: string } = { ["12"] = "OPEN", ["13"] = "CLOSED" }
 	local seen = asks.hx.writes(s.gh, issueViews(live))
 	local b = openIssues(w)
-	local function plan(name: string): any
-		return asks.hx.ask(w, b, { op = "act", name = name })
+	local function plan(name: string, extra: { [string]: any }?): any
+		local q: { [string]: any } = { op = "act", name = name }
+		for k, v in extra or {} do
+			q[k] = v
+		end
+		return asks.hx.ask(w, b, q)
 	end
 	local function commit(p: any): any
 		return asks.hx.commit(w, b, p.token)
 	end
-	local function refused(name: string, why: string)
-		local p = plan(name)
+	local function refused(name: string, why: string, extra: { [string]: any }?)
+		local p = plan(name, extra)
 		yes(p.problem ~= nil and p.token == nil, why .. ": refused with no plan")
 	end
 	-- #12 is open
 	refused("issue-reopen", "an open issue is not reopened")
 	eq(#seen, 0, "and nothing was sent")
-	eq(commit(plan("issue-close")).ok, true, "closing the open issue commits")
-	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r" }, "it reads the issue, then closes it with no reason or other flag")
-	local stale = plan("issue-close")
+	refused("issue-close", "a close with no reason")
+	refused("issue-close", "a reason gh does not know", { reason = "duplicate" })
+	refused("issue-close", "a comment with a control byte", { reason = "completed", text = "a\1b" })
+	eq(#seen, 0, "none of them sent anything")
+	local completed = plan("issue-close", { reason = "completed" })
+	has(completed.confirm.lines[3], "as Completed", "the confirm names the reason")
+	eq(completed.confirm.lines[4], "No comment", "and that no comment goes with it")
+	eq(commit(completed).ok, true, "closing the open issue commits")
+	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r --reason completed" }, "it reads the issue, then closes it as completed")
+	local stale = plan("issue-close", { reason = "not planned" })
 	live["12"] = "CLOSED" -- closed elsewhere after the plan
 	yes(commit(stale).problem ~= nil, "an issue closed after the plan is refused at commit")
 	eq(#seen, 3, "only its state was read again: no second close")
 	-- #13 is closed
 	b.typeText("j")
-	refused("issue-close", "a closed issue is not closed again")
+	refused("issue-close", "a closed issue is not closed again", { reason = "completed" })
 	eq(#seen, 3, "and nothing was sent")
+	refused("issue-reopen", "a reopen with a reason", { reason = "completed" })
 	eq(commit(plan("issue-reopen")).ok, true, "reopening the closed issue commits")
-	same({ seen[4], seen[5] }, { issueView("13"), "gh issue reopen 13 --repo github.com/o/r" }, "it reads the issue, then reopens it")
+	same({ seen[4], seen[5] }, { issueView("13"), "gh issue reopen 13 --repo github.com/o/r" }, "it reads the issue, then reopens it with no reason")
 	local late = plan("issue-reopen")
 	live["13"] = "OPEN" -- reopened elsewhere after the plan
 	yes(commit(late).problem ~= nil, "an issue reopened after the plan is refused at commit")
 	eq(#seen, 6, "only its state was read again: no second reopen")
+end)
+
+case("host mutations: close as not planned lists the reason and the comment in the confirm and sends both to gh", function(w: World)
+	local s = issueHost(w)
+	local seen = asks.hx.writes(s.gh, issueViews({ ["12"] = "OPEN" }))
+	local b = openIssues(w)
+	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close", reason = "not planned", text = "  Out of scope.\nSee #3  " })
+	has(p.confirm.lines[3], "as Not planned", "the confirm names the reason")
+	has(p.confirm.lines[4], "Comment (", "and the comment")
+	has(table.concat(p.confirm.lines, "\n"), "Out of scope.", "shown in full")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "it commits")
+	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r --reason not planned --comment=Out of scope.\nSee #3" }, "the reason and the trimmed comment are separate argv entries")
 end)
 
 case("host mutations: ready for review and convert to draft run gh pr ready, with --undo only for the draft, refuse a pull request already in that state, and one that changed after the plan", function(w: World)
@@ -2536,12 +2573,12 @@ case("host mutations: switching gh's active account between plan and commit stil
 	local seen = asks.hx.writes(s.gh, issueViews({ ["12"] = "OPEN" }))
 	s.gh.tokens.work = "tok-work"
 	local b = openIssues(w)
-	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close" })
+	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close", reason = "completed" })
 	has(p.confirm.lines[2], "octocat", "the plan names the account gh was using")
 	s.gh.active = "work" -- `gh auth switch` before the confirm
 	w.advance(30 * 1000)
 	eq(asks.hx.commit(w, b, p.token).ok, true, "committed within five minutes")
-	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r" }, "the issue is read and closed")
+	same(seen, { issueView("12"), "gh issue close 12 --repo github.com/o/r --reason completed" }, "the issue is read and closed")
 	local sent = requestsOf(s.gh, "other")
 	eq(#sent, 2, "both commands ran")
 	for _, req in sent do
@@ -5283,7 +5320,7 @@ case("host mutations: a confirmation older than five minutes says it expired", f
 	local s = issueHost(w)
 	local seen = asks.hx.writes(s.gh, issueViews({ ["12"] = "OPEN" }))
 	local b = openIssues(w)
-	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close" })
+	local p = asks.hx.ask(w, b, { op = "act", name = "issue-close", reason = "completed" })
 	local before = #seen
 	w.advance(301 * 1000)
 	eq(asks.hx.commit(w, b, p.token).problem, "That confirmation expired after 5 minutes; nothing was sent.", "the age is named, not a changed selection")

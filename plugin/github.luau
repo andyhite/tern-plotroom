@@ -1882,12 +1882,30 @@ local function guarded(kind: string, fields: string, segs: { string }, repo: str
 	end, account)
 end
 
--- op "close" closes the open issue (gh's default reason), "reopen" reopens the closed one.
-function M.setIssueState(repo: string, number: number, op: string, account: string?, done: (Problem?) -> ())
+-- The reasons an issue is closed with, as `gh issue close --reason` spells them.
+M.CLOSE_REASONS = { "completed", "not planned" }
+
+-- op "close" closes the open issue as `reason` (one of M.CLOSE_REASONS; required) and, when `text` (M.commentText) is
+-- given, posts it as the closing comment; "reopen" reopens the closed one (no reason, no text).
+function M.setIssueState(repo: string, number: number, op: string, reason: string?, text: string?, account: string?, done: (Problem?) -> ())
 	local open = op == "reopen"
-	if (not open and op ~= "close") or not whole32(number) then
+	local body = if text == nil then nil else M.commentText(text)
+	local problem: string? = nil
+	if not whole32(number) then
+		problem = "Unexpected issue number."
+	elseif not open and op ~= "close" then
+		problem = "Unexpected issue operation."
+	elseif not open and not table.find(M.CLOSE_REASONS, reason) then
+		problem = "Unexpected close reason."
+	elseif open and (reason ~= nil or text ~= nil) then
+		problem = "Reopening takes no reason or comment."
+	elseif text ~= nil and not body then
+		problem = "The comment is empty, too long or has control characters."
+	end
+	if problem then
+		local why = problem
 		return later(function()
-			done(bad(if whole32(number) then "Unexpected issue operation." else "Unexpected issue number."))
+			done(bad(why))
 		end)
 	end
 	guarded("issue", "number,state,url", { "issues" }, repo, tostring(number), account, function(d)
@@ -1897,7 +1915,15 @@ function M.setIssueState(repo: string, number: number, op: string, account: stri
 		end
 		return nil
 	end, function(_, id)
-		return { "issue", if open then "reopen" else "close", id, "--repo", repoArg(repo) or "" }
+		local args = { "issue", if open then "reopen" else "close", id, "--repo", repoArg(repo) or "" }
+		if not open then
+			table.insert(args, "--reason")
+			table.insert(args, reason :: string)
+			if body then
+				table.insert(args, "--comment=" .. body)
+			end
+		end
+		return args
 	end, done)
 end
 
