@@ -16,12 +16,15 @@ export type Model = {
 
 local UNDO_LIMIT = 50
 
--- Valid UTF-8 only, other control characters dropped. Line breaks become
--- spaces, or with `multi` are kept as "\n" (and tabs kept).
+-- Valid UTF-8 only, other control characters dropped: C0, DEL, C1 (U+0080-009F) and Unicode's bidi controls (U+061C,
+-- U+200E-200F, U+202A-202E, U+2066-2069), which could reorder the text drawn around them. Line breaks (CR, LF, U+2028,
+-- U+2029) become spaces, or with `multi` are kept as "\n" (and tabs kept).
 -- A malformed byte is dropped alone; the valid characters around it stay.
 function M.clean(s: string, multi: boolean?): string
-	s = string.gsub(s, "\r\n", if multi then "\n" else " ")
-	s = string.gsub(s, "[\r\n]", if multi then "\n" else " ")
+	local br = if multi then "\n" else " "
+	s = string.gsub(s, "\r\n", br)
+	s = string.gsub(s, "[\r\n]", br)
+	s = string.gsub(s, "\226\128[\168\169]", br)
 	if string.find(s, "[%c\128-\255]") == nil then
 		return s
 	end
@@ -30,25 +33,24 @@ function M.clean(s: string, multi: boolean?): string
 	while i <= n do
 		local b = string.byte(s, i)
 		local step = 1
-		local ok: boolean
+		local ok = false
 		if b < 0x80 then
 			ok = (b >= 0x20 and b ~= 0x7F) or (multi == true and (b == 10 or b == 9))
 		else
-			step = if b >= 0xF0 then 4 elseif b >= 0xE0 then 3 elseif b >= 0xC0 then 2 else 1
-			ok = step > 1 and utf8.len(s, i, i) ~= nil
-			if not ok then
-				step = 1
+			local len = if b >= 0xF0 then 4 elseif b >= 0xE0 then 3 elseif b >= 0xC0 then 2 else 1
+			if len > 1 and utf8.len(s, i, i) ~= nil then
+				step = len
+				local c = utf8.codepoint(s, i)
+				ok = c > 0x9F and c ~= 0x061C and c ~= 0x200E and c ~= 0x200F and not (c >= 0x202A and c <= 0x202E) and not (c >= 0x2066 and c <= 0x2069)
 			end
 		end
-		if ok then
-			i += step
-		else
+		if not ok then
 			if from < i then
 				table.insert(out, string.sub(s, from, i - 1))
 			end
-			i += 1
-			from = i
+			from = i + step
 		end
+		i += step
 	end
 	if from <= n then
 		table.insert(out, string.sub(s, from))

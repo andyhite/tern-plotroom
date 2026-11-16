@@ -149,6 +149,15 @@ function M.clip(text: string, n: number, tail: string): string
 	return text
 end
 
+-- A one-line text field from GitHub or Jira as Plotroom keeps it: `input.clean` (no controls, no bidi controls, line
+-- breaks as spaces), cut to `n` characters. Normalising applies it once, so every row, toast and prompt gets it clean.
+function M.line(text: string, n: number): string
+	return M.clip(input.clean(text), n, "…")
+end
+-- How much of a title, and of any other field (author, label, assignee, status, type, priority, check name), is kept.
+M.TITLE_CHARS = 256
+M.FIELD_CHARS = 100
+
 -- How much of a description a run's acceptance criteria keep, in characters.
 M.CRITERIA_CHARS = 2000
 

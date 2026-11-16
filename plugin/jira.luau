@@ -212,12 +212,16 @@ function M.normalize(item: any, siteUrl: string): (tracker.Issue?, string?)
 		return nil, "acli returned a work item without a key or summary"
 	end
 	local category = field(fields, "status", "statusCategory", "key")
-	local statusName = nonEmpty(field(fields, "status", "name"))
-	local assignee = nonEmpty(field(fields, "assignee", "displayName"))
+	-- Every text field is cleaned and cut once, here (tracker.line); nil when nothing is left.
+	local function text(v: any): string?
+		return nonEmpty(if type(v) == "string" then tracker.line(v, tracker.FIELD_CHARS) else nil)
+	end
+	local statusName = text(field(fields, "status", "name"))
+	local assignee = text(field(fields, "assignee", "displayName"))
 	local labels: { string } = {}
 	for _, l in list(field(fields, "labels")) do
 		if type(l) == "string" then
-			table.insert(labels, l)
+			table.insert(labels, tracker.line(l, tracker.FIELD_CHARS))
 		end
 	end
 	return {
@@ -225,15 +229,15 @@ function M.normalize(item: any, siteUrl: string): (tracker.Issue?, string?)
 		tracker = "jira",
 		repo = project,
 		ref = key,
-		title = summary,
+		title = tracker.line(summary, tracker.TITLE_CHARS),
 		url = siteUrl .. "/browse/" .. key,
-		author = nonEmpty(field(fields, "reporter", "displayName")) or "Unknown",
+		author = text(field(fields, "reporter", "displayName")) or "Unknown",
 		state = if category == "done" then "closed" else "open",
 		reason = nil,
 		status = if statusName then { text = statusName, tone = (if type(category) == "string" then TONE[category] else nil) or "muted" } else nil,
 		category = if type(category) == "string" then category else nil,
-		type = nonEmpty(field(fields, "issuetype", "name")),
-		priority = nonEmpty(field(fields, "priority", "name")),
+		type = text(field(fields, "issuetype", "name")),
+		priority = text(field(fields, "priority", "name")),
 		labels = labels,
 		assignees = if assignee then { assignee } else {},
 		comments = 0,

@@ -1486,12 +1486,12 @@ local function worktreeCard(state: State): Node?
 		elseif sec.state == "ready" and info then
 			table.insert(body, ui.node("row", { key = key .. "-title", gap = "xs", align = "center" }, {
 				ui.text({ ui.span(sec.ref, "mono") }),
-				ui.node("text", { key = "t", spans = { ui.span(printable(info.title), "strong") } }),
-				ui.node("badge", { key = "state", text = printable(info.state), tone = "muted" }),
+				ui.node("text", { key = "t", spans = { ui.span(info.title, "strong") } }),
+				ui.node("badge", { key = "state", text = info.state, tone = "muted" }),
 			}))
 			local rows: { { [string]: any } } = {
 				{ k = "Tracker", v = { ui.span(printable(info.tracker), "mono") } },
-				{ k = if key == "pr" then "Author" else "Assignee", v = if info.person then { ui.span(printable(info.person)) } else nil },
+				{ k = if key == "pr" then "Author" else "Assignee", v = if info.person then { ui.span(info.person) } else nil },
 			}
 			table.insert(body, ui.node("kv", { key = key .. "-facts", items = withValue(rows) }))
 			if info.excerpt then

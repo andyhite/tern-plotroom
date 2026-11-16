@@ -454,16 +454,25 @@ function M.duration(s: number): string
 	return (s // 3600) .. "h" .. (if s % 3600 >= 60 then " " .. (s % 3600) // 60 .. "m" else "")
 end
 
--- `s` with control characters as spaces and, when it is not valid UTF-8, every non-ASCII byte as "?".
+-- `s` with control characters as spaces (C0, DEL, C1, U+2028/2029 and the bidi controls input.clean drops) and, when it
+-- is not valid UTF-8, every non-ASCII byte as "?".
 function M.printable(s: string): string
 	local out = string.gsub(s, "%c", " ")
 	if utf8.len(out) == nil then
 		out = string.gsub(out, "[\128-\255]", "?")
+	elseif string.find(out, "[\194\216\226]") then
+		-- Byte patterns: in valid UTF-8 each matches exactly its code points.
+		out = string.gsub(out, "\194[\128-\159]", " ")
+		out = string.gsub(out, "\216\156", " ")
+		out = string.gsub(out, "\226\128[\142\143\168-\174]", " ")
+		out = string.gsub(out, "\226\129[\166-\169]", " ")
 	end
 	return out
 end
 
 -- `s` (valid UTF-8, see printable) cut to `max` characters.
+-- ponytail: counts code points, so a cut can split an emoji ZWJ sequence or a combining mark; cut at grapheme
+-- boundaries if that shows up in practice.
 function M.clip(s: string, max: number): string
 	local cut = utf8.offset(s, max + 1)
 	return if cut and cut <= #s then string.sub(s, 1, cut - 1) .. "…" else s

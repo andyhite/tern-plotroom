@@ -1068,7 +1068,7 @@ function M.act(state: State, id: string, q: any)
 				M.offer(state, id, item, {
 					head = "Assign " .. item.ref .. " to you?",
 					label = "Assign to me",
-					lines = { target .. ": " .. printable(item.title), "Jira account: " .. printable(who.email) .. " at " .. printable(who.site), "Current assignee: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
+					lines = { target .. ": " .. item.title, "Jira account: " .. printable(who.email) .. " at " .. printable(who.site), "Current assignee: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
 				}, function(done)
 					jira.assignMe(item.ref, who, function(problem2: github.Problem?)
 						M.landed(state, done, problem2, "Assigned " .. item.ref .. " to you")
@@ -1083,7 +1083,7 @@ function M.act(state: State, id: string, q: any)
 		return M.offer(state, id, item, {
 			head = "Assign " .. target .. " to you?",
 			label = "Assign to me",
-			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, "Current assignees: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
+			lines = { target .. ": " .. item.title, "Account: @" .. account, "Current assignees: " .. (if #item.assignees > 0 then table.concat(item.assignees, ", ") else "none") },
 		}, function(done)
 			github.editIssue({ repo = item.repo, number = tonumber(item.ref) :: number, addAssignees = { "@me" }, removeAssignees = {} }, account, function(problem: github.Problem?)
 				M.landed(state, done, problem, "Assigned " .. target .. " to you")
@@ -1107,7 +1107,7 @@ function M.act(state: State, id: string, q: any)
 			head = "Rerun failed jobs of " .. target .. "?",
 			label = "Rerun failed jobs",
 			lines = {
-				target .. ": " .. printable(item.title),
+				target .. ": " .. item.title,
 				"Account: @" .. account,
 				"Rerun the failed jobs of workflow run " .. run .. " (" .. clip(table.concat(names, ", "), 100) .. ")",
 			},

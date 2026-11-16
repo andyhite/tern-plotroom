@@ -2146,4 +2146,61 @@ case("github.outcome: every outcome is Verified or Not verified from GitHub's fa
 	eq(#w.calls, calls, "GitHub is not asked")
 end)
 
+case("github/jira normalize: remote text is cleaned and cut once, controls and bidi controls dropped", function(w: World)
+	local github = w.load("github") :: Github
+	local jira = w.load("jira") :: Jira
+	local input: any = w.load("input")
+	local core: any = w.load("host/core")
+	local evil = "Fix\u{202E}gpj.exe\u{2066} \u{0085}now\u{2028}ok\1x\u{200F}"
+	local tidy = "Fixgpj.exe now okx"
+	eq(input.clean(evil), tidy, "C0, C1 and bidi controls drop; U+2028 is a line break")
+	eq(input.clean("a\u{2029}b\u{061C}", true), "a\nb", "with multi, U+2029 is kept as a line break")
+	eq(input.clean("é 😀\u{200D}🔥"), "é 😀\u{200D}🔥", "letters, emoji and the joiner stay")
+	eq(core.printable("a\u{202E}b\u{0085}c\u{061C}d\u{200E}e\u{2029}f\1g\u{2067}h"), "a b c d e f g h", "printable makes each control a space")
+	eq(core.printable("é 😀"), "é 😀", "and leaves other text as it is")
+	local long = string.rep("é", 300)
+	local pr = github.normalize({
+		number = 5, url = "https://github.com/o/r/pull/5", title = evil, author = "\u{202E}octo",
+		labels = { "bug\u{0085}", long },
+		runs = {
+			{ name = "build\u{202E}", status = "COMPLETED", conclusion = "SUCCESS", checkSuite = { id = "S1", workflowRun = { workflow = { name = "C\u{2066}I" } } } } :: any,
+			{ name = "build", status = "COMPLETED", conclusion = "SUCCESS", checkSuite = { id = "S2", app = { name = "Other" } } },
+			{ context = "ci/\u{0085}" .. long, state = "SUCCESS" },
+		},
+	}) :: any
+	eq(pr.title, tidy, "a pull request's title is cleaned")
+	eq(pr.author, "octo", "its author")
+	same(pr.labels, { "bug", string.rep("é", 100) .. "…" }, "its labels, each cut to 100 characters")
+	local names: { string } = {}
+	for _, r in pr.runs do
+		table.insert(names, r.name)
+	end
+	same(names, { "CI / build", "Other / build", "ci/" .. string.rep("é", 97) .. "…" }, "check names and their workflow names are cleaned and cut")
+	eq((github.normalize({ number = 6, url = "https://github.com/o/r/pull/6", title = long }) :: any).title, string.rep("é", 256) .. "…", "a title is cut to 256 characters")
+	local issue = github.normalizeIssue({ number = 7, url = "https://github.com/o/r/issues/7", title = evil, author = "ann\u{2069}", labels = { "p1\u{202A}" }, assignees = { "bo\1b" } }) :: any
+	eq(issue.title, tidy, "an issue's title is cleaned")
+	eq(issue.author, "ann", "its author")
+	same(issue.labels, { "p1" }, "its labels")
+	same(issue.assignees, { "bob" }, "its assignees")
+	local ticket = jira.normalize({
+		key = "ABC-1",
+		fields = {
+			summary = evil .. long,
+			status = { name = "In\u{202E} Review", statusCategory = { key = "indeterminate" } },
+			reporter = { displayName = long },
+			assignee = { displayName = "\u{202E}" },
+			issuetype = { name = "Bug\u{0085}" },
+			priority = { name = "Hi\u{2066}gh" },
+			labels = { "ux\1" },
+		},
+	}, "https://acme.atlassian.net") :: any
+	eq(ticket.title, tidy .. string.rep("é", 256 - #tidy) .. "…", "a Jira summary is cleaned and cut to 256 characters")
+	eq(ticket.status.text, "In Review", "its status")
+	eq(ticket.author, string.rep("é", 100) .. "…", "its reporter is cut to 100 characters")
+	same(ticket.assignees, {}, "an assignee with nothing left is none")
+	eq(ticket.type, "Bug", "its type")
+	eq(ticket.priority, "High", "its priority")
+	same(ticket.labels, { "ux" }, "its labels")
+end)
+
 return {}

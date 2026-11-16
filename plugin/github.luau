@@ -280,14 +280,15 @@ function M.runs(raw: any): { Run }
 					since = if running then started else nil
 					at = started or math.huge
 				end
-				name = checkName
+				name = tracker.line(checkName, tracker.FIELD_CHARS)
 				suite = nonEmpty(field(n, "checkSuite", "id"))
 				label = nonEmpty(field(n, "checkSuite", "workflowRun", "workflow", "name")) or nonEmpty(field(n, "checkSuite", "app", "name"))
+				label = if label then tracker.line(label, tracker.FIELD_CHARS) else nil
 			elseif type(context) == "string" then
 				local state = field(n, "state")
 				local c = if type(state) == "string" then CONTEXT_STATE[state] else nil
 				if c then
-					name, status, detail, phase = context, c[1], c[2], c[3]
+					name, status, detail, phase = tracker.line(context, tracker.FIELD_CHARS), c[1], c[2], c[3]
 				end
 			end
 			if name and status and detail and phase then
@@ -385,7 +386,7 @@ function M.normalize(item: any): (Pr?, string?)
 	if type(item.labels) == "table" then
 		for _, l in item.labels do
 			if type(l) == "string" then
-				table.insert(labels, l)
+				table.insert(labels, tracker.line(l, tracker.FIELD_CHARS))
 			end
 		end
 	end
@@ -420,9 +421,9 @@ function M.normalize(item: any): (Pr?, string?)
 		key = M.identity(o, r, n),
 		repo = o .. "/" .. r,
 		number = n,
-		title = item.title,
+		title = tracker.line(item.title, tracker.TITLE_CHARS),
 		url = item.url,
-		author = if type(item.author) == "string" then item.author else "ghost",
+		author = if type(item.author) == "string" then tracker.line(item.author, tracker.FIELD_CHARS) else "ghost",
 		state = state,
 		draft = item.isDraft == true,
 		updated = M.epoch(str(item.updatedAt)) or 0,
@@ -515,7 +516,7 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 		if type(v) == "table" then
 			for _, s in v do
 				if type(s) == "string" then
-					table.insert(out, s)
+					table.insert(out, tracker.line(s, tracker.FIELD_CHARS))
 				end
 			end
 		end
@@ -541,9 +542,9 @@ function M.normalizeIssue(item: any): (tracker.Issue?, string?)
 		tracker = "github",
 		repo = o .. "/" .. r,
 		ref = tostring(n),
-		title = item.title,
+		title = tracker.line(item.title, tracker.TITLE_CHARS),
 		url = item.url,
-		author = if type(item.author) == "string" then item.author else "ghost",
+		author = if type(item.author) == "string" then tracker.line(item.author, tracker.FIELD_CHARS) else "ghost",
 		state = if closed then "closed" else "open",
 		reason = if closed and type(item.reason) == "string" then ISSUE_STATE[item.reason] else nil,
 		labels = strings(item.labels),
