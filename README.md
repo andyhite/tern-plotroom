@@ -84,3 +84,7 @@ python3 scripts/check.py           # test · types · bench · smoke
 | `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` (no smoke, Tern is not available there). `smoke.py` runs on installed Tern 0.9.13+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
 
 `link` and `install` are exclusive per id: switch with `tern plugin remove plotroom` / `tern plugin unlink plotroom` first.
+
+## License
+
+[MIT](LICENSE).
