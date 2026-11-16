@@ -1803,11 +1803,29 @@ function M.readIgnored(state: State, paths: { string })
 	step(1)
 end
 
+-- Why a worktree at `path` must stay: a live agent (any state but exited) of its item `key` runs there, or some pane of
+-- this host works in it. nil when nothing does. Removing it would delete the folder under them.
+function M.inUse(state: State, path: string, key: string?): string?
+	local st = if key then state.agents[key] else nil
+	if st and st ~= "exited" then
+		return "An agent is running in it; stop it first."
+	end
+	for _, p in tern.pane.list() do
+		if p.cwd and worktree.within(p.cwd, path) then
+			return "A tab works in it; close it first."
+		end
+	end
+	return nil
+end
+
 -- The backend the board model calls: git on this host only. `dirty` reads one folder, and only one the latest inventory listed.
 function M.boardApi(state: State): any
 	return {
 		inventory = worktree.inventory,
 		removeEntry = worktree.removeEntry,
+		busy = function(row: any): string?
+			return M.inUse(state, row.path, row.key or (if row.number then row.repo .. "#" .. row.number else nil))
+		end,
 		dirty = function(path: string, done: (boolean?) -> ())
 			for _, r in state.board.rows do
 				if r.path == path then
@@ -2900,8 +2918,14 @@ function M.boardAct(state: State, act: string): boolean
 		if state.boardBusy then
 			state.cx:toast("info", "Still reading", "Remove it once the read has finished.")
 		elseif row and not row.locked and not row.missing then
-			state.boardRemoving = row.id
-			M.readIgnored(state, { row.path })
+			local why = M.boardApi(state).busy(row)
+			if why then
+				row.refused = why
+				state.cx:toast("info", "Not removed", why)
+			else
+				state.boardRemoving = row.id
+				M.readIgnored(state, { row.path })
+			end
 		elseif row then
 			state.cx:toast("info", "Not removed here", "Locked or missing worktrees are not removed here.")
 		end
@@ -2910,18 +2934,22 @@ function M.boardAct(state: State, act: string): boolean
 			state.cx:toast("info", "Still reading", "Remove them once the read has finished.")
 		else
 			local ids: { string } = {}
-			for _, r in board.finished(state.board) do
+			local rows, kept = board.finished(state.board, M.boardApi(state).busy)
+			for _, r in rows do
 				table.insert(ids, r.id)
 			end
 			if #ids == 0 then
-				state.cx:toast("info", "No finished worktrees", "Run Find finished worktrees first; it marks the merged and closed ones.")
+				state.cx:toast("info", if kept > 0 then kept .. " kept: a tab or an agent works in them" else "No finished worktrees", if kept > 0 then "Close the tab or stop the agent first." else "Run Find finished worktrees first; it marks the merged and closed ones.")
 			else
 				state.boardFinished = ids
 				local paths: { string } = {}
-				for _, r in board.finished(state.board) do
+				for _, r in rows do
 					table.insert(paths, r.path)
 				end
 				M.readIgnored(state, paths)
+				if kept > 0 then
+					state.cx:toast("info", kept .. " kept: a tab or an agent works in them")
+				end
 			end
 		end
 	elseif act == "wt-cancel-remove" then

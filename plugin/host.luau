@@ -90,7 +90,7 @@ local function askRemove(state: State)
 		return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
 	end
 	local key = chosen.key
-	state.removing, state.removeFate, state.removeRefusal = key, nil, nil
+	state.removing, state.removeFate, state.removeRefusal = key, nil, engine.inUse(state, note.path or "", key)
 	state.removeRound += 1 -- drops a read of an earlier question's ignored files
 	state.removeIgnored = nil
 	-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
@@ -112,9 +112,9 @@ local function askRemove(state: State)
 				refusal = worktree.unusable(e)
 			end
 		end
-		state.removeRefusal = refusal
+		state.removeRefusal = engine.inUse(state, path, key) or refusal
 		state.cx:render()
-		if not refusal then
+		if not state.removeRefusal then
 			-- `git worktree remove` deletes ignored files and folders too (.env, ...) and git status never lists them: say so.
 			engine.readIgnored(state, { path })
 		end
@@ -486,6 +486,14 @@ local function blockDef(): BlockDef<State>
 		end
 		if preparing[key] then
 			return state.cx:toast("info", "Worktree is busy", "Plotroom is still working on it; try again in a moment.")
+		end
+		local inUse = engine.inUse(state, path, key)
+		if inUse then
+			note.refused = inUse
+			state.noteSeq += 1
+			state.cx:toast("error", "Worktree not removed", inUse)
+			state.cx:render()
+			return
 		end
 		preparing[key] = true
 		state.cx:toast("info", "Removing the worktree of " .. key .. "…")

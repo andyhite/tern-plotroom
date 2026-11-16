@@ -40,6 +40,9 @@ export type Api = {
 		branch: string?,
 		done: (removal: Removal?, problem: string?, dirty: boolean?) -> ()
 	) -> (),
+	-- Why the worktree of `row` must stay (a tab or a live agent works in it), nil when nothing does; asked again at the
+	-- moment of removal, since a tab or agent can arrive after the confirm.
+	busy: (row: Row) -> string?,
 }
 
 -- What a linked pull request or issue looks like once read. `tracker` names where it lives ("github o/r", "jira PROJ"),
@@ -325,6 +328,10 @@ function M.remove(board: Board, api: Api, id: string, live: () -> boolean, done:
 	elseif row.missing then
 		return refuse("The worktree folder is missing; prune it with git.")
 	end
+	local inUse = api.busy(row)
+	if inUse then
+		return refuse(inUse)
+	end
 	row.refused = nil
 	api.removeEntry(row.checkout, row.repo, row.path, row.branch, function(removal, why, dirty)
 		if not live() then
@@ -355,16 +362,22 @@ function M.fate(row: { branch: string?, key: string?, number: number?, inferred:
 	return "Its branch is deleted too only if git confirms its commits are saved elsewhere; otherwise it is kept."
 end
 
--- The rows Find finished worktrees marked merged or closed and that can be removed at all, in list order.
-function M.finished(board: Board): { Row }
+-- The rows Find finished worktrees marked merged and closed and that can be removed at all, in list order, and how many
+-- more it marked but `busy` keeps (a tab or an agent works in them).
+function M.finished(board: Board, busy: (row: Row) -> string?): ({ Row }, number)
 	local out: { Row } = {}
+	local kept = 0
 	for _, r in board.rows do
 		if (r.candidate == "merged" or r.candidate == "closed") and not r.locked and not r.missing then
-			table.insert(out, r)
+			if busy(r) then
+				kept += 1
+			else
+				table.insert(out, r)
+			end
 		end
 	end
 	table.sort(out, order)
-	return out
+	return out, kept
 end
 
 -- Rows Find finished worktrees has not checked yet (those it could check at all): the confirm says how many.

@@ -2300,7 +2300,7 @@ end
 -- question as its head, the consequence in one sentence, the facts (a kv, or `o.lines` as they will be sent), and in
 -- its foot Cancel first (quiet, Esc) and then the action (`danger` unless `o.calm`, its key `actKeys`). `o.act` nil: the
 -- action is refused (the sentence says why) and only Cancel is offered.
-local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, warn: string?, extra: Node?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
+local function confirmOverlay(o: { head: string, meta: string?, icon: string?, body: string, facts: { { [string]: any } }?, lines: { string }?, extra: Node?, label: string, actKeys: { string }, calm: boolean?, cancel: string, act: string? }): Node
 	local icon = o.icon or "trash"
 	local kids: { Node } = { ui.node("text", { key = "body", spans = { ui.span(o.body, "muted") } }) }
 	if o.facts and #o.facts > 0 then
@@ -2310,9 +2310,6 @@ local function confirmOverlay(o: { head: string, meta: string?, icon: string?, b
 		for i, line in o.lines do
 			table.insert(kids, ui.node("text", { key = "line-" .. i, spans = { ui.span(line) } }))
 		end
-	end
-	if o.warn then
-		table.insert(kids, ui.node("text", { key = "tab", spans = { ui.span(o.warn) } }))
 	end
 	if o.extra then
 		table.insert(kids, o.extra)
@@ -2470,7 +2467,6 @@ local function addIgnored(facts: { { [string]: any } }, state: State)
 	end
 end
 
-local TAB_WARN = "A tab works in it and will be left in a folder that no longer exists."
 local REMOVE_BODY = "Its folder is deleted; git refuses while it has uncommitted changes, and nothing is forced."
 
 -- The modal that asks before a board row's worktree is removed; Enter or Esc keeps it, `d` or a click removes it.
@@ -2490,7 +2486,6 @@ local function boardConfirm(state: State): Node
 		head = "Remove this worktree?",
 		body = REMOVE_BODY,
 		facts = facts,
-		warn = if row and engine.boardOpen(state)[row.path] then TAB_WARN else nil,
 		label = "Remove",
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
@@ -2502,13 +2497,10 @@ end
 local function finishedConfirm(state: State): Node
 	local items: { any } = {}
 	local ids: { string } = state.boardFinished or {}
-	local open = engine.boardOpen(state)
-	local tabbed = false
 	for _, id in ids do
 		for _, r in engine.boardRows(state) do
 			if r.id == id then
 				table.insert(items, { k = board.label(r), v = { ui.span(r.path, "code") } })
-				tabbed = tabbed or open[r.path] ~= nil
 			end
 		end
 	end
@@ -2521,7 +2513,6 @@ local function finishedConfirm(state: State): Node
 		meta = if unchecked > 0 then unchecked .. " not checked yet" else nil,
 		body = "Each folder is deleted, then its branch unless that holds commits saved nowhere else; git keeps a worktree with uncommitted changes, and nothing is forced.",
 		facts = facts,
-		warn = if tabbed then TAB_WARN else nil,
 		label = "Remove all " .. n,
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
@@ -2535,7 +2526,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 	local removing, stopping = state.removing, state.stopping
 	local note = if removing then state.notes[removing] else nil
 	if removing and note then
-		-- A worktree's removal, asked from its card: where it is, and a warning while a tab works in it.
+		-- A worktree's removal, asked from its card: where it is, and why it is refused while a tab or an agent works in it.
 		local refusal = state.removeRefusal
 		local facts = withValue({ { k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil } })
 		if not refusal then
@@ -2546,7 +2537,6 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 			head = "Remove worktree?",
 			body = refusal or REMOVE_BODY,
 			facts = facts,
-			warn = if openItems(state)[removing] then TAB_WARN else nil,
 			label = "Remove",
 			actKeys = { "d" },
 			cancel = "cancel-remove",

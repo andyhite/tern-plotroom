@@ -23,10 +23,10 @@ local function entry(path: string, extra: { [string]: any }?): board.Entry
 	return e :: any
 end
 
-type Fake = { api: board.Api, calls: { string }, max: number, dirty: { [string]: boolean }, removed: { string } }
+type Fake = { api: board.Api, calls: { string }, max: number, dirty: { [string]: boolean }, removed: { string }, busy: { [string]: string } }
 
 local function fake(inv: { [string]: { board.Entry } }): Fake
-	local f: Fake = { api = nil :: any, calls = {}, max = 0, dirty = {}, removed = {} }
+	local f: Fake = { api = nil :: any, calls = {}, max = 0, dirty = {}, removed = {}, busy = {} }
 	local busy = 0
 	local function enter(name: string)
 		busy += 1
@@ -57,6 +57,9 @@ local function fake(inv: { [string]: { board.Entry } }): Fake
 			end
 			table.insert(f.removed, path)
 			done({ branch = "deleted" }, nil, nil)
+		end,
+		busy = function(r)
+			return f.busy[r.path]
 		end,
 	}
 	return f
@@ -138,6 +141,24 @@ function M.run()
 	assert(board.fate({ branch = "b", number = 3, inferred = true } :: board.Row):find("is kept"))
 	assert(board.fate({ branch = "b" } :: board.Row):find("is kept"))
 	assert(not removeOf(b, f, "gone"))
+
+	-- a tab or an agent works in it: refused before git is asked, never listed as finished, and kept when removed together
+	f.busy["/shared"] = "A tab works in it; close it first."
+	local callsBefore = #f.calls
+	local okBusy, msgBusy = removeOf(b, f, row("/shared").id)
+	assert(not okBusy and msgBusy:find("A tab works") and row("/shared").refused == msgBusy and #f.calls == callsBefore and #f.removed == 1)
+	row("/shared").candidate = "merged"
+	local fin, keptBusy = board.finished(b, f.api.busy)
+	assert(#fin == 0 and keptBusy == 1)
+	local rm, kp = -1, -1
+	board.removeFinished(b, f.api, { row("/shared").id }, yes, function(r, k)
+		rm, kp = r, k
+	end)
+	assert(rm == 0 and kp == 1 and #f.removed == 1)
+	f.busy["/shared"] = nil
+	local finNow = board.finished(b, f.api.busy)
+	assert(#finNow == 1 and finNow[1].path == "/shared")
+	row("/shared").candidate = nil
 
 	-- reload keeps dirty info for rows still present
 	row("/shared").dirty = true
