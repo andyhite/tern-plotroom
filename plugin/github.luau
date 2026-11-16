@@ -1343,9 +1343,14 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		then
 			return done(nil, { kind = "failed", message = "gh printed unexpected pull request metadata." }, cx)
 		end
-		-- The head branch becomes a git ref, a path and prompt text: only a plain name goes on (its author is not the user).
-		if not string.match(data.ref, "^[%w_][%w_%./%+@%-]*$") then
+		-- The head and base branches become git refs, paths and prompt text: only a plain name goes on (their author is not the
+		-- user). A base gh left out is "" and stays so.
+		local PLAIN_REF = "^[%w_][%w_%./%+@%-]*$"
+		if not string.match(data.ref, PLAIN_REF) then
 			return done(nil, { kind = "failed", message = "The head branch “" .. input.clean(string.sub(data.ref, 1, 80)) .. "” has characters Plotroom does not accept in a branch name." }, cx)
+		end
+		if type(data.baseRef) == "string" and data.baseRef ~= "" and not string.match(data.baseRef, PLAIN_REF) then
+			return done(nil, { kind = "failed", message = "The base branch “" .. input.clean(string.sub(data.baseRef, 1, 80)) .. "” has characters Plotroom does not accept in a branch name." }, cx)
 		end
 		local function text(v: any): string
 			return if type(v) == "string" then v else ""

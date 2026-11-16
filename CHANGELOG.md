@@ -5,6 +5,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ## [Unreleased]
 
 ### Fixed
+- A pull request whose base branch has characters Plotroom does not accept in a branch name (as its head branch already was) is refused by Worktree and agents, so a base branch named like shell syntax never reaches an agent prompt's `{base}`.
 - Approve and Request changes are bound to the head commit the confirm shows ("Approves commit abc1234; a push since refuses it"): a pull request pushed to since the plan is refused and nothing is posted, as Merge already was. Both refuse while GitHub has not said the head.
 
 ### Added
