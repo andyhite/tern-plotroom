@@ -592,6 +592,39 @@ case("now: a Jira issue whose newest change is your own is not listed, until som
 	has(table.concat(listed(b), ","), "nabc_23ABC-1", "Bob's comment lists it again")
 end)
 
+case("now: asks acli about at most four assigned Jira issues at a time, and still answers every one", function(w: World)
+	local at: { number } = {} -- when each issue was asked; every answer takes a second
+	local most = 0
+	local _, b = nowScene(w, {}, function(_, acli: h.Acli)
+		local items: { any } = {}
+		for i = 1, 10 do
+			table.insert(items, jiraItem("ABC-" .. i, "Issue " .. i))
+		end
+		acli.searches[h.JIRA_NOW] = items
+		acli.override = function(req: h.AcliReq): Reply?
+			if req.kind ~= "changes" then
+				return nil
+			end
+			local t = w.now()
+			local busy = 1
+			for _, s in at do
+				if s + 1000 > t then
+					busy += 1
+				end
+			end
+			most = math.max(most, busy)
+			table.insert(at, t)
+			local fields = { updated = h.iso(EPOCH - 60), comment = { comments = h.array({}) } }
+			return { stdout = h.jsonEncode({ key = req.argv[5], fields = fields }) .. "\n", delay = 1000 }
+		end
+	end)
+	w.advance(5 * 1000) -- three rounds of answers; Now's next read is a minute away
+	w.flush()
+	eq(#at, 10, "every assigned issue was asked")
+	eq(most, 4, "four at a time")
+	eq(#whys(b), 10, "and Now lists them all once answered")
+end)
+
 case("now: a seen assigned Jira issue someone else comments on is listed as Assigned: changed and is Changed in a view; your own comment lists nothing", function(w: World)
 	local function changes(updated: number, comments: { any }): any
 		return { key = "x", fields = { updated = h.iso(updated), comment = { comments = h.array(comments) } } }

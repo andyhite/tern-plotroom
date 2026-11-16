@@ -3234,6 +3234,8 @@ local NOW_REVIEW_TEAMS = "is:open review-requested:@me draft:false archived:fals
 local NOW_DISMISSED = "is:open reviewed-by:@me -author:@me draft:false archived:false"
 local NOW_ASSIGNED = "is:open assignee:@me archived:false"
 local NOW_JIRA = "assignee = currentUser() AND statusCategory != Done"
+-- How many assigned Jira issues Now asks acli about at once (jira.yours): one or two acli processes each.
+local YOURS_AT_ONCE = 4
 local NOW_LABEL: { [string]: string } = { mine = "Your pull requests", review = "Review requests", assigned = "Assigned issues", notices = "Notifications" }
 
 -- Reads Now's sources once, while none is being read. A source that cannot be read keeps its last answer and says why
@@ -3296,22 +3298,40 @@ function M.nowRead(state: State)
 		if not asked and not kept.assigned and store then
 			-- Jira's assigned issues: was the newest change of a New or Changed one your own, and did someone else comment
 			-- on a seen one since you saw it (M.status)? A "yours" answer, and a seen issue's answer that nobody else
-			-- commented, are asked again every read (someone may have acted since); any other holds while the issue and
-			-- its seen time do.
+			-- commented, are asked again every read (someone may have acted since: acli's search carries no update time
+			-- or comment count, so the mark cannot tell); any other holds while the issue and its seen time do. At most
+			-- YOURS_AT_ONCE are asked at a time, each answer starting the next.
+			-- ponytail: still one acli call or two per seen issue per read; batch by JQL if acli ever searches comments.
 			asked = true
 			local clock = os.time()
+			local queue: { any } = {}
 			for _, issue in fresh.assigned do
 				local mark = yoursMark(store, issue)
 				local had = now.yours[issue.key]
 				local seen = triage.status(store, "issues", issue, clock).fresh == "seen"
 				local holds = had ~= nil and had.mark == mark and (if seen then had.yours == false else had.yours ~= true)
 				if issue.tracker == "jira" and not holds then
-					pending += 1
-					jira.yours(issue.ref, seenAt(store, issue), function(yours: boolean?)
-						now.yours[issue.key] = { mark = mark, yours = yours }
-						settle()
-					end)
+					table.insert(queue, { issue = issue, mark = mark })
 				end
+			end
+			local nextAsk = 0
+			local function ask()
+				nextAsk += 1
+				local q = queue[nextAsk]
+				if not q then
+					return
+				end
+				pending += 1
+				jira.yours(q.issue.ref, seenAt(store, q.issue), function(yours: boolean?)
+					now.yours[q.issue.key] = { mark = q.mark, yours = yours }
+					if live() then
+						ask() -- before settle, so this read does not settle with issues still to ask
+					end
+					settle()
+				end)
+			end
+			for _ = 1, YOURS_AT_ONCE do
+				ask()
 			end
 			if pending > 0 then
 				return
