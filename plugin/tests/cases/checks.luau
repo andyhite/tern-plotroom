@@ -1453,7 +1453,7 @@ case("host: a pull request listed as from a fork is found on <owner>/<branch>, w
 	eq(badgeOf(b, 2), nil, "which is no other pull request's either")
 end)
 
-case("host: a malformed request from a window gets no answer and starts nothing", function(w: World)
+case("host: a request with no valid id is dropped, and any other the host rejects is answered with a problem; nothing starts", function(w: World)
 	hostScene(w, 2)
 	local b = openQueue(w)
 	local ran, told = #w.calls, #w.opened
@@ -1467,6 +1467,16 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 		eq(#w.toasts, 0, what .. ": or said")
 		eq(#w.opened, told, what .. ": and the window was told nothing")
 	end
+	local function refused(what: string, body: { [string]: any })
+		b.event({ ev = "action", act = "rpc", value = jsonEncode(body) })
+		w.flush()
+		yes(type(answerOf(b, "a1").problem) == "string", what .. ": a problem is the answer")
+		eq(#w.calls, ran, what .. ": nothing was run")
+		eq(#w.toasts, 0, what .. ": or said")
+		told += 1
+		eq(#w.opened, told, what .. ": and the window was told once")
+		eq(w.opened[#w.opened], "plotroom://rpc/a1", what .. ": at its id")
+	end
 	ignored("a value that is not text", 42)
 	ignored("text that is not JSON", "{not json")
 	ignored("JSON that is not an object", "[1,2]")
@@ -1475,16 +1485,27 @@ case("host: a malformed request from a window gets no answer and starts nothing"
 	ignored("an id that is not text", jsonEncode({ id = 5, op = "menu" }))
 	ignored("an id of other characters than letters and digits", jsonEncode({ id = "a-1", op = "menu" }))
 	ignored("an id that is too long", jsonEncode({ id = string.rep("a", 41), op = "menu" }))
-	ignored("an op that does not exist", jsonEncode({ id = "a1", op = "format" }))
-	ignored("an op that no longer exists", jsonEncode({ id = "a1", op = "verify", tpl = "/home/u/.omp/agent/prompts/review.md", root = "/work/r" }))
+	refused("an op that does not exist", { id = "a1", op = "format" })
+	refused("an op that no longer exists", { id = "a1", op = "verify", tpl = "/home/u/.omp/agent/prompts/review.md", root = "/work/r" })
+	refused("act with a name that is not text", { id = "a1", op = "act", name = 5 })
+	refused("draft with a phase that is not text", { id = "a1", op = "draft", phase = 5 })
+	refused("open-url with a url over 2048 bytes", { id = "a1", op = "open-url", url = "https://a.example/" .. string.rep("x", 2048) })
+	refused("models with a prompt id of no kind", { id = "a1", op = "models", prompt = "nope" })
+	refused("profile with a login of other characters", { id = "a1", op = "profile", login = "a b" })
+	refused("a checkout without a folder", { id = "a1", op = "checkout", repo = "o/r" })
+	refused("map-jira with no project", { id = "a1", op = "map-jira", repo = "o/r" })
+	refused("a message with no token", { id = "a1", op = "message" })
+	refused("a review of a run that is no run", { id = "a1", op = "review", run = 5 })
+	refused("an action with a branch and no repository", { id = "a1", op = "action", kind = "pr", pid = "p1", branch = "b" })
 	local repos: { any } = { 5, "o", "o/r/x", "o/..", "../r", "o/r r" }
 	for _, repo in repos do
-		ignored("the repository " .. show(repo), jsonEncode({ id = "a1", op = "worktree", repo = repo, number = 1 }))
+		refused("the repository " .. show(repo), { id = "a1", op = "worktree", repo = repo, number = 1 })
 	end
 	local numbers: { any } = { 0, -1, 1.5, 2147483648, "5" }
 	for _, number in numbers do
-		ignored("the number " .. show(number), jsonEncode({ id = "a1", op = "worktree", repo = "o/r", number = number }))
+		refused("the number " .. show(number), { id = "a1", op = "worktree", repo = "o/r", number = number })
 	end
+	refused("a worktree flag that is not true or false", { id = "a1", op = "worktree", repo = "o/r", number = 1, worktree = "yes" })
 	savePrompts(w, { promptOf("p1", "Review", "Review {url}\nthen report") })
 	request(b, "m1", { op = "menu" })
 	w.flush()
@@ -2944,33 +2965,35 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 	same(chipsOf(b), { "Uncommitted changes" }, "and the badge learns of them")
 end)
 
-case("host: an issue request is dropped unless it is well formed", function(w: World)
+case("host: an issue request the host rejects is answered with a problem", function(w: World)
 	issueHost(w)
 	local b = openIssues(w)
 	local ran, told = #w.calls, #w.opened
-	local function ignored(what: string, value: any)
+	local function refused(what: string, value: any)
 		b.event({ ev = "action", act = "rpc", value = value })
 		w.flush()
-		for _, probe in { "a1", "m1" } do
-			eq(answerOf(b, probe), nil, what .. ": no answer is kept for " .. probe)
-		end
+		has(answerOf(b, "a1").problem or "", ".", what .. ": a problem is the answer")
 		eq(#w.calls, ran, what .. ": nothing was run")
 		eq(#w.toasts, 0, what .. ": or said")
-		eq(#w.opened, told, what .. ": and the window was told nothing")
+		eq(#w.opened, told + 1, what .. ": and the window was told once")
+		told += 1
 	end
 	local repos: { any } = { 5, "o", "o/r/x", "o/..", "../r", "o/r r" }
 	for _, repo in repos do
-		ignored("the repository " .. show(repo), jsonEncode({ id = "a1", op = "issue", repo = repo, ref = "12", worktree = false }))
+		refused("the repository " .. show(repo), jsonEncode({ id = "a1", op = "issue", repo = repo, ref = "12", worktree = false }))
 	end
 	local refs: { any } = { "", "a/b", "a b", "1.5", string.rep("1", 65), true }
 	for _, ref in refs do
-		ignored("the reference " .. show(ref), jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = ref, worktree = false }))
+		refused("the reference " .. show(ref), jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = ref, worktree = false }))
 	end
 	local wheres: { any } = { "yes", 1 }
 	for _, where in wheres do
-		ignored("worktree " .. show(where), jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12", worktree = where }))
+		refused("worktree " .. show(where), jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12", worktree = where }))
 	end
-	ignored("no worktree field", jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12" }))
+	refused("no worktree field", jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12" }))
+	refused("a target that is no repository", jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12", worktree = false, target = "x" }))
+	refused("a pull request that is no number", jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12", worktree = false, pr = "x" }))
+	refused("a base with a space", jsonEncode({ id = "a1", op = "issue", repo = "o/r", ref = "12", worktree = false, base = "a b" }))
 	request(b, "a2", { op = "issue", repo = "o/r", ref = "12", worktree = false })
 	w.flush()
 	eq(answerOf(b, "a2").path, "/work/r", "a well-formed request is answered")

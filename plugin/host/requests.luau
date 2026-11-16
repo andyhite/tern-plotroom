@@ -1872,6 +1872,8 @@ function M.workflowRpc(state: State, id: string, q: any)
 		local row = if state.boardOn then engine.boardSelected(state) else nil
 		local path = if state.boardOn then (if row and not row.missing and tern.fs.exists(row.path) then row.path else nil) else engine.cardPath(state)
 		reply(state, id, if path then { path = path } else { problem = "That worktree is no longer there." })
+	else
+		reply(state, id, { problem = "Plotroom does not understand that request." })
 	end
 end
 
@@ -1900,16 +1902,7 @@ local function moveStatus(state: State, id: string, ref: string, status: string)
 	end)
 end
 
--- One request from the window. Untrusted shape: anything malformed is dropped (the window gives up waiting).
-function M.rpc(state: State, raw: any)
-	if type(raw) ~= "string" or #raw > 120000 then
-		return
-	end
-	local ok, q = pcall(tern.json.decode, raw)
-	if not ok or not isTable(q) or type(q.id) ~= "string" or not string.match(q.id, "^%w+$") or #q.id > 40 then
-		return
-	end
-	local id: string = q.id
+local function dispatch(state: State, id: string, q: any)
 	if q.op == "action" and (q.kind == "pr" or q.kind == "issue") and type(q.pid) == "string" and #q.pid <= 64 then
 		-- One saved action by id, whatever view offers it: what a finished agent's next action runs. With `repo` and
 		-- `branch` (a pull request action after an issue's): also the open or draft pull request of that repository whose
@@ -1926,7 +1919,7 @@ function M.rpc(state: State, raw: any)
 		local repo = if q.kind == "pr" then parseRepo(q.repo) else nil
 		local branch = q.branch
 		if not repo or type(branch) ~= "string" or branch == "" or #branch > 255 or string.find(branch, "%c") then
-			return
+			return reply(state, id, { problem = "The repository or branch is not valid." })
 		end
 		github.pullByHead(repo, branch, login(state), function(pr, problem)
 			if not alive(state) then
@@ -1957,7 +1950,7 @@ function M.rpc(state: State, raw: any)
 		else
 			local kind, pid = storage.kindAndId(q.prompt)
 			if not kind then
-				return
+				return reply(state, id, { problem = "That action no longer exists." })
 			end
 			local store, why = loadPrompts(kind)
 			local p = if store then promptById(store, pid) else nil
@@ -2000,27 +1993,27 @@ function M.rpc(state: State, raw: any)
 		local repo = parseRepo(q.repo)
 		local n = q.number
 		if not repo then
-			return
+			return reply(state, id, { problem = "Type it as owner/name." })
 		end
 		if type(n) ~= "number" or n < 1 or n > 2147483647 or n ~= math.floor(n) then
-			return
+			return reply(state, id, { problem = "The pull request number is not a whole number." })
 		end
 		if q.worktree ~= nil and type(q.worktree) ~= "boolean" then
-			return
+			return reply(state, id, { problem = "The worktree flag is not true or false." })
 		end
 		prepare(state, id, repo, n, q.worktree ~= false, q.users == true, q.failures == true, q.premerge == true)
 	elseif q.op == "checkout" then
 		local repo = parseRepo(q.repo)
 		local path = q.path
 		if not repo or type(path) ~= "string" or #path > 4096 or trim(path) == "" then
-			return
+			return reply(state, id, { problem = "Type it as owner/name, with a folder." })
 		end
 		claim(state, id, repo, path)
 	elseif q.op == "map-jira" then
 		local repo = parseRepo(q.repo)
 		local project = q.project
 		if type(project) ~= "string" or not tracker.jiraProject(project) then
-			return
+			return reply(state, id, { problem = "The Jira project key is not valid." })
 		end
 		if not repo then
 			return reply(state, id, { problem = "Type it as owner/name." })
@@ -2032,25 +2025,25 @@ function M.rpc(state: State, raw: any)
 		local repo, ref = q.repo, q.ref
 		-- A GitHub repository or a Jira project key: the link's repository is whatever the window was handed.
 		if type(repo) ~= "string" or not worktree.validProject(repo) then
-			return
+			return reply(state, id, { problem = "The repository is not a GitHub repository or Jira project." })
 		end
 		if type(ref) ~= "string" or #ref > 64 or not string.match(ref, "^[%w_%-]+$") or type(q.worktree) ~= "boolean" then
-			return
+			return reply(state, id, { problem = "The issue reference or worktree flag is not valid." })
 		end
 		local target: string? = nil
 		if q.target ~= nil then
 			target = parseRepo(q.target)
 			if not target then
-				return
+				return reply(state, id, { problem = "Type the target as owner/name." })
 			end
 		end
 		local pr, base = q.pr, q.base
 		if pr ~= nil and (type(pr) ~= "number" or pr < 1 or pr > 2147483647 or pr ~= math.floor(pr)) then
-			return
+			return reply(state, id, { problem = "The pull request number is not a whole number." })
 		end
 		-- git checks the name itself; this only keeps options and odd bytes out of its argv.
 		if base ~= nil and (type(base) ~= "string" or #base > 255 or string.find(base, "^%-") or string.find(base, "[%c%s]")) then
-			return
+			return reply(state, id, { problem = "The base branch is not a valid name." })
 		end
 		prepareIssue(state, id, repo, ref, q.worktree, target, { pr = pr, fresh = q.fresh == true, base = base }, q.users == true)
 	elseif q.op == "criteria" and type(q.repo) == "string" and worktree.validProject(q.repo) and type(q.ref) == "string" and #q.ref <= 64 and string.match(q.ref, "^[%w_%-]+$") then
@@ -2109,7 +2102,7 @@ function M.rpc(state: State, raw: any)
 		local lines: { string } = {}
 		for _, line in q.lines do
 			if type(line) ~= "string" or #line > 2000 then
-				return
+				return reply(state, id, { problem = "A line of the message is not text or is too long." })
 			end
 			table.insert(lines, line)
 		end
@@ -2131,6 +2124,24 @@ function M.rpc(state: State, raw: any)
 		reply(state, id, { at = review.fileAt(q.run), glimpse = if storage.readReview() then true else nil })
 	else
 		M.workflowRpc(state, id, q)
+	end
+end
+
+-- One request from the window. Untrusted shape: a request that is not JSON with a valid id has nothing to answer and
+-- is dropped; every other rejection, and an error a handler throws, is answered with a {problem}, so the window shows
+-- the cause at once instead of waiting out its own timer.
+function M.rpc(state: State, raw: any)
+	if type(raw) ~= "string" or #raw > 120000 then
+		return
+	end
+	local ok, q = pcall(tern.json.decode, raw)
+	if not ok or not isTable(q) or type(q.id) ~= "string" or not string.match(q.id, "^%w+$") or #q.id > 40 then
+		return
+	end
+	local id: string = q.id
+	local done, err = pcall(dispatch, state, id, q)
+	if not done then
+		reply(state, id, { problem = "Plotroom could not answer that request: " .. tostring(err) })
 	end
 end
 

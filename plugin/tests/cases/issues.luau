@@ -704,10 +704,10 @@ case("host: a Jira issue request makes its worktree in the project's mapped GitH
 	request(b, "g3", { op = "issue", repo = "ABC", ref = "ABC 12", worktree = false })
 	w.flush()
 	eq(answerOf(b, "g1").problem, "That issue is not loaded here any more; Refresh and try again.", "a GitHub issue the Jira list never had is refused")
-	eq(answerOf(b, "g2"), nil, "so is a project key that is not one")
-	eq(answerOf(b, "g3"), nil, "and a reference that cannot name a directory")
+	has(answerOf(b, "g2").problem, "not a GitHub repository or Jira project", "so is a project key that is not one")
+	has(answerOf(b, "g3").problem, "not valid", "and a reference that cannot name a directory")
 	eq(#w.calls, ran, "nothing ran")
-	eq(#w.opened, told + 1, "and the window was told of that refusal only")
+	eq(#w.opened, told + 3, "and the window was told of those refusals only")
 end)
 
 case("host: an issue filter shows the card of an issue's worktree that git lists, with no pull request head to be at", function(w: World)
@@ -2187,7 +2187,7 @@ case("host: a Jira issue's linked pull requests are those a search for its key f
 	eq(#requestsOf(s.gh, "linked"), 3, "without a search either")
 end)
 
-case("host: an issue request with a pull request or base it cannot use is dropped, and one with a fresh or users that is no boolean has them ignored", function(w: World)
+case("host: an issue request with a pull request or base it cannot use is answered with a problem, and one with a fresh or users that is no boolean has them ignored", function(w: World)
 	local s = issueHost(w)
 	local b = openIssues(w)
 	local ran, told = #w.calls, #w.opened
@@ -2198,9 +2198,10 @@ case("host: an issue request with a pull request or base it cannot use is droppe
 		end
 		b.event({ ev = "action", act = "rpc", value = jsonEncode(body) })
 		w.flush()
-		eq(answerOf(b, "m1"), nil, what .. ": no answer is kept")
+		yes(type(answerOf(b, "m1").problem) == "string", what .. ": a problem is the answer")
 		eq(#w.calls, ran, what .. ": nothing was run")
-		eq(#w.opened, told, what .. ": and the window was told nothing")
+		told += 1
+		eq(#w.opened, told, what .. ": and the window was told once")
 	end
 	local prs: { any } = { 0, -1, 1.5, "7", 2147483648, true }
 	for _, pr in prs do
@@ -2265,7 +2266,7 @@ case("host: where answers the worktree a block knows for a pull request or an is
 	eq(where(issues, "issue", "o/r#12"), nil, "until it is removed too")
 end)
 
-case("host: a where request with a kind or key it cannot use is dropped", function(w: World)
+case("host: a where request with a kind or key it cannot use is answered with a problem", function(w: World)
 	issueHost(w)
 	local b = openIssues(w)
 	local ran, told = #w.calls, #w.opened
@@ -2273,9 +2274,10 @@ case("host: a where request with a kind or key it cannot use is dropped", functi
 		body.id, body.op = "m1", "where"
 		b.event({ ev = "action", act = "rpc", value = jsonEncode(body) })
 		w.flush()
-		eq(answerOf(b, "m1"), nil, what .. ": no answer is kept")
+		yes(type(answerOf(b, "m1").problem) == "string", what .. ": a problem is the answer")
 		eq(#w.calls, ran, what .. ": nothing was run")
-		eq(#w.opened, told, what .. ": and the window was told nothing")
+		told += 1
+		eq(#w.opened, told, what .. ": and the window was told once")
 	end
 	ignored("a kind that is neither", { kind = "commit", key = "o/r#12" })
 	ignored("no kind", { key = "o/r#12" })

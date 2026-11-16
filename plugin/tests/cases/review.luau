@@ -768,7 +768,7 @@ case("review: the window's review request answers when the run's Draft review fi
 	h.request(b, "q2", { op = "review", run = "r2" })
 	same(h.answerOf(b, "q2"), {}, "no file: no at")
 	h.request(b, "q3", { op = "review", run = "../x" })
-	eq(h.answerOf(b, "q3"), nil, "a run id that is not one is not answered")
+	has(h.answerOf(b, "q3").problem, "does not understand", "a run id that is not one is refused")
 	w.finish()
 end)
 
