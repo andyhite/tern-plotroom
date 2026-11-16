@@ -1293,7 +1293,7 @@ windowCase("worktree.openIssue: creates the issue's branch at the chosen base an
 	eq(countLog(r.git, "config"), 0, "no upstream is configured: the user's first push -u sets it")
 end)
 
-windowCase("worktree.openIssue: a worktree at the issue's directory is reused whatever its branch, so is one that holds the branch elsewhere; a locked or missing one is an error", function(w: World)
+windowCase("worktree.openIssue: a worktree at the issue's directory is reused whatever its branch, so is one that holds the branch elsewhere; a detached, locked or missing one is an error", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local r = issueRepo(w, "12")
 	-- the issue's directory holds another branch
@@ -1315,9 +1315,9 @@ windowCase("worktree.openIssue: a worktree at the issue's directory is reused wh
 	table.insert(r.git.worktrees, { path = "/wt/plotroom-o_r-issue-13", head = sha("e"), locked = false })
 	w.fs.dirs["/wt/plotroom-o_r-issue-13"] = true
 	local detached = openIssueWt(w, worktree, r, "13", "13-docs", nil)
-	eq(detached.result.created, false, "a detached worktree is reused too")
-	eq(detached.result.branch, "13-docs", "and reported on the branch asked for")
-	eq(detached.result.head, sha("e"), "at its own commit")
+	eq(detached.result, nil, "a detached worktree is refused, not reported on the planned branch")
+	has(detached.problem, "is detached", "and the problem says so")
+	eq(countLog(r.git, "config"), 0, "no branch config is written for the planned branch")
 	-- another worktree holds the branch
 	table.insert(r.git.worktrees, { path = "/wt/elsewhere", branch = "refs/heads/14-typo", head = sha("f"), locked = false })
 	w.fs.dirs["/wt/elsewhere"] = true

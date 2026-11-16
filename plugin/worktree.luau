@@ -2009,7 +2009,10 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 	locate(s, checkout, repo, plan.dir, function(spot, cx)
 		for _, r in spot.recs do
 			if r.path == spot.target then
-				local rb = if r.branch then string.gsub(r.branch, "^refs/heads/", "") else branch
+				if not r.branch then
+					return finish(nil, "The worktree at " .. r.path .. " is detached; check out a branch there or remove it.", cx)
+				end
+				local rb = string.gsub(r.branch, "^refs/heads/", "")
 				if r.locked or r.prunable or not tern.fs.exists(r.path) then
 					return finish(nil, "The worktree of " .. rb .. " at " .. r.path .. " is locked, prunable or missing. If another window is creating it, choose Worktree again in a moment; otherwise repair it yourself (git worktree repair or prune).", cx)
 				end
