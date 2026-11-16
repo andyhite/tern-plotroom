@@ -2215,7 +2215,7 @@ def draft_review(s: Smoke, wt: Path, agent: Dict[str, Any], queue_tab: int) -> N
     # The summary is selected first: edit it by keys (e; replace all; type, marker first as the tree caps text at 200 characters; shot while editing; Esc).
     s.ctl_ok("key", "e")
     s.wait_until("the summary's editor opens (Done is offered)", lambda: n(done) == 1)
-    s.ctl_ok("key", "Meta+a")
+    s.ctl_ok("key", "Ctrl+a")  # not Meta+a: Tern 0.9.24 takes ⌘A for its own Select All before the block sees it (input.key selects all on either)
     s.ctl_ok("type", json.dumps("Smoke summary edit.\n\n" + summary))
     s.wait_text("the summary as typed", "Smoke summary edit.")
     s.shot("review-editing-summary")
