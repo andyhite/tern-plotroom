@@ -27,10 +27,13 @@ function M.sanitizeKey(key: any): string?
 	return key
 end
 
-local function fnv(s: string, seed: number): number
+-- FNV-1a, 32 bits. The prime is 2^24 + 0x193, so the multiply is done in two parts that stay below 2^53:
+-- (h * 2^24) mod 2^32 is the low byte of h shifted up, and h * 0x193 is under 2^41. A direct `h * 16777619` reaches 2^56 and loses low bits.
+function M.fnv(s: string, seed: number): number
 	local h = seed
 	for i = 1, #s do
-		h = bit32.band(bit32.bxor(h, s:byte(i)) * 16777619, 0xFFFFFFFF)
+		h = bit32.bxor(h, s:byte(i))
+		h = ((h % 256) * 16777216 + h * 0x193) % 4294967296
 	end
 	return h
 end
@@ -87,7 +90,7 @@ function M.signature(kind: string, item: any): string
 		}
 	end
 	local s = table.concat(f, "\31")
-	local sig = string.format("%08x%08x", fnv(s, 2166136261), fnv(s, 0x9747b28c))
+	local sig = string.format("%08x%08x", M.fnv(s, 2166136261), M.fnv(s, 0x9747b28c))
 	memo[item] = sig
 	return sig
 end

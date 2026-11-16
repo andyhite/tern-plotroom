@@ -22,6 +22,11 @@ end
 
 function M.run()
 	local now = 1_000_000
+	-- the published FNV-1a 32-bit vectors: a multiply that rounds past 2^53 gets the longer ones wrong
+	assert(triage.fnv("", 2166136261) == 0x811c9dc5)
+	assert(triage.fnv("a", 2166136261) == 0xe40c292c)
+	assert(triage.fnv("foobar", 2166136261) == 0xbf9cf968)
+
 	local s = triage.empty()
 
 	-- new / seen / changed
