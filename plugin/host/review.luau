@@ -387,7 +387,7 @@ local function load(state: State)
 			if who and meta.author and string.lower(who) == string.lower(meta.author) then
 				state.own, state.verdict = true, "comment"
 			end
-			worktree.reviewDiff(state.cwd, p.repo, p.number, meta.baseRef, p.head, function(out, problem2)
+			worktree.reviewDiff(state.cwd, p.repo, p.number, meta.baseRef, p.head, state.login, function(out, problem2)
 				if not alive(state, gen) then
 					return
 				elseif not out then

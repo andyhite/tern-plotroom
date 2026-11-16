@@ -165,17 +165,17 @@ function M.run(cx: WindowCx)
 					answered(if removal then { branch = removal.branch } else { dirty = dirty }, problem)
 				end)
 			elseif op == "draft" then
-				worktree.draftPreview(request.path, request.repo, request.base, function(draft, problem)
+				worktree.draftPreview(request.path, request.repo, request.base, nil, function(draft, problem)
 					answered(draft, problem)
 				end)
 			elseif op == "push" then
-				worktree.pushBranch(request.draft :: worktree.Draft, function(problem)
+				worktree.pushBranch(request.draft :: worktree.Draft, nil, function(problem)
 					answered({ pushed = problem == nil }, problem)
 				end)
 			elseif op == "issue" then
 				worktree.openIssue(request.checkout, request.repo, request.key, plan :: worktree.IssuePlan, nil, finish)
 			elseif op == "branches" then
-				worktree.remoteBranches(request.checkout, request.repo, function(names: { string }?, problem: string?, cx2: WindowCx?)
+				worktree.remoteBranches(request.checkout, request.repo, nil, function(names: { string }?, problem: string?, cx2: WindowCx?)
 					finish(if names then { branches = tern.json.array(names) } else nil, problem, cx2)
 				end)
 			else

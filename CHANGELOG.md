@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 - A pull request whose base branch has characters Plotroom does not accept in a branch name (as its head branch already was) is refused by Worktree and agents, so a base branch named like shell syntax never reaches an agent prompt's `{base}`.
 - Approve and Request changes are bound to the head commit the confirm shows ("Approves commit abc1234; a push since refuses it"): a pull request pushed to since the plan is refused and nothing is posted, as Merge already was. Both refuse while GitHub has not said the head.
+- Plotroom's own `git fetch`, `git ls-remote` and `git push` run as the view's gh login (a draft pull request's push as the login its confirm names) over an `https://github.com/…` remote: git gets that login's token through `gh auth git-credential` instead of your credential helper, which answered with gh's active account. A worktree of a private pull request on a view of a non-active login no longer fails with "repository not found". SSH remotes are unchanged.
 
 ### Added
 - Checks lens: `gh pr checks` in a shell pane shows its checks as a table (Check; Status as a dot in the preview's check colours and Pass, Fail, Pending or Skipped; Took; Link), the last table under `--watch`. A URL gh cut to the terminal's width gets no link, and output with no checks table stays raw. Shell panes start with `GLAMOUR_STYLE=dark` when it is unset, so gh's background-colour query no longer makes Tern show gh's output raw.

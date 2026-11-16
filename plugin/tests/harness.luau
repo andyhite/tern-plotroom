@@ -2395,6 +2395,14 @@ local function newGit(w: World, root: string): Git
 				return { status = 2, stderr = "error: No such remote '" .. (args[4] or "") .. "'\n" }
 			end
 			return { stdout = table.concat(urls, "\n") .. "\n" }
+		elseif sub == "remote" and args[2] == "get-url" then
+			-- `remote get-url [--push] <name>`: its first URL (the model keeps no separate push URL)
+			local name = if args[3] == "--push" then args[4] else args[3]
+			local urls = g.remotes[name or ""]
+			if not urls then
+				return { status = 2, stderr = "error: No such remote '" .. (name or "") .. "'\n" }
+			end
+			return { stdout = urls[1] .. "\n" }
 		elseif sub == "status" then
 			-- `--porcelain=v2 --branch`: header lines, then the entries; the upstream lines only for a branch that has one
 			local head = "# branch.oid " .. here.head .. "\n# branch.head main\n"

@@ -544,7 +544,7 @@ case("worktree.draftPreview: reads the branch and its commits over the base fetc
 	local g = asks.bk.drafted(w)
 	local function preview(base: string): any
 		return asks.bk.pack(w, function(done)
-			worktree.draftPreview("/wt/x", "o/r", base, done)
+			worktree.draftPreview("/wt/x", "o/r", base, nil, done)
 		end)
 	end
 	local got = preview("main")
@@ -583,7 +583,7 @@ case("worktree.draftPreview: a detached HEAD, the base itself, no commits, a bad
 	local g = asks.bk.drafted(w)
 	local function refused(base: string, what: string)
 		local got = asks.bk.pack(w, function(done)
-			worktree.draftPreview("/wt/x", "o/r", base, done)
+			worktree.draftPreview("/wt/x", "o/r", base, nil, done)
 		end)
 		eq(got[1], nil, what .. ": no draft")
 		yes(type(got[2]) == "string" and got[2] ~= "", what .. ": an actionable problem")
@@ -613,12 +613,12 @@ case("worktree.pushBranch: pushes exactly the previewed commit unforced, and onl
 	local g = asks.bk.drafted(w)
 	local function preview(): any
 		return asks.bk.pack(w, function(done)
-			worktree.draftPreview("/wt/x", "o/r", "main", done)
+			worktree.draftPreview("/wt/x", "o/r", "main", nil, done)
 		end)[1]
 	end
 	local function push(d: any): any
 		return asks.bk.pack(w, function(done)
-			worktree.pushBranch(d, done)
+			worktree.pushBranch(d, nil, done)
 		end)[1]
 	end
 	local d = preview()
@@ -658,6 +658,70 @@ case("worktree.pushBranch: pushes exactly the previewed commit unforced, and onl
 	eq(#g.pushes, 2, "and nothing was pushed")
 end)
 
+case("worktree: as a gh login, fetch, ls-remote and push over an https github.com remote take that login's token and no other credential helper; SSH or no login runs git as before", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = asks.bk.drafted(w)
+	local gh = newGh(w)
+	gh.tokens.work = "tok-work"
+	-- The environment of the last git call whose subcommand is `sub`.
+	local function envOf(sub: string): { [string]: string }
+		for i = #w.calls, 1, -1 do
+			local a = w.calls[i].argv
+			if a[1] == "git" and a[4] == sub then
+				return w.calls[i].env
+			end
+		end
+		error("no git " .. sub)
+	end
+	local function asWork(env: { [string]: string }, what: string)
+		eq(env.GH_TOKEN, "tok-work", what .. ": the login's token")
+		eq(env.GIT_CONFIG_COUNT, "2", what .. ": two config entries")
+		eq(env.GIT_CONFIG_KEY_0 .. "=" .. env.GIT_CONFIG_VALUE_0, "credential.helper=", what .. ": the user's credential helpers dropped")
+		eq(env.GIT_CONFIG_KEY_1 .. "=" .. env.GIT_CONFIG_VALUE_1, "credential.helper=!gh auth git-credential", what .. ": gh answers instead")
+	end
+	local function asUser(env: { [string]: string }, what: string)
+		eq(env.GH_TOKEN, nil, what .. ": no token")
+		eq(env.GIT_CONFIG_COUNT, nil, what .. ": the user's own credential helper")
+	end
+	local function preview(account: string?): any
+		return asks.bk.pack(w, function(done)
+			worktree.draftPreview("/wt/x", "o/r", "main", account, done)
+		end)
+	end
+	local d = preview("work")[1]
+	asWork(envOf("fetch"), "the draft's base fetch")
+	asks.bk.pack(w, function(done)
+		worktree.remoteBranches("/wt/x", "o/r", "work", done)
+	end)
+	asWork(envOf("ls-remote"), "the remote's branches")
+	eq(asks.bk.pack(w, function(done)
+		worktree.pushBranch(d, "work", done)
+	end)[1], nil, "pushed")
+	asWork(envOf("push"), "the push")
+	eq(#requestsOf(gh, "token"), 1, "the token was read once, then kept for a minute")
+
+	preview(nil)
+	asUser(envOf("fetch"), "no login")
+	g.remotes.origin = { "git@github.com:o/r.git" }
+	preview("work")
+	asUser(envOf("fetch"), "an SSH remote")
+	eq(asks.bk.pack(w, function(done)
+		worktree.pushBranch(d, "work", done)
+	end)[1], nil, "pushed over SSH")
+	asUser(envOf("push"), "an SSH push")
+
+	g.remotes.origin = { "https://github.com/o/r.git" }
+	local fetches, pushes = countLog(g, "fetch"), #g.pushes
+	local got = preview("ghost")
+	eq(got[1], nil, "a login gh has no token for: no draft")
+	has(got[2], "not signed in", "it says so")
+	has(asks.bk.pack(w, function(done)
+		worktree.pushBranch(d, "ghost", done)
+	end)[1], "not signed in", "nor a push")
+	eq(countLog(g, "fetch"), fetches, "nothing was fetched as anyone else")
+	eq(#g.pushes, pushes, "nothing was pushed as anyone else")
+end)
+
 case("worktree.draftDestinations: GitHub remotes only, origin first, one per repository, none is a problem", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.repo(w)
@@ -694,14 +758,14 @@ case("worktree: draftPreview and remoteBranches resolve the remote of the reposi
 	g.remotes.fork = { "https://github.com/me/r.git" }
 	g.served["refs/heads/main"] = sha("1")
 	local got = asks.bk.pack(w, function(done)
-		worktree.draftPreview("/wt/x", "me/r", "main", done)
+		worktree.draftPreview("/wt/x", "me/r", "main", nil, done)
 	end)
 	eq(got[2], nil, "problem")
 	eq(got[1].remote, "fork", "the draft's remote")
 	eq(countLog(g, "fetch --no-tags --no-write-fetch-head fork +refs/heads/main:refs/remotes/fork/main"), 1, "the fetch names that remote")
 	eq(countLog(g, "fetch --no-tags --no-write-fetch-head origin"), 0, "and not origin")
 	asks.bk.pack(w, function(done)
-		worktree.remoteBranches("/wt/x", "me/r", done)
+		worktree.remoteBranches("/wt/x", "me/r", nil, done)
 	end)
 	eq(countLog(g, "ls-remote --symref fork"), 1, "remoteBranches lists that remote's branches")
 	eq(countLog(g, "ls-remote --symref origin"), 0, "not origin's")

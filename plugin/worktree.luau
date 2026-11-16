@@ -105,20 +105,27 @@ local function lines(s: string): { string }
 	return out
 end
 
--- Runs `git -C root <args>`; done(stdout, problem, cx, status). A nonzero exit
+-- Runs `git -C root <args>`, with `extra` added to its environment; done(stdout, problem, cx, status). A nonzero exit
 -- is a problem naming the failed operation.
 local function git(
 	root: string,
 	args: { string },
 	ms: number,
-	done: (string?, string?, WindowCx?, number?) -> ()
+	done: (string?, string?, WindowCx?, number?) -> (),
+	extra: { [string]: string }?
 )
 	local argv: { string } = { "git", "-C", root }
 	for _, a in args do
 		table.insert(argv, a)
 	end
 	-- LC_ALL only for git: remove reads git's English "modified or untracked" to tell uncommitted changes
-	process.run(argv, { timeout_ms = ms, env = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0", LC_ALL = "C" } }, function(result, perr, cx)
+	local env: { [string]: string } = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0", LC_ALL = "C" }
+	if extra then
+		for k, v in extra do
+			env[k] = v
+		end
+	end
+	process.run(argv, { timeout_ms = ms, env = env }, function(result, perr, cx)
 		if not result then
 			return done(nil, perr or "git could not be started", cx, nil)
 		end
@@ -130,6 +137,48 @@ local function git(
 			return done(nil, "git " .. table.concat(args, " ", 1, math.min(#args, 2)) .. " failed: " .. why, cx, result.status)
 		end
 		done(result.stdout, nil, cx, 0)
+	end)
+end
+
+-- What a networked git command (fetch, ls-remote, push) on `remote` of `root` adds to its environment to run as gh
+-- login `account`, the way `github.gh` does: when the remote's URL (`push`: its push URL) is https://github.com/…, git
+-- asks `gh auth git-credential` with that login's token as GH_TOKEN, and none of the user's credential helpers.
+-- done(nil) without an account or over SSH (the user's SSH key authenticates, whatever the login); a token gh does not
+-- give is a problem.
+local function asLogin(root: string, remote: string, account: string?, push: boolean, done: ({ [string]: string }?, string?, WindowCx?) -> ())
+	if not account or account == "" then
+		return done(nil, nil, nil)
+	end
+	local args = if push then { "remote", "get-url", "--push", remote } else { "remote", "get-url", remote }
+	git(root, args, LOCAL_MS, function(url, _, cx)
+		local host, _, ssh = M.parseRemote(url or "")
+		if host ~= "github.com" or ssh then
+			return done(nil, nil, cx)
+		end
+		github.token(account, function(token, problem, cx2)
+			if not token then
+				return done(nil, if problem then problem.message else "gh gave no token for " .. account, cx2 or cx)
+			end
+			done({
+				GH_TOKEN = token,
+				-- The empty helper drops every configured one (`gh auth setup-git`'s included), then gh answers.
+				GIT_CONFIG_COUNT = "2",
+				GIT_CONFIG_KEY_0 = "credential.helper",
+				GIT_CONFIG_VALUE_0 = "",
+				GIT_CONFIG_KEY_1 = "credential.helper",
+				GIT_CONFIG_VALUE_1 = "!gh auth git-credential",
+			}, nil, cx2 or cx)
+		end)
+	end)
+end
+
+-- `git -C root <args>` that reaches `remote` (fetch, ls-remote), as gh login `account` (asLogin), within NET_MS.
+local function netGit(root: string, remote: string, args: { string }, account: string?, done: (string?, string?, WindowCx?, number?) -> ())
+	asLogin(root, remote, account, false, function(env, why, cx)
+		if why then
+			return done(nil, why, cx, nil)
+		end
+		git(root, args, NET_MS, done, env)
 	end)
 end
 
@@ -1004,7 +1053,7 @@ end
 -- Reads what a draft PR from the work tree at `path` into `base` of `repo` would hold. The base is fetched from the
 -- remote first (network, up to two minutes; a failed fetch is a problem, never a stale base), so call it on a
 -- deliberate request only. Nothing is pushed or created. done(draft, problem).
-function M.draftPreview(path: string, repo: string, base: string, done: (Draft?, string?) -> ())
+function M.draftPreview(path: string, repo: string, base: string, account: string?, done: (Draft?, string?) -> ())
 	M.resolveRepository(path, repo, function(info, why)
 		if not info then
 			return done(nil, why)
@@ -1022,7 +1071,7 @@ function M.draftPreview(path: string, repo: string, base: string, done: (Draft?,
 				end
 				local baseRef = "refs/remotes/" .. remote .. "/" .. base
 				-- The base is fetched (read-only, into its remote-tracking ref) so a preview never waits on the user.
-				git(root, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. baseRef }, NET_MS, function(_, ferr)
+				netGit(root, remote, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. baseRef }, account, function(_, ferr)
 				if ferr then
 					return done(nil, "Could not fetch " .. base .. " from " .. remote .. ": " .. reasonOf(ferr))
 				end
@@ -1080,7 +1129,7 @@ end
 -- committing anything. Refused when the work tree is on another branch or commit than previewed, or the remote no
 -- longer is the repository's, so what the user confirmed is what goes. A rejected (non-fast-forward) push is an error.
 -- done(problem): nil when pushed.
-function M.pushBranch(draft: Draft, done: (string?) -> ())
+function M.pushBranch(draft: Draft, account: string?, done: (string?) -> ())
 	M.resolveRepository(draft.path, draft.repo, function(info, why)
 		if not info then
 			return done(why)
@@ -1094,17 +1143,28 @@ function M.pushBranch(draft: Draft, done: (string?) -> ())
 				return done("The branch moved since the preview (" .. branch .. " at " .. short(head) .. "); preview again.")
 			end
 			local dest = "refs/heads/" .. draft.branch
-			-- Straight through process.run: git's one-line summary of a rejected push would only say "To <url>".
-			process.run({ "git", "-C", draft.root, "push", "--no-force-with-lease", draft.remote, draft.head .. ":" .. dest }, { timeout_ms = NET_MS, env = ENV }, function(res, perr)
-				if not res then
-					return done(perr or "git could not be started")
-				elseif res.timed_out then
-					return done("git push timed out")
-				elseif res.status == 0 then
-					return done(nil)
+			asLogin(draft.root, draft.remote, account, true, function(extra, aerr)
+				if aerr then
+					return done(aerr)
 				end
-				local why = string.match(res.stderr, "[^\n]*! %[[^\n]*") or string.match(res.stderr, "fatal: ([^\n]+)") or string.match(res.stderr, "[Ee]rror: ([^\n]+)") or github.firstLines(res.stderr, 1)
-				done("The push was refused: " .. trim(why))
+				local env: { [string]: string } = table.clone(ENV)
+				if extra then
+					for k, v in extra do
+						env[k] = v
+					end
+				end
+				-- Straight through process.run: git's one-line summary of a rejected push would only say "To <url>".
+				process.run({ "git", "-C", draft.root, "push", "--no-force-with-lease", draft.remote, draft.head .. ":" .. dest }, { timeout_ms = NET_MS, env = env }, function(res, perr)
+					if not res then
+						return done(perr or "git could not be started")
+					elseif res.timed_out then
+						return done("git push timed out")
+					elseif res.status == 0 then
+						return done(nil)
+					end
+					local why = string.match(res.stderr, "[^\n]*! %[[^\n]*") or string.match(res.stderr, "fatal: ([^\n]+)") or string.match(res.stderr, "[Ee]rror: ([^\n]+)") or github.firstLines(res.stderr, 1)
+					done("The push was refused: " .. trim(why))
+				end)
 			end)
 		end)
 	end)
@@ -1352,7 +1412,7 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 			return afterFetch(m, cx)
 		end
 		local tracking = "+refs/heads/" .. m.ref .. ":refs/remotes/" .. info.remote .. "/" .. m.ref
-		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, tracking }, NET_MS, function(_, _, cx1)
+		netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, tracking }, account, function(_, _, cx1)
 			s.attempt(cx1 or cx, function()
 				afterFetch(m, cx1 or cx)
 			end)
@@ -1361,7 +1421,7 @@ local function checkoutPr<T>(s: Steps<T>, spot: Spot, repo: string, number: numb
 
 	-- The PR head into our own ref (removal compares the branch with it), then on with the commit that ref holds.
 	local function fetch(m: github.PrMeta)
-		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/pull/" .. number .. "/head:" .. ref }, NET_MS, function(_, ferr, cx)
+		netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/pull/" .. number .. "/head:" .. ref }, account, function(_, ferr, cx)
 			s.attempt(cx, function()
 				-- Another window fetching the same ref can hold Git's lock: what counts is the commit the ref holds.
 				git(info.root, { "rev-parse", "--verify", "--quiet", ref }, LOCAL_MS, function(out, _, cx1)
@@ -1535,7 +1595,7 @@ end
 -- lockfiles Plotroom knows (M.LOCKFILES) are taken from the base and regenerated, and with no conflict left the merge is
 -- committed. done(merge, problem, cx); a problem (the fetch, or a merge that stopped for another reason, which is
 -- aborted) leaves the branch as it was.
-function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
+function M.premerge(path: string, remote: string, base: string, account: string?, done: Cb<Merge>)
 	if not string.match(base, "^[%w_][%w_%./%-]*$") or not M.validSegment(remote) then
 		return process.later(function(cx)
 			done(nil, "Base " .. base .. " is not a branch Plotroom merges", cx)
@@ -1612,7 +1672,7 @@ function M.premerge(path: string, remote: string, base: string, done: Cb<Merge>)
 			end
 		end)
 	end
-	git(path, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, ferr, cx)
+	netGit(path, remote, { "fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/heads/" .. base .. ":" .. tracking }, account, function(_, ferr, cx)
 		if ferr then
 			return done(nil, ferr, cx)
 		end
@@ -1641,12 +1701,12 @@ end
 
 -- The branches of `repo`'s remote, its default branch first, then by name; done(names, problem, cx). Problem M.NO_REPO
 -- means `checkout` is not a checkout of `repo`.
-function M.remoteBranches(checkout: string, repo: string, done: Cb<{ string }>)
+function M.remoteBranches(checkout: string, repo: string, account: string?, done: Cb<{ string }>)
 	M.resolveRepository(checkout, repo, function(info, _, cx)
 		if not info then
 			return done(nil, M.NO_REPO, cx)
 		end
-		git(info.root, { "ls-remote", "--symref", info.remote, "HEAD", "refs/heads/*" }, NET_MS, function(out, err, cx1)
+		netGit(info.root, info.remote, { "ls-remote", "--symref", info.remote, "HEAD", "refs/heads/*" }, account, function(out, err, cx1)
 			if not out then
 				return done(nil, err, cx1)
 			end
@@ -1672,7 +1732,7 @@ end
 -- before the base commits the pull request merged since, and GitHub's diff is against the base's tip now. When the head
 -- commit is missing there, the pull request's head (`refs/pull/<number>/head`) is fetched once and the diff is read
 -- again. done(diff, problem, cx).
-function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, done: Cb<string>)
+function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, account: string?, done: Cb<string>)
 	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
 		return process.later(function(cx)
 			done(nil, "The review names a base or head commit Plotroom does not read.", cx)
@@ -1684,7 +1744,7 @@ function M.reviewDiff(path: string, repo: string, number: number, base: string, 
 		end
 		local tracking = "refs/remotes/" .. info.remote .. "/" .. base
 		local args = { "diff", "--no-color", "--no-ext-diff", "-U3", "--src-prefix=a/", "--dst-prefix=b/", tracking .. "..." .. head, "--" }
-		git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, berr, cx1)
+		netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, account, function(_, berr, cx1)
 			if berr then
 				return done(nil, berr, cx1)
 			end
@@ -1692,7 +1752,7 @@ function M.reviewDiff(path: string, repo: string, number: number, base: string, 
 				if out then
 					return done(out, nil, cx2)
 				end
-				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, NET_MS, function(_, ferr, cx3)
+				netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "refs/pull/" .. number .. "/head" }, account, function(_, ferr, cx3)
 					if ferr then
 						return done(nil, ferr, cx3)
 					end
@@ -1756,7 +1816,7 @@ function M.openIssue(checkout: string, repo: string, key: string, plan: IssuePla
 				if status ~= 0 then
 					return finish(nil, "Base branch " .. base .. " is not a valid branch name.", cx1 or cx)
 				end
-				git(info.root, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, NET_MS, function(_, ferr, cx2)
+				netGit(info.root, info.remote, { "fetch", "--no-tags", "--no-write-fetch-head", info.remote, "+refs/heads/" .. base .. ":" .. tracking }, account, function(_, ferr, cx2)
 					attempt(cx2, function()
 						git(info.root, { "rev-parse", "--verify", "--quiet", tracking }, LOCAL_MS, function(out, _, cx3)
 							attempt(cx3 or cx2, function()

@@ -242,6 +242,33 @@ windowCase("worktree: a first open fetches the PR head into its own ref and repo
 	lacks(table.concat(s.git.log, "\n"), "refs/plotroom/", "the old, ambiguous namespace is not used")
 end)
 
+windowCase("worktree: a pull request's worktree opened as a gh login fetches as that login over the https remote, and its premerge fetches the base as it too", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s = scene(w, worktree, "o", "r", 5)
+	s.gh.tokens.work = "tok-work"
+	s.git.served["refs/heads/main"] = sha("1")
+	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
+	worktree.open(s.launch, s.repo, s.number, naming(s), "work", function(result, problem)
+		out.calls += 1
+		out.result, out.problem = result, problem
+	end)
+	w.flush()
+	eq(out.problem, nil, "problem")
+	eq(out.result.created, true, "created")
+	s.git.fail["merge"] = {} -- merges cleanly
+	worktree.premerge(out.result.path, "origin", "main", "work", function() end)
+	w.flush()
+	local fetches = 0
+	for _, call in w.calls do
+		if call.argv[1] == "git" and call.argv[4] == "fetch" then
+			fetches += 1
+			eq(call.env.GH_TOKEN, "tok-work", "fetch " .. tostring(call.argv[8]) .. ": as the login")
+			eq(call.env.GIT_CONFIG_VALUE_1, "!gh auth git-credential", "through gh's credential helper")
+		end
+	end
+	eq(fetches, 3, "the PR head, its head branch and the premerge's base were fetched")
+end)
+
 windowCase("worktree: opening again reuses the worktree: no fetch, nothing changed, status read once", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local s = scene(w, worktree, "o", "r", 5)
@@ -1656,7 +1683,7 @@ end)
 -- The branches of o/r that worktree.remoteBranches lists from `checkout`: its one answer (result: the names).
 local function remoteBranchesOf(w: World, worktree: Worktree, checkout: string): Opened
 	local out: Opened = { calls = 0, result = nil, problem = nil, cx = nil }
-	worktree.remoteBranches(checkout, "o/r", function(names, problem, cx)
+	worktree.remoteBranches(checkout, "o/r", nil, function(names, problem, cx)
 		out.calls += 1
 		out.result, out.problem, out.cx = names, problem, cx
 	end)

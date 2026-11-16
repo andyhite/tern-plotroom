@@ -444,7 +444,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 					return answer(nil)
 				end
 				preparing[key] = true -- a second request waits for the merge, as for the worktree
-				worktree.premerge(r.path, r.remote, r.prBase, function(merge)
+				worktree.premerge(r.path, r.remote, r.prBase, login(state), function(merge)
 					preparing[key] = nil
 					if alive(state) then
 						answer(merge)
@@ -570,7 +570,7 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 
 	-- A new branch that does not exist yet: the remote's branches to start it from.
 	local function needBase(branch: string)
-		worktree.remoteBranches(checkout, code, function(names, why)
+		worktree.remoteBranches(checkout, code, login(state), function(names, why)
 			preparing[key] = nil -- the read is over: its answer is the question
 			if not alive(state) then
 				return
@@ -1590,7 +1590,7 @@ function M.draft(state: State, id: string, q: any)
 			if not d then
 				return
 			end
-			worktree.remoteBranches(root, d.repo, function(names, problem)
+			worktree.remoteBranches(root, d.repo, login(state), function(names, problem)
 				if not alive(state) then
 					return
 				elseif state.gen ~= gen then
@@ -1618,7 +1618,7 @@ function M.draft(state: State, id: string, q: any)
 				return
 			end
 			local repo = d.repo
-			worktree.draftPreview(path, repo, base, function(draft, problem)
+			worktree.draftPreview(path, repo, base, login(state), function(draft, problem)
 				if not alive(state) then
 					return
 				elseif state.gen ~= gen then
@@ -1681,7 +1681,7 @@ function M.draft(state: State, id: string, q: any)
 		end
 		M.offer(state, id, item, { head = "Create a draft pull request?", label = if draft.needsPush then "Push and create draft" else "Create draft", lines = lines }, function(done)
 			-- The branch, its head and the base are read again: a commit or a fetch since the preview cancels it.
-			worktree.draftPreview(draft.path, draft.repo, draft.base, function(fresh, problem)
+			worktree.draftPreview(draft.path, draft.repo, draft.base, account, function(fresh, problem)
 				if not fresh then
 					return done({ problem = problem or "The branch could not be read again; nothing was sent." })
 				elseif fresh.head ~= draft.head or fresh.branch ~= draft.branch or fresh.baseSha ~= draft.baseSha or fresh.remote ~= draft.remote or fresh.needsPush ~= draft.needsPush then
@@ -1704,7 +1704,7 @@ function M.draft(state: State, id: string, q: any)
 					end)
 				end
 				if fresh.needsPush then
-					worktree.pushBranch(fresh, function(perr)
+					worktree.pushBranch(fresh, account, function(perr)
 						if perr then
 							return done({ problem = perr })
 						end

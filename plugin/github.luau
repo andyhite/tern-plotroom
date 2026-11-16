@@ -601,11 +601,41 @@ local TOKEN_TTL_S = 60
 -- One gh login's token, read with `gh auth token`; memory only, never written anywhere.
 local tokens: { [string]: { token: string, at: number } } = {}
 
--- Runs `gh <args>` as `account` (nil or "" = active account); done(stdout, problem, cx,
--- failedStdout). A failed run still passes its stdout (with `--include`, the
--- response headers) as the 4th value. An account's token is read with
--- `gh auth token` and kept in memory for TOKEN_TTL_S seconds, dropped on any `auth`
--- problem: no answer in time is `failed` (retryable); only a definite refusal is `auth`.
+-- `account`'s token, read with `gh auth token` and kept in memory for TOKEN_TTL_S seconds; done(token, problem, cx).
+-- No answer in time is `failed` (retryable); only a definite refusal is `auth`.
+function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
+	local key = string.lower(account)
+	local hit = tokens[key]
+	if hit and os.time() - hit.at < TOKEN_TTL_S then
+		return done(hit.token, nil, nil)
+	end
+	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
+		if not r then
+			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx)
+		end
+		if r.timed_out then
+			-- No answer about the account (a keychain prompt, a slow disk): not "not signed in".
+			return done(nil, { kind = "failed", message = "gh auth token did not answer within 30 seconds." }, cx)
+		end
+		local token = string.match(r.stdout, "^%s*(%S+)%s*$")
+		if r.status ~= 0 or not token then
+			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx)
+		end
+		local entry = { token = token, at = os.time() }
+		tokens[key] = entry
+		-- No token outlives its TTL, even for a login no call asks for again.
+		tern.timer(TOKEN_TTL_S * 1000, function()
+			if tokens[key] == entry then
+				tokens[key] = nil
+			end
+		end)
+		done(token, nil, cx)
+	end)
+end
+
+-- Runs `gh <args>` as `account` (nil or "" = active account, else with its M.token as GH_TOKEN); done(stdout,
+-- problem, cx, failedStdout). A failed run still passes its stdout (with `--include`, the response headers) as the 4th
+-- value. The account's cached token is dropped on any `auth` problem.
 function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) -> (), account: string?, timeoutMs: number?)
 	local argv: { string } = { "gh" }
 	for _, a in args do
@@ -631,39 +661,16 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 	if not key or not account then
 		return run(ENV)
 	end
-	local function withToken(token: string)
+	M.token(account, function(token, problem, cx)
+		if not token then
+			return done(nil, problem, cx, nil)
+		end
 		local env: { [string]: string } = {}
 		for k, v in ENV do
 			env[k] = v
 		end
 		env.GH_TOKEN = token
 		run(env)
-	end
-	local hit = tokens[key]
-	if hit and os.time() - hit.at < TOKEN_TTL_S then
-		return withToken(hit.token)
-	end
-	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
-		if not r then
-			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx, nil)
-		end
-		if r.timed_out then
-			-- No answer about the account (a keychain prompt, a slow disk): not "not signed in".
-			return done(nil, { kind = "failed", message = "gh auth token did not answer within 30 seconds." }, cx, nil)
-		end
-		local token = string.match(r.stdout, "^%s*(%S+)%s*$")
-		if r.status ~= 0 or not token then
-			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx, nil)
-		end
-		local entry = { token = token, at = os.time() }
-		tokens[key] = entry
-		-- No token outlives its TTL, even for a login no call asks for again.
-		tern.timer(TOKEN_TTL_S * 1000, function()
-			if tokens[key] == entry then
-				tokens[key] = nil
-			end
-		end)
-		withToken(token)
 	end)
 end
 

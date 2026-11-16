@@ -2776,6 +2776,39 @@ case("host draft: info, preview, plan and commit push the previewed commit unfor
 	same(b.saved().pins, { created }, "the created pull request is the saved pin")
 end)
 
+case("host draft: on a view of another gh login, the plan names it and its commit pushes as that login, not as gh's active account", function(w: World)
+	local s = asks.hx.draftScene(w)
+	s.gh.tokens.work = "tok-work"
+	s.gh.issueItems.work = { issueItem(12, "o/r", EPOCH - 60, { title = "Fix login" }) }
+	w.kv.put("views-issues", { version = 1, nextId = 2, items = array({
+		{ id = "v1", name = "Work", integration = "github", query = "is:open assignee:@me", logins = array({ "work" }), group = "none", prompts = array({}) },
+	}) })
+	local created = "https://github.com/o/r/pull/21"
+	asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "pr create", 1, true) then
+			return { stdout = created .. "\n" }
+		end
+		return nil
+	end)
+	s.gh.pulls[created] = searchItem(21, "o/r", EPOCH - 10, { title = "Fix login", isDraft = true })
+	local b = openIssues(w)
+	local pv = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
+	eq(pv.needsPush, true, "the remote lacks the branch")
+	local plan = asks.hx.ask(w, b, { op = "draft", phase = "plan", token = pv.token, title = "Fix login", body = pv.body })
+	eq(plan.confirm.lines[5], "Opens a draft pull request, as @work", "the plan names the view's login")
+	local mark = #w.calls
+	eq(asks.hx.commit(w, b, plan.token).ok, true, "committed")
+	local push: any = nil
+	for i = mark + 1, #w.calls do
+		if w.calls[i].argv[4] == "push" then
+			push = w.calls[i]
+		end
+	end
+	yes(push ~= nil, "the branch was pushed")
+	eq(push.env.GH_TOKEN, "tok-work", "with the work login's token")
+	eq(push.env.GIT_CONFIG_VALUE_1, "!gh auth git-credential", "which gh hands git, not the user's credential helper")
+end)
+
 case("host draft: a repository that is not one of the worktree's remotes is refused before any fetch, push or create, and a second GitHub remote is a destination of its own", function(w: World)
 	local s = asks.hx.draftScene(w)
 	s.git.remotes.upstream = { "https://github.com/u/r.git" }
