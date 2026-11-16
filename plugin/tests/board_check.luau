@@ -136,6 +136,7 @@ function M.run()
 	assert(ok2 and #f.removed == 1 and #b.rows == 3)
 	-- the confirm's branch sentence follows the row's facts
 	assert(board.fate({ branch = nil } :: board.Row):find("no branch"))
+	assert(board.fate({ branch = nil, stranded = true } :: board.Row):find("create a branch first"))
 	assert(board.fate({ branch = "b", key = "#1" } :: board.Row):find("only if git confirms"))
 	assert(board.fate({ branch = "b", number = 3 } :: board.Row):find("only if git confirms"))
 	assert(board.fate({ branch = "b", number = 3, inferred = true } :: board.Row):find("is kept"))

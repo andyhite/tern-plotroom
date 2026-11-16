@@ -2236,6 +2236,7 @@ export type Git = {
 	dirty: { [string]: string }, -- worktree path -> its changes, the entries of `status --porcelain=v2` output
 	unpushed: { [string]: number }, -- worktree path -> commits its branch holds that its upstream lacks (none: no upstream)
 	ignored: { [string]: string }, -- worktree path -> what `ls-files -z -o -i --exclude-standard --directory` lists there (NUL-separated paths; none: nothing ignored)
+	stranded: { [string]: boolean }, -- detached worktree path -> its HEAD holds a commit no branch, tag or remote ref reaches
 	ahead: { [string]: boolean }, -- branch -> it holds commits its fetched ref lacks: `merge-base --is-ancestor` says no
 	unmerged: { [string]: boolean }, -- branch -> `branch -d` refuses it: its commits are merged nowhere
 	fail: { [string]: Reply }, -- "fetch", "status", "worktree add", "rev-parse HEAD"... -> the answer instead of the model's
@@ -2283,6 +2284,7 @@ local function newGit(w: World, root: string): Git
 		dirty = {},
 		ignored = {},
 		unpushed = {},
+		stranded = {},
 		ahead = {},
 		unmerged = {},
 		fail = {},
@@ -2439,6 +2441,9 @@ local function newGit(w: World, root: string): Git
 			return { stdout = if #out > 0 then table.concat(out, "\n") .. "\n" else "" }
 		elseif sub == "symbolic-ref" then
 			return if here.branch then { stdout = here.branch .. "\n" } else { status = 1 }
+		elseif sub == "rev-list" and args[2] == "-n" then
+			-- `rev-list -n 1 HEAD --not --branches --remotes --tags`: a commit of HEAD no ref reaches, if the model has one
+			return { stdout = if g.stranded[here.path] then here.head .. "\n" else "" }
 		elseif sub == "rev-list" and args[2] == "--count" then
 			local at = string.match(args[3] or "", "%.%.(%x+)$") or ""
 			return { stdout = tostring(g.counts[at] or 0) .. "\n" }

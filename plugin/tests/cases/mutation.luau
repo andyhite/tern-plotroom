@@ -512,6 +512,30 @@ case("worktree.removeEntry: a dirty worktree is never forced, a clean one goes w
 	eq(countLog(g, "branch -D"), 0, "and none was ever forced")
 end)
 
+case("worktree.removeEntry: a detached worktree whose HEAD holds commits no ref reaches is refused, touching nothing, and inventory flags it", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local g = asks.bk.inventoryRepo(w)
+	g.stranded["/wt/det"] = true
+	local inv = asks.bk.pack(w, function(done)
+		worktree.inventory("/work/r", "o/r", done)
+	end)
+	local flagged: { string } = {}
+	for _, e in inv[1] do
+		if e.stranded then
+			table.insert(flagged, e.path)
+		end
+	end
+	same(flagged, { "/wt/det" }, "only the detached worktree with unreachable commits is flagged")
+	local before = snapshot(g)
+	local got = asks.bk.pack(w, function(done)
+		worktree.removeEntry("/work/r", "o/r", "/wt/det", nil, done)
+	end)
+	eq(got[1], nil, "no removal")
+	eq(got[2], worktree.STRANDED, "the refusal says to create a branch first")
+	eq(snapshot(g), before, "git state is untouched")
+	eq(countLog(g, "worktree remove"), 0, "git was never asked to remove it")
+end)
+
 case("worktree.status: porcelain v2 header lines are never changes, an ahead count needs an upstream, and a status git could not read is unknown", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local g = asks.bk.inventoryRepo(w)

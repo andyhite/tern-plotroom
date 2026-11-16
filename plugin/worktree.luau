@@ -89,6 +89,9 @@ type Opened = { path: string, branch: string, head: string, created: boolean, di
 local LOCAL_MS = 10 * 1000
 local NET_MS = 120 * 1000
 local REMOVE_MS = 120 * 1000 -- deleting a worktree's whole folder (node_modules and all) takes a while
+
+-- Why a detached worktree whose HEAD no ref reaches is never removed: its commits would be lost with its reflog.
+M.STRANDED = "HEAD has commits no branch or remote holds; create a branch first."
 -- No prompts; status never takes the index lock, so reading a worktree cannot make the user's own git command fail.
 local ENV = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0" }
 
@@ -846,6 +849,7 @@ export type Entry = {
 	number: number?,
 	ref: string?,
 	inferred: boolean?, -- `number` was guessed from an older Plotroom's ref or branch, not noted
+	stranded: boolean?, -- a detached worktree whose HEAD holds commits no branch, tag or remote ref reaches (or git could not tell)
 	repo: string?, -- the repository the branch's note names (nil: no note)
 }
 
@@ -925,7 +929,21 @@ function M.inventory(checkout: string, repo: string, done: ({ Entry }?, string?)
 						repo = if branch then repos[branch] else nil,
 					})
 				end
-				done(entries, nil)
+				-- A detached HEAD has no branch to keep its commits: read whether any ref reaches them. Sequential, one
+				-- spawn per detached worktree that still has a folder; a read git fails is "stranded", the safe answer.
+				local function strand(i: number)
+					local e = entries[i]
+					if not e then
+						return done(entries, nil)
+					elseif e.main or not e.detached or e.missing or e.prunable then
+						return strand(i + 1)
+					end
+					git(e.path, { "rev-list", "-n", "1", "HEAD", "--not", "--branches", "--remotes", "--tags" }, LOCAL_MS, function(out, _, _, status)
+						e.stranded = if status ~= 0 or trim(out or "") ~= "" then true else nil
+						strand(i + 1)
+					end)
+				end
+				strand(1)
 			end)
 		end)
 	end)
@@ -952,18 +970,22 @@ local function claim(checkout: string, repo: string, path: string, branch: strin
 	end)
 end
 
--- Why removal refuses inventory worktree `e` (locked, prunable or missing), as removeEntry says it; nil: it does not.
+-- Why removal refuses inventory worktree `e` (locked, prunable, missing, or detached on commits no ref holds), as
+-- removeEntry says it; nil: it does not.
 function M.unusable(e: Entry): string?
 	if e.locked or e.prunable or e.missing then
 		return "The worktree at " .. e.path .. " is locked, prunable or missing; repair it yourself (git worktree repair or prune)."
+	elseif e.stranded then
+		return M.STRANDED
 	end
 	return nil
 end
 
--- Removes one inventory worktree without force, as `remove` does for an item's: a locked, prunable or missing one, the
--- main checkout and one that is no longer at `path` on `branch` are refused. Only a branch Plotroom noted (an issue key
--- or a pull request number, not a guessed one) goes with the worktree, as `remove` does it; any other branch is kept,
--- and a detached worktree has no branch to drop. Git itself refuses a worktree with changes.
+-- Removes one inventory worktree without force, as `remove` does for an item's: a locked, prunable or missing one, a
+-- detached one whose HEAD holds commits no ref reaches, the main checkout and one that is no longer at `path` on
+-- `branch` are refused. Only a branch Plotroom noted (an issue key or a pull request number, not a guessed one) goes
+-- with the worktree, as `remove` does it; any other branch is kept, and a detached worktree has no branch to drop.
+-- Git itself refuses a worktree with changes.
 -- done(removal, problem, dirty).
 function M.removeEntry(checkout: string, repo: string, path: string, branch: string?, done: (Removal?, string?, boolean?) -> ())
 	claim(checkout, repo, path, branch, function(e, why)

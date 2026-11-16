@@ -27,6 +27,7 @@ export type Entry = {
 	number: number?,
 	ref: string?,
 	inferred: boolean?,
+	stranded: boolean?,
 	repo: string?, -- the repository the branch's note names
 }
 export type Api = {
@@ -78,6 +79,7 @@ export type Row = {
 	key: string?,
 	number: number?,
 	inferred: boolean?,
+	stranded: boolean?, -- detached on commits no branch, tag or remote ref reaches: removal is refused
 	locked: boolean,
 	missing: boolean,
 	dirty: boolean?,
@@ -247,6 +249,7 @@ function M.load(board: Board, api: Api, checkouts: { [string]: string }, live: (
 							key = e.key,
 							number = e.number,
 							inferred = e.inferred,
+							stranded = e.stranded,
 							locked = e.locked,
 							missing = e.missing or e.prunable,
 							dirty = if prev and not (e.missing or e.prunable) then prev.dirty else nil,
@@ -353,8 +356,11 @@ end
 
 -- What removing `row` does to its branch, from the facts git listed (as `worktree.removeEntry` decides): only a branch
 -- Plotroom noted goes, and only if git confirms nothing is lost; any other branch is kept; a detached worktree has none.
-function M.fate(row: { branch: string?, key: string?, number: number?, inferred: boolean? }): string
+function M.fate(row: { branch: string?, key: string?, number: number?, inferred: boolean?, stranded: boolean? }): string
 	if not row.branch then
+		if row.stranded then
+			return "It has no branch and its HEAD holds commits no branch or remote holds, so it is not removed; create a branch first."
+		end
 		return "It has no branch."
 	elseif row.key == nil and (row.number == nil or row.inferred == true) then
 		return "Plotroom never noted its branch, so the branch is kept."
