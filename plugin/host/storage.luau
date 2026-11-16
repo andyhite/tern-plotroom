@@ -414,8 +414,10 @@ function M.removeRepo(repo: string): string?
 	local key = string.lower(repo)
 	local failed: string? = nil
 	for _, name in { "checkouts", "branch-formats", "setup-commands" } do
-		local stored = M.readMap(name, name)
-		if stored and stored[key] ~= nil then
+		local stored, why = M.readMap(name, name)
+		if not stored then
+			failed = failed or why
+		elseif stored[key] ~= nil then
 			stored[key] = nil
 			local err = kvSet(name, stored)
 			failed = failed or (if err then "Could not save: " .. err else nil)

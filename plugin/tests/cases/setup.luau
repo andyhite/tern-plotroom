@@ -239,4 +239,11 @@ windowCase("window: an action on a repository without a checkout offers the dete
 	eq(w.window.agents[1].cwd, s.target, "in the item's worktree")
 end)
 
+case("storage: removeRepo reports an unreadable checkouts store and does not write it", function(w: World)
+	local storage: any = w.load("host/storage")
+	w.kv.put("checkouts", "garbage")
+	eq(storage.removeRepo("o/r"), "Saved checkouts could not be read.", "the failure is returned")
+	eq(w.kv.get("checkouts"), "garbage", "the store is left as it was")
+end)
+
 return {}
