@@ -353,8 +353,12 @@ function M.runs(raw: any): { Run }
 	return out
 end
 
--- One search item as a Pr, or nil and why. Issues and malformed URLs are rejected.
+-- One search item as a Pr, or nil and why. An item of the other kind (the `{}` the search's inline fragment gives an
+-- issue, or an issue's URL) answers nil and no reason: parsePage skips it. Malformed pull requests are rejected.
 function M.normalize(item: any): (Pr?, string?)
+	if type(item) == "table" and (item.number == nil or item.number == tern.json.null or (type(item.url) == "string" and string.find(item.url, "^https://github%.com/[^/]+/[^/]+/issues/%d+$"))) then
+		return nil, nil
+	end
 	if type(item) ~= "table" or type(item.number) ~= "number" then
 		return nil, "the search returned an item that is not a pull request"
 	end
@@ -446,10 +450,11 @@ function M.normalize(item: any): (Pr?, string?)
 	}, nil
 end
 
-type Page = { total: number, next: string?, cost: number, raw: number, items: { any } }
+type Page = { total: number, next: string?, cost: number, raw: number, skipped: number, items: { any } }
 
--- One page of the search JSON: total, next cursor, points cost, raw item count, items as `normalize` makes them (it
--- rejects an item that is not of the kind searched).
+-- One page of the search JSON: total, next cursor, points cost, raw item count, items as `normalize` makes them, and
+-- how many raw items were skipped because `normalize` answered nil with no reason (an item of the other kind, which a
+-- query holding `is:issue` in a pull request view returns). A malformed item of the kind searched fails the page.
 function M.parsePage(stdout: string, normalize: (any) -> (any?, string?), decoded: any?): (Page?, string?)
 	local ok, data = true, decoded
 	if data == nil then
@@ -459,30 +464,36 @@ function M.parsePage(stdout: string, normalize: (any) -> (any?, string?), decode
 		return nil, "gh printed something other than a search result"
 	end
 	local items: { any } = {}
+	local skipped = 0
 	for _, item in data.items do
 		local one, why = normalize(item)
-		if not one then
+		if one then
+			table.insert(items, one)
+		elseif why then
 			return nil, why
+		else
+			skipped += 1
 		end
-		table.insert(items, one)
 	end
 	return {
 		total = data.total,
 		next = if type(data.next) == "string" and data.next ~= "" then data.next else nil,
 		cost = if type(data.cost) == "number" and data.cost > 0 then data.cost else 1,
 		raw = #data.items,
+		skipped = skipped,
 		items = items,
 	}, nil
 end
 
 local ISSUE_STATE: { [string]: string } = { COMPLETED = "completed", NOT_PLANNED = "not-planned", DUPLICATE = "duplicate" }
 
--- One search item as an Issue, or nil and why. Pull requests and malformed URLs are rejected.
+-- One search item as an Issue, or nil and why. A pull request (the `{}` the search's inline fragment gives it, or its
+-- URL) answers nil and no reason: parsePage skips it. Malformed issues and foreign URLs are rejected.
 function M.normalizeIssue(item: any): (tracker.Issue?, string?)
-	if type(item) ~= "table" or type(item.number) ~= "number" or type(item.url) ~= "string" then
-		return nil, "the search returned an item that is not an issue"
+	if type(item) == "table" and (item.number == nil or item.number == tern.json.null or (type(item.url) == "string" and string.find(item.url, "^https://github%.com/[^/]+/[^/]+/pull/%d+$"))) then
+		return nil, nil
 	end
-	if string.find(item.url, "^https://github%.com/[^/]+/[^/]+/pull/%d+$") then
+	if type(item) ~= "table" or type(item.number) ~= "number" or type(item.url) ~= "string" then
 		return nil, "the search returned an item that is not an issue"
 	end
 	local o, r, ns = string.match(item.url, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/issues/(%d+)$")
@@ -1039,7 +1050,8 @@ local function searchAll(
 			if after == nil then
 				total = pg.total
 			end
-			loaded += pg.raw
+			loaded += pg.raw - pg.skipped
+			total -= pg.skipped
 			for _, item in pg.items do
 				table.insert(all, item)
 			end

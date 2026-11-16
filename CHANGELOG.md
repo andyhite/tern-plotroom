@@ -6,6 +6,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A view whose query returns items of the other kind (`is:issue` in a pull request view, `is:pr` in an Issues view) lists the items of its own kind and leaves the rest out of its count, instead of failing the whole view with "the search returned an item that is not a pull request".
 - Now asks `acli` about at most four assigned Jira issues at a time, instead of starting one or two `acli` processes for every assigned issue at once on each read.
 - A failing check's log now reads `TypeError: x`, `ERROR: x`, `[ERROR] x`, `Exception in thread …`, `java.lang.NullPointerException` and ESLint's `✖` as error lines, so the `{failures}` excerpt and the preview's first error line show the cause instead of the last 30 lines.
 - Settings › Repositories › Remove now says so when a saved store (checkouts, branch formats, setup commands) cannot be read, instead of reporting success while the repository stays listed.

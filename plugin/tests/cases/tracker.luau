@@ -1249,12 +1249,23 @@ case("github.issues: searches is:issue in the repository and normalizes issues",
 		table.insert(seen, issue.state .. ":" .. (issue.reason or "-") .. ":" .. issue.author)
 	end
 	same(seen, { "closed:completed:octo", "closed:duplicate:octo", "closed:not-planned:octo", "closed:-:octo", "open:-:ghost" }, "the closing reasons, and ghost for a deleted author")
-	-- a pull request, or a URL that is not the issue's, fails the whole read
-	gh.issueItems.octocat = { issueItem(5, "o/r", EPOCH - 60, { url = "https://github.com/o/r/pull/5" }) }
+	-- a pull request in an issue search (its URL, or the `{}` the inline fragment gives it) is skipped and counted out of the total
+	gh.issueItems.octocat = { issueItem(5, "o/r", EPOCH - 60, { url = "https://github.com/o/r/pull/5" }), issueItem(6, "o/r", EPOCH - 70) }
 	local pull = runIssues(w, github, "is:open")
-	eq(pull.result, nil, "a pull request in an issue search fails the read")
-	eq(pull.problem.kind, "failed", "problem kind")
-	eq(pull.problem.message, "the search returned an item that is not an issue", "message")
+	eq(pull.problem, nil, "a pull request in an issue search does not fail the read")
+	same(
+		(function()
+			local refs: { string } = {}
+			for _, issue in pull.result.issues do
+				table.insert(refs, issue.ref)
+			end
+			return refs
+		end)(),
+		{ "6" },
+		"the issue is kept"
+	)
+	eq(pull.result.total, 1, "the skipped one is not counted")
+	eq(pull.result.complete, true, "and the read is complete")
 	gh.issueItems.octocat = { issueItem(5, "o/r", EPOCH - 60, { url = "https://evil.example/o/r/issues/5" }) }
 	eq(runIssues(w, github, "is:open").problem.message, "the search returned an issue with an unexpected URL", "a foreign URL")
 	gh.issueItems.octocat = { issueItem(5, "o/r", EPOCH - 60, { number = 6 }) }
