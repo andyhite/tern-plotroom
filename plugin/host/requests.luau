@@ -2139,9 +2139,9 @@ function M.rpc(state: State, raw: any)
 		return
 	end
 	local id: string = q.id
-	local done, err = pcall(dispatch, state, id, q)
-	if not done then
-		reply(state, id, { problem = "Plotroom could not answer that request: " .. tostring(err) })
+	local result = { pcall(dispatch, state, id, q) }
+	if not result[1] then
+		reply(state, id, { problem = "Plotroom could not answer that request: " .. tostring(result[2]) })
 	end
 end
 
