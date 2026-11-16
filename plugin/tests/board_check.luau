@@ -600,7 +600,8 @@ function M.run()
 	assert(board.unchecked(bfin) == 4) -- z, a, open, c: not locked, missing, inferred or without a link
 	at(bfin, "/f/a").candidateChecked = true
 	assert(board.unchecked(bfin) == 3)
-	for p, cand in { ["/f/z"] = "merged", ["/f/a"] = "closed", ["/f/lock"] = "merged", ["/f/gone"] = "closed", ["/f/c"] = "merged" } do
+	local marks: { [string]: "merged" | "closed" } = { ["/f/z"] = "merged", ["/f/a"] = "closed", ["/f/lock"] = "merged", ["/f/gone"] = "closed", ["/f/c"] = "merged" }
+	for p, cand in marks do
 		at(bfin, p).candidate = cand :: any
 	end
 	local reversed: { board.Row } = {}
@@ -641,7 +642,7 @@ function M.run()
 		end
 		return nil
 	end
-	local base = { id = "i", repo = "o/r", checkout = "/c", path = "/p", head = "0123456789abcdef" }
+	local base: { [string]: any } = { id = "i", repo = "o/r", checkout = "/c", path = "/p", head = "0123456789abcdef" }
 	local function statusOf(extra: { [string]: any }): string?
 		local r: { [string]: any } = {}
 		for k, v in base do
