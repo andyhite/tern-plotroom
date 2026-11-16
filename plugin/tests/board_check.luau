@@ -574,6 +574,203 @@ function M.run()
 	local invCalls = #fd.calls
 	board.scan(bd2, fd.api, 0, yes, function() end)
 	assert(#cheap == 2 and #fd.calls == invCalls and bd2.rows[1].dirty == true and bd2.rows[2].dirty == false)
+
+	-- finished / unchecked: only merged or closed rows that can be removed at all, in list order whatever the stored order
+	local function at(bd: board.Board, path: string): board.Row
+		for _, r in bd.rows do
+			if r.path == path then
+				return r
+			end
+		end
+		error("no row " .. path)
+	end
+	local ffin = fake({
+		["/f"] = {
+			entry("/f/z", { number = 1 }),
+			entry("/f/a", { number = 2 }),
+			entry("/f/lock", { number = 3, locked = true }),
+			entry("/f/gone", { number = 4, prunable = true }),
+			entry("/f/open", { number = 5 }),
+			entry("/f/c", { key = "#6" }),
+			entry("/f/inf", { number = 7, inferred = true }),
+			entry("/f/plain"),
+		},
+	})
+	local bfin = loaded(ffin, { ["o/f"] = "/f" })
+	assert(board.unchecked(bfin) == 4) -- z, a, open, c: not locked, missing, inferred or without a link
+	at(bfin, "/f/a").candidateChecked = true
+	assert(board.unchecked(bfin) == 3)
+	for p, cand in { ["/f/z"] = "merged", ["/f/a"] = "closed", ["/f/lock"] = "merged", ["/f/gone"] = "closed", ["/f/c"] = "merged" } do
+		at(bfin, p).candidate = cand :: any
+	end
+	local reversed: { board.Row } = {}
+	for i = #bfin.rows, 1, -1 do
+		table.insert(reversed, bfin.rows[i])
+	end
+	bfin.rows = reversed
+	local finList, finKept = board.finished(bfin, function()
+		return nil
+	end)
+	assert(finKept == 0 and #finList == 3 and finList[1].path == "/f/a" and finList[2].path == "/f/c" and finList[3].path == "/f/z")
+	local _, keptTwo = board.finished(bfin, function(r: board.Row)
+		return if r.path == "/f/c" or r.path == "/f/z" then "in use" else nil
+	end)
+	assert(keptTwo == 2)
+
+	-- removeFinished: one row at a time in the order given, a row git refuses stays (dirty), the rest go
+	local order2: { string } = {}
+	local ask = function(r: board.Row, d: (string) -> ())
+		table.insert(order2, r.path)
+		d("merged")
+	end :: board.Check
+	ffin.dirty["/f/c"] = true
+	local rmN, keptN, recN = -1, -1, -1
+	board.removeFinished(bfin, ffin.api, ask, { at(bfin, "/f/z").id, at(bfin, "/f/c").id, at(bfin, "/f/a").id }, yes, function(r, k, c)
+		rmN, keptN, recN = r, k, c
+	end)
+	assert(rmN == 2 and keptN == 1 and recN == 0)
+	assert(table.concat(order2, ",") == "/f/z,/f/c,/f/a" and table.concat(ffin.removed, ",") == "/f/z,/f/a")
+	assert(at(bfin, "/f/c").dirty == true and at(bfin, "/f/c").refused ~= nil and #bfin.rows == 6)
+
+	-- facts: Status says why nothing is known, the head is shortened, a detached worktree has no branch name
+	local function fact(facts: { { string } }, name: string): string?
+		for _, p in facts do
+			if p[1] == name then
+				return p[2]
+			end
+		end
+		return nil
+	end
+	local base = { id = "i", repo = "o/r", checkout = "/c", path = "/p", head = "0123456789abcdef" }
+	local function statusOf(extra: { [string]: any }): string?
+		local r: { [string]: any } = {}
+		for k, v in base do
+			r[k] = v
+		end
+		for k, v in extra do
+			r[k] = v
+		end
+		return fact(board.facts(r :: any), "Status")
+	end
+	assert(statusOf({ missing = true, dirty = true }) == "Folder missing")
+	assert(statusOf({ dirty = true }) == "Uncommitted changes" and statusOf({ dirty = false }) == "Clean")
+	assert(statusOf({ scannedAt = 3 }) == "Unknown: could not read changes" and statusOf({}) == "Reading…")
+	local gf = board.facts(base :: any)
+	assert(fact(gf, "Head") == "01234567" and fact(gf, "Branch") == "(detached)" and fact(gf, "Repository") == "o/r" and fact(gf, "Path") == "/p")
+	assert(fact(board.facts({ id = "i", repo = "r", checkout = "c", path = "/p", head = "abc" } :: any), "Head") == "abc")
+	assert(fact(board.facts({ id = "i", repo = "r", checkout = "c", path = "/p" } :: any), "Head") == nil)
+
+	-- remove: git removed it, but a reload dropped the row meanwhile: still a success, nothing else to take out
+	local fv = fake({ ["/v"] = { entry("/v/a"), entry("/v/b") } })
+	local bv = loaded(fv, { ["o/v"] = "/v" })
+	local inv = { ["/v"] = { entry("/v/b") } }
+	fv.api.removeEntry = function(_, _, _, _, d)
+		board.load(bv, fv.api, { ["o/v"] = "/v" }, yes, function() end)
+		d({ branch = "kept" }, nil, nil)
+	end
+	fv.api.inventory = function(_, _, d)
+		d(inv["/v"], nil)
+	end
+	local vOk, vMsg = removeOf(bv, fv, at(bv, "/v/a").id)
+	assert(vOk and vMsg == "kept" and #bv.rows == 1 and bv.rows[1].path == "/v/b")
+
+	-- load: live() turning false mid-way leaves it loading and never finished
+	local fm2 = fake({ ["/a"] = { entry("/w1") }, ["/b"] = { entry("/w2") } })
+	local bm2 = board.new()
+	local stillLive, finishedLoad = true, false
+	local realInv = fm2.api.inventory
+	fm2.api.inventory = function(checkout, repo, d)
+		realInv(checkout, repo, function(entries, problem)
+			stillLive = false
+			d(entries, problem)
+		end)
+	end
+	board.load(bm2, fm2.api, { ["o/a"] = "/a", ["o/b"] = "/b" }, function()
+		return stillLive
+	end, function()
+		finishedLoad = true
+	end)
+	assert(bm2.loading and not bm2.loaded and not finishedLoad and #bm2.rows == 0 and #fm2.calls == 1)
+
+	-- a checkout path shared with repos beyond the cap: they are skipped with a problem, their noted worktrees are not listed
+	local capInv: { [string]: { board.Entry } } = {}
+	local capCks: { [string]: string } = {}
+	for i = 1, 60 do
+		capCks[string.format("o/r%02d", i)] = "/k" .. i
+		capInv["/k" .. i] = {}
+	end
+	capCks["o/r51"] = "/k1"
+	capInv["/k1"] = { entry("/k1/mine", { repo = "o/r01" }), entry("/k1/theirs", { repo = "o/r51" }), entry("/k1/unnoted") }
+	local bcap = loaded(fake(capInv), capCks)
+	local skippedProblems = 0
+	for _, p in bcap.problems do
+		if p:find("skipped, more than " .. board.CAP_CHECKOUTS .. " checkouts", 1, true) then
+			skippedProblems += 1
+		end
+	end
+	assert(skippedProblems == 10 and #bcap.problems == 10)
+	assert(#bcap.rows == 2 and at(bcap, "/k1/mine").repo == "o/r01" and at(bcap, "/k1/unnoted").repo == "o/r01")
+
+	-- order: ties on the branch fall to the path
+	local fo2 = fake({ ["/t"] = { entry("/t/b", { branch = "dup" }), entry("/t/a", { branch = "dup" }), entry("/t/0", { branch = "aaa" }) } })
+	local bo2 = loaded(fo2, { ["o/t"] = "/t" })
+	local want = "/t/0,/t/a,/t/b"
+	local gotRows, gotList = {}, {}
+	for _, r in bo2.rows do
+		table.insert(gotRows, r.path)
+	end
+	for _, r in board.rows(bo2) do
+		table.insert(gotList, r.path)
+	end
+	assert(table.concat(gotRows, ",") == want and table.concat(gotList, ",") == want)
+
+	-- select on a row that was removed closes the preview; the removed row's late read is ignored
+	local fx = fake({ ["/x"] = { entry("/x/a", { number = 1 }) } })
+	local bx = loaded(fx, { ["o/x"] = "/x" })
+	local lateRead: ((board.Info?, string?) -> ())? = nil
+	local lx: board.Links = {
+		pr = function(_, _, d)
+			lateRead = d
+		end,
+		issue = function(_, _, d)
+			d(nil, nil)
+		end,
+		head = function(_, _, d)
+			d(nil)
+		end,
+	}
+	local xid = bx.rows[1].id
+	local xDone = 0
+	board.select(bx, lx, xid, yes, function()
+		xDone += 1
+	end)
+	assert(bx.selected == xid and lateRead)
+	assert(removeOf(bx, fx, xid))
+	board.select(bx, lx, xid, yes, function()
+		xDone += 1
+	end)
+	assert(bx.selected == nil)
+	local doneBefore = xDone;
+	(lateRead :: (board.Info?, string?) -> ())({ ref = "#1", title = "t", state = "open", tracker = "g" }, nil)
+	assert(xDone == doneBefore and bx.selected == nil)
+
+	-- an excerpt that is only whitespace is no excerpt
+	local fw = fake({ ["/w"] = { entry("/w/a", { number = 1 }) } })
+	local bw = loaded(fw, { ["o/w"] = "/w" })
+	local lw: board.Links = {
+		pr = function(_, _, d)
+			d({ ref = "#1", title = "t", state = "open", tracker = "g", excerpt = " \n\t  " }, nil)
+		end,
+		issue = function(_, _, d)
+			d(nil, nil)
+		end,
+		head = function(_, _, d)
+			d(nil)
+		end,
+	}
+	board.select(bw, lw, bw.rows[1].id, yes, function() end)
+	local wd = bw.details[bw.rows[1].id]
+	assert(wd and wd.pr and wd.pr.state == "ready" and wd.pr.info and wd.pr.info.excerpt == nil)
 end
 
 return M
