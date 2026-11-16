@@ -1895,7 +1895,7 @@ function M.setIssueState(repo: string, number: number, op: string, reason: strin
 		problem = "Unexpected issue number."
 	elseif not open and op ~= "close" then
 		problem = "Unexpected issue operation."
-	elseif not open and not table.find(M.CLOSE_REASONS, reason) then
+	elseif not open and (reason == nil or not table.find(M.CLOSE_REASONS, reason)) then
 		problem = "Unexpected close reason."
 	elseif open and (reason ~= nil or text ~= nil) then
 		problem = "Reopening takes no reason or comment."

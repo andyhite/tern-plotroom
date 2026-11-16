@@ -2469,8 +2469,10 @@ case("host mutations: close and reopen run gh issue close or reopen on the plann
 	local b = openIssues(w)
 	local function plan(name: string, extra: { [string]: any }?): any
 		local q: { [string]: any } = { op = "act", name = name }
-		for k, v in extra or {} do
-			q[k] = v
+		if extra then
+			for k, v in extra do
+				q[k] = v
+			end
 		end
 		return asks.hx.ask(w, b, q)
 	end
