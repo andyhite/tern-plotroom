@@ -66,7 +66,7 @@ export type Views = { version: number, nextId: number, items: { View } }
 -- prompts.OUTCOMES id, checked against GitHub when the run's turn ends. `checker` (nil: none) is the id of another
 -- prompt of the kind (Checked by) that a fresh agent runs on the same item when a run of this one ends with a commit.
 -- `premerge` (nil means false; a pull request action's Merge the base first): before its agent starts in a clean
--- worktree of a non-fork pull request GitHub reports conflicting, the host merges the base there (worktree.premerge).
+-- worktree of a non-fork pull request GitHub reports conflicting that the run's own login wrote, the host merges the base there (worktree.premerge).
 export type Prompt = { id: string, name: string, text: string, key: string?, worktree: boolean?, split: boolean?, model: string?, effort: string?, status: string?, next: string?, outcome: string?, checker: string?, premerge: boolean? }
 export type Prompts = { version: number, nextId: number, items: { Prompt } }
 -- A row of a `?` list: its fixed keys, then the configured key of each of its `actions` (Settings › General; a removed

@@ -2093,10 +2093,12 @@ local function mergeModel(w: World, s: Scene, files: { string }, tools: { [strin
 	return unmerged
 end
 
--- Runs the default Watch on o/r#5 of an agentScene whose PR GitHub reports conflicting with base main.
+-- Runs the default Watch on o/r#5 of an agentScene whose PR GitHub reports conflicting with base main, written by the
+-- login the run is (octocat): Plotroom only merges into a pull request its own login wrote.
 local function watchConflicted(w: World): (Scene, h.Block)
 	local s, b = h.agentScene(w)
 	s.gh.meta["o/r#5"].conflicts = true
+	s.gh.meta["o/r#5"].author = "OctoCat"
 	s.git.served["refs/heads/main"] = sha("m")
 	return s, b
 end
@@ -2258,6 +2260,23 @@ windowCase("worktree.premerge: no merge for an action that does not resolve conf
 	lacks(w.window.agents[3].prompt, "<merge>", "a dirty worktree is never merged into")
 	eq(countLog(s.git, "merge "), 0, "git merge never ran")
 	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head origin +refs/heads/main"), 0, "nor was the base fetched for it")
+end)
+
+windowCase("worktree.premerge: a pull request another login wrote is never merged into before its agent starts: no git merge or commit and no lockfile tool run in its worktree", function(w: World)
+	local s = watchConflicted(w)
+	s.gh.meta["o/r#5"].author = "ann"
+	mergeModel(w, s, { "Gemfile.lock", "pnpm-lock.yaml" }, { bundle = { stdout = "" }, pnpm = { stdout = "" } })
+	local from = #w.calls
+	runWatch(w)
+	eq(h.requestsSent(w)[#h.requestsSent(w)].premerge, true, "Watch still asks for the merge")
+	for i = from + 1, #w.calls do
+		local a = w.calls[i].argv
+		local line = table.concat(a, " ")
+		yes(a[1] ~= "bundle" and a[1] ~= "pnpm", "no lockfile tool runs: " .. line)
+		yes(not (a[1] == "git" and (a[4] == "merge" or a[4] == "commit")), "no git merge or commit in the worktree: " .. line)
+	end
+	lacks(w.window.agents[1].prompt, "<merge>", "the agent resolves the conflict itself")
+	eq(w.window.agents[1].cwd, s.target, "in the worktree")
 end)
 
 windowCase("worktree.premerge: a fork PR is never merged into before its agent starts: no git merge or commit and no lockfile tool run in its worktree", function(w: World)

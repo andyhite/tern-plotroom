@@ -349,7 +349,8 @@ end
 -- notes the outcome; with `wt` false, answers the repository's main checkout as it is, reading only the PR's details.
 -- Without a checkout of `repo` the answer asks the window for one. `users`: the answer carries `{github.user}` too,
 -- and `failures` the `{failures}` block, for the prompt that runs there; it always carries `{flaky}` (engine.flakyText).
--- `premerge`: the action says Merge the base first, so a clean worktree of a PR GitHub reports conflicting first gets
+-- `premerge`: the action says Merge the base first, so a clean worktree of a PR GitHub reports conflicting, from the
+-- same repository and written by the run's own login (`{github.user}`, read whenever `premerge` is asked), first gets
 -- its base merged (worktree.premerge), and the answer carries what that did (`merge`) or why it did not (`mergeProblem`).
 local function prepare(state: State, id: string, repo: string, n: number, wt: boolean, users: boolean, failures: boolean, premerge: boolean)
 	local failed: string? = nil
@@ -441,9 +442,11 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 						mergeProblem = mergeProblem,
 					})
 				end
-				-- A fork's code is not trusted: its git hooks and lockfile tools (a Gemfile, a .pnpmfile.cjs, a build
-				-- backend) would run here, so a fork PR gets no premerge and its agent resolves the conflict itself.
-				if not (premerge and not r.fork and r.conflicts and r.dirty == false and r.prBase ~= "") then
+				-- Neither a fork's nor another author's code is trusted: its git hooks and lockfile tools (a Gemfile, a
+				-- .pnpmfile.cjs, a build backend) would run here as you before the agent's own author check could stop
+				-- anything, so only a PR the run's login wrote gets a premerge and the agent resolves the conflict itself.
+				local mine = string.lower(found["github.user"] or "") == string.lower(r.author) and r.author ~= ""
+				if not (premerge and mine and not r.fork and r.conflicts and r.dirty == false and r.prBase ~= "") then
 					return answer(nil)
 				end
 				preparing[key] = true -- a second request waits for the merge, as for the worktree
@@ -472,7 +475,7 @@ local function prepare(state: State, id: string, repo: string, n: number, wt: bo
 			go(found)
 		end)
 	end
-	if not users then
+	if not (users or premerge) then
 		return start({})
 	end
 	readUsers(state, key, wt, false, start)
