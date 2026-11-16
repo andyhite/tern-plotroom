@@ -1254,6 +1254,40 @@ function M.dirty(path: string, done: (boolean?, WindowCx?) -> ())
 	end)
 end
 
+-- What `git worktree remove` deletes without a word: files and folders git ignores (`.env`, local config, a built
+-- node_modules), which `git status` never lists, so a "Clean" worktree can still hold them. `count` is the top-level
+-- entries (a folder git ignores whole counts once, with a trailing "/"), `names` the first few.
+export type Ignored = { count: number, names: { string } }
+
+local IGNORED_NAMES = 3
+
+-- `git ls-files -z -o -i --exclude-standard --directory` output: NUL-separated paths in sorted order, so what lies
+-- under a listed folder follows it at once and is left out. (`git status --ignored` cannot be used: it refuses
+-- `--untracked-files=no`, and without that it lists every untracked file too.)
+function M.parseIgnored(out: string): Ignored
+	local names: { string } = {}
+	local count = 0
+	local dir: string? = nil
+	for path in string.gmatch(out, "[^\0]+") do
+		if not dir or string.sub(path, 1, #dir) ~= dir then
+			count += 1
+			if #names < IGNORED_NAMES then
+				table.insert(names, path)
+			end
+			dir = if string.sub(path, -1) == "/" then path else nil
+		end
+	end
+	return { count = count, names = names }
+end
+
+-- The ignored files and folders of the worktree at `path`; nil when git could not tell (never read as "none").
+-- done(ignored, cx): cx is nil in the host.
+function M.ignored(path: string, done: (Ignored?, WindowCx?) -> ())
+	git(path, { "ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory" }, LOCAL_MS, function(out, _, cx)
+		done(if out then M.parseIgnored(out) else nil, cx)
+	end)
+end
+
 -- Confirms `path` is a work tree of the repository whose git common dir is `commonDir`, then reports its HEAD and
 -- whether it has changes. A worktree made just now must sit at `want`; it is read for changes too, since a checkout
 -- hook may have written some.

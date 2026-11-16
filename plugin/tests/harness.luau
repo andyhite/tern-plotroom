@@ -2235,6 +2235,7 @@ export type Git = {
 	worktrees: { GitWorktree }, -- [1] is the main worktree
 	dirty: { [string]: string }, -- worktree path -> its changes, the entries of `status --porcelain=v2` output
 	unpushed: { [string]: number }, -- worktree path -> commits its branch holds that its upstream lacks (none: no upstream)
+	ignored: { [string]: string }, -- worktree path -> what `ls-files -z -o -i --exclude-standard --directory` lists there (NUL-separated paths; none: nothing ignored)
 	ahead: { [string]: boolean }, -- branch -> it holds commits its fetched ref lacks: `merge-base --is-ancestor` says no
 	unmerged: { [string]: boolean }, -- branch -> `branch -d` refuses it: its commits are merged nowhere
 	fail: { [string]: Reply }, -- "fetch", "status", "worktree add", "rev-parse HEAD"... -> the answer instead of the model's
@@ -2280,6 +2281,7 @@ local function newGit(w: World, root: string): Git
 		config = {},
 		worktrees = { { path = root, branch = "refs/heads/main", head = sha("1"), locked = false } },
 		dirty = {},
+		ignored = {},
 		unpushed = {},
 		ahead = {},
 		unmerged = {},
@@ -2403,6 +2405,8 @@ local function newGit(w: World, root: string): Git
 				return { status = 2, stderr = "error: No such remote '" .. (name or "") .. "'\n" }
 			end
 			return { stdout = urls[1] .. "\n" }
+		elseif sub == "ls-files" then
+			return { stdout = g.ignored[here.path] or "" }
 		elseif sub == "status" then
 			-- `--porcelain=v2 --branch`: header lines, then the entries; the upstream lines only for a branch that has one
 			local head = "# branch.oid " .. here.head .. "\n# branch.head main\n"

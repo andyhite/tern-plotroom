@@ -2425,6 +2425,51 @@ local function fateFact(branch: string?, fate: string): { [string]: any }
 	return { k = "Branch", v = v }
 end
 
+-- The Ignored fact of a worktree removal: what `git worktree remove` deletes though `git status` never lists it (kv
+-- state.removeIgnored, read before the confirm can be accepted). nil when there is none. One worktree or several (the
+-- Board's finished ones): the files are counted across all of them.
+local function ignoredFact(state: State): { [string]: any }?
+	local read = state.removeIgnored
+	if not read then
+		return { k = "Ignored", v = { ui.span("Reading its ignored files from git…", "muted") } }
+	end
+	local total, trees, unknown, listed = 0, 0, 0, 0
+	local names: { string } = {}
+	for _, entry in read do
+		local found: any = entry -- a read git could not answer is false
+		listed += 1
+		if not found then
+			unknown += 1
+		elseif found.count > 0 then
+			total += found.count
+			trees += 1
+			for _, name in found.names do
+				if #names < 3 then
+					table.insert(names, name)
+				end
+			end
+		end
+	end
+	if unknown > 0 then
+		return { k = "Ignored", v = { ui.span("Git could not list its ignored files (.env, local config, …); they are deleted too.") } }
+	elseif total == 0 then
+		return nil
+	end
+	local many = listed > 1
+	local what = total .. " ignored file" .. (if total == 1 then "" else "s") .. " or folder" .. (if total == 1 then "" else "s")
+	local seen = table.concat(names, ", ") .. (if total > #names then ", …" else "")
+	local where = if many then " in " .. trees .. " worktree" .. (if trees == 1 then "" else "s") else ""
+	local verb = if total == 1 then "is" else "are"
+	return { k = "Ignored", v = { ui.span(what .. where .. " (" .. seen .. ") " .. verb .. " deleted with " .. (if many then "them." else "it.")) } }
+end
+
+local function addIgnored(facts: { { [string]: any } }, state: State)
+	local fact = ignoredFact(state)
+	if fact then
+		table.insert(facts, fact)
+	end
+end
+
 local TAB_WARN = "A tab works in it and will be left in a folder that no longer exists."
 local REMOVE_BODY = "Its folder is deleted; git refuses while it has uncommitted changes, and nothing is forced."
 
@@ -2439,6 +2484,7 @@ local function boardConfirm(state: State): Node
 	local facts = withValue({ { k = "Path", v = if row then { ui.span(row.path, "code") } else nil } })
 	if row then
 		table.insert(facts, fateFact(row.branch, board.fate(row)))
+		addIgnored(facts, state)
 	end
 	return confirmOverlay({
 		head = "Remove this worktree?",
@@ -2448,7 +2494,7 @@ local function boardConfirm(state: State): Node
 		label = "Remove",
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
-		act = "wt-confirm-remove",
+		act = if state.removeIgnored then "wt-confirm-remove" else nil,
 	})
 end
 
@@ -2466,18 +2512,20 @@ local function finishedConfirm(state: State): Node
 			end
 		end
 	end
+	local facts = withValue(items)
+	addIgnored(facts, state)
 	local n = #items
 	local unchecked = board.unchecked(state.board)
 	return confirmOverlay({
 		head = "Remove " .. n .. " finished worktree" .. (if n == 1 then "" else "s") .. "?",
 		meta = if unchecked > 0 then unchecked .. " not checked yet" else nil,
 		body = "Each folder is deleted, then its branch unless that holds commits saved nowhere else; git keeps a worktree with uncommitted changes, and nothing is forced.",
-		facts = withValue(items),
+		facts = facts,
 		warn = if tabbed then TAB_WARN else nil,
 		label = "Remove all " .. n,
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
-		act = "wt-confirm-remove",
+		act = if state.removeIgnored then "wt-confirm-remove" else nil,
 	})
 end
 
@@ -2492,6 +2540,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 		local facts = withValue({ { k = "Path", v = if note.path then { ui.span(note.path, "code") } else nil } })
 		if not refusal then
 			table.insert(facts, fateFact(note.branch, state.removeFate or "Reading its branch from git…"))
+			addIgnored(facts, state)
 		end
 		table.insert(layer, confirmOverlay({
 			head = "Remove worktree?",
@@ -2501,7 +2550,7 @@ function M.queueView(state: State, palette: Node, bar: Node?): BlockView
 			label = "Remove",
 			actKeys = { "d" },
 			cancel = "cancel-remove",
-			act = if refusal then nil else "confirm-remove",
+			act = if refusal or not state.removeIgnored then nil else "confirm-remove",
 		}))
 	elseif state.boardOn and (state.boardRemoving or state.boardFinished) then
 		table.insert(layer, if state.boardFinished then finishedConfirm(state) else boardConfirm(state))

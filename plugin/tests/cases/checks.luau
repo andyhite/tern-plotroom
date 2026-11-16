@@ -787,11 +787,16 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	eq(box.p.foot, "layer.confirm.foot", "its buttons in its foot")
 	local foot: any = findKey(box, "foot", "row")
 	same({ foot.c[1].p.text, foot.c[1].p.variant, foot.c[1].p.keys } :: any, { "Cancel", "quiet", { "esc" } :: any }, "Cancel first, quiet, with Esc")
-	same({ foot.c[2].p.text, foot.c[2].p.variant, foot.c[2].p.keys } :: any, { "Remove", "danger", { "d" } :: any }, "then Remove, danger, with its d")
+	eq(#foot.c, 1, "Remove is not offered while git is still listing what is deleted with it")
 	same(findKey(box, "facts", "kv").p.items, {
 		{ k = "Path", v = { { t = target, s = "code" } } },
 		{ k = "Branch", v = { { t = branch, s = "code" }, { t = "  " } :: any, { t = "Reading its branch from git…", s = "muted" } } },
-	}, "naming the worktree's path and branch, and what becomes of the branch once git answers")
+		{ k = "Ignored", v = { { t = "Reading its ignored files from git…", s = "muted" } } },
+	}, "naming the worktree's path and branch, and what becomes of the branch and the ignored files once git answers")
+	w.flush()
+	local read: any = findKey(confirmOf(b), "foot", "row")
+	same({ read.c[2].p.text, read.c[2].p.variant, read.c[2].p.keys } :: any, { "Remove", "danger", { "d" } :: any }, "then Remove, danger, with its d, once git has answered")
+	eq(findKey(confirmOf(b), "facts", "kv").p.items[3], nil, "a worktree with nothing ignored shows no Ignored line")
 	eq(findKey(box, "tab"), nil, "no tab works in it: no warning")
 	eq(b.press("j"), false, "other keys are not taken while it asks")
 	eq(b.press("escape"), true, "Esc keeps it")
@@ -825,6 +830,7 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"ls-files -z -o -i --exclude-standard --directory",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -843,6 +849,7 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	ask()
 	eq(answerOf(b, "a1").created, true, "asking again makes a new worktree: the old one is really gone")
 	pressCard(b, "remove")
+	w.flush()
 	local remove: any = findKey(confirmOf(b), "act", "button")
 	eq(remove.p.text, "Remove", "the question's button says what it does")
 	b.event({ ev = "action", id = "layer.confirm.foot.act", act = remove.p.actions.click })
@@ -898,6 +905,49 @@ case("host: the card's Remove confirm says what becomes of the branch from git's
 	end
 	local gone = said()
 	has(gone, "no longer lists", "a worktree that went detached is not claimed on its branch")
+end)
+
+case("host: the card's Remove confirm warns that ignored files and folders go with the worktree, though git status calls it Clean; it never refuses for them", function(w: World)
+	local s = hostScene(w, 1)
+	s.git.served["refs/pull/1/head"] = sha("b")
+	s.gh.meta["o/r#1"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
+	local b = openQueue(w)
+	local target = "/wt/plotroom-o_r-pr-1"
+	request(b, "a1", { op = "worktree", repo = "o/r", number = 1 })
+	w.flush()
+	same(chipsOf(b), { "Up to date", "Clean" }, "the card says Clean")
+	local function ignoredLine(): string?
+		pressCard(b, "remove")
+		w.flush()
+		for _, f in findKey(confirmOf(b), "facts", "kv").p.items do
+			if f.k == "Ignored" then
+				return f.v[1].t
+			end
+		end
+		return nil
+	end
+	-- `git ls-files` lists a folder git ignores whole once, then (sorted) what is under it, which the count skips
+	s.git.ignored[target] = ".env\0a.local\0build/\0build/out.o\0src/t.local\0"
+	eq(ignoredLine(), "4 ignored files or folders (.env, a.local, build/, …) are deleted with it.", "four top-level entries, three named")
+	b.press("escape")
+	s.git.ignored[target] = ".env\0"
+	eq(ignoredLine(), "1 ignored file or folder (.env) is deleted with it.", "one entry")
+	b.press("escape")
+	s.git.fail["ls-files"] = { status = 128, stderr = "fatal: broken\n" }
+	has(ignoredLine() or "", "Git could not list its ignored files", "git failing to list them is said, never read as none")
+	b.press("escape")
+	s.git.fail["ls-files"] = nil
+	s.git.ignored[target] = nil
+	eq(ignoredLine(), nil, "no ignored file: no line")
+	b.press("escape")
+	s.git.ignored[target] = ".env\0"
+	pressCard(b, "remove")
+	b.typeText("d")
+	eq(confirmOf(b) ~= nil, true, "d waits while git is still listing them")
+	w.flush()
+	b.typeText("d")
+	w.flush()
+	eq(cardOf(b), nil, "a warning, not a refusal: it is removed")
 end)
 
 case("host: a Jira worktree whose mapped checkout is not git's main path has no repo: the confirm says why and d refuses without running git", function(w: World)
@@ -996,6 +1046,7 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"ls-files -z -o -i --exclude-standard --directory",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -1013,6 +1064,7 @@ case("host: a worktree git refuses to remove stays: its card says why, its badge
 	eq(w.toasts[#w.toasts].sub, "It has uncommitted changes; commit, stash or remove it yourself.", "with the same reason")
 	s.git.dirty[target] = nil
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	eq(cardOf(b), nil, "once the changes are dealt with, it goes")
@@ -1037,6 +1089,7 @@ case("host: removing a worktree whose branch holds commits of its own keeps the 
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"ls-files -z -o -i --exclude-standard --directory",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -1066,6 +1119,7 @@ case("host: Remove worktree is refused while the worktree is being prepared, at 
 	w.flush()
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "idle again, it asks")
+	w.flush() -- git has said what is deleted with it, so d can ask
 	request(b, "a3", { op = "worktree", repo = "o/r", number = 1 })
 	b.typeText("d")
 	eq(confirmOf(b), nil, "the question closes")
@@ -1282,6 +1336,7 @@ case("host: a scan that began before a worktree attempt or a removal ended canno
 	refreshNow(w, b)
 	s.git.fail["worktree list"] = nil
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	eq(cardOf(b), nil, "the worktree is removed")
@@ -2856,6 +2911,7 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"ls-files -z -o -i --exclude-standard --directory",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -2871,6 +2927,7 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 	ask()
 	eq(answerOf(b, "a1").created, true, "a new worktree attaches the branch that stayed")
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	eq(w.toasts[#w.toasts].sub, "Branch octocat/12-fix-login was deleted too.", "merged now, it goes with the next removal")
@@ -2878,6 +2935,7 @@ case("host: an issue's worktree is removed with its branch only when git agrees,
 	ask()
 	s.git.dirty[target] = " M src/a.lua\n"
 	pressCard(b, "remove")
+	w.flush()
 	b.typeText("d")
 	w.flush()
 	has(cardText(b), "Not removed. It has uncommitted changes; commit, stash or remove it yourself.", "changes git refuses to lose keep the card, with the reason")
@@ -3535,6 +3593,7 @@ case("host: everything clickable in a preview is a button or a link, and nothing
 	same(hx.offPalette(b.view().layer), {}, "and nothing in it is coloured outside DESIGN.md's Color Meaning Rule")
 	pressCard(b, "remove")
 	yes(confirmOf(b) ~= nil, "the removal asks first")
+	w.flush() -- Remove is offered once git has said what is deleted with it
 	same(hx.miscued(confirmOf(b)), {}, "and its Cancel and Remove are buttons")
 	same(hx.offPalette(confirmOf(b)), {}, "Remove is its one danger button and Cancel wears no colour")
 	local cancel: any, drop: any = findKey(confirmOf(b), "cancel", "button"), findKey(confirmOf(b), "act", "button")

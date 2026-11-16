@@ -1957,6 +1957,7 @@ case("host: an issue with exactly one linked pull request still on its branch is
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
+		"ls-files -z -o -i --exclude-standard --directory",
 		"worktree list --porcelain -z",
 		"config --local --get-regexp ^branch\\..*\\.plotroom(key|pr|repo)$",
 		"for-each-ref --format=%(objectname) %(refname) refs/plotroom-pr/o/r/pr-*",
@@ -2251,12 +2252,14 @@ case("host: where answers the worktree a block knows for a pull request or an is
 	-- removing a worktree forgets it, for every block
 	showPr(prs, 1)
 	pressCard(prs, "remove")
+	w.flush()
 	prs.typeText("d")
 	w.flush()
 	eq(where(prs, "pr", "o/r#1"), nil, "a removed pull request worktree has no path")
 	eq(where(other, "pr", "o/r#1"), nil, "for another block too")
 	eq(where(issues, "issue", "o/r#12"), "/wt/plotroom-o_r-issue-12", "the issue's is still there")
 	pressCard(issues, "remove")
+	w.flush()
 	issues.typeText("d")
 	w.flush()
 	eq(where(issues, "issue", "o/r#12"), nil, "until it is removed too")

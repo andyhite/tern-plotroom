@@ -91,6 +91,8 @@ local function askRemove(state: State)
 	end
 	local key = chosen.key
 	state.removing, state.removeFate, state.removeRefusal = key, nil, nil
+	state.removeRound += 1 -- drops a read of an earlier question's ignored files
+	state.removeIgnored = nil
 	-- The confirm says exactly what becomes of the branch, from git's own list now (removal re-reads it again).
 	local root, repo, path, branch = note.root, note.repo, note.path, note.branch
 	if not root or not repo or not path then
@@ -112,6 +114,10 @@ local function askRemove(state: State)
 		end
 		state.removeRefusal = refusal
 		state.cx:render()
+		if not refusal then
+			-- `git worktree remove` deletes ignored files and folders too (.env, ...) and git status never lists them: say so.
+			engine.readIgnored(state, { path })
+		end
 	end)
 end
 
@@ -616,6 +622,8 @@ local function blockDef(): BlockDef<State>
 				removing = nil,
 				removeFate = nil,
 				removeRefusal = nil,
+				removeIgnored = nil,
+				removeRound = 0,
 				noteSeq = 0,
 				scanned = nil,
 				scanning = false,
@@ -721,7 +729,7 @@ local function blockDef(): BlockDef<State>
 				if name == "enter" or name == "escape" then
 					state.removing = nil
 				elseif plain and k == "d" then
-					if not state.removeRefusal then
+					if not state.removeRefusal and state.removeIgnored then
 						removeNow(state)
 					end
 				else
@@ -1186,7 +1194,7 @@ local function blockDef(): BlockDef<State>
 					askRemove(state)
 				end
 			elseif act == "confirm-remove" then
-				if state.removing and not state.removeRefusal then
+				if state.removing and not state.removeRefusal and state.removeIgnored then
 					removeNow(state)
 				end
 			elseif act == "cancel-remove" then

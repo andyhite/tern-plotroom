@@ -1778,6 +1778,31 @@ function M.boardEnsure(state: State)
 	end
 end
 
+-- Reads the ignored files and folders of the worktrees at `paths` (one after another), for the removal about to be
+-- confirmed: `git worktree remove` deletes them without a word and `git status` never lists them. state.removeIgnored
+-- is nil until all are read; a newer read drops this one.
+function M.readIgnored(state: State, paths: { string })
+	state.removeRound += 1
+	state.removeIgnored = nil
+	local round = state.removeRound
+	local found: { [string]: any } = {}
+	local function step(i: number)
+		if not M.alive(state) or state.removeRound ~= round then
+			return
+		end
+		local path = paths[i]
+		if not path then
+			state.removeIgnored = found
+			return state.cx:render()
+		end
+		worktree.ignored(path, function(ignored: worktree.Ignored?)
+			found[path] = if ignored then ignored else false
+			step(i + 1)
+		end)
+	end
+	step(1)
+end
+
 -- The backend the board model calls: git on this host only. `dirty` reads one folder, and only one the latest inventory listed.
 function M.boardApi(state: State): any
 	return {
@@ -2876,6 +2901,7 @@ function M.boardAct(state: State, act: string): boolean
 			state.cx:toast("info", "Still reading", "Remove it once the read has finished.")
 		elseif row and not row.locked and not row.missing then
 			state.boardRemoving = row.id
+			M.readIgnored(state, { row.path })
 		elseif row then
 			state.cx:toast("info", "Not removed here", "Locked or missing worktrees are not removed here.")
 		end
@@ -2891,11 +2917,18 @@ function M.boardAct(state: State, act: string): boolean
 				state.cx:toast("info", "No finished worktrees", "Run Find finished worktrees first; it marks the merged and closed ones.")
 			else
 				state.boardFinished = ids
+				local paths: { string } = {}
+				for _, r in board.finished(state.board) do
+					table.insert(paths, r.path)
+				end
+				M.readIgnored(state, paths)
 			end
 		end
 	elseif act == "wt-cancel-remove" then
 		state.boardRemoving = nil
 		state.boardFinished = nil
+	elseif act == "wt-confirm-remove" and (state.boardRemoving or state.boardFinished) and state.removeIgnored == nil then
+		-- Its ignored files are still being read: the confirm cannot say what goes yet, so it waits.
 	elseif act == "wt-confirm-remove" then
 		local id, ids = state.boardRemoving, state.boardFinished
 		state.boardRemoving, state.boardFinished = nil, nil
