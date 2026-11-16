@@ -219,7 +219,7 @@ case("summary: Settings › General picks the Summary model from omp's list in t
 	same({ row.control.k, row.control.act, row.control.label, row.changed, row.hint }, { "action", "pick-model", "@smol", false } :: { any }, "a button naming omp's small model, unchanged")
 	has(row.defaultLabel or "", "@smol", "and reset says it goes back to @smol")
 	b.event({ ev = "action", id = "layer.settings", act = "pick-model", value = "summary:model" })
-	eq(w.opened[#w.opened], "plotroom://model/summary:model", "the button asks the window's picker the actions use")
+	eq(w.opened[#w.opened], h.tokened("plotroom://model/summary:model"), "the button asks the window's picker the actions use")
 	request(b, "q1", { op = "models", prompt = "summary:model" })
 	local a = answerOf(b, "q1")
 	same(a.models, { "anthropic/claude-opus-4-5", "anthropic/claude-haiku-4-5", "openai/gpt-5.2" }, "the picker gets omp's models")

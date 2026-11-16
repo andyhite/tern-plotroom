@@ -987,7 +987,7 @@ windowCase("window: the Jira project picker lists the saved projects and acli's;
 	s.acli.projects = { { key = "ABC", name = "Alpha" }, { key = "XYZ", name = "Xyz Project" } }
 	w.window.choose = "Other project…"
 	w.window.typed = "xyz"
-	w.click("plotroom://jira-projects")
+	w.click(h.tokened("plotroom://jira-projects"))
 	w.flush()
 	local items = w.window.picks[1].items
 	eq(items[1].label, "ABC", "the saved project first")

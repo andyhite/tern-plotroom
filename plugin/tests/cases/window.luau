@@ -29,7 +29,7 @@ windowCase("window: the Add repository picker offers the saved repositories and 
 	s.gh.repos.work = { "z/z", "o/r" }
 	local b = linkQueue(w, s)
 	w.window.choose = { "@work", "z/z" }
-	w.click("plotroom://repos")
+	w.click(h.tokened("plotroom://repos"))
 	w.flush()
 	local function labels(i: number): { string }
 		local out: { string } = {}
@@ -45,7 +45,7 @@ windowCase("window: the Add repository picker offers the saved repositories and 
 	eq(prefsOf(b).editing.row, "checkout:z/z", "and Settings opens on its checkout row")
 	w.window.choose = "Other repository…"
 	w.window.typed = " p/q "
-	w.click("plotroom://repos")
+	w.click(h.tokened("plotroom://repos"))
 	w.flush()
 	eq(w.kv.get("checkouts")["p/q"], "", "so is a typed one")
 	eq(prefsOf(b).editing.row, "checkout:p/q", "with its row open")
@@ -170,7 +170,7 @@ windowCase("window: Commands rows show an action's detail filled for the selecte
 		promptOf("p3", "Odd", "Look at {nope}"),
 	})
 	b.render()
-	w.click("plotroom://more")
+	w.click(h.tokened("plotroom://more"))
 	w.flush()
 	local byLabel: { [string]: any } = {}
 	for _, item in w.window.picks[#w.window.picks].items do
@@ -373,7 +373,7 @@ windowCase("window: Settings' Model button opens a picker of omp's default, the 
 	h.goToSettings(b, "prompts")
 	w.flush()
 	w.window.choose = "claude-haiku-4-5"
-	w.click("plotroom://model/prs:p1")
+	w.click(h.tokened("plotroom://model/prs:p1"))
 	w.flush()
 	local pick = w.window.picks[#w.window.picks]
 	local shown: { string } = {}
@@ -393,7 +393,7 @@ windowCase("window: Settings' Model button opens a picker of omp's default, the 
 	}, "omp's default, the saved model omp no longer lists (current, marked), the roles with their models, then each provider's models")
 	eq(w.kv.get("prompts-prs").items[1].model, "anthropic/claude-haiku-4-5", "the pick is saved as its selector")
 	w.window.choose = "@slow"
-	w.click("plotroom://model/prs:p1")
+	w.click(h.tokened("plotroom://model/prs:p1"))
 	w.flush()
 	eq(w.kv.get("prompts-prs").items[1].model, "@slow", "a role is saved as its alias")
 	local current: { string } = {}
@@ -404,10 +404,10 @@ windowCase("window: Settings' Model button opens a picker of omp's default, the 
 	end
 	same(current, { "claude-haiku-4-5" }, "the picker had checked the model saved then, and only it")
 	w.window.choose = "omp's default"
-	w.click("plotroom://model/prs:p1")
+	w.click(h.tokened("plotroom://model/prs:p1"))
 	w.flush()
 	eq(w.kv.get("prompts-prs").items[1].model, nil, "omp's default resets it")
-	w.click("plotroom://model/prs:p1; rm")
+	w.click(h.tokened("plotroom://model/prs:p1; rm"))
 	eq(w.toasts[#w.toasts].text, "Plotroom: malformed link", "a malformed link asks nothing")
 end)
 
@@ -416,7 +416,7 @@ windowCase("window: Settings' Summary model button opens the same picker, with t
 	h.goToSettings(b, "general")
 	w.flush()
 	w.window.choose = "claude-haiku-4-5"
-	w.click("plotroom://model/summary:model")
+	w.click(h.tokened("plotroom://model/summary:model"))
 	w.flush()
 	local pick = w.window.picks[#w.window.picks]
 	local first = pick.items[1]
@@ -424,7 +424,7 @@ windowCase("window: Settings' Summary model button opens the same picker, with t
 	eq(pick.items[#pick.items].label, "gpt-5.2", "then the roles and omp's models")
 	eq(w.kv.get("summary").model, "anthropic/claude-haiku-4-5", "the pick is saved as the Summary model")
 	w.window.choose = "Summary default"
-	w.click("plotroom://model/summary:model")
+	w.click(h.tokened("plotroom://model/summary:model"))
 	w.flush()
 	eq(w.window.picks[#w.window.picks].items[1].current, false, "the picker had the saved model current, not the default")
 	eq(w.kv.get("summary").model, nil, "the default resets it")
@@ -823,10 +823,35 @@ windowCase("window: a link without the host's token is refused, so text in a des
 	refused("plotroom://github/run/o/r/5/p1", "a run link with no token")
 	refused("plotroom://github/worktree/o/r/5", "a worktree link with no token")
 	refused("plotroom://github/worktree/o/r/5?k=0123456789abcdef01234567", "a worktree link with a stale token")
+	-- The links that open Commands, a picker or a folder prompt, run the Next move or ask to ignore a check: bare, and
+	-- with another run's token. A description can hold any of them.
+	local notFromBlock = "Plotroom: link did not come from a Plotroom block"
+	for _, c in {
+		{ "plotroom://next", notFromBlock },
+		{ "plotroom://repos", notFromBlock },
+		{ "plotroom://jira-projects", notFromBlock },
+		{ "plotroom://model/prs:p1", notFromBlock },
+		{ "plotroom://checkout/evil/repo", notFromBlock },
+		{ "plotroom://more", "Plotroom: Commands are not offered here" },
+		{ "plotroom://github/ignore/1/build", "Plotroom: that check is no longer listed" },
+	} do
+		for _, link in { c[1], c[1] .. "?k=0123456789abcdef01234567" } do
+			local said = #w.toasts
+			w.click(link)
+			w.flush()
+			eq(w.toasts[said + 1].text, c[2], link .. ": refused")
+			lacks(w.toasts[said + 1].text .. (w.toasts[said + 1].sub or ""), token :: string, link .. ": the toast does not show the token")
+		end
+	end
+	eq(#w.window.picks, 0, "no picker opened")
+	eq(#w.window.prompts, 0, "no folder was asked")
 	eq(#w.window.events, sent, "nothing was asked of any host")
 	eq(#w.calls, ran, "nothing ran")
 	eq(#w.window.agents, 0, "no agent started")
 	eq(#w.window.launches, 0, "no tab opened")
+	w.click(h.tokened("plotroom://more"))
+	w.flush()
+	eq(#w.window.picks, 1, "the block's own Commands link, with its token, still opens Commands")
 end)
 
 windowCase("window: a pull request whose head branch has shell characters is refused for Worktree and agents", function(w: World)

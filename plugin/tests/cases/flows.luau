@@ -27,7 +27,7 @@ type FlowStub = { reply: (string, any) -> any, link: (string, string) -> (), ops
 -- hidden link node the window validates a link against; `palette(rows)` publishes the block's main.palette node.
 local function flowHost(w: World, pane: number?): FlowStub
 	local at = pane or 1
-	local main: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } }, { id = "main.more", p = { href = "plotroom://more", hidden = true } } }
+	local main: { any } = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } }, { id = "main.more", p = { href = h.tokened("plotroom://more"), hidden = true } } }
 	-- The host acknowledges an agent-status event by publishing main.agents: the sorted `key=state;` signature.
 	local session: any = w.cx.session
 	local sendEvent = session.event
@@ -884,7 +884,7 @@ windowCase("window flows: Copy usage report lists both machines' counts by name 
 	)
 	st.palette({ items = {}, commands = { { id = "usage-report" } } })
 	w.window.choose = "Copy usage report"
-	w.click("plotroom://more")
+	w.click(h.tokened("plotroom://more"))
 	w.flush()
 	local text = w.copied[#w.copied]
 	has(text, "Since " .. os.date("!%Y-%m-%d", EPOCH - 2 * 86400), "since the first recorded day of either machine")
@@ -1420,7 +1420,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 		})
 		w.window.choose = choose
 		local picks = #w.window.picks
-		w.click("plotroom://more")
+		w.click(h.tokened("plotroom://more"))
 		w.flush()
 		local pick = w.window.picks[picks + 1]
 		return flowRows(pick), pick
@@ -1503,19 +1503,19 @@ windowCase("window flows: the Next row leads Commands, and plotroom://next runs 
 	st.palette({ items = {}, queue = queue, commands = { { id = "pr-ready", group = "GitHub - PR" } }, next = "pr-ready" })
 	st.link("layer.queue.buttons.agent", prLink("agent", "o/r", 7))
 	w.window.choose = nil
-	w.click("plotroom://more")
+	w.click(h.tokened("plotroom://more"))
 	w.flush()
 	local pick = w.window.picks[#w.window.picks]
 	eq(pick.items[1].label, "Ready for review…", "the next move is the first row")
 	eq(pick.items[1].group, "Next", "under Next")
 	eq(pick.items[1].detail, "key x", "with its key")
-	w.click("plotroom://next")
+	w.click(h.tokened("plotroom://next"))
 	w.flush()
 	eq(st.ops()[#st.ops()], "act", "the link runs the command's own flow")
 	eq(requestsSent(w)[#requestsSent(w)].name, "pr-ready", "the one named, which plans before anything is sent")
 	local ops = #st.ops()
 	st.palette({ items = {}, queue = queue, commands = { { id = "pr-ready", group = "GitHub - PR" } }, next = "pr-merge" })
-	w.click("plotroom://next")
+	w.click(h.tokened("plotroom://next"))
 	w.flush()
 	eq(#st.ops(), ops, "a command the block does not offer is never run")
 	eq(w.toasts[#w.toasts].text, "Plotroom: that move is no longer offered here", "and says so")

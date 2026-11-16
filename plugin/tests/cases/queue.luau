@@ -482,7 +482,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands
 	eq(w.kv.get("keys").more, nil, "Reset brings the palette's key back")
 	b.press("escape")
 	eq(b.press(".", nil, "."), true, "and it works again")
-	eq(w.opened[#w.opened], "plotroom://more", "opening the command palette")
+	eq(w.opened[#w.opened], h.tokened("plotroom://more"), "opening the command palette")
 end)
 
 case("host: the empty queue's hint names the Settings key, or just Settings when it has none", function(w: World)
@@ -551,7 +551,7 @@ case("host: the command palette's menu lists the queue actions and the commands 
 	local s = hostScene(w, 3)
 	w.kv.store.keys = nil :: any
 	local b = openQueue(w)
-	eq(findKey(b.view().main, "more").p.href, "plotroom://more", "the palette's link is always on screen, for the window to check")
+	eq(findKey(b.view().main, "more").p.href, h.tokened("plotroom://more"), "the palette's link is always on screen with the host's token, for the window to check")
 	local p = hx.palette(w, b)
 	local expectedIds: { string } = { "open", "worktree", "copy-link", "copy-number", "copy-branch", "seen", "snooze", "layout", "snoozed", "sort", "search", "refresh", "nownext" }
 	for _, scope in pickerOf(b).scopes do
@@ -2410,7 +2410,7 @@ case("host: a prompt's Model is picked from omp's models and roles; one omp no l
 	same(roles, { "plan=", "review=openai/gpt-5.2:high", "slow=anthropic/claude-opus-4-5:max", "smol=" }, "omp's own roles and the config's, minus default, each with the model it names")
 	same({ a.current, a.listed }, { "@slow", "@slow" }, "the saved model, found in the list")
 	b.event({ ev = "action", id = "layer.settings", act = "pick-model", value = "pmodel:prs:p1" })
-	eq(w.opened[#w.opened], "plotroom://model/prs:p1", "the button asks the window's picker, naming the action")
+	eq(w.opened[#w.opened], h.tokened("plotroom://model/prs:p1"), "the button asks the window's picker, naming the action")
 	expand(b, "popen:prs:p2")
 	same({ rowIn(b, "pmodel:prs:p2").control.label, rowIn(b, "pmodel:prs:p2").hint }, { "retired/model-x", "Not in omp's list" }, "a model omp no longer lists stays selected, marked")
 	request(b, "q2", { op = "models", prompt = "prs:p2" })
@@ -3702,7 +3702,7 @@ case("host next move: each pull request stage maps to its move, shown first in C
 	eq(nextOf(w, b, "no_2fr_232").row, "Merge…", "named as its command")
 	opened = #w.opened
 	b.press("x", nil, "x")
-	eq(w.opened[opened + 1], "plotroom://next", "x asks the window to run it")
+	eq(w.opened[opened + 1], h.tokened("plotroom://next"), "x asks the window to run it")
 	same(nextOf(w, b, "no_2fr_233"), {}, "a merged PR with no worktree: no move, no button, no row")
 	opened = #w.opened
 	eq(b.press("x", nil, "x"), false, "and x is not taken")

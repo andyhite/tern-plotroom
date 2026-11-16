@@ -3682,7 +3682,7 @@ windowCase("window: a check row's click and Open open its page beside the block,
 	eq(checkRow(b, "run1").menu[2], nil, "and the row no longer offers it")
 	cardSurface(w, b)
 	local said = #w.toasts
-	w.click("plotroom://github/ignore/1/build")
+	w.click(h.tokened("plotroom://github/ignore/1/build"))
 	eq(w.toasts[said + 1].text, "Plotroom: that check is no longer listed", "an ignore link the block no longer shows is refused")
 	w.click("plotroom://github/check/1/" .. "https%3A%2F%2Fexample.com")
 	eq(w.toasts[said + 2].text, "Plotroom: that check is no longer listed", "so is a check link to another page")

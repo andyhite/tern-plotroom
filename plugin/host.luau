@@ -143,7 +143,7 @@ local function runQueueAction(state: State, act: string): boolean
 	elseif act == "settings" then
 		openSettings(state)
 	elseif act == "more" then
-		state.cx:open("plotroom://more")
+		state.cx:open(core.withToken("plotroom://more"))
 	elseif act == "agentdisagree" or act == "agentreview" then
 		-- Disagree with check… needs the selected item's checker verdict, Show Draft review a Draft review its run opened;
 		-- its agent may have exited. In the Agents list, Show Draft review is the previewed agent's.
@@ -194,7 +194,7 @@ local function runQueueAction(state: State, act: string): boolean
 		elseif move.id == "remove" then
 			askRemove(state)
 		elseif string.sub(move.id, 1, 4) == "cmd:" then
-			state.cx:open("plotroom://next") -- the window runs the command `main.palette` names as `next`
+			state.cx:open(core.withToken("plotroom://next")) -- the window runs the command `main.palette` names as `next`
 		elseif string.sub(move.id, 1, 4) == "run:" then
 			state.cx:open(runHrefOf(state, chosen, string.sub(move.id, 5)))
 		else

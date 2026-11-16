@@ -374,7 +374,7 @@ function M.rpcNodes(state: State, palette: Node): { Node }
 		-- How many need you (Now's rows not snoozed): the sidebar counts it, and the window's status line takes it.
 		ui.node("text", { key = "need", text = tostring(engine.nowCount(state)), hidden = true }),
 		-- The command palette's link (its key and button open it), with or without a selected item.
-		ui.node("text", { key = "more", href = "plotroom://more", hidden = true }),
+		ui.node("text", { key = "more", href = core.withToken("plotroom://more"), hidden = true }),
 		palette,
 		-- This host's usage counts (usage.luau), for the window's Copy usage report.
 		ui.node("text", { key = "usage", text = usage.published(), hidden = true }),
@@ -490,7 +490,7 @@ local function checkLink(state: State, act: string, item: string): string?
 	if act == "open" then
 		return if r.url then "plotroom://github/check/" .. i .. "/" .. pct(r.url) else nil
 	elseif act == "ignore" then
-		return if r.status == "failure" and not engine.ignored(state, pr, r) then "plotroom://github/ignore/" .. i .. "/" .. pct(r.name) else nil
+		return if r.status == "failure" and not engine.ignored(state, pr, r) then core.withToken("plotroom://github/ignore/" .. i .. "/" .. pct(r.name)) else nil
 	end
 	return nil
 end
@@ -2086,7 +2086,7 @@ local function checklist(state: State): Node?
 		elseif type(path) == "string" then
 			line("co:" .. key, "Use " .. worktree.tilde(path, tern.getenv("HOME")) .. " as the checkout", "todo", "setup-use=" .. repo, repo)
 		else
-			line("co:" .. key, "Choose the checkout of " .. repo .. "…", "todo", "open", "A new or empty folder gets a clone", "plotroom://checkout/" .. repo)
+			line("co:" .. key, "Choose the checkout of " .. repo .. "…", "todo", "open", "A new or empty folder gets a clone", core.withToken("plotroom://checkout/" .. repo))
 		end
 	end
 	local choice = shortcutsChoice(saved)

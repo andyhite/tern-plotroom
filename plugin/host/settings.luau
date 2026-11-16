@@ -1658,15 +1658,15 @@ function M.runAction(state: State, act: string, row: string)
 	elseif act == "refresh" then
 		retry(state)
 	elseif act == "add-repo" then
-		state.cx:open("plotroom://repos")
+		state.cx:open(core.withToken("plotroom://repos"))
 	elseif act == "pick-model" then
 		-- The window's picker (window.luau's `pickModel`) asks this block for omp's list; its pick comes back as the row's change.
 		local id = string.match(row, "^pmodel:(%a+:[%w]+)$") or (if row == "summary:model" then row else nil)
 		if id then
-			state.cx:open("plotroom://model/" .. id)
+			state.cx:open(core.withToken("plotroom://model/" .. id))
 		end
 	elseif act == "add-jira" then
-		state.cx:open("plotroom://jira-projects")
+		state.cx:open(core.withToken("plotroom://jira-projects"))
 	elseif act == "guide" then
 		for _, c in cli.list do
 			if row == "guide:" .. c.id then

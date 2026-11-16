@@ -190,6 +190,14 @@ local function nodeProp(node: any, prop: string): any?
 	return nil
 end
 
+-- Whether `full` ends in the token of the host behind `pane` (the `?k=<token>` its always-published hidden `main.more`
+-- link carries): a link the block opened, not one written into a description it shows.
+local function fromHost(cx: WindowCx, pane: number, full: string): boolean
+	local more = nodeProp(readNode(cx, pane, MORE_NODE), "href")
+	local token = if type(more) == "string" then string.match(more, "%?k=%x+$") else nil
+	return token ~= nil and string.sub(full, -#token) == token
+end
+
 -- `plotroom://github/<open|worktree|goto|agent|show>/<owner>/<repo>/<n>`, or `…/run/<owner>/<repo>/<n>/<prompt id>`:
 -- the kind, the PR, and for `run` the saved prompt's id.
 local function parseLink(url: string): (string?, string?, string?, number?, string?)
@@ -1742,7 +1750,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		return true
 	end
 	if url == "plotroom://repos" or url == "plotroom://jira-projects" then
-		if not isPlotroom(cx, pane) then
+		if not isPlotroom(cx, pane) or not fromHost(cx, pane, full) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://repos" then
 			pickRepo(cx, pane)
@@ -1753,7 +1761,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	end
 	if string.sub(url, 1, 17) == "plotroom://model/" then
 		local qid = string.match(url, "^plotroom://model/(%a+:[%w]+)$")
-		if not isPlotroom(cx, pane) then
+		if not isPlotroom(cx, pane) or not fromHost(cx, pane, full) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif not qid then
 			cx:toast("error", "Plotroom: malformed link")
@@ -1773,7 +1781,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	local cOwner, cName = string.match(url, "^plotroom://checkout/([^/]+)/([^/]+)$")
 	if string.sub(url, 1, 20) == "plotroom://checkout/" then
 		-- The Get started checklist's line for a repository whose checkout was not found: ask for a folder.
-		if not isPlotroom(cx, pane) then
+		if not isPlotroom(cx, pane) or not fromHost(cx, pane, full) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif not cOwner or not cName or not worktree.validSegment(cOwner) or not worktree.validSegment(cName) then
 			cx:toast("error", "Plotroom: malformed link")
@@ -1785,7 +1793,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 	if url == "plotroom://next" then
 		-- The Next move that is a window command (the block opens this for it): run as its Commands row runs it, and
 		-- only while the block names it as `next` among the commands it offers.
-		if not isPlotroom(cx, pane) then
+		if not isPlotroom(cx, pane) or not fromHost(cx, pane, full) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 			return true
 		end
@@ -1813,7 +1821,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
 		elseif url == "plotroom://more" then
-			if nodeProp(readNode(cx, pane, MORE_NODE), "href") ~= url then
+			if nodeProp(readNode(cx, pane, MORE_NODE), "href") ~= full then
 				cx:toast("error", "Plotroom: Commands are not offered here")
 			else
 				palette(cx, pane)
@@ -1841,7 +1849,7 @@ local function handle(cx: WindowCx, full: string, pane: number, typed: boolean?)
 		-- A failing check's Ignore in this repo… (its row's menu): the plan to ignore that check, confirmed in the block.
 		if not isPlotroom(cx, pane) then
 			cx:toast("error", "Plotroom: link did not come from a Plotroom block")
-		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= url then
+		elseif nodeProp(readNode(cx, pane, IGNORE_NODE .. ignoreIndex), "href") ~= full then
 			cx:toast("error", "Plotroom: that check is no longer listed", "Refresh and try again.")
 		else
 			flows.ignoreCheck(cx, pane, unpct(ignoreName))
