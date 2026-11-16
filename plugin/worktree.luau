@@ -1661,9 +1661,17 @@ end
 -- committed. done(merge, problem, cx); a problem (the fetch, or a merge that stopped for another reason, which is
 -- aborted) leaves the branch as it was.
 function M.premerge(path: string, remote: string, base: string, account: string?, done: Cb<Merge>)
-	if not string.match(base, "^[%w_][%w_%./%-]*$") or not M.validSegment(remote) then
+	local bad: string? = nil
+	if base == "" then
+		bad = "The pull request names no base branch to merge."
+	elseif not github.validRef(base) then
+		bad = "Base branch “" .. input.clean(string.sub(base, 1, 80)) .. "” has characters Plotroom does not accept in a branch name."
+	elseif not github.validRef(remote) then
+		bad = "Remote “" .. input.clean(string.sub(remote, 1, 80)) .. "” has characters Plotroom does not accept in a remote name."
+	end
+	if bad then
 		return process.later(function(cx)
-			done(nil, "Base " .. base .. " is not a branch Plotroom merges", cx)
+			done(nil, bad, cx)
 		end)
 	end
 	local tracking = "refs/remotes/" .. remote .. "/" .. base
@@ -1811,9 +1819,17 @@ M.DIFF_TOO_LARGE = "The diff is too large to show."
 -- failure (a timeout, no merge base) is returned at once. A large diff may need more than LOCAL_MS, so it gets NET_MS.
 -- done(diff, problem, cx).
 function M.reviewDiff(path: string, repo: string, number: number, base: string, head: string, account: string?, done: Cb<string>)
-	if not string.match(base, "^[%w_][%w_%./%-]*$") or string.find(base, "..", 1, true) or not string.match(head, "^%x+$") or #head > 64 then
+	local bad: string? = nil
+	if base == "" then
+		bad = "The pull request names no base branch to diff against."
+	elseif not github.validRef(base) then
+		bad = "Base branch “" .. input.clean(string.sub(base, 1, 80)) .. "” has characters Plotroom does not accept in a branch name."
+	elseif not string.match(head, "^%x+$") or #head > 64 then
+		bad = "The review names a head commit Plotroom does not read."
+	end
+	if bad then
 		return process.later(function(cx)
-			done(nil, "The review names a base or head commit Plotroom does not read.", cx)
+			done(nil, bad, cx)
 		end)
 	end
 	M.resolveRepository(path, repo, function(info, why, cx)

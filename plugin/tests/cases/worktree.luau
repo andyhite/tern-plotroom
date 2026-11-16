@@ -112,6 +112,38 @@ case("worktree: validSegment accepts GitHub names and refuses path tricks", func
 	end
 end)
 
+case("worktree: premerge and reviewDiff share one base check and name the value they refuse", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local github = w.load("github") :: h.Github
+	for _, name in { "main", "release/1.0+rc", "user@x/topic", "team/fork", "a.b-c_d" } do
+		yes(github.validRef(name), name .. " is a legal name")
+	end
+	for _, name in { "", "a..b", "a//b", "a/", "a.", "x.lock", "a/b.lock", "a/.b", "-x", "a b", "a\n", "a@{1}" } do
+		yes(not github.validRef(name), show(name) .. " is refused")
+	end
+	local function premerge(remote: string, base: string): string?
+		local got: string? = nil
+		worktree.premerge("/wt", remote, base, nil, function(_, problem)
+			got = problem
+		end)
+		w.flush()
+		return got
+	end
+	has(premerge("origin", "a..b"), "Base branch “a..b”", "a bad base is named")
+	has(premerge("origin", ""), "names no base branch", "an empty base says so")
+	has(premerge("bad remote", "main"), "Remote “bad remote”", "a bad remote is named, not the base")
+	local function diff(base: string): string?
+		local got: string? = nil
+		worktree.reviewDiff("/wt", "o/r", 1, base, string.rep("a", 40), nil, function(_, problem)
+			got = problem
+		end)
+		w.flush()
+		return got
+	end
+	has(diff("a//b"), "Base branch “a//b”", "reviewDiff refuses the same bases")
+	has(diff(""), "names no base branch", "and says so for an empty base")
+end)
+
 case("worktree: remote URLs with a trailing slash still identify the repository", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local function gh(url: string): string?

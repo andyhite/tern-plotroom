@@ -1339,6 +1339,21 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 	end, account)
 end
 
+-- A branch or remote name Plotroom puts in a git ref, a path or a prompt: git's own ref-name rules (no `..`, empty,
+-- dot-leading or `.lock`-ending component, trailing `.`) over a plain character set (`+` and `@` are legal in both).
+-- One check for every site that takes the name, so one place accepts what another refuses.
+function M.validRef(s: string): boolean
+	if not string.match(s, "^[%w_][%w_%./%+@%-]*$") or string.find(s, "..", 1, true) or string.sub(s, -1) == "." then
+		return false
+	end
+	for part in string.gmatch(s .. "/", "([^/]*)/") do
+		if part == "" or string.sub(part, 1, 1) == "." or string.sub(part, -5) == ".lock" then
+			return false
+		end
+	end
+	return true
+end
+
 -- baseRef, title and author only feed prompt variables, so a missing one is "" rather than a failed read. `fork` is the
 -- owner of the repository the head branch lives in when that is not `base` (a fork), and `forkRepo` that repository
 -- ("owner/name"; nil when it was deleted). `conflicts`: GitHub reports the PR conflicts with its base (false while it
@@ -1365,11 +1380,10 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 		end
 		-- The head and base branches become git refs, paths and prompt text: only a plain name goes on (their author is not the
 		-- user). A base gh left out is "" and stays so.
-		local PLAIN_REF = "^[%w_][%w_%./%+@%-]*$"
-		if not string.match(data.ref, PLAIN_REF) then
+		if not M.validRef(data.ref) then
 			return done(nil, { kind = "failed", message = "The head branch “" .. input.clean(string.sub(data.ref, 1, 80)) .. "” has characters Plotroom does not accept in a branch name." }, cx)
 		end
-		if type(data.baseRef) == "string" and data.baseRef ~= "" and not string.match(data.baseRef, PLAIN_REF) then
+		if type(data.baseRef) == "string" and data.baseRef ~= "" and not M.validRef(data.baseRef) then
 			return done(nil, { kind = "failed", message = "The base branch “" .. input.clean(string.sub(data.baseRef, 1, 80)) .. "” has characters Plotroom does not accept in a branch name." }, cx)
 		end
 		local function text(v: any): string
