@@ -304,8 +304,8 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	end
 	local gone = state.agentInfo[item.key]
 	if state.agents[item.key] == "exited" and gone and engine.died(gone) then
-		local b = DIED_BADGE[gone.result or ""]
-		table.insert(items, { k = "Agent", v = { ui.span(b.text, b.tone), ui.span(" — no end-of-run report") } })
+		local died = DIED_BADGE[gone.result or ""]
+		table.insert(items, { k = "Agent", v = { ui.span(died.text, died.tone), ui.span(" — no end-of-run report") } })
 	end
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil

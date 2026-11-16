@@ -395,7 +395,7 @@ windowCase("window flows: a run that failed or exited with no report is toasted 
 	w.window.handlers.agent_finished({ pane = link.agent, result = "failed" }, w.cx)
 	w.flush()
 	local toast = w.toasts[#w.toasts]
-	same({ toast.level, toast.text, toast.sub }, { "error", "o/r#5: agent failed", "Review" }, "the item and what happened, named by its action")
+	same({ toast.level, toast.text, toast.sub or "-" }, { "error", "o/r#5: agent failed", "Review" }, "the item and what happened, named by its action")
 	local told = #w.toasts
 	w.window.handlers.agent_finished({ pane = link.agent, result = "exited" }, w.cx)
 	w.flush()
