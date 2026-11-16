@@ -394,6 +394,23 @@ case("now: an idle agent whose outcome is Not verified, or whose report says stu
 	same(whys(b), { "no_2fr_233 Report: stuck" }, "a stuck report needs you whatever the outcome")
 end)
 
+case("now: an agent that exited after its run failed or exited with no report ranks with Needs you, without Go to agent; one that reported or never died does not", function(w: World)
+	local _, b = nowScene(w, {})
+	asks.hx.agents(b, {
+		["o/r#3"] = { state = "exited", action = "Implement", result = "failed", attention = "none" },
+		["o/r#4"] = { state = "exited", action = "Fix", result = "exited", attention = "none" },
+		["o/r#5"] = { state = "exited" },
+		["o/r#6"] = { state = "idle", action = "Fix", result = "failed", attention = "none" },
+	})
+	same(whys(b), { "no_2fr_233 Agent failed", "no_2fr_234 Agent exited" }, "only the two dead runs, each saying how it died")
+	eq(b.title(), "Plotroom · Now · 2 agents need you", "and they are counted")
+	has(textOf(h.pickerNode(b)), "The agent's run failed and left no end-of-run report", "the preview says why")
+	eq(table.find(h.hx.palette(w, b).ids, "agentgo"), nil, "no pane to go to")
+	eq(h.findKey(h.pickerNode(b), "agentgo"), nil, "nor a hidden link to one")
+	asks.hx.agents(b, { ["o/r#3"] = { state = "working", action = "Implement" } })
+	same(whys(b), {}, "a newer run replaces the dead one")
+end)
+
 case("now: an idle checker whose check failed ranks with Needs you, its findings in the preview; a passing one does not", function(w: World)
 	local _, b = nowScene(w, {})
 	asks.hx.agents(b, {

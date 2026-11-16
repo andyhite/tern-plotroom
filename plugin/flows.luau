@@ -362,6 +362,11 @@ local function statusMap(links: { Link }, host: HostId, states: { [number]: stri
 			local state = stateOf(l, states, cwds) or "exited"
 			local note: { last: string?, err: string? } = notes[l.agent] or {}
 			local row: StatusRow = { state = state, check = l.check, review = l.reviewed }
+			-- An agent that died (its run failed or exited with no end-of-run report) stays Needs you (engine.needsYou)
+			-- after it exited, so its thin row keeps what says so.
+			if state == "exited" and l.attention == "none" and (l.result == "failed" or l.result == "exited") then
+				row.result, row.attention, row.action = l.result, l.attention, l.action
+			end
 			local full: StatusRow = { state = state, action = l.action, branch = l.branch, title = l.title, last = note.last, err = note.err, result = l.result, ended = l.ended, attention = l.attention, reason = l.reason, blocker = l.blocker, outcome = l.outcome, verdict = if l.outcome then l.verdict else nil, check = l.check, findings = if l.check == "fail" then l.findings else nil, stop = l.stop, review = l.reviewed }
 			if state == "working" then
 				local first = l.result == nil and l.started ~= nil
@@ -1176,6 +1181,7 @@ local waits: { [number]: Wait } = {} -- agent pane -> its turn end waiting for t
 
 local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string, msgs: { any }?)
 	local first = l.result == nil
+	local ended = l.result == "failed" or l.result == "exited"
 	local report = usage.reportOf(turnReport(msgs))
 	l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
 	if report then
@@ -1183,6 +1189,11 @@ local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string
 		l.commit = report.commit or l.commit
 	elseif first then
 		l.attention, l.reason, l.blocker = "none", nil, nil
+	end
+	-- A run that failed or exited with no report is told once: nothing else says it died (its agent's row falls back to
+	-- what GitHub shows, engine.needsYou keeps it in Now).
+	if (result == "failed" or result == "exited") and l.attention == "none" and not ended then
+		cx:toast("error", l.key .. ": agent " .. result, l.action)
 	end
 	local verdict: string? = nil
 	local findings: { string } = {}

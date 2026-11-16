@@ -169,6 +169,12 @@ local function verdictBadge(info: { outcome: string?, verdict: string? }?): { te
 	return if b and label then { text = b.text, tone = b.tone, title = b.title .. label } else nil
 end
 
+-- An exited agent whose run died (engine.died): it failed, or its program exited, with no end-of-run report.
+local DIED_BADGE: { [string]: { text: string, tone: string, title: string } } = {
+	failed = { text = "Agent failed", tone = "error", title = "The agent's run failed and left no end-of-run report" },
+	exited = { text = "Agent exited", tone = "error", title = "The agent's program exited and left no end-of-run report" },
+}
+
 -- The Outcome fact: "<outcome>: <verdict>", nil when verdictBadge has none.
 local function verdictText(info: { outcome: string?, verdict: string? }?): string?
 	local b = verdictBadge(info)
@@ -195,6 +201,10 @@ local function decorate(state: State, kind: string, item: any, row: { [string]: 
 	local agent = AGENT_BADGE[state.agents[item.key] or ""]
 	if agent and stage ~= "working" and stage ~= "needs" then
 		table.insert(extra, agent)
+	end
+	local gone = state.agentInfo[item.key]
+	if state.agents[item.key] == "exited" and gone and engine.died(gone) then
+		table.insert(extra, DIED_BADGE[gone.result or ""])
 	end
 	local info = if state.agents[item.key] and state.agents[item.key] ~= "exited" then state.agentInfo[item.key] else nil
 	local verdict, checked = verdictBadge(info), checkBadge(info)
@@ -291,6 +301,11 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	-- Each reason a Blocked PR has, most severe first: its job, then who or what.
 	for _, r in (blockers or {}) :: { engine.Blocker } do
 		table.insert(items, { k = "Blocked by", v = if r.detail then { ui.span(r.chip, "error"), ui.span(" — " .. r.detail) } else { ui.span(r.chip, "error") } })
+	end
+	local gone = state.agentInfo[item.key]
+	if state.agents[item.key] == "exited" and gone and engine.died(gone) then
+		local b = DIED_BADGE[gone.result or ""]
+		table.insert(items, { k = "Agent", v = { ui.span(b.text, b.tone), ui.span(" — no end-of-run report") } })
 	end
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
 	local info = if live then state.agentInfo[item.key] else nil
@@ -1712,6 +1727,9 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		elseif agent.attention == "stuck" or agent.attention == "needs-human" then
 			local report = REPORT_BADGE[agent.attention]
 			return { text = report.text, tone = report.tone, title = report.title }, report.title
+		elseif row.dead then
+			local b = DIED_BADGE[agent.result or ""]
+			return { text = b.text, tone = b.tone, title = b.title }, b.title
 		end
 		return { text = verdict or "Not verified", tone = "accent", title = "GitHub does not show what its run must leave behind" }, "GitHub does not show what its run must leave behind: " .. (verdict or "Not verified")
 	elseif row.rank == 2 then
@@ -1747,7 +1765,7 @@ local function nowPreview(state: State): { Node }
 	if item and row.kind then
 		stage = stageBadge((engine.stage(state, row.kind, item)), state.notes[item.key])
 	end
-	local go = if row.rank == 1 and row.key then engine.agentHref(row.key) else nil
+	local go = if row.rank == 1 and row.key and not row.dead then engine.agentHref(row.key) else nil
 	local reply = if go and row.waiting then engine.agentHref(row.key, "agentreply") else nil
 	local enter = if go then "Enter goes to the agent." elseif row.url then "Enter shows it in Plotroom." else "Enter has nothing to show for it."
 	-- The links Go to agent and Reply… open (the window honours only links its block shows).

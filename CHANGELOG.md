@@ -6,6 +6,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 - A snooze ends when the item changes (checks going red, a review, a push, a comment since you snoozed it), not only at 08:00 tomorrow: the item is listed, counted and in Now again as Changed. The Snooze toast says "until tomorrow, or until it changes". Snoozes saved before this still run to their time.
+- A run that failed, or whose agent program exited, with no end-of-run report is no longer silent: one error toast names the item (`o/r#5: agent failed`), and after the agent exits its item stays Needs you in Now with an Agent failed or Agent exited badge, and its action offered again as the Next move, until a newer run replaces it.
 - Remotes at `ssh.github.com` (GitHub's SSH over port 443), an SSH alias that `ssh -G` resolves to it, and ssh remotes with an Enterprise-managed user (`org-123@github.com:o/r`) are recognised as GitHub, so Worktree, Draft PR and Draft review diffs work for those checkouts.
 - The Draft review reads a pull request's diff with up to 120 s, not 10 s, and fetches the pull request's head only when git says the head commit is missing; a timeout or another failure (such as no merge base) is shown at once instead of after a pointless fetch and a second try.
 - A pull request whose base branch has characters Plotroom does not accept in a branch name (as its head branch already was) is refused by Worktree and agents, so a base branch named like shell syntax never reaches an agent prompt's `{base}`.

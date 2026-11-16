@@ -2217,7 +2217,7 @@ function M.paletteActions(state: State): { QueueAction }
 	end
 	if state.nowOn then
 		local row = engine.nowSelected(state)
-		if row and row.rank == 1 and row.key and engine.agentHref(row.key) then
+		if row and row.rank == 1 and row.key and not row.dead and engine.agentHref(row.key) then
 			if row.waiting then
 				labels.agentreply = "Reply…"
 				add("agentreply", "Now")

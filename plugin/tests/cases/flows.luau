@@ -389,6 +389,37 @@ windowCase("window flows: a valid end-of-run report call goes on the run record 
 	eq(row.result, "done", "beside the turn's result")
 end)
 
+windowCase("window flows: a run that failed or exited with no report is toasted once, and its exited agent still tells the block how it died", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "failed" }, w.cx)
+	w.flush()
+	local toast = w.toasts[#w.toasts]
+	same({ toast.level, toast.text, toast.sub }, { "error", "o/r#5: agent failed", "Review" }, "the item and what happened, named by its action")
+	local told = #w.toasts
+	w.window.handlers.agent_finished({ pane = link.agent, result = "exited" }, w.cx)
+	w.flush()
+	eq(#w.toasts, told, "its program exiting after the failure says nothing more")
+	w.window.panes[link.agent] = nil
+	w.advance(4000)
+	same(statusEvents(w)[#statusEvents(w)].map["o/r#5"], { state = "exited", result = "exited", attention = "none", action = "Review" }, "the exited agent's row keeps how it died, and the action to run again")
+end)
+
+windowCase("window flows: an agent that exited after a report is not toasted and tells the block nothing but its state", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	reports(w, link.agent, `\{"attention":"ok","reason":"done","commit":null,"pr":null,"evidence":[],"blocker":null}`)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	local told = #w.toasts
+	w.window.handlers.agent_finished({ pane = link.agent, result = "exited" }, w.cx)
+	w.flush()
+	eq(#w.toasts, told, "no toast: it reported before it exited")
+	w.window.panes[link.agent] = nil
+	w.advance(4000)
+	same(statusEvents(w)[#statusEvents(w)].map["o/r#5"], { state = "exited" }, "and its exited row stays bare")
+end)
+
 windowCase("window flows: a refused report call is not read; the corrected call after it is", function(w: World)
 	w.load("window")
 	local link = startReview(w)

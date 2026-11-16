@@ -355,13 +355,23 @@ function M.status(state: State, kind: string, item: any): any
 	return st
 end
 
+-- Whether an exited agent's run died: it failed or exited without an end-of-run report (the window sends those two
+-- fields for an exited agent only then).
+function M.died(info: AgentInfo): boolean
+	return (info.result == "failed" or info.result == "exited") and info.attention == "none"
+end
+
 -- Whether the agent of item `key` needs you: it waits for input; or, idle after its turn, its end-of-run report says
 -- `stuck` or `needs-human`, its run's outcome was checked Not verified, it is a checker whose check failed, or its
--- item's chain stopped at a limit. A working agent does not (you answered it), and an exited one is no longer listed.
+-- item's chain stopped at a limit; or it exited after its run died (M.died), until a newer run of the item replaces it.
+-- A working agent does not (you answered it), and any other exited one is no longer listed.
+-- ponytail: no dismissing a dead run, only a new run (or the item merging or closing) clears it.
 function M.needsYou(state: State, key: string): boolean
 	local agent = state.agents[key]
 	if agent == "waiting_input" then
 		return true
+	elseif agent == "exited" then
+		return M.died(state.agentInfo[key] or {})
 	elseif agent ~= "idle" then
 		return false
 	end
@@ -659,6 +669,12 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	if stage == "merged" or stage == "closed" then
 		return if note and note.ok then { id = "remove", label = "Remove worktree…" } else nil
 	elseif stage == "needs" or stage == "working" then
+		local info = state.agentInfo[item.key]
+		if state.agents[item.key] == "exited" and info then
+			-- a dead run: the same action again, where it is offered
+			local again = if info.action then action(info.action) else nil
+			return if again then { id = again.id, label = again.label .. " again" } else nil
+		end
 		return { id = "agentgo", label = "Go to agent" }
 	elseif kind ~= "prs" then
 		if stage == "none" then
@@ -3190,7 +3206,7 @@ end
 -- follows the link Now's preview carries. false when the row is no such agent.
 function M.nowAgent(state: State, act: string): boolean
 	local row = M.nowSelected(state)
-	local href = if row and row.rank == 1 and row.key and (act ~= "agentreply" or row.waiting) then M.agentHref(row.key, act) else nil
+	local href = if row and row.rank == 1 and row.key and not row.dead and (act ~= "agentreply" or row.waiting) then M.agentHref(row.key, act) else nil
 	if href then
 		state.cx:open(href)
 	end
@@ -3530,6 +3546,7 @@ function M.nowRows(state: State): { any }
 			item = if found then found.item else nil,
 			agent = info,
 			waiting = state.agents[key] == "waiting_input", -- else idle: its report or its outcome check needs you
+			dead = state.agents[key] == "exited", -- its run died (M.died): no pane to go to
 			title = if found then found.item.title elseif info.title then info.title else key,
 			url = if found then found.item.url else nil,
 			snoozed = false,
