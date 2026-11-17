@@ -445,6 +445,7 @@ export type World = {
 	respond: (Responder) -> (),
 	kv: Kv,
 	fs: Fs,
+	tern: typeof(tern), -- the fake SDK itself, for a case about how the fake behaves
 	panes: { PaneRow },
 	blocks: { [string]: any },
 	lenses: { [string]: any }, -- manifest lens id -> its LensDef, as `tern.lens.define` got it
@@ -461,7 +462,7 @@ export type World = {
 	cx: any, -- the window's cx: what callbacks receive in a window world
 	link: (Block) -> (), -- makes `block` the window's pane of the same id: events reach it, its opens are link clicks there, its main region is what the window reads
 	click: (string, number?, { alt: boolean? }?) -> any, -- a link click in `pane` (default 1); `{alt = true}` holds Alt
-	command: (string) -> (),
+	command: (string, boolean?) -> (),
 	commandDef: (string) -> any, -- the def the window passed tern.command for `id`; nil when none
 	palette: () -> { string },
 	finish: () -> (),
@@ -1142,8 +1143,15 @@ local function newWorld(instantiate: Loader, context: string): World
 		return table.concat(call.argv, " ")
 	end
 
-	local sdk: any = {
-		context = context,
+	-- A member of the pinned SDK this fake does not model: it fails loudly instead of silently existing.
+	local function unfaked(name: string): (...any) -> ...any
+		return function()
+			error("the fake tern has no " .. name .. ": add it to the harness before a case needs it", 2)
+		end
+	end
+
+	local sdk: typeof(tern) = {
+		context = context :: any,
 		plugin = { id = "plotroom", name = "Tern Plotroom", version = "0.1.0", dir = "/plugins/plotroom", data = "/data/plotroom" },
 		runtime = { os = "macos", jit = false },
 		log = {
@@ -1163,7 +1171,7 @@ local function newWorld(instantiate: Loader, context: string): World
 			array = function(t: any?): any
 				local list = t or {}
 				return tagArray(list)
-			end,
+			end :: any,
 			null = NULL,
 		},
 		now = function(): number
@@ -1252,6 +1260,11 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			list = function(path: string): { string }
 				local p = cleanPath(path)
+				if files[p] ~= nil then
+					error("read_dir " .. p .. ": Not a directory", 0)
+				elseif not dirs[p] then
+					error("read_dir " .. p .. ": No such file or directory", 0)
+				end
 				local names: { string } = {}
 				for name in files do
 					if parentOf(name) == p then
@@ -1268,6 +1281,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			remove = function(path: string)
 				local p = cleanPath(path)
+				if files[p] == nil and not dirs[p] then
+					error("remove " .. p .. ": No such file or directory", 0)
+				end
 				files[p] = nil
 				dirs[p] = nil
 				local prefix = p .. "/"
@@ -1284,18 +1300,44 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 		},
 		process = {
-			run = function(argv: any, a: any, b: any)
+			run = function(argv: any, a: any, b: any): any
 				local opts: any = a
 				local cb: any = b
 				if type(a) == "function" then
 					opts, cb = nil, a
 				end
-				if type(argv) ~= "table" or #argv == 0 or type(cb) ~= "function" then
-					error("the fake process.run takes (argv, opts?, callback)", 2)
+				-- Like the SDK: bad arguments raise, and a call without a callback returns an Awaitable.
+				if type(argv) ~= "table" or #argv == 0 then
+					error("tern.process.run: argv must be a non-empty array of strings", 2)
+				end
+				if opts ~= nil and type(opts) ~= "table" then
+					error("tern.process.run: opts must be a table", 2)
+				end
+				if cb ~= nil and type(cb) ~= "function" then
+					error("tern.process.run: the callback must be a function", 2)
+				end
+				for key in opts or {} do
+					if key ~= "cwd" and key ~= "env" and key ~= "stdin" and key ~= "timeout_ms" then
+						error("tern.process.run: unknown option " .. tostring(key) .. " (the options are cwd, env, stdin, timeout_ms)", 2)
+					end
 				end
 				local list: { string } = {}
-				for _, arg in argv do
-					table.insert(list, tostring(arg))
+				for i, arg in argv do
+					if type(arg) ~= "string" then
+						error("tern.process.run: argv[" .. i .. "] is a " .. type(arg) .. ", not a string", 2)
+					end
+					table.insert(list, arg)
+				end
+				local awaitable = cb == nil
+				local waiter: any = nil
+				local settled: any = nil
+				if awaitable then
+					cb = function(result: any, cx: any)
+						settled = result
+						if waiter then
+							waiter(result, nil, cx)
+						end
+					end
 				end
 				local copy: { [string]: string } = {}
 				if opts and type(opts.env) == "table" then
@@ -1344,9 +1386,22 @@ local function newWorld(instantiate: Loader, context: string): World
 						cb(result, if context == "window" then windowCx else nil)
 					end)
 				end
-			end,
+				if awaitable then
+					return {
+						kind = "process",
+						id = #calls,
+						next = function(_self: any, fn: any)
+							waiter = fn
+							if settled then
+								fn(settled, nil, if context == "window" then windowCx else nil)
+							end
+						end,
+					}
+				end
+				return nil
+			end :: any,
 		},
-		ui = {
+		ui = (({
 			diff = function(text: string, path: string?): any
 				return { k = "diff", p = { text = text, path = path } }
 			end,
@@ -1399,7 +1454,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				end
 				return { k = "el", p = p, c = children }
 			end,
-		},
+		}) :: any),
 		pane = {
 			list = function(): { PaneRow }
 				local rows: { PaneRow } = {}
@@ -1407,7 +1462,8 @@ local function newWorld(instantiate: Loader, context: string): World
 					table.insert(rows, { pane = row.pane, cwd = row.cwd })
 				end
 				return rows
-			end,
+			end :: any, -- ponytail: rows carry only pane and cwd, not PaneInfo's other 17 fields; fill them in when a case reads one
+			write = unfaked("pane.write"),
 		},
 		block = {
 			define = function(id: string, def: any)
@@ -1437,6 +1493,8 @@ local function newWorld(instantiate: Loader, context: string): World
 			refresh = function()
 				win.refreshes += 1
 			end,
+			window_title = unfaked("chrome.window_title"),
+			program_icon = unfaked("chrome.program_icon"),
 		},
 		command = function(def: any)
 			commands[def.id] = def
@@ -1452,6 +1510,29 @@ local function newWorld(instantiate: Loader, context: string): World
 				routes.open = fn
 			end,
 		},
+		-- Declared by the SDK, not used by Plotroom: calling one fails loudly until a case needs it faked.
+		carly = {
+			export = unfaked("carly.export"),
+			context = unfaked("carly.context"),
+			schedule = unfaked("carly.schedule"),
+			tasks = unfaked("carly.tasks"),
+			cancel = unfaked("carly.cancel"),
+			on_canvas = unfaked("carly.on_canvas"),
+		},
+		base64 = { encode = unfaked("base64.encode"), decode = unfaked("base64.decode") },
+		sleep = unfaked("sleep"),
+		secrets = { get = unfaked("secrets.get"), set = unfaked("secrets.set") },
+		fetch = unfaked("fetch") :: any,
+		parse = {
+			columns = unfaked("parse.columns"),
+			packed = unfaked("parse.packed"),
+			json_tree = unfaked("parse.json_tree"),
+			location = unfaked("parse.location"),
+			size = unfaked("parse.size"),
+		},
+		bind = unfaked("bind"),
+		override = unfaked("override"),
+		css = unfaked("css"),
 	}
 
 	local load = instantiate(sdk, fakeOs)
@@ -1626,6 +1707,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 		kv = kv,
 		fs = fs,
+		tern = sdk,
 		panes = panes,
 		blocks = blocks,
 		lenses = lenses,
@@ -1655,10 +1737,16 @@ local function newWorld(instantiate: Loader, context: string): World
 			local alt = mods ~= nil and mods.alt == true
 			return handler({ url = url, pane = pane or 1, mods = { cmd = false, alt = alt, shift = false, ctrl = false } }, windowCx)
 		end,
-		command = function(id: string)
+		command = function(id: string, fromPalette: boolean?)
 			local def = commands[id]
 			if def == nil then
 				error("the window registered no command " .. id, 2)
+			end
+			-- `available` says only whether Tern's palette lists the row: the action name (key binds, `tern ctl plugins run`)
+			-- runs a hidden command too, as most cases here do. `fromPalette` is a pick from the palette, which cannot
+			-- reach a hidden one.
+			if fromPalette and def.available ~= nil and not def.available(windowCx) then
+				error("the command " .. id .. " is not in Tern's palette now (its `available` answered false)", 2)
 			end
 			def.run(windowCx)
 		end,

@@ -24,6 +24,7 @@ require("./cases/arrive")
 require("./cases/review")
 require("./cases/layout")
 require("./cases/extension")
+require("./cases/fake")
 
 type Loader = h.Loader
 
