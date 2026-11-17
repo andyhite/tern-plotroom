@@ -2381,7 +2381,7 @@ end
 -- Refresh, the scopes, Settings and the shortcut list. Next in Now is offered everywhere.
 function M.paletteActions(state: State): { QueueAction }
 	local map = keys.load()
-	local labels: { [string]: string } = { unpin = "Unpin" }
+	local labels: { [string]: string } = { unpin = "Unpin", seenall = "Mark all seen" }
 	for _, a in keys.ACTIONS do
 		labels[a.id] = a.label
 	end
@@ -2430,6 +2430,9 @@ function M.paletteActions(state: State): { QueueAction }
 		end
 		add("seen", "Triage")
 		add("snooze", "Triage")
+		if #engine.unseenShown(state, true) > 0 then
+			add("seenall", "Triage")
+		end
 		if engine.pinFor(state.pins, item.key) then
 			add("unpin", "Triage")
 		end

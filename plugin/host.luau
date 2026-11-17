@@ -193,6 +193,8 @@ local function runQueueAction(state: State, act: string): boolean
 		return requests.copy(state, act)
 	elseif act == "seen" or act == "snooze" then
 		engine.mark(state, act)
+	elseif act == "seenall" then
+		engine.markAllSeen(state)
 	elseif act == "snoozed" then
 		engine.toggle(state, act)
 	elseif act == "layout" then

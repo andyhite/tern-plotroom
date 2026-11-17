@@ -1012,6 +1012,51 @@ function M.mark(state: State, act: string)
 	state.cx:toast("success", if act == "seen" then "Marked seen" elseif act == "snooze" then "Snoozed until " .. os.date("%a %H:%M", until_) .. ", or until it changes" else "Snooze ended", item.key)
 end
 
+-- The items the list shows now (the view's, after the search and with snoozed ones left out unless shown) that are New
+-- or Changed: what Mark all seen marks. Nothing while Now, Worktrees or Agents is shown. `first`: stop at the first.
+function M.unseenShown(state: State, first: boolean?): { any }
+	local out: { any } = {}
+	local v = if state.boardOn or state.agentsOn or state.nowOn then nil else M.filtered(state)
+	if not v or not state.snap then
+		return out
+	end
+	for _, item in v.items do
+		local st = M.status(state, state.snap.kind, item)
+		if st and st.fresh ~= "seen" and triage.sanitizeKey(item.key) then
+			table.insert(out, item)
+			if first then
+				break
+			end
+		end
+	end
+	return out
+end
+
+-- Mark all seen: every New or Changed item the list shows (M.unseenShown), in one save of the triage store (reread first,
+-- never overwritten when unreadable). No confirm: seen only quiets the New and Changed signal.
+function M.markAllSeen(state: State)
+	local snap = state.snap
+	local items = M.unseenShown(state)
+	if not snap or #items == 0 then
+		return
+	end
+	local store = M.store(state, true)
+	if not store then
+		return state.cx:toast("error", "Not saved", state.triageProblem or "The saved triage state could not be read.")
+	end
+	local now = os.time()
+	for _, item in items do
+		triage.markSeen(store, snap.kind, item, now)
+	end
+	local err = triage.save(store)
+	if err then
+		state.triage, state.triageProblem = nil, nil
+		return state.cx:toast("error", "Not saved", err)
+	end
+	M.triageChanged(state)
+	state.cx:toast("success", string.format("%d %s marked seen", #items, if #items == 1 then "item" else "items"))
+end
+
 -- The narrowest block, in terminal columns, that lays a Board out; a narrower one shows the List. Measured in real Tern
 -- (c226): below about 80 columns a card's number and why it is listed no longer fit its column.
 M.BOARD_MIN_COLS = 80

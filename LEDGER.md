@@ -34,6 +34,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | --- | --- | --- | --- | --- | --- |
 | New and Changed badges; seen is automatic | Queue rows | Keep | — | Approved | |
 | Mark seen | Commands | Keep | — | Approved | |
+| Mark all seen | Commands › Triage | New | — | Approved | Marks every New or Changed item the list shows, in one save, with no confirm; toast `N items marked seen`. Clears a backlog of badges the user has judged irrelevant (k928) |
 | Snooze until 08:00 tomorrow; Show or hide snoozed; Unsnooze | Commands, preview | Keep | — | Approved | |
 | Needs attention only filter | Commands | Merge into **Now** | 2 | Approved | Three names today, and a partial answer to "what needs me". Done: removed; Now lists New and Changed assigned items |
 | Pane-title count and the `N need attention` status segment | Pane title, status bar | Merge into one **Now** count | 2 | Approved | Done: `N need you` in the status bar is the one count and a button (shows Now); the pane title and Now's heading split it by reason (`2 agents need you · 1 Blocked · 3 reviews requested`); no header number repeats the sidebar |

@@ -9,6 +9,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ### Added
 
+- **Mark all seen** (Commands › Triage, offered while the list shows a New or Changed item) marks every New or Changed item the view shows seen in one save, with no confirm, and toasts `N items marked seen` (tern-plotroom#k928).
 - The Worktrees sidebar entry reads **Worktrees · N finished** while N worktrees were made for an item a loaded view already lists as merged or closed (or that Find finished worktrees marked), counted from what is loaded with no read of its own; the number beside it stays the total (tern-plotroom#k9gy).
 - **Move to status…** on a Jira issue (Commands): pick a status the loaded issues of its project show, or type another, then confirm the move (`acli jira workitem transition`, no API token), bound to the Jira account and site acli is signed in as. Reopens LEDGER's cut Jira transition… (rw2k).
 - SECURITY.md says how to report a vulnerability privately and what is in scope; the README's More list links it and AGENTS.md as the contributor guide (tern-plotroom#tcrg).

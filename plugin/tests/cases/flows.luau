@@ -2344,6 +2344,38 @@ case("host triage: unseen rows are New, the selected row is marked seen on its o
 	eq(w.toasts[#w.toasts].text, "Marked seen", "m still marks and says so")
 end)
 
+case("host triage: Mark all seen marks the New and Changed items the list shows, snoozed ones apart, in one save, and says how many; it is offered only while one is shown", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).ids, "seenall") ~= nil
+	end
+	yes(offered(), "offered while the list shows New items")
+	eq(hx.palette(w, b).groups.seenall, "Triage", "under Triage")
+	eq(hx.palette(w, b).labels.seenall, "Mark all seen", "named Mark all seen")
+	b.typeText("z")
+	same(asks.hx.marks(b), { "New", "New" }, "the first item is snoozed and leaves the list")
+	b.event({ ev = "action", act = "queue", value = "seenall" })
+	same(asks.hx.marks(b), { "-", "-" }, "every item the list shows is marked seen, with no confirm")
+	eq(w.toasts[#w.toasts].text, "2 items marked seen", "the toast counts them")
+	same(asks.hx.keys((w.kv.get("triage") :: any).items), { "o/r#1", "o/r#2", "o/r#3" }, "the snoozed item's entry is the snooze; the others are saved")
+	eq((w.kv.get("triage") :: any).items["o/r#1"].seen, nil, "the snoozed item is not marked")
+	eq(offered(), false, "nothing left to mark: not offered")
+	local before = #w.toasts
+	b.event({ ev = "action", act = "queue", value = "seenall" })
+	eq(#w.toasts, before, "and running it says nothing")
+	b.typeText("Z")
+	same(asks.hx.marks(b), { "Snoozed", "-", "-" }, "the snoozed item shows again, still unmarked (Snoozed badge)")
+	s.gh.items.octocat[2] = searchItem(2, "o/r", EPOCH - 60, { checks = "FAILURE" })
+	refreshNow(w, b)
+	same(asks.hx.marks(b), { "Snoozed", "Changed", "-" }, "a changed item shows Changed")
+	b.event({ ev = "action", act = "queue", value = "seenall" })
+	eq(w.toasts[#w.toasts].text, "2 items marked seen", "the snoozed item shown again and the Changed one are marked")
+	yes((w.kv.get("triage") :: any).items["o/r#1"].seen ~= nil, "the once snoozed item is marked once shown")
+	same(asks.hx.marks(b), { "Snoozed", "-", "-" }, "the Changed one is seen")
+	w.flush()
+end)
+
 case("host triage: a save that fails is told once and tried again only when the row changes", function(w: World)
 	local s = hostScene(w, 3)
 	w.kv.failSet["triage"] = "read-only file system"
