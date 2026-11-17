@@ -19,6 +19,8 @@ M.UNDECIDED = "undecided"
 M.NEED_BASE = "need-base"
 
 export type Repo = { root: string, commonDir: string, remote: string }
+-- A draft PR's possible target: a github.com repository among the checkout's remotes, with the Repo it resolves to.
+export type Destination = { repo: string, remote: string, root: string, commonDir: string }
 export type Record = {
 	path: string,
 	head: string?,
@@ -99,6 +101,8 @@ M.STRANDED = "HEAD has commits no branch or remote holds; create a branch first.
 local ENV = { GIT_TERMINAL_PROMPT = "0", GIT_OPTIONAL_LOCKS = "0" }
 
 type Cb<T> = (T?, string?, WindowCx?) -> ()
+-- resolveRepository's shape: a caller may hand draftPreview and pushBranch a memoized one.
+export type Resolve = (path: string, repo: string, done: Cb<Repo>) -> ()
 
 local function lines(s: string): { string }
 	local out = {}
@@ -1120,46 +1124,54 @@ local function headOf(path: string, done: (string?, string?, string?) -> ())
 end
 
 -- The GitHub repositories a draft PR from the work tree at `path` may target: one per distinct github.com repository
--- among its checkout's remotes (origin first), spelled as the remote URL spells it. Local git only; the same remote
--- `draftPreview`, `remoteBranches` and `pushBranch` then resolve for that repo. done(list, problem).
-function M.draftDestinations(path: string, done: ({ { repo: string, remote: string } }?, string?) -> ())
+-- among its checkout's remotes (origin first), spelled as the remote URL spells it, each with its checkout's root and
+-- git common dir: the Repo `draftPreview` and `pushBranch` resolve for it. Local git only. done(list, problem).
+function M.draftDestinations(path: string, done: ({ Destination }?, string?) -> ())
 	topLevel(path, function(root, err)
 		if not root then
 			return done(nil, err)
 		end
-		rankedRemotes(root, function(names, err2)
-			if not names then
-				return done(nil, err2)
+		git(root, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, LOCAL_MS, function(cd, err1)
+			if not cd then
+				return done(nil, err1)
 			end
-			local out: { { repo: string, remote: string } } = {}
-			local seen: { [string]: boolean } = {}
-			local function try(i: number)
-				if i > #names then
-					if #out == 0 then
-						return done(nil, root .. " has no github.com remote.")
-					end
-					return done(out, nil)
+			local common = trim(cd)
+			rankedRemotes(root, function(names, err2)
+				if not names then
+					return done(nil, err2)
 				end
-				git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls)
-					scan(lines(urls or ""), nil, nil, function(id)
-						if id and not seen[string.lower(id)] then
-							seen[string.lower(id)] = true
-							table.insert(out, { repo = id, remote = names[i] })
+				local out: { Destination } = {}
+				local seen: { [string]: boolean } = {}
+				local function try(i: number)
+					if i > #names then
+						if #out == 0 then
+							return done(nil, root .. " has no github.com remote.")
 						end
-						try(i + 1)
+						return done(out, nil)
+					end
+					git(root, { "remote", "get-url", "--all", names[i] }, LOCAL_MS, function(urls)
+						scan(lines(urls or ""), nil, nil, function(id)
+							if id and not seen[string.lower(id)] then
+								seen[string.lower(id)] = true
+								table.insert(out, { repo = id, remote = names[i], root = root, commonDir = common })
+							end
+							try(i + 1)
+						end)
 					end)
-				end)
-			end
-			try(1)
+				end
+				try(1)
+			end)
 		end)
 	end)
 end
 
 -- Reads what a draft PR from the work tree at `path` into `base` of `repo` would hold. The base is fetched from the
 -- remote first (network, up to two minutes; a failed fetch is a problem, never a stale base), so call it on a
--- deliberate request only. Nothing is pushed or created. done(draft, problem).
-function M.draftPreview(path: string, repo: string, base: string, account: string?, done: (Draft?, string?) -> ())
-	M.resolveRepository(path, repo, function(info, why)
+-- deliberate request only. Nothing is pushed or created. `resolve` (default resolveRepository) finds the checkout and
+-- remote; the branch, HEAD and base are always read. done(draft, problem).
+function M.draftPreview(path: string, repo: string, base: string, account: string?, done: (Draft?, string?) -> (), resolve: Resolve?)
+	local find = resolve or M.resolveRepository
+	find(path, repo, function(info, why)
 		if not info then
 			return done(nil, why)
 		end
@@ -1233,9 +1245,10 @@ end
 -- Pushes what `draft` previewed: commit `draft.head` to `draft.branch` on `draft.remote`, never forced and never
 -- committing anything. Refused when the work tree is on another branch or commit than previewed, or the remote no
 -- longer is the repository's, so what the user confirmed is what goes. A rejected (non-fast-forward) push is an error.
--- done(problem): nil when pushed.
-function M.pushBranch(draft: Draft, account: string?, done: (string?) -> ())
-	M.resolveRepository(draft.path, draft.repo, function(info, why)
+-- `resolve` as draftPreview's. done(problem): nil when pushed.
+function M.pushBranch(draft: Draft, account: string?, done: (string?) -> (), resolve: Resolve?)
+	local find = resolve or M.resolveRepository
+	find(draft.path, draft.repo, function(info, why)
 		if not info then
 			return done(why)
 		elseif info.remote ~= draft.remote or info.root ~= draft.root then

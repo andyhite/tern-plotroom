@@ -68,6 +68,35 @@ end
 local preparing: { [string]: boolean } = {}
 M.preparing = preparing
 
+-- Checkouts resolved for a repository in the last RESOLVED_MS, by checkout path and repository (lowercase): one draft's
+-- preview and commit read its remotes once. Each entry is dropped by a timer: os.time's whole seconds are too coarse.
+local RESOLVED_MS = 5000
+local resolved: { [string]: worktree.Repo } = {}
+
+local function remember(path: string, repo: string, info: worktree.Repo)
+	local key = path .. "\0" .. string.lower(repo)
+	resolved[key] = info
+	tern.timer(RESOLVED_MS, function()
+		if resolved[key] == info then
+			resolved[key] = nil
+		end
+	end)
+end
+
+-- worktree.resolveRepository through the memo.
+local function resolve(path: string, repo: string, done: (worktree.Repo?, string?, WindowCx?) -> ())
+	local hit = resolved[path .. "\0" .. string.lower(repo)]
+	if hit then
+		return done(hit, nil, nil)
+	end
+	worktree.resolveRepository(path, repo, function(info, why, cx)
+		if info then
+			remember(path, repo, info)
+		end
+		done(info, why, cx)
+	end)
+end
+
 local function reply(state: State, id: string, body: { [string]: any })
 	if not alive(state) then
 		return
@@ -1583,7 +1612,7 @@ function M.draft(state: State, id: string, q: any)
 	-- The repositories a draft may target: the GitHub remotes of this worktree's checkout, read again by every step, so a
 	-- repository the window names is only ever one of them (never typed text); the saved repository of the checkout first.
 	local saved = M.repoOfRoot(root)
-	local function destinations(done: ({ { repo: string, remote: string } }) -> ())
+	local function destinations(done: ({ worktree.Destination }) -> ())
 		worktree.draftDestinations(path, function(list, problem)
 			if not alive(state) then
 				return
@@ -1592,8 +1621,9 @@ function M.draft(state: State, id: string, q: any)
 			elseif not list or #list == 0 then
 				return no(problem or "That worktree has no GitHub remote to open a pull request on.")
 			end
-			local ordered: { { repo: string, remote: string } } = {}
+			local ordered: { worktree.Destination } = {}
 			for _, d in list do
+				remember(path, d.repo, { root = d.root, commonDir = d.commonDir, remote = d.remote })
 				if saved and string.lower(d.repo) == string.lower(saved) then
 					table.insert(ordered, 1, d)
 				else
@@ -1604,7 +1634,7 @@ function M.draft(state: State, id: string, q: any)
 		end)
 	end
 	-- The destination `q.repo` names among `list`; false (and a refusal) when it is none of them.
-	local function chosen(list: { { repo: string, remote: string } }): { repo: string, remote: string }?
+	local function chosen(list: { worktree.Destination }): worktree.Destination?
 		if type(q.repo) == "string" then
 			for _, d in list do
 				if string.lower(d.repo) == string.lower(q.repo) then
@@ -1684,7 +1714,7 @@ function M.draft(state: State, id: string, q: any)
 					needsPush = draft.needsPush,
 					dirty = draft.dirty,
 				})
-			end)
+			end, resolve)
 		end)
 	elseif q.phase == "plan" then
 		local d = state.draft
@@ -1748,11 +1778,11 @@ function M.draft(state: State, id: string, q: any)
 							return done({ problem = perr })
 						end
 						create()
-					end)
+					end, resolve)
 				else
 					create()
 				end
-			end)
+			end, resolve)
 		end)
 	else
 		no("Plotroom does not know that step.")

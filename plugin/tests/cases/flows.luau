@@ -3241,6 +3241,73 @@ case("host draft: a draft previewed again while the commit pushes does not stop 
 	eq(pickerOf(b).scopes[2].label, "o/r#21", "and the new pull request is pinned")
 end)
 
+-- How many git commands logged after entry `from` read exactly `line`.
+local function gitRan(g: h.Git, from: number, line: string): number
+	local n = 0
+	for _, l in h.logFrom(g, from) do
+		if l == line then
+			n += 1
+		end
+	end
+	return n
+end
+
+case("host draft: a commit less than 5 s after its preview resolves the repository no more: each remote is read once in all", function(w: World)
+	local s = asks.hx.draftScene(w)
+	s.git.remotes.upstream = { "git@gh-alias:u/r.git" }
+	w.respond(function(call: h.Call): Reply?
+		if call.argv[1] == "ssh" and call.argv[#call.argv] == "git@gh-alias" then
+			return { stdout = "user git\nhostname github.com\n" }
+		end
+		return nil
+	end)
+	local created = "https://github.com/u/r/pull/3"
+	asks.hx.writes(s.gh, function(line: string): Reply?
+		if string.find(line, "pr create", 1, true) then
+			return { stdout = created .. "\n" }
+		end
+		return nil
+	end)
+	s.gh.pulls[created] = searchItem(3, "u/r", EPOCH - 10, { title = "T", isDraft = true })
+	local b = openIssues(w)
+	local log, calls = #s.git.log, #w.calls
+	local pv = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "u/r", base = "main" })
+	eq(pv.remote, "upstream", "the ssh alias remote is the repository's")
+	local plan = asks.hx.ask(w, b, { op = "draft", phase = "plan", token = pv.token, title = "T", body = "B" })
+	eq(asks.hx.commit(w, b, plan.token).url, created, "the draft pull request is created")
+	same(s.git.pushes, { "push --no-force-with-lease upstream " .. sha("c") .. ":refs/heads/12-fix-login" }, "after the push")
+	eq(gitRan(s.git, log, "rev-parse --show-toplevel"), 1, "the top level is read once")
+	eq(gitRan(s.git, log, "rev-parse --path-format=absolute --git-common-dir"), 1, "the common dir once")
+	eq(gitRan(s.git, log, "remote"), 1, "the remotes are listed once")
+	eq(gitRan(s.git, log, "remote get-url --all origin"), 1, "origin's URLs are read once")
+	eq(gitRan(s.git, log, "remote get-url --all upstream"), 1, "upstream's once")
+	local ssh = 0
+	for _, line in ranSince(w, calls) do
+		if string.sub(line, 1, 6) == "ssh -G" then
+			ssh += 1
+		end
+	end
+	eq(ssh, 1, "the alias goes through ssh -G once")
+	eq(gitRan(s.git, log, "rev-parse --verify HEAD"), 3, "HEAD is still read at the preview, again at the commit and before the push")
+	eq(countLog(s.git, "fetch --no-tags --no-write-fetch-head upstream", log), 2, "the base is fetched again at the commit")
+	eq(gitRan(s.git, log, "rev-parse --verify --quiet refs/remotes/upstream/12-fix-login"), 2, "and the remote's branch read again for needsPush")
+end)
+
+case("host draft: a commit more than 5 s after its preview reads the remotes again and sees a changed URL", function(w: World)
+	local s = asks.hx.draftScene(w)
+	local seen = asks.hx.writes(s.gh)
+	local b = openIssues(w)
+	local pv = asks.hx.ask(w, b, { op = "draft", phase = "preview", repo = "o/r", base = "main" })
+	local plan = asks.hx.ask(w, b, { op = "draft", phase = "plan", token = pv.token, title = "T", body = "B" })
+	local log = #s.git.log
+	w.advance(5001)
+	s.git.remotes.origin = { "https://github.com/x/y.git" }
+	has(asks.hx.commit(w, b, plan.token).problem, "points at github.com/o/r", "the changed URL is seen: no remote is o/r's now")
+	eq(gitRan(s.git, log, "remote get-url --all origin"), 1, "origin's URLs were read again")
+	eq(#s.git.pushes, 0, "nothing was pushed")
+	eq(#seen, 0, "nor created")
+end)
+
 case("host mutations: with no known GitHub account every GitHub plan refuses and spawns nothing", function(w: World)
 	local s = asks.hx.draftScene(w)
 	s.gh.items.octocat = manyItems("o/r", 2)
