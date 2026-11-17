@@ -1142,10 +1142,11 @@ local function deletePrompt(state: State, s: Settings, id: string)
 		end
 		return nil
 	end)
+	local deleted = not err
 	if not err and kind.id == "prs" then
 		-- Issue actions name it as `prs:<id>`. Only an issue store that has one is written: a store with nothing saved
 		-- keeps its seeded defaults unsaved. ponytail: an unreadable issue store keeps its bytes and its dangling next,
-		-- which Settings shows as None and a finished agent reports as gone.
+		-- which Settings shows as None and a finished agent reports as gone. A write failure shows on the Delete row.
 		local issues = loadPrompts(KINDS.issues)
 		local names = false
 		local items: { Prompt } = if issues then issues.items else {}
@@ -1153,7 +1154,7 @@ local function deletePrompt(state: State, s: Settings, id: string)
 			names = names or p.next == id
 		end
 		if names then
-			editPrompts(KINDS.issues, function(store: Prompts): string?
+			err = editPrompts(KINDS.issues, function(store: Prompts): string?
 				for _, p in store.items do
 					if p.next == id then
 						p.next = nil
@@ -1163,7 +1164,7 @@ local function deletePrompt(state: State, s: Settings, id: string)
 			end)
 		end
 	end
-	if not err then
+	if deleted then
 		propagate(state)
 	end
 	s.errors["popen:" .. id] = err -- the summary row shows why: the Delete row draws no label

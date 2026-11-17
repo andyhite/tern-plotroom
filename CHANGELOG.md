@@ -14,6 +14,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Deleting a pull request action now reports a failed cleanup of issue actions' `next` on its Delete row instead of dropping the error (tern-plotroom#ma6s).
 - Tern's search field is shown again at the top of Settings (a stale "too few settings" rule hid it), so a shortcut or setting is found by typing instead of scrolling the General page's 21 shortcut rows and the open views and actions (tern-plotroom#67ks).
 - A Jira issue whose comment list acli returned cut (fewer comments than `fields.comment.total`) is no longer read as complete: Now keeps an assigned issue instead of dropping it as "yours" on a stale newest comment, and a Summary gets no recent comments rather than old ones as the newest (tern-plotroom#an4x).
 - The preview head's Open is a quiet icon button (with the Enter keycap) like Copy link beside it, instead of a globe icon wearing the link role, which drew no cue that it opens something (tern-plotroom#yyvx).
