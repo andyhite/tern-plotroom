@@ -1210,6 +1210,20 @@ windowCase("window flows: a Jira issue's agentgo link goes to the agent recorded
 	w.flush()
 end)
 
+windowCase("window flows: the agent-go palette command follows the focused block's agentgo node to the agent's pane, and a block with none says the item has no agent", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	seedAgent(w, 50, "working", 1, "o/r#5")
+	w.window.focused = 1
+	w.command("agent-go")
+	eq(w.toasts[#w.toasts].text, "The selected item has no agent", "no agentgo node: the toast says so")
+	eq(w.toasts[#w.toasts].level, "info", "as information")
+	eq(w.window.focused, 1, "and focus stays on the block")
+	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
+	w.command("agent-go")
+	eq(w.window.focused, 50, "the node's link focuses the recorded agent's pane")
+end)
+
 windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop asks nothing in the palette (the block asked), and an exited agent, a blank message or a refused one only toasts", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
