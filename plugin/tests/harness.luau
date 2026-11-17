@@ -3881,7 +3881,7 @@ function hx.rows(b: Block): { string }
 	return out
 end
 
-asks.protocol = "55" -- mirrors rpc.PROTOCOL (what host/render's `main.rpc` node says): the one place the window cases name it
+asks.protocol = tostring(require("../rpc").PROTOCOL) -- what host/render's `main.rpc` node says: read from rpc, never typed here
 
 -- The requests the window sent to blocks' hosts so far, decoded, without their ids.
 function asks.sent(w: World): { any }

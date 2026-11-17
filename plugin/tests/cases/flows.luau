@@ -5536,6 +5536,52 @@ windowCase("window selection: the user picks the agent and reviews every line in
 	eq(#w.window.agentCalls, calls, "and nothing is sent")
 end)
 
+case("rpc: every op SINCE lists is one the host answers, added after MIN and no later than PROTOCOL", function(w: World)
+	local rpc: any = w.load("rpc")
+	jiraHost(w)
+	local b = openIssues(w)
+	-- A smallest request each listed op accepts: a new SINCE row needs its own here.
+	local function shown(): { [string]: any }
+		return { token = "ab12", head = "Send?", lines = { "x" } }
+	end
+	local bodies: { [string]: { [string]: any } } = {
+		message = shown(),
+		fork = shown(),
+		compose = { token = "ab12", head = "Comment", label = "Continue", placeholder = "" },
+		["jira-who"] = {},
+	}
+	local listed = 0
+	for op, since in rpc.SINCE do
+		listed += 1
+		yes(since > rpc.MIN and since <= rpc.PROTOCOL, op .. ": added after MIN, no later than PROTOCOL")
+		local body = bodies[op]
+		yes(body ~= nil, op .. ": this case names a request for it")
+		body.op = op
+		local answer = asks.hx.ask(w, b, body)
+		yes(type(answer) == "table" and answer.problem ~= "Plotroom does not understand that request.", op .. ": the host handles it")
+	end
+	yes(listed > 0, "SINCE lists the ops added since MIN")
+end)
+
+windowCase("window selection: a host at MIN is never asked for a message, whose op SINCE says it lacks", function(w: World)
+	local rpc: any = w.load("rpc")
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	yes(rpc.SINCE.message > rpc.MIN, "the real table says a host at MIN does not know `message`")
+	w.window.surfaces[1].main.c[1].p.text = tostring(rpc.MIN)
+	w.window.selection = { pane = 1, kind = "terminal", text = "local x = 1" }
+	pickAgent(w)
+	local asked = #st.ops()
+	w.command("agent-message-selection")
+	w.flush()
+	eq(messagesAsked(st), 0, "no review was asked")
+	eq(#st.ops(), asked, "and nothing else was sent")
+	eq(w.toasts[#w.toasts].level, "error", "the user is told, with an error")
+	has(w.toasts[#w.toasts].text, "an older version", "that the host is an older version")
+	eq(#w.window.agentCalls, 0, "and nothing reached the agent")
+end)
+
 windowCase("window selection: a note is added by one line, a long selection is clipped in view and in the send, and a file's selection comes from read", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
