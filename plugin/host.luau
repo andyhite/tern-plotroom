@@ -520,9 +520,6 @@ local function blockDef(): BlockDef<State>
 		state.cx:toast("info", "Removing the worktree of " .. key .. "…")
 		worktree.removeEntry(root, repo, path, branch, function(removal, why, dirty)
 			preparing[key] = nil
-			if not alive(state) then
-				return
-			end
 			if removal then
 				for _, s in running do
 					if s.notes[key] then
@@ -534,6 +531,11 @@ local function blockDef(): BlockDef<State>
 						end
 					end
 				end
+			end
+			if not alive(state) then
+				return
+			end
+			if removal then
 				state.cx:toast("success", "Worktree removed", removal.branch)
 			else
 				note.refused = why
