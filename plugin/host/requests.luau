@@ -1460,6 +1460,47 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, (if approve then "Approved " else "Requested changes on ") .. target)
 			end)
 		end)
+	elseif name == "pr-request-review" then
+		if not prs then
+			return no("Requesting a review is for pull requests.")
+		elseif item.state ~= "open" or item.draft then
+			return no("That pull request is not open and ready for review.")
+		end
+		local reviewed = engine.reviewedBy(state, item)
+		if #reviewed == 0 then
+			return no("No one has reviewed that pull request without being asked to review it now.")
+		end
+		local logins: { string } = {}
+		if q.reviewers == nil then
+			if #reviewed > 1 then
+				return reply(state, id, { reviewers = tern.json.array(reviewed) })
+			end
+			logins = reviewed
+		elseif type(q.reviewers) ~= "table" or #q.reviewers == 0 then
+			return no("Those are not reviewers.")
+		else
+			for _, who in q.reviewers do
+				local at = if type(who) == "string" then table.find(reviewed, who) else nil
+				if not at or table.find(logins, who) then
+					return no("That reviewer has not reviewed this pull request, or is asked already.")
+				end
+				table.insert(logins, who)
+			end
+		end
+		local account = needAccount()
+		if not account then
+			return
+		end
+		local names = "@" .. table.concat(logins, ", @")
+		return M.offer(state, id, item, {
+			head = "Request review on " .. target .. "?",
+			label = "Request review",
+			lines = { target .. ": " .. printable(item.title), "Account: @" .. account, "Asks " .. names .. " to review again" },
+		}, function(done)
+			github.requestReview(item.repo, item.number, logins, account, function(problem: github.Problem?)
+				M.landed(state, done, problem, "Asked " .. names .. " to review " .. target)
+			end)
+		end)
 	elseif name == "pr-update-branch" then
 		if not prs then
 			return no("Updating a branch is for pull requests.")
@@ -1631,6 +1672,9 @@ function M.commands(state: State): { { id: string, group: string? } }
 			end
 			add("pr-approve")
 			add("pr-request-changes")
+			if not item.draft and #engine.reviewedBy(state, item) > 0 then
+				add("pr-request-review")
+			end
 			local d = state.details[detailKey(state, item)]
 			if d and d.about and d.about.merge == "behind" then
 				add("pr-update-branch")

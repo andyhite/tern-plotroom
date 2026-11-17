@@ -58,10 +58,11 @@ export type Pr = {
 	-- Unresolved review threads among the last 100; nil when the search did not say. ponytail: the search reads no
 	-- thread's author (a comment per thread costs a GraphQL point per 100 threads), so every unresolved one counts.
 	unresolved: number?,
-	-- Each reviewer's latest review (as Review.state, `at` when it was submitted); nil when the search did not say.
+	-- Each reviewer's latest review (as Review.state, `at` when it was submitted, `sha` the commit it was on); nil when
+	-- the search did not say.
 	latest: { Latest }?,
 }
-export type Latest = { login: string, state: string, at: number }
+export type Latest = { login: string, state: string, at: number, sha: string? }
 -- complete: every PR the search counts is in prs (the scan was not cut short and fits GitHub's result cap).
 export type SearchResult = { prs: { Pr }, total: number, complete: boolean, note: string? }
 -- What one PR's detail load reads besides its checks. merge: conflicts | behind | blocked | unstable | ready | draft |
@@ -93,8 +94,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt}]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt commit { oid } author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt,sha:.commit.oid}]}"
 local SEARCH_GQL = "query($q: String!, $after: String, $first: Int!) { rateLimit { cost } search(query: $q, type: ISSUE, first: $first, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -418,8 +419,9 @@ function M.normalize(item: any): (Pr?, string?)
 		local list: { Latest } = {}
 		for _, v in item.latest do
 			local who, verdict, at = login(field(v, "login")), VERDICT[if type(field(v, "state")) == "string" then field(v, "state") else ""], M.stamp(field(v, "at"))
+			local onSha = field(v, "sha")
 			if who and verdict and at and #list < REVIEWERS then
-				table.insert(list, { login = who, state = verdict, at = at })
+				table.insert(list, { login = who, state = verdict, at = at, sha = if type(onSha) == "string" and #onSha == 40 and string.match(onSha, "^%x+$") then string.lower(onSha) else nil })
 			end
 		end
 		latest = list
@@ -2159,6 +2161,41 @@ function M.reviewPr(repo: string, number: number, approve: boolean, text: string
 		local args = { "pr", "review", id, "--repo", repoArg(repo) or "", if approve then "--approve" else "--request-changes" }
 		if body then
 			table.insert(args, "--body=" .. body)
+		end
+		return args
+	end, done)
+end
+
+-- Asks `reviewers` (logins, up to REVIEWERS) to review the open pull request again: GitHub does not do it when a push
+-- answers their review. Refused when the pull request is not open or one of them is its author (GitHub refuses that too).
+function M.requestReview(repo: string, number: number, reviewers: { string }, account: string?, done: (Problem?) -> ())
+	local names: { string } = {}
+	for _, who in reviewers do
+		if login(who) and not table.find(names, who) then
+			table.insert(names, who)
+		end
+	end
+	if not whole32(number) or #names == 0 or #names ~= #reviewers or #names > REVIEWERS then
+		return later(function()
+			done(bad(if whole32(number) then "Unexpected reviewers." else "Unexpected pull request number."))
+		end)
+	end
+	guarded("pr", "number,state,author,url", { "pull" }, repo, tostring(number), account, function(d)
+		if field(d, "state") ~= "OPEN" then
+			return "Pull request #" .. number .. " is not open."
+		end
+		local author = field(d, "author", "login")
+		for _, who in names do
+			if type(author) == "string" and string.lower(author) == string.lower(who) then
+				return "@" .. who .. " is the author of pull request #" .. number .. "; nothing was requested."
+			end
+		end
+		return nil
+	end, function(_, id)
+		local args = { "api", "--hostname", HOST, "--method", "POST", "repos/" .. repo .. "/pulls/" .. id .. "/requested_reviewers" }
+		for _, who in names do
+			table.insert(args, "-f")
+			table.insert(args, "reviewers[]=" .. who)
 		end
 		return args
 	end, done)

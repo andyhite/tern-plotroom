@@ -2321,6 +2321,38 @@ local function prRequestChanges(cx: WindowCx, pane: number)
 	composePlan(cx, pane, { head = "Request changes", label = "Continue", placeholder = "What needs to change?", item = true }, "Changes not requested", "pr-request-changes", false)
 end
 
+-- Request review…: the host answers the reviewers who reviewed and are not asked now (several: pick everyone or one) or
+-- the plan for the only one.
+local function prRequestReview(cx: WindowCx, pane: number)
+	local title = "Review not requested"
+	e().ask(cx, pane, "act", { name = "pr-request-review" }, ACT_MS, function(a: any, cx2: WindowCx)
+		local why = problemOf(a)
+		if why then
+			return cx2:toast("error", title, why)
+		elseif type(a.reviewers) ~= "table" then
+			return planned(cx2, a)
+		end
+		local logins: { string } = {}
+		for _, who in a.reviewers do
+			if type(who) == "string" then
+				table.insert(logins, who)
+			end
+		end
+		if #logins == 0 then
+			return cx2:toast("info", "No reviewer to ask again")
+		end
+		local items: { PickItem } = { { label = "Everyone who reviewed", detail = "@" .. table.concat(logins, ", @"), who = logins } }
+		for _, who in logins do
+			table.insert(items, { label = "@" .. who, who = { who } })
+		end
+		cx2:pick({ items = items, placeholder = "Ask who to review again?", icon = "merge", action = "plan" }):next(function(picked, _, cx3)
+			if picked and cx3 then
+				planAct(cx3, pane, title, { name = "pr-request-review", reviewers = picked.who })
+			end
+		end)
+	end)
+end
+
 local function prUpdateBranch(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Branch not updated", { name = "pr-update-branch" })
 end
@@ -2583,6 +2615,7 @@ M.COMMANDS = {
 	{ id = "pr-merge", title = "Merge the selected PR", label = "Merge…", run = prMerge },
 	{ id = "pr-approve", title = "Approve the selected PR", label = "Approve…", run = prApprove },
 	{ id = "pr-request-changes", title = "Request changes on the selected PR", label = "Request changes…", run = prRequestChanges },
+	{ id = "pr-request-review", title = "Ask the selected PR's reviewers to review it again", label = "Request review…", run = prRequestReview },
 	{ id = "pr-update-branch", title = "Update the selected PR's branch from its base", label = "Update branch…", run = prUpdateBranch },
 	{ id = "pr-empty-commit", title = "Push an empty commit to the selected PR's branch so its checks run again", label = "Push empty commit…", run = prEmptyCommit },
 	{ id = "rerun-failed", title = "Re-run the selected PR's failed checks", label = "Re-run failed checks", run = rerunFailed },

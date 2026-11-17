@@ -1885,6 +1885,37 @@ windowCase("window flows: Merge picks one of the host's methods (or auto-merge),
 	end
 end)
 
+windowCase("window flows: Request review… plans the only reviewer at once, and with several asks everyone or one, naming the logins the host offered", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local function lastAsk(): any
+		return requestsSent(w)[#requestsSent(w)]
+	end
+	local lines = { "o/r#7: Fix login", "Account: @octocat", "Asks @maria-k to review again" }
+	w.command("pr-request-review")
+	w.flush()
+	eq(lastAsk().name, "pr-request-review", "asks the host")
+	eq(lastAsk().reviewers, nil, "naming no one")
+	st.reply("act", { token = "t-review", confirm = { head = "Request review on o/r#7?", label = "Request review", lines = lines } })
+	eq(#w.window.picks, 0, "one reviewer needs no picker")
+	w.window.choose = "Everyone who reviewed"
+	w.command("pr-request-review")
+	w.flush()
+	st.reply("act", { reviewers = { "maria-k", "devon" } })
+	same(flowRows(w.window.picks[#w.window.picks]), { "Everyone who reviewed", "@maria-k", "@devon" }, "everyone first, then each reviewer")
+	same(lastAsk().reviewers, { "maria-k", "devon" }, "everyone is planned by name")
+	st.reply("act", { problem = "stop" })
+	w.window.choose = "@devon"
+	w.command("pr-request-review")
+	w.flush()
+	st.reply("act", { reviewers = { "maria-k", "devon" } })
+	same(lastAsk().reviewers, { "devon" }, "one reviewer is planned alone")
+	st.reply("act", { problem = "stop" })
+	for _, op in st.ops() do
+		yes(op ~= "commit", "the window commits nothing")
+	end
+end)
+
 windowCase("window flows: a Worktrees list link opens the path, or focuses the tab already there", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

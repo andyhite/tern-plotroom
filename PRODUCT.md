@@ -20,7 +20,7 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 | **Triage** | What needs me now? | Now, stages, New and Changed, Snooze |
 | **Dispatch** | Who does it, and where? | One-key Worktree, Actions that start agents |
 | **Supervise** | Which agent needs me, which finished, and did it work? | Agent states, the Agents list, messages, outcomes |
-| **Land** | Is it ready? Ship it. | Checks, reviews, Merge, Approve, Request changes, Draft PR |
+| **Land** | Is it ready? Ship it. | Checks, reviews, Merge, Approve, Request changes, Request review, Draft PR |
 | **Clean up** | What is finished? | Find and remove finished worktrees |
 
 ## Principles

@@ -3993,6 +3993,46 @@ case("host review recency: a PR you approved whose head moved says New commits s
 	eq(h.detailText(pickerOf(b).items[2]), "#2 · New commits since you approved", "and still says why")
 end)
 
+case("host next move: your PR whose reviewers a push answered, with no one asked again, goes to Request review… instead of Address feedback again", function(w: World)
+	local s = hostScene(w, 0)
+	local function reviewed(who: string, state: string, on: string): any
+		return array({ { login = who, state = state, at = h.iso(EPOCH - 3600), sha = sha(on) } })
+	end
+	local function mine(n: number, extra: { [string]: any }): any
+		local item = { author = "octocat", headSha = sha("a"), merge = "BLOCKED", mergeable = "MERGEABLE" }
+		for k, v in extra do
+			item[k] = v
+		end
+		return searchItem(n, "o/r", EPOCH - n * 60, item)
+	end
+	s.gh.items.octocat = {
+		mine(1, { review = "CHANGES_REQUESTED", latest = reviewed("maria-k", "CHANGES_REQUESTED", "b") }), -- pushed since
+		mine(2, { review = "CHANGES_REQUESTED", latest = reviewed("maria-k", "CHANGES_REQUESTED", "a") }), -- reviewed this head
+		mine(3, { review = "CHANGES_REQUESTED", latest = reviewed("maria-k", "CHANGES_REQUESTED", "b") }), -- asked again
+		mine(4, { review = "REVIEW_REQUIRED", latest = reviewed("devon", "COMMENTED", "b") }), -- waiting, commented before the push
+		mine(5, { review = "REVIEW_REQUIRED", latest = reviewed("devon", "APPROVED", "b") }), -- approved an older head
+		mine(6, { review = "CHANGES_REQUESTED", isDraft = true, latest = reviewed("maria-k", "CHANGES_REQUESTED", "b") }),
+		searchItem(7, "o/r", EPOCH - 420, { author = "ann", headSha = sha("a"), review = "CHANGES_REQUESTED", latest = reviewed("maria-k", "CHANGES_REQUESTED", "b") }),
+	}
+	local function about(requested: { string }): { [string]: any }
+		return { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array(requested) }
+	end
+	for n = 1, 7 do
+		s.gh.about["o/r#" .. n] = about(if n == 3 then { "maria-k" } else {})
+	end
+	local b = openQueue(w)
+	local first = nextOf(w, b, "no_2fr_231")
+	eq(first.row, "Request review…", "answered by a push, no one asked: Request review…, not Address feedback")
+	eq(first.command, "pr-request-review", "the window's command")
+	eq(first.group, "Next", "first in Commands under Next")
+	eq(nextOf(w, b, "no_2fr_232").row, "Address feedback", "the head is the commit they reviewed: still Address feedback")
+	eq(nextOf(w, b, "no_2fr_233").row, "Address feedback", "asked again already: nothing to request, the blocked PR's own move stands")
+	eq(nextOf(w, b, "no_2fr_234").row, "Request review…", "your PR waiting on others whose reviewer only commented before the push: Request review…")
+	eq(nextOf(w, b, "no_2fr_235").row, nil, "an approval needs no one asked again")
+	eq(nextOf(w, b, "no_2fr_236").row, "Address feedback", "a draft is not asked again: its Blocked move stands")
+	eq(nextOf(w, b, "no_2fr_237").row, nil, "someone else's PR is theirs to hand back")
+end)
+
 case("host next move: an issue goes Worktree, then Draft PR…, a closed one with a worktree Remove worktree…, an unrelated closed one nothing", function(w: World)
 	local s = h.issueHost(w)
 	local b = h.openIssues(w)

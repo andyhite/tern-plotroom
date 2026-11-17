@@ -3295,6 +3295,77 @@ case("host mutations: approve and request changes show their comment in full, re
 	eq(#writesOf(seen, "pr review"), 3, "three reviews were sent, no more")
 end)
 
+case("host mutations: Request review asks the reviewers who reviewed and are not asked now, one or all, through requested_reviewers, and refuses anyone else", function(w: World)
+	local s = hostScene(w, 0)
+	local function review(who: string, state: string, hours: number): { [string]: any }
+		return { login = who, state = state, at = h.iso(EPOCH - hours * 3600), sha = sha("b") }
+	end
+	local latest = array({ review("maria-k", "CHANGES_REQUESTED", 4), review("devon", "COMMENTED", 2), review("octocat", "COMMENTED", 1) })
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, { author = "octocat", headSha = sha("a"), latest = latest }),
+		searchItem(2, "o/r", EPOCH - 120, { author = "octocat", headSha = sha("a"), latest = array({ review("maria-k", "COMMENTED", 4), review("devon", "COMMENTED", 2) }) }),
+		searchItem(3, "o/r", EPOCH - 180, { author = "octocat", headSha = sha("a"), isDraft = true, latest = latest }),
+		searchItem(4, "o/r", EPOCH - 240, { author = "octocat", headSha = sha("a") }),
+	}
+	local function about(requested: { string }): { [string]: any }
+		return { mergeable = "MERGEABLE", merge = "BLOCKED", body = "", reviews = array({}), requested = array(requested) }
+	end
+	s.gh.about["o/r#1"] = about({})
+	s.gh.about["o/r#2"] = about({ "devon" })
+	local live: { [string]: any } = { number = 1, state = "OPEN", author = { login = "octocat" }, url = "https://github.com/o/r/pull/1" }
+	local seen: { string } = {}
+	s.gh.tokens.octocat = "tok-octocat"
+	s.gh.override = function(req: GhReq): Reply?
+		local line = table.concat(req.call.argv, " ")
+		if string.find(line, "gh pr view ", 1, true) then
+			return { stdout = jsonEncode(live) }
+		elseif string.find(line, "requested_reviewers", 1, true) then
+			table.insert(seen, line)
+			return { stdout = "{}" }
+		end
+		return nil
+	end
+	local b = openQueue(w)
+	w.advance(300)
+	local function offered(): boolean
+		return table.find(hx.palette(w, b).commands, "pr-request-review") ~= nil
+	end
+	yes(offered(), "offered for an open pull request someone reviewed")
+	local p = asks.hx.ask(w, b, { op = "act", name = "pr-request-review" })
+	same(p.reviewers, { "devon", "maria-k" }, "the reviewers to choose from, newest review first, never its author")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "stranger" }) }).problem, "has not reviewed", "someone who did not review is refused")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "octocat" }) }).problem, "has not reviewed", "and so is its author")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "devon", "devon" }) }).problem, "has not reviewed", "and the same one twice")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({}) }).problem, "not reviewers", "and no one")
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "maria-k", "devon" }) })
+	eq(p.confirm.head, "Request review on o/r#1?", "the question names the pull request")
+	eq(p.confirm.label, "Request review", "the confirming choice")
+	same({ p.confirm.lines[1], p.confirm.lines[2], p.confirm.lines[3] }, { "o/r#1: PR 1", "Account: @octocat", "Asks @maria-k, @devon to review again" }, "the target, the account and who is asked")
+	eq(#seen, 0, "planning asked no one")
+	eq(asks.hx.commit(w, b, p.token).ok, true, "committed")
+	same(seen, { "gh api --hostname github.com --method POST repos/o/r/pulls/1/requested_reviewers -f reviewers[]=maria-k -f reviewers[]=devon" }, "one request naming exactly the confirmed reviewers")
+	live.state = "CLOSED"
+	p = asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "devon" }) })
+	has(asks.hx.commit(w, b, p.token).problem, "not open", "a pull request closed since the plan is not asked")
+	live.state = "OPEN"
+	live.author = { login = "Devon" }
+	has(asks.hx.commit(w, b, asks.hx.ask(w, b, { op = "act", name = "pr-request-review", reviewers = array({ "devon" }) }).token).problem, "is the author", "nor is the live author")
+	eq(#seen, 1, "nothing more was sent")
+	b.typeText("j")
+	w.advance(300)
+	local only = asks.hx.ask(w, b, { op = "act", name = "pr-request-review" })
+	eq(only.confirm.lines[3], "Asks @maria-k to review again", "the only reviewer not asked is planned without a choice")
+	b.press("escape")
+	b.typeText("j")
+	w.advance(300)
+	eq(offered(), false, "not offered for a draft")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review" }).problem, "not open and ready", "and refused")
+	b.typeText("j")
+	w.advance(300)
+	eq(offered(), false, "not offered while no one reviewed")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-request-review" }).problem, "No one has reviewed", "and refused")
+end)
+
 case("host mutations: approve and request changes post nothing once the pull request was pushed to since the confirm", function(w: World)
 	local b, seen, live = mergeScene(w)
 	for _, name in { "pr-approve", "pr-request-changes" } do

@@ -661,11 +661,65 @@ function M.reviewAsked(state: State, pr: github.Pr): boolean
 	return false
 end
 
+-- The logins that reviewed `pr` and are not asked now, newest verdict first: who Request review… offers to ask again.
+-- Not its author. A reviewer shown as requested in the loaded details (or in a search that read the requests) is asked
+-- already; without loaded details that is unknown and they are offered.
+function M.reviewedBy(state: State, pr: github.Pr): { string }
+	local asked: { [string]: boolean } = { [string.lower(pr.author)] = true }
+	local d = state.details[M.detailKey(state, pr)]
+	for _, r in (if d and d.about then d.about.reviews else {}) :: { github.Review } do
+		if r.state == "requested" then
+			asked[string.lower(r.login)] = true
+		end
+	end
+	for _, who in (pr.reviewers or {}) :: { string } do
+		asked[string.lower(who)] = true
+	end
+	local picked: { github.Latest } = {}
+	for _, r in (pr.latest or {}) :: { github.Latest } do
+		if not asked[string.lower(r.login)] then
+			asked[string.lower(r.login)] = true
+			table.insert(picked, r)
+		end
+	end
+	table.sort(picked, function(a, b)
+		return a.at > b.at
+	end)
+	local out: { string } = {}
+	for _, r in picked do
+		table.insert(out, r.login)
+	end
+	return out
+end
+
+-- Whether `pr`, an open pull request that is not a draft, has gone back to its reviewers' court with nothing to say so:
+-- its loaded details show nobody asked to review, and a reviewer's latest review (changes requested or a comment) is on
+-- a commit older than its head, so a push answered it. GitHub asks no one again by itself.
+function M.reviewAgain(state: State, pr: github.Pr): boolean
+	local d = state.details[M.detailKey(state, pr)]
+	if pr.state ~= "open" or pr.draft or not pr.headSha or not d or not d.about or #(pr.reviewers or {}) > 0 then
+		return false
+	end
+	for _, r in d.about.reviews do
+		if r.state == "requested" then
+			return false
+		end
+	end
+	local author = string.lower(pr.author)
+	for _, r in (pr.latest or {}) :: { github.Latest } do
+		if (r.state == "changes" or r.state == "commented") and string.lower(r.login) ~= author and r.sha and r.sha ~= pr.headSha then
+			return true
+		end
+	end
+	return false
+end
+
 -- The suggested next move for `item` (the selected one) in its stage, or nil when none applies: `id` is a queue action
 -- (`worktree`, `agentgo`), `remove` (the worktree card's Remove worktree…), `cmd:<flows.COMMANDS id>` or
 -- `run:<saved action id>`, each offered only where its own command is. A saved action is the one offered here under
 -- that name (Review, Address feedback, Watch). "Yours" is a PR whose author is the login the view runs as. A Blocked
--- PR with failing checks is re-run only when every failing check is Likely flaky; else yours goes to Watch.
+-- PR with failing checks is re-run only when every failing check is Likely flaky; else yours goes to Watch. Yours that
+-- a push has answered the reviewers of (M.reviewAgain) goes to Request review… instead of Address feedback again.
 function M.nextMove(state: State, kind: string, item: any): { id: string, label: string }?
 	local stage = M.stage(state, kind, item)
 	local note = state.notes[item.key]
@@ -697,12 +751,15 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	local who = M.login(state) or ghActive.login
 	local me = if who then string.lower(who) else nil
 	local mine = me ~= nil and string.lower(pr.author) == me
+	local again = mine and M.reviewAgain(state, pr)
 	if stage == "blocked" then
 		-- Feedback to act on (Address changes or Reply) comes before the checks, as the chips do.
 		local feedback = pr.review == "changes" or ((pr.unresolved or 0) > 0 and pr.review ~= "approved")
-		local fix = if mine and feedback then action("Address feedback") else nil
-		if fix or #M.failing(state, pr) == 0 then
+		local fix = if mine and feedback and not again then action("Address feedback") else nil
+		if fix then
 			return fix
+		elseif #M.failing(state, pr) == 0 then
+			return if again then { id = "cmd:pr-request-review", label = "Request review…" } else nil
 		elseif M.allFlaky(state, pr) and M.rerunnable(state, pr) then
 			return { id = "cmd:rerun-failed", label = "Re-run failed checks" }
 		end
@@ -714,7 +771,7 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 	elseif pr.draft then
 		return if mine then { id = "cmd:pr-ready", label = "Ready for review…" } else nil
 	elseif mine or not me then
-		return nil
+		return if again then { id = "cmd:pr-request-review", label = "Request review…" } else nil
 	end
 	return if M.reviewAsked(state, pr) then action("Review") else nil
 end
