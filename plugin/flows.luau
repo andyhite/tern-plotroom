@@ -446,12 +446,33 @@ end
 local timer: TimerHandle? = nil -- the agents' status timer: runs only while a linked agent is live
 local told: { [number]: boolean } = {} -- Plotroom panes seen holding their host's agent map (agentSync)
 
+local linksBad = false -- kv `agent-links` is unreadable (see readLinks): every agent feature is off while it is
+
+-- True while the saved agent links cannot be read: what the status line says, since agent tracking stops without a word.
+function M.linksUnreadable(): boolean
+	return linksBad
+end
+
+-- Re-reads the store's health each tick: one log line and a redrawn status line when it changes.
+local function linksSync()
+	local _, healthy = readLinks()
+	if healthy == not linksBad then
+		return
+	end
+	linksBad = not healthy
+	if linksBad then
+		tern.log.warn("kv agent-links is unreadable: agent tracking is off and the store is left as it is until it reads again")
+	end
+	tern.chrome.refresh()
+end
+
 local function needTick(cx: WindowCx?)
 	needTimer = nil
 	if not cx then
 		return -- the window went away: the next window_start or pane_created starts it again
 	end
 	M.needSync(cx)
+	linksSync()
 	M.recheck(cx) -- outcomes due again, at most once a refresh each
 	if timer == nil and #readLinks() > 0 then
 		-- no live agent, so the status timer is off: a block opened since is still told exited agents' verdicts

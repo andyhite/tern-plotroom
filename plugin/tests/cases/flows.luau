@@ -258,6 +258,32 @@ windowCase("window status: agents needing input are counted in the one need-you 
 	eq(#w.toasts, toasts + 2, "entering again toasts again")
 end)
 
+windowCase("window status: an unreadable agent-links store shows a segment and is never written over, and clears once it reads again", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local function texts(): { string }
+		local out: { string } = {}
+		for _, s in ((w.window.status :: any)({ pane = 1 }) or {}) do
+			table.insert(out, s.text)
+		end
+		return out
+	end
+	same(texts(), {}, "a readable store shows nothing")
+	local good = w.kv.get("agent-links")
+	local before = w.window.refreshes
+	w.kv.put("agent-links", { { key = 5 } })
+	w.advance(4000)
+	same(texts(), { "Agent links unreadable" }, "one malformed row is said on the status line")
+	eq(w.window.refreshes, before + 1, "the status line was redrawn once")
+	w.advance(12000)
+	eq(w.window.refreshes, before + 1, "and stays as it is")
+	same(w.kv.get("agent-links"), { { key = 5 } }, "the store is not written over")
+	w.kv.put("agent-links", good)
+	w.advance(4000)
+	same(texts(), {}, "the segment clears once the store reads again")
+end)
+
 windowCase("window status: only agents the Agents list covers count, and closing Plotroom does not re-toast a waiting agent", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

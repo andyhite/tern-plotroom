@@ -360,6 +360,9 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	if paused ~= nil then
 		table.insert(out, { text = "Plotroom paused: " .. paused, icon = "warn", tone = "error" })
 	end
+	if flows.linksUnreadable() then
+		table.insert(out, { text = "Agent links unreadable", icon = "warn", tone = "error" })
+	end
 	-- One count covers the agents that need input and the rest of Now: a click shows Now.
 	local need = flows.needCount()
 	if need > 0 then
