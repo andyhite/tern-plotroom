@@ -20,6 +20,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ### Fixed
 
+- A pull request whose head or base branch has letters beyond ASCII (`feature/ñ`, `fix/日本語`) can be checked out and reviewed instead of being refused as "has characters Plotroom does not accept"; shell characters, `#`, `,`, whitespace, control characters and a leading `-` are still refused (tern-plotroom#bxks).
 - A view's name is refused over 120 characters (it was not limited), and an action's or view's name is counted in characters, not bytes: 70 CJK characters are no longer refused as "at most 120 characters". The sidebar, the title, the Delete view confirm and Settings' view rows show a view's name on one line, cut to 60 characters.
 - Deleting a pull request action now reports a failed cleanup of issue actions' `next` on its Delete row instead of dropping the error (tern-plotroom#ma6s).
 - Settings › General: Reset on a shortcut whose default another action now holds (Commands' `.` bound to another action) says "Already the shortcut of <action>." instead of doing nothing and showing no reason (tern-plotroom#qxz5).

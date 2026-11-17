@@ -1400,11 +1400,31 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 end
 
 -- A branch or remote name Plotroom puts in a git ref, a path or a prompt: git's own ref-name rules (no `..`, empty,
--- dot-leading or `.lock`-ending component, trailing `.`) over a plain character set (`+` and `@` are legal in both).
+-- dot-leading or `.lock`-ending component, trailing `.`) over a plain character set: ASCII letters, digits and
+-- `_ . / + @ -` (not first), plus any valid UTF-8 outside the controls, spaces, separators and bidi/format marks below.
 -- One check for every site that takes the name, so one place accepts what another refuses.
+-- ponytail: Luau has no Unicode category table, so a non-ASCII symbol or emoji passes with the letters (none is shell
+-- syntax); upgrade to a letter table only if such names must be refused.
+local function plainCodepoint(c: number, first: boolean): boolean
+	if c < 128 then
+		local word = c == 0x5F or (c >= 0x30 and c <= 0x39) or (c >= 0x41 and c <= 0x5A) or (c >= 0x61 and c <= 0x7A)
+		return word or (not first and (c == 0x2D or c == 0x2E or c == 0x2F or c == 0x2B or c == 0x40))
+	end
+	-- Refused: C1 controls, no-break space, soft hyphen, Unicode spaces, zero-width and bidi marks, line and paragraph
+	-- separators, word joiner and invisible operators, ideographic space, BOM.
+	return not ((c >= 0x80 and c <= 0xA0) or c == 0xAD or (c >= 0x2000 and c <= 0x206F) or c == 0x3000 or c == 0xFEFF)
+end
+
 function M.validRef(s: string): boolean
-	if not string.match(s, "^[%w_][%w_%./%+@%-]*$") or string.find(s, "..", 1, true) or string.sub(s, -1) == "." then
+	if utf8.len(s) == nil or string.find(s, "..", 1, true) or string.sub(s, -1) == "." then
 		return false
+	end
+	local first = true
+	for _, c in utf8.codes(s) do
+		if not plainCodepoint(c, first) then
+			return false
+		end
+		first = false
 	end
 	for part in string.gmatch(s .. "/", "([^/]*)/") do
 		if part == "" or string.sub(part, 1, 1) == "." or string.sub(part, -5) == ".lock" then

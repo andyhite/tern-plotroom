@@ -115,10 +115,10 @@ end)
 case("worktree: premerge and reviewDiff share one base check and name the value they refuse", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local github = w.load("github") :: h.Github
-	for _, name in { "main", "release/1.0+rc", "user@x/topic", "team/fork", "a.b-c_d" } do
+	for _, name in { "main", "release/1.0+rc", "user@x/topic", "team/fork", "a.b-c_d", "feature/ñ", "fix/日本語", "Ünï/x-y", "ñ" } do
 		yes(github.validRef(name), name .. " is a legal name")
 	end
-	for _, name in { "", "a..b", "a//b", "a/", "a.", "x.lock", "a/b.lock", "a/.b", "-x", "a b", "a\n", "a@{1}" } do
+	for _, name in { "", "a..b", "a//b", "a/", "a.", "x.lock", "a/b.lock", "a/.b", "-x", "a b", "a\n", "a@{1}", "fix#12", "a,b", "a;b", "a$b", "a`b", "a\0b", "\x7f", "\u{85}x", "a\u{a0}b", "a\u{202e}b", "a\u{200b}b", "a\u{2028}b", "a\u{3000}b", "é\x80b", "\xff", "-ñ" } do
 		yes(not github.validRef(name), show(name) .. " is refused")
 	end
 	local function premerge(remote: string, base: string): string?
