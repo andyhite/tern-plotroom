@@ -15,6 +15,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - The Worktrees board's remove confirms: one finished worktree's button reads "Remove", and neither confirm offers a remove button when it has nothing to remove (psfa).
 
 ### Changed
+- Settings: the API-quota meter is neutral (no warn/bad colours), and the prompt editor's Save and Cancel are Tern buttons showing ⌘↵ and Esc (5n37).
 - A Summary no longer fails, blaming the model, when an item's description or a comment holds a control character such as NUL: they are dropped before the prompt is built (n8r5).
 - Docs state that Plotroom works with github.com only; the host is one `HOST` constant in `plugin/github.luau` (no behavior change).
 - A triage store saved by a newer Plotroom now says so ("from a newer Plotroom; not overwriting it") instead of "malformed" (tern-plotroom#dezq).

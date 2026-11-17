@@ -786,7 +786,7 @@ local function pageContent(state: State): ({ any }, { Node })
 						ui.text({ ui.span("API quota") }),
 						ui.text({ ui.span(left, "muted") }),
 					}),
-					ui.node("meter", { key = "used", value = 1 - q.remaining / q.limit, thresholds = { warn = 0.8, bad = 0.95 }, size = "md", basis = 0.3 }),
+					ui.node("meter", { key = "used", value = 1 - q.remaining / q.limit, size = "md", basis = 0.3 }),
 				})
 			)
 		end
@@ -2292,14 +2292,8 @@ function M.settingsView(state: State, palette: Node): BlockView
 		table.insert(
 			kids,
 			ui.node("row", { key = "buttons", role = "omp.actions" }, {
-				ui.node("row", { key = "save", role = "omp.btn", gap = "xs", align = "center", actions = { click = "save-prompt" } }, {
-					ui.node("icon", { key = "i", name = "save" }),
-					ui.text({ ui.span("Save") }),
-				}),
-				ui.node("row", { key = "cancel", role = "omp.btn", gap = "xs", align = "center", actions = { click = "cancel-prompt" } }, {
-					ui.node("icon", { key = "i", name = "x" }),
-					ui.text({ ui.span("Cancel") }),
-				}),
+				render.button("Cancel", { key = "cancel", size = "md", variant = "quiet", keys = { "esc" }, actions = { click = "cancel-prompt" } }),
+				render.button("Save", { key = "save", size = "md", keys = { "cmd", "enter" }, actions = { click = "save-prompt" } }),
 			})
 		)
 		table.insert(extra, ui.node("col", { key = "prompt", role = "omp.prefs.editor", gap = "md" }, kids))
