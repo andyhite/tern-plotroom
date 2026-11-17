@@ -724,6 +724,17 @@ case("host: the card says how many commits are unpushed, and a git command finis
 	s.git.dirty[target] = nil
 	done(9, "git push")
 	same(chipsOf(b), { "Up to date", "Clean" }, "nothing unpushed shows no badge")
+	s.git.unpushed[target] = 2
+	done(10, "git -C " .. target .. " commit -m x")
+	same(chipsOf(b), { "Up to date", "Clean", "2 unpushed" }, "git -C the worktree from another folder reads the card")
+	s.git.unpushed[target] = 0
+	local reads2 = countLog(s.git, "status")
+	done(9, "git -C ../../elsewhere status")
+	eq(countLog(s.git, "status"), reads2, "git -C a folder outside the worktree, run from inside it, reads nothing")
+	done(10, "cd /wt && echo git")
+	eq(countLog(s.git, "status"), reads2, "a word git in another command reads nothing")
+	done(9, "FOO=1 git pull")
+	eq(countLog(s.git, "status"), reads2 + 1, "a git command after a variable assignment reads the card")
 end)
 
 case("host: a Worktree press keeps the unpushed count, and a git finish runs the worktree scan again", function(w: World)

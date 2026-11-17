@@ -495,6 +495,149 @@ function M.brief(s: string): string
 	return M.clip(M.printable(string.match(s, "[^\n]*") or ""), 160)
 end
 
+-- A shell line read as the simple commands it runs: split at unquoted `;`, `|`, `&`, `(`, `)` and newlines, words
+-- unquoted. `FOO=1`, `sudo`, `env` and the like before the program are skipped, and a `git` or `gh` command keeps its
+-- program (path stripped), its `-C` directory and the words from its subcommand on (git's `-C dir`, `-c k=v`,
+-- `--git-dir`… and gh's `-R repo` skipped). Other programs are dropped: nothing here needs them.
+-- ponytail: no variable, alias, function or `sudo -u user` expansion; a line the parser misreads changes only
+-- whether a refresh happens one poll early. Use a real shell parser if that matters.
+export type ShellCommand = { program: string, dir: string?, args: { string } }
+
+local WRAPPERS = { sudo = true, env = true, command = true, time = true, exec = true, nohup = true }
+local GIT_WITH_VALUE = { ["-C"] = true, ["-c"] = true, ["--git-dir"] = true, ["--work-tree"] = true, ["--namespace"] = true, ["--super-prefix"] = true, ["--config-env"] = true }
+local GH_WITH_VALUE = { ["-R"] = true, ["--repo"] = true }
+
+local function shellWords(line: string): { { string } }
+	local segs: { { string } } = {}
+	local cur: { string } = {}
+	local word: string? = nil
+	local quote: string? = nil
+	local i = 1
+	local function endWord()
+		if word then
+			table.insert(cur, word)
+			word = nil
+		end
+	end
+	local function endSeg()
+		endWord()
+		if #cur > 0 then
+			table.insert(segs, cur)
+			cur = {}
+		end
+	end
+	while i <= #line do
+		local c = string.sub(line, i, i)
+		if quote then
+			if c == quote then
+				quote = nil
+			elseif c == "\\" and quote == '"' and i < #line then
+				i += 1
+				word = (word or "") .. string.sub(line, i, i)
+			else
+				word = (word or "") .. c
+			end
+		elseif c == "'" or c == '"' then
+			quote = c
+			word = word or ""
+		elseif c == "\\" and i < #line then
+			i += 1
+			word = (word or "") .. string.sub(line, i, i)
+		elseif c == " " or c == "\t" then
+			endWord()
+		elseif c == ";" or c == "|" or c == "&" or c == "(" or c == ")" or c == "\n" then
+			endSeg()
+		else
+			word = (word or "") .. c
+		end
+		i += 1
+	end
+	endSeg()
+	return segs
+end
+
+function M.shellCommands(line: string): { ShellCommand }
+	local out: { ShellCommand } = {}
+	for _, words in shellWords(line) do
+		local i = 1
+		while words[i] do
+			local w = words[i]
+			if string.find(w, "^[%a_][%w_]*=") or WRAPPERS[w] or (i > 1 and string.sub(w, 1, 1) == "-" and WRAPPERS[words[1]]) then
+				i += 1
+			else
+				break
+			end
+		end
+		local program = string.match(words[i] or "", "[^/]*$")
+		if program == "git" or program == "gh" then
+			local withValue = if program == "git" then GIT_WITH_VALUE else GH_WITH_VALUE
+			local dir: string? = nil
+			i += 1
+			while words[i] and string.sub(words[i], 1, 1) == "-" do
+				local opt = words[i]
+				if withValue[opt] then
+					i += 1
+					if opt == "-C" and words[i] then
+						dir = if not dir or string.sub(words[i], 1, 1) == "/" then words[i] else dir .. "/" .. words[i]
+					end
+				end
+				i += 1
+			end
+			local cmd: ShellCommand = { program = program :: string, dir = dir, args = table.move(words, i, #words, 1, {}) }
+			table.insert(out, cmd)
+		end
+	end
+	return out
+end
+
+local GH_MUTATING: { [string]: { [string]: boolean } } = {
+	pr = { create = true, merge = true, ready = true, edit = true, close = true, reopen = true, review = true, comment = true, ["update-branch"] = true, revert = true },
+	issue = { create = true, close = true, reopen = true, edit = true, comment = true, delete = true, transfer = true },
+	run = { rerun = true, cancel = true, delete = true },
+}
+
+-- Whether `cmd` changes what GitHub lists: `git push` that is not a dry run, `gh pr|issue|run` with a subcommand that
+-- writes (`gh pr view`, `gh pr list`, `gh run watch` only read).
+function M.mutatesGithub(cmd: ShellCommand): boolean
+	local sub = cmd.args[1]
+	if cmd.program == "git" then
+		if sub ~= "push" then
+			return false
+		end
+		for _, a in cmd.args do
+			if a == "--dry-run" or string.find(a, "^%-[^%-]*n") then
+				return false
+			end
+		end
+		return true
+	end
+	local group = if sub then GH_MUTATING[sub] else nil
+	return group ~= nil and cmd.args[2] ~= nil and group[cmd.args[2]] == true
+end
+
+-- The folder a command runs in: its `-C` directory against `cwd` (the pane's folder), with `.` and `..` resolved; nil
+-- when that is not an absolute path (a `~` directory, or no cwd for a relative one).
+function M.commandDir(cmd: ShellCommand, cwd: string?): string?
+	local path = cmd.dir
+	if not path then
+		return cwd
+	elseif string.sub(path, 1, 1) ~= "/" then
+		if not cwd or string.sub(path, 1, 1) == "~" then
+			return nil
+		end
+		path = cwd .. "/" .. path
+	end
+	local parts: { string } = {}
+	for part in string.gmatch(path, "[^/]+") do
+		if part == ".." then
+			table.remove(parts)
+		elseif part ~= "." then
+			table.insert(parts, part)
+		end
+	end
+	return "/" .. table.concat(parts, "/")
+end
+
 M.QUEUE_ID = "layer.queue"
 M.SETTINGS_ID = "layer.settings"
 -- The Settings pages, in order, the same whatever the active kind: the `setup` page of an integration (its install
