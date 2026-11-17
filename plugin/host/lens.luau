@@ -168,11 +168,11 @@ function M.define()
 	tern.lens.define("pr-checks", checks)
 	-- In a Tern pane gh first asks the terminal its background colour, ending with a cursor position query, and Tern
 	-- aborts a capture that sends one, so `gh pr checks` (and every gh lens) would stay raw. With GLAMOUR_STYLE set gh
-	-- skips the query: a shell gets `dark` unless the daemon's environment already names a style. An export in the
+	-- skips the query: a shell gets `notty` (no colours, so it reads on any theme) unless the daemon's environment already names a style. An export in the
 	-- shell's rc file still wins, as it runs after this.
 	tern.on("spawn", function(spec: SpawnSpec): SpawnSpec
 		if not spec.env.GLAMOUR_STYLE and not tern.getenv("GLAMOUR_STYLE") then
-			spec.env.GLAMOUR_STYLE = "dark"
+			spec.env.GLAMOUR_STYLE = "notty"
 		end
 		return spec
 	end)

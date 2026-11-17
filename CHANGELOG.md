@@ -16,6 +16,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ### Changed
 
+- Shell panes start with `GLAMOUR_STYLE=notty` (colourless) instead of `dark` when it is unset, so `gh pr view`, `gh issue view` and `glow` read on a light theme; export `GLAMOUR_STYLE` in your shell's rc file to choose another style (tern-plotroom#h9ve).
 - Settings › Actions with neither `gh` nor `acli` installed shows "Install gh or acli first: see Settings › GitHub and Settings › Jira." with a Setup guide button for each, instead of an empty sheet (tern-plotroom#b789).
 
 ### Fixed
