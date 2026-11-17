@@ -58,7 +58,7 @@ python3 scripts/check.py --ci      # what CI runs (ubuntu + macOS x Python 3.9 +
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
 
-Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (`$XDG_CACHE_HOME`) → PATH. Missing tool = failure, not skip. Each bench row (median of 3 samples) has a budget: `BENCH_BUDGETS_MS` in `scripts/check.py` by row name, else 25 ms; `PLOTROOM_BENCH_BUDGET_MS` sets one ceiling for every row. The failure names the row. A row with neither `ms=` nor `bytes=` fails the gate, and the `BENCH payload*` rows must stay under 600000 bytes. `types` fails on **any** luau-lsp diagnostic, warnings included, over `plugin/**/*.luau`.
+Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (`$XDG_CACHE_HOME`) → PATH. Missing tool = failure, not skip. Each bench row (median of 3 samples) has a budget: `BENCH_BUDGETS_MS` in `scripts/check.py` by row name, else 25 ms; `PLOTROOM_BENCH_BUDGET_MS` sets one ceiling for every row. A row over its budget reruns the bench once, and fails the gate only when it is over in that run too (machine load slows a run; a regression slows both). The failure names the row. A row with neither `ms=` nor `bytes=` fails the gate, and the `BENCH payload*` rows must stay under 600000 bytes. `types` fails on **any** luau-lsp diagnostic, warnings included, over `plugin/**/*.luau`.
 
 CI never runs smoke (no Tern there), so a green CI is not a full pass: before merging, run `python3 scripts/check.py` locally with Tern installed and make sure the smoke stage passed. Real-Tern-only failures (a CSS rule Tern rejects, SDK drift, real git or `omp worktree add` behavior) are caught only there.
 

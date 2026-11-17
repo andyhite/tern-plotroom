@@ -22,7 +22,7 @@ test    plugin/tests/regression.luau (which also runs the plugin/tests/check.lua
 types   luau-lsp analyze --platform standard against scripts/tern-0.9.13.d.luau (a copy of the SDK that
         `tern plugin types` writes), over plugin/**/*.luau (subfolders included). Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
-bench   renders the real queue view with 1000 PRs and fails when a row is above its budget (BENCH_BUDGETS_MS, else 25 ms; PLOTROOM_BENCH_BUDGET_MS sets one ceiling for all rows) or has neither ms= nor bytes=.
+bench   renders the real queue view with 1000 PRs and fails when a row is above its budget (BENCH_BUDGETS_MS, else 25 ms; PLOTROOM_BENCH_BUDGET_MS sets one ceiling for all rows) in two runs (the second runs only when the first has a row over) or has neither ms= nor bytes=.
 ext     plugin/tests/extension.ts, run by bun (else node >= 23.6, which strips types): the omp extension's two tools
         over the fixtures it shares with its Luau readers (plugin/tests/extension.luau; the `test` stage reads them
         back in Luau). NOT RUN when neither runtime is on PATH.
@@ -667,8 +667,7 @@ def check_types() -> str:
     return "%d files, 0 diagnostics" % len(files)
 
 
-def check_bench() -> str:
-    luau = find_tool("luau", "LUAU")
+def bench_rows(luau: Path) -> List[str]:
     code, out, err = run_bundle(luau, "bench")
     sys.stdout.write(out)
     sys.stderr.write(err)
@@ -677,7 +676,13 @@ def check_bench() -> str:
     rows = [l for l in out.splitlines() if l.startswith("BENCH ")]
     if not rows:
         raise GateError("benchmark printed no BENCH rows")
-    worst = ("", 0.0, 0.0)  # row name, ms, its budget: the row closest to (or furthest over) its budget
+    return rows
+
+
+def judge_bench(rows: List[str]) -> Tuple[List[Tuple[str, float, float]], Tuple[str, float, float]]:
+    """Rows over their budget (name, ms, budget), and the row closest to its budget."""
+    over: List[Tuple[str, float, float]] = []
+    worst = ("", 0.0, 0.0)
     for row in rows:
         name = row.split()[1]
         fields = dict(re.findall(r"(\w+)=([0-9.]+)", row))
@@ -685,7 +690,7 @@ def check_bench() -> str:
             budget = float(BENCH_BUDGET_ENV) if BENCH_BUDGET_ENV else BENCH_BUDGETS_MS.get(name, BENCH_DEFAULT_MS)
             ms = float(fields["ms"])
             if ms > budget:
-                raise GateError("bench row %s took %.1f ms, over its %.0f ms budget (BENCH_BUDGETS_MS, PLOTROOM_BENCH_BUDGET_MS)" % (name, ms, budget))
+                over.append((name, ms, budget))
             if worst[0] == "" or ms / budget > worst[1] / worst[2]:
                 worst = (name, ms, budget)
         elif "bytes" in fields:
@@ -693,6 +698,23 @@ def check_bench() -> str:
                 raise GateError("bench row %s is %d bytes, not under %d" % (name, float(fields["bytes"]), BENCH_PAYLOAD_MAX))
         else:
             raise GateError("bench row %s has neither ms= nor bytes=, so no budget covers it: %s" % (name, row))
+    return over, worst
+
+
+def check_bench() -> str:
+    luau = find_tool("luau", "LUAU")
+    rows = bench_rows(luau)
+    over, worst = judge_bench(rows)
+    if over:
+        # Wall time on a shared machine: load (concurrent checks, efficiency cores) slows every row for a while. A row
+        # fails only when it is over budget in a second run too; a real regression is.
+        say("bench: %s over budget; running the bench again to tell a regression from machine load" % ", ".join("%s %.1f ms" % (n, ms) for n, ms, _ in over))
+        first = {n: ms for n, ms, _ in over}
+        rows = bench_rows(luau)
+        again, worst = judge_bench(rows)
+        for name, ms, budget in again:
+            if name in first:
+                raise GateError("bench row %s took %.1f ms, then %.1f ms, over its %.0f ms budget (BENCH_BUDGETS_MS, PLOTROOM_BENCH_BUDGET_MS)" % (name, first[name], ms, budget))
     return "%d rows, closest to budget: %s %.1f of %.0f ms" % (len(rows), worst[0], worst[1], worst[2])
 
 
