@@ -2104,7 +2104,7 @@ local function newGh(w: World): Gh
 end
 M.newGh = newGh
 
-export type AcliReq = { kind: string, argv: { string } } -- kind: version | auth | search | count | sprints | view | changes | owned | projects | other
+export type AcliReq = { kind: string, argv: { string }, env: { [string]: string } } -- kind: version | auth | search | count | sprints | view | changes | owned | projects | other
 export type Acli = {
 	site: string?, -- the Jira site `acli jira auth status` names; nil: signed out, every jira command fails as unauthorized
 	searches: { [string]: { any } }, -- --jql value -> the work items it finds, in the order acli prints them; an unlisted query finds none
@@ -2141,7 +2141,7 @@ local function newAcli(w: World): Acli
 		elseif argv[2] == "jira" and argv[3] == "project" and argv[4] == "list" then
 			kind = "projects"
 		end
-		local req: AcliReq = { kind = kind, argv = argv }
+		local req: AcliReq = { kind = kind, argv = argv, env = call.env }
 		table.insert(acli.requests, req)
 		local forced = if acli.override then acli.override(req) else nil
 		if forced then

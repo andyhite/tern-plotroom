@@ -12,6 +12,8 @@ local M = {}
 -- Problem kinds as github.luau's.
 type Problem = github.Problem
 
+local ENV: { [string]: string } = { NO_COLOR = "1" } -- as github.luau's
+
 local TIMEOUT_MS = 60 * 1000
 -- ponytail: a view lists the newest 1000 by priority then update; more is partial, raise it if views need more
 M.LIMIT = 1000
@@ -28,9 +30,11 @@ local function list(v: any): { any }
 	return if type(v) == "table" then v else {}
 end
 
--- The Problem acli's failure means; `text` is what it printed, stdout then stderr.
+-- The Problem acli's failure means; `text` is what it printed, stdout then stderr. A colour sequence is cut whole,
+-- and the message has passed input.clean, so no control byte reaches a toast or a problem row.
 function M.classify(text: string): Problem
-	local line = input.trim(string.match(text, "Error:%s*([^\n]+)") or string.match(text, "%S[^\n]*") or "")
+	text = string.gsub(text, "\27%[[%d;?]*[%a]", "")
+	local line = input.clean(input.trim(string.match(text, "Error:%s*([^\n]+)") or string.match(text, "%S[^\n]*") or ""))
 	if line == "" then
 		line = "acli failed."
 	end
@@ -54,7 +58,7 @@ local function acli(args: { string }, done: (string?, Problem?) -> ())
 	for _, a in args do
 		table.insert(argv, a)
 	end
-	process.run(argv, { timeout_ms = TIMEOUT_MS }, function(result, perr)
+	process.run(argv, { timeout_ms = TIMEOUT_MS, env = ENV }, function(result, perr)
 		if not result then
 			return done(nil, { kind = "missing", message = perr or "acli could not be started" })
 		end

@@ -1808,6 +1808,23 @@ case("jira.issues: acli's failures become problems, and a query that cannot be w
 	eq(during.problem.kind, "superseded", "cancelled while the search was in flight")
 end)
 
+case("jira.issues: acli runs with NO_COLOR and a coloured error reaches the problem without control bytes", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	local query = "assignee = currentUser()"
+	eq(runJira(w, jira, query, nil).problem, nil, "a working search")
+	for _, req in acli.requests do
+		eq(req.env.NO_COLOR, "1", "NO_COLOR for " .. req.kind)
+	end
+	acli.override = function(req: AcliReq): Reply?
+		return if req.kind == "search" then { status = 1, stderr = "\27[31mError: no access\27[0m\27[K\n" } else nil
+	end
+	local out = runJira(w, jira, query, nil)
+	eq(out.result, nil, "no result")
+	eq(out.problem.message, "no access", "the error, named")
+	yes(string.find(out.problem.message, "[%c\127]") == nil, "no control byte reaches the problem row")
+end)
+
 case("jira.issue: body as markdown, fields, links and dates", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local github = w.load("github") :: Github

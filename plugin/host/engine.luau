@@ -2272,7 +2272,7 @@ function M.probeClis(again: boolean?)
 	for _, c in cli.list do
 		if (again or cli.installed[c.id] == nil) and not cli.probing[c.id] then
 			cli.probing[c.id] = true
-			process.run(c.argv, { timeout_ms = 10000 }, function(result)
+			process.run(c.argv, { timeout_ms = 10000, env = { NO_COLOR = "1" } }, function(result)
 				cli.probing[c.id] = nil
 				cli.moved = cli.moved or cli.installed[c.id] ~= (result ~= nil)
 				cli.installed[c.id] = result ~= nil
