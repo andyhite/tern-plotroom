@@ -893,8 +893,11 @@ function M.define()
 					state.at, state.editing = i, false
 				end
 			elseif act == "keep" and tonumber(value) then
-				state.at = tonumber(value) :: number
-				toggle(state, state.at)
+				local i = tonumber(value) :: number
+				if i >= 0 and i <= last(state) then
+					state.at = i
+					toggle(state, i)
+				end
 			elseif act == "edit" and tonumber(value) then
 				local i = tonumber(value) :: number
 				if i >= 0 and i <= last(state) then

@@ -444,6 +444,11 @@ case("review: keys and clicks pick, edit, keep and drop; Send carries the kept c
 	eq(navState(b, 2), "Dropped", "Drop drops the comment")
 	b.event({ ev = "action", act = "keep", value = "2" })
 	eq(navState(b, 2), "Kept", "and Keep keeps it again")
+	b.event({ ev = "action", act = "keep", value = "99" })
+	eq(navState(b, 2), "Kept", "a stale Keep past the last card changes nothing")
+	b.typeText(" ")
+	eq(navState(b, 2), "Dropped", "and the selection stays on comment 2")
+	b.event({ ev = "action", act = "keep", value = "2" })
 	b.typeText(" ")
 	eq(navState(b, 2), "Dropped", "Space drops the selected comment")
 	-- Request changes.
