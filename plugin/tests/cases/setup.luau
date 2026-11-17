@@ -75,10 +75,10 @@ case("host: Get started lists gh, omp, the listed repository without a checkout 
 	local b = openOutside(w)
 	yes(guide(b) ~= nil, "a fresh profile shows the checklist")
 	same(labels(b), { "gh signed in as @octocat", "omp installed", "Choose the checkout of o/r…" }, "gh and omp done, o/r's checkout to choose")
-	local choose = step(b, "co:o/r")
+	local choose = step(b, "coo_2fr")
 	eq(choose.p.href, h.tokened("plotroom://checkout/o/r"), "nothing was found: it asks the window for a folder")
 	eq(choose.p.size, "sm", "a small button: it sits in a card")
-	eq(stepWhat(b, "co:o/r"), "A new or empty folder gets a clone", "and clone stays the fallback")
+	eq(stepWhat(b, "coo_2fr"), "A new or empty folder gets a clone", "and clone stays the fallback")
 	has(findKey(line(b, "keys"), "what").p.spans[1].t, "One-key shortcuts (j k", "the shortcuts line names its keys")
 	eq(findKey(line(b, "keys"), "use", "button").p.text, "Use them", "with Use them")
 	eq(findKey(line(b, "keys"), "no", "button").p.text, "No thanks", "and No thanks")
@@ -132,6 +132,30 @@ case("host: without gh, Get started's gh line points to gh's install guide", fun
 	same(labels(b), { "Install gh, GitHub's CLI", "omp installed" }, "gh to install; with no GitHub view nothing is listed, so no checkout to choose")
 	click(b, "gh")
 	eq(w.opened[#w.opened], "https://github.com/cli/cli#installation", "gh's install guide")
+end)
+
+case("host: Get started's checkout line keys escape the repository name, so `.` and `/` never split the key path", function(w: World)
+	local s = hostScene(w, 3)
+	fresh(w)
+	local items = h.manyItems("owner/foo.js", 1)
+	for _, repo in { "a/b.c", "a/b" } do
+		table.insert(items, h.manyItems(repo, 1)[1])
+	end
+	s.gh.items.octocat = items
+	local b = openOutside(w)
+	local keys: { string } = {}
+	for _, node in findKey(guide(b), "lines", "col").c do
+		local key: string = node.p.key
+		if key ~= "gh" and key ~= "omp" then
+			yes(not string.find(key, "[/.]"), "key " .. key .. " holds neither / nor .")
+			table.insert(keys, key)
+		end
+	end
+	eq(#keys, 3, "one line per repository")
+	yes(keys[1] ~= keys[2] and keys[2] ~= keys[3] and keys[1] ~= keys[3], "a/b.c and a/b get different keys")
+	local js = step(b, "coowner_2ffoo_2ejs")
+	eq(js.p.text, "Choose the checkout of owner/foo.js…", "the line is found by its escaped key")
+	eq(js.p.href, h.tokened("plotroom://checkout/owner/foo.js"), "and it opens the checkout prompt for owner/foo.js, name unescaped")
 end)
 
 case("host: Get started's shortcuts: Use them binds the one-key set, No thanks keeps the keys, and either is done", function(w: World)
@@ -189,13 +213,13 @@ case("host: checkout detection offers the folder Plotroom opened in when one of 
 	s.git.remotes = { origin = { "https://github.com/me/r.git" }, upstream = { "https://github.com/o/r.git" } }
 	local b = h.openQueue(w)
 	eq(w.kv.get("checkouts")["me/r"], "/work/r", "the launch saved the fork")
-	eq(step(b, "co:o/r").p.text, "Use /work/r as the checkout", "and detection offers the folder for o/r")
-	eq(stepWhat(b, "co:o/r"), "o/r", "naming the repository")
-	click(b, "co:o/r")
+	eq(step(b, "coo_2fr").p.text, "Use /work/r as the checkout", "and detection offers the folder for o/r")
+	eq(stepWhat(b, "coo_2fr"), "o/r", "naming the repository")
+	click(b, "coo_2fr")
 	w.flush()
 	eq(w.kv.get("checkouts")["o/r"], "/work/r", "Use saves it")
 	eq(w.toasts[#w.toasts].text, "Checkout saved", "and says so")
-	eq(line(b, "co:o/r"), nil, "the line is gone")
+	eq(line(b, "coo_2fr"), nil, "the line is gone")
 	eq(countCalls(w, "gh repo clone github.com/o/r /work/r"), 0, "nothing was cloned")
 end)
 
@@ -206,16 +230,16 @@ case("host: checkout detection offers another pane's folder on this host, never 
 	wrong.remotes.origin = { "https://github.com/x/y.git" }
 	table.insert(w.panes, { pane = 7, cwd = "/code/x" })
 	local b = openOutside(w)
-	eq(step(b, "co:o/r").p.text, "Choose the checkout of o/r…", "a checkout whose remote is another repository is not offered")
+	eq(step(b, "coo_2fr").p.text, "Choose the checkout of o/r…", "a checkout whose remote is another repository is not offered")
 	local right = newGit(w, "/code/r")
 	right.remotes.origin = { "git@github.com:o/r.git" }
 	w.fs.dirs["/code/r/src"] = true
 	table.insert(w.panes, { pane = 8, cwd = "/code/r/src" })
 	b.event({ ev = "action", act = "get-started" }) -- asks again at once
 	w.flush()
-	eq(step(b, "co:o/r").p.text, "Use /code/r as the checkout", "a pane inside a checkout of o/r offers that checkout")
+	eq(step(b, "coo_2fr").p.text, "Use /code/r as the checkout", "a pane inside a checkout of o/r offers that checkout")
 	right.remotes.origin = { "https://github.com/x/z.git" }
-	click(b, "co:o/r")
+	click(b, "coo_2fr")
 	w.flush()
 	eq(w.toasts[#w.toasts].text, "Checkout not saved", "Use verifies the folder again")
 	has(w.toasts[#w.toasts].sub, "No remote of /code/r points at github.com/o/r", "and refuses a remote that changed meanwhile")
@@ -230,7 +254,7 @@ case("host: a pane on another host never counts for checkout detection", functio
 	w.window.panes[9] = { cwd = "/code/r", tab = 1 }
 	w.window.hostOf[9] = 2
 	local b = openOutside(w)
-	eq(step(b, "co:o/r").p.text, "Choose the checkout of o/r…", "the other host's checkout is not offered")
+	eq(step(b, "coo_2fr").p.text, "Choose the checkout of o/r…", "the other host's checkout is not offered")
 	eq(countCalls(w, "git -C /code/r rev-parse --show-toplevel"), 0, "nor looked at")
 end)
 

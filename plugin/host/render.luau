@@ -2137,13 +2137,15 @@ local function checklist(state: State): Node?
 	end
 	for _, repo in engine.missingCheckouts(state) do
 		local key = string.lower(repo)
+		-- A repository name holds `/` and `.`, which Tern splits keys on: escape it as the picker ids do.
+		local node = engine.pickerId("co", key)
 		local path = if state.found then state.found[key] else nil
 		if path == nil then
-			line("co:" .. key, "Looking for a checkout of " .. repo .. "…", "wait")
+			line(node, "Looking for a checkout of " .. repo .. "…", "wait")
 		elseif type(path) == "string" then
-			line("co:" .. key, "Use " .. worktree.tilde(path, tern.getenv("HOME")) .. " as the checkout", "todo", "setup-use=" .. repo, repo)
+			line(node, "Use " .. worktree.tilde(path, tern.getenv("HOME")) .. " as the checkout", "todo", "setup-use=" .. repo, repo)
 		else
-			line("co:" .. key, "Choose the checkout of " .. repo .. "…", "todo", "open", "A new or empty folder gets a clone", core.withToken("plotroom://checkout/" .. repo))
+			line(node, "Choose the checkout of " .. repo .. "…", "todo", "open", "A new or empty folder gets a clone", core.withToken("plotroom://checkout/" .. repo))
 		end
 	end
 	local choice = shortcutsChoice(saved)

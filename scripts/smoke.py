@@ -1388,7 +1388,7 @@ def sc_get_started(s: Smoke) -> None:
     s.wait_text("the checklist", "Get started")
     s.wait_text("the checkout found in the other tab", "Use %s as the checkout" % root)
     s.shot("get-started")
-    s.ctl_ok("click", "[data-id$='get-started.lines.co:s/tart.do']")
+    s.ctl_ok("click", "[data-id$='get-started.lines.cos_2ftart.do']")
     s.wait_text("Use saves it", "Checkout saved")
     s.wait_until("the checkout's line is done", lambda: not any("as the checkout" in t for t in s.texts()))
     s.ctl_ok("click", "[data-id$='get-started.keys.no']")
