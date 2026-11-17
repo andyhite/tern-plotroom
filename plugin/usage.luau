@@ -420,6 +420,18 @@ function M.readRuns(): ({ Run }?, string?)
 	return index, nil
 end
 
+-- The newest run of item `key` that is no checker's, whole (its file's report fields too; the index entry alone when
+-- the file cannot be read), or nil when there is none or the log cannot be read.
+-- ponytail: one index read and one file read per call; the caller asks only for the selected item's preview.
+function M.lastRun(key: string): Run?
+	for _, r in M.readRuns() or {} do
+		if r.key == key and not r.checking then
+			return (if r.id then readFile(r.id) else nil) or r
+		end
+	end
+	return nil
+end
+
 -- Puts `run` first in the log (its file, then its index entry), keeping the newest RUNS_CAP; `run.id`: the agent's run
 -- id (nil or invalid: one is made). The files of runs pushed out are removed. Nothing is written when the log cannot be
 -- read or is malformed.

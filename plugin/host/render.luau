@@ -148,6 +148,9 @@ local AGENT_BADGE: { [string]: { text: string, tone: string, title: string } } =
 	exited = { text = "Exited", tone = "muted", title = "Its agent has exited" },
 }
 
+-- How a run in the run log ended, as the item's Last run says it.
+local LAST_RESULT: { [string]: string } = { done = "finished", failed = "failed", exited = "program exited", closed = "pane closed" }
+
 -- An agent's last end-of-run report as a badge: the agent's claim, never a sign the work is done.
 local REPORT_BADGE: { [string]: { text: string, tone: string, title: string } } = {
 	ok = { text = "Report: ok", tone = "muted", title = "Its agent reported nothing blocks it; a claim, not a check" },
@@ -308,7 +311,13 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 		table.insert(items, { k = "Agent", v = { ui.span(died.text, died.tone), ui.span(" — no end-of-run report") } })
 	end
 	local live = state.agents[item.key] and state.agents[item.key] ~= "exited"
-	local info = if live then state.agentInfo[item.key] else nil
+	-- With no live agent the item's newest run in the run log stands in: the verdicts outlive the agent's pane.
+	local last = if live then nil else usage.lastRun(item.key)
+	local info: { outcome: string?, verdict: string?, check: string?, findings: any? }? = if live then state.agentInfo[item.key] else last
+	if last then
+		local result = LAST_RESULT[last.result] or last.result
+		table.insert(items, { k = "Last run", v = { ui.span(printable(last.action .. " · " .. github.age(last.ended) .. " ago · " .. result)) } })
+	end
 	if verdictBadge(info) then
 		table.insert(items, { k = "Outcome", v = { ui.span(verdictText(info) :: string, (verdictBadge(info) :: any).tone) } })
 	end
@@ -316,7 +325,20 @@ local function stageFact(state: State, kind: string, item: any, lead: { { [strin
 	if c and info then
 		table.insert(items, { k = "Check", v = { ui.span(c.text, c.tone) } })
 		if info.check == "fail" and info.findings then
-			table.insert(items, { k = "Findings", v = { ui.span(printable(info.findings)) } })
+			local text = if type(info.findings) == "table" then table.concat(info.findings, " · ") else info.findings
+			table.insert(items, { k = "Findings", v = { ui.span(printable(text)) } })
+		end
+	end
+	if last then
+		local report = REPORT_BADGE[last.attention or ""]
+		if report then
+			table.insert(items, { k = "Report", v = { ui.span(report.text, report.tone) } })
+		end
+		if report and last.reason then
+			table.insert(items, { k = "Reason", v = { ui.span(printable(last.reason)) } })
+		end
+		if report and last.blocker then
+			table.insert(items, { k = "Blocker", v = { ui.span(printable(last.blocker), "error") } })
 		end
 	end
 	if lead then
