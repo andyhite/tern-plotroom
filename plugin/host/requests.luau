@@ -878,6 +878,13 @@ function M.concrete(state: State): string?
 	return login(state) or ghActive.login
 end
 
+-- Drops every question the block can have open over the queue (the plan, Stop agent, Remove worktree, the Board's removals,
+-- a message, a fork, a compose), so the one a window request shows next is never hidden behind, or followed by, an old one.
+local function clearConfirms(state: State)
+	state.plan, state.stopping, state.removing, state.messaging, state.forking, state.composing = nil, nil, nil, nil, nil, nil
+	state.boardRemoving, state.boardFinished = nil, nil
+end
+
 -- Keeps `run` as the one plan waiting for confirmation and answers the window with what is asked; the block asks it in
 -- its Confirm overlay (render.planConfirm), over the queue, so Settings closes first. Nothing is sent anywhere until that
 -- overlay's action commits with this token while the selection and the view are as they were.
@@ -888,7 +895,8 @@ function M.offer(state: State, id: string, item: any, confirm: { head: string, l
 		discardEdit(state)
 		state.settings = nil
 	end
-	state.plan, state.messaging, state.forking, state.composing = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }, nil, nil, nil
+	clearConfirms(state)
+	state.plan = { token = token, key = item.key, gen = state.gen, view = state.activeId, login = state.activeLogin, at = os.time(), run = run, confirm = confirm }
 	reply(state, id, { token = token, confirm = { head = confirm.head, label = confirm.label, lines = tern.json.array(confirm.lines) } })
 end
 
@@ -2148,7 +2156,7 @@ local function dispatch(state: State, id: string, q: any)
 			discardEdit(state)
 			state.settings = nil
 		end
-		state.plan, state.stopping, state.removing, state.messaging, state.forking, state.composing = nil, nil, nil, nil, nil, nil
+		clearConfirms(state)
 		if q.op == "fork" then
 			state.forking = { token = q.token, head = q.head, lines = lines }
 		else
@@ -2179,7 +2187,7 @@ local function dispatch(state: State, id: string, q: any)
 			discardEdit(state)
 			state.settings = nil
 		end
-		state.plan, state.stopping, state.removing, state.messaging, state.forking = nil, nil, nil, nil, nil
+		clearConfirms(state)
 		local item: any = if q.item == true then selected(state) else nil
 		local meta = if not item then nil elseif type(item.number) == "number" then item.repo .. "#" .. item.number elseif item.tracker == "jira" then item.ref else item.repo .. "#" .. item.ref
 		state.composing = { token = q.token, head = q.head, meta = meta, label = q.label, placeholder = q.placeholder, max = math.floor(q.max or core.COMPOSE_MAX), model = input.new(q.value or "", true) }
