@@ -4,8 +4,9 @@
 -- review.json) and kv `runs`, the run log's index: one entry per run, newest first, at most RUNS_CAP, with only the
 -- fields its readers use (INDEXED). Ids are "<where>:<what>": "queue:<action id>" (the host's queue actions),
 -- "row:<command id>" (Commands rows the window runs), "palette:<command id>" (Tern palette commands) and
--- "action:<name>" (saved actions started). Nothing here holds item titles or prompt text, and of an agent's output a
--- run keeps only its end-of-run report (reportOf), cut to the caps below. A store that cannot be read or is malformed
+-- "action:<name>" (saved actions started). The usage report holds no item titles or prompt text. A run's file keeps the
+-- item's acceptance criteria (CRITERIA_CAP) and, of an agent's output, only its end-of-run report (reportOf: reason,
+-- blocker, evidence, findings), cut to the caps below. A store that cannot be read or is malformed
 -- is never written over.
 
 local M = {}
