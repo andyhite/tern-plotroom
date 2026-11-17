@@ -1,7 +1,19 @@
 /* Every rule is scoped to the block's regions; colors, radii and fonts are Tern tokens. Only syntax Tern's engine accepts
    (docs.stencil.so/tern/styles/css.md): em, px, vw, vh and % lengths only (ch and rem are rejected); no logical properties such as padding-block, or :has().
    Everything else is drawn by Tern's own kinds (picker, prefs, list, overlay, md…): add a rule only where no kind or
-   prop covers it. */
+   prop covers it.
+
+   Tern's inner classes this sheet depends on (the one list; "may change" in Tern, so a Tern update that renames one
+   breaks the rule that names it, and nothing but smoke notices). Keep it in step with the rules below:
+   - picker:  .sf-picker (.pv-hide, .pv-side), .pk-pv, .pk-main, .pk-esc, .pk-count, .pk-scopes, .pk-scopebtn (.has),
+              .pk-sheet, .pk-row, .pk-detail, .pk-strip-l
+   - card:    .sf-card, .sf-card-head, .sf-card-body, .sf-card-end, .sf-head, .sf-more
+   - text, list and tabs:  .sf-t-code, .sf-t-mono, .sf-item, .sf-item-label, .sf-tabs, .sf-act
+   - prefs (the Settings sheet):  .pf, .sheet, .pf-nav, .nav-row, .lbl, .pf-sec, .pf-rows, .pf-row (.focus, .stack),
+              .pf-lbl, .pf-in, .pf-ctl, .pf-reset, .pf-editor, .btn, .sf-col, .sf-layer, .sf-prefs
+   - block state:  .sf-paused, .sf-still
+   Prefer a kind or prop; add a class here only when none covers it, give the rule a `ponytail:` note naming the Tern
+   feature that would replace it, and add the class to this list. */
 
 /* Tern hides previews below 640px, even for preview="below". A selected item must remain readable (and only then
    becomes seen). Keep its native below-list layout at that width; unselected pickers use pv-none and stay closed. */
@@ -103,7 +115,7 @@
 	font-size: 12px;
 }
 
-/* The sheet's page tabs are icons: Tern 0.8.4 hides a tab's .pf-txt there, but its label is a .lbl now, which showed
+/* The sheet's page tabs are icons: Tern hides a tab's .pf-txt there, but its label is a .lbl now, which showed
    as "…" beside each icon and pushed it off center. ponytail: drop once Tern's sheet hides .lbl itself. */
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-nav .nav-row .lbl {
 	display: none;
