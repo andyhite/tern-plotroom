@@ -1170,7 +1170,7 @@ end
 -- deliberate request only. Nothing is pushed or created. `resolve` (default resolveRepository) finds the checkout and
 -- remote; the branch, HEAD and base are always read. done(draft, problem).
 function M.draftPreview(path: string, repo: string, base: string, account: string?, done: (Draft?, string?) -> (), resolve: Resolve?)
-	local find = resolve or M.resolveRepository
+	local find: Resolve = resolve or M.resolveRepository
 	find(path, repo, function(info, why)
 		if not info then
 			return done(nil, why)
@@ -1247,7 +1247,7 @@ end
 -- longer is the repository's, so what the user confirmed is what goes. A rejected (non-fast-forward) push is an error.
 -- `resolve` as draftPreview's. done(problem): nil when pushed.
 function M.pushBranch(draft: Draft, account: string?, done: (string?) -> (), resolve: Resolve?)
-	local find = resolve or M.resolveRepository
+	local find: Resolve = resolve or M.resolveRepository
 	find(draft.path, draft.repo, function(info, why)
 		if not info then
 			return done(why)
