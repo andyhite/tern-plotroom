@@ -373,6 +373,18 @@ tern.chrome.status(function(pane: StatusPaneInfo): { StatusSegment }?
 	return if #out > 0 then out else nil
 end)
 
+-- The same count in the window's title, for a window with Tern's status bar off and for the task switcher and Dock, which
+-- show while Tern is in the background. Tern's own title (`win.space`) stays whenever nothing needs you. The count
+-- changes call tern.chrome.refresh() already (flows.needSync and the agent status), so nothing here redraws.
+tern.chrome.window_title(function(win: WindowInfo): string?
+	local need = flows.needCount()
+	local space = win.space
+	if need > 0 and type(space) == "string" and space ~= "" then
+		return "(" .. need .. ") " .. space
+	end
+	return nil
+end)
+
 command({
 	id = "agents-waiting",
 	title = "Go to the first agent that needs input",

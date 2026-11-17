@@ -258,6 +258,26 @@ windowCase("window status: agents needing input are counted in the one need-you 
 	eq(#w.toasts, toasts + 2, "entering again toasts again")
 end)
 
+windowCase("window title: the need-you count leads the window's title while it is above zero, and Tern's own title stays otherwise", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startAgentOn(w, st)
+	local agent = (w.kv.get("agent-links") :: any)[1].agent
+	local function title(): string?
+		return (w.window.windowTitle :: any)({ space = "work", tabs = 2 })
+	end
+	eq(title(), nil, "nothing needs you: Tern's own title")
+	local before = w.window.refreshes
+	w.window.agentStates[agent] = "waiting_input"
+	w.advance(4000)
+	eq(title(), "(1) work", "one agent waits: the count leads the session's name")
+	eq(w.window.refreshes, before + 1, "the cached title was dropped once, with the status line")
+	eq((w.window.windowTitle :: any)({ tabs = 2 }), nil, "no session name to lead: Tern's own title")
+	w.window.agentStates[agent] = "working"
+	w.advance(4000)
+	eq(title(), nil, "the count cleared: Tern's own title again")
+end)
+
 windowCase("window status: an unreadable agent-links store shows a segment and is never written over, and clears once it reads again", function(w: World)
 	w.load("window")
 	local st = flowHost(w)

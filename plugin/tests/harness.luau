@@ -380,6 +380,7 @@ export type Win = {
 	setup: { ms: number?, err: string?, running: boolean?, status: number?, silent: boolean? }, -- what a shell does with a cx:run, as real Tern 0.9.14 reports it: `running` at once, then after `ms` (default 0) `last` with status `status` (default 0); `running` true: it never finishes; `silent`: no shell integration, so neither is ever reported. cx.session:settle resolves only at its deadline (as real Tern does), or with `err` at once
 	status: ((any) -> { any }?)?, -- the tern.chrome.status formatter
 	tabTitle: ((any) -> string?)?, -- the tern.chrome.tab_title formatter
+	windowTitle: ((any) -> string?)?, -- the tern.chrome.window_title formatter
 	refreshes: number, -- tern.chrome.refresh calls
 	reads: { [number]: number }, -- pane -> cx.session:surface reads
 	gitOpened: { string }, -- every path cx.git:open was asked for
@@ -1473,7 +1474,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			refresh = function()
 				win.refreshes += 1
 			end,
-			window_title = unfaked("chrome.window_title"),
+			window_title = function(fn: any)
+				win.windowTitle = fn
+			end,
 			program_icon = unfaked("chrome.program_icon"),
 		},
 		command = function(def: any)
