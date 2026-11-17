@@ -55,6 +55,7 @@ The UI, README and reference use these words and no others for these things.
 | **Now** | The default view: everything that needs you, ranked. | Inbox, Needs attention only |
 | **Stage** | Where an item stands, derived from facts: Not started, Worktree, Agent working, Needs you, PR open, Blocked, Ready to merge, Merged, Closed. | status (except Jira's own status) |
 | **Chip** | One reason a Blocked pull request is Blocked, named by the job that clears it: **Address changes**, **Reply** (unresolved threads), **Fix checks**, **Re-run** (every failing check Likely flaky), **Resolve conflicts**. | reason badge, blocker, status |
+| **Auto-merge**, **Queued** | A pull request GitHub itself will merge: **Auto-merge** while auto-merge is enabled (it merges when its checks pass), **Queued** while it waits in its base branch's merge queue. Plotroom only shows them; it never enables, disables, adds or removes either, and offers no Merge… for such a pull request. | armed, enqueued, merge queue (as a Plotroom feature) |
 | **Likely flaky** | A failing check that no failure annotation blames on a file the PR changed, and that failed at least 3 of the base branch's last 20 runs of its workflow or passed earlier on the same head commit. | flaky (unqualified), intermittent |
 | **Checkout** | A repository's main local clone, set in Settings › Repositories. | local checkout, main checkout, repository path |
 | **Worktree** | A linked git worktree Plotroom made for one item. The sidebar list is **Worktrees**. | Worktrees list, board |

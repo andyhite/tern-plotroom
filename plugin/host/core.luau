@@ -699,6 +699,11 @@ M.STATE_BADGE = {
 	closed = { text = "Closed", tone = "muted" },
 	done = { text = "Done", tone = "success" },
 } :: { [string]: { text: string, tone: string } }
+-- A pull request GitHub itself will merge (github.Pr.queue): read and shown only, never changed by Plotroom (PRODUCT.md rules merge queue management out). Neutral: it asks nothing of you.
+M.QUEUE_BADGE = {
+	queued = { text = "Queued", tone = "muted", title = "It waits in its base branch's merge queue; GitHub merges it" },
+	auto = { text = "Auto-merge", tone = "muted", title = "Auto-merge is enabled; GitHub merges it when its checks pass" },
+} :: { [string]: { text: string, tone: string, title: string } }
 -- Why a closed issue closed; any other reason (or none) is a plain Closed.
 local CLOSED_REASON: { [string]: { text: string, tone: string } } = {
 	completed = { text = "Completed", tone = "success" },

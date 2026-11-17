@@ -3270,6 +3270,54 @@ case("host mutations: merge offers the repository's allowed methods, auto-merge 
 	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash", auto = true }).problem, "while checks are pending", "and none planned")
 end)
 
+case("host mutations: merge refuses a pull request that already has auto-merge enabled, even when it was planned before", function(w: World)
+	local b, seen, live = mergeScene(w)
+	local plan = asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" })
+	live.autoMergeRequest = { enabledAt = "2026-01-01T00:00:00Z" }
+	has(asks.hx.commit(w, b, plan.token).problem, "already has auto-merge enabled", "armed since it was planned: refused")
+	eq(#writesOf(seen, "pr merge"), 0, "and nothing was merged")
+	live.autoMergeRequest = NULL
+	eq(asks.hx.commit(w, b, asks.hx.ask(w, b, { op = "act", name = "pr-merge", method = "squash" }).token).ok, true, "a null request is no request")
+end)
+
+case("host: a queued or auto-merge pull request wears a neutral badge, is not Ready to merge, and is not offered Merge…", function(w: World)
+	local s = hostScene(w, 0)
+	local ready = { review = "APPROVED", mergeable = "MERGEABLE", merge = "CLEAN", checks = "SUCCESS", headSha = sha("a") }
+	local function with(extra: { [string]: any }): { [string]: any }
+		local item = table.clone(ready)
+		for k, v in extra do
+			item[k] = v
+		end
+		return item
+	end
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 60, with({ queued = true })),
+		searchItem(2, "o/r", EPOCH - 120, with({ auto = true })),
+		searchItem(3, "o/r", EPOCH - 180, with({ queued = false, auto = false })),
+	}
+	local b = openQueue(w)
+	local function badges(id: string): { string }
+		local out: { string } = {}
+		for _, row in pickerOf(b).items do
+			if row.id == id then
+				for _, badge in row.badges or {} do
+					if badge.text ~= "New" then
+						table.insert(out, badge.text .. ":" .. tostring(badge.tone))
+					end
+				end
+			end
+		end
+		return out
+	end
+	same(badges("no_2fr_231"), { "PR open:muted", "Queued:muted" }, "queued: PR open, never Ready to merge, with a neutral Queued badge")
+	same(badges("no_2fr_232"), { "PR open:muted", "Auto-merge:muted" }, "armed: PR open with a neutral Auto-merge badge")
+	same(badges("no_2fr_233"), { "Ready to merge:success" }, "neither: Ready to merge, no badge")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).problem, "Queued", "a queued pull request is not planned")
+	b.press("j")
+	has(asks.hx.ask(w, b, { op = "act", name = "pr-merge" }).problem, "Auto-merge", "nor one with auto-merge enabled")
+	w.flush()
+end)
+
 case("host mutations: approve and request changes show their comment in full, request changes needs one, and a comment that cannot fit is refused", function(w: World)
 	local b, seen = mergeScene(w)
 	local p = asks.hx.ask(w, b, { op = "act", name = "pr-approve" })

@@ -1368,6 +1368,8 @@ function M.act(state: State, id: string, q: any)
 			return no("Merging is for pull requests.")
 		elseif item.state ~= "open" or item.draft then
 			return no("That pull request is not open and ready for review.")
+		elseif item.queue then
+			return no(if item.queue == "queued" then "That pull request is Queued: GitHub merges it from its base branch's merge queue." else "That pull request has Auto-merge enabled: GitHub merges it when its checks pass.")
 		elseif not item.headSha then
 			return no("GitHub did not say which commit this pull request is at; Refresh, then try again.")
 		end
@@ -1674,7 +1676,7 @@ function M.commands(state: State): { { id: string, group: string? } }
 		end
 		if item.state == "open" then
 			add(if item.draft then "pr-ready" else "pr-draft")
-			if not item.draft and item.headSha then
+			if not item.draft and item.headSha and not item.queue then
 				add("pr-merge")
 			end
 			add("pr-approve")

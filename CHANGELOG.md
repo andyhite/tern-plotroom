@@ -9,6 +9,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - A triage store saved by a newer Plotroom now says so ("from a newer Plotroom; not overwriting it") instead of "malformed" (tern-plotroom#dezq).
 
 ### Added
+- **Auto-merge** and **Queued** badges on a pull request GitHub itself will merge (auto-merge enabled, or waiting in its base branch's merge queue), also noted in its preview. Such a pull request is PR open rather than Ready to merge, and **Merge…** is neither offered nor planned for it; a Merge… planned before auto-merge was enabled is refused at the confirm. Read-only: Plotroom does not manage the queue (4a2n).
 
 - **Mark all seen** (Commands › Triage, offered while the list shows a New or Changed item) marks every New or Changed item the view shows seen in one save, with no confirm, and toasts `N items marked seen` (tern-plotroom#k928).
 - The one need-you count leads the window's title as `(N) <session name>` while it is above zero, so it shows with Tern's status bar off and in the task switcher and Dock; at zero Tern's own title shows (tern-plotroom#a34y).

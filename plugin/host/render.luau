@@ -114,6 +114,10 @@ local function pickerItem(pr: github.Pr, note: Note?, stage: string, blockers: {
 	if stateKind(pr) == "draft" then
 		table.insert(badges, STATE_BADGE.draft)
 	end
+	local queue = if pr.queue then core.QUEUE_BADGE[pr.queue] else nil
+	if queue then
+		table.insert(badges, queue)
+	end
 	local detail = refDetail("#" .. pr.number, pr.repo, repos)
 	local why = if blockers and blockers[1] then blockers[1].detail else nil
 	if why then
@@ -1151,7 +1155,7 @@ local function previewNodes(state: State, pr: github.Pr?, acts: { Action }): { N
 		local asked = engine.reviewAsked(state, pr)
 		local author = { k = "Author", v = "@" .. pr.author }
 		local facts: { { [string]: any } } = {
-			{ k = "Merge", v = if m then { ui.span(m.text, m.tone) } else nil },
+			{ k = "Merge", v = if m then (if pr.queue then { ui.span(m.text, m.tone), ui.span(" · " .. core.QUEUE_BADGE[pr.queue].text) } else { ui.span(m.text, m.tone) }) else nil },
 			{ k = "Review", v = if review then { ui.span(review.text, review.tone) } else nil },
 			if asked then { k = "Author" } else author,
 			{ k = "Updated", v = github.age(pr.updated) .. " ago" },

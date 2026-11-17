@@ -44,6 +44,7 @@ export type Pr = {
 	review: string?,
 	checks: string?,
 	merge: string?, -- as About.merge; nil when the search did not say
+	queue: string?, -- "queued" while it waits in its base branch's merge queue, "auto" while auto-merge is armed (queued wins); nil when neither, or the search did not say
 	runs: { Run },
 	runTotal: number,
 	labels: { string },
@@ -94,8 +95,8 @@ local function checkNodes(extra: string): string
 end
 
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
-local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt commit { oid } author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
-local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt,sha:.commit.oid}]}"
+local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus isInMergeQueue autoMergeRequest { enabledAt } labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt commit { oid } author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
+local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,queued:.isInMergeQueue,auto:(.autoMergeRequest != null),checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt,sha:.commit.oid}]}"
 local SEARCH_GQL = "query($q: String!, $after: String, $first: Int!) { rateLimit { cost } search(query: $q, type: ISSUE, first: $first, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
@@ -448,6 +449,7 @@ function M.normalize(item: any): (Pr?, string?)
 		review = if type(item.review) == "string" then REVIEW[item.review] else nil,
 		checks = if type(item.checks) == "string" then CHECKS[item.checks] else nil,
 		merge = if item.mergeable == "CONFLICTING" then "conflicts" elseif type(item.merge) == "string" then MERGE[item.merge] else nil,
+		queue = if item.queued == true then "queued" elseif item.auto == true then "auto" else nil,
 		runs = runs,
 		runTotal = #runs + math.max(0, count(item.runTotal) - (if type(item.runs) == "table" then #item.runs else 0)),
 		labels = labels,
@@ -943,6 +945,7 @@ local function flatPr(n: any): any
 		base = n.baseRefName, additions = n.additions, deletions = n.deletions, changedFiles = n.changedFiles,
 		comments = field(n, "comments", "totalCount"), review = n.reviewDecision, yours = field(n, "viewerLatestReview", "state"), yoursAt = field(n, "viewerLatestReview", "commit", "oid"),
 		mergeable = n.mergeable, merge = n.mergeStateStatus, checks = field(roll, "state"),
+		queued = n.isInMergeQueue, auto = type(n.autoMergeRequest) == "table" and n.autoMergeRequest ~= tern.json.null,
 		runs = field(roll, "contexts", "nodes") or {}, runTotal = field(roll, "contexts", "totalCount") or 0, labels = names(n.labels, "name"),
 	}
 	local threads = field(n, "reviewThreads", "nodes")
@@ -2116,13 +2119,15 @@ function M.setPrMerge(repo: string, number: number, method: string, auto: boolea
 		end)
 	end
 	local planned = string.lower(sha)
-	guarded("pr", "number,state,isDraft,headRefOid,mergeStateStatus,url", { "pull" }, repo, tostring(number), account, function(d)
+	guarded("pr", "number,state,isDraft,headRefOid,mergeStateStatus,autoMergeRequest,url", { "pull" }, repo, tostring(number), account, function(d)
 		if field(d, "state") ~= "OPEN" then
 			return "Pull request #" .. number .. " is not open."
 		elseif field(d, "isDraft") ~= false then
 			return "Pull request #" .. number .. " is a draft."
 		elseif string.lower(tostring(field(d, "headRefOid"))) ~= planned then
 			return "Pull request #" .. number .. " was pushed to since it was planned; nothing was merged."
+		elseif type(field(d, "autoMergeRequest")) == "table" and field(d, "autoMergeRequest") ~= tern.json.null then
+			return "Pull request #" .. number .. " already has auto-merge enabled; nothing was merged."
 		elseif auto and (field(d, "mergeStateStatus") == "CLEAN" or field(d, "mergeStateStatus") == "HAS_HOOKS" or field(d, "mergeStateStatus") == "UNSTABLE") then
 			-- gh merges at once in these states instead of waiting for checks.
 			return "Pull request #" .. number .. " can merge now, so gh would merge it without waiting for its checks; nothing was merged."
