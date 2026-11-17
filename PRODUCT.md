@@ -16,10 +16,10 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 
 | Step | The user's question | What Plotroom answers with |
 | --- | --- | --- |
-| **Intake** | What work exists? | Views, Pins, Inbox (Now from Phase 2) |
-| **Triage** | What needs me now? | New and Changed, Snooze, Needs attention (Now and stages from Phase 2) |
+| **Intake** | What work exists? | Views, Pins, Now |
+| **Triage** | What needs me now? | Now, stages, New and Changed, Snooze |
 | **Dispatch** | Who does it, and where? | One-key Worktree, Actions that start agents |
-| **Supervise** | Which agent needs me, which finished, and did it work? | Agent states, the Agents list, messages (outcomes from Phase 3) |
+| **Supervise** | Which agent needs me, which finished, and did it work? | Agent states, the Agents list, messages, outcomes |
 | **Land** | Is it ready? Ship it. | Checks, reviews, Merge, Approve, Request changes, Draft PR |
 | **Clean up** | What is finished? | Find and remove finished worktrees |
 
@@ -31,7 +31,7 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 4. **Works before it is configured.** With `gh` and `omp` installed and the repository's checkout open in a Tern tab, a new user reaches a running agent without opening Settings. Settings change defaults; they are not a setup step.
 5. **Tern-native, not a second app.** Use Tern's Browser, tabs, agent blocks, Git view and status bar. Never rebuild what Tern, omp or GitHub already do well: CI, merge queues, notification delivery, GitHub's code review UI. The exception is agent work you must approve before it leaves: a Draft review is shown on its diff in Plotroom, because no other surface lets you edit an agent's findings before they post.
 6. **One word per thing.** The glossary below is the only vocabulary in the UI, README and reference.
-7. **Editable guidance, fixed contract.** (Phase 3) Users edit an action's text. The end-of-run report Plotroom appends to it is fixed, because Plotroom parses it.
+7. **Editable guidance, fixed contract.** Users edit an action's text. The end-of-run report Plotroom appends to it is fixed, because Plotroom parses it.
 
 ## Out of scope
 
@@ -52,8 +52,8 @@ The UI, README and reference use these words and no others for these things.
 | **Item** | One pull request, GitHub issue or Jira issue. | row, entry |
 | **View** | A saved GitHub search or JQL query in the sidebar. | filter, scope, list |
 | **Pin** | An item opened by URL or paste, kept in the sidebar's Pins group. | — |
-| **Now** (Phase 2) | The default view: everything that needs you, ranked. | Inbox, Needs attention only |
-| **Stage** (Phase 2) | Where an item stands, derived from facts: Not started, Worktree, Agent working, Needs you, PR open, Blocked, Ready to merge, Merged, Closed. | status (except Jira's own status) |
+| **Now** | The default view: everything that needs you, ranked. | Inbox, Needs attention only |
+| **Stage** | Where an item stands, derived from facts: Not started, Worktree, Agent working, Needs you, PR open, Blocked, Ready to merge, Merged, Closed. | status (except Jira's own status) |
 | **Chip** | One reason a Blocked pull request is Blocked, named by the job that clears it: **Address changes**, **Reply** (unresolved threads), **Fix checks**, **Re-run** (every failing check Likely flaky), **Resolve conflicts**. | reason badge, blocker, status |
 | **Likely flaky** | A failing check that no failure annotation blames on a file the PR changed, and that failed at least 3 of the base branch's last 20 runs of its workflow or passed earlier on the same head commit. | flaky (unqualified), intermittent |
 | **Checkout** | A repository's main local clone, set in Settings › Repositories. | local checkout, main checkout, repository path |
@@ -61,11 +61,10 @@ The UI, README and reference use these words and no others for these things.
 | **Action** | A saved instruction that starts an agent on an item (Settings › Actions). Its text field is its **prompt**. | saved action, prompt (for the whole thing), command |
 | **Agent** | An omp agent block started by an action. | session, worker |
 | **Run** | One agent started by an action on an item, from start to end of turn, as recorded in the run log. | job |
-| **Outcome** (Phase 3) | What a run must leave behind (review posted, PR opened, …), checked against facts: **Verified** or **Not verified**. | result, done |
-| **Checker** (Phase 3) | An action run by a fresh agent that verifies another run's work. | evaluator, reviewer |
+| **Outcome** | What a run must leave behind (review posted, PR opened, …), checked against facts: **Verified** or **Not verified**. | result, done |
+| **Checker** | An action run by a fresh agent that verifies another run's work. | evaluator, reviewer |
 | **Commands** | Plotroom's own menu, opened with `.`. Tern's own palette is **Tern's palette**. | command palette, menu |
 | **Open** | Show the item's web page in Tern's Browser beside the queue. Other destinations are named: **Go to tab**, **Go to agent**, **Open Git view**, **Show in Plotroom**. | Open in GitHub, preview, floating preview |
-| **Needs attention** | New or Changed and not snoozed, or its agent needs input. | attention filter |
 | **Snooze** | Hide an item until 08:00 tomorrow, or until it changes. | — |
 | **Refresh** | Read the view again now. | reload, sync |
 | **Draft review** | Findings an agent proposes for a pull request (comments on lines, a summary, a verdict), opened in Plotroom's review block beside that agent. You keep, edit or drop each one and send them back; the agent posts only what you sent. | proposal, suggested review |
