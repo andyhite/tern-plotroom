@@ -304,6 +304,7 @@ case("summary: unreadable Summary settings lock their rows and are never written
 	has(rowIn(b, "summary:on").disabled or "", "malformed", "the switch says why")
 	b.event({ ev = "change", id = "layer.settings", item = "summary:on", value = false })
 	same(w.kv.get("summary"), { off = "maybe" }, "nothing is written over them")
+	w.flush()
 end)
 
 case("summary: a GitHub issue's Summary reads its body and newest comments, cached by its update time", function(w: World)

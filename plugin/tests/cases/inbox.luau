@@ -1196,6 +1196,7 @@ case("now: on the Board the arrows and h/j/k/l move in and across columns, into 
 	eq(b.state().nowOn, true, "and shows nothing else")
 	b.press("enter")
 	eq(b.state().nowOn, false, "Enter shows its item, as in the List")
+	w.flush()
 end)
 
 case("now: a Now card's menu offers only Open, which does what Enter does; a double click too", function(w: World)
@@ -1209,6 +1210,7 @@ case("now: a Now card's menu offers only Open, which does what Enter does; a dou
 	eq(b.state().nowOn, true, "and leaves Now")
 	b.event({ ev = "action", id = "layer.queue.board.lanes.waiting.list.no_2fr_234", act = "open" })
 	eq(b.state().nowOn, false, "Open shows the card's item, as Enter does")
+	w.flush()
 end)
 
 case("now: below 80 columns the Board shows as the List; the choice is Now's Layout, which every block shows", function(w: World)

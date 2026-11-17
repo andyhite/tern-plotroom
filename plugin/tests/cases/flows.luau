@@ -1207,6 +1207,7 @@ windowCase("window flows: a Jira issue's agentgo link goes to the agent recorded
 	seedAgent(w, 50, "working", 1, "abc#ABC-12")
 	w.click("plotroom://issue/agentgo/ABC/ABC-12")
 	eq(w.window.focused, 50, "the recorded pane is focused")
+	w.flush()
 end)
 
 windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop asks nothing in the palette (the block asked), and an exited agent, a blank message or a refused one only toasts", function(w: World)
@@ -1295,6 +1296,7 @@ windowCase("window flows: an agent link switches to the exact recorded pane, eve
 	local said = #w.toasts
 	w.click("plotroom://github/agentgo/o/r/6")
 	eq(w.toasts[said + 1].level, "error", "a link its node does not carry is refused")
+	w.flush()
 end)
 
 windowCase("window flows: a live agent is offered before another is started", function(w: World)
@@ -2477,6 +2479,7 @@ case("host sort: a saved sort orders the list, one this view cannot take is drop
 	b.event({ ev = "change", id = "layer.settings", item = "vsort:prs:v1", value = "default" })
 	eq(w.kv.get("views-prs").items[1].sort, nil, "the default order saves no sort")
 	same(listed(b), { "no_2fr_232", "no_2fr_233", "no_2fr_231" }, "and is the default order")
+	w.flush()
 end)
 
 case("host sort: o cycles the view's sorts, saves each with the view and ends on the default order, which leaves the search order untouched", function(w: World)
@@ -2520,6 +2523,7 @@ case("host sort: Oldest waiting ranks by creation, and Largest changes first by 
 	expand(b, "vopen:prs:v1")
 	b.event({ ev = "change", id = "layer.settings", item = "vsort:prs:v1", value = "size" })
 	same(listed(b), { "no_2fr_233", "no_2fr_232", "no_2fr_231" }, "size: 93 lines, then 45, then 2")
+	w.flush()
 end)
 
 case("host sort: switching to a view with the same query and another sort shows its order and its first item before any search lands", function(w: World)
@@ -2572,6 +2576,7 @@ case("host sort: a Jira view offers priority alone, o turns it on and off, and G
 	same(asks.hx.options(b, "vsort:issues:v1"), { "default", "priority" }, "the Sort by row lists only that")
 	b.event({ ev = "change", id = "layer.settings", item = "vsort:issues:v1", value = "updated" })
 	eq(w.kv.get("views-issues").items[1].sort, nil, "a GitHub sort is refused for a Jira view")
+	w.flush()
 end)
 
 case("host sort: GitHub issues offer updated and oldest, never a review order", function(w: World)
@@ -2586,6 +2591,7 @@ case("host sort: GitHub issues offer updated and oldest, never a review order", 
 	b.event({ ev = "change", id = "layer.settings", item = "vsort:issues:v1", value = "oldest" })
 	eq(w.kv.get("views-issues").items[1].sort, "oldest", "oldest is saved")
 	same(listed(b), { "no_2fr_2314", "no_2fr_2313", "no_2fr_2312" }, "the longest waiting issue first")
+	w.flush()
 end)
 
 case("host agents: agent-status shows a badge per row, drops values and keys it does not know, replaces the whole map and caps it at 200 keys", function(w: World)
@@ -3446,6 +3452,7 @@ case("host agents: the Agents scope lists agents that are not exited by reposito
 	eq(pickerOf(b).selected, nil, "and none selected")
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the Agents scope")
+	w.flush()
 end)
 
 case("host agents: an Agents row and its preview show the end-of-run report's attention, reason and blocker, or No report", function(w: World)
@@ -3557,6 +3564,7 @@ case("host agents: Stop agent… asks in the block's Confirm overlay, Cancel fir
 	b.event({ ev = "action", act = "queue", value = "agentstop" })
 	eq(b.state().settings, nil, "picked over Settings, Settings closes so the confirm shows")
 	yes(h.confirmOf(b) ~= nil, "and it asks")
+	w.flush()
 end)
 
 case("host agents: a message for an agent is asked in the block's Confirm overlay, Cancel first; Esc drops it, Enter or Send opens the window's send link, n or Add a note its note link", function(w: World)
@@ -3779,6 +3787,7 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	pickScope(b, "prs:v1")
 	eq(pickerOf(b).scope, "prs:v1", "a click on the view leaves the board too")
 	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "with its rows")
+	w.flush()
 end)
 
 case("host worktrees table: Worktrees is a native table beside the selected worktree's card, its Path cut in the middle and hidden first, and ↑/↓, j/k, Enter, d and clicks drive its selection", function(w: World)
@@ -3854,6 +3863,7 @@ case("host worktrees table: Worktrees is a native table beside the selected work
 	eq(countLog(s.git, "worktree remove"), 0, "nothing was removed")
 	same(hx.offPalette(b.view().layer), {}, "no colour outside the Color Meaning Rule")
 	same(hx.miscued(b.view().layer), {}, "every clickable node is a button or a link")
+	w.flush()
 end)
 
 case("host worktrees board: the changes of every worktree are read on their own and again every 30 seconds while the board is shown, never after it is left; u marks closed and merged items as cleanup candidates without removing anything", function(w: World)
@@ -4025,6 +4035,7 @@ case("host worktrees board: a worktree a tab or a live agent works in is kept ou
 	eq(w.toasts[#w.toasts].text, "Not removed", "it says so")
 	has(w.toasts[#w.toasts].sub, "A tab works in it", "and why")
 	eq(countLog(s.git, "worktree remove"), 0, "git removed nothing")
+	w.flush()
 end)
 
 case("host worktrees board: the preview of a row names its branch, the pull request or issue it was made for as the tracker answered, its branch, repository, path and head, and stays open on Escape", function(w: World)
@@ -4179,6 +4190,7 @@ case("host worktrees board: no action bar; Commands offers Find and Remove finis
 	b.render()
 	eq(hx.palette(w, b).keys["wt-cleanup"], "u", "bound, Commands shows its key")
 	eq(b.press("u", nil, "u"), true, "and u runs it")
+	w.flush()
 end)
 
 case("host worktrees board: d asks first, Enter or Esc keeps the worktree, d again removes it without force, and dirty and locked rows are refused", function(w: World)
@@ -4405,6 +4417,7 @@ case("host keys: a saved custom key equal to an action's default leaves that act
 	goToSettings(b, "general")
 	eq(rowIn(b, "key:more").control.value, "", "Settings shows the shortcut removed")
 	same(w.kv.get("keys"), { worktree = "." }, "nothing was written")
+	w.flush()
 end)
 
 case("host keys: Reset on Commands says which action holds its default . and writes nothing", function(w: World)
@@ -4415,6 +4428,7 @@ case("host keys: Reset on Commands says which action holds its default . and wri
 	b.event({ ev = "change", id = "layer.settings", item = "key:more" })
 	eq(rowIn(b, "key:more").warning, "Already the shortcut of Worktree.", "the row names the action")
 	same(w.kv.get("keys"), { worktree = "." }, "nothing was written")
+	w.flush()
 end)
 
 case("host views: moving a view to the other kind keeps a sort that kind offers, and resets one it does not with a toast", function(w: World)
@@ -4443,6 +4457,7 @@ case("host views: moving a view to the other kind keeps a sort that kind offers,
 	eq(moved.sort, nil, "a review order issues do not offer is reset")
 	eq(w.toasts[#w.toasts].text, "Sort order reset", "and a toast says so")
 	has(w.toasts[#w.toasts].sub, "Review required first", "naming the order")
+	w.flush()
 end)
 
 case("host agents: the hidden main.agents node says the agent map as sorted key=state; pairs, empty with none, and a reloaded block starts empty", function(w: World)
@@ -4904,6 +4919,7 @@ windowCase("window flows: a listed pane whose directory is not the link's is not
 	links[1].cwd = "/wt/other"
 	w.kv.put("agent-links", links)
 	eq(f.liveAgent(w.cx, 1, "o/r#5"), nil, "a pane id reused by another directory is no one's agent")
+	w.flush()
 end)
 
 windowCase("window flows: a chain's next action starts from the block that started the chain, else the lowest block on the host", function(w: World)
@@ -4969,6 +4985,7 @@ windowCase("window flows: one pane_closed runs agent sync, redraw and the protoc
 	end
 	eq(redraws, 1, "the block was redrawn")
 	eq(protocolWarning(w, 1), "Plotroom on host1 is a different version from this window's", "and the protocol check ran")
+	w.flush()
 end)
 
 windowCase("window flows: the status map carries an agent's last message cut to 200 bytes and its delivery error", function(w: World)
@@ -5221,6 +5238,7 @@ case("host actions: default actions name their outcome, a saved action without o
 	eq((w.kv.get("prompts-prs") :: any).items[1].outcome, "pushed", "an outcome not offered changes nothing")
 	b.event({ ev = "change", id = "layer.settings", item = "poutcome:prs:p1", value = "none" })
 	eq((w.kv.get("prompts-prs") :: any).items[1].outcome, nil, "None clears it")
+	w.flush()
 end)
 
 case("usage: the report counts each action's outcomes as verified, not verified and unchecked", function(w: World)
@@ -5446,6 +5464,7 @@ windowCase("window events: a hook paused over budget shows in the status line an
 	w.window.handlers.budget({ hook = 5, state = "paused" }, w.cx)
 	w.window.handlers.budget("x", w.cx)
 	same(texts(), {}, "malformed events change nothing")
+	w.flush()
 end)
 
 windowCase("window files: the Files button opens Plotroom on the folder it shows, refuses another host's folder, and writes nothing", function(w: World)
@@ -5471,6 +5490,7 @@ windowCase("window files: the Files button opens Plotroom on the folder it shows
 	eq(#w.window.launches, count, "a path with a control character opens nothing")
 	button.run({ root = nil, host = "", selection = {}, tab = "files" }, w.cx)
 	eq(w.window.launches[#w.window.launches].cwd, "/work/r", "with no folder it opens as Open does, in the focused pane's directory")
+	w.flush()
 end)
 
 windowCase("window selection: the user picks the agent and reviews every line in the block's Confirm overlay; only its own Send link sends; a stale link, a dead agent and a refused delivery send nothing", function(w: World)
@@ -5698,6 +5718,7 @@ windowCase("window flows: the lens's show link refuses a pull request on another
 	w.click("plotroom://lens/show/https%3A%2F%2Fgit.example.com%2Fo%2Fr%2Fpull%2F45", 2)
 	eq(w.toasts[#w.toasts].text, "Plotroom: malformed link", "refused")
 	eq(#w.window.events, 0, "and no block is told anything")
+	w.flush()
 end)
 
 windowCase("window flows: the issue preview's Pull request row and the PR preview's Issue row are followed", function(w: World)
@@ -5718,6 +5739,7 @@ windowCase("window flows: the issue preview's Pull request row and the PR previe
 	table.insert(layer, { id = "layer.queue.noted", c = { { id = "layer.queue.noted.issue1", p = { href = open } } } })
 	w.click(open)
 	same(w.window.browser, { { url = issue, how = "beside", beside = 1 } }, "the noted issue row opens the issue")
+	w.flush()
 end)
 
 windowCase("window status: one need-you count, the largest of the Plotroom blocks, redrawn only on change, hidden at zero, and a click shows Now in that block", function(w: World)
@@ -5801,6 +5823,7 @@ windowCase("window tabs: a worktree's tab title survives a plugin reload and is 
 	w.window.handlers.pane_closed({ pane = pane }, w.cx)
 	eq(#(w.kv.get("tab-labels") :: any), 0, "its tab closed: the label leaves kv")
 	eq(title({ cwd = "/wt/pr5", name = "PR #5 · r" }), nil, "and the title")
+	w.flush()
 end)
 
 windowCase("window tabs: kv keeps the newest 50 titles", function(w: World)

@@ -443,6 +443,7 @@ export type World = {
 	frames: { { pane: number, ops: any } }, -- every cx:frame, oldest first: the ops a block sent its view (a focus move)
 	calls: { Call },
 	respond: (Responder) -> (),
+	strictResponders: () -> (),
 	kv: Kv,
 	fs: Fs,
 	tern: typeof(tern), -- the fake SDK itself, for a case about how the fake behaves
@@ -565,6 +566,8 @@ local function newWorld(instantiate: Loader, context: string): World
 		end,
 	}
 	local unmatched: { string } = {}
+	local matched: { [number]: boolean } = {}
+	local strict = false
 	local panes: { PaneRow } = {}
 	local blocks: { [string]: any } = {}
 	local lenses: { [string]: any } = {}
@@ -1358,6 +1361,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				for i = #responders, 1, -1 do
 					reply = responders[i](call)
 					if reply then
+						matched[i] = true
 						break
 					end
 				end
@@ -1705,6 +1709,10 @@ local function newWorld(instantiate: Loader, context: string): World
 		respond = function(responder: Responder)
 			table.insert(responders, responder)
 		end,
+		-- Opt in: finish also fails when a responder registered with w.respond never answered a call.
+		strictResponders = function()
+			strict = true
+		end,
 		kv = kv,
 		fs = fs,
 		tern = sdk,
@@ -1765,8 +1773,30 @@ local function newWorld(instantiate: Loader, context: string): World
 			return out
 		end,
 		finish = function()
+			-- Events already due are the case's to run (flush/advance); running them here shows what they would have done.
+			local due = 0
+			for _, ev in queue do
+				if ev.live and ev.at <= nowMs then
+					due += 1
+				end
+			end
+			runUntil(nowMs)
+			local problems: { string } = {}
 			if #unmatched > 0 then
-				error("process calls no responder answered:\n  " .. table.concat(unmatched, "\n  "), 0)
+				table.insert(problems, "process calls no responder answered:\n  " .. table.concat(unmatched, "\n  "))
+			end
+			if due > 0 then
+				table.insert(problems, due .. " event(s) were due but never run: end the case with w.flush() or w.advance()")
+			end
+			if strict then
+				for i = 2, #responders do
+					if matched[i] == nil then
+						table.insert(problems, "responder #" .. (i - 1) .. " registered with w.respond never answered a call")
+					end
+				end
+			end
+			if #problems > 0 then
+				error(table.concat(problems, "\n"), 0)
 			end
 		end,
 	}

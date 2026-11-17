@@ -176,6 +176,7 @@ case("host: Get started's shortcuts: Use them binds the one-key set, No thanks k
 	eq((w.kv.get("get-started") :: any).shortcuts, "no", "and is saved as decided")
 	eq(line(b, "keys").p.label, "One-key shortcuts: no thanks", "the line is done")
 	eq(findKey(guide(b), "dismiss", "button").p.text, "Close", "all done, Get started's card offers Close")
+	w.flush()
 end)
 
 case("host: Get started reads the Jira project map once however many Jira issues are listed", function(w: World)

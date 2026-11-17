@@ -553,6 +553,7 @@ case("host: with Settings open the queue beside it takes clicks, a field being t
 	yes(prefsOf(b) ~= nil, "beside Settings")
 	b.event({ ev = "action", id = "layer.queue", act = "settings" })
 	eq(findKey(b.view().layer, "settings", "prefs"), nil, "the Settings button closes the sheet")
+	w.flush()
 end)
 
 case("host: a worktree request becomes a badge and a card with its status, place and update commands, and removes nothing", function(w: World)
@@ -865,6 +866,7 @@ case("host: Remove worktree asks first: Esc or Enter keeps it, d or the Remove b
 	yes(confirmOf(b) ~= nil, "and asks")
 	b.press("escape")
 	yes(confirmOf(b) == nil and cardOf(b) ~= nil, "Esc keeps the worktree")
+	w.flush()
 end)
 
 case("host: the card's Remove confirm says what becomes of the branch from git's own facts: noted, guessed, unnamed or gone", function(w: World)
@@ -3141,6 +3143,7 @@ case("host: the branch format rejects unknown variables and saves per repository
 	save("feat/{key}")
 	eq(w.kv.get("branch-formats"), "garbage", "an unreadable map is never overwritten")
 	eq(findKey(findKey(pickerNode(b), "branch"), "v").p.spans[1].t, "octocat/12-fix-login", "and the Worktrees format applies meanwhile")
+	w.flush()
 end)
 
 case("host: issue prompts are separate from PR prompts, each kind's on the Prompts page and offered under its own filters, and they carry where they run", function(w: World)
@@ -3270,6 +3273,7 @@ case("host: an action saved with the removed carly field still loads, kv is left
 	b.event({ ev = "change", id = "layer.settings", item = "psplit:prs:p1", value = "split" })
 	eq(w.kv.get("prompts-prs").items[1].split, true, "an edit saves the store")
 	eq(w.kv.get("prompts-prs").items[1].carly, nil, "and the saved action has no carly field")
+	w.flush()
 end)
 
 case("host: Merge the base first is a pull request action's switch, on for the default Watch only; an action saved before it takes it from the default of its name, and the menu says it", function(w: World)
@@ -3309,6 +3313,7 @@ case("host: Merge the base first is a pull request action's switch, on for the d
 	goToSettings(b, "prompts")
 	expand(b, "popen:issues:p1")
 	eq(rowIn(b, "ppremerge:issues:p1"), nil, "an issue action has no such row")
+	w.flush()
 end)
 
 case("host: the issue's commands, keys and links: Worktree, Go to tab and Agent, each opening the link the card keeps unseen beside each prompt's", function(w: World)
@@ -3402,6 +3407,7 @@ case("host: an account's Add makes a view of the kind on screen, saved with that
 	b.event({ ev = "action", id = "layer.settings", act = "add", value = "vadd:nowhere:" })
 	b.event({ ev = "action", id = "layer.settings", act = "add", value = "vadd:github:bad name" })
 	same({ #w.kv.get("views-prs").items, #w.kv.get("views-issues").items }, { 3, 6 }, "a malformed Add value (an unknown integration, a login that is none) saves nothing")
+	w.flush()
 end)
 
 case("host: an Enterprise Managed User account (a login with an underscore) can have a view added, saved and shown", function(w: World)
@@ -3480,6 +3486,7 @@ case("host: a view's Type row moves it to the other kind's store under a new id 
 	b.event({ ev = "change", id = "layer.settings", item = "vkind:issues:v3", value = "prs" })
 	eq(#w.kv.get("views-issues").items, 4, "an event for it moves nothing")
 	eq(#w.kv.get("views-prs").items, 2, "and adds nothing to the pull request views")
+	w.flush()
 end)
 
 case("host: a views store that cannot be read locks its own kind's views, says which kind it is, and leaves the other kind editable", function(w: World)
@@ -3506,6 +3513,7 @@ case("host: a views store that cannot be read locks its own kind's views, says w
 	w.flush()
 	goToSettings(b, "views")
 	has(rowIn(b, "vadd:github:octocat").disabled, "disk offline", "on a pull request filter Add is locked, as its kind's views are")
+	w.flush()
 end)
 
 case("host: a click on another row first ends the line being typed, so a new view's Group by menu opens at once", function(w: World)
@@ -3534,6 +3542,7 @@ case("host: a click on another row first ends the line being typed, so a new vie
 	b.event({ ev = "action", id = "layer.settings", act = "collapse", value = "vopen:prs:v3" })
 	eq(w.kv.get("views-prs").items[3].name, "New view23", "Done saves it too")
 	eq(rowIn(b, "name:prs:v3"), nil, "and closes the form")
+	w.flush()
 end)
 
 case("host: a collapsed view is one summary row; Edit expands its form, another's Edit collapses the first, and Done collapses", function(w: World)
@@ -3586,6 +3595,7 @@ case("host: a collapsed view is one summary row; Edit expands its form, another'
 	lacks(hint, "work", "a login is not in the summary")
 	eq(sectionIn(other, "vopen:prs:v1").title, "GitHub - work", "the login is in the group's title")
 	eq(hint, "Pull requests · is:open", "the summary is the kind and the query: no grouping, no prompt count")
+	w.flush()
 end)
 
 case("host: the Type row is a menu that Enter opens, not a flip, and moving a view says how many offered actions it cleared", function(w: World)
@@ -3608,6 +3618,7 @@ case("host: the Type row is a menu that Enter opens, not a flip, and moving a vi
 	local toasted = #w.toasts
 	b.event({ ev = "change", id = "layer.settings", item = "vkind:issues:v1", value = "prs" })
 	eq(#w.toasts, toasted, "a view moved with none offered adds no toast")
+	w.flush()
 end)
 
 case("host: a scan reads the name formats once for every shown item", function(w: World)

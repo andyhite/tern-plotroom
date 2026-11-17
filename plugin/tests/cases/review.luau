@@ -1015,6 +1015,7 @@ case("review: Settings › General › Draft review opens saves Over the agent's
 	has(h.rowIn(b, "review:opens").hint, "malformed", "the row says why")
 	h.request(b, "q3", { op = "review", run = "r1" })
 	same(h.answerOf(b, "q3"), { at = AT1 }, "and they read as Beside the agent")
+	w.flush()
 	w.finish()
 end)
 

@@ -1016,6 +1016,7 @@ windowCase("window: every Tern palette command sits under the Plotroom group wit
 	same(w.commandDef("now").keys, { "ctrl+alt+shift+i" }, "and Show what needs you (Now)")
 	same(w.commandDef("agents-waiting").keys, { "ctrl+alt+shift+a" }, "and Go to the first agent that needs input")
 	eq(w.commandDef("open").keys, nil, "Open keeps no key: Go to Plotroom's opens one when none is there")
+	w.flush()
 end)
 
 windowCase("window: Go to Plotroom focuses the session's Plotroom block, opens one when none is in a tab, and does nothing on one", function(w: World)
@@ -1035,6 +1036,7 @@ windowCase("window: Go to Plotroom focuses the session's Plotroom block, opens o
 	w.window.focused = 7
 	w.command("focus")
 	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/s", args = { "/work/s" } } }, "a parked block is not gone to: one opens beside the shell, in its folder")
+	w.flush()
 end)
 
 windowCase("window: a new worktree runs its repository's setup commands in its tab; a reused one does not", function(w: World)
@@ -1343,6 +1345,7 @@ windowCase("window: a block whose host does not announce this protocol is never 
 	local surface: any = w.window.surfaces[1]
 	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = "2", hidden = true } } } }
 	refused("another protocol's marker")
+	w.flush()
 end)
 
 windowCase("window: a host one protocol older serves the ops it knows and refuses a newer one at once; below the range it is a mismatch", function(w: World)

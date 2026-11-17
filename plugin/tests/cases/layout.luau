@@ -75,6 +75,7 @@ case("layout: a view's Layout (Settings › Views) saves Board with the view, wh
 	eq(w.kv.get("views-prs").items[1].layout, nil, "List saves no layout")
 	eq((board(b)), nil, "and the view is a List again")
 	eq(#listed(b), 5, "listing every item")
+	w.flush()
 end)
 
 case("layout: Commands › Show as Board and Show as List switch the active view's layout and save it; a pinned item has none", function(w: World)
@@ -151,6 +152,7 @@ case("layout: on a view's Board the keys move in and across columns, search and 
 	eq(at(b), "ready.list.no_2fr_232", "a click on a card selects it")
 	local ready: any = findKey(pickerNode(b), "no_2fr_232", "card")
 	eq(findKey(ready, "badge", "badge").p.text, "New", "and it is still New: a Board marks nothing seen")
+	w.flush()
 end)
 
 case("layout: a Board is Tern's cards: each column a card headed by its name and count whose cards scroll in it, each card its item's number, one badge and a two-line title, the selected one ringed", function(w: World)
@@ -231,6 +233,7 @@ case("layout: below 80 columns a view's Board shows as the List with the List's 
 	b.cx.cols = 80
 	b.render()
 	eq(at(b), "ready.list.no_2fr_232", "wide enough again, the Board, on the same item")
+	w.flush()
 end)
 
 case("layout: a stored layout this version does not know loads as the List, and Show as Board writes over it", function(w: World)
@@ -239,6 +242,7 @@ case("layout: a stored layout this version does not know loads as the List, and 
 	eq(#listed(b), 5, "and the store is read")
 	layout(b)
 	eq(w.kv.get("views-prs").items[1].layout, "board", "Show as Board saves Board")
+	w.flush()
 end)
 
 local function triageEvent(b: h.Block, value: string)
@@ -269,6 +273,7 @@ case("layout: the palette's Snooze and Mark seen act on the selected item in a v
 	eq(pickerOf(b).selected, "no_2fr_232", "the List selects the next item")
 	triageEvent(b, "snooze")
 	eq(w.kv.get("triage").items["o/r#2"].snoozeUntil, EPOCH + 20 * 3600, "Snooze in a List snoozes the selected item")
+	w.flush()
 end)
 
 return {}

@@ -252,6 +252,7 @@ case("host: ? lists the shortcuts of the current mode, and a ? is plain text whi
 	b.press("escape")
 	b.press("escape")
 	eq(findKey(b.view().layer, "settings", "prefs"), nil, "Escape closes the list, then Settings")
+	w.flush()
 end)
 
 case("host: the ? list has a row for every action a key can be bound to", function(w: World)
@@ -301,6 +302,7 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	b.typeText("s")
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "s opens Settings")
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
+	w.flush()
 end)
 
 case("host: a search that lands after a view switch is kept for its view, which shows it at once when it returns", function(w: World)
@@ -323,6 +325,7 @@ case("host: a search that lands after a view switch is kept for its view, which 
 	eq(pickerOf(b).scope, "prs:v1", "back on the first view")
 	eq(pickerOf(b).state, "ready", "its late result is shown, not a spinner")
 	eq(#listed(b), 3, "with its items")
+	w.flush()
 end)
 
 case("host: Settings › General binds an action to a key: the key works, ? and Commands show it, and Reset goes back to no key", function(w: World)
@@ -409,6 +412,7 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	same(w.kv.get("keys"), { refresh = "" }, "which is saved as no key")
 	b.press("escape")
 	eq(b.press("w", nil, "w"), false, "the reset key is the pane's again")
+	w.flush()
 end)
 
 case("host: a render reads the saved keys once, and a key press once more", function(w: World)
@@ -457,6 +461,7 @@ case("host: Use one-key shortcuts binds the classic set to actions with no key, 
 	press()
 	has(rowIn(b, "kpreset").warning, "malformed", "unreadable keys are refused with the existing message")
 	eq(w.kv.get("keys"), "garbage", "and never written over")
+	w.flush()
 end)
 
 case("host: a key removed after Use one-key shortcuts stays removed when it is used again", function(w: World)
@@ -472,6 +477,7 @@ case("host: a key removed after Use one-key shortcuts stays removed when it is u
 	eq(bindKey(b, "wt-remove", ""), nil, "Backspace removes it")
 	press()
 	eq((w.kv.get("keys") :: any)["wt-remove"], "", "using the set again keeps it unbound")
+	w.flush()
 end)
 
 case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands leave it out, and the command palette's Reset brings its . back", function(w: World)
@@ -539,6 +545,7 @@ case("host: an empty Keys row removes a shortcut: no key does it, ? and Commands
 	b.press("escape")
 	eq(b.press(".", nil, "."), true, "and it works again")
 	eq(w.opened[#w.opened], h.tokened("plotroom://more"), "opening the command palette")
+	w.flush()
 end)
 
 case("host: the empty queue's hint names the Settings key, or just Settings when it has none", function(w: World)
@@ -601,6 +608,7 @@ case("host: the bar's Settings and Refresh events do what their keys do", functi
 	eq(#viewSearchesOf(s.gh, "search"), 2, "Refresh searches again")
 	act("settings")
 	yes(findKey(b.view().layer, "settings", "prefs") ~= nil, "Settings opens the settings page")
+	w.flush()
 end)
 
 case("host: the command palette's menu lists the queue actions and the commands the block offers now, in typed groups, and a queue event runs only one of those", function(w: World)
@@ -839,6 +847,7 @@ case("settings: Now's switches saved malformed are shown as the defaults Now run
 	b.event({ ev = "change", id = "layer.settings", item = "now:review", value = false })
 	same(w.kv.get("now"), { off = "review" }, "the saved store is untouched")
 	has(rowIn(b, "now:review").warning, "malformed", "the row says why")
+	w.flush()
 end)
 
 -- Settings' nav: page id -> its `changed` count.
@@ -868,6 +877,7 @@ case("settings: an on/off row is a switch: a click sends a boolean, Enter flips 
 	b.event({ ev = "change", id = "layer.settings", item = "now:blocked", value = false })
 	same(w.kv.get("now").off, { "blocked" }, "a click's false switches a reason off")
 	eq(rowIn(b, "now:blocked").control.on, false, "shown off")
+	w.flush()
 end)
 
 case("settings: each page counts the settings, views, actions and formats on it that differ from the defaults", function(w: World)
@@ -918,6 +928,7 @@ case("settings: each page counts the settings, views, actions and formats on it 
 	w.kv.put("prompts-prs", prs)
 	goToSettings(b, "general")
 	same({ changedCounts(b).general, changedCounts(b).prompts }, { 2, 5 }, "an action's key counts on General, where it is set, and not as a changed action")
+	w.flush()
 end)
 
 case("host: a view that cannot be written keeps its draft and says why; an unchanged Enter writes nothing", function(w: World)
@@ -940,6 +951,7 @@ case("host: a view that cannot be written keeps its draft and says why; an uncha
 	b.press("enter")
 	eq(rowIn(b, "name:prs:v1").warning, nil, "the retry saved it and cleared the warning")
 	eq(w.kv.get("views-prs").items[1].name, "My PRs2", "the draft was saved")
+	w.flush()
 end)
 
 case("host: a opens the selected PR's agent link", function(w: World)
@@ -984,6 +996,7 @@ case("host: setup commands are added, edited and removed per repository; unreada
 	b.render()
 	yes(type(rowIn(b, "setup:o/r:new").disabled) == "string", "an unreadable map disables the rows")
 	eq(w.kv.get("setup-commands"), "garbage", "and is never overwritten")
+	w.flush()
 end)
 
 case("host: unreadable or malformed saved views are shown as defaults and never overwritten", function(w: World)
@@ -1136,6 +1149,7 @@ case("host: a first run saves its issue views once the Jira site said whether it
 	same(hx.viewRows(w, "views-issues"), restored, "Add missing defaults saved them after the others, under new ids")
 	eq(rowIn(b, "vrestore:jira:"), nil, "and is gone with nothing left to restore")
 	eq(prefsOf(b).focus, "vadd:jira:", "Add takes the focus")
+	w.flush()
 end)
 
 case("host: an account's Add missing defaults saves back the default views its group has none named like, as that account's; a failed save is told and changes nothing", function(w: World)
@@ -1167,6 +1181,7 @@ case("host: an account's Add missing defaults saves back the default views its g
 	eq(w.kv.get("views-issues").items[1].query, "is:open assignee:@me label:mine", "an edited default is never replaced")
 	eq(rowIn(b, "vrestore:github:octocat"), nil, "nothing is left to restore")
 	yes(rowIn(b, "vrestore:jira:") ~= nil, "while Jira still has defaults to restore")
+	w.flush()
 end)
 
 case("host: Remove repository and Remove project ask in the block, each naming what Plotroom forgets", function(w: World)
@@ -1186,6 +1201,7 @@ case("host: Remove repository and Remove project ask in the block, each naming w
 	same(ask.foot, { "Cancel/quiet/esc", "Remove project/danger/enter" }, "Cancel first, then Remove project")
 	b.press("enter")
 	eq(w.kv.get("jira-repos").ABC, nil, "Enter removes it")
+	w.flush()
 end)
 
 -- Seeds a value under every key Reset all settings clears, and work state it keeps; returns the kept values.
@@ -1245,6 +1261,7 @@ case("host: Reset all settings asks in the block with Cancel first; only its act
 	end
 	same(hx.viewRows(w, "views-prs"), { "v1 My PRs · github · repo", "v2 Review requested · github · none · oldest" }, "the views are the defaults again")
 	eq(w.toasts[#w.toasts].text, "Settings reset", "the user is told")
+	w.flush()
 end)
 
 case("host: Reset all settings brings back the default views, actions and checklist in every block; a key that cannot be cleared is named, and a malformed store is cleared", function(w: World)
@@ -1274,6 +1291,7 @@ case("host: Reset all settings brings back the default views, actions and checkl
 	yes(findKey(b.view().layer, "get-started", "card") ~= nil, "the checklist shows again")
 	yes(findKey(other.view().layer, "get-started", "card") ~= nil, "in the other open block too")
 	has(other.title(), "My PRs", "which shows the default views")
+	w.flush()
 end)
 
 case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories, General, and Shift+Tab goes back; they are the same whichever kind of filter is shown", function(w: World)
@@ -1314,6 +1332,7 @@ case("host: Tab cycles the Settings pages in order, Views, Actions, Repositories
 	pickScope(b, "issues:v1")
 	b.typeText("s")
 	same(ids(), expected, "are an issue filter's")
+	w.flush()
 end)
 
 case("host: a view's Group by is a menu: Enter opens it, the arrows and the pointer move the highlight, Esc closes it, Enter saves; the integration cannot be changed", function(w: World)
@@ -1361,6 +1380,7 @@ case("host: a view's Group by is a menu: Enter opens it, the arrows and the poin
 	eq(w.kv.get("views-issues").items[1].group, second, "Enter on the highlighted option saves it")
 	eq(prefsOf(b).editing, nil, "and closes the menu")
 	eq(rowIn(b, vgroup).control.value, second, "the row shows it")
+	w.flush()
 end)
 
 -- The text in the card's draft; nil without a card.
@@ -1456,6 +1476,7 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	b.typeText(" Be brief.")
 	b.press("enter", "c")
 	eq(savedText(w, 1), "Review {url}\nThen summarise. Be brief.", "Ctrl+Enter saves as well")
+	w.flush()
 end)
 
 case("host: typing a character in a Settings field reads each store at most once for the key and the render after it", function(w: World)
@@ -1499,6 +1520,7 @@ case("host: naming a new prompt with the placeholder name itself still opens its
 	eq(w.kv.get("prompts-prs").items[1].name, "New action", "the name stays what it was")
 	yes(editorCard(b) ~= nil, "and the prompt, still with no text, opens its text editor")
 	eq(caretOf(w), "layer.settings.prompt.draft", "with the caret in its field")
+	w.flush()
 end)
 
 case("host: a prompt's text that is empty or over 8000 bytes stays in the editor with the card's warning; Save and Cancel act like ⌘Enter and Esc", function(w: World)
@@ -1553,6 +1575,7 @@ case("host: a prompt's text that is empty or over 8000 bytes stays in the editor
 	b.event(save)
 	eq(cardWarning(b), "A prompt is required.", "Save refuses an empty text the same way")
 	eq(savedText(w, 1), "Short.", "and keeps the saved one")
+	w.flush()
 end)
 
 case("host: a view's Prompts chips keep only prompts that exist, and Enter, Right and Space toggle them from the keyboard", function(w: World)
@@ -1606,6 +1629,7 @@ case("host: a view's Prompts chips keep only prompts that exist, and Enter, Righ
 	eq(prefsOf(b).editing, nil, "any other key leaves the chips")
 	eq(prefsOf(b).focus, "vopen:prs:v2", "and does what it does")
 	same(saved(), { "p1" }, "without changing the prompts")
+	w.flush()
 end)
 
 case("host: Delete on a prompt asks in the block, naming it: confirming deletes it, cancelling keeps it", function(w: World)
@@ -1633,6 +1657,7 @@ case("host: Delete on a prompt asks in the block, naming it: confirming deletes 
 	eq(pendingOf(b).head, "Delete action “Triage”?", "the Delete button asks the same question")
 	pendingOf(b).act()
 	eq(#w.kv.get("prompts-prs").items, 0, "and confirming it deletes that prompt")
+	w.flush()
 end)
 
 case("host: changing page or closing Settings drops an open text edit and gives the caret back", function(w: World)
@@ -1662,6 +1687,7 @@ case("host: changing page or closing Settings drops an open text edit and gives 
 	eq(caretOf(w), "released", "and gives the caret back")
 	b.typeText("s")
 	eq(editorCard(b), nil, "reopened Settings has no edit")
+	w.flush()
 end)
 
 case("host: deleting a prompt drops an edit of its own name or text and leaves the edit of another prompt alone", function(w: World)
@@ -1694,6 +1720,7 @@ case("host: deleting a prompt drops an edit of its own name or text and leaves t
 	click("p3")
 	eq(#w.kv.get("prompts-prs").items, 0, "it is deleted")
 	eq(prefsOf(b).editing, nil, "and its name edit ends")
+	w.flush()
 end)
 
 case("host: unreadable or malformed saved prompts lock Add with the reason, are never overwritten, and the menu answers with the problem and no prompts", function(w: World)
@@ -1736,6 +1763,7 @@ case("host: unreadable or malformed saved prompts lock Add with the reason, are 
 	local answer = answerOf(b, "m9")
 	eq(answer.problem, nil, "and the menu has no problem")
 	eq(#answer.items, 1, "but the prompt")
+	w.flush()
 end)
 
 case("host: view prompts limit the menu", function(w: World)
@@ -2059,6 +2087,7 @@ case("host keys footer: a click on a seg runs what its key runs, and a seg no lo
 	b.press("down")
 	b.event({ ev = "action", id = "dock.keybar.k9", act = refresh.p.actions.click })
 	eq(w.kv.get("usage").counts["queue:refresh"].n, before + 1, "unbound, Refresh is off the footer and its old seg runs nothing")
+	w.flush()
 end)
 
 case("host keys footer: with the default keys only Commands and the preview's tab keys show; an unbound Commands leaves the tab keys", function(w: World)
@@ -2136,6 +2165,7 @@ case("host: Settings > Actions' Next action row offers the other actions, refuse
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p2" })
 	eq(#w.kv.get("prompts-prs").items, 2, "the action is deleted")
 	eq(w.kv.get("prompts-prs").items[1].next, nil, "and no longer anyone's next action")
+	w.flush()
 end)
 
 case("host: Settings > Actions' Checked by row offers the other actions, refuses the action itself, and deleting the checker clears it; Implement and Fix are checked by Check", function(w: World)
@@ -2177,6 +2207,7 @@ case("host: Settings > Actions' Checked by row offers the other actions, refuses
 		table.insert(restored, p.id .. " " .. p.name .. ">" .. (p.checker or "-"))
 	end
 	same(restored, { "p1 Check>-", "p2 Plan>-", "p3 Implement>p1", "p4 Fix>p1" }, "Add missing defaults points them at the saved action named Check")
+	w.flush()
 end)
 
 case("host: an issue action's Next action also offers the pull request actions by kind, saved qualified; a pull request action never offers issue actions, and deleting one clears it as a next", function(w: World)
@@ -2203,6 +2234,7 @@ case("host: an issue action's Next action also offers the pull request actions b
 	b.event({ ev = "action", id = "layer.settings", act = "confirm-delete", value = "pdelete:prs:p2" })
 	eq(w.kv.get("prompts-issues").items[1].next, nil, "deleting the pull request action clears it as an issue action's next")
 	eq(#w.kv.get("prompts-issues").items, 3, "the issue actions stay")
+	w.flush()
 end)
 
 case("host: the default actions set each action's model, Opens in and Next action; Implement and Fix lead into the pull request action named Watch, found by name, and into none without it", function(w: World)
@@ -2249,6 +2281,7 @@ case("host: the default actions set each action's model, Opens in and Next actio
 	same(nexts(), { "Implement>-", "Fix>-", "Plan>-", "Check>-" }, "nor with Watch deleted")
 	w.kv.put("prompts-prs", "garbage")
 	same(nexts(), { "Implement>-", "Fix>-", "Plan>-", "Check>-" }, "nor when the pull request actions cannot be read")
+	w.flush()
 end)
 
 case("host: Add missing defaults restores each default's model and Opens in, and points Implement's and Fix's Next action at the saved Watch's id", function(w: World)
@@ -2268,6 +2301,7 @@ case("host: Add missing defaults restores each default's model and Opens in, and
 	same(rows("prompts-prs"), { "p1 Watch - tab - - premerge", "p2 Review @slow tab - - -", "p3 Quick review @slow split - - -", "p4 Address feedback - tab - - -" }, "the pull request defaults come back with their model, Opens in and Watch's Merge the base first")
 	b.event({ ev = "action", id = "layer.settings", act = "restore-prompts", value = "prestore:issues" })
 	same(rows("prompts-issues"), { "p1 Check - tab - - -", "p2 Plan - tab - - -", "p3 Implement - tab prs:p1 p1 -", "p4 Fix - tab prs:p1 p1 -" }, "Implement and Fix lead into the saved Watch (p1, not the seed's p4); edited defaults keep their own options")
+	w.flush()
 end)
 
 case("host: a prompt's shortcut is one free key on the Keys page: the row refuses what the queue uses or another prompt has, and clearing it removes the key", function(w: World)
@@ -2336,6 +2370,7 @@ case("host: a prompt's shortcut is one free key on the Keys page: the row refuse
 	eq(try(""), nil, "Backspace is accepted")
 	eq(w.kv.get("prompts-prs").items[1].key, nil, "and removes the key")
 	eq(rowIn(b, "pkey:prs:p1").control.value, "", "which the row shows")
+	w.flush()
 end)
 
 case("host: a Keys row refuses a key another action or a saved prompt of either kind has, and a prompt's shortcut refuses the keys the queue uses now", function(w: World)
@@ -2381,6 +2416,7 @@ case("host: a Keys row refuses a key another action or a saved prompt of either 
 	eq(w.opened[#w.opened], runLink("o/r", 1, "p1"), "the prompt's key runs it")
 	b.typeText("g")
 	eq(w.opened[#w.opened], prLink("worktree", "o/r", 1), "and the action's new key makes the worktree")
+	w.flush()
 end)
 
 case("host: unreadable or malformed saved keys lock the Keys rows with the reason, the default keys keep working, and nothing is written over them", function(w: World)
@@ -2432,6 +2468,7 @@ case("host: unreadable or malformed saved keys lock the Keys rows with the reaso
 	b.typeText("Q")
 	eq(rowIn(b, "key:goto").warning, nil, "the retry clears the warning")
 	same(w.kv.get("keys"), { ["goto"] = "Q", worktree = "W" }, "and saves the key beside the other")
+	w.flush()
 end)
 
 case("host: a key changed in one block reaches the other live blocks, and a closed pane is skipped", function(w: World)
@@ -2596,6 +2633,7 @@ case("host: ? adds a row for each prompt offered under the view that has a key, 
 	b.typeText("s")
 	b.typeText("?")
 	same(promptRows(), {}, "the list of Settings has none")
+	w.flush()
 end)
 
 case("host: a checkout of another repository is refused with its draft kept; a real one is saved only after git confirms it", function(w: World)
@@ -3229,6 +3267,7 @@ case("host: group by Fork and by Label put each PR under its fork owner or first
 	goToSettings(b, "views")
 	expand(b, "vopen:prs:v1")
 	same(asks.hx.options(b, "vgroup:prs:v1"), { "none", "repo", "author", "state", "review", "checks", "base", "fork", "label" }, "Settings offers both")
+	w.flush()
 end)
 
 case("host: a search that matches nothing says so, with the text, instead of calling the view empty", function(w: World)
@@ -3270,6 +3309,7 @@ case("host: Settings keeps the refresh pace while a refresh runs", function(w: W
 	b.typeText("r")
 	goToSettings(b, "general")
 	has(rowIn(b, "refresh").hint, "Auto-refresh every", "the pace shows while the refresh is still running")
+	w.flush()
 end)
 
 case("host: a rate limit holds every refresh, the manual one included, until it resets", function(w: World)
@@ -3470,6 +3510,7 @@ case("host: a view change in one block reaches the other live blocks, and a clos
 	a.press("enter")
 	eq(#viewSearchesOf(s.gh, "search"), 5, "a closed pane is not searched for")
 	eq(c.renders(), drawn, "and not drawn")
+	w.flush()
 end)
 
 case("host: gh's active account changing reaches every block: the old account's data goes and nothing runs as it", function(w: World)
@@ -3541,6 +3582,7 @@ case("settings: Save on the prompt editor saves the typed text after Done closed
 	eq(draftOf(b), nil, "and closes the editor")
 	local op: any = w.frames[#w.frames].ops[1]
 	eq(op[2], NULL, "giving the caret back")
+	w.flush()
 end)
 
 case("host: an invalid pause held across a restart still holds when its restored view is first listed", function(w: World)
@@ -3606,6 +3648,7 @@ case("host: a prompt, format, setup command or checkout saved in one block reach
 	reaches("clearing a checkout", function()
 		a.event({ ev = "change", id = "layer.settings", item = "checkout:o/r" })
 	end)
+	w.flush()
 end)
 
 case("host: Add missing defaults, a repository or a Jira project added in one block reaches the others at once", function(w: World)
@@ -3642,6 +3685,7 @@ case("host: Add missing defaults, a repository or a Jira project added in one bl
 	reaches("adding a Jira project", function()
 		a.event({ ev = "action", act = "add-jira", value = "ABC" })
 	end)
+	w.flush()
 end)
 
 case("host: a queue action that runs counts once in this host's usage, and the block publishes the counts; a malformed store is left untouched", function(w: World)
@@ -3677,6 +3721,7 @@ case("host: every way Settings opens counts once as queue:settings, with its fir
 	eq((w.kv.get("usage") :: any).counts["queue:settings"].n, 1, "closing it counts nothing")
 	b.event({ ev = "action", id = "layer.queue", act = "settings" })
 	eq((w.kv.get("usage") :: any).counts["queue:settings"].n, 2, "the button opens it again, and that counts")
+	w.flush()
 end)
 
 -- Every badge text of row `id`, in order.

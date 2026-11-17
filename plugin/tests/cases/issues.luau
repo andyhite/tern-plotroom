@@ -65,6 +65,7 @@ case("host: a collapsed prompt is one summary row; Edit expands it, another's Ed
 	yes(rowIn(b, "pname:prs:p3") ~= nil, "the new prompt opens expanded")
 	yes(rowIn(b, "popen:prs:p1").control.act == "expand" and rowIn(b, "pname:prs:p1") == nil, "and the one that was open collapses")
 	eq(prefsOf(b).editing.row, "pname:prs:p3", "with its name being edited")
+	w.flush()
 end)
 
 case("host: pull request and issue filters sit together in the group of the login they run as, and one without a login follows gh's active login", function(w: World)
@@ -178,6 +179,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	same(listed(b), { "no_2fr_231", "no_2fr_232" }, "with its own list")
 	b.press("down")
 	eq(pickerOf(b).scope, "prs:v1@work", "Down moves to the scope below")
+	w.flush()
 end)
 
 case("host: a login failing in one scope leaves the view's other scope alone", function(w: World)
@@ -294,6 +296,7 @@ case("host: each Views group of an available account or Jira ends in an Add butt
 	eq(#made.logins, 0, "with no login")
 	eq(made.query, "assignee = currentUser() AND statusCategory != Done", "and Jira's query")
 	eq(#w.kv.get("views-prs").items, 2, "an issue view though a pull request view is shown: Jira has no pull requests")
+	w.flush()
 end)
 
 case("host: the Jira group of the Views page follows acli: with no Jira view it shows once acli answers, and not while acli cannot be started", function(w: World)
@@ -622,6 +625,7 @@ case("host: a Jira view's Settings speak of JQL, the shared prompts, the reposit
 	b.event({ ev = "select", id = "layer.settings", item = "vadd:github:octocat" })
 	b.press("enter")
 	eq(w.kv.get("views-issues").items[2].query, "is:open involves:@me", "a new view starts as the GitHub one")
+	w.flush()
 end)
 
 case("host: removing a repository drops it from jira-repos, branch-formats and setup-commands", function(w: World)
@@ -643,6 +647,7 @@ case("host: removing a repository drops it from jira-repos, branch-formats and s
 	same(w.kv.get("jira-repos"), { ABC = { "o/r" }, DEF = array({}) }, "every Jira project drops it; one left with none stays listed")
 	eq(rowIn(b, "ropen:x/y"), nil, "it is gone from the page")
 	eq(prefsOf(b).focus, "radd", "and the Add button takes the focus")
+	w.flush()
 end)
 
 case("host: a Jira issue request makes its worktree in the project's mapped GitHub repository", function(w: World)
@@ -1325,6 +1330,7 @@ windowCase("window: Plotroom has one launcher, which opens the one block beside 
 	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/r", args = { "/work/r" } } }, "the palette command launches the Plotroom block in the focused pane's folder")
 	local ok = pcall(w.command, "open-issues")
 	eq(ok, false, "there is no command for an Issues block")
+	w.flush()
 end)
 
 windowCase("window: a forged issue link not shown by the block is refused before anything is asked", function(w: World)
@@ -1397,6 +1403,7 @@ case("host: without gh, an issue action's Next action offers no pull request act
 	goToSettings(b, "prompts")
 	expand(b, "popen:issues:p1")
 	same(asks.hx.options(b, "pnext:issues:p1"), { "none", "p2", "p3", "p4" }, "only the issue actions: a pull request action could only fail")
+	w.flush()
 end)
 
 case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt or request, and Settings shows its setup guide until gh starts", function(w: World)
@@ -1482,6 +1489,7 @@ case("host: with no prompts saved, Settings lists each kind's default prompts, a
 	eq(saved.nextId, #saved.items + 1, "whose id follows theirs")
 	eq(saved.items[1].text, defaults[1].text, "a default is saved with its text")
 	eq(w.kv.get("prompts-issues"), nil, "the issue prompts stay the defaults")
+	w.flush()
 end)
 
 case("host: Add missing defaults saves back the default actions no saved one is named like, and a kind with none keeps its title on its buttons", function(w: World)
@@ -1525,6 +1533,7 @@ case("host: Add missing defaults saves back the default actions no saved one is 
 	same(hx.rows(b), full, "with every default saved, Add missing defaults goes")
 	eq(prefsOf(b).focus, "padd:prs", "and Add takes the focus")
 	eq(#w.kv.get("prompts-issues").items, 0, "the other kind is untouched")
+	w.flush()
 end)
 
 case("host: with neither gh nor acli installed, nothing is listed or asked, and Settings offers both setup guides", function(w: World)
@@ -1552,6 +1561,7 @@ case("host: with neither gh nor acli installed, nothing is listed or asked, and 
 	same(hx.pages(b), { "views", "prompts", "repos", "general", "setup-github", "setup-jira" }, "the four pages, and a setup page each")
 	b.press("enter")
 	eq(w.opened[#w.opened], "https://developer.atlassian.com/cloud/acli/guides/install-acli/", "Jira's opens acli's install guide")
+	w.flush()
 end)
 
 case("host: with both CLIs on, Settings has four pages: Views, Actions, Repositories and General", function(w: World)
@@ -1582,6 +1592,7 @@ case("host: with both CLIs on, Settings has four pages: Views, Actions, Reposito
 	same(titles(), { "Keyboard shortcuts", "Pull request actions", "Issue actions", "Summary", "Draft review", "Refresh", "Reset" }, "General: the keyboard shortcuts, the actions' own keys, Summary, Draft review, Refresh, then Reset")
 	eq(prefsOf(b).sections[1].rows[1].id, "kpreset", "the one-key set leads the shortcuts")
 	has(rowIn(b, "refresh").label, "Refresh now", "Refresh now is there")
+	w.flush()
 end)
 
 case("host: until the CLIs answer no view is listed or searched, and the restored view is the active one once they do", function(w: World)
@@ -1683,6 +1694,7 @@ case("host: Settings › Repositories lists the three name formats with their de
 	eq(hx.reset(prs, "fmt:issuedir"), "Could not save: read-only file system", "a Reset that cannot be written says so")
 	eq(w.kv.get("issue-dir-format"), "i{key}", "and keeps the format")
 	eq(rowIn(prs, "fmt:issuedir").changed, true, "which the row still shows")
+	w.flush()
 end)
 
 case("host: a default name format that cannot be read or is not a string locks its row, and is never written over", function(w: World)
@@ -1717,6 +1729,7 @@ case("host: a default name format that cannot be read or is not a string locks i
 	prs.press("enter")
 	eq(rowIn(prs, "fmt:issuedir").warning, nil, "once readable, the save goes through")
 	eq(w.kv.get("issue-dir-format"), "i{key}j{key}", "as before")
+	w.flush()
 end)
 
 case("host: the repository's own branch format wins over the Worktrees one for an issue's new branch, and its Reset brings the Worktrees one back", function(w: World)
@@ -3172,6 +3185,7 @@ case("host: an issue action's Move to status is an issue-side row that saves, re
 	eq(sent.status, "In Review", "the menu sends it")
 	b.event({ ev = "change", id = "layer.settings", item = "pstatus:issues:p1", value = nil })
 	eq(w.kv.get("prompts-issues").items[1].status, nil, "reset clears it")
+	w.flush()
 end)
 
 -- A queue of two PRs (#1 at sha a, checks pending; #2 at sha b, checks passing) whose gh answers the repository's merge

@@ -17,6 +17,24 @@ case("selftest: the pure helper assertions of check.luau pass", function(w: Worl
 	check.run()
 end)
 
+case("harness: finish fails on a due event the case never ran, and strictResponders on a responder that never answered", function(w: World)
+	local process = w.load("process") :: Process
+	w.respond(function(_call: Call): Reply?
+		return { stdout = "" }
+	end)
+	process.run({ "git", "status" }, {}, function() end)
+	local ok, err = pcall(w.finish)
+	yes(not ok and string.find(tostring(err), "due but never run", 1, true) ~= nil, "a reply left due fails the case")
+	w.respond(function(call: Call): Reply?
+		return if call.argv[2] == "idle" then { stdout = "" } else nil
+	end)
+	w.strictResponders()
+	local ok2, err2 = pcall(w.finish)
+	yes(not ok2 and string.find(tostring(err2), "never answered a call", 1, true) ~= nil, "the idle responder is named")
+	process.run({ "git", "idle" }, {}, function() end)
+	w.flush()
+end)
+
 -- ---- process.luau: discovery of gh/git when the SDK cannot find them
 
 local PROBE = "\0PLOTROOM_PATH\0/opt/tools/bin:/usr/bin\n\0PLOTROOM_END\0"
