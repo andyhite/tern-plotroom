@@ -27,7 +27,7 @@ Every feature, command, setting and surface, mapped to the loop step it serves (
 | Shell lens after `gh pr create` | Shell pane | Keep | — | Approved | Cheap intake of a just-created PR |
 | Alt-click a GitHub pull request or issue link in any pane to show it in Plotroom | Any pane's links | New | — | Approved | tern-plotroom#cfd8: intake of an item met anywhere in the window without copying its URL; a plain click still opens the browser |
 | Open Plotroom button in the Files pane | Files pane | Keep | — | Approved | Entry point |
-| Plotroom: Open | Tern's palette | Keep | — | Approved | Entry point |
+| Plotroom › Open | Tern's palette | Keep | — | Approved | Entry point |
 
 ## Triage
 
