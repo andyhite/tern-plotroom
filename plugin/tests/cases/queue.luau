@@ -1635,6 +1635,7 @@ case("host: the prompt editor takes Tern's native edits (select all, replace, a 
 	b.edit("draft", 0, 15, "Dropped")
 	b.press("escape")
 	eq(savedText(w, 1), "> Look at {url}", "Esc drops the edits")
+	w.flush()
 end)
 
 case("host: a view's Prompts chips keep only prompts that exist, and Enter, Right and Space toggle them from the keyboard", function(w: World)
