@@ -8,6 +8,9 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 - A plan that the palette asks while a Stop agent or Remove worktree confirm (or a Board removal confirm) is open now replaces it, as a message already did, so cancelling the plan no longer brings the older confirm back (tern-plotroom#gg2f).
 - A worktrees directory that is a symlink (macOS `/tmp` and `/var` are) or holds `.` or `..` segments no longer hides the worktree Plotroom made there: git lists a worktree under its real path, so the worktree at an item's folder on another branch was not recognised and the open ended in "already exists and is not the worktree of …". Plotroom now resolves the directory to its real path before it builds a worktree's folder (tern-plotroom#q9xp).
+
+- A search that lands after the view or account changed is kept for its own view instead of discarded, so switching A → B → A quickly shows A's list at once and does not spend its GraphQL points twice (tern-plotroom#3awd).
+
 - A checkout found from a linked worktree is saved as the main worktree git lists first, also for a repository whose git directory is not `<main>/.git` (`--separate-git-dir`) (tern-plotroom#f77a).
 - Remove finished worktrees asks GitHub or Jira about each pull request or issue again just before removing its worktree, instead of trusting the verdict of an old Find finished worktrees: a pull request or issue reopened since is kept, loses its Merged or Closed mark, and the toast says how many were kept for that.
 - Oldest waiting puts an item whose creation date could not be read last instead of first, and a view applies only a sort its kind offers.

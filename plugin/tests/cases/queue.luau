@@ -303,6 +303,28 @@ case("host: the documented queue keys move, open, refresh and switch filters", f
 	eq(pickerNode(b).k, "picker", "as a sheet over the queue")
 end)
 
+case("host: a search that lands after a view switch is kept for its view, which shows it at once when it returns", function(w: World)
+	local s = hostScene(w, 3)
+	local slow = true
+	s.gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and slow then
+			slow = false
+			return { delay = 5000, stdout = jsonEncode({ total = #s.gh.items.octocat, next = NULL, cost = 1, items = array(s.gh.items.octocat) }) }
+		end
+		return nil
+	end
+	local b = w.open(1, { "/work/r" })
+	w.advance(100)
+	b.press("left")
+	b.press("down")
+	eq(pickerOf(b).scope, "prs:v2", "the second view is active while the first search is out")
+	w.advance(6000)
+	b.press("up")
+	eq(pickerOf(b).scope, "prs:v1", "back on the first view")
+	eq(pickerOf(b).state, "ready", "its late result is shown, not a spinner")
+	eq(#listed(b), 3, "with its items")
+end)
+
 case("host: Settings › General binds an action to a key: the key works, ? and Commands show it, and Reset goes back to no key", function(w: World)
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any

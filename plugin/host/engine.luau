@@ -1646,8 +1646,9 @@ function M.refresh(state: State)
 	local gen, query, integration = state.gen, v.query, v.integration
 	local key = M.snapKey(v, state.activeLogin)
 	state.inflight = gen
+	-- Alive, not gen: a request a view switch outdated still finishes, and `landed` keeps its result for its own key.
 	local function current(): boolean
-		return running[state.cx.pane] == state and state.gen == gen
+		return running[state.cx.pane] == state
 	end
 	local kind = v.kind -- what this request lists, whichever view is active when it lands
 	local issues = kind == "issues"
@@ -1661,6 +1662,13 @@ function M.refresh(state: State)
 		end
 		if state.gen ~= gen or (problem and problem.kind == "superseded") then
 			-- The query or the login changed meanwhile and its own request is running or paused: only the spent quota counts.
+			if result and not problem then
+				if issues then
+					tracker.byStatus(result.issues)
+				end
+				-- key is identity-safe: keep the paid-for result for when its view returns
+				state.snaps[key] = { kind = kind, items = if issues then result.issues else result.prs, total = result.total, complete = result.complete, note = result.note, fetched = os.time() }
+			end
 			if spent > 0 then
 				state.cost = math.max(spent, state.cost)
 			end
