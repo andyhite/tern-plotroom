@@ -2536,7 +2536,7 @@ end)
 
 case("host triage: a malformed or unreadable kv triage is never overwritten: marking is refused with an error toast and no row is marked", function(w: World)
 	hostScene(w, 3)
-	w.kv.put("triage", { version = 7, items = {} })
+	w.kv.put("triage", { version = 0, items = {} })
 	local bad = w.kv.store["triage"]
 	local b = openQueue(w)
 	same(asks.hx.marks(b), { "-", "-", "-" }, "without a trusted store no row is marked")

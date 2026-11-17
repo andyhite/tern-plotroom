@@ -6,6 +6,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ### Changed
 - Docs state that Plotroom works with github.com only; the host is one `HOST` constant in `plugin/github.luau` (no behavior change).
+- A triage store saved by a newer Plotroom now says so ("from a newer Plotroom; not overwriting it") instead of "malformed" (tern-plotroom#dezq).
 
 ### Added
 

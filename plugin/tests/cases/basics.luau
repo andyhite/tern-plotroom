@@ -402,12 +402,16 @@ case("triage: load reads an absent store as empty, a saved one back, and refuses
 	eq(why, "Saved triage state could not be read: disk gone", "the read error is reported")
 	w.kv.failGet["triage"] = nil :: any
 
-	for _, bad in ({ { version = 2, items = {} }, { version = 1, items = { a = { at = "x" } } }, "text" } :: { any }) do
+	for _, bad in ({ { version = 0, items = {} }, { version = 1, items = { a = { at = "x" } } }, "text" } :: { any }) do
 		w.kv.put("triage", bad)
 		s, why = triage.load()
 		eq(s, nil, "a malformed store gives no store")
 		eq(why, "Saved triage state is malformed; not overwriting it.", "the malformed message")
 	end
+	w.kv.put("triage", { version = 2, items = {} })
+	s, why = triage.load()
+	eq(s, nil, "a newer store gives no store")
+	eq(why, "Saved triage state is from a newer Plotroom; not overwriting it.", "and says it is newer")
 end)
 
 case("triage: save prunes before it validates, refuses a malformed store and reports a kv error", function(w: World)
@@ -426,7 +430,7 @@ case("triage: save prunes before it validates, refuses a malformed store and rep
 	yes(saved.items["k1"] == nil and saved.items["k4"] ~= nil, "the oldest went")
 
 	local before = w.kv.store["triage"]
-	local bad: any = { version = 2, items = {} }
+	local bad: any = { version = 0, items = {} }
 	eq(triage.save(bad), "Saved triage state is malformed; not overwriting it.", "save refuses it")
 	eq(w.kv.store["triage"], before, "a malformed store is not written")
 
