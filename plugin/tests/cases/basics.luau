@@ -155,7 +155,7 @@ case("process: reset keeps the recovered PATH, and a spawn failing under it prob
 			return { stdout = "\0PLOTROOM_PATH\0" .. shellPath .. "\n\0PLOTROOM_END\0" }
 		end
 		local path = call.env.PATH
-		local found = path and string.find(path, if call.argv[1] == "acli" then "/new/bin" else "/opt/tools/bin", 1, true)
+		local found = call.argv[1] ~= "nope" and path and string.find(path, if call.argv[1] == "acli" then "/new/bin" else "/opt/tools/bin", 1, true)
 		return if found then { stdout = "ok\n" } else { raise = "no such file or directory" }
 	end)
 	local outcomes: { string } = {}
@@ -177,8 +177,15 @@ case("process: reset keeps the recovered PATH, and a spawn failing under it prob
 	has(outcomes[3], "acli", "and is still not found: the problem names it")
 	shellPath = "/opt/tools/bin:/new/bin:/usr/bin"
 	run("acli")
-	eq(probeCount(w), 3, "another failed lookup probes again")
-	eq(outcomes[4], "ok\n", "a newly installed program is found under the new PATH")
+	eq(probeCount(w), 2, "a failed lookup right after a probe does not probe again")
+	has(outcomes[4], "acli", "it is answered with the could-not-be-started problem")
+	w.advance(60000)
+	run("acli")
+	eq(probeCount(w), 3, "once the window has passed, a failed lookup probes again")
+	eq(outcomes[5], "ok\n", "a newly installed program is found under the new PATH")
+	process.reset()
+	run("nope")
+	eq(probeCount(w), 4, "reset lifts the throttle")
 	run("gh")
 	eq(w.calls[#w.calls].env.PATH, shellPath, "the new PATH is the one kept")
 end)
@@ -204,6 +211,7 @@ case("process: a failed re-probe keeps the PATH even when another spawn joined i
 	run("gh")
 	w.flush()
 	probeOk = false
+	w.advance(60000)
 	run("acli")
 	run("gh")
 	w.flush()

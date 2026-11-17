@@ -2,7 +2,7 @@
 -- The one process runner gh and git share. The bare program name is spawned
 -- first (the SDK looks it up on PATH). Only when the spawn itself fails is
 -- the PATH of the user's login shell recovered, cached in memory, and
--- the same argv retried with it; a later failure under that PATH probes the login shell again (a newly installed program). A started process that exits nonzero is
+-- the same argv retried with it; a later failure under that PATH probes the login shell again (a newly installed program), but at most once per REPROBE_MS: inside that window it is answered "could not be started" without a probe. A started process that exits nonzero is
 -- never retried: that is an auth/API/git failure, not a discovery failure.
 
 local M = {}
@@ -13,10 +13,12 @@ local MARK_A = "\0PLOTROOM_PATH\0"
 local MARK_B = "\0PLOTROOM_END\0"
 local SCRIPT = "printf '\\0PLOTROOM_PATH\\0'; /usr/bin/printenv PATH; printf '\\0PLOTROOM_END\\0'"
 local PROBE_TIMEOUT_MS = 5000
+local REPROBE_MS = 60000
 
 local recovered: string? = nil
 local failed: string? = nil
 local recovering: { Waiter }? = nil
+local probedAt: number? = nil -- tern.now() when the last probe finished, whatever it found
 
 -- Runs `fn` from a zero-delay timer: callers that need a fresh window cx get one, and async callbacks never run inline.
 function M.later(fn: (WindowCx?) -> ())
@@ -67,6 +69,7 @@ local function recover(cb: Waiter, reprobe: boolean?)
 	local function finish(path: string?, err: string?, cx: WindowCx?)
 		local waiters: { Waiter } = recovering or {}
 		recovering = nil
+		probedAt = tern.now()
 		if path then
 			recovered = path
 		else
@@ -119,6 +122,7 @@ end
 -- it probes the login shell again (see run). Explicit Retry calls this.
 function M.reset()
 	failed = nil
+	probedAt = nil
 end
 
 -- done(result, problem, cx): `problem` is set only when the program could not
@@ -148,6 +152,13 @@ function M.run(argv: { string }, opts: ProcessOptions, done: (ProcessResult?, st
 		return
 	end
 	local program = argv[1] or "program"
+	local last = probedAt
+	if stale and last and not recovering and tern.now() - last < REPROBE_MS then
+		local msg = explain(program, tostring(err))
+		return defer(function(cx)
+			done(nil, msg, cx)
+		end)
+	end
 	-- A spawn that fails under the PATH found earlier asks the login shell once more: the program may be newly installed.
 	recover(function(path, why, cx)
 		if not path or path == stale then
