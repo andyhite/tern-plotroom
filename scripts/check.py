@@ -24,7 +24,7 @@ ext     plugin/tests/extension.ts, run by bun (else node >= 23.6, which strips t
 smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
-Pinned: Luau 0.743, luau-lsp 1.70.1, Tern 0.9.13 SDK (stencil-hq/tern-sdk 0479f70, the minimum supported Tern).
+Pinned: Luau 0.743 (its binary's sha256 is checked on every run: the Luau CLI has no --version), luau-lsp 1.70.1, Tern 0.9.13 SDK (stencil-hq/tern-sdk 0479f70, the minimum supported Tern).
 Cache: $XDG_CACHE_HOME or ~/.cache, plotroom-check/.
 """
 
@@ -55,12 +55,17 @@ TERN_VERSION = "0.9.13"  # the SDK pin and the minimum Tern smoke accepts
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
 BENCH_PAYLOAD_MAX = 600000
 
-# sha256 of the release assets, as GitHub publishes them.
+# sha256 of the release assets, as GitHub publishes them. "binary" is the sha256 of the extracted luau
+# executable per platform: the Luau CLI has no --version, so the hash is how a 0.743 binary is told from another.
 TOOLS = {
     "luau": {
         "version": LUAU_VERSION,
         "base": "https://github.com/luau-lang/luau/releases/download/%s/" % LUAU_VERSION,
         "member": "luau",
+        "binary": {
+            "Darwin": "08c4781cacc4f16c1025fd954028465a7ff3a458279e4b5fef6eceb19acb8e76",
+            "Linux": "416fec2184d0bd238be24721f0369ec1d38b09da21032d6845e5f6648f69f2f8",
+        },
         "assets": {
             "Darwin": ("luau-macos.zip", "4334afbfb0c05ee697c9bfea64a85f950249c1e8f6f7d99aaa5a24ee362b09c3"),
             "Linux": ("luau-ubuntu.zip", "99d45afb4afaee00ba631c526c8e8c76c67b60f6f119953ce6409be6d6953663"),
@@ -116,13 +121,13 @@ def find_tool(name: str, env_var: str) -> Path:
         path = Path(given).expanduser()
         if not (path.is_file() and os.access(path, os.X_OK)):
             raise GateError("%s=%s is not an executable file" % (env_var, given))
-        return path
+        return path if name != "luau" else pinned_luau(path, cached=False)
     path = cached_tool(name)
     if path.is_file():
-        return path
+        return path if name != "luau" else pinned_luau(path, cached=True)
     found = shutil.which(TOOLS[name]["member"])
     if found:
-        return Path(found)
+        return Path(found) if name != "luau" else pinned_luau(Path(found), cached=False)
     raise GateError(
         "%s %s not found: set %s=/path/to/%s, or run `python3 scripts/check.py tools` "
         "(sha256-pinned download into %s)" % (name, TOOLS[name]["version"], env_var, TOOLS[name]["member"], cache_dir())
@@ -156,6 +161,21 @@ def download(url: str) -> bytes:
     raise AssertionError("unreachable")
 
 
+def luau_is_pinned(path: Path) -> bool:
+    return sha256_file(path) == TOOLS["luau"]["binary"].get(platform.system())
+
+
+def pinned_luau(path: Path, cached: bool) -> Path:
+    """A luau that is not the pinned 0.743 binary: an error from the cache (edited or corrupt), a warning from
+    LUAU or PATH (your own build, or a platform with no pinned one)."""
+    if luau_is_pinned(path):
+        return path
+    if cached:
+        raise GateError("%s does not match the pinned Luau %s binary (sha256 %s): run `python3 scripts/check.py tools` to reinstall it" % (path, LUAU_VERSION, TOOLS["luau"]["binary"].get(platform.system())))
+    say("check: WARNING: %s is not the pinned Luau %s binary; results may differ from the gate's" % (path, LUAU_VERSION))
+    return path
+
+
 def install_tools() -> str:
     system = platform.system()
 
@@ -171,7 +191,7 @@ def install_tools() -> str:
     for name, spec in TOOLS.items():
         zip_name, want = asset_for(name)
         dest = cached_tool(name)
-        if dest.is_file():
+        if dest.is_file() and (name != "luau" or luau_is_pinned(dest)):
             lines.append("%s %s: already at %s" % (name, spec["version"], dest))
             continue
         url = spec["base"] + zip_name
@@ -189,6 +209,8 @@ def install_tools() -> str:
                 if not members:
                     raise GateError("%s holds no %s" % (zip_name, spec["member"]))
                 tmp.write_bytes(bundle.read(members[0]))
+            if name == "luau" and not luau_is_pinned(tmp):
+                raise GateError("the extracted %s is not the pinned Luau %s binary; nothing was installed" % (spec["member"], LUAU_VERSION))
             tmp.chmod(0o755)
             os.replace(tmp, dest)
         except (OSError, zipfile.BadZipFile) as error:
@@ -309,8 +331,9 @@ def run_bundle(luau: Path, mode: str) -> Tuple[int, str, str]:
 
 
 def luau_banner(luau: Path) -> str:
-    # The Luau CLI has no --version: identify the binary by hash; `tools` installs the pinned release.
-    return "luau %s (sha256 %s; pinned release %s)" % (luau, sha256_file(luau)[:16], LUAU_VERSION)
+    # The Luau CLI has no --version: the binary is identified by hash; `tools` installs the pinned release.
+    verdict = "pinned release %s verified" % LUAU_VERSION if luau_is_pinned(luau) else "NOT the pinned release %s" % LUAU_VERSION
+    return "luau %s (sha256 %s; %s)" % (luau, sha256_file(luau)[:16], verdict)
 
 
 def check_css() -> None:
