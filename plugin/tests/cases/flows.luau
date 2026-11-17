@@ -930,7 +930,8 @@ case("usage: each run's whole record is its own file beside a Draft review; kv r
 	same({ saved.check, saved.findings, saved.verdict, saved.key }, { "fail", { "AC2 fails" }, "verified", "o/r#5" } :: { any }, "and written again from the index, with the change")
 	eq(saved.criteria, nil, "losing only what the torn file alone held")
 	same((w.kv.get("runs") :: any)[1].findings, { "AC2 fails" }, "the index keeps the findings the chain's limits read")
-	-- The cap: runs pushed out of the index lose their files, and a folder with a Draft review keeps it.
+	-- The cap: runs pushed out of the index lose their whole folder, a Draft review and a half-written one included.
+	w.fs.files["/data/plotroom/runs/1700000000-abc123/review.json.1.tmp"] = "{"
 	usage.RUNS_CAP = 2
 	usage.appendRun({ key = "o/r#6", action = "Fix", ended = EPOCH + 70, result = "done" })
 	usage.appendRun({ key = "o/r#7", action = "Fix", ended = EPOCH + 80, result = "done" })
@@ -939,7 +940,28 @@ case("usage: each run's whole record is its own file beside a Draft review; kv r
 	has(index[1].id, tostring(EPOCH + 80) .. "-", "a run with no run id gets one made from its end")
 	yes(w.fs.files["/data/plotroom/runs/" .. index[1].id .. "/run.json"] ~= nil, "with its file")
 	eq(w.fs.files[file], nil, "the run pushed out loses its file")
-	eq(w.fs.files["/data/plotroom/runs/1700000000-abc123/review.json"], "{}", "but not its Draft review")
+	eq(w.fs.files["/data/plotroom/runs/1700000000-abc123/review.json"], nil, "and its Draft review")
+	eq(w.sdk.fs.exists("/data/plotroom/runs/1700000000-abc123"), false, "and its folder")
+end)
+
+case("usage: sweepRuns removes old run folders no log entry names, and nothing when the log cannot be read", function(w: World)
+	local usage: any = w.load("usage")
+	local runs = "/data/plotroom/runs/"
+	local old, recent = tostring(EPOCH - 31 * 86400) .. "-aaaaaa", tostring(EPOCH - 86400) .. "-bbbbbb"
+	usage.appendRun({ id = tostring(EPOCH - 40 * 86400) .. "-cccccc", key = "o/r#1", action = "Fix", ended = EPOCH - 40 * 86400, result = "done" })
+	for _, id in { old, recent, "notes" } do
+		w.sdk.fs.mkdir(runs .. id)
+		w.sdk.fs.write(runs .. id .. "/review.json", "{}")
+	end
+	usage.sweepRuns()
+	eq(w.sdk.fs.exists(runs .. old), false, "an old folder no entry names is removed")
+	yes(w.sdk.fs.exists(runs .. recent), "a recent one stays: its run may still be going")
+	yes(w.sdk.fs.exists(runs .. "notes"), "a folder that is no run's stays")
+	yes(w.sdk.fs.exists(runs .. tostring(EPOCH - 40 * 86400) .. "-cccccc"), "an old run the log still names stays")
+	w.sdk.fs.mkdir(runs .. old)
+	w.kv.put("runs", "malformed")
+	usage.sweepRuns()
+	yes(w.sdk.fs.exists(runs .. old), "a log that is malformed removes nothing")
 end)
 
 case("usage: a run log from before the index is split into one file per run once, and its index replaces it", function(w: World)

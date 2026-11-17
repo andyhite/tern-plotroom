@@ -13,6 +13,7 @@ local M = {}
 M.USAGE_KEY = "usage"
 M.RUNS_KEY = "runs"
 M.RUNS_CAP = 1000
+local ORPHAN_DAYS = 30 -- a run folder no index entry names is swept this long after its run began
 local IDS_CAP = 500 -- ids kept; the least recently used goes first
 local ID_CAP = 200
 local TEXT_CAP = 200
@@ -372,13 +373,35 @@ local function readFile(id: string): Run?
 	return run
 end
 
--- Removes the file of run `id`, and its folder once nothing else (a Draft review) is in it.
+-- Removes run `id`'s whole folder: its file and its Draft review (review.json, a half-written temporary one), which
+-- is dead once the run has left the log.
 local function removeFile(id: string)
+	pcall(tern.fs.remove, tern.plugin.data .. "/runs/" .. id)
+end
+
+-- Removes the run folders on this machine that no index entry names and whose run began over ORPHAN_DAYS ago (a
+-- folder is named "<start>-<hex>"): the Draft review of a run that never got a log entry, or any run's on a host
+-- whose log lives on the window's machine. Nothing is removed when the log cannot be read or is malformed.
+function M.sweepRuns()
+	local runs = M.readRuns()
+	if not runs then
+		return
+	end
+	local named: { [string]: boolean } = {}
+	for _, r in runs do
+		named[r.id :: string] = true
+	end
+	local root = tern.plugin.data .. "/runs"
+	local oldest = os.time() - ORPHAN_DAYS * 86400
 	pcall(function()
-		local dir = tern.plugin.data .. "/runs/" .. id
-		tern.fs.remove(M.runFile(id))
-		if #tern.fs.list(dir) == 0 then
-			tern.fs.remove(dir)
+		if not tern.fs.exists(root) then
+			return
+		end
+		for _, name in tern.fs.list(root) do
+			local began = tonumber(string.match(name, "^(%d+)%-"))
+			if began and began < oldest and not named[name] and M.validId(name) then
+				tern.fs.remove(root .. "/" .. name)
+			end
 		end
 	end)
 end

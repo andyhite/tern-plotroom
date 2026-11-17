@@ -572,6 +572,7 @@ local function blockDef(): BlockDef<State>
 				retire(previous)
 			end
 			usage.start() -- this host's first start, for the usage report
+			usage.sweepRuns() -- run folders no log entry names (a Draft review its run never logged)
 			-- State saved by another Plotroom version is ignored: a fresh start.
 			local mine = isTable(saved) and saved.version == 2
 			-- The saved view id is the view's own in its kv store (the pin's is "pin"); `activeKind` says which store: what
