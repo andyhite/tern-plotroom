@@ -34,6 +34,14 @@ local function line(text: string, n: number): string
 	return clip((string.gsub(text, "%c", " ")), n)
 end
 
+-- Untrusted multi-line text: a line that reads as the BEGIN ITEM / END ITEM marker is defanged so it cannot close the block.
+local function defang(text: string): string
+	return (string.gsub(text, "[^\n]*", function(l: string)
+		local t = string.lower(string.match(l, "^%s*(.-)%s*$") or "")
+		return if t == "begin item" or t == "end item" then "(" .. l .. ")" else l
+	end))
+end
+
 -- The prompt for `item`, every part capped, the untrusted parts between markers and length-labelled.
 function M.prompt(item: Input): string
 	local out = {
@@ -57,11 +65,11 @@ function M.prompt(item: Input): string
 			table.insert(out, "- " .. line(p, 200))
 		end
 	end
-	local body = clip(item.body, BODY_CHARS)
+	local body = defang(clip(item.body, BODY_CHARS))
 	table.insert(out, "Description (" .. #body .. " bytes):")
 	table.insert(out, if string.find(body, "%S") then body else "(none)")
 	for _, c in item.comments do
-		local text = clip(c.body, COMMENT_CHARS)
+		local text = defang(clip(c.body, COMMENT_CHARS))
 		table.insert(out, "Comment by " .. line(c.author, 100) .. " (" .. #text .. " bytes):")
 		table.insert(out, text)
 	end

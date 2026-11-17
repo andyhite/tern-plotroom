@@ -10,6 +10,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A line in an item's description or comment that reads `BEGIN ITEM` or `END ITEM` is wrapped in parentheses in the Summary prompt, so tracker text can no longer close the untrusted block early (tern-plotroom#jqn1).
 - An answer to the window, the command palette's published rows and the Draft review's message can no longer outgrow the window's 64000-character read: the repository lists and the palette's queue actions and commands are cut like the other pickers' rows, an answer still too large says so instead of failing to be read, and a Draft review message too large to send goes straight to Copy instead of waiting out Send (tern-plotroom#qk6y).
 - A `gh auth switch` is now seen within a poll (the list of signed-in logins is read again when it is 20 s old, was 10 min), and when the active account changes, or none is active any more, a view with no login of its own drops the old account's list, checks, Likely flaky marks and sign-in problem and searches again as the new account, so Ready for review, Review suggestions and `{github.user}` in a new branch name no longer use the previous login (tern-plotroom#78qv).
 - A removed worktree's note is dropped in every other Plotroom block on the host even when the block that asked was closed during the removal, so their Worktree badge, Open Git and Remove no longer linger (tern-plotroom#cpr3).
