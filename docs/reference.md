@@ -25,7 +25,7 @@ Then, from any pane: Tern's palette → **Plotroom › Open** (or press ⌃⌥�
 2. `omp` installed (it runs the agents and makes the worktrees): **Setup guide ↗** while it is not.
    A line **Update git to 2.36 or newer (this is 2.35.1)** with a **Setup guide ↗** shows only while `git --version` reads older than 2.36: the worktree inventory reads `git worktree list -z`, which older git does not have, so the Worktrees list and a worktree's card stay empty without it. A newer git shows no line.
 3. A checkout for each repository among the listed items that has none: **Use ~/code/repo as the checkout** when Plotroom found one, else **Choose the checkout of owner/repo…**, which asks for a folder (a new or empty one gets a clone).
-4. The one-key shortcuts (`j k w g a G m z Z n o / r s ? u d`): **Use them** or **No thanks**.
+4. The one-key shortcuts (`j k h l x n w g a G m z Z o u d / r s ?`): **Use them** or **No thanks**.
 
 Plotroom finds a checkout in the folder it opened in, or in the folder of any open Tern pane on the same host, when that folder is inside a git checkout with a remote on that github.com repository; it is verified as Settings › Repositories verifies one, and the disk is never scanned. So with `gh` and `omp` installed and the repository open in a Tern tab, you get from Plotroom › Open to a running agent without opening Settings: press Worktree or pick an action on an item. Worktree, an action or Type a prompt… on a repository with no checkout offers the same **Use** first, then **Another folder…**. The checklist goes once every line is done, or for good with **Dismiss**; Commands › **Get started** shows it again.
 
