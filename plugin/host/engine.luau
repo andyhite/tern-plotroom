@@ -105,8 +105,10 @@ local function aliveFn(state: State): () -> boolean
 	end
 end
 
--- Learns gh's active login (cached by github.accounts) and redraws when it changed, so views without a login of their own
--- sit under whichever account is active. Only views of GitHub ask (`always`: asked anyway), and never while gh is off.
+-- Learns gh's active login (read again once it is ACCOUNTS_FRESH_S old, so a `gh auth switch` is seen within a poll) and
+-- redraws when it changed, so views without a login of their own sit under whichever account is active. A change of the
+-- active login (or none left) makes every block drop what it holds for views without a login (M.accountSwitched). Only
+-- views of GitHub ask (`always`: asked anyway), and never while gh is off.
 function ghActive.note(state: State, always: boolean?)
 	local any = always == true and cli.on("github")
 	for _, v in state.views do
@@ -130,13 +132,21 @@ function ghActive.note(state: State, always: boolean?)
 		if list then
 			ghActive.accounts = names
 		end
-		if (found and found ~= ghActive.login) or (list ~= nil and known ~= table.concat(names, ",")) then
-			ghActive.login = found or ghActive.login
+		local was = ghActive.login
+		-- A read that failed (nil list) says nothing; a list with no active account says there is none.
+		local moved = list ~= nil and found ~= was
+		if moved then
+			ghActive.login = found
+		end
+		if moved and was ~= nil then
+			M.accountSwitched()
+		end
+		if moved or (list ~= nil and known ~= table.concat(names, ",")) then
 			if M.alive(state) then
 				state.cx:render()
 			end
 		end
-	end)
+	end, core.ACCOUNTS_FRESH_S)
 end
 
 function M.activeView(state: State): View?
@@ -1793,6 +1803,35 @@ function M.refreshAll()
 		if M.alive(s) then
 			schedule(s, 0)
 		end
+	end
+end
+
+-- gh's active login changed (or none is active any more): a view with no login of its own is keyed by "" and ran as the
+-- old account, so every block forgets what it loaded for those (snapshots, details, Likely flaky marks, a problem the
+-- old account raised) and, when it shows one, searches again as the new account.
+function M.accountSwitched()
+	for _, s in running do
+		if not M.alive(s) then
+			continue
+		end
+		for _, list in { s.views, s.pins } do
+			for _, v in list do
+				if v.integration == "github" and #v.logins == 0 then
+					s.snaps[M.snapKey(v, nil)] = nil
+				end
+			end
+		end
+		if s.tracker == "github" and s.account == "" then
+			if s.problemBy == "github" and s.problemAccount == "" then
+				s.problem = nil
+			end
+			s.flaky, s.flakyBusy = {}, {}
+			forget(s)
+			schedule(s, 0)
+		else
+			prune(s)
+		end
+		s.cx:render()
 	end
 end
 

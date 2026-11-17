@@ -1658,8 +1658,13 @@ end
 export type Account = { login: string, active: boolean }
 
 -- The gh logins signed in to github.com, the active one first; done(accounts, problem). Needs gh 2.66 or newer
--- (`gh auth status --json`).
-function M.accounts(done: ({ Account }?, Problem?) -> ())
+-- (`gh auth status --json`). `maxAge`: a kept list older than that many seconds is read again before answering
+-- (callers during the read share it), so a caller that must see an account switch is not answered with the old list.
+function M.accounts(done: ({ Account }?, Problem?) -> (), maxAge: number?)
+	local hit = kept.accounts
+	if maxAge and hit and not reading.accounts and os.time() - hit.at >= maxAge then
+		kept.accounts = nil
+	end
 	cached("accounts", function(finish)
 		M.gh({ "auth", "status", "--hostname", "github.com", "--json", "hosts" }, function(out, problem, _, failed)
 			-- An account whose token fails makes the exit status nonzero; the others are still listed.

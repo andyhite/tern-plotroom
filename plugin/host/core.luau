@@ -12,6 +12,7 @@ local ui = tern.ui
 local M = {}
 
 M.POLL_MS = 60 * 1000
+M.ACCOUNTS_FRESH_S = 20 -- how old gh's list of signed-in logins may be when a refresh asks who is active: a `gh auth switch` shows within a poll
 M.COST_GUESS = 10
 M.DETAIL_DEBOUNCE_MS = 300 -- the cursor must rest this long on an item before its checks load, or its worktree's changes are read
 M.DETAIL_RETRY_S = 15 -- a failed checks load tries again after this long, doubling up to DETAIL_RETRY_MAX_S

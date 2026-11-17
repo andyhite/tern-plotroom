@@ -3930,4 +3930,41 @@ case("prompts: the default Quick review proposes a Draft review, posts only the 
 	reviewSeedAsks(w, "Quick review", { "P0 · blocking", "P1 · blocking", "P2", "P3" })
 end)
 
+case("host: a gh account switch is seen within a poll: a view with no login drops the old account's list and searches as the new one", function(w: World)
+	local s = hostScene(w, 3)
+	s.gh.items.hubot = { searchItem(7, "o/r", EPOCH - 30) }
+	s.gh.tokens.hubot = "t"
+	local b = openQueue(w)
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "the active account's list")
+	s.gh.active = "hubot"
+	w.advance(120000)
+	w.flush()
+	same(listed(b), { "no_2fr_237" }, "the next poll lists the new active account's pull requests, not the cached ones")
+	s.gh.active = "octocat"
+	w.advance(120000)
+	w.flush()
+	same(listed(b), { "no_2fr_231", "no_2fr_232", "no_2fr_233" }, "and switching back drops hubot's list as well")
+end)
+
+case("host: no active gh account any more clears the remembered login and the list it loaded", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	eq(hx.ask(w, b, "a1", { op = "repos" }).accounts[1].login, "octocat", "the active login is known")
+	local signedOut = false
+	s.gh.override = function(req: GhReq): Reply?
+		if not signedOut then
+			return nil
+		elseif req.kind == "accounts" then
+			return { stdout = jsonEncode({ hosts = { ["github.com"] = { { state = "success", active = false, host = "github.com", login = "octocat" } } } }) }
+		elseif req.kind == "search" then
+			return { status = 1, stderr = "gh: not logged in\n" }
+		end
+		return nil
+	end
+	signedOut = true
+	w.advance(120000)
+	w.flush()
+	eq(#listed(b), 0, "nothing of the old account stays listed")
+end)
+
 return {}
