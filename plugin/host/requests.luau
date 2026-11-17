@@ -1951,24 +1951,36 @@ end
 -- Moves Jira issue `ref` to the status named `status`, as an action's setting asks when its agent starts: nothing when
 -- the issue is there already (compared case-insensitively), else `acli jira workitem transition --status`, so no API
 -- token is needed. Replies {moved = <status>}, {already = true}, {skipped = true} (not a Jira key) or {problem}. No
--- confirm: the action's status is the user's own setting. acli's refusal (no such status, a transition that needs
+-- confirm: the action's status is the user's own setting. `who` is the Jira account (site and email) the window read
+-- when the action was planned (`jira-who`); acli must still be signed in as it, before the item is read and again
+-- before the transition (jira.moveTo), else nothing is moved. acli's refusal (no such status, a transition that needs
 -- fields) is the problem.
-local function moveStatus(state: State, id: string, ref: string, status: string)
+local function moveStatus(state: State, id: string, ref: string, status: string, who: jira.Identity?)
 	if not string.match(ref, "^[A-Z][A-Z0-9_]*%-%d+$") then
 		return reply(state, id, { skipped = true })
+	elseif not who then
+		return reply(state, id, { problem = "Plotroom did not record which Jira account this was planned for; nothing was moved." })
 	end
+	local planned: jira.Identity = who
 	local want = string.lower(status)
-	jira.item(ref, function(issue, problem)
-		if not issue then
-			return reply(state, id, { problem = M.whyOf(problem) })
-		elseif issue.status and string.lower(issue.status.text) == want then
-			return reply(state, id, { already = true })
+	jira.bound(planned, function(problem0)
+		if not alive(state) then
+			return
+		elseif problem0 then
+			return reply(state, id, { problem = M.whyOf(problem0) })
 		end
-		jira.moveTo(ref, status, function(problem2: github.Problem?)
-			if problem2 then
-				return reply(state, id, { problem = M.whyOf(problem2) })
+		jira.item(ref, function(issue, problem)
+			if not issue then
+				return reply(state, id, { problem = M.whyOf(problem) })
+			elseif issue.status and string.lower(issue.status.text) == want then
+				return reply(state, id, { already = true })
 			end
-			reply(state, id, { moved = status })
+			jira.moveTo(ref, status, planned, function(problem2: github.Problem?)
+				if problem2 then
+					return reply(state, id, { problem = M.whyOf(problem2) })
+				end
+				reply(state, id, { moved = status })
+			end)
 		end)
 	end)
 end
@@ -2138,8 +2150,22 @@ local function dispatch(state: State, id: string, q: any)
 		else
 			github.issue(found.repo, tonumber(found.ref) :: number, login(state), got)
 		end
+	elseif q.op == "jira-who" then
+		-- The Jira account acli is signed in as now, for an action with a Move to status: the window sends it back with
+		-- `move-status`, which moves nothing once acli is another account or site.
+		jira.identity(function(who: jira.Identity?, problem: github.Problem?)
+			if not alive(state) then
+				return
+			end
+			reply(state, id, if who then { who = { site = who.site, email = who.email } } else { problem = M.whyOf(problem) })
+		end)
 	elseif q.op == "move-status" and type(q.ref) == "string" and #q.ref <= 64 and type(q.status) == "string" and q.status ~= "" and #q.status <= core.STATUS_CAP then
-		moveStatus(state, id, q.ref, q.status)
+		local w = q.who
+		local who: jira.Identity? = nil
+		if type(w) == "table" and type(w.site) == "string" and type(w.email) == "string" and #w.site <= 256 and #w.email <= 256 then
+			who = { site = w.site, email = w.email }
+		end
+		moveStatus(state, id, q.ref, q.status, who)
 	elseif q.op == "where" and (q.kind == "pr" or q.kind == "issue") and type(q.key) == "string" and #q.key <= 200 then
 		-- The worktree folder of an item as its note has it (git's list or the last attempt), for the window's Go to tab:
 		-- a note of the kind asked about.

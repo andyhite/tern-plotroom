@@ -829,6 +829,7 @@ local function bound(who: Identity, done: (Problem?) -> ())
 		done(nil)
 	end)
 end
+M.bound = bound
 
 -- Assigns `key` to the signed-in user (`--assignee @me`) as `who`, which must still be that account; done(problem).
 function M.assignMe(key: string, who: Identity, done: (Problem?) -> ())
@@ -847,16 +848,22 @@ function M.assignMe(key: string, who: Identity, done: (Problem?) -> ())
 	end)
 end
 
--- Moves `key` to the status named `status` with `acli jira workitem transition` (no REST, no API token); acli's own
--- refusal (no such status, a transition that needs fields) is the problem. done(problem).
-function M.moveTo(key: string, status: string, done: (Problem?) -> ())
+-- Moves `key` to the status named `status` with `acli jira workitem transition` (no REST, no API token) as the account
+-- `who`, which must still be acli's sign-in (bound); acli's own refusal (no such status, a transition that needs
+-- fields) is the problem. done(problem).
+function M.moveTo(key: string, status: string, who: Identity, done: (Problem?) -> ())
 	if type(key) ~= "string" or not string.match(key, KEY) or type(status) ~= "string" or status == "" then
 		return later(function()
 			done({ kind = "invalid", message = "Unexpected issue key or status." })
 		end)
 	end
-	acli({ "jira", "workitem", "transition", "--key", key, "--status", status, "--yes" }, function(_, problem)
-		done(noted(problem))
+	bound(who, function(problem0)
+		if problem0 then
+			return done(problem0)
+		end
+		acli({ "jira", "workitem", "transition", "--key", key, "--status", status, "--yes" }, function(_, problem)
+			done(noted(problem))
+		end)
 	end)
 end
 

@@ -90,6 +90,8 @@ end
 type Ready = { path: string, created: boolean, current: boolean, dirty: boolean?, summary: string, setup: string?, title: string?, fork: boolean }
 -- What a link acts on: a PR (ref = its number) or an issue (ref = its tracker key). `tab` names its worktree's tab.
 type Target = { kind: "pr" | "issue", repo: string, ref: string, label: string, tab: string }
+-- The Jira account (jira.Identity) an action with a Move to status was planned for.
+type Who = { site: string, email: string }
 -- A prompt to run: its text, the model omp runs it with (`omp --model`; nil: the agent command's default), its effort
 -- (`omp --thinking`, worktree.EFFORTS; nil: omp's default), and
 -- whether its agent opens beside the queue in the queue's tab (`split`) rather than in a tab of its own. A saved action
@@ -1034,10 +1036,11 @@ local function fillVars(prompt: string, vars: any): string
 	end))
 end
 
--- Asks the host to move a Jira issue to the status an action names (the host runs acli, no API token) and
--- toasts what came of it; nothing for an issue already there or one that is not Jira's. The agent does not wait for it.
-local function moveStatus(cx: WindowCx, pane: number, t: Target, status: string)
-	ask(cx, pane, "move-status", { ref = t.ref, status = status }, PREPARE_MS, function(a: any, cx2: WindowCx)
+-- Asks the host to move a Jira issue to the status an action names (the host runs acli, no API token) as the account
+-- `who` the action was planned for, and toasts what came of it; nothing for an issue already there or one that is not
+-- Jira's. The agent does not wait for it.
+local function moveStatus(cx: WindowCx, pane: number, t: Target, status: string, who: Who?)
+	ask(cx, pane, "move-status", { ref = t.ref, status = status, who = who }, PREPARE_MS, function(a: any, cx2: WindowCx)
 		if type(a.moved) == "string" then
 			cx2:toast("success", "Moved " .. t.label .. " to " .. a.moved)
 		elseif type(a.problem) == "string" then
@@ -1048,7 +1051,7 @@ end
 
 -- What prepareTarget's earlier answers settled: the repository a Jira issue is worked in (`target`), and for a new issue
 -- worktree the linked PR to check out (`pr`) or a new branch (`fresh`) from remote branch `base`.
-type Settled = { target: string?, pr: number?, fresh: boolean?, base: string? }
+type Settled = { target: string?, pr: number?, fresh: boolean?, base: string?, who: Who?, whoAsked: boolean? }
 
 local function settle(more: Settled?, add: Settled): Settled
 	local out: Settled = if more then table.clone(more) else {}
@@ -1257,7 +1260,10 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 				local block, found = prompts.criteriaBlock(criteria), prompts.findingsBlock(prompt.findings)
 				local function after(started: boolean, cx4: WindowCx)
 					if started and t.kind == "issue" and prompt and prompt.status then
-						moveStatus(cx4, pane, t, prompt.status)
+						-- Only a Jira issue whose account was recorded when the action started is moved (jira-who).
+						if more and more.who then
+							moveStatus(cx4, pane, t, prompt.status, more.who)
+						end
 					elseif not started then
 						failed(cx4)
 					end
@@ -1301,6 +1307,25 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	-- Only a saved action with Merge the base first (the default Watch) has the host merge the base first.
 	local premerge = prompt ~= nil and wt and prompt.premerge == true
 	local m: Settled = more or {}
+	-- A Jira issue's Move to status is bound to the account acli runs as now, when the action is planned: asked once,
+	-- before anything else is prepared, and sent back with the move. Without an answer (a problem, an older host) the
+	-- agent still starts and the status is not moved.
+	if prompt and prompt.status and t.kind == "issue" and not m.whoAsked and string.match(t.ref, "^[A-Z][A-Z0-9_]*%-%d+$") then
+		local who = ask(cx, pane, "jira-who", {}, PREPARE_MS, function(a: any, cx2: WindowCx)
+			local w = a.who
+			if type(w) == "table" and type(w.site) == "string" and type(w.email) == "string" then
+				return prepareTarget(cx2, pane, t, prompt, wt, settle(more, { who = { site = w.site, email = w.email }, whoAsked = true }))
+			end
+			cx2:toast("error", "Not moved to " .. tostring(prompt.status) .. ": " .. t.label, if type(a.problem) == "string" then a.problem else "The block's host could not read the Jira account")
+			prepareTarget(cx2, pane, t, prompt, wt, settle(more, { whoAsked = true }))
+		end, false, failed)
+		if who then
+			if wt and not more then
+				cx:toast("info", "Preparing worktree for " .. t.label)
+			end
+			return
+		end
+	end
 	local sent = if t.kind == "pr"
 		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil, premerge = premerge }, PREPARE_MS, done, false, failed)
 		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done, false, failed)

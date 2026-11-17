@@ -6,7 +6,7 @@
 -- raises MIN to the new PROTOCOL and drops the SINCE rows MIN now covers.
 local M = {}
 
-M.PROTOCOL = 54
+M.PROTOCOL = 55
 M.MIN = 48
 -- op → the protocol that added it; an op not listed is known to every host in range. 48 (MIN): `commit` is gone and a
 -- plan (act's or draft's answer) is confirmed in the block's own Confirm overlay, not by the window. 49: `message`, a
@@ -17,7 +17,9 @@ M.MIN = 48
 -- prompt…, a Draft PR's description). 53: `menu` and `action` answers say an action's `premerge` (Merge the base first)
 -- and the `worktree` answer `mergeProblem`; an older host says neither, so no action merges the base first through it.
 -- 54: the `worktree` answer says `warning` when the worktree was made but Plotroom could not record it or set its
--- upstream; an older host says nothing, so the window shows no toast for it.
-M.SINCE = { message = 49, fork = 50, compose = 52 } :: { [string]: number }
+-- upstream; an older host says nothing, so the window shows no toast for it. 55: `jira-who`, the Jira account acli runs
+-- as, read when an issue action with a Move to status starts; `move-status` takes it as `who` and moves nothing once
+-- acli is another account or site (an older host moves as whoever acli is then).
+M.SINCE = { message = 49, fork = 50, compose = 52, ["jira-who"] = 55 } :: { [string]: number }
 
 return M

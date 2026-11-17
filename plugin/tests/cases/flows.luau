@@ -4455,26 +4455,39 @@ case("host agents: the hidden main.agents node says the agent map as sorted key=
 	eq(sig(b), "o/r#4=working|Review|fix|Fix it|||||stuck|Tests fail|No database|pr|not|fail|AC2 unmet|3 failed checks|||2026-11-04T10:00:00.000Z;", "the recorded texts are part of it")
 end)
 
-case("host move-status: moves a Jira issue with acli, leaves one already there alone, and says acli's reason when it refuses", function(w: World)
+case("host move-status: moves a Jira issue with acli as the account jira-who named, leaves one already there alone, says acli's reason when it refuses, and moves nothing once acli is another account", function(w: World)
 	local s = jiraHost(w)
 	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login", { status = { name = "In Progress", statusCategory = { key = "indeterminate" } } })
 	local ran: { string } = {}
 	local refuse = false
+	local auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
 	s.acli.override = function(req: AcliReq): Reply?
-		if req.kind == "other" then
+		if req.kind == "auth" then
+			return { stdout = auth }
+		elseif req.kind == "other" then
 			table.insert(ran, table.concat(req.argv, " "))
 			return if refuse then { status = 1, stderr = "✗ Error: status 'Blocked' not found\n" } else { stdout = "✓ done\n" }
 		end
 		return nil
 	end
 	local b = openIssues(w)
-	local function move(status: string, ref: string?): any
-		return asks.hx.ask(w, b, { op = "move-status", ref = ref or "ABC-12", status = status })
+	local who = asks.hx.ask(w, b, { op = "jira-who" }).who
+	same({ who.site, who.email }, { "https://acme.atlassian.net", "ann@example.com" }, "jira-who names the full email and the site acli runs as")
+	local function move(status: string, ref: string?, as: any?): any
+		return asks.hx.ask(w, b, { op = "move-status", ref = ref or "ABC-12", status = status, who = if as == nil then who else as })
 	end
 	eq(move("in progress").already, true, "an issue already there (any case) is left alone")
 	eq(#ran, 0, "and acli runs nothing")
 	eq(move("12", "12").skipped, true, "a GitHub issue's number is no Jira key")
-	eq(move("Done").moved, "Done", "the move works")
+	has(move("Done", nil, false).problem, "did not record which Jira account", "a move with no recorded account is refused")
+	eq(#ran, 0, "and nothing runs")
+	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@other.org\n"
+	has(move("Done").problem, "account changed", "another account is refused")
+	auth = "✓ Authenticated\n  Site: elsewhere.atlassian.net\n  Email: ann@example.com\n"
+	has(move("Done").problem, "account changed", "so is the same email on another site")
+	eq(#ran, 0, "and nothing was transitioned")
+	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
+	eq(move("Done").moved, "Done", "the same account moves it")
 	same(ran, { "acli jira workitem transition --key ABC-12 --status Done --yes" }, "by one acli transition of the key to the status")
 	refuse = true
 	local none = move("Blocked")
@@ -4646,22 +4659,46 @@ local function startIssueChained(w: World, st: FlowStub, wt: boolean): any
 	return (w.kv.get("agent-links") :: any)[1]
 end
 
+-- Starts the issue action Implement (Move to status Blocked) on Jira issue ABC-12 and answers the host's questions as
+-- far as the agent's start; `who` is what jira-who answers (nil: a problem).
+local function startJiraMove(w: World, st: FlowStub, who: any?)
+	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/ABC/ABC-12")
+	st.palette({ items = { { id = "p1", label = "Implement" } } })
+	w.window.choose = "Implement"
+	w.click("plotroom://issue/agent/ABC/ABC-12")
+	w.flush()
+	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, status = "Blocked" } } })
+	st.reply("jira-who", if who then { who = who } else { problem = "acli is signed out" })
+	st.reply("issue", { path = "/wt/abc12", summary = "Created", created = true, current = true, vars = { url = "https://acme.atlassian.net/browse/ABC-12", title = "Fix login", branch = "ABC-12-fix" }, code = "o/r" })
+end
+
 windowCase("window flows: an action's Move to status that acli refuses is an error toast with acli's message, and the agent has started", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
-	st.palette({ items = { { id = "p1", label = "Implement" } } })
-	w.window.choose = "Implement"
-	w.click("plotroom://issue/agent/o/r/12")
-	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, status = "Blocked" } } })
-	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", title = "Fix login", branch = "12-fix" }, code = "o/r" })
+	startJiraMove(w, st, { site = "https://acme.atlassian.net", email = "ann@example.com" })
 	eq(#w.window.agents, 1, "the agent started")
 	local asked = st.reply("move-status", { problem = "status 'Blocked' not found" })
 	eq(asked.status, "Blocked", "the host was asked for the action's status")
+	same({ asked.who.site, asked.who.email }, { "https://acme.atlassian.net", "ann@example.com" }, "as the account read when the action started")
 	local last = w.toasts[#w.toasts]
 	eq(last.level, "error", "an error toast")
 	has(last.sub, "status 'Blocked' not found", "with acli's message")
+end)
+
+windowCase("window flows: an action's Move to status whose Jira account could not be read starts the agent, says why, and moves nothing", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	startJiraMove(w, st, nil)
+	eq(#w.window.agents, 1, "the agent started")
+	local says: any = nil
+	for _, t in w.toasts do
+		if t.level == "error" then
+			says = t
+		end
+	end
+	eq(says ~= nil, true, "an error toast")
+	has(says.sub, "acli is signed out", "with the host's reason")
+	eq(table.find(st.ops(), "move-status"), nil, "and the status is not moved")
 end)
 
 windowCase("window flows: an issue action whose next is a pull request action runs it on the pull request of the worktree's branch, in the same worktree and tab", function(w: World)
@@ -4836,16 +4873,10 @@ end)
 windowCase("window flows: an action whose agent could not start moves no Jira status", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
-	st.link("layer.queue.buttons.agent", "plotroom://issue/agent/o/r/12")
-	st.palette({ items = { { id = "p1", label = "Implement" } } })
 	w.cx.agents.start = function(_self: any, _opts: any): number
 		error("no agent program", 0)
 	end
-	w.window.choose = "Implement"
-	w.click("plotroom://issue/agent/o/r/12")
-	w.flush()
-	st.reply("menu", { items = { { id = "p1", label = "Implement", send = "Do {url}", worktree = true, status = "Blocked" } } })
-	st.reply("issue", { path = "/wt/i12", summary = "Created", created = true, current = true, vars = { url = "https://github.com/o/r/issues/12", title = "Fix login", branch = "12-fix" }, code = "o/r" })
+	startJiraMove(w, st, { site = "https://acme.atlassian.net", email = "ann@example.com" })
 	eq(#w.window.agents, 0, "no agent started")
 	eq(w.toasts[#w.toasts].level, "error", "the user is told")
 	eq(table.find(st.ops(), "move-status"), nil, "and the status is not moved")

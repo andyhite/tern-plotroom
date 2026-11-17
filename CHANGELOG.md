@@ -10,6 +10,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- An action's Move to status on a Jira issue is now bound to the Jira account and site acli was signed in as when the action started, as assign and comment already were: after `acli jira auth switch` or a login to another site in between, nothing is moved and the toast says the acli account changed, instead of making the transition as the other account (tern-plotroom#w4bw). New rpc op `jira-who`, protocol 55.
 - When the saved agent links (kv `agent-links`) cannot be read, every pane's status line now shows **Agent links unreadable** and the plugin log gets one warning, instead of agent status, chain steps, outcome checks and the Draft review silently stopping. The store is still never written over; it clears on its own once it reads again (tern-plotroom#d4g6).
 - The merge sweep keeps at most 4 `outcome` requests in flight (the host keeps only 8 answers on screen) and sends the rest, oldest first, as answers arrive, so no undecided checked run waits for the next 10-minute sweep (tern-plotroom#vptz).
 - Open item by URL, pasting a URL and the shell lens accept a GitHub pull request or issue URL with a sub-page (`/files`, `/commits/<sha>`, `/checks`) and `http://` or `www.github.com` forms, so URLs copied from a pull request's tabs open the item instead of "not a pull request or issue" (tern-plotroom#q82c).
