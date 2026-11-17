@@ -61,8 +61,8 @@ function M.run(instantiate: Loader, filter: string?, verbose: boolean?)
 	end
 end
 
--- Prints `BENCH <name> ms=<n>` per measured step of the real queue view with 1000 loaded PRs; scripts/check.py fails the
--- gate when a step is slower than its budget.
+-- Prints `BENCH <name> ms=<n>` per measured step of the real queue view with 1000 loaded PRs, the median of three
+-- samples (each the mean over its rounds); scripts/check.py fails the gate when a row is slower than its budget.
 function M.bench(instantiate: Loader)
 	local w = newWorld(instantiate, "host")
 	w.setEncodeViews(false) -- Tern serializes the view itself; the fake's encoder is not what is measured
@@ -84,12 +84,17 @@ function M.bench(instantiate: Loader)
 	if #shown ~= 1000 then
 		error("the benchmark expected 1000 loaded pull requests, got " .. #shown, 0)
 	end
-	local function timed(name: string, rounds: number, step: (number) -> ())
-		local started = os.clock()
-		for i = 1, rounds do
-			step(i)
+	local function timed(name: string, rounds: number, step: (number) -> (), samples: number?)
+		local means: { number } = {}
+		for _ = 1, samples or 3 do
+			local started = os.clock()
+			for i = 1, rounds do
+				step(i)
+			end
+			table.insert(means, (os.clock() - started) * 1000 / rounds)
 		end
-		print(string.format("BENCH %s ms=%.2f rounds=%d", name, (os.clock() - started) * 1000 / rounds, rounds))
+		table.sort(means)
+		print(string.format("BENCH %s ms=%.2f rounds=%d", name, means[(#means + 1) // 2], rounds))
 	end
 	timed("render", 20, function(_i: number)
 		b.render()
@@ -101,7 +106,7 @@ function M.bench(instantiate: Loader)
 	local typed = { "a", " ", "r" }
 	timed("search-keystroke", #typed, function(i: number)
 		b.typeText(typed[i])
-	end)
+	end, 1) -- one sample: each round types its own character
 	b.press("escape")
 	b.press("escape")
 	local payload = jsonEncode(b.view())

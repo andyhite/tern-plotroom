@@ -23,6 +23,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - A Summary no longer fails, blaming the model, when an item's description or a comment holds a control character such as NUL: they are dropped before the prompt is built (n8r5).
 - Docs state that Plotroom works with github.com only; the host is one `HOST` constant in `plugin/github.luau` (no behavior change).
 - A triage store saved by a newer Plotroom now says so ("from a newer Plotroom; not overwriting it") instead of "malformed" (tern-plotroom#dezq).
+- The bench gate names the row that is over budget, gives the cheap rows their own budgets (`BENCH_BUDGETS_MS` in `scripts/check.py`), times each row as the median of three samples, and fails on a row it has no budget for (no behavior change; zere).
 
 ### Added
 - **Auto-merge** and **Queued** badges on a pull request GitHub itself will merge (auto-merge enabled, or waiting in its base branch's merge queue), also noted in its preview. Such a pull request is PR open rather than Ready to merge, and **Merge…** is neither offered nor planned for it; a Merge… planned before auto-merge was enabled is refused at the confirm. Read-only: Plotroom does not manage the queue (4a2n).

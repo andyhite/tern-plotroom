@@ -22,7 +22,7 @@ test    plugin/tests/regression.luau (which also runs the plugin/tests/check.lua
 types   luau-lsp analyze --platform standard against scripts/tern-0.9.13.d.luau (a copy of the SDK that
         `tern plugin types` writes), over plugin/**/*.luau (subfolders included). Any diagnostic, warnings
         included, fails: luau-lsp exits 0 on lint warnings.
-bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH_BUDGET_MS per render.
+bench   renders the real queue view with 1000 PRs and fails when a row is above its budget (BENCH_BUDGETS_MS, else 25 ms; PLOTROOM_BENCH_BUDGET_MS sets one ceiling for all rows) or has neither ms= nor bytes=.
 ext     plugin/tests/extension.ts, run by bun (else node >= 23.6, which strips types): the omp extension's two tools
         over the fixtures it shares with its Luau readers (plugin/tests/extension.luau; the `test` stage reads them
         back in Luau). NOT RUN when neither runtime is on PATH.
@@ -58,7 +58,22 @@ SDK_SHA256 = "50ac8b5dcc41f6e853730d05db5525566992d765e5d3a249ce5e0a5ec4f7749e"
 LUAU_VERSION = "0.743"
 LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.9.13"  # the SDK pin and the minimum Tern smoke accepts
-BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
+# One ceiling for every row of the bench, from the environment; unset, each row takes BENCH_BUDGETS_MS or the default.
+BENCH_BUDGET_ENV = os.environ.get("PLOTROOM_BENCH_BUDGET_MS")
+BENCH_DEFAULT_MS = 25.0
+# Per-row ceilings (ms) for the cheap steps, about 4x their measured median over 1000 PRs, so a 10x regression fails;
+# the heavy ones (rebuilds, boards, runs-index) keep the default.
+BENCH_BUDGETS_MS = {
+    "render": 5.0,
+    "cursor-down": 5.0,
+    "seen-render": 5.0,
+    "views-render": 5.0,
+    "settings-key": 5.0,
+    "search-keystroke": 10.0,
+    "now-cursor-down": 10.0,
+    "now-render": 10.0,
+    "scan": 15.0,
+}
 BENCH_PAYLOAD_MAX = 600000
 IMAGE_MAX = 400000  # README screenshots, bytes (AGENTS.md: each under 400 KB)
 
@@ -662,16 +677,23 @@ def check_bench() -> str:
     rows = [l for l in out.splitlines() if l.startswith("BENCH ")]
     if not rows:
         raise GateError("benchmark printed no BENCH rows")
-    worst = 0.0
+    worst = ("", 0.0, 0.0)  # row name, ms, its budget: the row closest to (or furthest over) its budget
     for row in rows:
+        name = row.split()[1]
         fields = dict(re.findall(r"(\w+)=([0-9.]+)", row))
         if "ms" in fields:
-            worst = max(worst, float(fields["ms"]))
-        if row.startswith("BENCH payload") and float(fields["bytes"]) >= BENCH_PAYLOAD_MAX:
-            raise GateError("payload %d bytes is not under %d" % (float(fields["bytes"]), BENCH_PAYLOAD_MAX))
-    if worst > BENCH_BUDGET_MS:
-        raise GateError("slowest render %.1f ms exceeds the %.0f ms budget (PLOTROOM_BENCH_BUDGET_MS)" % (worst, BENCH_BUDGET_MS))
-    return "%d rows, slowest %.1f ms (budget %.0f ms)" % (len(rows), worst, BENCH_BUDGET_MS)
+            budget = float(BENCH_BUDGET_ENV) if BENCH_BUDGET_ENV else BENCH_BUDGETS_MS.get(name, BENCH_DEFAULT_MS)
+            ms = float(fields["ms"])
+            if ms > budget:
+                raise GateError("bench row %s took %.1f ms, over its %.0f ms budget (BENCH_BUDGETS_MS, PLOTROOM_BENCH_BUDGET_MS)" % (name, ms, budget))
+            if worst[0] == "" or ms / budget > worst[1] / worst[2]:
+                worst = (name, ms, budget)
+        elif "bytes" in fields:
+            if name.startswith("payload") and float(fields["bytes"]) >= BENCH_PAYLOAD_MAX:
+                raise GateError("bench row %s is %d bytes, not under %d" % (name, float(fields["bytes"]), BENCH_PAYLOAD_MAX))
+        else:
+            raise GateError("bench row %s has neither ms= nor bytes=, so no budget covers it: %s" % (name, row))
+    return "%d rows, closest to budget: %s %.1f of %.0f ms" % (len(rows), worst[0], worst[1], worst[2])
 
 
 def check_version() -> str:
