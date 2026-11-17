@@ -12,7 +12,7 @@ type World = h.World
 local agentScene, asks, case, countCalls, eq, findKey, has = h.agentScene, h.asks, h.case, h.countCalls, h.eq, h.findKey, h.has
 local hostScene, hx, linkQueue, newGit, promptOf, requestsSent = h.hostScene, h.hx, h.linkQueue, h.newGit, h.promptOf, h.requestsSent
 local runLink, same, savePrompts, scene, windowCase, yes = h.runLink, h.same, h.savePrompts, h.scene, h.windowCase, h.yes
-local cardSurface = h.cardSurface
+local cardSurface, array = h.cardSurface, h.array
 
 -- The checklist card the queue shows, nil when it shows none.
 local function guide(b: Block): any
@@ -152,6 +152,34 @@ case("host: Get started's shortcuts: Use them binds the one-key set, No thanks k
 	eq((w.kv.get("get-started") :: any).shortcuts, "no", "and is saved as decided")
 	eq(line(b, "keys").p.label, "One-key shortcuts: no thanks", "the line is done")
 	eq(findKey(guide(b), "dismiss", "button").p.text, "Close", "all done, Get started's card offers Close")
+end)
+
+case("host: Get started reads the Jira project map once however many Jira issues are listed", function(w: World)
+	local s = h.jiraHost(w)
+	fresh(w)
+	w.kv.put("checkouts", {})
+	w.kv.put("jira-repos", { ABC = array({ "o/r" }), DEF = array({ "x/y" }), GHI = array({ "p/q", "p/r" }) })
+	local items: { any } = {}
+	for i = 1, 50 do
+		table.insert(items, h.jiraItem(({ "ABC", "DEF", "GHI", "NOPE" })[i % 4 + 1] .. "-" .. i, "Issue " .. i))
+	end
+	s.acli.searches[h.JIRA_ASSIGNED] = items
+	local reads = 0
+	local get = w.kv.get
+	w.kv.get = function(key: string): any
+		if key == "jira-repos" then
+			reads += 1
+		end
+		return get(key)
+	end
+	w.fs.dirs["/home/me"] = true
+	local b = w.open(1, { "/home/me" }, { version = 2, launchCwd = "/home/me", activeKind = "issues", activeViewId = "v1" })
+	w.flush()
+	reads = 0
+	b.render()
+	-- askSetup and the checklist each compute the missing checkouts once per render, so a few reads in all; one per Jira issue would be 50 and more
+	yes(reads >= 1 and reads < 10, "kv jira-repos is read once per missingCheckouts call, not once per listed issue (" .. reads .. " reads)")
+	same(labels(b), { "gh signed in as @octocat", "omp installed", "Choose the checkout of x/y…", "Choose the checkout of o/r…" }, "the lines, in list order: a project mapped to exactly one repository asks for its checkout, one mapped to two or none asks for none")
 end)
 
 case("host: checkout detection offers the folder Plotroom opened in when one of its remotes is the listed repository, and Use saves it", function(w: World)

@@ -1099,9 +1099,10 @@ function M.missingCheckouts(state: State): { string }
 	local out: { string } = {}
 	local seen: { [string]: boolean } = {}
 	local saved = readCheckouts()
+	local jira = storage.readMap("jira-repos", "Jira project repositories") or {} -- an unreadable map maps nothing, and is not read again per issue
 	local items: { any } = if state.snap then state.snap.items else {}
 	for _, item in items do
-		local repo: string? = if type(item.number) == "number" then item.repo else M.codeRepoOf(item)
+		local repo: string? = if type(item.number) == "number" then item.repo else M.codeRepoOf(item, jira)
 		local key = if repo then string.lower(repo) else nil
 		if repo and key and not seen[key] then
 			seen[key] = true
@@ -2806,12 +2807,13 @@ function M.issueVars(issue: tracker.Issue, code: string): { [string]: string }
 end
 
 -- The GitHub repository an issue is worked in: its own, or the one its Jira project maps to when that is exactly one;
--- nil while the choice is still to be made.
-function M.codeRepoOf(issue: tracker.Issue): string?
+-- nil while the choice is still to be made. `saved` is the Jira project map (kv "jira-repos") when the caller already
+-- read it, so a loop over many issues reads it once.
+function M.codeRepoOf(issue: tracker.Issue, saved: { [string]: any }?): string?
 	if issue.tracker ~= "jira" then
 		return issue.repo
 	end
-	local mapped = jiraReposOf(issue.repo)
+	local mapped = jiraReposOf(issue.repo, saved)
 	return if #mapped == 1 then mapped[1] else nil
 end
 
