@@ -104,9 +104,48 @@ local function validViews(kind: Kind, v: any): Views?
 	return { version = 1, nextId = v.nextId, items = items }
 end
 
+-- What the render in progress read from kv, by key (see M.scope), if one is.
+local scoped: { [string]: { ok: boolean, v: any } }? = nil
+
+-- pcall(tern.kv.get, key), or what the render in progress already read of `key`: kv is read on every use, so another
+-- block's change needs no notice, except inside one render, where every caller sees the same store. Only for stores
+-- whose readers copy what they take (never readMap's raw map).
+local function kvGet(key: string): (boolean, any)
+	local mine = scoped
+	if not mine then
+		return pcall(tern.kv.get, key)
+	end
+	local hit = mine[key]
+	if not hit then
+		local ok, v = pcall(tern.kv.get, key)
+		hit = { ok = ok, v = v }
+		mine[key] = hit
+	end
+	return hit.ok, hit.v
+end
+
+-- Runs `fn` (a render) with the stores read through kvGet read once each. A write drops its key's read.
+function M.scope<T>(fn: () -> T): T
+	local outer = scoped
+	scoped = outer or {}
+	local ok, out = pcall(fn)
+	scoped = outer
+	if not ok then
+		error(out, 0)
+	end
+	return out
+end
+
+-- How many times a store was saved through kvSet: a page built before a save is not the page after it.
+M.writes = 0
+
 -- tern.kv.set raises on failure and returns nothing: the error text, or nil when saved.
 local function kvSet(key: string, value: any): string?
+	M.writes += 1
 	local ok, err = pcall(function(): string?
+		if scoped then
+			scoped[key] = nil
+		end
 		tern.kv.set(key, value)
 		return nil
 	end)
@@ -127,7 +166,7 @@ end
 -- views, writable, error. The views' ids are "<kind>:<saved id>". An absent key is seeded; unreadable or malformed
 -- storage is never overwritten: seeds are shown but Save is disabled.
 function M.loadViews(kind: Kind): (Views, boolean, string?)
-	local ok, v = pcall(tern.kv.get, kind.viewsKey)
+	local ok, v = kvGet(kind.viewsKey)
 	if not ok then
 		return seedViews(kind), false, "Saved " .. kind.one .. " views could not be read: " .. tostring(v)
 	end
@@ -330,7 +369,7 @@ end
 -- and why when the store cannot be read or is malformed: it is then never written over.
 local IGNORED_KEY = "ignored-checks"
 function M.readIgnored(): ({ [string]: { string } }?, string?)
-	local ok, v = pcall(tern.kv.get, IGNORED_KEY)
+	local ok, v = kvGet(IGNORED_KEY)
 	if not ok then
 		return nil, "Saved ignored checks could not be read."
 	end
@@ -386,7 +425,7 @@ formats.DEFAULTS = { branch = tracker.BRANCH_DEFAULT, prdir = tracker.PR_DIR_DEF
 -- The saved format, "" when unset; and why it could not be read (unreadable or not a string), when the default
 -- applies meanwhile and formats.save never writes over it.
 function formats.saved(which: string): (string, string?)
-	local ok, v = pcall(tern.kv.get, formats.KEYS[which])
+	local ok, v = kvGet(formats.KEYS[which])
 	if not ok or (v ~= nil and type(v) ~= "string") then
 		return "", "Saved name format could not be read."
 	end
@@ -465,7 +504,7 @@ M.PROMPT_CAP = 8000 -- bytes of one prompt's text: several must fit one answer t
 -- Saved agent prompts (kv prompts-prs / prompts-issues; absent: the kind's default prompts, saved with the first edit),
 -- or nil and why when unreadable or malformed: a write then fails closed rather than overwrite them.
 function M.loadPrompts(kind: Kind): (Prompts?, string?)
-	local ok, v = pcall(tern.kv.get, kind.promptsKey)
+	local ok, v = kvGet(kind.promptsKey)
 	if not ok then
 		return nil, "Actions could not be read: " .. tostring(v)
 	end
@@ -657,7 +696,7 @@ end
 -- (every reason, login and Jira on, team review requests off, the List); editNow never writes over the last two.
 function M.readNow(): (core.NowPrefs, string?)
 	local prefs: core.NowPrefs = { off = {}, logins = {}, jira = true, teams = false, board = false }
-	local ok, v = pcall(tern.kv.get, "now")
+	local ok, v = kvGet("now")
 	if not ok then
 		return prefs, "Now's saved switches could not be read: " .. tostring(v)
 	end
@@ -711,7 +750,7 @@ end
 -- Absent: on, with summary.MODEL. One that cannot be read or is malformed gives those defaults and is never written over.
 export type SummaryPrefs = { on: boolean, model: string? } -- model nil: summary.MODEL
 function M.readSummary(): (SummaryPrefs, string?)
-	local ok, v = pcall(tern.kv.get, "summary")
+	local ok, v = kvGet("summary")
 	if not ok then
 		return { on = true }, "Summary settings could not be read: " .. tostring(v)
 	end
@@ -738,7 +777,7 @@ end
 -- Where a Draft review opens (kv "review": { glimpse = true }): Over the agent's tab (Tern's glimpse) or, absent,
 -- Beside the agent. One that cannot be read or is malformed reads as Beside and is never written over.
 function M.readReview(): (boolean, string?)
-	local ok, v = pcall(tern.kv.get, "review")
+	local ok, v = kvGet("review")
 	if not ok then
 		return false, "Draft review settings could not be read: " .. tostring(v)
 	end

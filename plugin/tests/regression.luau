@@ -218,6 +218,11 @@ function M.bench(instantiate: Loader)
 	timed("views-render", 20, function(_i: number)
 		many.render()
 	end)
+	-- Settings over those views: a key press moves the focus and renders the sheet, which builds its page once.
+	h.goToSettings(many, "views")
+	timed("settings-key", 20, function(i: number)
+		many.press(if i % 2 == 0 then "up" else "down")
+	end)
 	print(string.format("BENCH payload bytes=%d items=%d", #payload, #shown))
 end
 

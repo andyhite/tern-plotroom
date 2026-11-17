@@ -746,9 +746,11 @@ local function blockDef(): BlockDef<State>
 			scanWorktrees(state)
 			inspectSelected(state)
 			return keys.scope(function(): BlockView
-				local queue = requests.paletteActions(state)
-				local palette = requests.paletteNode(state, queue)
-				return if state.settings then settingsView(state, palette) else queueView(state, palette, requests.keyBar(state, queue))
+				return storage.scope(function(): BlockView
+					local queue = requests.paletteActions(state)
+					local palette = requests.paletteNode(state, queue)
+					return if state.settings then settingsView(state, palette) else queueView(state, palette, requests.keyBar(state, queue))
+				end)
 			end)
 		end,
 

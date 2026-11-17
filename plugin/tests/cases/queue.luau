@@ -1458,6 +1458,35 @@ case("host: Add prompt asks for a name, then opens the text in a multi-line edit
 	eq(savedText(w, 1), "Review {url}\nThen summarise. Be brief.", "Ctrl+Enter saves as well")
 end)
 
+case("host: typing a character in a Settings field reads each store at most once for the key and the render after it", function(w: World)
+	hostScene(w, 3)
+	savePrompts(w, { promptOf("p1", "Review", "Review {url}"), promptOf("p2", "Fix", "Fix {url}") })
+	local b = openQueue(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:prs:p1")
+	b.event({ ev = "select", id = "layer.settings", item = "pname:prs:p1" })
+	b.press("enter")
+	eq(prefsOf(b).editing.row, "pname:prs:p1", "the name is being edited")
+	b.render()
+	for k in w.kv.reads do
+		w.kv.reads[k] = 0
+	end
+	b.typeText("x")
+	local reads: { [string]: number } = {}
+	for key, n in w.kv.reads do
+		reads[key] = n
+	end
+	eq(prefsOf(b).editing.draft, "Reviewx", "the character is typed")
+	local over: { string } = {}
+	for key, n in reads do
+		if n > 1 then
+			table.insert(over, key .. "=" .. n)
+		end
+	end
+	table.sort(over)
+	eq(table.concat(over, ", "), "", "stores read more than once for one character")
+end)
+
 case("host: naming a new prompt with the placeholder name itself still opens its text editor", function(w: World)
 	hostScene(w, 3)
 	savePrompts(w, {})

@@ -814,11 +814,22 @@ local function pageContent(state: State): ({ any }, { Node })
 	return sections, extra
 end
 
+-- The rows of the open page: the ones the last render built while nothing they are built from has changed since (the
+-- page, the open form, the saved stores, the views); built again when it has (a handler that adds a row and then looks
+-- it up) or when none was built yet. A render is what builds them for the keys and clicks that follow.
+local function pageRows(state: State): { any }
+	local s = state.settings :: Settings
+	local b = s.built
+	if b and b.page == s.page and b.open == s.open and b.rev == state.rev and b.writes == storage.writes then
+		return b.sections
+	end
+	return (pageContent(state))
+end
+
 -- Ids of the page's rows the keys can reach, in order.
 function M.focusRows(state: State): { string }
 	local out: { string } = {}
-	local sections = pageContent(state)
-	for _, sec in sections do
+	for _, sec in pageRows(state) do
 		for _, row in sec.rows do
 			if not row.disabled then
 				table.insert(out, row.id)
@@ -829,8 +840,7 @@ function M.focusRows(state: State): { string }
 end
 
 function M.rowById(state: State, id: string): Row?
-	local sections = pageContent(state)
-	for _, sec in sections do
+	for _, sec in pageRows(state) do
 		for _, row in sec.rows do
 			if row.id == id then
 				return row
@@ -1961,6 +1971,7 @@ function M.commitEdit(state: State)
 				state.cx:toast("success", if cloned then "Cloned " .. repo else "Checkout saved", if claimed then claimed.root else nil)
 			elseif state.settings == s and s.page == "repos" and not s.edit and readCheckouts()[key] ~= nil then
 				s.open = repo -- its form, should it have been closed meanwhile
+				s.built = nil -- the row was disabled while the checkout was claimed: look it up in a fresh build
 				beginEdit(state, row, text) -- the draft stays for a correction; this clears the row's warning, so set it after
 				s.errors[row] = err
 			else
@@ -2229,6 +2240,7 @@ end
 function M.settingsView(state: State, palette: Node): BlockView
 	local s = state.settings :: Settings
 	local sections, extra = pageContent(state)
+	s.built = { page = s.page, open = s.open, rev = state.rev, writes = storage.writes, sections = sections }
 	local changes = pageChanges(state)
 	local pages: { any } = {}
 	for _, p in cli.pages() do

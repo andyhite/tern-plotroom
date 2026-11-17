@@ -184,6 +184,7 @@ export type Settings = {
 	pick: { row: string, option: string? }?, -- a choice or chips row the keys drive, `option` highlighted
 	errors: { [string]: string? }, -- row id -> warning under the row
 	confirm: string?, -- delete row ("delete:<view id>", "pdelete:<prompt id>", "rremove:<repo>" or "jremove:<key>") or "reset:all" awaiting confirmation; view and prompt ids are qualified by their kind
+	built: { page: string, open: string?, rev: number, writes: number, sections: { any } }?, -- the rows the last render built, and what they were built from (settings.pageRows): what the keys and clicks look rows up in
 }
 
 -- What the window recorded about an agent when it started it: the action's name, the worktree's branch, the item's title;
