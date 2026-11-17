@@ -1609,7 +1609,7 @@ case("host: the palette names a Jira issue's own operations Jira - Issue", funct
 	jiraHost(w)
 	local b = openIssues(w)
 	local p = hx.palette(w, b)
-	for _, id in { "assign-me", "comment" } do
+	for _, id in { "assign-me", "comment", "jira-move" } do
 		eq(p.commandGroups[id], "Jira - Issue", id .. " is under Jira - Issue")
 	end
 	eq(p.groups.snooze, "Triage", "snoozing it is Triage")

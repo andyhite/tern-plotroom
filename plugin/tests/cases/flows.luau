@@ -1697,6 +1697,40 @@ windowCase("window flows: palette commands send plain events, and the command pa
 	eq(w.toasts[said + 1].level, "error", "a link the block does not carry is refused")
 end)
 
+windowCase("window flows: Move to status picks one of the host's statuses or types another, and asks the host to plan it", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local function plan(): any
+		return st.reply("act", { token = "t-move", confirm = { head = "Move ABC-12 to Done?", label = "Move to status", lines = { "ABC-12: Fix login" } } })
+	end
+	w.window.choose = "Done"
+	w.command("jira-move")
+	w.flush()
+	local first = st.reply("act", { statuses = { "Done", "Blocked" }, current = "In Progress" })
+	eq(first.name, "jira-move", "Move to status first asks the host for the statuses")
+	eq(first.status, nil, "with none named")
+	local picked = w.window.picks[#w.window.picks]
+	same(flowRows(picked), { "Done", "Blocked", "Another status…" }, "the host's statuses, then a way to type another")
+	eq(plan().status, "Done", "the pick is planned by the host")
+	w.window.choose = "Another status…"
+	w.window.typed = "  Won't do \n"
+	w.command("jira-move")
+	w.flush()
+	st.reply("act", { statuses = { "Done" } })
+	eq(plan().status, "Won't do", "a typed status is planned trimmed")
+	w.window.typed = "   "
+	w.command("jira-move")
+	w.flush()
+	st.reply("act", { statuses = { "Done" } })
+	same(st.ops(), { "act", "act", "act", "act", "act" }, "a blank one plans nothing")
+	w.window.choose = nil
+	w.window.typed = "Blocked"
+	w.command("jira-move")
+	w.flush()
+	st.reply("act", { statuses = {} })
+	eq(plan().status, "Blocked", "with no status to pick from, the name is asked for at once")
+end)
+
 windowCase("window flows: the Next row leads Commands, and plotroom://next runs the window command the block names as its next move only while it offers it", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
@@ -2964,6 +2998,55 @@ case("host mutations: a Jira assign works for a signed-in email whose local part
 	eq(p.confirm.lines[2], "Jira account: pat.o'brien@corp.com at https://acme.atlassian.net", "the whole email, apostrophe and all")
 	eq(asks.hx.commit(w, b, p.token).message, "Assigned ABC-12 to you", "committed as that account")
 	same(ran, { "acli jira workitem assign --key ABC-12 --assignee @me --yes" }, "acli assigned it")
+end)
+
+case("host mutations: Jira Move to status offers the project's other loaded statuses, plans the move naming the account, and commits only as that account", function(w: World)
+	local s = jiraHost(w)
+	s.acli.views["ABC-12"] = jiraItem("ABC-12", "Fix login", { status = { name = "In Progress", statusCategory = { key = "indeterminate" } } })
+	local ran: { string } = {}
+	local auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
+	local refuse = false
+	s.acli.override = function(req: AcliReq): Reply?
+		if req.kind == "auth" then
+			return { stdout = auth }
+		elseif req.kind == "other" then
+			table.insert(ran, table.concat(req.argv, " "))
+			return if refuse then { status = 1, stderr = "✗ Error: status 'Blocked' not found\n" } else { stdout = "✓ done\n" }
+		end
+		return nil
+	end
+	local b = openIssues(w)
+	local offer = asks.hx.ask(w, b, { op = "act", name = "jira-move" })
+	same(offer.statuses, { "Done" }, "with no status the host answers the other statuses the project's loaded issues show")
+	eq(offer.current, "In Progress", "and the issue's own, which is not among them")
+	has(asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "in progress" }).problem, "already in", "the issue's own status, in any case, is refused at the plan")
+	eq(#ran, 0, "and nothing runs")
+	local p = asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "  Done " })
+	eq(p.confirm.head, "Move ABC-12 to Done?", "the plan names the issue and the status, trimmed")
+	eq(p.confirm.label, "Move to status", "the confirming choice")
+	eq(p.confirm.lines[1], "ABC-12: Fix login", "the issue")
+	eq(p.confirm.lines[2], "Jira account: ann@example.com at https://acme.atlassian.net", "the full account and site")
+	eq(p.confirm.lines[4], "Move to: Done", "and where it moves")
+	eq(#ran, 0, "a plan runs nothing")
+	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@other.org\n"
+	has(asks.hx.commit(w, b, p.token).problem, "account changed", "another account is refused")
+	eq(#ran, 0, "and nothing was moved")
+	auth = "✓ Authenticated\n  Site: acme.atlassian.net\n  Email: ann@example.com\n"
+	p = asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "Done" })
+	eq(asks.hx.commit(w, b, p.token).message, "Moved ABC-12 to Done", "the same account commits")
+	same(ran, { "acli jira workitem transition --key ABC-12 --status Done --yes" }, "by one acli transition")
+	refuse = true
+	p = asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "Blocked" })
+	has(asks.hx.commit(w, b, p.token).problem, "status 'Blocked' not found", "acli's refusal is the problem, in its words")
+	has(asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "a\nb" }).problem, "one line", "a status with a line break is refused")
+	has(asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "   " }).problem, "one line", "so is a blank one")
+end)
+
+case("host mutations: Move to status is refused on a GitHub issue, and sends nothing", function(w: World)
+	local g = issueHost(w)
+	local b = openIssues(w)
+	has(asks.hx.ask(w, b, { op = "act", name = "jira-move", status = "Done" }).problem, "Jira issues", "a GitHub issue is refused")
+	eq(#asks.hx.writes(g.gh), 0, "and nothing is sent")
 end)
 
 case("host mutations: rerun-failed plans the failed runs by their real run ids, runs view then rerun, and refuses a pull request with none", function(w: World)

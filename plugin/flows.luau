@@ -2230,6 +2230,49 @@ local function issueReopen(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Issue not reopened", { name = "issue-reopen" })
 end
 
+-- Move to status…: the host answers the statuses its loaded issues of the project show (acli lists none itself); pick
+-- one, or type another name, then the host plans the move.
+local function jiraMove(cx: WindowCx, pane: number)
+	local title = "Not moved"
+	local function plan(cx2: WindowCx, status: string)
+		local t = trim(status)
+		if t ~= "" then
+			planAct(cx2, pane, title, { name = "jira-move", status = t })
+		end
+	end
+	local function typed(cx2: WindowCx)
+		cx2:prompt({ placeholder = "Status name, as Jira names it", icon = "merge", action = "plan" }):next(function(text, _, cx3)
+			if cx3 and text then
+				plan(cx3, text)
+			end
+		end)
+	end
+	e().ask(cx, pane, "act", { name = "jira-move" }, ACT_MS, function(a: any, cx2: WindowCx)
+		local why = problemOf(a)
+		if why then
+			return cx2:toast("error", title, why)
+		end
+		local items: { PickItem } = {}
+		for _, s in if type(a.statuses) == "table" then a.statuses else {} do
+			if type(s) == "string" and s ~= "" then
+				table.insert(items, { label = s, status = s })
+			end
+		end
+		if #items == 0 then
+			return typed(cx2)
+		end
+		table.insert(items, { label = "Another status…", other = true })
+		cx2:pick({ items = items, placeholder = "Move the selected issue to…", icon = "merge", action = "plan" }):next(function(picked, _, cx3)
+			if not (picked and cx3) then
+				return
+			elseif picked.other then
+				return typed(cx3)
+			end
+			plan(cx3, picked.status)
+		end)
+	end)
+end
+
 local function prReady(cx: WindowCx, pane: number)
 	planAct(cx, pane, "Not marked ready", { name = "pr-ready" })
 end
@@ -2534,6 +2577,7 @@ M.COMMANDS = {
 	{ id = "comment", title = "Comment on the selected item", label = "Comment…", run = comment },
 	{ id = "issue-close", title = "Close the selected GitHub issue", label = "Close issue…", run = issueClose },
 	{ id = "issue-reopen", title = "Reopen the selected GitHub issue", label = "Reopen issue…", run = issueReopen },
+	{ id = "jira-move", title = "Move the selected Jira issue to a status", label = "Move to status…", run = jiraMove },
 	{ id = "pr-ready", title = "Mark the selected draft PR ready for review", label = "Ready for review…", run = prReady },
 	{ id = "pr-draft", title = "Convert the selected PR to a draft", label = "Convert to draft…", run = prDraft },
 	{ id = "pr-merge", title = "Merge the selected PR", label = "Merge…", run = prMerge },

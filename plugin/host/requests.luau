@@ -1153,6 +1153,61 @@ function M.act(state: State, id: string, q: any)
 				M.landed(state, done, problem, "Assigned " .. target .. " to you")
 			end)
 		end)
+	elseif name == "jira-move" then
+		if prs or item.tracker ~= "jira" then
+			return no("Moving to a status works on Jira issues.")
+		end
+		local current = if item.status then item.status.text else nil
+		local status: any = q.status
+		if status == nil then
+			-- acli lists no transitions (its `transitions` field comes back null), so the choices are the statuses the
+			-- loaded issues of this project show now; the window offers any other name to type.
+			-- ponytail: only statuses on screen are offered; read the real transitions if acli ever lists them.
+			local project = string.match(item.ref, "^([A-Z][A-Z0-9_]*)%-")
+			local seen: { [string]: boolean } = {}
+			local list: { string } = {}
+			for _, other in snap.items do
+				local text = if other.tracker == "jira" and other.status and string.match(other.ref, "^([A-Z][A-Z0-9_]*)%-") == project then other.status.text else nil
+				if text and text ~= current and #text <= core.STATUS_CAP and not seen[string.lower(text)] then
+					seen[string.lower(text)] = true
+					table.insert(list, text)
+				end
+			end
+			table.sort(list)
+			return reply(state, id, { statuses = M.strings(list), current = current })
+		elseif type(status) ~= "string" then
+			return no("Choose a status name.")
+		end
+		local want = string.match(status, "^%s*(.-)%s*$") :: string
+		if want == "" or #want > core.STATUS_CAP or string.find(want, "%c") then
+			return no("A status name on one line, at most " .. core.STATUS_CAP .. " characters.")
+		elseif current and string.lower(current) == string.lower(want) then
+			return no(item.ref .. " is already in " .. printable(current) .. ".")
+		end
+		local gen = state.gen
+		return jira.identity(function(who: jira.Identity?, problem: github.Problem?)
+			if not alive(state) then
+				return
+			elseif not who then
+				return no(M.whyOf(problem))
+			elseif state.gen ~= gen then
+				return no("The view changed; ask again.")
+			end
+			M.offer(state, id, item, {
+				head = "Move " .. item.ref .. " to " .. clip(printable(want), 100) .. "?",
+				label = "Move to status",
+				lines = {
+					target .. ": " .. printable(item.title),
+					"Jira account: " .. printable(who.email) .. " at " .. printable(who.site),
+					"Current status: " .. (if current then printable(current) else "unknown"),
+					"Move to: " .. printable(want),
+				},
+			}, function(done)
+				jira.moveTo(item.ref, want, who, function(problem2: github.Problem?)
+					M.landed(state, done, problem2, "Moved " .. item.ref .. " to " .. clip(printable(want), 100))
+				end)
+			end)
+		end)
 	elseif name == "rerun-failed" then
 		if not prs then
 			return no("Failed checks are rerun on pull requests.")
@@ -1590,6 +1645,8 @@ function M.commands(state: State): { { id: string, group: string? } }
 	add("assign-me")
 	if item.tracker ~= "jira" then
 		add(if item.state == "open" then "issue-close" else "issue-reopen")
+	else
+		add("jira-move")
 	end
 	add("comment")
 	local note = state.notes[item.key]
