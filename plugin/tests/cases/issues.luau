@@ -1540,6 +1540,14 @@ case("host: with neither gh nor acli installed, nothing is listed or asked, and 
 			eq(call.argv[2], "--version", call.argv[1] .. " is only asked whether it starts")
 		end
 	end
+	goToSettings(b, "prompts")
+	same(hx.rows(b), { "guide:github", "guide:jira" }, "Actions is offered, not an empty sheet: one row per setup guide")
+	eq(prefsOf(b).sections[1].title, "Install gh or acli first: see Settings › GitHub and Settings › Jira.", "under the sentence that says what to do")
+	b.press("enter")
+	eq(w.opened[#w.opened], "https://github.com/cli/cli#installation", "the first row opens gh's install guide")
+	same(hx.miscued(b.view().layer), {}, "every click is a button")
+	same(hx.offPalette(b.view().layer), {}, "and nothing is coloured outside the rule")
+	b.press("escape")
 	goToSettings(b, "setup-jira")
 	same(hx.pages(b), { "views", "prompts", "repos", "general", "setup-github", "setup-jira" }, "the four pages, and a setup page each")
 	b.press("enter")

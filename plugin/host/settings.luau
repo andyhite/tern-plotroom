@@ -381,6 +381,20 @@ local function pageContent(state: State): ({ any }, { Node })
 			end
 		end
 	elseif s.page == "prompts" then
+		-- With neither CLI starting both kinds are skipped below: say why the page is empty (the same words as the queue's
+		-- own empty state). Not before the probes answer: until then nothing is on yet.
+		if cli.ready() and not usable(KINDS.prs) and not usable(KINDS.issues) then
+			section("setup", "Install gh or acli first: see Settings › GitHub and Settings › Jira.")
+			for _, c in cli.list do
+				local gh = c.id == "github"
+				row({
+					id = "guide:" .. c.id,
+					label = if gh then "Install gh" else "Install acli",
+					hint = if gh then "For pull request and issue actions" else "For Jira issue actions",
+					control = { k = "action", act = "guide", label = "Setup guide ↗" },
+				})
+			end
+		end
 		for _, kind in { KINDS.prs, KINDS.issues } do
 			-- A kind's prompts while one of its integrations is on: pull request prompts need gh.
 			if not usable(kind) then

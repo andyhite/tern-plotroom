@@ -8,6 +8,10 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 - The Draft review shows a **Retry** button (also `r`) beside a diff problem: it reads the pull request and the diff again for the same proposal, busy while it runs, keeping every comment's edited text and keep or drop choice, instead of leaving the comments without their lines until the agent proposes again or the block is reopened (tern-plotroom#70mt).
 
+### Changed
+
+- Settings › Actions with neither `gh` nor `acli` installed shows "Install gh or acli first: see Settings › GitHub and Settings › Jira." with a Setup guide button for each, instead of an empty sheet (tern-plotroom#b789).
+
 ### Fixed
 
 - Tern's search field is shown again at the top of Settings (a stale "too few settings" rule hid it), so a shortcut or setting is found by typing instead of scrolling the General page's 21 shortcut rows and the open views and actions (tern-plotroom#67ks).
