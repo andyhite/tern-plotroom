@@ -734,9 +734,15 @@ function M.keep(state: State, kind: string, item: any): boolean
 end
 
 -- How many of `snap`'s items a sidebar scope counts: those its list shows, so snoozed ones are left out (unless shown).
+-- Counted once per state.rev (triage, agents, Show snoozed), noteSeq and minute (a snooze ends), as the rows are
+-- (render's rowsOf), and kept on the snapshot, which a refresh replaces.
 function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 	if pinned or state.showSnoozed then
 		return #snap.items
+	end
+	local minute = os.time() // 60
+	if snap.count and snap.countRev == state.rev and snap.countNote == state.noteSeq and snap.countMin == minute then
+		return snap.count
 	end
 	local n = 0
 	local store = M.store(state)
@@ -746,6 +752,7 @@ function M.listedCount(state: State, snap: Snap, pinned: boolean): number
 			n += 1
 		end
 	end
+	snap.count, snap.countRev, snap.countNote, snap.countMin = n, state.rev, state.noteSeq, minute
 	return n
 end
 

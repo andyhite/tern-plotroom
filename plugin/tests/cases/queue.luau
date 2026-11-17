@@ -2939,6 +2939,35 @@ case("host: switching across kinds shows each view's cached list and its sidebar
 	eq(#viewSearchesOf(s.gh, "search") >= 2, true, "and it refreshed meanwhile")
 end)
 
+case("host: a view's sidebar count follows a snooze, an agent that needs you, a refresh and the minute a snooze ends", function(w: World)
+	local s = hostScene(w, 3)
+	local b = openQueue(w)
+	eq(countOf(b, "prs:v1"), 3, "every item is listed")
+	b.event({ ev = "action", id = "layer.queue", act = "queue", value = "snooze" })
+	w.flush()
+	eq(countOf(b, "prs:v1"), 2, "a snoozed item leaves the count")
+	asks.hx.agents(b, { ["o/r#1"] = "waiting_input" })
+	eq(countOf(b, "prs:v1"), 3, "an agent that waits for its snoozed item brings it back")
+	asks.hx.agents(b, {})
+	eq(countOf(b, "prs:v1"), 2, "and the count drops again when it stops")
+	b.typeText("Z")
+	b.event({ ev = "select", id = "layer.queue", item = "no_2fr_231" })
+	b.event({ ev = "action", act = "unsnooze" })
+	b.typeText("Z")
+	eq(countOf(b, "prs:v1"), 3, "an unsnoozed item is counted again")
+	s.gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60), searchItem(2, "o/r", EPOCH - 120) }
+	refreshNow(w, b)
+	eq(countOf(b, "prs:v1"), 2, "a refresh that lands counts its own items")
+	w.kv.put("triage", { version = 1, items = { ["o/r#1"] = { at = 1, snoozeUntil = EPOCH + 3600 } } })
+	b.state().triage = nil -- the block rereads the store
+	b.state().rev += 1
+	b.render()
+	eq(countOf(b, "prs:v1"), 1, "a snooze that is running keeps its item out")
+	w.advance(3600 * 1000 + 60000)
+	b.render()
+	eq(countOf(b, "prs:v1"), 2, "and the minute it ends counts the item again")
+end)
+
 case("host: a not-found belongs to its view: another view clears it and searches, while the view itself stays paused", function(w: World)
 	local _, acli = crossScene(w)
 	-- A second Jira view beside the failing one: the switch keeps the integration.

@@ -104,6 +104,10 @@ export type Snap = {
 	rowsRev: number?,
 	rowsMin: number?,
 	rowsState: number?,
+	count: number?, -- the sidebar's count (engine.listedCount), with the state.rev, noteSeq and minute it was made at
+	countRev: number?,
+	countNote: number?,
+	countMin: number?,
 	stages: { [string]: string }?, -- each item's stage (item key -> engine.stage id) when last noted (engine.arrive)
 }
 -- What the local search lets through: computed once per snapshot, search text and view group and sort.

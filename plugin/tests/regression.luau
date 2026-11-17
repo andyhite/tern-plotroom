@@ -182,6 +182,41 @@ function M.bench(instantiate: Loader)
 	timed("runs-index", 20, function(_i: number)
 		usage.medians(usage.readRuns())
 	end)
+	-- Five views of 1000 items each, every one with a cached list, in a block wide enough to show the sidebar's counts:
+	-- a render counts each view's items once per revision and minute, not once per render.
+	local wide = newWorld(instantiate, "host")
+	wide.setEncodeViews(false)
+	local scene = hostScene(wide, 0)
+	scene.gh.items.octocat = items
+	local views: { any } = {}
+	for i = 1, 5 do
+		table.insert(views, { id = "v" .. i, name = "View " .. i, integration = "github", query = "is:open label:l" .. i, group = "none", prompts = array({}) })
+	end
+	wide.kv.put("views-prs", { version = 1, nextId = 6, items = array(views) })
+	local snoozes: { [string]: any } = {}
+	for i = 1, 1000 do
+		snoozes["o/r#" .. i] = if i % 2 == 0 then { at = EPOCH, snoozeUntil = EPOCH + 86400 } else { seen = "x", at = EPOCH }
+	end
+	wide.kv.put("triage", { version = 1, items = snoozes })
+	local many = openQueue(wide)
+	for i = 2, 5 do
+		many.event({ ev = "action", id = "layer.queue", act = "scope", value = "prs:v" .. i })
+		wide.flush()
+	end
+	for i = 1, 5 do
+		local count: any = nil
+		for _, scope in pickerOf(many).scopes do
+			if scope.id == "prs:v" .. i then
+				count = scope.count
+			end
+		end
+		if count ~= 500 then
+			error("the benchmark expected view " .. i .. " to count 500 unsnoozed items, got " .. tostring(count), 0)
+		end
+	end
+	timed("views-render", 20, function(_i: number)
+		many.render()
+	end)
 	print(string.format("BENCH payload bytes=%d items=%d", #payload, #shown))
 end
 
