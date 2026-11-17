@@ -736,7 +736,7 @@ local function blockDef(): BlockDef<State>
 			elseif not v then
 				return "Plotroom" .. tail
 			end
-			return "Plotroom · " .. v.name .. tail
+			return "Plotroom · " .. core.viewName(v) .. tail
 		end,
 
 		view = function(state: State, _cx: BlockCx): BlockView

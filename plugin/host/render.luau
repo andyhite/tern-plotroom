@@ -458,6 +458,8 @@ local function keyText(k: string): string
 	return if string.match(k, "^%u$") then "Shift+" .. k else k
 end
 
+local viewName = core.viewName
+
 -- A Tern button labelled `text` ("" with an `icon`: icon-only, named by `title`); `p` its props, `keys` the key names
 -- of the key that does the same. Size `sm` (rows, the preview, cards) unless `p.size` says `md` (bars, overlays, heads).
 local function button(text: string, p: { [string]: any }): Node
@@ -1403,7 +1405,7 @@ function M.scopeRows(state: State): ({ any }, string?)
 		end
 		table.insert(scopes, {
 			id = scope.id,
-			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") .. ": " .. v.name else v.name,
+			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") .. ": " .. viewName(v) else viewName(v),
 			icon = KINDS[v.kind].icon,
 			count = if not dropdown and cached then engine.listedCount(state, cached, engine.isPin(v.id)) else nil,
 			group = if engine.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
@@ -2190,7 +2192,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	local order: { any } = if vis then vis.order else tern.json.array({})
 
 	-- The active view's name is the heading; the sidebar lists them all.
-	local title: { any } = { ui.span(if view then view.name else "Plotroom", "title") }
+	local title: { any } = { ui.span(if view then viewName(view) else "Plotroom", "title") }
 	if snap and problem then
 		table.insert(title, ui.span("  stale", "muted"))
 	elseif snap and not snap.complete then
@@ -2266,7 +2268,7 @@ function M.queuePicker(state: State, bar: boolean?): Node
 		state = if not snap and problem then "error" elseif not snap and (view or not cli.ready()) then "loading" else "ready",
 		empty = {
 			ui.span(
-				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by snoozing; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. view.name .. ".")
+				if view then (if hidden > 0 and snap and hidden == #snap.items then hidden .. " " .. (if hidden == 1 then state.kind.one else state.kind.many) .. " hidden by snoozing; " .. hiddenHow .. " to show " .. (if hidden == 1 then "it" else "them") .. "." elseif state.query and input.trim(state.query.text) ~= "" then "No loaded " .. state.kind.many .. " match “" .. state.query.text .. "”." else "No " .. state.kind.many .. " match " .. viewName(view) .. ".")
 					else (if none then "Neither gh nor acli is installed on this host. " else "No views yet. ")
 						.. (if map.settings ~= "" then "Press " .. keyText(map.settings) .. " to "
 							elseif map.more ~= "" then "Press " .. keyText(map.more) .. " and pick Settings to "
@@ -2487,7 +2489,7 @@ function M.deleteConfirm(state: State): Node?
 		body = "Views, actions, shortcuts, repositories, branch and folder formats and Get started go back to their defaults in every Plotroom pane; triage, usage and agents are kept."
 	else
 		local view = viewOf(state, id)
-		head, label, body = "Delete view “" .. (if view then view.name else "this view") .. "”?", "Delete view", "It is gone from every Plotroom pane."
+		head, label, body = "Delete view “" .. (if view then viewName(view) else "this view") .. "”?", "Delete view", "It is gone from every Plotroom pane."
 	end
 	return confirmOverlay({ head = head, body = body, label = label, actKeys = { "enter" }, cancel = "cancel-delete", act = "confirm-delete" })
 end

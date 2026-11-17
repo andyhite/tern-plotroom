@@ -14,6 +14,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A view's name is refused over 120 characters (it was not limited), and an action's or view's name is counted in characters, not bytes: 70 CJK characters are no longer refused as "at most 120 characters". The sidebar, the title, the Delete view confirm and Settings' view rows show a view's name on one line, cut to 60 characters.
 - Deleting a pull request action now reports a failed cleanup of issue actions' `next` on its Delete row instead of dropping the error (tern-plotroom#ma6s).
 - Settings › General: Reset on a shortcut whose default another action now holds (Commands' `.` bound to another action) says "Already the shortcut of <action>." instead of doing nothing and showing no reason (tern-plotroom#qxz5).
 - Tern's search field is shown again at the top of Settings (a stale "too few settings" rule hid it), so a shortcut or setting is found by typing instead of scrolling the General page's 21 shortcut rows and the open views and actions (tern-plotroom#67ks).

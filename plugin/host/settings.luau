@@ -302,7 +302,7 @@ local function pageContent(state: State): ({ any }, { Node })
 				local kind = KINDS[v.kind]
 				local list = promptLists[v.kind]
 				local locked = state.locked[v.kind]
-				local name = v.name .. (if v.id == state.activeId then " · active" else "")
+				local name = core.viewName(v) .. (if v.id == state.activeId then " · active" else "")
 				if summary("vopen:", v.id, name, function()
 					return kind.label .. " · " .. v.query .. (if v.layout == "board" then " · Board" else "")
 				end) then
@@ -1782,6 +1782,8 @@ function M.commitEdit(state: State)
 		local err: string? = nil
 		if text == "" then
 			err = if kind == "name" then "A name is required." else "A query is required."
+		elseif kind == "name" and (utf8.len(text) or #text) > core.NAME_CAP then
+			err = "A name is at most " .. core.NAME_CAP .. " characters."
 		elseif kind == "query" and view and view.integration == "jira" then
 			err = jira.scopeProblem(text)
 		end
@@ -1878,7 +1880,7 @@ function M.commitEdit(state: State)
 		local empty = false
 		if text == "" then
 			err = if kind == "pname" then "A name is required." else "A prompt is required."
-		elseif kind == "pname" and #text > core.NAME_CAP then
+		elseif kind == "pname" and (utf8.len(text) or #text) > core.NAME_CAP then
 			err = "A name is at most " .. core.NAME_CAP .. " characters."
 		elseif #text > PROMPT_CAP then
 			err = "Over " .. PROMPT_CAP .. " bytes; shorten it."

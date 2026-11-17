@@ -483,6 +483,11 @@ function M.clip(s: string, max: number): string
 	return if cut and cut <= #s then string.sub(s, 1, cut - 1) .. "…" else s
 end
 
+-- A view's name as shown: one line, valid UTF-8, at most 60 characters (a stored name may be longer than the 120 a save allows).
+function M.viewName(v: { name: string }): string
+	return M.clip(M.printable(v.name), 60)
+end
+
 -- The first line of `s`, cut to 160 characters.
 function M.brief(s: string): string
 	return M.clip(M.printable(string.match(s, "[^\n]*") or ""), 160)
