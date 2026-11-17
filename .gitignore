@@ -2,3 +2,6 @@ target/
 tern.d.luau
 __pycache__
 .kata.local.toml
+/.evidence/
+/.worktrees/
+.DS_Store
