@@ -1058,6 +1058,27 @@ windowCase("review: Over the agent's tab, a turn end glimpses the Draft review o
 	w.finish()
 end)
 
+windowCase("review: a Draft review whose block did not open is not marked seen, so the next turn end opens it", function(w: World)
+	w.load("window")
+	local answer = queueStub(w)
+	seedRun(w)
+	local real = w.cx.new_block
+	w.cx.new_block = function(): number?
+		return nil
+	end
+	finished(w)
+	answer(AT1)
+	eq(#reviewLaunches(w), 0, "Tern opened no block")
+	eq(w.toasts[#w.toasts].text, "The Draft review for o/r#5 did not open", "the toast says so")
+	eq((w.kv.get("agent-links") :: any)[1].reviewed, nil, "the proposal is not remembered as seen")
+	w.cx.new_block = real
+	finished(w)
+	answer(AT1)
+	eq(#reviewLaunches(w), 1, "the next turn end opens the same proposal")
+	eq((w.kv.get("agent-links") :: any)[1].reviewed, AT1, "and only then it is remembered")
+	w.finish()
+end)
+
 case("review: Settings › General › Draft review opens saves Over the agent's tab, the review request tells the window, and settings it cannot read are never written over", function(w: World)
 	h.hostScene(w)
 	local b = h.openQueue(w)
