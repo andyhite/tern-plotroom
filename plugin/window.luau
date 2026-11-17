@@ -117,7 +117,7 @@ local function issueTarget(repo: string, ref: string): Target
 	return { kind = "issue", repo = repo, ref = ref, label = ref, tab = ref }
 end
 -- Requests to a block's host waiting for their answer, by id.
-type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle }
+type Pending = { pane: number, done: (any, WindowCx) -> (), timer: TimerHandle, quiet: boolean?, lost: ((WindowCx) -> ())? }
 local pending: { [string]: Pending } = {}
 local requests = 0
 -- Picker labels chosen last, newest first. Kept in tern.kv: Tern reboots plugin VMs now and then, losing module state.
@@ -395,8 +395,9 @@ local answered: (WindowCx, string) -> ()
 -- Asks the host half of the Plotroom block in `pane` to run `op`, where the block runs. done(answer, cx) runs once,
 -- with the decoded answer, when the host announces it (plotroom://rpc/<id>); with no answer within `ms`, a toast says
 -- so instead. False when nothing was sent: an older host that does not know `op` is refused at once. `quiet` (a
--- background request): neither the refusal nor a missing answer is toasted.
-local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> (), quiet: boolean?): boolean
+-- background request): neither the refusal nor a missing answer is toasted. `lost` runs when the block's pane closes
+-- before the answer (a request's failure path, as for a start that fails on the way); the request is then dropped.
+local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any }, ms: number, done: (any, WindowCx) -> (), quiet: boolean?, lost: ((WindowCx) -> ())?): boolean
 	if quiet then
 		local p = protocolOf(cx, pane)
 		if not (inRange(p) and (rpc.SINCE[op] or rpc.MIN) <= (p :: number)) then
@@ -416,7 +417,7 @@ local function ask(cx: WindowCx, pane: number, op: string, args: { [string]: any
 			end
 		end
 	end)
-	pending[id] = { pane = pane, done = done, timer = timer }
+	pending[id] = { pane = pane, done = done, timer = timer, quiet = quiet, lost = lost }
 	local ok, why = pcall(function()
 		cx.session:event(pane, { ev = "action", act = "rpc", value = tern.json.encode(args) })
 	end)
@@ -1298,8 +1299,8 @@ local function prepareTarget(cx: WindowCx, pane: number, t: Target, prompt: Job?
 	local premerge = prompt ~= nil and wt and prompt.premerge == true
 	local m: Settled = more or {}
 	local sent = if t.kind == "pr"
-		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil, premerge = premerge }, PREPARE_MS, done)
-		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done)
+		then ask(cx, pane, "worktree", { repo = t.repo, number = tonumber(t.ref), worktree = wt, users = users, failures = prompt ~= nil and string.find(prompt.text, "{failures}", 1, true) ~= nil, premerge = premerge }, PREPARE_MS, done, false, failed)
+		else ask(cx, pane, "issue", { repo = t.repo, ref = t.ref, worktree = wt, target = m.target, pr = m.pr, fresh = m.fresh, base = m.base, users = users }, PREPARE_MS, done, false, failed)
 	if not sent then
 		failed(cx)
 	end
@@ -2030,9 +2031,33 @@ tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
 	return { handled = true }
 end)
 
+-- A request waits no longer for a block that is gone: its timer stops, its failure path runs (`lost`), and one toast
+-- says why unless every dropped request was a background one.
+local function dropClosed(cx: WindowCx)
+	local gone: { Pending } = {}
+	for id, p in pending do
+		if cx.session:pane(p.pane) == nil then
+			pending[id] = nil
+			p.timer:cancel()
+			table.insert(gone, p)
+		end
+	end
+	local toasted = false
+	for _, p in gone do
+		if not p.quiet and not toasted then
+			toasted = true
+			cx:toast("error", "Plotroom: the block closed", "Its request was dropped.")
+		end
+		if p.lost then
+			p.lost(cx)
+		end
+	end
+end
+
 -- A closed pane may have held a PR's worktree, and the host hears no event for it: nudge this window's Plotroom
 -- blocks so their "In tab" marks follow (the host renders after any event).
 tern.on("pane_closed", function(_ev: any, cx: WindowCx)
+	dropClosed(cx)
 	flows.agentSync(cx)
 	syncTabLabels(cx)
 	for _, p in cx.session:panes() do
@@ -2321,14 +2346,14 @@ local function startStep(cx: WindowCx, s: flows.Step)
 				return failed(cx2, if type(a.problem) == "string" then a.problem else "The action is gone.")
 			end
 			start(cx2, a, prTarget(owner, name, a.pr), prAction)
-		end)
+		end, false, failed)
 	else
 		sent = ask(cx, s.block, "action", { kind = chain.kind, pid = pid }, MENU_MS, function(a: any, cx2: WindowCx)
 			if type(a.send) ~= "string" then
 				return failed(cx2, if type(a.problem) == "string" then a.problem else "The action is gone.")
 			end
 			start(cx2, a, t, pid)
-		end)
+		end, false, failed)
 	end
 	if not sent then
 		failed(cx)

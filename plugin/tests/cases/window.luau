@@ -1422,6 +1422,25 @@ windowCase("window: a request its block's host never answers gives up with a toa
 	eq(#w.toasts, said, "and says nothing")
 end)
 
+windowCase("window: closing the block drops its waiting requests at once, with one toast and no later timeout", function(w: World)
+	w.load("window")
+	listPr(w, "o/r", 5)
+	local surface: any = w.window.surfaces[1]
+	surface.main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol, hidden = true } } } }
+	w.click(prLink("worktree", "o/r", 5))
+	eq(#requestsSent(w), 1, "the worktree is requested")
+	local said = #w.toasts
+	w.window.panes[1] = nil
+	w.window.handlers.pane_closed({ pane = 1 }, w.cx)
+	eq(#w.toasts, said + 1, "closing the block says so once")
+	eq(w.toasts[#w.toasts].text, "Plotroom: the block closed", "naming what happened")
+	w.advance(20 * 60 * 1000)
+	for _, t in w.toasts do
+		lacks(t.text, "did not answer", "no misleading timeout follows")
+	end
+	eq(#w.toasts, said + 1, "and nothing else is said")
+end)
+
 windowCase("window: an answer already on screen is found by polling even when its link never arrives", function(w: World)
 	w.load("window")
 	listPr(w, "o/r", 5)

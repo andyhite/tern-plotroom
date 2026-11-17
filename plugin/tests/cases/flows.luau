@@ -4550,6 +4550,19 @@ windowCase("window flows: a failed, exited or closed agent stops its chain with 
 	eq(#w.window.agents, 3, "and no agent starts for it")
 end)
 
+windowCase("window flows: closing the block while a chain step waits for its action counts the failed start at once", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local first = startChained(w, st)
+	agentFinished(w, first.agent, "done")
+	st.reply("outcome", { verdict = "verified" })
+	eq(countOps(st, "action"), 1, "the next action is asked for")
+	eq((loggedRuns(w) :: any)[1].starts, nil, "no start has failed yet")
+	w.window.panes[1] = nil
+	w.window.handlers.pane_closed({ pane = 1 }, w.cx)
+	eq((loggedRuns(w) :: any)[1].starts, 1, "the closed block counts as one failed start, not a timeout 30 s later")
+end)
+
 windowCase("window flows: a done turn whose pane closes while its transcript lags still records one done run and decides its chain", function(w: World)
 	w.load("window")
 	local st = flowHost(w)
