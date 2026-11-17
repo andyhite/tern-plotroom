@@ -424,7 +424,8 @@ end
 -- the file cannot be read), or nil when there is none or the log cannot be read.
 -- ponytail: one index read and one file read per call; the caller asks only for the selected item's preview.
 function M.lastRun(key: string): Run?
-	for _, r in M.readRuns() or {} do
+	local runs = M.readRuns()
+	for _, r in runs or {} :: { Run } do
 		if r.key == key and not r.checking then
 			return (if r.id then readFile(r.id) else nil) or r
 		end
