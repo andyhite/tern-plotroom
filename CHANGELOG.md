@@ -6,6 +6,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- A worktrees directory that is a symlink (macOS `/tmp` and `/var` are) or holds `.` or `..` segments no longer hides the worktree Plotroom made there: git lists a worktree under its real path, so the worktree at an item's folder on another branch was not recognised and the open ended in "already exists and is not the worktree of …". Plotroom now resolves the directory to its real path before it builds a worktree's folder (tern-plotroom#q9xp).
 - A checkout found from a linked worktree is saved as the main worktree git lists first, also for a repository whose git directory is not `<main>/.git` (`--separate-git-dir`) (tern-plotroom#f77a).
 - Remove finished worktrees asks GitHub or Jira about each pull request or issue again just before removing its worktree, instead of trusting the verdict of an old Find finished worktrees: a pull request or issue reopened since is kept, loses its Merged or Closed mark, and the toast says how many were kept for that.
 - Oldest waiting puts an item whose creation date could not be read last instead of first, and a view applies only a sort its kind offers.

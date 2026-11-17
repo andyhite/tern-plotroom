@@ -2346,6 +2346,14 @@ local function newGit(w: World, root: string): Git
 			end
 			return nil
 		end)
+		-- the real path of the worktrees directory: itself unless a case answers first (no symlinks in the model)
+		w.respond(function(call: Call): Reply?
+			local a = call.argv
+			if a[1] == "sh" and a[2] == "-c" and a[4] == "sh" and a[5] then
+				return { stdout = a[5] }
+			end
+			return nil
+		end)
 	end
 	local function worktreeOf(dir: string): GitWorktree?
 		local best: GitWorktree? = nil

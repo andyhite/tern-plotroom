@@ -698,9 +698,40 @@ function M.scan(checkout: string, wants: { [string]: Want }, done: (Scan?, strin
 	end)
 end
 
--- A path without doubled or trailing slashes, as git lists it ("/" stays).
+-- A path without doubled or trailing slashes, `.` segments or resolved `..` segments, as git lists it ("/" stays).
+-- Lexical only: `..` after a symlink is not followed through it (see realDir).
 local function clean(p: string?): string?
-	return if p then (string.gsub(string.gsub(p, "/+", "/"), "(.)/$", "%1")) else nil
+	if not p then
+		return nil
+	end
+	local abs = string.sub(p, 1, 1) == "/"
+	local out: { string } = {}
+	for seg in string.gmatch(p, "[^/]+") do
+		if seg == ".." then
+			if #out > 0 and out[#out] ~= ".." then
+				table.remove(out)
+			elseif not abs then
+				table.insert(out, seg)
+			end
+		elseif seg ~= "." then
+			table.insert(out, seg)
+		end
+	end
+	return (if abs then "/" else "") .. table.concat(out, "/")
+end
+M.clean = clean
+
+-- `git worktree add` stores, and `git worktree list` prints, a folder's real path, so a worktrees directory behind a
+-- symlink (macOS /tmp and /var are) is listed under another string than the one Plotroom built. The real path of
+-- `path` (absolute, clean): its nearest existing ancestor with symlinks resolved, then the rest as written. `path`
+-- itself when that cannot be told (no sh, a failed spawn).
+local REAL_DIR = 'p=$1; t=; while [ ! -d "$p" ] && [ -n "$p" ] && [ "$p" != / ]; do t=/${p##*/}$t; p=${p%/*}; done; '
+	.. '[ -n "$p" ] || p=/; cd "$p" 2>/dev/null && printf "%s%s" "$(pwd -P)" "$t"'
+function M.realDir(path: string, done: (string, WindowCx?) -> ())
+	process.run({ "sh", "-c", REAL_DIR, "sh", path }, { timeout_ms = LOCAL_MS }, function(res, _, cx)
+		local real = if res and res.status == 0 and not res.timed_out then clean(res.stdout) else nil
+		done(if real and string.sub(real, 1, 1) == "/" then real else path, cx)
+	end)
 end
 
 -- The folder new worktrees go in, each a direct child (`omp worktree clear` deletes nested directories there): omp's
@@ -1445,17 +1476,21 @@ local function locate<T>(s: Steps<T>, checkout: string, repo: string, dir: strin
 			if not info then
 				return s.finish(nil, M.NO_REPO, cx)
 			end
-			M.worktreesDir(function(base, why, cx0)
-				if not base then
+			M.worktreesDir(function(base0, why, cx0)
+				if not base0 then
 					return s.finish(nil, why, cx0)
 				end
-				s.run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx1)
-					local recs = M.parseWorktrees(out, info.root)
-					local main = recs[1]
-					if not main or string.sub(main.path, 1, 1) ~= "/" then
-						return s.finish(nil, "Could not find this repository's main worktree.", cx1)
-					end
-					step({ info = info, root = (string.gsub(main.path, "/+$", "")), recs = recs, target = base .. "/" .. dir }, cx1)
+				M.realDir(base0, function(base, cx00)
+					s.attempt(cx00 or cx0, function()
+						s.run(info.root, { "worktree", "list", "--porcelain", "-z" }, LOCAL_MS, function(out, cx1)
+							local recs = M.parseWorktrees(out, info.root)
+							local main = recs[1]
+							if not main or string.sub(main.path, 1, 1) ~= "/" then
+								return s.finish(nil, "Could not find this repository's main worktree.", cx1)
+							end
+							step({ info = info, root = (string.gsub(main.path, "/+$", "")), recs = recs, target = base .. "/" .. dir }, cx1)
+						end)
+					end)
 				end)
 			end)
 		end)

@@ -1339,6 +1339,57 @@ windowCase("worktree.openIssue: a worktree at the issue's directory is reused wh
 	eq(countLog(r.git, "worktree add"), 0, "nothing was added")
 end)
 
+-- OMP_WORKTREE_DIR=/tmp/wt where /tmp is a symlink: git lists every worktree there under /private/tmp/wt.
+local function symlinkedWorktrees(w: World)
+	w.env.OMP_WORKTREE_DIR = "/tmp/wt"
+	w.respond(function(call: Call): Reply?
+		local a = call.argv
+		if a[1] == "sh" and a[2] == "-c" and a[4] == "sh" then
+			return { stdout = if a[5] == "/tmp/wt" then "/private/tmp/wt" else a[5] }
+		end
+		return nil
+	end)
+end
+
+windowCase("worktree.openIssue: a worktree git lists under the real path of a symlinked worktrees directory is the one at the issue's folder", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local r = issueRepo(w, "12")
+	symlinkedWorktrees(w)
+	local real = "/private/tmp/wt/plotroom-o_r-issue-12"
+	table.insert(r.git.worktrees, { path = real, branch = "refs/heads/work-in-progress", head = sha("d"), locked = false })
+	w.fs.dirs[real] = true
+	local out = openIssueWt(w, worktree, r, "12", "12-fix-login", nil)
+	eq(out.problem, nil, "no 'already exists' error")
+	eq(out.result.path, real, "path: as git lists it")
+	eq(out.result.created, false, "reused")
+	eq(out.result.branch, "work-in-progress", "on its own branch")
+	eq(countLog(r.git, "worktree add"), 0, "no add")
+end)
+
+windowCase("worktree.open: a worktree git lists under the real path of a symlinked worktrees directory is the one at the PR's folder", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s = scene(w, worktree, "o", "r", 5)
+	symlinkedWorktrees(w)
+	local real = "/private/tmp/wt/" .. s.dir
+	table.insert(s.git.worktrees, { path = real, branch = "refs/heads/plotroom/o/r/pr-5", head = sha("d"), locked = false })
+	w.fs.dirs[real] = true
+	local out = openWt(w, worktree, s, nil, nil)
+	eq(out.problem, nil, "no 'already exists' error")
+	eq(out.result.path, real, "path: as git lists it")
+	eq(out.result.created, false, "reused")
+	eq(countLog(s.git, "worktree add"), 0, "no add")
+end)
+
+windowCase("worktree.open: a new worktree in a symlinked worktrees directory is added at its real path", function(w: World)
+	local worktree = w.load("worktree") :: Worktree
+	local s = scene(w, worktree, "o", "r", 5)
+	symlinkedWorktrees(w)
+	local out = openWt(w, worktree, s, nil, nil)
+	eq(out.problem, nil, "problem")
+	eq(out.result.path, "/private/tmp/wt/" .. s.dir, "path")
+	eq(out.result.created, true, "created")
+end)
+
 windowCase("worktree.openIssue: attaches an existing local branch without moving it", function(w: World)
 	local worktree = w.load("worktree") :: Worktree
 	local r = issueRepo(w, "12")
