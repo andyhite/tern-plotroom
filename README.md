@@ -25,8 +25,8 @@ It is not a team tool, a hosted service or a full GitHub or Jira client: GitHub,
 | **Intake** | What work exists? | Views of GitHub searches and Jira JQL, Pins for any item by URL, GitHub notifications in Now |
 | **Triage** | What needs me now? | Now, ranked with why; stages, New and Changed badges, Snooze, checks and reviews in the preview |
 | **Dispatch** | Who does it, and where? | One-key Worktree, actions that start an omp agent in it |
-| **Supervise** | Which agent needs me, and which finished? | Agent states on every item, the Agents list, Message, Interrupt and Stop agent |
-| **Land** | Is it ready? Ship it. | Merge, Approve, Request changes, Update branch, Draft PR, each confirmed first |
+| **Supervise** | Which agent needs me, and which finished? | Agent states on every item, the Agents list, Message, Interrupt and Stop agent; a Draft review block beside an agent that proposed a review: findings you keep, drop or edit, then send back |
+| **Land** | Is it ready? Ship it. | Merge, Approve, Request changes, Update branch, Push empty commit, Re-run failed checks, Draft PR, each confirmed first |
 | **Clean up** | What is finished? | Find finished worktrees and remove them, never forced |
 
 Commands (`.`) lists everything that applies to the selected item:
@@ -40,6 +40,10 @@ Worktrees lists every worktree of your checkouts straight from git, with the ite
 An action starts an agent in the item's worktree. While it works, the item says so, and starting another action on it offers Go to agent first:
 
 ![An agent already works on the selected pull request: Go to agent or Start another agent, above its worktree card](docs/images/agent.png)
+
+When an agent proposes a review, the Draft review block opens beside it. Keep, drop or edit each finding, then send them back to the agent:
+
+![Draft review beside the agent: findings you keep, drop or edit, then Send to agent](docs/images/review.png)
 
 ## Install and first run
 
