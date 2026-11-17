@@ -1106,33 +1106,6 @@ local function newWorld(instantiate: Loader, context: string): World
 			kvStore[key] = jsonEncode(value)
 		end,
 	}
-	-- Most cases drive the queue by the one-key shortcuts Plotroom bound by default before only the command palette had
-	-- a key; a case about the defaults themselves drops them (`w.kv.store.keys = nil :: any`).
-	kvStore.keys = jsonEncode({
-		down = "j",
-		up = "k",
-		left = "h",
-		right = "l",
-		worktree = "w",
-		goto = "g",
-		agent = "a",
-		agentgo = "G",
-		seen = "m",
-		snooze = "z",
-		snoozed = "Z",
-		sort = "o",
-		search = "/",
-		refresh = "r",
-		settings = "s",
-		help = "?",
-		["wt-cleanup"] = "u",
-		["wt-remove"] = "d",
-	})
-	-- The Get started checklist is dismissed, so previews show only the item; a case about it drops this
-	-- (`w.kv.store["get-started"] = nil :: any`).
-	kvStore["get-started"] = jsonEncode({ dismissed = true })
-	-- Summaries are off, so a preview spawns no omp; a case about Summaries drops this (`w.kv.store.summary = nil :: any`).
-	kvStore.summary = jsonEncode({ off = true })
 
 	-- fs: absolute paths only; failures raise. Plotroom's omp extension and its fork overlay are installed
 	-- (tern.plugin.dir below); a case about one missing removes it before the host loads.
@@ -3043,6 +3016,42 @@ local function listPr(w: World, repo: string, n: number)
 end
 M.listPr = listPr
 
+-- What a user who has used Plotroom a while has saved, which most queue cases run on: the one-key shortcuts Plotroom
+-- bound by default before only the command palette had a key, the Get started checklist dismissed (previews show only
+-- the item) and Summaries off (a preview spawns no omp). `newWorld` starts at the factory defaults; the queue scenes
+-- (`hostScene`, `linkQueue`) seed this on top (a store the case saved first is kept), and a case about a default clears its store after the scene
+-- (`w.kv.store.keys = nil :: any`, `w.kv.store["get-started"] = nil :: any`, `w.kv.store.summary = nil :: any`).
+local function seed(w: World, key: string, value: any)
+	if w.kv.store[key] == nil then
+		w.kv.put(key, value)
+	end
+end
+
+function hx.configured(w: World)
+	seed(w, "keys", {
+		down = "j",
+		up = "k",
+		left = "h",
+		right = "l",
+		worktree = "w",
+		goto = "g",
+		agent = "a",
+		agentgo = "G",
+		seen = "m",
+		snooze = "z",
+		snoozed = "Z",
+		sort = "o",
+		search = "/",
+		refresh = "r",
+		settings = "s",
+		help = "?",
+		["wt-cleanup"] = "u",
+		["wt-remove"] = "d",
+	})
+	seed(w, "get-started", { dismissed = true })
+	seed(w, "summary", { off = true })
+end
+
 -- The views most cases run on, saved as a user keeps them: ungrouped and unsorted, so the list is the search's order.
 -- A store the case saved already is kept. Cases about the default views (KINDS seeds) clear them first.
 function hx.fixtureViews(w: World)
@@ -3067,6 +3076,7 @@ end
 -- requests reach its host half, which runs git, gh and omp, and the answers come back.
 local function linkQueue(w: World, s: Scene): Block
 	w.load("host")
+	hx.configured(w)
 	hx.fixtureViews(w)
 	s.gh.items.octocat = { searchItem(s.number, s.repo, EPOCH - 60) }
 	listPr(w, s.repo, s.number)
@@ -3297,6 +3307,7 @@ local function hostScene(w: World, count: number?): HostScene
 	local g = asks.bk.repo(w)
 	local gh = newGh(w)
 	gh.items.octocat = manyItems("o/r", count or 3)
+	hx.configured(w)
 	hx.fixtureViews(w)
 	return { git = g, gh = gh }
 end
@@ -3634,6 +3645,7 @@ local function issueHost(w: World): HostScene
 		issueItem(13, "o/r", EPOCH - 120, { title = "Add dark mode", state = "CLOSED", reason = "NOT_PLANNED" }),
 		issueItem(14, "o/r", EPOCH - 180, { title = "Docs typo", author = "ann", state = "CLOSED", reason = "COMPLETED" }),
 	}
+	hx.configured(w)
 	hx.fixtureViews(w)
 	return { git = g, gh = gh }
 end
@@ -3688,6 +3700,7 @@ local function jiraHost(w: World): JiraScene
 	local g = asks.bk.repo(w)
 	g.served["refs/heads/main"] = sha("b")
 	g.defaultBranch = "main"
+	hx.configured(w)
 	local acli = newAcli(w)
 	acli.searches[JIRA_ASSIGNED] = {
 		jiraItem("ABC-12", "Fix login", {

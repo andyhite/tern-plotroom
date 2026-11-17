@@ -102,6 +102,27 @@ case("host: Get started lists gh, omp, the listed repository without a checkout 
 	eq(w.kv.get("get-started"), "garbage", "and the unreadable store is never written over")
 end)
 
+case("host: a profile with nothing saved opens on the first-run defaults: the checklist shows and a rested row asks omp for a Summary", function(w: World)
+	local s = hostScene(w, 3)
+	fresh(w)
+	w.kv.store.summary = nil :: any
+	s.gh.about["o/r#1"] = { body = "Login fails after a redirect.", files = array({ "src/auth.lua" }), recent = array({}) }
+	local asked = 0
+	w.respond(function(call: h.Call): any
+		if call.argv[1] == "omp" and call.argv[2] == "-p" then
+			asked += 1
+			return { stdout = "Fine." }
+		end
+		return nil
+	end)
+	local b = h.openQueue(w)
+	yes(guide(b) ~= nil, "the checklist shows")
+	eq(asked, 0, "no Summary before the cursor rests")
+	w.advance(1500)
+	w.flush()
+	eq(asked, 1, "Summaries are on: the rested row asks omp once")
+end)
+
 case("host: Get started points to each setup guide while gh is signed out or omp is missing", function(w: World)
 	local s = hostScene(w, 3)
 	fresh(w)

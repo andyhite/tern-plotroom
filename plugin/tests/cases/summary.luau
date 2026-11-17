@@ -15,9 +15,9 @@ local pickerNode, prefsOf, request, answerOf, rowIn, same, searchItem, sha, yes 
 
 local FLAGS = { "omp", "-p", "--no-tools", "--no-session", "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--no-title", "--system-prompt" }
 
--- Summaries on (the harness seeds them off) and every omp call answered by `reply`; the calls, in order.
+-- Every omp call answered by `reply`; the calls, in order. A scene seeds Summaries off, so the case turns them on after it
+-- (`on`).
 local function summaries(w: World, reply: (Call) -> { [string]: any }): { Call }
-	w.kv.store.summary = nil :: any
 	local calls: { Call } = {}
 	w.respond(function(call: Call): any
 		if call.argv[1] == "omp" and call.argv[2] == "-p" then
@@ -45,8 +45,13 @@ local function shown(b: Block): string?
 end
 
 -- PR o/r#1 at head `head` with a description, changed files and comments; and o/r#2.
+local function on(w: World)
+	w.kv.store.summary = nil :: any
+end
+
 local function prScene(w: World, head: string): HostScene
 	local s = hostScene(w, 0)
+	on(w)
 	s.gh.items.octocat = {
 		searchItem(1, "o/r", EPOCH - 60, { title = "Fix login", headSha = head }),
 		searchItem(2, "o/r", EPOCH - 120, { title = "Other", headSha = sha("c") }),
@@ -297,8 +302,8 @@ case("summary: unreadable Summary settings lock their rows and are never written
 	summaries(w, function()
 		return { stdout = "x" }
 	end)
-	w.kv.put("summary", { off = "maybe" })
 	prScene(w, sha("a"))
+	w.kv.put("summary", { off = "maybe" })
 	local b = openQueue(w)
 	goToSettings(b, "general")
 	has(rowIn(b, "summary:on").disabled or "", "malformed", "the switch says why")
@@ -312,6 +317,7 @@ case("summary: a GitHub issue's Summary reads its body and newest comments, cach
 		return { stdout = "An issue about login." }
 	end)
 	local s = issueHost(w)
+	on(w)
 	s.gh.issueDetail["o/r#12"] = {
 		body = "Steps to reproduce.",
 		milestone = h.NULL,
@@ -336,6 +342,7 @@ case("summary: a Jira issue's Summary waits for its details, which carry its upd
 		return { stdout = "A Jira issue." }
 	end)
 	local s = jiraHost(w)
+	on(w)
 	s.acli.views["ABC-12"] = {
 		key = "ABC-12",
 		fields = {
