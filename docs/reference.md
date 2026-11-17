@@ -19,6 +19,8 @@ This is how Plotroom behaves today, step by step through [the loop](../PRODUCT.m
 tern plugin install github.com/andyhite/tern-plotroom/plugin
 ```
 
+Update later with the same command plus `--force`.
+
 Then, from any pane: Tern's palette → **Plotroom › Open** (or press ⌃⌥⇧Q, **Go to Plotroom**). The first time, **Get started** shows above the preview with what is left before an agent can run, one action per line:
 
 1. `gh` installed and signed in to github.com: **Setup guide ↗** while it is not. Plotroom works with github.com only: a GitHub Enterprise host (Server, or Cloud with data residency) has no views, accounts or Open item by URL.
@@ -35,15 +37,20 @@ One Plotroom block holds every saved view in its sidebar: GitHub pull requests a
 
 Settings are shared by every Plotroom block on the host: a change saved in one (a view, an action or Add missing defaults, a repository, its checkout, setup commands or branch format, a Jira project or its repositories, a name format, a key, the Summary settings) shows at once in every other open Plotroom block, its Commands and Settings included.
 
-**What you changed.** Every on/off setting (Now's reasons, team review requests and accounts in Settings › Views › Now; Summaries in Settings › General; an action's Merge the base first) is a switch: a click flips it, and so does Enter on its row. Each Settings page's entry in the nav shows how many things on it differ from the defaults, hidden at zero: on **Views**, Now's switches and Layout off their defaults, each view not identical to the default view of that type and name (its query, group, sort, layout, accounts or actions offered) and each default view deleted; on **Actions**, each action not identical to the default action of that name (its prompt, model, effort, status, Runs in, Opens in, Merge the base first, outcome, next action or checker) and each default action deleted; on **Repositories**, each name format set and each repository's checkout and branch format set; on **General**, each keyboard shortcut off its default, each action's key, the Summary settings and Draft review opens off their defaults. A store that cannot be read counts as its defaults.
+**What you changed.**
+
+- **Switches.** Every on/off setting (Now's reasons, team review requests and accounts in Settings › Views › Now; Summaries in Settings › General; an action's Merge the base first) is a switch: a click flips it, and so does Enter on its row.
+- **Per-page counts.** Each Settings page's entry in the nav shows how many things on it differ from the defaults, hidden at zero.
+- **What is counted.**
+  - **Views:** Now's switches and Layout off their defaults, each view not identical to the default view of that type and name (its query, group, sort, layout, accounts or actions offered) and each default view deleted.
+  - **Actions:** each action not identical to the default action of that name (its prompt, model, effort, status, Runs in, Opens in, Merge the base first, outcome, next action or checker) and each default action deleted.
+  - **Repositories:** each name format set and each repository's checkout and branch format set.
+  - **General:** each keyboard shortcut off its default, each action's key, the Summary settings and Draft review opens off their defaults.
+  - A store that cannot be read counts as its defaults.
 
 The Files pane's **Open Plotroom** header button opens the same block beside the focused pane, starting in the folder Files shows. If that folder belongs to another host, focus a pane on that host first; Plotroom never interprets one host's path on another.
 
-Update later with the same command plus `--force`.
-
 **Start over.** Settings › General › Reset › **Reset all settings** clears every saved setting on the block's host, as if Plotroom were freshly installed: the views (the default views come back), the actions (the default actions come back), the keyboard shortcuts, the repositories with their checkouts, branch formats and setup commands, the Jira projects' repositories, the branch and folder name formats, Now's switches, the Summary settings, where a Draft review opens, Get started (the checklist shows again) and the ignored checks. It keeps work state: triage (seen and snoozed items), usage counts, the run log, agent links and the Summaries made. It asks first in the block (see Trust › Every confirm); every open Plotroom block shows the defaults at once. A store that could not be read or is malformed is cleared too, so this is the way out of a corrupted one. A setting that cannot be cleared is named under the row; the others are cleared all the same.
-
-**From the separate Issues block.** There is no *Open Issues* command any more: Plotroom › Open is the one entry point and shows issue views too. Tern has no way to convert a pane, so a pane of the old Issues block does not work in the new version: close it and open Plotroom once. A pane of the old PR block reopens as it was. Your saved views and prompts are not touched: the new block reads them where they are.
 
 **Remote hosts.** A Plotroom pane on a remote host works like a local one: the queue, worktrees and agents run on that host, with its `gh`, `git`, `omp`, checkouts and saved settings. Install Plotroom on both machines (the command above, run on each); plugins are not updated or synchronized automatically. The plugin's version is its release (see CHANGELOG.md); the protocol its window and host speak is separate. A window works with a host one protocol older, so updating one machine first is fine: actions the older host knows run as usual, and an action it does not know is refused at once with a toast saying to install the current Plotroom on that host. A host outside that range is another version: with Tern's status bar enabled, a focused Plotroom pane shows **Plotroom on <host> is a different version from this window's**, and host-backed actions are refused with a toast naming the host. The local window checks on focus and every two seconds while Plotroom stays focused, so the warning clears when the host is updated. A missing marker while the block loads shows no warning.
 

@@ -4,6 +4,9 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ## [Unreleased]
 
+### Changed
+- Migrating from the separate Issues block: there is no *Open Issues* command; Plotroom › Open is the one entry point and shows issue views too. Tern cannot convert a pane, so close a pane of the old Issues block and open Plotroom once; a pane of the old PR block reopens as it was, and saved views and prompts are untouched. docs/reference.md Setup reordered (xvc8).
+
 ### Documented
 - Tools download and smoke support macOS and Linux x86_64 only; README and check.py say what to set elsewhere (h5x5).
 
