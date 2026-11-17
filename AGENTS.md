@@ -53,11 +53,13 @@ tern plugin link ./plugin          # install for local use
 python3 scripts/check.py tools     # download pinned luau 0.743 + luau-lsp 1.70.1 (macOS / Linux x86_64)
 python3 scripts/check.py           # all: test + types + bench + ext + smoke
 python3 scripts/check.py test      # regression suite only (also: types | bench | ext | smoke)
-python3 scripts/check.py --ci      # what CI runs: smoke reported NOT RUN
+python3 scripts/check.py --ci      # what CI runs (ubuntu + macOS x Python 3.9 + 3.13): smoke reported NOT RUN
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
 
 Tool lookup order: env `LUAU`/`LUAU_LSP`/`TERN` → `~/.cache/plotroom-check/` (`$XDG_CACHE_HOME`) → PATH. Missing tool = failure, not skip. `PLOTROOM_BENCH_BUDGET_MS` (default 25) caps the slowest bench row, and the `BENCH payload` row must stay under 600000 bytes. `types` fails on **any** luau-lsp diagnostic, warnings included, over `plugin/**/*.luau`.
+
+CI never runs smoke (no Tern there), so a green CI is not a full pass: before merging, run `python3 scripts/check.py` locally with Tern installed and make sure the smoke stage passed. Real-Tern-only failures (a CSS rule Tern rejects, SDK drift, real git or `omp worktree add` behavior) are caught only there.
 
 ## Code Conventions & Common Patterns
 

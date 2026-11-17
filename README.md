@@ -81,7 +81,7 @@ python3 scripts/check.py           # test · types · bench · smoke
 | `plugin/triage.luau` · `sorting.luau` · `board.luau` | seen/snooze memory, per-view sorts, the Worktrees model |
 | `plugin/github.luau` · `jira.luau` · `tracker.luau` · `worktree.luau` · `process.luau` · `input.luau` · `keys.luau` · `prompts.luau` | `gh` search and writes, Jira through `acli`, tracker-neutral issues and name formats, worktrees and their inventory, argv process runner, text input (one line or many), the queue's rebindable keys, the default prompts |
 | `plugin/tests/` | `regression.luau` (runner), `harness.luau` (fake SDK, helpers), `cases/` (one file per area), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
-| `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` (no smoke, Tern is not available there). `smoke.py` runs on installed Tern 0.9.13+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
+| `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` on Linux and macOS under Python 3.9 and 3.13, with no smoke (Tern is not available there), so a merge needs a local `python3 scripts/check.py` smoke pass. `smoke.py` runs on installed Tern 0.9.13+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
 
 `link` and `install` are exclusive per id: switch with `tern plugin remove plotroom` / `tern plugin unlink plotroom` first.
 
