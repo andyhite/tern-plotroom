@@ -21,7 +21,8 @@ bench   renders the real queue view with 1000 PRs and fails above PLOTROOM_BENCH
 ext     plugin/tests/extension.ts, run by bun (else node >= 23.6, which strips types): the omp extension's two tools
         over the fixtures it shares with its Luau readers (plugin/tests/extension.luau; the `test` stage reads them
         back in Luau). NOT RUN when neither runtime is on PATH.
-smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; see its docstring.
+smoke   scripts/smoke.py: `tern serve` headless on temporary directories, real git; its docstring lists the scenarios (SCENARIOS) and env vars
+        (TERN, PLOTROOM_SMOKE_SHOTS).
 
 Tools: LUAU, LUAU_LSP, TERN (paths) -> the cache below -> PATH. `tools` is the only network access.
 Pinned: Luau 0.743 (its binary's sha256 is checked on every run: the Luau CLI has no --version), luau-lsp 1.70.1, Tern 0.9.13 SDK (stencil-hq/tern-sdk 0479f70, the minimum supported Tern).

@@ -2,14 +2,15 @@
 
     python3 scripts/check.py smoke      isolated headless Tern + real git only
 
-smoke   `tern serve` headless on temporary directories only (never the live daemon or plugin registry):
-        the selftest toast, no stylesheet errors in the log, real-git worktree scenarios driven
-        through plugin.plotroom.smoke (plugin/tests/runtime.luau: open, open an issue's, remote branches, scan)
-        with a fake gh on PATH, and a Plotroom block on an attached loopback host that shows a worktree made
-        before it (read from git), then makes its worktree through the real link flow. Last, setup_wait: a second `tern serve` under zsh
-        (shell integration) starts an agent on a new worktree once its setup command finishes, and one on another once its setup fails,
-        with the setup toast the one on screen.
-Smoke prerequisites: Tern >= 0.9.13, the minimum supported (TERN=/path or PATH; the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
+smoke   `tern serve` headless on temporary directories only (never the live daemon or plugin registry): the selftest toast, no
+        stylesheet errors in the log, then every scenario in SCENARIOS (near the end of this file: worktree creation and reuse,
+        draft push, Boards, keys, arrival ring, prompts and others), driven through plugin.plotroom.smoke
+        (plugin/tests/runtime.luau) and real Plotroom blocks, with a fake gh on PATH. Last, setup_wait: a second `tern serve` under
+        zsh (shell integration) starts agents once a worktree's setup command finishes or fails.
+Environment: TERN=/path to the tern binary (else PATH); PLOTROOM_SMOKE_SHOTS=<dir> makes Tern write the scenarios' screenshots there
+        (README's images are cropped from them); PLOTROOM_SMOKE_OMP is set by smoke itself (the fake omp agents start under
+        PLOTROOM_SELFTEST=1), not by the caller.
+Smoke prerequisites: Tern >= 0.9.13, the minimum supported (the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
 lives under one temporary directory that is deleted afterwards.
 
