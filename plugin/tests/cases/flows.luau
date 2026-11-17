@@ -4333,7 +4333,6 @@ case("host open-url: another site's URL, garbage, an item that is not found and 
 		"",
 		"https://evil.com/o/r/pull/1",
 		"https://github.com.evil.com/o/r/pull/1",
-		"http://github.com/o/r/pull/1",
 		"https://github.com/o/r/commit/1",
 		"https://acme.atlassian.net/wiki/x",
 	} do

@@ -22,11 +22,15 @@ case("github.parseItemUrl: only https github.com pull and issues links, a query,
 	eq(brief(github.parseItemUrl("https://github.com/o/r/issues/7")), "issue:o/r:7", "issue")
 	eq(brief(github.parseItemUrl("https://github.com/o/r/pull/5/")), "pr:o/r:5", "trailing slash")
 	eq(brief(github.parseItemUrl("https://github.com/o/r/pull/5?diff=split#discussion_r1")), "pr:o/r:5", "query and fragment")
+	eq(brief(github.parseItemUrl("https://github.com/o/r/pull/5/files")), "pr:o/r:5", "files tab")
+	eq(brief(github.parseItemUrl("https://github.com/o/r/pull/5/commits/abc123")), "pr:o/r:5", "commit page")
+	eq(brief(github.parseItemUrl("https://github.com/o/r/pull/5/checks")), "pr:o/r:5", "checks tab")
+	eq(brief(github.parseItemUrl("http://www.github.com/o/r/issues/7")), "issue:o/r:7", "http and www")
 	for _, url in {
-		"http://github.com/o/r/pull/5",
+		"https://github.com/o/r/pull/5x",
 		"https://github.com/o/r/pulls/5",
 		"https://github.com/o/r/pull/0",
-		"https://github.com/o/r/pull/5/files",
+		"https://github.com/o/r/pull/5.5",
 		"https://github.com/o/r/pull/99999999999",
 		"https://github.com/o/r/commit/5",
 		"https://github.com/o/../pull/5",

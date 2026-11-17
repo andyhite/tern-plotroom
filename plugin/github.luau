@@ -2371,7 +2371,12 @@ function M.parseItemUrl(url: any): { kind: string, repo: string, number: number 
 		return nil
 	end
 	local clean = string.gsub(string.match(url, "^[^?#]*") or "", "/$", "")
-	local o, r, k, n = string.match(clean, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/(%a+)/(%d+)$")
+	clean = string.gsub(clean, "^https?://www%.github%.com/", "https://github.com/")
+	clean = string.gsub(clean, "^http://github%.com/", "https://github.com/")
+	local o, r, k, n, rest = string.match(clean, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/(%a+)/(%d+)(.*)$")
+	if rest ~= nil and rest ~= "" and string.sub(rest, 1, 1) ~= "/" then
+		return nil
+	end
 	local num = tonumber(n)
 	if not o or not r or o == "." or o == ".." or r == "." or r == ".." or (k ~= "pull" and k ~= "issues") or not num or not whole32(num) then
 		return nil
