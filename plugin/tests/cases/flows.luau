@@ -1615,30 +1615,21 @@ windowCase("window flows: the status report stays under the host's 40000-byte ca
 	eq(statusEvents(w)[1].map["o/r#100"].state, "idle", "every agent still has its state")
 end)
 
-windowCase("window flows: palette commands send plain events, and the command palette lists, in its groups, the typed prompt, the saved actions, the queue's actions and only the commands the host says apply", function(w: World)
+type PaletteCtx = { queue: { any }, commands: { { id: string, group: string? } } }
+
+-- The window with a flow host, and the command palette in three situations: what the host says applies with no item selected, with a GitHub issue selected, and a list naming every group.
+local function paletteScene(w: World)
 	w.load("window")
 	local st = flowHost(w)
 	local function last(): any
 		return w.window.events[#w.window.events].ev
 	end
-	local rows: { any } = {
-		{ "mark-seen", "triage", "seen" },
-		{ "snooze", "triage", "snooze" },
-		{ "toggle-snoozed", "triage", "toggle-snoozed" },
-		{ "sort", "sort", "next" },
-		{ "worktrees-open", "open-worktrees" },
-	}
-	for _, row in rows do
-		w.command(row[1])
-		same(last(), { ev = "action", act = row[2], value = row[3] }, row[1])
-	end
-	-- What the host says applies with no item selected, and with a GitHub issue selected.
 	local views = { id = "scope:worktrees", label = "Worktrees", key = "", group = "Views", detail = "Worktrees" }
-	local nothing: { queue: { any }, commands: { { id: string, group: string? } } } = {
+	local nothing: PaletteCtx = {
 		queue = { { id = "snoozed", label = "Show or hide snoozed", key = "", group = "Filter & Sort" }, views, { id = "settings", label = "Settings", key = "", group = "Configuration" } },
 		commands = { { id = "open-url" }, { id = "worktrees-open" } },
 	}
-	local issue: { queue: { any }, commands: { { id: string, group: string? } } } = {
+	local issue: PaletteCtx = {
 		queue = {
 			{ id = "open", label = "Open", key = "", group = "GitHub - Issue" },
 			{ id = "seen", label = "Mark seen", key = "m", group = "Triage" },
@@ -1654,43 +1645,7 @@ windowCase("window flows: palette commands send plain events, and the command pa
 			{ id = "draft-pr", group = "GitHub - Issue" },
 		},
 	}
-	-- Publishes `ctx` as the block's palette and opens it: what it lists, by label, and the pick.
-	local function palette(choose: string?, ctx: any): ({ string }, any)
-		st.palette({
-			items = { { id = "p1", label = "Review", detail = "Review {url}", key = "e", worktree = true } },
-			queue = ctx.queue,
-			commands = ctx.commands,
-		})
-		w.window.choose = choose
-		local picks = #w.window.picks
-		w.click(h.tokened("plotroom://more"))
-		w.flush()
-		local pick = w.window.picks[picks + 1]
-		return flowRows(pick), pick
-	end
-	local listed, pick = palette(nil, nothing)
-	same(listed, { "Show or hide snoozed", "Worktrees", "Open item by URL…", "Settings" }, "with no item selected: what needs none, in the group order, the queue's actions before the commands of their group; Worktrees is the Views scope, not a command of its own")
-	eq(pick.items[1].group, "Filter & Sort", "the view's action under Filter & Sort")
-	eq(pick.items[2].group, "Views", "a scope under Views")
-	eq(pick.items[2].detail, "Worktrees", "naming the sidebar group it sits under")
-	eq(pick.items[3].group, "Views", "and Open item by URL with it")
-	st.link("layer.queue.buttons.agent", prLink("agent", "o/r", 5))
-	st.link("layer.queue.buttons.prompt-p1", runLink("o/r", 5, "p1"))
-	listed, pick = palette(nil, issue)
-	same(listed, { "Type a prompt…", "Review", "Go to agent", "Open", "Assign to me", "Comment…", "Close issue…", "Draft PR…", "Mark seen", "Worktrees", "Open item by URL…", "Settings" }, "with an item selected: Actions first (typed prompt, actions, Go to agent), then its type's operations (Draft PR among them), Triage, Views and Configuration, and nothing the host did not name")
-	eq(table.find(listed, "Agent picker"), nil, "there is no agent picker row")
-	eq(table.find(listed, "Re-run failed checks"), nil, "nor a re-run without a failed run")
-	local byLabel: { [string]: any } = {}
-	for _, row in pick.items do
-		byLabel[row.label] = row
-	end
-	eq(byLabel["Open"].group, "GitHub - Issue", "Open carries the item's type")
-	eq(byLabel["Mark seen"].group, "Triage", "marking seen is Triage")
-	eq(byLabel["Type a prompt…"].group, "Actions", "the typed prompt is under Actions")
-	eq(byLabel["Go to agent"].group, "Actions", "Go to agent is too")
-	eq(byLabel["Assign to me"].group, "GitHub - Issue", "the host's group for an issue operation")
-	eq(byLabel["Draft PR…"].group, "GitHub - Issue", "draft creation belongs to the selected issue")
-	local every: { queue: { any }, commands: { { id: string, group: string? } } } = {
+	local every: PaletteCtx = {
 		queue = { { id = "extra", label = "Extra", key = "", group = "Elsewhere" } },
 		commands = {
 			{ id = "rerun-failed", group = "GitHub - PR" },
@@ -1709,31 +1664,140 @@ windowCase("window flows: palette commands send plain events, and the command pa
 			{ id = "no-such-command" },
 		},
 	}
-	listed = palette(nil, every)
+	-- Publishes `ctx` as the block's palette and opens it: what it lists, by label, and the pick.
+	local function palette(choose: string?, ctx: PaletteCtx): ({ string }, any)
+		st.palette({
+			items = { { id = "p1", label = "Review", detail = "Review {url}", key = "e", worktree = true } },
+			queue = ctx.queue,
+			commands = ctx.commands,
+		})
+		w.window.choose = choose
+		local picks = #w.window.picks
+		w.click(h.tokened("plotroom://more"))
+		w.flush()
+		local pick = w.window.picks[picks + 1]
+		return flowRows(pick), pick
+	end
+	-- Selects pull request 5 of o/r with a saved action p1 in the block.
+	local function selectItem()
+		st.link("layer.queue.buttons.agent", prLink("agent", "o/r", 5))
+		st.link("layer.queue.buttons.prompt-p1", runLink("o/r", 5, "p1"))
+	end
+	return {
+		st = st,
+		last = last,
+		palette = palette,
+		selectItem = selectItem,
+		nothing = nothing,
+		issue = issue,
+		every = every,
+	}
+end
+
+windowCase("window flows: palette commands send plain events", function(w: World)
+	w.load("window")
+	flowHost(w)
+	local rows: { any } = {
+		{ "mark-seen", "triage", "seen" },
+		{ "snooze", "triage", "snooze" },
+		{ "toggle-snoozed", "triage", "toggle-snoozed" },
+		{ "sort", "sort", "next" },
+		{ "worktrees-open", "open-worktrees" },
+	}
+	for _, row in rows do
+		w.command(row[1])
+		same(w.window.events[#w.window.events].ev, { ev = "action", act = row[2], value = row[3] }, row[1])
+	end
+	w.flush()
+end)
+
+windowCase("window flows: the command palette with no item selected lists only what needs none, in the group order", function(w: World)
+	local p = paletteScene(w)
+	local listed, pick = p.palette(nil, p.nothing)
+	same(listed, { "Show or hide snoozed", "Worktrees", "Open item by URL…", "Settings" }, "with no item selected: what needs none, in the group order, the queue's actions before the commands of their group; Worktrees is the Views scope, not a command of its own")
+	eq(pick.items[1].group, "Filter & Sort", "the view's action under Filter & Sort")
+	eq(pick.items[2].group, "Views", "a scope under Views")
+	eq(pick.items[2].detail, "Worktrees", "naming the sidebar group it sits under")
+	eq(pick.items[3].group, "Views", "and Open item by URL with it")
+end)
+
+windowCase("window flows: the command palette with an item selected lists, in its groups, the typed prompt, the saved actions and the item's operations", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	local listed, pick = p.palette(nil, p.issue)
+	same(listed, { "Type a prompt…", "Review", "Go to agent", "Open", "Assign to me", "Comment…", "Close issue…", "Draft PR…", "Mark seen", "Worktrees", "Open item by URL…", "Settings" }, "with an item selected: Actions first (typed prompt, actions, Go to agent), then its type's operations (Draft PR among them), Triage, Views and Configuration, and nothing the host did not name")
+	eq(table.find(listed, "Agent picker"), nil, "there is no agent picker row")
+	eq(table.find(listed, "Re-run failed checks"), nil, "nor a re-run without a failed run")
+	local byLabel: { [string]: any } = {}
+	for _, row in pick.items do
+		byLabel[row.label] = row
+	end
+	eq(byLabel["Open"].group, "GitHub - Issue", "Open carries the item's type")
+	eq(byLabel["Mark seen"].group, "Triage", "marking seen is Triage")
+	eq(byLabel["Type a prompt…"].group, "Actions", "the typed prompt is under Actions")
+	eq(byLabel["Go to agent"].group, "Actions", "Go to agent is too")
+	eq(byLabel["Assign to me"].group, "GitHub - Issue", "the host's group for an issue operation")
+	eq(byLabel["Draft PR…"].group, "GitHub - Issue", "draft creation belongs to the selected issue")
+end)
+
+windowCase("window flows: the command palette puts every group in its place and never lists a keyed command or an unknown id", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	local listed = p.palette(nil, p.every)
 	same(listed, { "Type a prompt…", "Review", "Comment…", "Ready for review…", "Merge…", "Approve…", "Request changes…", "Update branch…", "Push empty commit…", "Re-run failed checks", "Draft PR…", "Open item by URL…", "Copy usage report", "Extra" }, "every group in its place: Saved actions, Jira - Issue, GitHub - PR, GitHub - Issue, Views, Configuration, then one the window does not know; a keyed command and an unknown id are never listed")
-	palette("Mark seen", issue)
-	same(last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
-	palette("Assign to me", issue)
-	eq(st.ops()[#st.ops()], "act", "an item command runs its flow")
-	palette("Comment…", issue)
-	local composeAsk = st.compose("  Looks good to me  ")
+end)
+
+windowCase("window flows: a palette queue action is sent back as the block's queue action", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	p.palette("Mark seen", p.issue)
+	same(p.last(), { ev = "action", act = "queue", value = "seen" }, "a queue action is sent back as the block's queue action")
+end)
+
+windowCase("window flows: a palette item command runs its flow", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	p.palette("Assign to me", p.issue)
+	eq(p.st.ops()[#p.st.ops()], "act", "an item command runs its flow")
+end)
+
+windowCase("window flows: the palette's Comment asks the block for text and then the host for a comment", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	p.palette("Comment…", p.issue)
+	local composeAsk = p.st.compose("  Looks good to me  ")
 	eq(composeAsk.item, true, "Comment asks the block for text about its selected item")
 	local commentAsk = requestsSent(w)[#requestsSent(w)]
 	eq(commentAsk.op, "act", "Comment then asks the host")
 	eq(commentAsk.name, "comment", "for a comment")
 	eq(commentAsk.text, "Looks good to me", "with the written text, trimmed")
-	palette("Review", issue)
-	eq(st.ops()[#st.ops()], "menu", "a saved action runs through its hidden link: the host is asked for it")
+end)
+
+windowCase("window flows: a saved action picked from the palette runs through its hidden link, asking the host for just that one", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	p.palette("Review", p.issue)
+	eq(p.st.ops()[#p.st.ops()], "menu", "a saved action runs through its hidden link: the host is asked for it")
 	eq(requestsSent(w)[#requestsSent(w)].only, "p1", "just that one")
-	st.reply("menu", { items = {} })
-	palette("Type a prompt…", issue)
-	st.compose("Fix the flaky test")
-	local wt = st.reply("worktree", { path = "/wt/five", summary = "Created", created = true, current = true })
+	p.st.reply("menu", { items = {} })
+end)
+
+windowCase("window flows: a typed prompt picked from the palette prepares the selected item's worktree, with no agent picker", function(w: World)
+	local p = paletteScene(w)
+	p.selectItem()
+	p.palette("Type a prompt…", p.issue)
+	p.st.compose("Fix the flaky test")
+	local wt = p.st.reply("worktree", { path = "/wt/five", summary = "Created", created = true, current = true })
 	eq(wt.number, 5, "a typed prompt prepares the selected item's worktree, with no agent picker")
+end)
+
+windowCase("window flows: the palette's link is refused when the block does not carry it", function(w: World)
+	paletteScene(w)
 	local said = #w.toasts
 	w.window.surfaces[1] = { main = { id = "main", c = { { id = "main.rpc", p = { text = asks.protocol } } } } }
 	w.click("plotroom://more")
 	eq(w.toasts[said + 1].level, "error", "a link the block does not carry is refused")
+	w.flush()
 end)
 
 windowCase("window flows: Move to status picks one of the host's statuses or types another, and asks the host to plan it", function(w: World)

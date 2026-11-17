@@ -1662,11 +1662,26 @@ local function acliOption(argv: { string }, name: string): string?
 	return nil
 end
 
-case("jira.issues: one search of the view's query, highest priority then newest update first, normalized", function(w: World)
+-- A Jira search through acli: the module, a fake acli, the view's query and the JQL it is wrapped into.
+local function jiraSearch(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)
 	local query = "assignee = currentUser() AND statusCategory != Done"
 	local jql = "(" .. query .. ") ORDER BY priority DESC, updated DESC"
+	return jira, acli, query, jql
+end
+
+-- `count` work items, ABC-1 to ABC-<count>.
+local function jiraItems(count: number): { any }
+	local items: { any } = {}
+	for i = 1, count do
+		table.insert(items, jiraItem("ABC-" .. i, "Issue " .. i))
+	end
+	return items
+end
+
+case("jira.issues: one search of the view's query, highest priority then newest update first, normalized", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
 	acli.searches[jql] = {
 		jiraItem("ABC-12", "Fix login", {
 			status = { name = "In Progress", statusCategory = { key = "indeterminate" } },
@@ -1718,7 +1733,10 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(second.state, "closed", "a done category is closed")
 	same(second.status, { text = "Done", tone = "success" }, "status")
 	same(second.assignees, {}, "a null assignee is none")
-	-- an empty search prints [null], [] or null
+end)
+
+case("jira.issues: an empty search prints [null], [] or null, and an update notice before the JSON and a null element inside it are skipped", function(w: World)
+	local jira, acli, query = jiraSearch(w)
 	for i, text in { "[\n  null\n]\n", "[]\n", "null\n" } do
 		acli.override = function(req: AcliReq): Reply?
 			if req.kind == "count" then
@@ -1732,7 +1750,6 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 		eq(none.result.total, 0, "empty form " .. i .. ": total")
 		eq(none.result.complete, true, "empty form " .. i .. ": complete")
 	end
-	-- an update notice before the JSON and a null element inside it are skipped
 	acli.override = function(req: AcliReq): Reply?
 		return if req.kind == "search" then { stdout = "You're using an outdated version 1.3.36-stable. Update to the latest version 1.3.39-stable.\n[null," .. jsonEncode(jiraItem("ABC-5", "Five")) .. "]" } else nil
 	end
@@ -1740,33 +1757,34 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(noticed.problem, nil, "problem")
 	eq(#noticed.result.issues, 1, "the notice and the null are skipped")
 	eq(noticed.result.issues[1].ref, "ABC-5", "the work item")
-	-- exactly one page is complete: the count says there is no more
-	acli.override = nil
-	local many: { any } = {}
-	for i = 1, 100 do
-		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
-	end
-	acli.searches[jql] = many
+end)
+
+case("jira.issues: exactly one page is complete, because the count says there is no more", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(100)
 	local full = runJira(w, jira, query, nil)
 	eq(#full.result.issues, 100, "a full page")
 	eq(full.result.total, 100, "total from the count")
 	eq(full.result.complete, true, "exactly 100 is complete")
 	eq(full.result.issues[1].ref, "ABC-1", "acli's order is kept")
 	eq(full.result.issues[100].ref, "ABC-100", "to the last item")
-	-- a count within LIMIT paginates (acli ignores --limit then, so only a list that fits is fetched this way)
-	for i = 101, 900 do
-		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
-	end
+end)
+
+-- acli ignores --limit when it paginates, so only a list that fits is fetched this way.
+case("jira.issues: a count within the limit paginates and returns all of the list", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(900)
 	local mid = runJira(w, jira, query, nil)
 	local midArgv = acli.requests[#acli.requests].argv
 	eq(acliOption(midArgv, "--limit"), "1000", "up to 1000")
 	yes(table.find(midArgv, "--paginate"), "paginated")
 	eq(#mid.result.issues, 900, "all of them")
 	eq(mid.result.complete, true, "and complete")
-	-- more than LIMIT is one page, never a download of everything
-	for i = 901, 1200 do
-		table.insert(many, jiraItem("ABC-" .. i, "Issue " .. i))
-	end
+end)
+
+case("jira.issues: more than the limit is one page and partial, never a download of everything", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(1200)
 	local big = runJira(w, jira, query, nil)
 	local bigArgv = acli.requests[#acli.requests].argv
 	eq(acliOption(bigArgv, "--limit"), "100", "one page")
@@ -1774,22 +1792,35 @@ case("jira.issues: one search of the view's query, highest priority then newest 
 	eq(#big.result.issues, 100, "a page")
 	eq(big.result.total, 1200, "total from the count")
 	eq(big.result.complete, false, "more than 1000 is partial")
-	-- a failed count keeps the single page: a full page is not known to be complete
+end)
+
+case("jira.issues: a failed count keeps the single page, and a full page without a count is partial", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(100)
 	acli.override = function(req: AcliReq): Reply?
 		return if req.kind == "count" then { status = 1, stderr = "✗ Error: boom\n" } else nil
 	end
 	local blind = runJira(w, jira, query, nil)
 	eq(#blind.result.issues, 100, "one page")
 	eq(blind.result.complete, false, "a full page without a count may have more")
-	-- a count that disagrees with a full list (an issue created between the two calls) is partial
+end)
+
+case("jira.issues: a count that disagrees with a full list is partial", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(100)
+	-- an issue created between the two calls
 	acli.override = function(req: AcliReq): Reply?
 		return if req.kind == "count" then { stdout = "✓ Number of work items in the search: 98\n" } else nil
 	end
 	local stale = runJira(w, jira, query, nil)
 	eq(#stale.result.issues, 100, "the full page")
 	eq(stale.result.complete, false, "a count of 98 under a full page is partial")
-	acli.override = nil
-	-- the site is read once per sign-in
+end)
+
+case("jira.issues: the site is read once per sign-in, and reset forgets it", function(w: World)
+	local jira, acli, query, jql = jiraSearch(w)
+	acli.searches[jql] = jiraItems(1)
+	runJira(w, jira, query, nil)
 	eq(acliCount(acli, "auth"), 1, "the site is asked for once")
 	jira.reset()
 	runJira(w, jira, query, nil)

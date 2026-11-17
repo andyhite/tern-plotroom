@@ -3157,7 +3157,8 @@ case("host: the branch format rejects unknown variables and saves per repository
 	w.flush()
 end)
 
-case("host: issue prompts are separate from PR prompts, each kind's on the Prompts page and offered under its own filters, and they carry where they run", function(w: World)
+-- An issue host with PR prompts (p1) and issue prompts (p1 to p3) saved, the queue open on issues, and `menu()`: the rows the block answers a menu request with.
+local function promptsScene(w: World)
 	issueHost(w)
 	savePrompts(w, { promptOf("p1", "PR only", "Review {url}") })
 	saveIssuePrompts(w, {
@@ -3167,25 +3168,35 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	})
 	local b = openIssues(w)
 	local asked = 0
-	-- The rows the block answers a menu request with.
 	local function menu(): { any }
 		asked += 1
 		request(b, "m" .. asked, { op = "menu" })
 		w.flush()
 		return answerOf(b, "m" .. asked).items
 	end
+	return b, menu
+end
+
+case("host: an issue filter offers the issue prompts, each saying where it runs and its key", function(w: World)
+	local _, menu = promptsScene(w)
 	same(menu(), {
 		{ id = "p1", label = "Triage", detail = "Triage https://github.com/o/r/issues/12", group = "All actions", send = "Triage {url}", worktree = true, key = "t" } :: any,
 		{ id = "p2", label = "Notes", detail = "Summarise Fix login", group = "All actions", send = "Summarise {title}", worktree = false },
 		{ id = "p3", label = "Old", detail = "Old https://github.com/o/r/issues/12", group = "All actions", send = "Old {url}", worktree = true },
 	}, "an issue filter offers the issue prompts, each saying where it runs and its key; one saved without the field runs in a worktree")
+end)
+
+case("host: a pull request filter offers the pull request prompts, saying where each runs too", function(w: World)
+	local b, menu = promptsScene(w)
 	pickScope(b, "prs:v1")
 	w.flush()
 	same(menu(), {
 		{ id = "p1", label = "PR only", group = "All actions", send = "Review {url}", worktree = true },
 	}, "a pull request filter offers the pull request prompts, saying where each runs too: both stores have a p1")
-	pickScope(b, "issues:v1")
-	w.flush()
+end)
+
+case("host: the Prompts page lists both kinds' prompts in a section each, the pull request prompts first, each with its Add row", function(w: World)
+	local b = promptsScene(w)
 	goToSettings(b, "prompts")
 	local order: { string } = {}
 	for _, section in prefsOf(b).sections do
@@ -3199,6 +3210,12 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 		end
 	end
 	same(listed, { "popen:prs:p1", "padd:prs", "prestore:prs", "popen:issues:p1", "popen:issues:p2", "popen:issues:p3", "padd:issues", "prestore:issues" }, "each kind's prompts are summary rows with the kind's Add row, then Add missing defaults (none of these is named like a default), last")
+	w.flush()
+end)
+
+case("host: an open issue prompt takes over its kind's card with Done and Delete, then the prompt's fields", function(w: World)
+	local b = promptsScene(w)
+	goToSettings(b, "prompts")
 	expand(b, "popen:issues:p1")
 	local ids: { string } = {}
 	for _, section in prefsOf(b).sections do
@@ -3210,6 +3227,13 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	end
 	same(ids, { "popen:issues:p1", "pdelete:issues:p1", "pname:issues:p1", "ptext:issues:p1", "pmodel:issues:p1", "peffort:issues:p1", "pstatus:issues:p1", "pwhere:issues:p1", "psplit:issues:p1", "poutcome:issues:p1", "pnext:issues:p1", "pchecker:issues:p1" }, "an open prompt first in its kind takes over the kind's card: Done and Delete, then Move to status, Runs in and Opens in after the model and effort, its outcome, its next action and its checker")
 	eq(sectionIn(b, "popen:issues:p1").title, "Issue actions", "keeping the kind's title")
+	w.flush()
+end)
+
+case("host: an issue prompt's Runs in is a Worktree / Checkout choice, on the worktree unless saved to run in the main checkout", function(w: World)
+	local b = promptsScene(w)
+	goToSettings(b, "prompts")
+	expand(b, "popen:issues:p1")
 	local where = rowIn(b, "pwhere:issues:p1")
 	eq(where.label, "Runs in", "label")
 	eq(where.control.k, "choice", "a choice")
@@ -3220,6 +3244,12 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	eq(rowIn(b, "pwhere:issues:p2").control.value, "checkout", "the main checkout for one that runs there")
 	expand(b, "popen:issues:p3")
 	eq(rowIn(b, "pwhere:issues:p3").control.value, "worktree", "and the worktree for one saved without the field")
+	w.flush()
+end)
+
+case("host: choosing where an issue prompt runs saves it, Enter cycles the segments, and the PR prompts are untouched", function(w: World)
+	local b, menu = promptsScene(w)
+	goToSettings(b, "prompts")
 	expand(b, "popen:issues:p1")
 	local function choose(id: string, value: string)
 		b.event({ ev = "change", id = "layer.settings", item = "pwhere:issues:" .. id, value = value })
@@ -3239,32 +3269,46 @@ case("host: issue prompts are separate from PR prompts, each kind's on the Promp
 	eq(w.kv.get("prompts-issues").items[2].worktree, true, "the worktree again")
 	eq(w.kv.get("prompts-issues").items[1].name, "Triage", "the rest of the prompt is kept")
 	eq(w.kv.get("prompts-prs").items[1].worktree, nil, "the PR prompts are untouched")
+end)
+
+case("host: Add prompt saves a new prompt with its own kind's prompts, an issue one in a worktree", function(w: World)
+	local b = promptsScene(w)
+	goToSettings(b, "prompts")
 	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:issues" })
 	local saved = w.kv.get("prompts-issues")
 	eq(#saved.items, 4, "Add prompt on the issue side saves a new one with the issue prompts")
 	eq(saved.items[4].worktree, true, "that runs in a worktree")
 	eq(#w.kv.get("prompts-prs").items, 1, "and none with the PR prompts")
 	b.press("escape")
+	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
+	eq(#w.kv.get("prompts-prs").items, 2, "Add prompt on the pull request side saves one with the PR prompts")
+	eq(#w.kv.get("prompts-issues").items, 4, "and none with the issue prompts")
+	w.flush()
+end)
+
+case("host: a PR prompt opens in a tab until told otherwise, and Beside the queue saves split and shows in the PR filter's menu", function(w: World)
+	local b, menu = promptsScene(w)
+	goToSettings(b, "prompts")
 	expand(b, "popen:prs:p1")
 	eq(rowIn(b, "psplit:prs:p1").control.value, "tab", "a PR prompt on the same page opens in a tab of its own until told otherwise")
 	b.event({ ev = "change", id = "layer.settings", item = "psplit:prs:p1", value = "split" })
 	eq(w.kv.get("prompts-prs").items[1].split, true, "the Beside the queue segment saves split")
 	eq(rowIn(b, "psplit:prs:p1").control.value, "split", "the row shows it")
-	b.event({ ev = "action", id = "layer.settings", act = "add-prompt", value = "padd:prs" })
-	eq(#w.kv.get("prompts-prs").items, 2, "Add prompt on the pull request side saves one with the PR prompts")
-	eq(#w.kv.get("prompts-issues").items, 4, "and none with the issue prompts")
 	b.press("escape")
 	b.press("escape")
+	pickScope(b, "prs:v1")
+	w.flush()
+	eq(menu()[1].split, true, "the pull request filter's menu says the prompt opens beside the queue")
+end)
+
+case("host: an issue prompt's shortcut is listed in the help for the selected issue", function(w: World)
+	local b = promptsScene(w)
 	b.typeText("?")
 	local keyed = false
 	for _, row in helpRows(b.view().layer) do
 		keyed = keyed or row.text == "Run the action “Triage” on the selected issue"
 	end
 	yes(keyed, "a prompt's shortcut is listed for the selected issue")
-	b.press("escape")
-	pickScope(b, "prs:v1")
-	w.flush()
-	eq(menu()[1].split, true, "the pull request filter's menu says the prompt opens beside the queue")
 end)
 
 case("host: an action saved with the removed carly field still loads, kv is left alone, and the next save of the store drops the field", function(w: World)
