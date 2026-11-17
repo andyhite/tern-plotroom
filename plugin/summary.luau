@@ -42,6 +42,12 @@ local function defang(text: string): string
 	end))
 end
 
+-- Untrusted multi-line text: control characters other than newline and tab are dropped, so none (a NUL above all, which
+-- argv refuses) reaches the argument; byte counts then describe what is sent.
+local function block(text: string, n: number): string
+	return defang(clip((string.gsub(text, "[%z\1-\8\11-\31\127]", "")), n))
+end
+
 -- The prompt for `item`, every part capped, the untrusted parts between markers and length-labelled.
 function M.prompt(item: Input): string
 	local out = {
@@ -65,11 +71,11 @@ function M.prompt(item: Input): string
 			table.insert(out, "- " .. line(p, 200))
 		end
 	end
-	local body = defang(clip(item.body, BODY_CHARS))
+	local body = block(item.body, BODY_CHARS)
 	table.insert(out, "Description (" .. #body .. " bytes):")
 	table.insert(out, if string.find(body, "%S") then body else "(none)")
 	for _, c in item.comments do
-		local text = defang(clip(c.body, COMMENT_CHARS))
+		local text = block(c.body, COMMENT_CHARS)
 		table.insert(out, "Comment by " .. line(c.author, 100) .. " (" .. #text .. " bytes):")
 		table.insert(out, text)
 	end
