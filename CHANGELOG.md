@@ -8,6 +8,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 - SECURITY.md says how to report a vulnerability privately and what is in scope; the README's More list links it and AGENTS.md as the contributor guide (tern-plotroom#tcrg).
 - The Draft review shows a **Retry** button (also `r`) beside a diff problem: it reads the pull request and the diff again for the same proposal, busy while it runs, keeping every comment's edited text and keep or drop choice, instead of leaving the comments without their lines until the agent proposes again or the block is reopened (tern-plotroom#70mt).
+- Get started shows an "Update git to 2.36 or newer" line (with git's download page) while `git --version` reads older than 2.36, whose `git worktree list -z` the Worktrees list and the worktree card need; before, an older git left both empty with no explanation. README and the reference now also list `acli jira auth login` and `ssh` (for SSH-alias remotes) among the prerequisites (tern-plotroom#79zg).
 
 ### Changed
 

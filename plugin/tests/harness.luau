@@ -550,6 +550,9 @@ local function newWorld(instantiate: Loader, context: string): World
 			if (argv[1] == "gh" or argv[1] == "acli" or argv[1] == "omp") and argv[2] == "--version" and #argv == 2 then
 				return { stdout = argv[1] .. " version 1.0.0\n" }
 			end
+			if argv[1] == "git" and argv[2] == "--version" and #argv == 2 then
+				return { stdout = "git version 2.43.0\n" }
+			end
 			if argv[1] == "omp" and argv[2] == "models" and argv[3] == "--json" then
 				return { stdout = M.OMP_MODELS }
 			end

@@ -1088,14 +1088,18 @@ end
 local GET_STARTED = "get-started" -- kv: { dismissed = true?, shortcuts = "use" | "no"? }
 local SETUP_S = 10 -- while the checklist may show, its facts and detection are asked again at most this often
 
--- What the checklist knows of this host, as last asked; nil: not known yet.
-M.setup = { omp = nil :: boolean?, signedIn = nil :: boolean? }
+-- What the checklist knows of this host, as last asked; nil: not known yet. `gitOld` is git's version while it is
+-- older than GIT_MIN (the worktree inventory reads `git worktree list -z`, which arrived in 2.36), else false.
+M.setup = { omp = nil :: boolean?, signedIn = nil :: boolean?, gitOld = nil :: (string | boolean)? }
+
+local GIT_MIN = { 2, 36 }
 
 -- Where each checklist line that is not done points.
 M.SETUP_GUIDES = {
 	gh = "https://github.com/cli/cli#installation",
 	["gh-login"] = "https://cli.github.com/manual/gh_auth_login",
 	omp = "https://github.com/can1357/oh-my-pi",
+	git = "https://git-scm.com/downloads",
 } :: { [string]: string }
 
 -- kv `get-started`; nil when it cannot be read (it is then never written over, and the checklist only shows when asked).
@@ -1183,6 +1187,20 @@ function M.askSetup(state: State)
 			state.cx:render()
 		end
 	end
+	pending += 1
+	process.run({ "git", "--version" }, { timeout_ms = 10000 }, function(result)
+		local found = if result and result.status == 0 and not result.timed_out then string.match(result.stdout, "git version (%d+%.%d+[%d%.]*)") else nil
+		local major, minor = nil, nil
+		if found then
+			major, minor = string.match(found, "^(%d+)%.(%d+)")
+		end
+		-- ponytail: an unreadable version (a vendor string) counts as fine; the worktree read then says what failed.
+		local old = major ~= nil and minor ~= nil and (tonumber(major) < GIT_MIN[1] or (tonumber(major) == GIT_MIN[1] and tonumber(minor) < GIT_MIN[2]))
+		M.setup.gitOld = if old then found else false
+		if M.alive(state) then
+			one()
+		end
+	end)
 	pending += 1
 	process.run({ "omp", "--version" }, { timeout_ms = 10000 }, function(result)
 		M.setup.omp = result ~= nil

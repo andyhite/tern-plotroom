@@ -155,6 +155,28 @@ case("host: without gh, Get started's gh line points to gh's install guide", fun
 	eq(w.opened[#w.opened], "https://github.com/cli/cli#installation", "gh's install guide")
 end)
 
+case("host: Get started has a git line only while git is older than 2.36, pointing to its download page", function(w: World)
+	hostScene(w, 3)
+	fresh(w)
+	w.kv.put("checkouts", { ["o/r"] = "/work/r" })
+	local version = "2.35.1"
+	w.respond(function(call: h.Call): Reply?
+		if call.argv[1] == "git" and call.argv[2] == "--version" then
+			return { stdout = "git version " .. version .. " (Apple Git-143)\n" }
+		end
+		return nil
+	end)
+	local b = openOutside(w)
+	same(labels(b), { "gh signed in as @octocat", "omp installed", "Update git to 2.36 or newer (this is 2.35.1)" }, "git 2.35.1 is a step")
+	click(b, "git")
+	eq(w.opened[#w.opened], "https://git-scm.com/downloads", "its download page")
+	version = "2.36.0"
+	w.advance(11000) -- the facts are asked again after 10 s
+	b.event({ ev = "action", act = "get-started" })
+	w.flush()
+	same(labels(b), { "gh signed in as @octocat", "omp installed" }, "git 2.36.0 is not")
+end)
+
 case("host: Get started's checkout line keys escape the repository name, so `.` and `/` never split the key path", function(w: World)
 	local s = hostScene(w, 3)
 	fresh(w)

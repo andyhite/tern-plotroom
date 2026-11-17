@@ -2137,6 +2137,10 @@ local function checklist(state: State): Node?
 	else
 		line("omp", "Install omp, which runs the agents", "todo", "setup-guide=omp", "Setup guide ↗")
 	end
+	-- A line only while git is too old: a modern git is not a step, and the old one empties the Worktrees list silently.
+	if type(setup.gitOld) == "string" then
+		line("git", "Update git to 2.36 or newer (this is " .. setup.gitOld .. ")", "todo", "setup-guide=git", "Setup guide ↗")
+	end
 	for _, repo in engine.missingCheckouts(state) do
 		local key = string.lower(repo)
 		-- A repository name holds `/` and `.`, which Tern splits keys on: escape it as the picker ids do.

@@ -43,7 +43,7 @@ An action starts an agent in the item's worktree. While it works, the item says 
 
 ## Install and first run
 
-Requires Tern 0.9.13 or newer, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi), plus `gh` signed in to github.com for GitHub and Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) for Jira.
+Requires Tern 0.9.13 or newer, `git` ≥ 2.36 and [`omp`](https://github.com/can1357/oh-my-pi), plus `gh` signed in to github.com (`gh auth login`) for GitHub and Atlassian's [`acli`](https://developer.atlassian.com/cloud/acli) signed in (`acli jira auth login`) for Jira. A GitHub remote written as an SSH alias (`git@github.com-work:…`) also needs `ssh` on PATH, which Plotroom asks with `ssh -G`.
 
 ```sh
 tern plugin install github.com/andyhite/tern-plotroom/plugin
@@ -51,7 +51,7 @@ tern plugin install github.com/andyhite/tern-plotroom/plugin
 
 1. Open the repository you work on in a Tern tab.
 2. Tern's palette → **Plotroom › Open** (or press ⌃⌥⇧Q).
-3. Follow **Get started** above the preview: it lists what is left before an agent can run (`gh`, `omp`, a checkout, the one-key shortcuts), one action per line.
+3. Follow **Get started** above the preview: it lists what is left before an agent can run (`gh`, `omp`, git older than 2.36, a checkout, the one-key shortcuts), one action per line.
 4. Select an item and press **Worktree**, or pick an action from Commands (`.`): the agent starts in the item's worktree.
 
 Update later with the same install command plus `--force`.
