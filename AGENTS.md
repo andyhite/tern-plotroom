@@ -52,7 +52,7 @@ Invariants (keep when editing):
 tern plugin link ./plugin          # install for local use
 python3 scripts/check.py tools     # download pinned luau 0.743 + luau-lsp 1.70.1 (macOS / Linux x86_64)
 python3 scripts/check.py           # all: test + types + bench + ext + smoke
-python3 scripts/check.py test      # regression suite only (also: types | bench | ext | smoke)
+python3 scripts/check.py test      # regression suite, plus the version and docs checks (also: types | bench | ext | smoke)
 python3 scripts/check.py --ci      # what CI runs (ubuntu + macOS x Python 3.9 + 3.13): smoke reported NOT RUN
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
@@ -81,7 +81,7 @@ CI never runs smoke (no Tern there), so a green CI is not a full pass: before me
 
 - `PRODUCT.md` — product direction: who it is for, the loop, principles, out of scope, glossary, roadmap, metrics, decisions.
 - `DESIGN.md` — the visual system: tokens (Tern variables only), typography, spacing, radii, components, the Color Meaning Rule and the copy and control rules.
-- `README.md` — the product page: pitch, who it is for, the loop as one table, screenshots, install and first run, links. Its screenshots are PNGs under `docs/images/` (never under `plugin/`, which ships), cropped from smoke's headless shots (`PLOTROOM_SMOKE_SHOTS=<dir> python3 scripts/check.py smoke`), each under 400 KB.
+- `README.md` — the product page: pitch, who it is for, the loop as one table, screenshots, install and first run, links. Its screenshots are PNGs under `docs/images/` (never under `plugin/`, which ships), cropped from smoke's headless shots (`PLOTROOM_SMOKE_SHOTS=<dir> python3 scripts/check.py smoke`), each under 400 KB. `check.py test` fails a screenshot over 400,000 bytes or not used by README.md, and any relative link or `#anchor` in the root and `docs/` markdown whose file or heading is gone, so a heading rename updates its links in the same commit.
 - `docs/reference.md` — the user-facing behavior spec, by loop step (Setup, Commands and keys, Intake, Triage, Dispatch, Supervise, Land, Clean up, Trust, Finer points) in the glossary's words. Update it with every behavior change.
 - `LEDGER.md` — every feature, command, setting and surface with its loop step, verdict (Keep, Merge, Hide, Cut, New) and phase.
 - `CHANGELOG.md` — Keep a Changelog: an Unreleased section and one `## [<version>]` heading per release of `plugin/plugin.toml`'s `version`.

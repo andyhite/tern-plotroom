@@ -3,8 +3,8 @@
 
     python3 scripts/check.py            test + types + bench + smoke (the full local gate)
     python3 scripts/check.py --ci       test + types + bench; smoke is reported NOT RUN (Tern is not on CI)
-    python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only
-    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only (`test` also checks plugin.toml's version has a CHANGELOG.md entry)
+    python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only; also checks plugin.toml's version has a CHANGELOG.md entry, and the docs stage: the markdown's relative links and #anchors resolve, README's screenshots are each used and under 400 KB
+    python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only
     python3 scripts/check.py bench      1000-PR queue render benchmark only
     python3 scripts/check.py ext        the omp extension (plugin/omp/plotroom.ts) over its fixtures only
     python3 scripts/check.py smoke      isolated headless Tern + real git only
@@ -54,6 +54,7 @@ LSP_VERSION = "1.70.1"
 TERN_VERSION = "0.9.13"  # the SDK pin and the minimum Tern smoke accepts
 BENCH_BUDGET_MS = float(os.environ.get("PLOTROOM_BENCH_BUDGET_MS", "25"))
 BENCH_PAYLOAD_MAX = 600000
+IMAGE_MAX = 400000  # README screenshots, bytes (AGENTS.md: each under 400 KB)
 
 # sha256 of the release assets, as GitHub publishes them. "binary" is the sha256 of the extracted luau
 # executable per platform: the Luau CLI has no --version, so the hash is how a 0.743 binary is told from another.
@@ -635,6 +636,73 @@ def check_version() -> str:
     return "plugin %s is in CHANGELOG.md" % version.group(1)
 
 
+def md_fenced(text: str) -> str:
+    """Markdown without fenced code blocks, so a heading or link shown as an example is not read as one."""
+    return re.sub(r"^(```|~~~).*?^\1[ \t]*$", "", text, flags=re.M | re.S)
+
+
+def md_text(text: str) -> str:
+    """md_fenced, and inline code spans blanked as well (a link inside one is an example too)."""
+    return re.sub(r"`[^`\n]*`", "", md_fenced(text))
+
+
+def md_slugs(text: str) -> set:
+    """The anchors GitHub gives each heading: lowercase, inline markup and punctuation dropped, spaces to hyphens, repeats suffixed -1, -2."""
+    seen: dict = {}
+    slugs = set()
+    for heading in re.findall(r"^#{1,6}[ \t]+(.+?)[ \t#]*$", md_fenced(text), re.M):
+        heading = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading)
+        slug = re.sub(r"[^\w\- ]", "", heading.replace("`", "").replace("*", "").lower()).replace(" ", "-")
+        count = seen.get(slug, 0)
+        seen[slug] = count + 1
+        slugs.add(slug if count == 0 else "%s-%d" % (slug, count))
+    return slugs
+
+
+def md_link_problems(root: Path, files: List[Path]) -> List[str]:
+    """Every relative link or image in `files` (relative to root) names a file that exists and, with #anchor, a heading in it."""
+    problems = []
+    slugs: dict = {}
+    for path in files:
+        for target in re.findall(r"\]\(<?([^)\s>]+)", md_text(path.read_text(encoding="utf-8"))):
+            if re.match(r"[a-z][a-z0-9+.-]*:", target, re.I):
+                continue
+            name, _, anchor = target.partition("#")
+            dest = (path.parent / name).resolve() if name else path
+            where = "%s: %s" % (path.relative_to(root), target)
+            if not dest.is_file():
+                problems.append("%s: no such file" % where)
+            elif anchor and dest.suffix == ".md":
+                if dest not in slugs:
+                    slugs[dest] = md_slugs(dest.read_text(encoding="utf-8"))
+                if anchor not in slugs[dest]:
+                    problems.append("%s: no such heading" % where)
+    return problems
+
+
+def check_docs() -> str:
+    """Docs hold together: relative links and #anchors in the markdown resolve, and README's screenshots are all used and under 400 KB."""
+    with tempfile.TemporaryDirectory() as tmp:  # prove the link check against known-bad links, as CSS_BAD does for the CSS lint
+        sample = Path(tmp) / "a.md"
+        sample.write_text("# Intake: Now, views and `Pins`\n\n## Dup\n\n## Dup\n\n[ok](#intake-now-views-and-pins) [ok](a.md#dup-1) [web](https://x.y/z#q)\n\n```\n[x](gone.md)\n```\n", encoding="utf-8")
+        if md_link_problems(Path(tmp), [sample]):
+            raise GateError("docs link check flags good links")
+        sample.write_text("[a](gone.md) [b](#nope) [c](a.md#nope) ![d](img.png)\n", encoding="utf-8")
+        if len(md_link_problems(Path(tmp), [sample])) != 4:
+            raise GateError("docs link check misses bad links")
+    problems = md_link_problems(ROOT, sorted(ROOT.glob("*.md")) + sorted((ROOT / "docs").glob("*.md")))
+    images = sorted((ROOT / "docs" / "images").glob("*.png"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for image in images:
+        if image.stat().st_size > IMAGE_MAX:
+            problems.append("docs/images/%s is %d bytes, over %d" % (image.name, image.stat().st_size, IMAGE_MAX))
+        if "docs/images/%s" % image.name not in readme:
+            problems.append("docs/images/%s is not used by README.md" % image.name)
+    if problems:
+        raise GateError("; ".join(problems[:8]))
+    return "links resolve, %d screenshots under %d KB" % (len(images), IMAGE_MAX // 1000)
+
+
 def ext_runtime() -> List[str]:
     """bun, else node 23.6 or newer (it runs .ts files as they are); [] when neither is on PATH."""
     bun = shutil.which("bun")
@@ -718,6 +786,7 @@ def main(argv: List[str]) -> int:
     if args.command in ("all", "test"):
         plan.append(("test", check_test))
         plan.append(("version", check_version))
+        plan.append(("docs", check_docs))
     if args.command in ("all", "types"):
         plan.append(("types", check_types))
     if args.command in ("all", "bench"):
