@@ -2843,12 +2843,22 @@ function M.cancelSummary(state: State)
 	end
 end
 
+-- Remembers that summary key `key` failed for `why`, so it is not asked again at once.
+local function noteFailure(key: string, why: string)
+	-- ponytail: failures are forgotten all at once past 100; a failed Summary is tried again then.
+	summaryFailures += 1
+	if summaryFailures > 100 then
+		summaryFailed, summaryFailures = {}, 1
+	end
+	summaryFailed[key] = why
+end
+
 -- Runs the one omp call of summary key `key` and caches its answer. Whatever item is selected when it lands, every block
 -- showing `itemKey` draws it; one showing another item draws only that item's own Summary.
 local function startSummary(key: string, itemKey: string, item: summary.Input, model: string)
 	local argv = summary.argv(model, summary.prompt(item))
 	if not argv then
-		summaryFailed[key] = "The Summary model is not one omp takes: " .. model
+		noteFailure(key, "The Summary model is not one omp takes: " .. model)
 		return
 	end
 	summarizing[key] = itemKey
@@ -2858,16 +2868,11 @@ local function startSummary(key: string, itemKey: string, item: summary.Input, m
 		if text then
 			storage.keepSummary(key, text) -- kept in memory even when the store cannot take it
 		else
-			-- ponytail: failures are forgotten all at once past 100; a failed Summary is tried again then.
-			summaryFailures += 1
-			if summaryFailures > 100 then
-				summaryFailed, summaryFailures = {}, 1
-			end
-			summaryFailed[key] = if problem then problem
+			noteFailure(key, if problem then problem
 				elseif not result then "omp did not answer."
 				elseif result.timed_out then "omp did not answer within " .. core.SUMMARY_TIMEOUT_MS // 1000 .. " seconds."
 				elseif result.status ~= 0 then "omp failed (exit " .. result.status .. ")" .. (if string.find(result.stderr, "%S") then ": " .. clip(printable(github.firstLines(result.stderr, 1)), 200) else ".")
-				else "omp's answer was not a Summary: empty, or longer than a few sentences."
+				else "omp's answer was not a Summary: empty, or longer than a few sentences.")
 		end
 		for _, s in running do
 			local at = M.selected(s)

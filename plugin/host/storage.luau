@@ -834,17 +834,8 @@ function M.summaryOf(key: string): string?
 	return if hit then hit.text else nil
 end
 
--- Caches `text` under `key` (the store is reread first, so other writers' entries stay); an error message or nil.
-function M.keepSummary(key: string, text: string): string?
-	local fresh = readSummaries()
-	if fresh.problem then
-		local mem: Summaries = summaries or fresh
-		mem.items[key] = { text = text, at = os.time() }
-		summaries = mem
-		return fresh.problem
-	end
-	local items = fresh.items
-	items[key] = { text = text, at = os.time() }
+-- Drops the oldest entries of `items` (never `keep`) until at most SUMMARY_CAP remain.
+local function capSummaries(items: { [string]: Cached }, keep: string)
 	local count = 0
 	for _ in items do
 		count += 1
@@ -852,7 +843,7 @@ function M.keepSummary(key: string, text: string): string?
 	while count > M.SUMMARY_CAP do
 		local oldest: string? = nil
 		for k, e in items do
-			if k ~= key and (not oldest or e.at < items[oldest].at or (e.at == items[oldest].at and k < oldest)) then
+			if k ~= keep and (not oldest or e.at < items[oldest].at or (e.at == items[oldest].at and k < oldest)) then
 				oldest = k
 			end
 		end
@@ -862,6 +853,21 @@ function M.keepSummary(key: string, text: string): string?
 		items[oldest] = nil
 		count -= 1
 	end
+end
+
+-- Caches `text` under `key` (the store is reread first, so other writers' entries stay); an error message or nil.
+function M.keepSummary(key: string, text: string): string?
+	local fresh = readSummaries()
+	if fresh.problem then
+		local mem: Summaries = summaries or fresh
+		mem.items[key] = { text = text, at = os.time() }
+		capSummaries(mem.items, key)
+		summaries = mem
+		return fresh.problem
+	end
+	local items = fresh.items
+	items[key] = { text = text, at = os.time() }
+	capSummaries(items, key)
 	summaries = { items = items }
 	local werr = kvSet("summaries", { version = 1, items = items })
 	return if werr then "Could not save: " .. werr else nil

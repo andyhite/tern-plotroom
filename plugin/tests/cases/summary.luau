@@ -211,6 +211,20 @@ case("summary: the cache keeps at most 200 Summaries, dropping the oldest", func
 	yes(kept["x/y#2@t1"] ~= nil and kept["o/r#1@" .. sha("a")] ~= nil, "the rest and the new one stay")
 end)
 
+case("summary: with an unreadable cache the in-memory Summaries are capped at 200 too, the oldest dropped first", function(w: World)
+	local storage: any = w.load("host/storage")
+	w.kv.put("summaries", "garbage")
+	for i = 1, 250 do
+		storage.keepSummary("k" .. i, "Text " .. i)
+		w.advance(1000)
+	end
+	eq(storage.summaryOf("k1"), nil, "the oldest went")
+	eq(storage.summaryOf("k50"), nil, "so did the 50th")
+	eq(storage.summaryOf("k51"), "Text 51", "the newest 200 stay")
+	eq(storage.summaryOf("k250"), "Text 250", "including the last")
+	eq(w.kv.get("summaries"), "garbage", "the store is left as it was")
+end)
+
 case("summary: Settings › General picks the Summary model from omp's list in the window's picker and switches Summaries off", function(w: World)
 	local calls = summaries(w, function()
 		return { stdout = "Done." }

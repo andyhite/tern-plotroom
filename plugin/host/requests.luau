@@ -882,6 +882,13 @@ function M.unpin(state: State): boolean
 		return false
 	end
 	table.remove(state.pins, at)
+	-- The pin's snapshots (one per gh login it was fetched as) go with it; a saved view with the same query reloads.
+	local prefix, suffix = pin.kind .. "\0" .. pin.integration .. "\0", "\0" .. pin.query
+	for k in state.snaps do
+		if string.sub(k, 1, #prefix) == prefix and string.sub(k, -#suffix) == suffix then
+			state.snaps[k] = nil
+		end
+	end
 	if state.activeId == pin.id then
 		local first = state.views[1]
 		switchView(state, if first then first.id else nil)
