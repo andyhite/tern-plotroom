@@ -24,6 +24,8 @@ local CONTEXT = 8 -- rows of diff a comment's card shows around its line
 -- How long Sending waits for the window's sent or gone (the window looks for the message for 3 s): a link that never
 -- arrives (a remote host's lost link) then falls back to Copy.
 M.SEND_TIMEOUT_MS = 15 * 1000
+-- The most encoded text of the hidden `main.send` node: the window reads a node up to 64000 characters.
+M.SEND_MAX = 60000
 
 M.VERDICTS = { "comment", "approve", "request_changes" }
 local REGULAR_COLS = 100 -- panes narrower than this stack the navigator above the detail (a `col` split)
@@ -449,6 +451,12 @@ local function send(state: State)
 	end
 	state.editing, state.sending, state.gone = false, true, nil
 	state.message = messageOf(state)
+	if #tern.json.encode({ run = state.run, text = state.message }) > M.SEND_MAX then
+		-- The window could not read it: Copy is offered straight away rather than a Send that cannot arrive.
+		state.sending = false
+		state.gone = "The message is too large to send from here. Copy the message and give it to the agent yourself."
+		return state.cx:render()
+	end
 	state.sends += 1
 	local n, gen = state.sends, state.gen
 	state.cx:render()

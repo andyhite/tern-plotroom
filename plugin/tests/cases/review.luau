@@ -1088,6 +1088,22 @@ case("review: a Send that no answer reaches leaves Sending after a while and off
 	w.finish()
 end)
 
+case("review: a message too large for the window's read is not armed for Send: Copy is offered straight away", function(w: World)
+	reviewScene(w)
+	local p = proposal()
+	p.summary = string.rep("漢", 20000) -- the most the tool allows: 60000 bytes, over the window's read once the message is built
+	w.fs.files[FILE] = jsonEncode(p)
+	local b = openReview(w)
+	b.press("enter", "m")
+	eq(sending(b), false, "it is not left sending")
+	eq(findKey(b.view().main, "send", "text"), nil, "no hidden message node is published")
+	has(textOf(findKey(b.view().main, "gone")), "too large", "the block says why")
+	yes(findKey(b.view().main, "copy", "button"), "and offers Copy")
+	b.typeText("c")
+	has(w.copied[#w.copied], "```json", "Copy puts the whole message on the clipboard")
+	w.finish()
+end)
+
 -- `unit` repeated to n UTF-16 units, as the tool counts them (a CJK character is one unit, three UTF-8 bytes).
 local function fill(unit: string, n: number): string
 	return string.rep(unit, n // (utf8.len(unit) or 1))

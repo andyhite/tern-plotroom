@@ -1527,6 +1527,21 @@ case("host: the published command palette carries no prompt text, the picker's m
 	eq(answerOf(b, "m2").items[1].send, "Review {url}\nthen report", "the picker's menu keeps the text")
 end)
 
+case("host: the published command palette stays within the window's 64000-character read however many actions are saved", function(w: World)
+	hostScene(w, 2)
+	local b = openQueue(w)
+	local many: { any } = {}
+	for i = 1, 400 do
+		table.insert(many, promptOf("p" .. i, string.rep("Review ", 15) .. i, "Review {url}"))
+	end
+	savePrompts(w, many)
+	b.render()
+	local text = findKey(b.view().main, "palette").p.text
+	yes(#text < 60000, "the node's text fits: " .. #text)
+	local items = jsonDecode(text).items
+	yes(#items > 50 and #items < 400, "the actions are cut, not dropped: " .. #items)
+end)
+
 windowCase("window: an agent run notes its worktree on the block as the Worktree key does, and the card replaces the failure before it", function(w: World)
 	local s, b = agentScene(w)
 	w.window.choose = "Type a prompt…"

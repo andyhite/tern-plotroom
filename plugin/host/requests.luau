@@ -48,19 +48,28 @@ local NOW_KEY = "\0now" -- the key of Now's Mark all notifications read… plan:
 local REPLY_CAP = 8 -- answers kept on screen, newest last: windows read theirs once announced
 -- Picker rows sent stop at this much encoded text: the answer must fit the window's 64000-character surface read.
 local MENU_BUDGET = 48000
+local ANSWER_MAX = 60000 -- the most encoded text one answer or the palette node carries before the window's read would cut it
 
--- The prefix of `list` whose running `cost` stays within MENU_BUDGET.
-local function capped(list: { any }, cost: (any) -> number): { any }
+-- The prefix of `list` whose running `cost` stays within `budget` (MENU_BUDGET unless given).
+local function capped(list: { any }, cost: (any) -> number, budget: number?): { any }
+	local limit = budget or MENU_BUDGET
 	local out: { any } = {}
 	local size = 0
 	for _, v in list do
 		size += cost(v)
-		if size > MENU_BUDGET then
+		if size > limit then
 			break
 		end
 		table.insert(out, v)
 	end
 	return out
+end
+
+-- `list` cut to `budget` encoded characters.
+local function cappedJson(list: { any }, budget: number): { any }
+	return capped(list, function(v)
+		return #tern.json.encode(v) + 1
+	end, budget)
 end
 
 -- Pull requests and issues whose worktree is being prepared or removed on this host ("owner/repo#n", lowercase): one
@@ -107,7 +116,11 @@ local function reply(state: State, id: string, body: { [string]: any })
 			break
 		end
 	end
-	table.insert(state.replies, { id = id, text = tern.json.encode(body) })
+	local text = tern.json.encode(body)
+	if #text > ANSWER_MAX then
+		text = tern.json.encode({ problem = "The answer was too large to show." }) -- the window would get a cut node
+	end
+	table.insert(state.replies, { id = id, text = text })
 	if #state.replies > REPLY_CAP then
 		table.remove(state.replies, 1)
 	end
@@ -229,12 +242,20 @@ end
 -- without their text, queue actions, window commands), so the window opens either without a round trip to this host.
 -- `queue`: paletteActions(state), which keyBar shares.
 function M.paletteNode(state: State, queue: { QueueAction }): Node
+	-- Each part keeps to its own share so the whole node stays within ANSWER_MAX.
 	local items, problem = menuRows(state, nil, false)
+	items = cappedJson(items, 30000)
 	local item = if state.boardOn or state.agentsOn or state.nowOn then nil else selected(state)
 	local move = if item then engine.nextMove(state, state.kind.id, item) else nil
 	-- The window command the Next move runs (`next`), when it is one: the window runs it as its own row would.
 	local cmd = if move then string.match(move.id, "^cmd:(.+)$") else nil
-	local text = tern.json.encode({ items = tern.json.array(items), problem = problem, queue = tern.json.array(queue), commands = tern.json.array(M.commands(state)), next = cmd })
+	local text = tern.json.encode({
+		items = tern.json.array(items),
+		problem = problem,
+		queue = tern.json.array(cappedJson(queue, 10000)),
+		commands = tern.json.array(cappedJson(M.commands(state), 14000)),
+		next = cmd,
+	})
 	return ui.node("text", { key = "palette", text = text, hidden = true })
 end
 
@@ -553,11 +574,11 @@ local function prepareIssue(state: State, id: string, repo: string, ref: string,
 				end
 			end
 			table.sort(names)
-			return reply(state, id, { needRepo = true, project = issue.repo, repos = tern.json.array(names) })
+			return reply(state, id, { needRepo = true, project = issue.repo, repos = tern.json.array(cappedJson(names, MENU_BUDGET)) })
 		elseif #mapped == 1 then
 			code = mapped[1]
 		else
-			return reply(state, id, { chooseRepo = true, project = issue.repo, repos = tern.json.array(mapped) })
+			return reply(state, id, { chooseRepo = true, project = issue.repo, repos = tern.json.array(cappedJson(mapped, MENU_BUDGET)) })
 		end
 	end
 	local checkout = checkoutOf(code)
@@ -722,6 +743,7 @@ local function repos(state: State, id: string)
 	table.sort(items, function(a, b)
 		return a.repo < b.repo
 	end)
+	items = cappedJson(items, MENU_BUDGET)
 	if not cli.on("github") then
 		return reply(state, id, { items = tern.json.array(items), accounts = tern.json.array({}) })
 	end

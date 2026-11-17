@@ -897,6 +897,23 @@ case("host: the project pickers: Jira's list puts saved projects first with thei
 	eq(answerOf(b, "r2").problem, nil, "with no problem")
 end)
 
+case("host: the repository picker's first page is cut to the window's read when many repositories are saved", function(w: World)
+	local s = jiraHost(w)
+	s.gh.tokens.octocat = "tok-octo"
+	local saved: { [string]: string } = {}
+	for i = 1, 1500 do
+		saved[string.format("owner/repository-%04d", i)] = "/work/some/long/path/to/repository-" .. i
+	end
+	w.kv.put("checkouts", saved)
+	local b = openIssues(w)
+	request(b, "r1", { op = "repos" })
+	w.flush()
+	local a = answerOf(b, "r1")
+	yes(#a.items > 100 and #a.items < 1500, "the list is cut, not dropped: " .. #(a.items or {}))
+	eq(a.items[2].repo, "owner/repository-0001", "from the front, sorted by name")
+	same(a.accounts, { { login = "octocat", active = true } }, "with the gh logins")
+end)
+
 case("host: a repository list cut short by a failed page reaches the picker with its problem and is read again; a whole one is kept", function(w: World)
 	local s = jiraHost(w)
 	local gh = s.gh
