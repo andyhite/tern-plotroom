@@ -5,6 +5,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 ## [Unreleased]
 
 ### Fixed
+- A Draft review that failed to open at a turn end is no longer marked seen: the next turn end tries again (mhwp).
 - The Draft review's Keep/Drop event ignores a stale card index instead of jumping to Instructions (tern-plotroom#1snf).
 
 ### Changed

@@ -1648,7 +1648,7 @@ end
 -- end never does, so a split opens unfocused (the user's tab and pane stay shown and focused) and a glimpse whose
 -- agent's tab is not shown opens nothing and a toast points at Show Draft review. With the agent's pane gone, a
 -- glimpse shows over the tab shown and a split beside the focused pane.
-local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean)
+local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean): boolean
 	local agent: number? = if cx.session:pane(l.agent) then l.agent else nil
 	if glimpse and agent then
 		if show then
@@ -1659,7 +1659,7 @@ local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean
 		local focused = cx.session:focused()
 		if not focused or cx.session:tab_of(focused) ~= cx.session:tab_of(agent) then
 			cx:toast("info", "Draft review ready for " .. l.key, "Show Draft review in Plotroom's Commands opens it over the agent's tab.")
-			return
+			return true -- deferred on purpose: Show Draft review opens it, so it counts as seen
 		end
 	end
 	-- A pull request run also passes its repository and number: the block refuses a Draft review of another one.
@@ -1683,7 +1683,9 @@ local function openReview(cx: WindowCx, l: Link, glimpse: boolean, show: boolean
 	end)
 	if not ok or not pane then
 		cx:toast("error", "The Draft review for " .. l.key .. " did not open", if ok then "Tern opened no block." else tostring(pane))
+		return false
 	end
+	return true
 end
 
 -- A turn of `agent` ended: when its run (Link.run) has a Draft review file newer than the last one opened (`reviewed`),
@@ -1714,6 +1716,7 @@ function M.reviewAfter(cx: WindowCx, agent: number)
 				if l.reviewed and l.reviewed >= at then
 					return
 				end
+				local before = l.reviewed
 				l.reviewed = at
 				writeLinks(links)
 				local open = reviewPane(cx2, run)
@@ -1723,7 +1726,10 @@ function M.reviewAfter(cx: WindowCx, agent: number)
 					end)
 					return
 				end
-				openReview(cx2, l, a.glimpse == true, false)
+				if not openReview(cx2, l, a.glimpse == true, false) then
+					l.reviewed = before -- not opened: the next turn end tries again
+					writeLinks(links)
+				end
 				return
 			end
 		end
