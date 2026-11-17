@@ -342,7 +342,7 @@ windowCase("window status: an agent that leaves the covered set while still wait
 	local st = flowHost(w)
 	startAgentOn(w, st)
 	local agent = (w.kv.get("agent-links") :: any)[1].agent
-	w.window.panes[8] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[8] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 }
 	w.window.hostOf[8] = 2
 	w.window.agentStates[agent] = "waiting_input"
 	local toasts = #w.toasts
@@ -1170,7 +1170,7 @@ end)
 windowCase("window status: only the focused Plotroom pane is checked, and leaving it stops the polling and the warning", function(w: World)
 	w.load("window")
 	w.window.panes[2] = { block = "plugin.terminal", cwd = "/", tab = 1 }
-	w.window.panes[3] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[3] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 }
 	announce(w, 1, "2")
 	announce(w, 3, asks.protocol)
 	w.window.handlers.pane_created({ pane = 3 }, w.cx)
@@ -5054,7 +5054,7 @@ windowCase("window flows: a Verified run's next action waits while its host has 
 	eq((w.kv.get("agent-links") :: any)[1].gate, "next", "the next action stays due")
 	w.advance(10 * 1000)
 	eq(countOps(st, "action"), 0, "and waits")
-	w.window.panes[1].block = "plugin.plotroom.prs"
+	w.window.panes[1].block = "plotroom.prs"
 	w.window.handlers.pane_created({ pane = 1 }, w.cx)
 	w.flush()
 	eq(countOps(st, "action"), 1, "a Plotroom block opening starts it")
@@ -5148,7 +5148,7 @@ windowCase("window flows: a chain's next action starts from the block that start
 	local st = flowHost(w)
 	local first = startChained(w, st)
 	eq(first.chain.pane, 1, "the link records the block the chain started from")
-	w.window.panes[3] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[3] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 }
 	local links: any = w.kv.get("agent-links")
 	links[1].chain.pane, links[1].gate = 3, "next"
 	w.kv.put("agent-links", links)
@@ -5169,7 +5169,7 @@ windowCase("window flows: a failed turn ends the chain even with no Plotroom blo
 	agentFinished(w, first.agent, "failed")
 	eq((w.kv.get("agent-links") :: any)[1].gate, "over", "the chain ends")
 	has(w.toasts[#w.toasts].text, "Next action not started", "and the user is told")
-	w.window.panes[1].block = "plugin.plotroom.prs"
+	w.window.panes[1].block = "plotroom.prs"
 	agentFinished(w, first.agent, "done")
 	answerAll(st, "outcome", { verdict = "verified" })
 	eq(countOps(st, "action"), 0, "a later finish starts nothing")
@@ -6011,7 +6011,7 @@ end)
 windowCase("window status: one need-you count, the largest of the Plotroom blocks, redrawn only on change, hidden at zero, and a click shows Now in that block", function(w: World)
 	w.load("window")
 	flowHost(w)
-	w.window.panes[2] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[2] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 }
 	flowHost(w, 2)
 	local main: any = w.window.surfaces[1].main.c
 	local other: any = w.window.surfaces[2].main.c
@@ -6864,7 +6864,7 @@ windowCase("window flows: Show Draft review focuses the run's open Draft review,
 			end
 		end
 		for id, p in w.window.panes do
-			if p.block == "plugin.plotroom.review" and #out > 0 and id > (out[#out].pane or 0) then
+			if p.block == "plotroom.review" and #out > 0 and id > (out[#out].pane or 0) then
 				out[#out].pane = id
 			end
 		end

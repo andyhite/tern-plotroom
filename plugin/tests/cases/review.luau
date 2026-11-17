@@ -1004,7 +1004,7 @@ windowCase("review: a turn end with a newer Draft review opens the block beside 
 	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat", "o/r", "5" }, "beside", { target = 20, dir = "right", focus = false } } :: { any }, "beside the agent, unfocused, with its run, folder, login and pull request")
 	local review = 0
 	for id, p in w.window.panes do
-		if p.block == "plugin.plotroom.review" then
+		if p.block == "plotroom.review" then
 			review = id
 		end
 	end
@@ -1019,7 +1019,7 @@ windowCase("review: a turn end with a newer Draft review opens the block beside 
 	-- The block is open for r1: a revised proposal reloads it.
 	local pane = 0
 	for id, p in w.window.panes do
-		if p.block == "plugin.plotroom.review" then
+		if p.block == "plotroom.review" then
 			pane = id
 		end
 	end
@@ -1054,7 +1054,7 @@ windowCase("review: Over the agent's tab, a turn end glimpses the Draft review o
 	eq(#opened, 1, "a newer proposal while the agent's tab is shown opens")
 	local review = w.window.focused :: number
 	local got: { any } = { opened[1].kind, opened[1].args, opened[1].how, opened[1].opts == nil, w.window.panes[review].block, w.window.panes[review].tab }
-	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat", "o/r", "5" }, "glimpse", true, "plugin.plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
+	same(got, { "plotroom.review", { "r1", "/wt/r5", "octocat", "o/r", "5" }, "glimpse", true, "plotroom.review", 2 } :: { any }, "as a glimpse over the agent's tab, splitting no pane, and focused so its keys work")
 	w.finish()
 end)
 
@@ -1124,7 +1124,7 @@ windowCase("review: Send hands the agent the block's message, and a gone agent i
 	reviewScene(w)
 	seedRun(w)
 	local b = openReview(w, 30)
-	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.window.panes[30] = { block = "plotroom.review", cwd = "", tab = 1 }
 	w.link(b)
 	b.press("enter", "m")
 	local _, text = sentChoices(b)
@@ -1155,7 +1155,7 @@ windowCase("review: Send goes only to the run's agent pane while it is listed in
 	-- After a restart pane 20 is another agent, live, in another worktree.
 	w.window.panes[20].cwd = "/wt/r9"
 	local b = openReview(w, 30)
-	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.window.panes[30] = { block = "plotroom.review", cwd = "", tab = 1 }
 	w.link(b)
 	b.press("enter", "m")
 	w.flush()
@@ -1179,7 +1179,7 @@ windowCase("review: a review/send link from the Draft review pane sends only the
 	reviewScene(w)
 	seedRun(w)
 	local b = openReview(w, 30)
-	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.window.panes[30] = { block = "plotroom.review", cwd = "", tab = 1 }
 	w.link(b)
 	-- Before Send: a link (say, in the summary) sends nothing and leaves the block as it was.
 	w.click("plotroom://review/send", 30)
@@ -1205,7 +1205,7 @@ windowCase("review: a send link that arrives before the block shows its message 
 	reviewScene(w)
 	seedRun(w)
 	local b = openReview(w, 30)
-	w.window.panes[30] = { block = "plugin.plotroom.review", cwd = "", tab = 1 }
+	w.window.panes[30] = { block = "plotroom.review", cwd = "", tab = 1 }
 	-- Not linked yet: the window sees no main.send, as when a remote host's link beats its render.
 	b.press("enter", "m")
 	local _, text = sentChoices(b)

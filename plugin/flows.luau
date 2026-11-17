@@ -1635,7 +1635,7 @@ local REVIEW_BLOCK = "plotroom.review"
 local function isReview(cx: WindowCx, pane: number): boolean
 	local info = cx.session:pane(pane)
 	local block = if info then info.block else nil
-	return type(block) == "string" and string.sub(block, -#REVIEW_BLOCK) == REVIEW_BLOCK
+	return block == REVIEW_BLOCK
 end
 
 -- The Draft review block open for run `run` (its hidden `main.run`), if any.

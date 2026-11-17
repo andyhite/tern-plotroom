@@ -624,7 +624,7 @@ local function newWorld(instantiate: Loader, context: string): World
 	end
 
 	local win: Win = {
-		panes = { [1] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 } },
+		panes = { [1] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 } },
 		tabs = { { id = 1, session = 1 } },
 		sessions = { 1 },
 		focused = 1,
@@ -750,7 +750,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		new_block = function(_self: any, kind: string, args: any, how: string?, opts: any): number?
 			local targeted = opts and opts.target and (how == nil or how == "beside" or how == "default")
 			local target = if targeted then win.panes[opts.target] elseif how ~= "tab" and win.focused then win.panes[win.focused] else nil
-			local pane = addPane({ block = "plugin." .. kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
+			local pane = addPane({ block = kind, cwd = "", newBlock = true, kind = kind, args = args, how = how, opts = opts }, if target then target.tab else nil)
 			if how ~= "glimpse" and not (opts and opts.focus == false) then
 				win.focused = pane
 			end

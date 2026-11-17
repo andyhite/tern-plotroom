@@ -1021,7 +1021,7 @@ end)
 
 windowCase("window: Go to Plotroom focuses the session's Plotroom block, opens one when none is in a tab, and does nothing on one", function(w: World)
 	w.load("window")
-	w.window.panes[5] = { block = "plugin.plotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[5] = { block = "plotroom.prs", cwd = "/work/r", tab = 1 }
 	w.window.panes[7] = { cwd = "/work/s", tab = 2 }
 	w.window.focused = 7
 	w.command("focus")
@@ -1036,6 +1036,17 @@ windowCase("window: Go to Plotroom focuses the session's Plotroom block, opens o
 	w.window.focused = 7
 	w.command("focus")
 	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/s", args = { "/work/s" } } }, "a parked block is not gone to: one opens beside the shell, in its folder")
+	w.flush()
+end)
+
+windowCase("window: a pane whose block id merely ends in plotroom.prs is not a Plotroom block", function(w: World)
+	w.load("window")
+	w.window.panes[1].parked = true
+	w.window.panes[5] = { block = "myplotroom.prs", cwd = "/work/r", tab = 1 }
+	w.window.panes[7] = { cwd = "/work/s", tab = 2 }
+	w.window.focused = 7
+	w.command("focus")
+	same(w.window.launches, { { block = "plotroom.prs", cwd = "/work/s", args = { "/work/s" } } }, "Go to Plotroom ignores the look-alike and opens a real one")
 	w.flush()
 end)
 

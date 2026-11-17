@@ -1365,7 +1365,7 @@ windowCase("window: a forged issue link not shown by the block is refused before
 	refused(issueLink("worktree", "o/r", string.rep("1", 65)), malformed, "a reference over 64 bytes")
 	refused(issueRunLink("o/r", "12", "p-1"), malformed, "an id that is no word")
 	refused(issueLink("worktree", "o/r", "12"), "Plotroom: link did not come from a Plotroom block", "a pane that is not Plotroom", 2)
-	w.window.panes[2] = { block = "plugin.plotroom.issues", cwd = "/work/r", tab = 1 }
+	w.window.panes[2] = { block = "plotroom.issues", cwd = "/work/r", tab = 1 }
 	refused(issueLink("worktree", "o/r", "12"), "Plotroom: link did not come from a Plotroom block", "a pane of the retired Issues block", 2)
 	eq(#w.window.events, sent, "nothing was asked of any host")
 	eq(#w.calls, ran, "nothing ran")

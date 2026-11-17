@@ -144,11 +144,12 @@ local function readStrings(key: string): { string }?
 	return out
 end
 
+-- A pane's `block` is "<plugin id>.<block id>"; compare it whole, since a suffix match accepts another plugin's `myplotroom.prs`.
 -- Whether `pane` runs the Plotroom block.
 local function isPlotroom(cx: WindowCx, pane: number): boolean
 	local info = cx.session:pane(pane)
 	local block = if info then info.block else nil
-	return type(block) == "string" and string.sub(block, -#PRS_BLOCK) == PRS_BLOCK
+	return block == PRS_BLOCK
 end
 
 local function findNode(node: any, id: string): any?
