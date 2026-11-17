@@ -2,7 +2,7 @@
 
 # ⎇ Tern Plotroom
 
-**Your pull requests and issues, in one block inside [Tern](https://docs.stencil.so/tern).**
+**Your pull requests and issues, in one block inside [Tern](https://tern.sh).**
 Triage with the keyboard. One key checks a PR or issue out into its own worktree. Another points an agent at it.
 
 [![check](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml/badge.svg)](https://github.com/andyhite/tern-plotroom/actions/workflows/check.yml)
@@ -14,7 +14,7 @@ Triage with the keyboard. One key checks a PR or issue out into its own worktree
 
 ## Who it is for
 
-You work in [Tern](https://docs.stencil.so/tern) with [omp](https://github.com/can1357/oh-my-pi) and run a few coding agents at once against GitHub pull requests and issues, sometimes Jira issues. Plotroom is where you decide what to work on, hand it to an agent, and land it, without keeping the state in your head. It is keyboard first, works the same on a remote host, and keeps a work and a personal GitHub login apart.
+You work in [Tern](https://tern.sh) with [omp](https://github.com/can1357/oh-my-pi) and run a few coding agents at once against GitHub pull requests and issues, sometimes Jira issues. Plotroom is where you decide what to work on, hand it to an agent, and land it, without keeping the state in your head. It is keyboard first, works the same on a remote host, and keeps a work and a personal GitHub login apart.
 
 It is not a team tool, a hosted service or a full GitHub or Jira client: GitHub, Jira, Tern and omp keep doing what they do well, and Plotroom ties them into one loop.
 
@@ -107,7 +107,7 @@ Platforms: `tools` downloads pinned builds for macOS and Linux x86_64 only. On W
 | `plugin/flows.luau` | window side of the workflow commands: agent links and status, confirmed mutations, draft PR, open by URL, the item commands |
 | `plugin/triage.luau` · `sorting.luau` · `board.luau` | seen/snooze memory, per-view sorts, the Worktrees model |
 | `plugin/github.luau` · `jira.luau` · `tracker.luau` · `worktree.luau` · `process.luau` · `input.luau` · `keys.luau` · `prompts.luau` | `gh` search and writes, Jira through `acli`, tracker-neutral issues and name formats, worktrees and their inventory, argv process runner, text input (one line or many), the queue's rebindable keys, the default prompts |
-| `plugin/tests/` | `regression.luau` (runner), `harness.luau` (fake SDK, helpers), `cases/` (one file per area), `check.luau` (pure asserts), `runtime.luau` (real-Tern smoke) |
+| `plugin/tests/` | `regression.luau` (runner), `harness.luau` (fake SDK, helpers), `cases/` (one file per area), `check.luau` (pure asserts), `board_check.luau` and `triage_check.luau` (pure-model asserts, run by `check.luau`), `runtime.luau` (real-Tern smoke) |
 | `scripts/check.py` · `scripts/smoke.py` | the gate (tools, bundle, test, types, bench); CI runs `--ci` on Linux and macOS under Python 3.9 and 3.13, with no smoke (Tern is not available there), so a merge needs a local `python3 scripts/check.py` smoke pass. `smoke.py` runs on installed Tern 0.9.13+ against temporary local repositories and a fake `gh`: worktrees, inventory, draft preview and push, triage/sort/Worktrees, URL, agent lifecycle, selected-text review and the Files entry. |
 
 `link` and `install` are exclusive per id: switch with `tern plugin remove plotroom` / `tern plugin unlink plotroom` first.
