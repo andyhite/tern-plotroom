@@ -31,20 +31,31 @@ type Loader = h.Loader
 local EPOCH, array, cases, hostScene, jsonEncode, newWorld = h.EPOCH, h.array, h.cases, h.hostScene, h.jsonEncode, h.newWorld
 local findKey, openQueue, pickerNode, pickerOf, searchItem = h.findKey, h.openQueue, h.pickerNode, h.pickerOf, h.searchItem
 
-function M.run(instantiate: Loader)
-	local failed = 0
+-- `filter` runs only the cases whose name contains that plain substring; `verbose` prints `RUN <name>` before each case,
+-- so a case that never returns is the last RUN line (scripts/check.py test -k <substring> -v).
+function M.run(instantiate: Loader, filter: string?, verbose: boolean?)
+	local failed, ran = 0, 0
 	for _, c in cases do
-		local w = newWorld(instantiate, c.context)
-		local ok, err = xpcall(function()
-			c.run(w)
-			w.finish()
-		end, debug.traceback)
-		if not ok then
-			failed += 1
-			print("FAIL " .. c.name .. "\n" .. tostring(err) .. "\n")
+		if filter == nil or filter == "" or string.find(c.name, filter, 1, true) then
+			ran += 1
+			if verbose then
+				print("RUN " .. c.name)
+			end
+			local w = newWorld(instantiate, c.context)
+			local ok, err = xpcall(function()
+				c.run(w)
+				w.finish()
+			end, debug.traceback)
+			if not ok then
+				failed += 1
+				print("FAIL " .. c.name .. "\n" .. tostring(err) .. "\n")
+			end
 		end
 	end
-	print(string.format("REGRESSION cases=%d failed=%d", #cases, failed))
+	if ran == 0 then
+		error(string.format("no regression case name contains %q (of %d cases)", filter or "", #cases), 0)
+	end
+	print(string.format("REGRESSION cases=%d failed=%d", ran, failed))
 	if failed > 0 then
 		error(failed .. " regression case(s) failed", 0)
 	end

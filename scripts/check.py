@@ -6,6 +6,9 @@ Platforms: `tools` downloads pinned builds for macOS and Linux x86_64 only. Else
     python3 scripts/check.py            test + types + bench + smoke (the full local gate)
     python3 scripts/check.py --ci       test + types + bench; smoke is reported NOT RUN (Tern is not on CI)
     python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only; also checks plugin.toml's version has a CHANGELOG.md entry, and the docs stage: the markdown's relative links and #anchors resolve, README's screenshots are each used and under 400 KB
+    python3 scripts/check.py test -k <substring> [-v]
+                                        only the cases whose name contains <substring> (also PLOTROOM_CASE=<substring>); -v prints `RUN <name>` before each case,
+                                        so a hang or timeout names the case that never returned
     python3 scripts/check.py types      luau-lsp analyze against the pinned Tern SDK only
     python3 scripts/check.py bench      1000-PR queue render benchmark only
     python3 scripts/check.py ext        the omp extension (plugin/omp/plotroom.ts) over its fixtures only
@@ -46,7 +49,7 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugin"
@@ -286,12 +289,17 @@ end
 local regression = instantiate(nil, os)("tests/regression")
 """
 
-DRIVERS = {"test": "regression.run(instantiate)\n", "bench": "regression.bench(instantiate)\n"}
+DRIVERS = {"test": "regression.run(instantiate%s)\n", "bench": "regression.bench(instantiate)\n"}
 
 Span = Tuple[int, int, str]
 
 
-def build_bundle(mode: str) -> Tuple[str, List[Span]]:
+def luau_string(text: str) -> str:
+    """A Luau string literal for any text: every byte as a decimal escape, so no quote or backslash needs care."""
+    return '"' + "".join("\\%03d" % b for b in text.encode("utf-8")) + '"'
+
+
+def build_bundle(mode: str, case_filter: Optional[str] = None, verbose: bool = False) -> Tuple[str, List[Span]]:
     lines = BUNDLE_HEAD.split("\n")[:-1]
     spans: List[Span] = []
     for path in plugin_files():
@@ -305,7 +313,10 @@ def build_bundle(mode: str) -> Tuple[str, List[Span]]:
         spans.append((first, len(lines), name))
         lines.append("end")
     lines.extend(BUNDLE_TAIL.split("\n"))
-    lines.extend(DRIVERS[mode].split("\n"))
+    driver = DRIVERS[mode]
+    if mode == "test":
+        driver = driver % (", %s, %s" % (luau_string(case_filter) if case_filter else "nil", "true" if verbose else "false"))
+    lines.extend(driver.split("\n"))
     return "\n".join(lines), spans
 
 
@@ -322,12 +333,48 @@ def remap(text: str, spans: List[Span]) -> str:
     return re.sub(r"\S*plotroom-bundle\.luau:(\d+)", sub, text)
 
 
-def run_bundle(luau: Path, mode: str) -> Tuple[int, str, str]:
-    source, spans = build_bundle(mode)
+def run_on_pty(cmd: List[str], cwd: str, timeout: float) -> Tuple[int, str]:
+    """Run cmd with stdout and stderr on a pty and return (exit code, output). Luau's print is block-buffered on a pipe, so a
+    killed run loses everything it printed; on a pty it is line-buffered and the output up to the kill survives.
+    Raises GateError naming the last `RUN <case>` line when the run outlives timeout."""
+    import pty
+    import select
+
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave)
+    os.close(slave)
+    chunks: List[bytes] = []
+    deadline = time.time() + timeout
+    try:
+        while True:
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait()
+                running = [l for l in b"".join(chunks).decode("utf-8", "replace").splitlines() if l.startswith("RUN ")]
+                raise GateError("timed out after %ds; last case started: %s" % (timeout, running[-1][4:] if running else "none"))
+            if not select.select([master], [], [], 0.5)[0]:
+                continue
+            try:
+                data = os.read(master, 65536)
+            except OSError:  # Linux: EIO once the child has closed the pty
+                data = b""
+            if not data:
+                break
+            chunks.append(data)
+    finally:
+        os.close(master)
+    return proc.wait(), b"".join(chunks).decode("utf-8", "replace").replace("\r\n", "\n")
+
+
+def run_bundle(luau: Path, mode: str, case_filter: Optional[str] = None, verbose: bool = False, timeout: int = 600) -> Tuple[int, str, str]:
+    source, spans = build_bundle(mode, case_filter, verbose)
     with tempfile.TemporaryDirectory(prefix="plotroom-bundle-") as tmp:
         script = Path(tmp) / "plotroom-bundle.luau"
         script.write_text(source, encoding="utf-8")
-        done = run([str(luau), str(script)], cwd=str(ROOT), timeout=600)
+        if verbose:  # a pty keeps the RUN lines of a run that never returns
+            code, out = run_on_pty([str(luau), str(script)], str(ROOT), timeout)
+            return code, remap(out, spans), ""
+        done = run([str(luau), str(script)], cwd=str(ROOT), timeout=timeout)
     return done.returncode, remap(done.stdout, spans), remap(done.stderr, spans)
 
 
@@ -553,7 +600,7 @@ def check_css() -> None:
         raise GateError("plugin/plotroom.css: " + "; ".join(problems[:5]))
 
 
-def check_test() -> str:
+def check_test(case_filter: Optional[str] = None, verbose: bool = False) -> str:
     check_css_lint()
     check_css()
     unlisted = [p.stem for p in sorted((PLUGIN / "tests" / "cases").glob("*.luau")) if 'require("./cases/%s")' % p.stem not in (PLUGIN / "tests" / "regression.luau").read_text(encoding="utf-8")]
@@ -561,14 +608,14 @@ def check_test() -> str:
         raise GateError("plugin/tests/cases/ files not required by plugin/tests/regression.luau (they would run nothing): %s" % ", ".join(unlisted))
     luau = find_tool("luau", "LUAU")
     say("test: " + luau_banner(luau))
-    code, out, err = run_bundle(luau, "test")
+    code, out, err = run_bundle(luau, "test", case_filter, verbose)
     sys.stdout.write(out)
     sys.stderr.write(err)
     match = re.search(r"^REGRESSION cases=(\d+) failed=(\d+)$", out, re.M)
     if code != 0 or not match or int(match.group(2)) != 0:
         raise GateError("regression suite failed (exit %d)" % code)
     cases = int(match.group(1))
-    return "%d regression cases" % cases
+    return "%d regression cases%s" % (cases, " (only those named %r: not the full gate)" % case_filter if case_filter else "")
 
 
 def check_types() -> str:
@@ -774,7 +821,13 @@ def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Plotroom verification gate", formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", nargs="?", default="all", choices=["all", "test", "types", "bench", "ext", "smoke", "tools"])
     parser.add_argument("--ci", action="store_true", help="skip the real-Tern smoke and say so (Tern is not available on CI)")
+    parser.add_argument("-k", dest="case_filter", metavar="SUBSTRING", default=None, help="test only: run just the regression cases whose name contains SUBSTRING (default: $PLOTROOM_CASE)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="test only: print `RUN <name>` before each case, so a hang names its case")
     args = parser.parse_args(argv)
+    if (args.case_filter or args.verbose) and args.command != "test":
+        parser.error("-k and -v apply to `test` only")
+    if args.command == "test" and not args.case_filter:
+        args.case_filter = os.environ.get("PLOTROOM_CASE") or None
 
     if args.command == "tools":
         try:
@@ -787,7 +840,7 @@ def main(argv: List[str]) -> int:
 
     plan: List[Tuple[str, Callable[[], str]]] = []
     if args.command in ("all", "test"):
-        plan.append(("test", check_test))
+        plan.append(("test", lambda: check_test(args.case_filter, args.verbose)))
         plan.append(("version", check_version))
         plan.append(("docs", check_docs))
     if args.command in ("all", "types"):
@@ -814,7 +867,7 @@ def main(argv: List[str]) -> int:
             results.append((name, "NOT RUN", str(why)))
         except subprocess.TimeoutExpired as error:
             say("%s: FAIL: timed out: %s" % (name, error))
-            results.append((name, "FAIL", "timed out"))
+            results.append((name, "FAIL", "timed out" + ("; rerun `python3 scripts/check.py test -v` to name the case that hangs" if name == "test" else "")))
     if args.command in ("all", "smoke"):
         if args.ci:
             load_smoke()  # a syntax or import error in smoke.py must still fail CI

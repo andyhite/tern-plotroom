@@ -53,6 +53,7 @@ tern plugin link ./plugin          # install for local use
 python3 scripts/check.py tools     # download pinned luau 0.743 + luau-lsp 1.70.1 (macOS / Linux x86_64)
 python3 scripts/check.py           # all: test + types + bench + ext + smoke
 python3 scripts/check.py test      # regression suite, plus the version and docs checks (also: types | bench | ext | smoke)
+python3 scripts/check.py test -k "input: clean" -v   # only cases whose name contains the substring (or PLOTROOM_CASE=...); -v prints RUN <name> per case, so a hang names its case
 python3 scripts/check.py --ci      # what CI runs (ubuntu + macOS x Python 3.9 + 3.13): smoke reported NOT RUN
 tern plugin types plugin           # refresh gitignored plugin/tern.d.luau for editor types
 ```
