@@ -421,6 +421,18 @@ function M.stage(state: State, kind: string, item: any): (string, { Blocker }?)
 	return if note and note.ok then "worktree" else "none"
 end
 
+-- How long an open pull request of yours waits for a review before Now's Waiting lists it: no review (GitHub's decision
+-- is required, or absent with no reviewer's review on it) and no activity since (`updated`).
+-- ponytail: fixed at 3 days; a setting if anyone needs another number.
+local WAITING_DAYS = 3
+
+-- Whether `pr`, a pull request of yours (the caller knows who wrote it and that its stage is PR open), has waited on a
+-- review for WAITING_DAYS: open, not a draft, no review and no activity in that time. From the search alone.
+function M.waiting(pr: github.Pr, clock: number): boolean
+	local unreviewed = pr.review == "required" or (pr.review == nil and pr.latest ~= nil and #pr.latest == 0)
+	return pr.state == "open" and not pr.draft and unreviewed and pr.updated <= clock - WAITING_DAYS * 86400
+end
+
 -- The checks of `item` (a pull request) as the preview shows them: the loaded list, else what the search carried.
 function M.runsOf(state: State, item: any): { github.Run }
 	local d = state.details[M.detailKey(state, item)]
@@ -770,8 +782,14 @@ function M.nextMove(state: State, kind: string, item: any): { id: string, label:
 		return nil
 	elseif pr.draft then
 		return if mine then { id = "cmd:pr-ready", label = "Ready for review…" } else nil
-	elseif mine or not me then
-		return if again then { id = "cmd:pr-request-review", label = "Request review…" } else nil
+	elseif mine then
+		if again then
+			return { id = "cmd:pr-request-review", label = "Request review…" }
+		end
+		-- Waiting on a review (Now's Waiting, when switched on): a comment pings the reviewers.
+		return if not state.now.prefs.off.waiting and M.waiting(pr, os.time()) then { id = "cmd:comment", label = "Comment…" } else nil
+	elseif not me then
+		return nil
 	end
 	return if M.reviewAsked(state, pr) then action("Review") else nil
 end
@@ -3675,9 +3693,9 @@ function M.nowRead(state: State)
 			end
 			local account = if who == "" or who == ghActive.login then nil else who
 			local wait = github.wait(os.time(), account)
-			-- What this login is asked for, as the reasons switched on need: Blocked and Ready to merge share one search.
+			-- What this login is asked for, as the reasons switched on need: Blocked, Ready to merge and Waiting share one search.
 			local wants: { string } = {}
-			if on("blocked") or on("ready") then
+			if on("blocked") or on("ready") or on("waiting") then
 				table.insert(wants, "mine")
 			end
 			if on("review") then
@@ -3764,7 +3782,8 @@ end
 -- Ranks: 1 an agent needs you (needsYou; `waiting`: it waits for input), 2 your pull request is Blocked (`why` lists its
 -- chips, M.blockers), 3 your review is requested (oldest first; `why` names the teams it was asked of when not of you), 4 your pull
 -- request is Ready to merge, 5 an unread notification you take part in, 6 an issue assigned to you is New or Changed
--- (`why`). A reason switched off in Settings › Views › Now lists nothing. An item is listed once, at its highest rank; a
+-- (`why`), 7 your pull request has waited on a review (M.waiting; longest first, `why` its age). A reason switched off in
+-- Settings › Views › Now lists nothing. An item is listed once, at its highest rank; a
 -- snoozed one only while snoozed items are shown (an agent that needs you is always listed, as in the views).
 function M.nowRows(state: State): { any }
 	local now = state.now
@@ -3786,7 +3805,7 @@ function M.nowRows(state: State): { any }
 	for _, issue in now.assigned do
 		known[issue.key] = { item = issue, kind = "issues" }
 	end
-	local REASON_OF = { "", "blocked", "review", "ready", "notices", "assigned" }
+	local REASON_OF = { "", "blocked", "review", "ready", "notices", "assigned", "waiting" }
 	local off = now.prefs.off
 	local function add(rank: number, kind: string?, item: any, why: string?)
 		if taken[item.key] or off[REASON_OF[rank]] then
@@ -3830,6 +3849,7 @@ function M.nowRows(state: State): { any }
 	local blocked: { any } = {}
 	local ready: { any } = {}
 	local why: { [string]: string } = {}
+	local waits: { any } = {}
 	for _, pr in now.mine do
 		local stage, blockers = M.stage(state, "prs", pr)
 		if stage == "blocked" then
@@ -3841,6 +3861,9 @@ function M.nowRows(state: State): { any }
 			why[pr.key] = table.concat(jobs, ", ")
 		elseif stage == "ready" then
 			table.insert(ready, pr)
+		elseif stage == "pr" and M.waiting(pr, clock) then
+			table.insert(waits, pr)
+			why[pr.key] = github.age(pr.updated)
 		end
 	end
 	table.sort(blocked, newest)
@@ -3895,6 +3918,12 @@ function M.nowRows(state: State): { any }
 	for _, issue in assigned do
 		add(6, "issues", issue, why[issue.key])
 	end
+	table.sort(waits, function(a: any, b: any): boolean
+		return if a.updated ~= b.updated then a.updated < b.updated else a.key < b.key
+	end)
+	for _, pr in waits do
+		add(7, "prs", pr, why[pr.key])
+	end
 	now.rows, now.rowsKey = rows, cacheKey
 	return rows
 end
@@ -3919,9 +3948,10 @@ local SUMMARY: { { one: string, many: string } } = {
 	{ one = "Ready to merge", many = "Ready to merge" },
 	{ one = "notification", many = "notifications" },
 	{ one = "assigned: new or changed", many = "assigned: new or changed" },
+	{ one = "waiting on a review", many = "waiting on a review" },
 }
 function M.nowSummary(state: State): string?
-	local counts: { number } = { 0, 0, 0, 0, 0, 0 }
+	local counts: { number } = { 0, 0, 0, 0, 0, 0, 0 }
 	for _, row in M.nowRows(state) do
 		if not row.snoozed then
 			counts[row.rank] += 1

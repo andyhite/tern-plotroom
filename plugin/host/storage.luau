@@ -691,11 +691,12 @@ function formats.prDir(repo: string, n: number, title: string, snap: { [string]:
 	return tracker.render(formats.of("prdir", snap), { key = tostring(n), slug = tracker.slug(title), owner = owner or "", repo = name or "" }, true)
 end
 
--- Now's switches as saved (kv "now": { off = {reason...}, logins = {off...}, jira = bool, teams = bool, board = bool }),
--- and why they could not be read. An absent store, and one that cannot be read or is malformed, gives the defaults
--- (every reason, login and Jira on, team review requests off, the List); editNow never writes over the last two.
+-- Now's switches as saved (kv "now": { off = {reason...}, waiting = bool, logins = {off...}, jira = bool, teams = bool,
+-- board = bool }; Waiting is on only with `waiting = true`, so it is never in `off`), and why they could not be read.
+-- An absent store, and one that cannot be read or is malformed, gives the defaults (every reason but Waiting, every
+-- login and Jira on, team review requests off, the List); editNow never writes over the last two.
 function M.readNow(): (core.NowPrefs, string?)
-	local prefs: core.NowPrefs = { off = {}, logins = {}, jira = true, teams = false, board = false }
+	local prefs: core.NowPrefs = { off = { waiting = true }, logins = {}, jira = true, teams = false, board = false }
 	local ok, v = kvGet("now")
 	if not ok then
 		return prefs, "Now's saved switches could not be read: " .. tostring(v)
@@ -718,9 +719,10 @@ function M.readNow(): (core.NowPrefs, string?)
 		return true
 	end
 	local off, logins = {}, {}
-	if not isTable(v) or (v.jira ~= nil and type(v.jira) ~= "boolean") or (v.teams ~= nil and type(v.teams) ~= "boolean") or (v.board ~= nil and type(v.board) ~= "boolean") or not list(v.off, off) or not list(v.logins, logins) then
+	if not isTable(v) or (v.jira ~= nil and type(v.jira) ~= "boolean") or (v.teams ~= nil and type(v.teams) ~= "boolean") or (v.board ~= nil and type(v.board) ~= "boolean") or (v.waiting ~= nil and type(v.waiting) ~= "boolean") or not list(v.off, off) or not list(v.logins, logins) then
 		return prefs, "Now's saved switches are malformed; not overwriting them."
 	end
+	off.waiting = v.waiting ~= true
 	return { off = off, logins = logins, jira = v.jira ~= false, teams = v.teams == true, board = v.board == true }, nil
 end
 
@@ -732,6 +734,8 @@ function M.editNow(fn: (core.NowPrefs) -> ()): string?
 		return err
 	end
 	fn(prefs)
+	local waiting = not prefs.off.waiting
+	prefs.off.waiting = false -- saved as `waiting`, not in `off` (keys leaves out what is false)
 	local function keys(set: { [string]: boolean }): any
 		local out: { string } = {}
 		for k, on in set do
@@ -742,7 +746,7 @@ function M.editNow(fn: (core.NowPrefs) -> ()): string?
 		table.sort(out)
 		return tern.json.array(out)
 	end
-	local werr = kvSet("now", { off = keys(prefs.off), logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams, board = prefs.board })
+	local werr = kvSet("now", { off = keys(prefs.off), waiting = waiting, logins = keys(prefs.logins), jira = prefs.jira, teams = prefs.teams, board = prefs.board })
 	return if werr then "Could not save: " .. werr else nil
 end
 

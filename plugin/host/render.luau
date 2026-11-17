@@ -1790,6 +1790,9 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 	elseif row.rank == 5 then
 		local reason = reasonOf(row.notice.reason)
 		return { text = reason.text, tone = reason.tone, title = "GitHub notified you: " .. reason.text }, "An unread notification you take part in: " .. reason.text
+	elseif row.rank == 7 then
+		local said = "Your pull request has had no review and no activity for " .. printable(row.why or "")
+		return { text = "Waiting", tone = "muted", title = said }, said
 	end
 	local fresh = if row.why == "New" then "and you haven't seen it yet" else "and changed since you last saw it"
 	return { text = "Assigned: " .. string.lower(row.why or ""), tone = "accent", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh

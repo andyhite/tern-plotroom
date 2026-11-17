@@ -231,7 +231,7 @@ local function pageContent(state: State): ({ any }, { Node })
 		end) then
 			row({ id = "now:layout", label = "Layout", hint = "A narrow block shows the List", disabled = unreadable, control = layout(prefs.board) })
 			for _, r in core.NOW_REASONS do
-				row({ id = "now:" .. r.id, label = r.label, disabled = unreadable, control = switch(not prefs.off[r.id]) })
+				row({ id = "now:" .. r.id, label = r.label, hint = if r.id == "waiting" then "Your open pull requests with no review and no activity for 3 days" else nil, disabled = unreadable, control = switch(not prefs.off[r.id]) })
 				if r.id == "review" then
 					row({ id = "now:teams", label = "Include team review requests", hint = "Requests of a team you are on, not only of you", disabled = unreadable, control = switch(prefs.teams) })
 				end
@@ -2175,7 +2175,7 @@ local function pageChanges(state: State): { [string]: number }
 	local now = storage.readNow()
 	local views = 0
 	for _, r in core.NOW_REASONS do
-		views += if now.off[r.id] then 1 else 0
+		views += if (now.off[r.id] == true) ~= (r.id == "waiting") then 1 else 0 -- Waiting is off by default: on is the change
 	end
 	views += (if now.teams then 1 else 0) + (if now.board then 1 else 0) + (if cli.on("jira") and not now.jira then 1 else 0)
 	if cli.on("github") then

@@ -878,6 +878,43 @@ case("now: with Blocked off and Ready to merge on, your pull requests are still 
 	same(listed(b), {}, "and nothing of theirs is listed")
 end)
 
+case("now: Waiting is off until switched on, then lists your open pull requests with no review and no activity for 3 days, longest first", function(w: World)
+	local DAY = 86400
+	local commented = h.array({ { login = "ann", state = "COMMENTED", at = h.iso(EPOCH - 5 * DAY) } })
+	local _, b = nowScene(w, {}, function(s: h.HostScene)
+		s.gh.queries[MINE] = {
+			searchItem(1, "o/r", EPOCH - 4 * DAY, { review = "REVIEW_REQUIRED" }),
+			searchItem(2, "o/r", EPOCH - 1 * DAY, { review = "REVIEW_REQUIRED" }), -- active lately
+			searchItem(3, "o/r", EPOCH - 5 * DAY, { latest = h.array({}) }), -- no review decision, nobody reviewed
+			searchItem(4, "o/r", EPOCH - 5 * DAY, { latest = commented }), -- somebody reviewed
+			searchItem(5, "o/r", EPOCH - 5 * DAY, { review = "REVIEW_REQUIRED", isDraft = true }),
+			searchItem(6, "o/r", EPOCH - 5 * DAY, { review = "APPROVED", merge = "BLOCKED" }),
+			searchItem(7, "o/r", EPOCH - 5 * DAY, { review = "CHANGES_REQUESTED" }),
+		}
+	end)
+	same(whys(b), { "no_2fr_237 Blocked" }, "off by default: only the Blocked one is listed")
+	flip(w, b, "waiting", true)
+	same(w.kv.get("now").waiting, true, "saved as on")
+	eq(#w.kv.get("now").off, 0, "and never in the list of reasons that are off")
+	same(whys(b), { "no_2fr_237 Blocked", "no_2fr_233 Waiting", "no_2fr_231 Waiting" }, "on: PRs with no review and no activity for 3 days, the one waiting longest first; not a recent, reviewed, draft or approved one")
+	eq(b.title(), "Plotroom · Now · 1 Blocked · 2 waiting on a review", "the heading counts them")
+	flip(w, b, "waiting", false)
+	same(whys(b), { "no_2fr_237 Blocked" }, "switched off again: gone at once")
+	same(w.kv.get("now").waiting, false, "saved as off")
+end)
+
+case("now: with Blocked and Ready to merge off and Waiting on, your pull requests are still searched and only the waiting ones listed", function(w: World)
+	local s, b = nowScene(w, {}, function(s: h.HostScene)
+		nowPrefs(w, { off = h.array({ "blocked", "ready" }), waiting = true })
+		s.gh.queries[MINE] = {
+			searchItem(1, "o/r", EPOCH - 4 * 86400, { review = "REVIEW_REQUIRED" }),
+			searchItem(2, "o/r", EPOCH - 4 * 86400, { review = "CHANGES_REQUESTED" }),
+		}
+	end)
+	same(whys(b), { "no_2fr_231 Waiting" }, "the Blocked one is not listed")
+	has(table.concat(nowAsks(s, 0), ","), "octocat mine", "Waiting alone has your pull requests searched")
+end)
+
 case("now: your pull request failing only an ignored check is not listed as Blocked; one failing another check is", function(w: World)
 	local done = "2026-01-01T00:00:00Z"
 	local only = { h.checkRun("approval", "COMPLETED", "FAILURE", done, { id = "A" }) }

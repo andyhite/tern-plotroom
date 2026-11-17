@@ -227,9 +227,9 @@ export type Now = {
 	rowsKey: string?,
 }
 
--- Which reasons and accounts feed Now (Settings › Views › Now, kv "now"): the reasons switched off (NOW_REASONS ids),
--- the gh logins switched off (lowercase), Jira's switch, whether review requests of your teams count, and whether Now
--- is laid out as a Board.
+-- Which reasons and accounts feed Now (Settings › Views › Now, kv "now"): the reasons switched off (NOW_REASONS ids;
+-- Waiting is off unless its kv entry switches it on), the gh logins switched off (lowercase), Jira's switch, whether
+-- review requests of your teams count, and whether Now is laid out as a Board.
 export type NowPrefs = { off: { [string]: boolean }, logins: { [string]: boolean }, jira: boolean, teams: boolean, board: boolean }
 
 -- Now's reasons in Now's order, as Settings › Views › Now switches them.
@@ -239,6 +239,7 @@ M.NOW_REASONS = {
 	{ id = "ready", label = "Ready to merge" },
 	{ id = "notices", label = "Notifications" },
 	{ id = "assigned", label = "Assigned" },
+	{ id = "waiting", label = "Waiting" }, -- off by default (storage.readNow)
 }
 
 -- Text the window asks for in the Compose overlay (rpc `compose`, render's composeOverlay): its `head`, the selected

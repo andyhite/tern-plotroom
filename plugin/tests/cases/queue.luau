@@ -3935,6 +3935,21 @@ case("host next move: each pull request stage maps to its move, shown first in C
 	has(findKey(b.view().layer, "confirm", "overlay").p.head, "Remove worktree", "which asks first, as the card's Remove worktree does")
 end)
 
+case("host next move: with Now's Waiting on, your open pull request with no review for 3 days is Comment…, the window's comment command; a recent one has no move", function(w: World)
+	local s = hostScene(w, 0)
+	w.kv.put("now", { waiting = true })
+	s.gh.items.octocat = {
+		searchItem(1, "o/r", EPOCH - 4 * 86400, { author = "octocat", review = "REVIEW_REQUIRED" }),
+		searchItem(2, "o/r", EPOCH - 3600, { author = "octocat", review = "REVIEW_REQUIRED" }),
+		searchItem(3, "o/r", EPOCH - 4 * 86400, { author = "ann", review = "REVIEW_REQUIRED" }),
+	}
+	local b = openQueue(w)
+	eq(nextOf(w, b, "no_2fr_231").row, "Comment…", "waited 4 days with no review: Comment…")
+	eq(nextOf(w, b, "no_2fr_231").command, "comment", "the window's comment command")
+	eq(nextOf(w, b, "no_2fr_232").row, nil, "active an hour ago: no move")
+	eq(nextOf(w, b, "no_2fr_233").row, nil, "someone else's pull request: no move")
+end)
+
 case("host review recency: a PR you approved whose head moved says New commits since you approved (and is Changed); your dismissed review or a request after your approval makes Review its next move", function(w: World)
 	local s = hostScene(w, 0)
 	local function approved(n: number, at: string, extra: { [string]: any }?): { [string]: any }
