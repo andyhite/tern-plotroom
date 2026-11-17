@@ -904,10 +904,10 @@ end
 -- the same item is selected in the same view. `done` gets {ok, message, url?} or {problem}.
 local function commit(state: State, token: any, done: (any) -> ())
 	local plan = state.plan
-	state.plan = nil
 	if not plan or plan.token ~= token then
 		return done({ problem = "That confirmation is no longer valid; nothing was sent. Ask again." })
 	end
+	state.plan = nil
 	local chosen = selected(state)
 	-- Now's plan holds while Now is shown; every other plan, while its item is the selected one.
 	local here = if plan.key == NOW_KEY then state.nowOn else chosen ~= nil and chosen.key == plan.key
@@ -919,7 +919,10 @@ local function commit(state: State, token: any, done: (any) -> ())
 	if plan.key ~= NOW_KEY then
 		state.acted[plan.key] = true -- what the mutation does to its stage is yours, not an arrival (engine.arrive)
 	end
-	plan.run(done)
+	local ok, err = pcall(plan.run, done)
+	if not ok then
+		done({ problem = tostring(err) })
+	end
 end
 
 -- The Confirm overlay's action on a plan (`token`, the plan's own): commits it and toasts what came of it.

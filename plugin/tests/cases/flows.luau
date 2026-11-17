@@ -2627,7 +2627,6 @@ case("host mutations: a commit with a made-up or replaced token, after the selec
 	local first = plan()
 	local second = plan()
 	has(commit(first.token).problem, "no longer valid", "the token of a replaced plan")
-	has(commit(second.token).problem, "no longer valid", "a refused commit drops the pending plan as well")
 	local rows = pickerOf(b).items
 	local moved = plan()
 	b.typeText("j")
@@ -2646,7 +2645,8 @@ case("host mutations: a commit with a made-up or replaced token, after the selec
 	has(commit(late.token).problem, "nothing was sent", "after five minutes")
 	eq(#seen, 0, "none of them sent anything")
 	local good = plan()
-	eq(commit(good.token).ok, true, "a fresh plan commits")
+	has(commit(first.token).problem, "no longer valid", "a stale token is refused")
+	eq(commit(good.token).ok, true, "and does not cancel the plan waiting")
 	eq(#seen, 1, "once")
 	has(commit(good.token).problem, "no longer valid", "the same token twice")
 	eq(#seen, 1, "sends nothing again")
