@@ -10,9 +10,10 @@ smoke   `tern serve` headless on temporary directories only (never the live daem
 Environment: TERN=/path to the tern binary (else PATH); PLOTROOM_SMOKE_SHOTS=<dir> makes Tern write the scenarios' screenshots there
         (README's images are cropped from them); PLOTROOM_SMOKE_OMP is set by smoke itself (the fake omp agents start under
         PLOTROOM_SELFTEST=1), not by the caller.
-Smoke prerequisites: Tern >= 0.9.13, the minimum supported (the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp on PATH,
+Smoke prerequisites: Tern >= 0.9.13, the minimum supported (the SDK snapshot stays the pinned 0.9.13), git >= 2.36, omp >= 18.22 on PATH,
 Python 3.9+. No network; every repository (bare remotes included), fake gh/ssh, the fake model omp's `@smol` role answers from, Tern directory and log
-lives under one temporary directory that is deleted afterwards.
+lives under one temporary directory that is deleted afterwards, also on SIGTERM (a CI cancel). Tern runs in its own process group, killed on
+exit with the agents it started.
 
 Imports the shared helpers from check.py, so it runs through it (check.py registers itself as `check` before importing this).
 """
@@ -24,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,7 @@ TERN_UNSET = (
 
 SMOKE_TOAST = "Plotroom self-test passed"
 GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
+OMP_MIN = (18, 22)  # the omp smoke was last verified against (`omp --version`: omp/18.22.0); `omp worktree add` is what Plotroom needs
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
 SETUP_LAG = 8.0  # seconds an agent may start after its setup ended: under the 10 s a silent shell waits, over a slow box's jitter
@@ -270,7 +273,11 @@ def smoke_prerequisites() -> Tuple[str, str, str]:
         raise GateError("smoke needs git >= %d.%d; %s reports %r. Upgrade git." % (GIT_MIN + (git, said)))
     omp = shutil.which("omp")
     if not omp:
-        raise GateError("smoke needs omp on PATH: Plotroom creates worktrees with `omp worktree add`.")
+        raise GateError("smoke needs omp >= %d.%d on PATH: Plotroom creates worktrees with `omp worktree add`." % OMP_MIN)
+    said = run([omp, "--version"], timeout=30).stdout.strip()
+    m = re.search(r"(\d+)\.(\d+)", said)
+    if not m or (int(m.group(1)), int(m.group(2))) < OMP_MIN:
+        raise GateError("smoke needs omp >= %d.%d; %s reports %r. Upgrade omp." % (OMP_MIN + (omp, said)))
     return tern, git, omp
 
 
@@ -740,6 +747,7 @@ class Smoke:
         self.proc = subprocess.Popen(
             [self.tern, "serve", "--control", str(self.sock)] + (["--out", os.environ["PLOTROOM_SMOKE_SHOTS"]] if os.environ.get("PLOTROOM_SMOKE_SHOTS") else []),
             cwd=str(self.cwd), env=self.env, stdin=subprocess.DEVNULL, stdout=self.logf, stderr=subprocess.STDOUT,
+            start_new_session=True,  # its own process group, so stop() can kill the agents it started along with it
         )
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
@@ -903,6 +911,11 @@ class Smoke:
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
                     self.proc.wait()
+        if self.proc is not None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)  # agents outlive a killed or quit Tern: the group is the only handle on them
+            except (ProcessLookupError, PermissionError):
+                pass  # the group is already empty
         if self.logf:
             self.logf.close()
 
@@ -3060,6 +3073,11 @@ def check_smoke() -> str:
     tern, git, omp = smoke_prerequisites()
     WARNINGS.clear()
     started = time.monotonic()
+    # SIGTERM (a CI cancel) kills Python without running a `finally`; as KeyboardInterrupt it unwinds through stop() and the rmtree below.
+    def interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt()
+
+    was = signal.signal(signal.SIGTERM, interrupt)
     tmp = Path(tempfile.mkdtemp(prefix="plotroom-smoke-", dir="/tmp" if os.path.isdir("/tmp") else None)).resolve()
     s = Smoke(tern, git, omp, tmp)
     try:
@@ -3093,6 +3111,7 @@ def check_smoke() -> str:
     finally:
         s.stop()
         shutil.rmtree(str(tmp), ignore_errors=True)
+        signal.signal(signal.SIGTERM, was)
 
 
 if __name__ == "__main__":

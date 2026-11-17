@@ -99,7 +99,7 @@ CI never runs smoke (no Tern there), so a green CI is not a full pass: before me
 
 - Luau (Tern's embedded runtime), not Lua 5.x: no `goto`. Type-checked with luau-lsp 1.70.1 against Tern 0.9.13 definitions (the minimum supported Tern).
 - `scripts/*.py` are Python 3.9+, stdlib only; no pip, package.json or Makefile. Do not add dependencies.
-- Smoke needs real `tern` 0.9.13 or newer (it refuses an older one; types stay pinned to 0.9.13), git ≥ 2.36 and `omp` on PATH; it is local-only (CI skips it). Smoke generates the installed Tern's SDK types and shows a WARN row (never a failure) when their sha256 differs from the pinned snapshot. CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA, checkout with `persist-credentials: false`.
+- Smoke needs real `tern` 0.9.13 or newer (it refuses an older one; types stay pinned to 0.9.13), git ≥ 2.36 and `omp` ≥ 18.22 (`OMP_MIN` in `scripts/smoke.py`) on PATH; it is local-only (CI skips it). Smoke runs Tern in its own process group and kills the group on exit, and turns SIGTERM into KeyboardInterrupt, so an abort or a CI cancel leaves no agent processes and no `/tmp/plotroom-smoke-*` directory. Smoke generates the installed Tern's SDK types and shows a WARN row (never a failure) when their sha256 differs from the pinned snapshot. CI: ubuntu-latest, `tools` then `--ci`, actions pinned by SHA, checkout with `persist-credentials: false`.
 - `plugin/tern.d.luau` is gitignored editor output; never commit it or depend on it in checks.
 
 ## Testing & QA
