@@ -105,6 +105,7 @@ case("logs: a failed log keeps the lines around its errors, marks the rest as ga
 		table.insert(many, "src/app.ts:" .. i)
 	end
 	eq(#logs.refs(many, { "src/app.ts" }), 5, "at most 5 changed-file lines")
+	same(logs.refs({ "at D:\\a\\r\\src\\app.ts:7 and x/y/top.ts:3 and ./top.ts:4 and /home/r/top.ts:5" }, { "src/app.ts", "top.ts" }), { "src/app.ts:7", "top.ts:4", "top.ts:5" }, "a backslash path names its changed file; a folder-less changed file is not named by x/y/top.ts")
 end)
 
 case("logs: typed errors, ERROR, [ERROR], Exception lines and the ✖ mark read as error lines, a heading naming one does not", function(w: World)

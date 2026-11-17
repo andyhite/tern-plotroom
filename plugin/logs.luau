@@ -135,16 +135,25 @@ function M.parse(stdout: string): { Excerpt }
 end
 
 -- `path:line` mentions in `lines` that name one of the PR's changed `files`, each once, in log order, at most MAX_REFS.
--- A log path may carry the runner's folder ("/home/runner/work/r/r/src/a.ts"): it names a changed path it ends with.
+-- A log path may carry the runner's folder ("/home/runner/work/r/r/src/a.ts", "D:\a\r\r\src\a.ts"): it names a changed
+-- path it ends with, at a folder boundary. A changed path with no folder ("a.ts") is named only by itself, "./a.ts" or an
+-- absolute log path: "x/y/a.ts" is another file.
 function M.refs(lines: { string }, files: { string }): { string }
 	local out: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, text in lines do
-		for raw, line in string.gmatch(text, "([%w%._%-/]+%.%w+):(%d+)") do
+		for raw, line in string.gmatch((string.gsub(text, "\\", "/")), "([%w%._%-/]+%.%w+):(%d+)") do
 			for _, path in files do
-				if #out < MAX_REFS and string.sub(raw, -#path) == path and (#raw == #path or string.sub(raw, -#path - 1, -#path - 1) == "/") then
+				if #out < MAX_REFS and string.sub(raw, -#path) == path then
+					local prefix = string.sub(raw, 1, #raw - #path)
+					local ok = prefix == ""
+					if not ok and string.find(path, "/", 1, true) then
+						ok = string.sub(prefix, -1) == "/"
+					elseif not ok then
+						ok = prefix == "./" or string.sub(prefix, 1, 1) == "/"
+					end
 					local ref = path .. ":" .. (line :: string)
-					if not seen[ref] then
+					if ok and not seen[ref] then
 						seen[ref] = true
 						table.insert(out, ref)
 					end
