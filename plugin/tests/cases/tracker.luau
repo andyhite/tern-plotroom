@@ -110,6 +110,66 @@ case("github.gh: a login's token is read once within 60 s, and any auth reply dr
 	eq(tokenReads(), 3, "and dropped it: the next call reads the token again")
 end)
 
+case("github.gh: calls on a cold token cache share one gh auth token read", function(w: World)
+	local github = w.load("github") :: Github
+	local tokenSpawns = 0
+	w.respond(function(call: Call): Reply?
+		if call.argv[2] == "auth" then
+			tokenSpawns += 1
+			return { stdout = "tok\n", delay = 1000 }
+		end
+		return { stdout = "ok" }
+	end)
+	local outs: { string } = {}
+	local tokens: { string } = {}
+	for _ = 1, 3 do
+		github.gh({ "api", "user" }, function(out)
+			table.insert(outs, out or "nil")
+		end, "cat")
+	end
+	w.flush()
+	eq(tokenSpawns, 1, "three calls before the token answers spawn one gh auth token")
+	w.advance(1000)
+	w.flush()
+	same(outs, { "ok", "ok", "ok" }, "every waiting call completed")
+	for _, c in w.calls do
+		if c.argv[2] ~= "auth" then
+			table.insert(tokens, c.env.GH_TOKEN or "none")
+		end
+	end
+	same(tokens, { "tok", "tok", "tok" }, "each ran with the shared token")
+end)
+
+case("github.gh: a failed shared token read gives every waiter its problem and is not remembered", function(w: World)
+	local github = w.load("github") :: Github
+	local tokenSpawns = 0
+	w.respond(function(call: Call): Reply?
+		if call.argv[2] == "auth" then
+			tokenSpawns += 1
+			return { status = 1, stderr = "no oauth token\n", delay = 1000 }
+		end
+		return { stdout = "ok" }
+	end)
+	local kinds: { string } = {}
+	local function ask()
+		github.gh({ "api", "user" }, function(_out, problem)
+			table.insert(kinds, if problem then problem.kind else "none")
+		end, "cat")
+	end
+	for _ = 1, 3 do
+		ask()
+	end
+	w.flush()
+	w.advance(1000)
+	w.flush()
+	eq(tokenSpawns, 1, "one spawn for the three waiters")
+	same(kinds, { "auth", "auth", "auth" }, "all three got the problem")
+	eq(#w.calls, 1, "no gh command ran without a token")
+	ask()
+	w.flush()
+	eq(tokenSpawns, 2, "nothing cached: the next call spawns gh auth token again")
+end)
+
 case("github.runs: same-named checks of different suites are independent rows, the failing one stays visible", function(w: World)
 	local github = w.load("github") :: Github
 	local runs = github.runs({

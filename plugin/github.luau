@@ -612,8 +612,11 @@ end
 local TOKEN_TTL_S = 60
 -- One gh login's token, read with `gh auth token`; memory only, never written anywhere.
 local tokens: { [string]: { token: string, at: number } } = {}
+-- Calls waiting on a login's in-flight `gh auth token`: one spawn per cold key, whatever the outcome.
+local tokenReads: { [string]: { (string?, Problem?, WindowCx?) -> () } } = {}
 
 -- `account`'s token, read with `gh auth token` and kept in memory for TOKEN_TTL_S seconds; done(token, problem, cx).
+-- Calls arriving while a read is in flight share it; a failed read is shared the same way but never cached.
 -- No answer in time is `failed` (retryable); only a definite refusal is `auth`.
 function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
 	local key = string.lower(account)
@@ -621,17 +624,30 @@ function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
 	if hit and os.time() - hit.at < TOKEN_TTL_S then
 		return done(hit.token, nil, nil)
 	end
+	local waiting = tokenReads[key]
+	if waiting then
+		table.insert(waiting, done)
+		return
+	end
+	local waiters = { done }
+	tokenReads[key] = waiters
+	local function finish(token: string?, problem: Problem?, cx: WindowCx?)
+		tokenReads[key] = nil
+		for _, cb in waiters do
+			cb(token, problem, cx)
+		end
+	end
 	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
 		if not r then
-			return done(nil, { kind = "missing", message = perr or "gh could not be started" }, cx)
+			return finish(nil, { kind = "missing", message = perr or "gh could not be started" }, cx)
 		end
 		if r.timed_out then
 			-- No answer about the account (a keychain prompt, a slow disk): not "not signed in".
-			return done(nil, { kind = "failed", message = "gh auth token did not answer within 30 seconds." }, cx)
+			return finish(nil, { kind = "failed", message = "gh auth token did not answer within 30 seconds." }, cx)
 		end
 		local token = string.match(r.stdout, "^%s*(%S+)%s*$")
 		if r.status ~= 0 or not token then
-			return done(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx)
+			return finish(nil, { kind = "auth", message = "The gh account " .. account .. " is not signed in: run `gh auth login`, or set another login on this view in Settings › Views." }, cx)
 		end
 		local entry = { token = token, at = os.time() }
 		tokens[key] = entry
@@ -641,7 +657,7 @@ function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
 				tokens[key] = nil
 			end
 		end)
-		done(token, nil, cx)
+		finish(token, nil, cx)
 	end)
 end
 
