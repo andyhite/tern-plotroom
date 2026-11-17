@@ -8,8 +8,8 @@ local tracker = require("./tracker")
 
 local M = {}
 
--- Problem kinds: auth | missing | rate-limit | invalid | not-found | failed (gh, the API or a timeout) and
--- superseded (the caller cancelled the request).
+-- Problem kinds: auth | missing | rate-limit | invalid | not-found | network (GitHub unreachable) | failed (gh, the API or a
+-- timeout) and superseded (the caller cancelled the request).
 export type Problem = { kind: string, message: string }
 -- status: failure | pending | success | neutral; detail spells it out ("Passed · 3s"); took is the bare duration of a
 -- finished check run, when GitHub gives one. phase is the preview's group: failing | running | queued | passed | skipped
@@ -601,8 +601,20 @@ function M.classify(result: ProcessResult, limit: string?): Problem
 		-- Validation Failed: bad query, or the account cannot search the repository. Retrying unchanged cannot help.
 		return { kind = "invalid", message = "GitHub rejected the request: " .. firstLines(err, 3) }
 	end
-	if string.find(err, "HTTP 404", 1, true) then
+	if string.find(err, "HTTP 404", 1, true) or string.find(err, "Could not resolve to ", 1, true) or string.find(err, "NOT_FOUND", 1, true) then
+		-- `gh api graphql` answers a missing repository or pull request with exit 1 and "Could not resolve to a ...", no HTTP 404.
 		return { kind = "not-found", message = "The repository or pull request is not visible to this GitHub account: " .. firstLines(err, 3) }
+	end
+	if
+		string.find(low, "error connecting to", 1, true)
+		or string.find(low, "dial tcp", 1, true)
+		or string.find(low, "no such host", 1, true)
+		or string.find(low, "could not resolve host", 1, true)
+	then
+		return { kind = "network", message = "Could not reach GitHub: check your connection. " .. firstLines(err, 2) }
+	end
+	if result.status == -1 then
+		return { kind = "failed", message = "gh was stopped before it answered." }
 	end
 	return {
 		kind = "failed",

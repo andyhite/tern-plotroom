@@ -1301,6 +1301,7 @@ local HEADS: { [string]: string } = {
 	["rate-limit"] = "GitHub rate limit",
 	["not-found"] = "Repository not visible",
 	invalid = "GitHub rejected the search",
+	network = "GitHub not reachable",
 }
 local HELP: { [string]: string } = {
 	missing = "Install the GitHub CLI (cli.github.com) so it is on your shell's PATH, then Refresh.",
@@ -1308,6 +1309,7 @@ local HELP: { [string]: string } = {
 	["rate-limit"] = "Searches resume automatically when GitHub's limit resets.",
 	["not-found"] = "Check this view's GitHub login in Settings › Views, then Refresh.",
 	invalid = "Check the view's query and login in Settings › Views, then Refresh.",
+	network = "Check your connection; Plotroom tries again at the next refresh.",
 }
 local JIRA_HEADS: { [string]: string } = {
 	missing = "Atlassian CLI not found",

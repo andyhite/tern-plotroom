@@ -289,6 +289,12 @@ case("github.classify: statuses map to the pause kinds the host acts on", functi
 	eq(kind(1, "gh: HTTP 429\n"), "rate-limit", "429")
 	eq(kind(-1, "", true), "failed", "timeout")
 	eq(kind(1, "gh: something broke\n"), "failed", "anything else")
+	eq(kind(1, "GraphQL: Could not resolve to a Repository with the name 'o/gone'. (repository)\n"), "not-found", "graphql missing repository")
+	eq(kind(1, "GraphQL: Could not resolve to a PullRequest with the name 'o/r'. (repository.pullRequest)\n"), "not-found", "graphql missing pull request")
+	eq(kind(1, "error connecting to api.github.com\ncheck your internet connection\n"), "network", "gh offline")
+	eq(kind(1, "Post \"https://api.github.com/graphql\": dial tcp: lookup api.github.com: no such host\n"), "network", "dns")
+	eq(kind(-1, ""), "failed", "killed")
+	has(github.classify({ status = -1, stdout = "", stderr = "", timed_out = false }).message, "stopped before it answered", "killed says so")
 end)
 
 case("github.search: a count GitHub caps loads ten pages of 100 and is partial", function(w: World)
