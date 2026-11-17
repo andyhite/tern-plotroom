@@ -722,6 +722,42 @@ case("github.checks: a paused quota or an unusable account sends nothing, and ca
 	eq(bad.problem.kind, "failed", "an unexpected repository name")
 end)
 
+case("github: a repository with a \".\" or \"..\" part, a space, or a bad number or ref never reaches gh", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local problems: { any } = {}
+	local function keep(...: any)
+		local args = table.pack(...)
+		for i = 1, args.n do
+			if type(args[i]) == "table" and args[i].message then
+				table.insert(problems, args[i])
+			end
+		end
+	end
+	for _, repo in { "../x", "o/..", "o/.", "o r/x", "o/r?x", "o/r#5", "o/r/s" } do
+		github.pr(repo, 5, nil, keep)
+		github.checks(repo, 5, nil, keep)
+		github.issue(repo, 5, nil, keep)
+		github.evidence(repo, 5, nil, keep)
+		github.linkedPrs(repo, "5", nil, keep)
+		github.linkedPrs(repo, "ABC-12", nil, keep)
+	end
+	for _, n in { 0, 1.5, -3, 2 ^ 31 } do
+		github.pr("o/r", n, nil, keep)
+		github.checks("o/r", n, nil, keep)
+		github.issue("o/r", n, nil, keep)
+		github.evidence("o/r", n, nil, keep)
+	end
+	for _, ref in { "ABC-12 is:merged", "ABC-12:x", "ABC-12 repo:x/y", "0", "99999999999" } do
+		github.linkedPrs("o/r", ref, nil, keep)
+	end
+	eq(#problems, 0, "never synchronous")
+	w.flush()
+	eq(#problems, 7 * 6 + 4 * 4 + 5, "every call failed")
+	eq(#gh.requests, 0, "no gh was spawned")
+	w.finish()
+end)
+
 case("github.pr: the head sha must be 40 hex digits and is lowercased", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)

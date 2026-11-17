@@ -743,6 +743,24 @@ case("review: the block reads the heads plotroom_propose_review accepts, 7 to 64
 	w.finish()
 end)
 
+case("review: the block refuses a repository with a \".\" or \"..\" part, as plotroom_propose_review does", function(w: World)
+	local review = w.load("host/review") :: any
+	local function read(repo: string): (any, string?)
+		local p = proposal()
+		p.repo = repo
+		return review.parse(jsonEncode(p))
+	end
+	for _, repo in { "o/r", "o.x/r..y", ".o/.r" } do
+		yes(read(repo), "reads repo " .. repo)
+	end
+	for _, repo in { "../x", "o/..", "./r", "o/." } do
+		local got, why = read(repo)
+		eq(got, nil, "refuses repo " .. repo)
+		eq(why, "The Draft review file is malformed.", "as malformed: " .. repo)
+	end
+	w.finish()
+end)
+
 case("review: a reload keeps your edits for the same proposal and starts over for a revised one; a gone agent gets Copy", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)

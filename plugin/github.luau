@@ -707,13 +707,25 @@ local function bad(message: string): Problem
 	return { kind = "invalid", message = message }
 end
 
--- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
-local function repoArg(repo: any): string?
+-- `repo` ("owner/name") as its owner and name; nil, nil unless both are plain name characters and neither is "." or
+-- "..": every REST path, search string and GraphQL variable built from a repository goes through here.
+local function ownerName(repo: any): (string?, string?)
 	local o, r = string.match(if type(repo) == "string" then repo else "", "^([%w%-_%.]+)/([%w%-_%.]+)$")
 	if not o or not r or o == "." or o == ".." or r == "." or r == ".." then
-		return nil
+		return nil, nil
 	end
-	return "github.com/" .. o .. "/" .. r
+	return o, r
+end
+
+-- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
+local function repoArg(repo: any): string?
+	local o, r = ownerName(repo)
+	return if o and r then "github.com/" .. o .. "/" .. r else nil
+end
+
+-- A GitHub issue or pull request number.
+local function whole32(v: any): boolean
+	return type(v) == "number" and v >= 1 and v <= 2147483647 and v == math.floor(v)
 end
 
 local later = process.later
@@ -1258,8 +1270,8 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 			finish(nil, 0, problem)
 		end)
 	end
-	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
-	if not owner or not name then
+	local owner, name = ownerName(repo)
+	if not owner or not name or not whole32(number) then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
 	end
 	if shouldContinue and not shouldContinue() then
@@ -1329,8 +1341,8 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 			finish(nil, problem)
 		end)
 	end
-	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
-	if not owner or not name then
+	local owner, name = ownerName(repo)
+	if not owner or not name or not whole32(number) then
 		return fail({ kind = "failed", message = "Unexpected repository name." })
 	end
 	if shouldContinue and not shouldContinue() then
@@ -1392,6 +1404,11 @@ export type PrMeta = { base: string, sha: string, ref: string, state: string, ba
 
 -- Base repository, head and prompt details of one PR; done(meta, problem, cx).
 function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Problem?, WindowCx?) -> ())
+	if not repoArg(repo) or not whole32(number) then
+		return later(function()
+			done(nil, bad("Unexpected pull request."), nil)
+		end)
+	end
 	M.gh({ "api", "--hostname", "github.com", "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
 		if not out then
 			return done(nil, problem, cx)
@@ -1456,13 +1473,19 @@ local MENTION_GQL = "query($q: String!) { search(query: $q, type: ISSUE, first: 
 local MENTION_JQ = "[(.data.search.nodes // [])[] | select(.number != null) | " .. PR_LINK_JQ .. "]"
 
 -- The pull requests of `repo` ("owner/name") issue `ref` is worked on: for a GitHub issue number those that close it,
--- for a Jira key those whose title or head branch names it. done(prs, problem).
+-- for a Jira key those whose title or head branch names it. done(prs, problem). A repository or ref of any other shape
+-- (a space would add search qualifiers) is refused before gh runs; done never runs before this call returns.
 function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ LinkedPr }?, Problem?) -> ())
-	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	local owner, name = ownerName(repo)
 	local mention = string.match(ref, "^%d+$") == nil
+	if not owner or not name or (if mention then not string.match(ref, "^%a[%w_]*%-%d+$") else not whole32(tonumber(ref))) then
+		return later(function()
+			done(nil, bad("Unexpected repository or issue."))
+		end)
+	end
 	local args = if mention
-		then { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. repo .. " is:pr " .. ref, "--jq", MENTION_JQ }
-		else { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. CLOSING_GQL, "-f", "o=" .. (owner or ""), "-f", "r=" .. (name or ""), "-F", "n=" .. ref, "--jq", CLOSING_JQ }
+		then { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. owner .. "/" .. name .. " is:pr " .. ref, "--jq", MENTION_JQ }
+		else { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. CLOSING_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. ref, "--jq", CLOSING_JQ }
 	-- The key as a whole word: ABC-12 is not ABC-123.
 	local word = "%f[%w]" .. string.gsub(string.lower(ref), "%p", "%%%0") .. "%f[^%w]"
 	M.gh(args, function(out, problem)
@@ -1566,7 +1589,7 @@ local OUTCOME_HEAD = "open: pullRequests(headRefName: $b, states: OPEN, first: 1
 -- done never runs before this call returns.
 function M.outcome(c: OutcomeCheck, done: (string, string?) -> ())
 	local o = c.outcome
-	local owner, name = string.match(c.repo, "^([^/]+)/([^/]+)$")
+	local owner, name = ownerName(c.repo)
 	local who = login(c.login)
 	local needsPr = o == "review" or o == "replied" or (c.number ~= nil and (o == "merged" or o == "pushed"))
 	local commit = if type(c.commit) == "string" then string.lower(c.commit) else nil
@@ -1784,10 +1807,6 @@ end
 -- Every write is argv-only (`--flag=value`, so a value that starts with `-` stays a value), runs as the view's saved
 -- gh account through M.gh, and checks its inputs first: a bad input never reaches gh. The host confirms with the user
 -- before calling any of these.
-
-local function whole32(v: any): boolean
-	return type(v) == "number" and v >= 1 and v <= 2147483647 and v == math.floor(v)
-end
 
 -- A gh login or `@me`; nil otherwise.
 local function assignee(v: any): string?
@@ -2259,7 +2278,7 @@ end
 -- One read of `repo`#`number`'s Evidence; done(evidence, problem). Nothing is sent while the account's quota is
 -- paused (kind "rate-limit"). done never runs before this call returns.
 function M.evidence(repo: string, number: number, account: string?, done: (Evidence?, Problem?) -> ())
-	local owner, name = string.match(repo, "^([^/]+)/([^/]+)$")
+	local owner, name = ownerName(repo)
 	if not owner or not name or not whole32(number) then
 		return later(function()
 			done(nil, bad("Unexpected pull request."))

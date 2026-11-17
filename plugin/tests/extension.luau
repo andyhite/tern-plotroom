@@ -147,6 +147,11 @@ return [==[
 			"refused": "comments[0].startLine must not be after line"
 		},
 		{
+			"name": "a repo with a \"..\" segment",
+			"input": { "repo": "../x", "number": 5, "head": "abc1234", "summary": "", "verdict": "comment", "comments": [] },
+			"refused": "repo must be \"owner/name\""
+		},
+		{
 			"name": "a head of 6 hex digits",
 			"input": { "repo": "o/r", "number": 5, "head": "abc123", "summary": "", "verdict": "comment", "comments": [] },
 			"refused": "head must be the reviewed head commit's SHA"

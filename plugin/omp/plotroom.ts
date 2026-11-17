@@ -151,7 +151,7 @@ export function validate(input: unknown): Proposal {
 	if (typeof input !== "object" || input === null) throw new Error("the input must be an object");
 	const o = input as Record<string, unknown>;
 	const repo = text(o.repo, "repo", 200);
-	if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('repo must be "owner/name"');
+	if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || repo.split("/").some(s => s === "." || s === "..")) throw new Error('repo must be "owner/name"');
 	const head = text(o.head, "head", 64);
 	if (!/^[0-9a-f]{7,64}$/i.test(head)) throw new Error("head must be the reviewed head commit's SHA");
 	if (!Array.isArray(o.comments)) throw new Error("comments must be a list");

@@ -106,7 +106,7 @@ function M.parse(raw: string): (Proposal?, string?)
 	end
 	local repo, head, at = text(o.repo, 200), text(o.head, 64), text(o.at, 64)
 	local number, summary = whole(o.number), text(o.summary, SUMMARY_BYTES)
-	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or not head or #head < 7 or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
+	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or string.match("/" .. repo .. "/", "/%.%.?/") or not head or #head < 7 or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
 		return nil, "The Draft review file is malformed."
 	end
 	local comments: { Comment } = {}
