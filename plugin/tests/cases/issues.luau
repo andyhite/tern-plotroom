@@ -96,11 +96,11 @@ case("host: pull request and issue filters sit together in the group of the logi
 		return out
 	end
 	same(sidebar(), {
-		"PR of A @ GitHub - user-a",
-		"PR plain @ GitHub - user-a",
-		"A's @ GitHub - user-a",
-		"Plain @ GitHub - user-a",
-		"B's @ GitHub - user-b",
+		"PR of A @ GitHub · user-a",
+		"PR plain @ GitHub · user-a",
+		"A's @ GitHub · user-a",
+		"Plain @ GitHub · user-a",
+		"B's @ GitHub · user-b",
 		"Jira view @ Jira",
 	}, "a group is an integration's and a login's, whatever the kind: pull request filters first, then issue filters; one with no login sits with the active login's own; user-b has its own group, and Jira follows")
 	s.gh.active = "user-b"
@@ -109,11 +109,11 @@ case("host: pull request and issue filters sit together in the group of the logi
 	b.typeText("r")
 	w.flush()
 	same(sidebar(), {
-		"PR of A @ GitHub - user-a",
-		"A's @ GitHub - user-a",
-		"PR plain @ GitHub - user-b",
-		"B's @ GitHub - user-b",
-		"Plain @ GitHub - user-b",
+		"PR of A @ GitHub · user-a",
+		"A's @ GitHub · user-a",
+		"PR plain @ GitHub · user-b",
+		"B's @ GitHub · user-b",
+		"Plain @ GitHub · user-b",
 		"Jira view @ Jira",
 	}, "after the active account switched, the filters with no login moved to user-b's group, after user-b's own")
 end)
@@ -149,7 +149,7 @@ case("host: a view of two logins is one scope in each login's group; each runs o
 	s.gh.meta["o/r#3"] = { base = "o/r", sha = sha("b"), ref = "feature", headRepo = "o/r", headOwner = "o", state = "open" }
 	loginsView(w, { "octocat", "work" })
 	local b = openQueue(w)
-	same(sidebarOf(b), { "Both @ GitHub - octocat = prs:v1@octocat", "Both @ GitHub - work = prs:v1@work" }, "the view is listed once in each login's group")
+	same(sidebarOf(b), { "Both @ GitHub · octocat = prs:v1@octocat", "Both @ GitHub · work = prs:v1@work" }, "the view is listed once in each login's group")
 	eq(pickerOf(b).scope, "prs:v1@octocat", "the first login's scope is the one shown")
 	local searches = viewSearchesOf(s.gh, "search")
 	eq(#searches, 1, "one search")
@@ -224,10 +224,10 @@ case("host: a view sits in the group of each login it lists, and one with none f
 	w.kv.put("views-prs", { version = 1, nextId = 1, items = array({}) })
 	local b = openIssues(w)
 	same(sidebarOf(b), {
-		"Both @ GitHub - user-a = issues:v1@user-a",
-		"Active @ GitHub - user-a = issues:v3",
-		"Both @ GitHub - user-b = issues:v1@user-b",
-		"Just b @ GitHub - user-b = issues:v2",
+		"Both @ GitHub · user-a = issues:v1@user-a",
+		"Active @ GitHub · user-a = issues:v3",
+		"Both @ GitHub · user-b = issues:v1@user-b",
+		"Just b @ GitHub · user-b = issues:v2",
 	}, "Both is under each of its logins; the view with none is under the active account's group")
 	goToSettings(b, "views")
 	has(sectionIn(b, "vopen:issues:v1").title, "GitHub - user-a, user-b", "the section in Settings lists the logins together in its title")
@@ -238,10 +238,10 @@ case("host: a view sits in the group of each login it lists, and one with none f
 	b.typeText("r")
 	w.flush()
 	same(sidebarOf(b), {
-		"Both @ GitHub - user-a = issues:v1@user-a",
-		"Both @ GitHub - user-b = issues:v1@user-b",
-		"Just b @ GitHub - user-b = issues:v2",
-		"Active @ GitHub - user-b = issues:v3",
+		"Both @ GitHub · user-a = issues:v1@user-a",
+		"Both @ GitHub · user-b = issues:v1@user-b",
+		"Just b @ GitHub · user-b = issues:v2",
+		"Active @ GitHub · user-b = issues:v3",
 	}, "when the active account switches, the view with none follows it")
 end)
 
@@ -284,7 +284,7 @@ case("host: each Views group of an available account or Jira ends in an Add butt
 	same(made.logins, { "user-b" }, "as user-b, though user-a is gh's active account")
 	eq(made.query, "is:open involves:@me", "starting from the integration's query")
 	eq(prefsOf(b).editing.row, "name:prs:v2", "a pull request view, the kind on screen, its form open on the name")
-	yes(table.find(sidebarOf(b), "New view @ GitHub - user-b = prs:v2") ~= nil, "it sits in user-b's group in the sidebar")
+	yes(table.find(sidebarOf(b), "New view @ GitHub · user-b = prs:v2") ~= nil, "it sits in user-b's group in the sidebar")
 	b.press("escape")
 	b.press("escape")
 	goToSettings(b, "views")
@@ -1449,8 +1449,8 @@ case("host: without gh, GitHub is off everywhere: no GitHub view, group, prompt 
 	yes(rowIn(b, "vadd:github:octocat") ~= nil, "which has the signed-in account's group")
 	b.press("escape")
 	same(sidebarOf(b), {
-		"My PRs @ GitHub - octocat = prs:v1",
-		"Review requested @ GitHub - octocat = prs:v2",
+		"My PRs @ GitHub · octocat = prs:v1",
+		"Review requested @ GitHub · octocat = prs:v2",
 		"Assigned to me @ Jira = issues:v1",
 	}, "the GitHub views are listed again")
 	eq(pickerOf(b).scope, "issues:v1", "the view on screen stays")

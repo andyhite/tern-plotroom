@@ -509,7 +509,7 @@ local function section(key: string, head: string, what: string, body: { Node }, 
 		return out
 	elseif fail then
 		local when = if fail.retryAt then "Trying again at " .. os.date("%H:%M:%S", fail.retryAt) .. "." else "Retry to load them."
-		table.insert(out, failNode(key, "Could not load " .. what, brief(fail.problem.message) .. "  " .. when, "Retry loading " .. what, "retry-checks"))
+		table.insert(out, failNode(key, "Could not load " .. what, brief(fail.problem.message) .. " · " .. when, "Retry loading " .. what, "retry-checks"))
 	elseif load.problem then
 		-- the Worktrees board's read: its Retry is the board's Refresh (host's retry-checks)
 		table.insert(out, failNode(key, "Could not load " .. what, brief(load.problem), "Retry loading " .. what, "retry-checks"))
@@ -1410,10 +1410,10 @@ function M.scopeRows(state: State): ({ any }, string?)
 		end
 		table.insert(scopes, {
 			id = scope.id,
-			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") .. ": " .. viewName(v) else viewName(v),
+			label = if dropdown then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " · " .. scope.shown else "") .. ": " .. viewName(v) else viewName(v),
 			icon = KINDS[v.kind].icon,
 			count = if not dropdown and cached then engine.listedCount(state, cached, engine.isPin(v.id)) else nil,
-			group = if engine.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
+			group = if engine.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " · " .. scope.shown else "") else nil,
 		})
 	end
 	-- Worktrees made for an item already known merged or closed (no read of its own): named in the entry, since a scope's
@@ -1856,7 +1856,7 @@ local function nowPreview(state: State): { Node }
 		{ k = "Action", v = if agent and agent.action then { ui.span(printable(agent.action)) } else nil },
 	})
 	addPart(kids, "agent", agentPart(state, row.key, agentFacts))
-	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(os.date("%Y-%m-%d %H:%M", n.updated)) } } } }) } else {})
+	addPart(kids, "properties", if n and n.updated > 0 then { ui.node("kv", { key = "facts", items = { { k = "Updated", v = { ui.span(github.age(n.updated) .. " ago") } } } }) } else {})
 	table.insert(kids, ui.node("text", { key = "enter", spans = { ui.span(enter, "muted") } }))
 	table.insert(kids, ui.node("col", { key = "buttons", hidden = true }, links))
 	return kids
@@ -2209,9 +2209,9 @@ function M.queuePicker(state: State, bar: boolean?): Node
 	-- The active view's name is the heading; the sidebar lists them all.
 	local title: { any } = { ui.span(if view then viewName(view) else "Plotroom", "title") }
 	if snap and problem then
-		table.insert(title, ui.span("  stale", "muted"))
+		table.insert(title, ui.span(" stale", "muted"))
 	elseif snap and not snap.complete then
-		table.insert(title, ui.span("  partial", "muted"))
+		table.insert(title, ui.span(" partial", "muted"))
 	end
 	local subtitle: { any } = {}
 	local function note(span: any)

@@ -16,6 +16,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - ⌘← and ⌘→ in a text field go to the line's start and end, and ⌘⌫ deletes back to it (tv91).
 - A pull request with more than 10 latest reviews shows the same verdicts in the list as in its preview: the list search asks for as many as the detail load does, 20 (g12w).
 - The Worktrees board's remove confirms: one finished worktree's button reads "Remove", and neither confirm offers a remove button when it has nothing to remove (psfa).
+- Small copy nits: scope group labels and the load-failure line join with " · ", the preview's Updated shows "N ago", and stale/partial sit one space after the title (eq3t).
 
 ### Changed
 - Settings: the API-quota meter is neutral (no warn/bad colours), and the prompt editor's Save and Cancel are Tern buttons showing ⌘↵ and Esc (5n37).

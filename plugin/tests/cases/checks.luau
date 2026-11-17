@@ -1650,10 +1650,10 @@ case("host: an issue filter lists issues under its own search, noun, icon, group
 		end
 	end
 	same(sidebar, {
-		"GitHub - octocat: My PRs",
-		"GitHub - octocat: Review requested",
-		"GitHub - octocat: Assigned to me",
-		"GitHub - octocat: Created by me",
+		"GitHub · octocat: My PRs",
+		"GitHub · octocat: Review requested",
+		"GitHub · octocat: Assigned to me",
+		"GitHub · octocat: Created by me",
 		"Jira: Assigned to me",
 		"Jira: Created by me",
 	}, "the sidebar lists every filter under its integration's group, pull request filters and issue filters together")
@@ -1718,7 +1718,7 @@ case("host: narrowing the block folds the scope rail into a dropdown that names 
 	for id, scope in narrow do
 		eq(scope.count, nil, "narrow: no count on " .. id)
 	end
-	has(narrow["issues:v1"].label, "GitHub - octocat", "narrow: the label carries integration and profile")
+	has(narrow["issues:v1"].label, "GitHub · octocat", "narrow: the label carries integration and profile")
 	has(narrow["issues:v1"].label, "Assigned to me", "narrow: and the filter name")
 	eq(narrow["issues:v3"].label:sub(1, 6), "Jira: ", "narrow: an integration without a profile gets no dash")
 	eq(pickerOf(b).title, nil, "narrow: the dropdown names the view, so the title beside it does not repeat it")
