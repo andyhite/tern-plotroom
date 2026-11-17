@@ -7,6 +7,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 ### Fixed
 
 - A plan that the palette asks while a Stop agent or Remove worktree confirm (or a Board removal confirm) is open now replaces it, as a message already did, so cancelling the plan no longer brings the older confirm back (tern-plotroom#gg2f).
+- A confirmation with a wrong, replaced or repeated token no longer cancels the plan waiting for its confirmation, and a plan that throws now shows its error instead of vanishing (tern-plotroom#14t6).
 - A worktrees directory that is a symlink (macOS `/tmp` and `/var` are) or holds `.` or `..` segments no longer hides the worktree Plotroom made there: git lists a worktree under its real path, so the worktree at an item's folder on another branch was not recognised and the open ended in "already exists and is not the worktree of …". Plotroom now resolves the directory to its real path before it builds a worktree's folder (tern-plotroom#q9xp).
 - A search that lands after the view or account changed is kept for its own view instead of discarded, so switching A → B → A quickly shows A's list at once and does not spend its GraphQL points twice (tern-plotroom#3awd).
 - A checkout found from a linked worktree is saved as the main worktree git lists first, also for a repository whose git directory is not `<main>/.git` (`--separate-git-dir`) (tern-plotroom#f77a).

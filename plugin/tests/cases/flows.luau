@@ -2625,7 +2625,7 @@ case("host mutations: a commit with a made-up or replaced token, after the selec
 	end
 	has(commit("p1_1_123456").problem, "no longer valid", "a made-up token")
 	local first = plan()
-	local second = plan()
+	plan()
 	has(commit(first.token).problem, "no longer valid", "the token of a replaced plan")
 	local rows = pickerOf(b).items
 	local moved = plan()
