@@ -10,6 +10,7 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ### Fixed
 
+- Tern's search field is shown again at the top of Settings (a stale "too few settings" rule hid it), so a shortcut or setting is found by typing instead of scrolling the General page's 21 shortcut rows and the open views and actions (tern-plotroom#67ks).
 - A Jira issue whose comment list acli returned cut (fewer comments than `fields.comment.total`) is no longer read as complete: Now keeps an assigned issue instead of dropping it as "yours" on a stale newest comment, and a Summary gets no recent comments rather than old ones as the newest (tern-plotroom#an4x).
 - Now's notification badges use each reason's tone (a security alert is error; CI, Comment, Subscribed and the like are muted) instead of the your-turn accent for every notification (tern-plotroom#2c3b).
 - Pasted or inserted text in a search field or prompt editor is capped at 200,000 bytes (cut at a character boundary), so a multi-megabyte paste no longer freezes the host or holds 50 full undo copies (tern-plotroom#9arm).

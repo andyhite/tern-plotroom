@@ -103,11 +103,6 @@
 	font-size: 12px;
 }
 
-/* Too few settings to need search. */
-[data-surface='plugin.plotroom.prs'] .sf-prefs .pf-search {
-	display: none;
-}
-
 /* The sheet's page tabs are icons: Tern 0.8.4 hides a tab's .pf-txt there, but its label is a .lbl now, which showed
    as "…" beside each icon and pushed it off center. ponytail: drop once Tern's sheet hides .lbl itself. */
 [data-surface='plugin.plotroom.prs'] .pf.sheet .pf-nav .nav-row .lbl {
