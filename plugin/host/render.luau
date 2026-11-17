@@ -959,7 +959,7 @@ end
 
 -- An item preview's head (PR and issue): one card, its icon the kind's, its head the title with its meta line under it
 -- (the ref, where it lives and the integration), and at its end the state badge, the suggested next move for the
--- item's stage (engine.nextMove, run as the Next move queue action), Copy link and Open. The meta is a line of the head,
+-- item's stage (engine.nextMove, run as the Next move queue action), Copy link and Open (both quiet icon buttons). The meta is a line of the head,
 -- not Tern's `meta` prop: that one is drawn after the title on its line and is cut to nothing in a narrow preview.
 local function itemHead(state: State, item: any, icon: string, ref: string, where: string, integration: string, badge: any, page: { copy: string, open: string, what: string }): Node
 	local tail: { Node } = { ui.node("badge", { key = "state", text = badge.text, tone = badge.tone, title = badge.title }) }
@@ -968,7 +968,7 @@ local function itemHead(state: State, item: any, icon: string, ref: string, wher
 		table.insert(tail, button(move.label, { key = "next", icon = "arrow-right", keys = keys.caps(keys.load(), "next"), title = "Next move: " .. move.label, aria = "Next move: " .. move.label, actions = { click = "next" } }))
 	end
 	table.insert(tail, button("", { key = "copy", icon = "copy", variant = "quiet", href = page.copy, actions = { click = "copy" }, title = "Copy link", aria = "Copy link to " .. page.what }))
-	table.insert(tail, ui.node("icon", { key = "open", name = "globe", role = LINK, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
+	table.insert(tail, button("", { key = "open", icon = "globe", variant = "quiet", keys = { "enter" }, href = page.open, actions = { click = "open" }, title = "Open", aria = "Open " .. page.what }))
 	return ui.node("card", {
 		key = "head",
 		-- plotroom.css wraps the end under the title when both do not fit, instead of squeezing the title.
