@@ -28,13 +28,15 @@ The Color Meaning Rule is enforced by tests: `hx.offPalette` (plugin/tests/harne
 
 ## Tokens
 
-All Tern variables; the plugin declares none.
+Tern variables the plugin uses, and nothing else. `plotroom.css` declares none and names only these; every other ink, line, surface and radius is drawn by the Tern kind that owns it, so it is not listed.
 
-- **Ink:** `--t1` (titles, body), `--t2` (keycap labels), `--t3` (muted text: `muted` tone), `--t4` (dim).
-- **Lines:** `--l1` to `--l4`; `--l3` underlines links (Tern's `button` kind draws its own ring).
-- **Surfaces:** Tern's picker, card, prefs sheet and overlay draw their own (`--card`, `--panel`, `--chip-bg`); Plotroom paints none.
-- **Accent:** `--accent` only through the `accent` tone (your turn) and Tern's own focus ring.
-- **Meaning colours:** through tones only: `accent`, `error` (`--bad`), `success` (`--ok`), `pending` (`--live`), `warning` (`--warn`).
+- **`--l3`:** the hairline under a link's label (Tern's `button` kind draws its own ring).
+- **`--mono`:** the monospace face of identifiers, 12px (Typography).
+- **`--accent`:** the focus ring (1.5px, plus a 3px halo) on the Delete, Remove and Add buttons of a focused Settings row, drawn as Tern's own ring is. It never colours anything else: your turn's colour comes through the `accent` tone.
+- **`--tc`:** the colour Tern sets on a picker row that carries a `tone`; the arrival ring and its reduced-motion tint read it.
+- **`--r-ctl`:** the arrival ring's radius.
+- **`--tv-aside`, `--sf-zoom`:** the Settings sheet's width and the block's zoom; the queue's right margin while the sheet is open is the first over the second.
+- **Meaning colours:** through tones only: `accent`, `error` (`--bad`), `success` (`--ok`), `pending` (`--live`), `warning` (`--warn`). The CSS never names them.
 
 ## Typography
 
@@ -47,7 +49,7 @@ All Tern variables; the plugin declares none.
 
 - Lengths are `px`, `em`, `vw`, `vh` or `%` only (Tern rejects `ch` and `rem`); no logical properties, no `:has()`.
 - Steps in use: 8px (the gap between Add buttons), 10px (above an Add row), 12px (a row's gap to its control). Node `gap` props use Tern's `xs` and `sm`.
-- Radii: `--r-ctl` for the arrival ring on a row; everything else takes the radius its Tern kind draws (`--r-chip` badges, `--r-card` cards, a `button`'s own).
+- Radii: `--r-ctl` for the arrival ring on a row; everything else takes the radius its Tern kind draws (badges, cards, a `button`'s own).
 
 ## Components
 
@@ -56,6 +58,22 @@ Each is built from Tern kinds; `plotroom.css` touches only what no kind or prop 
 ### Rows
 
 A picker `item` per pull request, issue, Now entry or agent (a worktree is a Worktrees table row). Left: the author's mark (Now: the reason). Title, then a detail line of identifiers (`#N` or key in `mono`, the repository only when the view spans several, for a Blocked PR its first chip's who or what, in plain text). Right: badges, stage first. A row shows only what decides at the list level; the rest is the preview's.
+
+### Sidebar
+
+Tern's `scopes` rail on the queue `picker` (`scopes` the entries, `scope` the one shown). Each entry is an icon, a label and a count Tern draws muted: **Now** first (`inbox`; its count is what needs you), the Pins, the views (the kind's icon; a view's own name, cut to one line), then **Worktrees** (`folder`) and **Agents** (`sparkle`). The entries get a group heading (Now, Pins, the integration and login, Worktrees, Agents) only when there is more than one integration, a view of several logins or a pin; with one group they stay a flat rail. The queue's heading is the shown entry's name, so the rail repeats no state. No tone: a count is a number, not a meaning.
+
+**Narrow sidebar.** At 127 terminal columns or fewer, measured from the block's own `cx.cols` (Tern's CSS sees the window's width, and container queries do not apply), the host adds `.narrow` to the picker's role; two `plotroom.css` rules then hide the rail and show Tern's scope dropdown beside the heading. Its entries read `GitHub - octocat: My PRs` (integration, login, then view; no group headings, no counts) and its button names the entry shown, so the heading keeps only its markers (stale, partial).
+
+### Now's heading
+
+Now is the queue picker with its own head: `icon` `inbox`, `title` **Now** (`strong`) followed by a muted ` · N left` (how many it lists) at rest and ` · n of N` while Next in Now walks it. Under it, the `subtitle`, joined by ` · `: a shimmering muted `Reading…` while it loads, the need summary in `accent` (`2 agents need you · 1 Blocked · …`, your turn), each problem in `error`, and a muted `Snoozed shown`. An empty Now says `Nothing needs you right now.` (muted), or, with every reason off, `Only agents are listed: Settings › Views › Now`. Next in Now has no bar of its own: it is a queue key, a Commands row and the key footer's **Now** seg, and the heading's `n of N` is its only trace.
+
+### Agents row, clock and Working line
+
+A picker `item` per live agent in the Agents list, grouped by repository (a group head with its count). Its label is the item's title; its detail line the action's name (then the last result and its age), the branch in `mono`, then what it asks of you: why the last prompt was not delivered and its blocker in `error`, its reason in plain text, its last message `muted`. Badges: the agent's state first (Working `pending`, Needs input `accent`, Idle and Exited `muted`), then the end-of-run report, the checked outcome and the checker's verdict, each toned by the Color Meaning Rule.
+
+While an agent works, the Agents row and its item's row in Now carry two picker columns, **bar** (Tern's `bar` format) then **clock** (`elapsed`, Tern ticks it: `2m12s`). The bar is an estimate, shown only once the action has 5 finished runs; the clock and the empty track are neutral. A preview shows the same as a **Working** line under the stage, a `row` keyed `working`: a muted `Working` label, an `elapsed` node (`format = "clock"`, `m:ss`) and, with an estimate, a `meter` in `pending`, the one place the bar is coloured (your agent is working). It is a row, not a kv fact, because a kv value holds spans only. A working row's bar moves by redraw only, so the block redraws when the soonest shown bar reaches its next step.
 
 ### Board
 
@@ -79,6 +97,10 @@ The picker's preview of a pull request or issue is a page (Tern's Designing View
 
 **Narrow preview.** The head card (role `plotroom.head`) keeps its title column at least 12em wide: when the title and the `end` row do not fit on one line, the `end` wraps onto its own line under the title, right-aligned, never squeezing the title. The underline `tabs` (role `plotroom.tabs`) wrap onto a second line rather than clip the last tab. Both are plotroom.css rules, since no card or tabs prop does it.
 
+### Summary
+
+The part at the top of a pull request's or issue's preview, an omp-written gist of the selected item (Settings › General; off, nothing shows). A `text` headed `Summary` (`strong`), then the answer as one plain `text`: never Markdown and never a link, since a model wrote it from untrusted text. Loading is a `skeleton` of 3 `text` lines; a failure is the inline error `Summary not made` with one **Make the Summary again** button (Loading, empty and error). Nothing shows until the cursor has rested on the item. No tone, no key.
+
 ### Buttons and links
 
 What a click does shows on the node. A **button** does something: Tern's `button` kind (`tern.ui.button`, render's `button()`), sized to its label, its key as `keys` keycaps (key names: `cmd`, `enter`, `esc`, `space`, a letter; an upper-case key is `shift` and its letter, since a keycap upper-cases every letter). Size `sm` in rows, the preview and cards (the worktree card, Get started, Retry, the lenses after `gh pr create` and `git push`); `md` in bars, overlays and the Draft review's head row (the Board's fold bar, the shortcut list's Close, the confirm, verdicts and Send). An icon button is the same kind with an empty label, `quiet`, named by its `title` (the head's and the branch's Copy). A button whose work is under way is `busy` (a spinner in its icon's place; it sends nothing more), as the Draft review's Send while the window carries it. A key footer seg (a `seg` in the dock's `status` strip, requests' `keyBar`) is neither: Tern's own seg, with its own hover fill and no Plotroom cue; the strip is Tern's status bar look, a keycap then what the key does. A Board card is neither too: a selectable `card` (it carries `selected`), whose click selects it, with Tern's own hover and selection ring. A **link** opens something: `role = "plotroom.link"`, its label underlined in `--l3`, the underline darkening under the pointer. Every node with a click action or an `href` is a button, a key footer seg, a selectable card or wears the link role, and no other node does (`hx.miscued`). Buttons are neutral: no tone, destructive ones included; their confirm is the guard.
@@ -92,6 +114,10 @@ Every confirm Plotroom asks: the worktree card's Remove worktree, the Worktrees 
 ### Compose overlay
 
 Text Plotroom asks for that may run over several lines: Comment…, Approve…'s and Request changes…'s comment, Type a prompt… and a draft pull request's description. One Tern `overlay` keyed `compose` in the queue block's layer (over the picker; Settings closes first), `modal`, `size = "md"`, icon `pen`, what the text is for as `head` (Comment, Approve, Request changes, Prompt for an agent on #N, Draft PR description), the selected item's ref as muted `meta` when the text is about it. Its body: an `editor` keyed `draft` (the placeholder says what to write, `maxLines = 16`, at least 6 lines tall), then, when its action was refused (too long), one `error` line saying so. Its `foot` is a row, right-aligned: **Cancel** first (`quiet`, `md`, keycap `esc`), then the action named as what comes next (`default`, `md`, keycaps `cmd` `enter`): **Continue** when a confirm follows, **Start agent**, **Save** for a description. Enter adds a line, ⌘↵ (or Ctrl-Enter) is the action, Esc cancels; while it asks, no other key reaches the queue. It is not a confirm: nothing leaves Plotroom from it, so it has no consequence sentence and its action is never `danger`.
+
+### Shortcut list overlay
+
+The keys that work now, one Tern `overlay` keyed `help`, `modal`, `size = "md"`, headed `Keyboard shortcuts`. Its body is a `col` of rows (`gap = "md"`, `align = "start"`): the keys as native keycaps in a `text` of their own that never shrinks below 13 characters (`wrap = "none"`; a kv's key column is measured as text and ran four keycaps into the description), then what they do in the body font, growing. The rows are the list's built-in keys, each with the key you bound it to, then one **Run the action “X” on the selected pull request** (or issue) row per action with a key; with Settings open it lists Settings' keys instead. Its foot is one **Close** button (`md`, icon `x`, keycap `esc`). No tone: a key is not a meaning.
 
 ### Checks table
 
@@ -111,7 +137,15 @@ Tern's four states, in the place of what they stand for and under its key, so th
 
 ### Commands
 
-`.` opens Tern's picker as an overlay: grouped rows filtered to what applies now, **Next** first, each with its key as keycaps. Every queue action has a Commands row; there is no action bar or strip.
+`.` opens Tern's picker as an overlay: grouped rows filtered to what applies now, **Next** first, each with its key as keycaps. Every queue action has a Commands row; there is no action bar (the key footer lists keys, not actions).
+
+### Key footer
+
+Tern's `status` strip (keyed `keybar`, `aria = "Keys"`) in the block's dock, 24px tall, under the queue and its Board. One `seg` per key that works now: the key as a keycap span, then its name muted, in the order docs/reference.md gives (Commands, Shortcut list, the Next move, then the most used). Each seg's `priority` falls from first to last, so a narrow pane drops keys from the end and Commands goes last. A click on a seg runs what its key runs: the strip is Tern's own control, so a seg is a clickable node that is neither a `button` nor a link. No tone. With no key bound, or while Settings is open, there is no strip. The picker's role takes `.keys` while it shows, and `plotroom.css` ends the picker's sheet 24px above the dock so the strip takes clicks and covers no row; a Board's columns are 2 lines shorter for it.
+
+### Get started
+
+The checklist `card` keyed `get-started`, first in the preview above a pull request's or issue's page and in Now's; not beside the Worktrees table or the Agents list. It shows until every line is done or it is dismissed (kv `get-started`), and again when Commands › Get started opens it. Its head is a `text`: `Get started` (`strong`) and a muted `N to do` or `All set`. Under it, a `col` (`gap = "xs"`) of one line per step: gh (installed, signed in), omp, git (a line only while it is older than 2.36) and a checkout for each repository that has none, then the one-key shortcuts line. A step you can do is a `row` of a `button` (`sm`, icon `arrow-right`) and its muted detail; a setup guide is a link `item` that opens the guide; a step being asked is a muted `item` (`Checking gh…`) with no control; a done step is an `item` with the `check` icon in `success` and no control. The shortcuts line asks **Use them** or **No thanks** (icons `check`, `x`), then reads done. Its foot is **Dismiss**, or **Close** once all is set (`quiet`, icon `x`). While any line is being asked the card stays hidden unless Get started opened it. `success` is the only tone: the rest is neutral.
 
 ### Settings
 
