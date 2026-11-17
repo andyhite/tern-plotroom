@@ -435,7 +435,7 @@ case("github.search: an empty page with a cursor, or a cursor that did not advan
 	eq(stuck.result.complete, false, "the repeated cursor ends the scan")
 end)
 
-case("github.search: a failing request returns its problem and no partial result", function(w: World)
+case("github.search: a request that keeps failing returns its problem and no partial result", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
 	gh.items.octocat = manyItems("o/r", 300)
@@ -445,7 +445,7 @@ case("github.search: a failing request returns its problem and no partial result
 			return nil
 		end
 		seen += 1
-		if seen == 2 then
+		if seen >= 2 then
 			return { status = 1, stderr = "gh: Server Error (HTTP 502)\n" }
 		end
 		return nil
@@ -453,7 +453,79 @@ case("github.search: a failing request returns its problem and no partial result
 	local out = runSearch(w, github, nil)
 	eq(out.result, nil, "no result")
 	eq(out.problem.kind, "failed", "problem kind")
-	eq(out.spent, 2, "both requests were counted")
+	eq(out.spent, 3, "the page, its smaller retry and the first page were counted")
+end)
+
+case("github.search: a 100-item page that fails with a GraphQL error is asked again with 25, and the rest keeps asking 25", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.items.octocat = manyItems("o/r", 60)
+	gh.pageSize = 25
+	gh.override = function(req: GhReq): Reply?
+		if req.kind == "search" and req.fields.first == "100" then
+			return { status = 1, stderr = "gh: Something went wrong while executing your query. (RESOURCE_LIMITS_EXCEEDED)\n", stdout = jsonEncode({ errors = array({ { type = "RESOURCE_LIMITS_EXCEEDED", message = "Node limit exceeded" } }) }) }
+		end
+		return nil
+	end
+	local out = runSearch(w, github, nil)
+	eq(out.problem, nil, "no problem")
+	eq(#out.result.prs, 60, "every item listed")
+	eq(out.result.complete, true, "and complete")
+	local sizes: { string } = {}
+	for _, req in gh.requests do
+		if req.kind == "search" then
+			table.insert(sizes, req.fields.first)
+			yes(string.find(req.fields.query, "first: $first", 1, true) ~= nil, "the size is a variable, not query text")
+			yes(string.find(req.fields.query, "first: 100", 1, true) == nil, "no size in the query text")
+		end
+	end
+	same(sizes, { "100", "25", "25", "25" }, "the 100 page, the same cursor with 25, then 25 for the rest")
+	eq(out.spent, 4, "every request counted")
+end)
+
+case("github.search: at 25 a page the search still reaches the 1000 cap", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.items.octocat = manyItems("o/r", 1200)
+	gh.pageSize = 25
+	gh.override = function(req: GhReq): Reply?
+		return if req.kind == "search" and req.fields.first == "100" then { status = 1, stderr = "gh: Server Error (HTTP 502)\n" } else nil
+	end
+	local out = runSearch(w, github, nil)
+	eq(#out.result.prs, 1000, "the cap in items")
+	eq(#gh.requests, 41, "the failed 100 page and 40 pages of 25")
+end)
+
+case("github.search: when the 25-item page fails too the problem shows, and an authorization problem is not retried", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	gh.items.octocat = manyItems("o/r", 60)
+	gh.override = function(req: GhReq): Reply?
+		return if req.kind == "search" then { status = 1, stderr = "gh: Something went wrong while executing your query.\n" } else nil
+	end
+	local out = runSearch(w, github, nil)
+	eq(out.result, nil, "no result")
+	eq(out.problem.kind, "failed", "the problem as before")
+	has(out.problem.message, "Something went wrong", "with gh's words")
+	local first: { string } = {}
+	for _, req in gh.requests do
+		if req.kind == "search" then
+			table.insert(first, req.fields.first)
+		end
+	end
+	same(first, { "100", "25" }, "asked at 100, once at 25, then it stopped")
+	gh.requests = {}
+	gh.override = function(req: GhReq): Reply?
+		return if req.kind == "search" then { status = 1, stderr = "gh: Bad credentials (HTTP 401)\n" } else nil
+	end
+	eq(runSearch(w, github, nil).problem.kind, "auth", "an auth problem")
+	local searches = 0
+	for _, req in gh.requests do
+		if req.kind == "search" then
+			searches += 1
+		end
+	end
+	eq(searches, 1, "is not asked again with a smaller page")
 end)
 
 case("github.search: an exhausted quota mid-scan keeps the pages that arrived as partial", function(w: World)

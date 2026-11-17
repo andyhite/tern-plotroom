@@ -72,7 +72,8 @@ local PATHS = 30 -- changed files a PR's detail load names (a Summary's input)
 local RECENT = 5 -- newest comments an item's detail load reads (a Summary's input)
 local RECENT_CHARS = 1000 -- each one cut to this many characters
 local CAP = 1000
-local SEARCH_PAGES = 10 -- CAP results at 100 a page
+local PAGE = 100 -- items a search page asks for; GitHub's maximum
+local SMALL_PAGE = 25 -- what the rest of a search asks after a full page failed
 local RATE_S = 300
 local MAX_RETRY_S = 24 * 60 * 60 -- the longest pause one Retry-After can ask for
 local ENV: { [string]: string } = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1", NO_COLOR = "1" }
@@ -88,7 +89,7 @@ end
 -- What the queue reads of a pull request, as GraphQL selects it and as `--jq` hands it to M.normalize.
 local PR_FIELDS = "number title url isDraft state updatedAt createdAt author { login } headRefName headRefOid isCrossRepository headRepositoryOwner { login } baseRefName additions deletions changedFiles comments { totalCount } reviewDecision viewerLatestReview { state commit { oid } } mergeable mergeStateStatus labels(first: 10) { nodes { name } } reviewThreads(last: 100) { nodes { isResolved } } latestReviews(first: 10) { nodes { state submittedAt author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 25) { totalCount " .. checkNodes("") .. " } } } } }"
 local PR_ITEM_JQ = "{number,title,url,isDraft,state,updatedAt,createdAt,author:.author.login,head:.headRefName,headSha:.headRefOid,fork:(if .isCrossRepository then (.headRepositoryOwner.login // .author.login) else null end),base:.baseRefName,additions,deletions,changedFiles,comments:.comments.totalCount,review:.reviewDecision,yours:.viewerLatestReview.state,yoursAt:.viewerLatestReview.commit.oid,mergeable,merge:.mergeStateStatus,checks:.commits.nodes[0].commit.statusCheckRollup.state,runs:(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []),runTotal:(.commits.nodes[0].commit.statusCheckRollup.contexts.totalCount // 0),labels:[.labels.nodes[]?.name],unresolved:([(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length),latest:[(.latestReviews.nodes // [])[] | {login:.author.login,state,at:.submittedAt}]}"
-local SEARCH_GQL = "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
+local SEARCH_GQL = "query($q: String!, $after: String, $first: Int!) { rateLimit { cost } search(query: $q, type: ISSUE, first: $first, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { " .. PR_FIELDS .. " } } } }"
 local SEARCH_JQ = "{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. PR_ITEM_JQ .. "]}"
 -- One pull request by its URL: a lookup, not a search (a search for its number also finds PRs that mention it).
 local PULL_GQL = "query($q: URI!) { rateLimit { cost } resource(url: $q) { ... on PullRequest { " .. PR_FIELDS .. " } } }"
@@ -96,7 +97,7 @@ local PULL_JQ = "[.data.resource | select(.number != null) | " .. PR_ITEM_JQ .. 
 local ISSUE_FIELDS = "number title url state stateReason updatedAt createdAt author { login } comments { totalCount } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } }"
 local ISSUE_ITEM = "{number,title,url,state,reason:.stateReason,updatedAt,createdAt,author:.author.login,comments:.comments.totalCount,labels:[.labels.nodes[]?.name],assignees:[.assignees.nodes[]?.login]"
 local function issueSearch(fields: string, item: string): (string, string)
-	return "query($q: String!, $after: String) { rateLimit { cost } search(query: $q, type: ISSUE, first: 100, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { " .. fields .. " } } } }",
+	return "query($q: String!, $after: String, $first: Int!) { rateLimit { cost } search(query: $q, type: ISSUE, first: $first, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { " .. fields .. " } } } }",
 		"{total:.data.search.issueCount,next:(if .data.search.pageInfo.hasNextPage then .data.search.pageInfo.endCursor else null end),cost:.data.rateLimit.cost,items:[.data.search.nodes[]|" .. item .. "}]}"
 end
 local ISSUE_GQL, ISSUE_JQ = issueSearch(ISSUE_FIELDS, ISSUE_ITEM)
@@ -994,8 +995,11 @@ end
 
 -- All pages of the search, sequentially; `done(items, total, complete, problem, spent)` at the end.
 -- `shouldContinue` is checked before every page and after every response; a
--- false answer ends with kind="superseded" and no further page runs. At most
--- SEARCH_PAGES requests are sent. `complete` holds only when every item the search
+-- false answer ends with kind="superseded" and no further page runs. A page
+-- that fails as "failed" (a timeout, RESOURCE_LIMITS_EXCEEDED, "Something went
+-- wrong") is asked once more for the same cursor with SMALL_PAGE items, and the
+-- rest of the search keeps that size. Requests ask for at most CAP items in
+-- all. `complete` holds only when every item the search
 -- counts loaded within GitHub's CAP: a scan cut short (quota, page budget, an
 -- empty page, a cursor that did not advance) or ended with fewer items than counted
 -- is partial and keeps what arrived. `qualifier` closes the query (" is:pr sort:...").
@@ -1034,12 +1038,18 @@ local function searchAll(
 		end)
 		return
 	end
-	local function fetch(after: string?, page: number)
+	local size = PAGE
+	local paged = string.find(gql, "$first", 1, true) ~= nil -- a lookup by URL has no page size
+	local function fetch(after: string?, asked: number)
 		if not shouldContinue() then
 			return done(nil, 0, false, superseded, spent)
 		end
 		spent += 1
 		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. gql, "-f", "q=" .. query }
+		if paged then
+			table.insert(args, "-F")
+			table.insert(args, "first=" .. size)
+		end
 		if after then
 			table.insert(args, "-f")
 			table.insert(args, "after=" .. after)
@@ -1056,6 +1066,10 @@ local function searchAll(
 				-- Orgs whose SSO is not authorized answer 200 with the rest of the page and FORBIDDEN errors; gh exits 1.
 				data, note = partial(body, flat)
 				if not data then
+					if paged and problem and problem.kind == "failed" and size > SMALL_PAGE then
+						size = SMALL_PAGE
+						return fetch(after, asked)
+					end
 					return done(nil, 0, false, problem, spent)
 				end
 			end
@@ -1076,13 +1090,13 @@ local function searchAll(
 			if cursor == nil or loaded >= math.min(total, CAP) then
 				return finish(false)
 			end
-			if pg.raw == 0 or cursor == after or page >= SEARCH_PAGES or M.wait(os.time(), account) > 0 then
+			if pg.raw == 0 or cursor == after or asked + size >= CAP or M.wait(os.time(), account) > 0 then
 				return finish(true)
 			end
-			fetch(cursor, page + 1)
+			fetch(cursor, asked + size)
 		end, account)
 	end
-	fetch(nil, 1)
+	fetch(nil, 0)
 end
 
 -- searchAll over pull requests; one swap-ready SearchResult at the end.
