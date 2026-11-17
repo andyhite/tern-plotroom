@@ -1258,8 +1258,13 @@ local SETTLE_MS, SETTLE_TRIES = 1000, 10
 type Wait = { host: HostId, result: string, msgs: { any }?, tries: number, turn: number? }
 local waits: { [number]: Wait } = {} -- agent pane -> its turn end waiting for the transcript
 
+-- Runs appended to the run log whose link (carrying `result`, which marks the first turn end done) could not be saved
+-- yet, "<key>|<started>|<agent>": their next turn end must not append the run again. Cleared once the link is saved.
+local appended: { [string]: boolean } = {}
+
 local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string, msgs: { any }?)
 	local first = l.result == nil
+	local appendedKey = l.key .. "|" .. (l.started or 0) .. "|" .. (l.agent or 0)
 	local ended = l.result == "failed" or l.result == "exited"
 	local report = usage.reportOf(turnReport(msgs))
 	l.result, l.ended = clip(result, RESULT_CAP), os.date("%H:%M")
@@ -1284,7 +1289,8 @@ local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string
 		end
 		l.check, l.findings = verdict, clip(table.concat(findings, " · "), FINDINGS_CAP)
 	end
-	if first then
+	if first and not appended[appendedKey] then
+		appended[appendedKey] = true
 		usage.appendRun({
 			id = l.run,
 			key = l.key,
@@ -1327,6 +1333,7 @@ local function recordTurn(cx: WindowCx, links: { Link }, l: Link, result: string
 		gateRun(cx, links, l, result, report, runs)
 	end
 	if writeLinks(links) then
+		appended[appendedKey] = nil
 		checkOutcome(cx, l)
 	end
 end

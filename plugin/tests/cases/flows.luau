@@ -400,6 +400,25 @@ windowCase("window flows: an agent's first turn end appends one run to the run l
 	eq((w.kv.get("agent-links") :: any)[1].result, "done", "while its link still shows the latest turn")
 end)
 
+windowCase("window flows: a first turn end whose link cannot be saved appends its run once, though the next turn end is a first again", function(w: World)
+	w.load("window")
+	local link = startReview(w)
+	w.kv.failSet["agent-links"] = "disk full"
+	w.advance(90 * 1000)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#loggedRuns(w), 1, "the run is logged")
+	w.advance(60 * 1000)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#loggedRuns(w), 1, "the unsaved link makes the next turn end a first again, which adds no second row")
+	w.kv.failSet["agent-links"] = nil :: any
+	w.advance(60 * 1000)
+	w.window.handlers.agent_finished({ pane = link.agent, result = "done" }, w.cx)
+	w.flush()
+	eq(#loggedRuns(w), 1, "and once the link is saved, still one")
+end)
+
 -- `agent`'s turn, as cx.agents:transcript gives it: its prompt, one assistant message per tool call in `calls`, then
 -- `text` as its last message. `before`: messages of earlier turns, oldest first.
 local function lastSays(w: World, agent: number, text: string, calls: { any }?, before: { any }?)
