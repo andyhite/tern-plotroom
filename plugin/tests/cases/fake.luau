@@ -78,6 +78,7 @@ windowCase("fake sdk: w.command from the palette cannot reach a command the pale
 	has(raised(function()
 		w.command("focus", true)
 	end), "not in Tern's palette", "a palette pick of the hidden command")
+	w.flush()
 end)
 
 return {}

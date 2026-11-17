@@ -1506,6 +1506,7 @@ case("host: typing a character in a Settings field reads each store at most once
 	end
 	table.sort(over)
 	eq(table.concat(over, ", "), "", "stores read more than once for one character")
+	w.flush()
 end)
 
 case("host: naming a new prompt with the placeholder name itself still opens its text editor", function(w: World)
