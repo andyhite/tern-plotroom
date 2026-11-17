@@ -317,7 +317,7 @@ case("preview: a pull request's head is one card, four stats sit under it, and i
 	for _, n in findKey(head, "end", "row").c do
 		table.insert(tail, n.k .. ":" .. n.p.key)
 	end
-	same(tail, { "badge:state", "button:next", "button:copy", "icon:open" }, "the state, the Next move, Copy link and Open, in one row")
+	same(tail, { "badge:state", "button:next", "button:copy", "button:open" }, "the state, the Next move, Copy link and Open, in one row")
 	eq(findKey(head, "next", "button").p.size, "sm", "the Next move is a small button")
 	eq(findKey(pickerNode(b), "titlerow"), nil, "no title row of its own")
 	-- the stats: four tiles, the failing checks in red
