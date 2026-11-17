@@ -393,6 +393,20 @@ case("github.search: a pull request carries the commit its head branch is at: as
 	eq(#out.result.prs, 7, "none of them is lost for it")
 end)
 
+case("github.search: the list asks for as many latest reviews as the detail load and keeps all of them", function(w: World)
+	local github = w.load("github") :: Github
+	local gh = newGh(w)
+	local latest = {}
+	for i = 1, 15 do
+		table.insert(latest, { login = "rev" .. i, state = "APPROVED", at = h.iso(EPOCH - i * 60) })
+	end
+	gh.items.octocat = { searchItem(1, "o/r", EPOCH - 60, { latest = array(latest) }) }
+	local out = runSearch(w, github, nil)
+	has(gh.requests[1].fields.query, "latestReviews(first: " .. github.REVIEWERS .. ")", "the search asks for REVIEWERS latest reviews")
+	yes(github.REVIEWERS >= 15, "which covers 15")
+	eq(#out.result.prs[1].latest, 15, "a pull request with 15 reviewers keeps every verdict in the list")
+end)
+
 case("github.search: a pull request carries the owner of the fork its head branch lives in: asked of GitHub, and kept only as a login", function(w: World)
 	local github = w.load("github") :: Github
 	local gh = newGh(w)
