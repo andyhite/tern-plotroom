@@ -61,6 +61,7 @@ Update later with the same install command plus `--force`.
 - [Reference](docs/reference.md): everything Plotroom does, step by step through the loop.
 - [Trust](docs/reference.md#trust): what Plotroom runs, stores and confirms, and what agents may do.
 - [Development](#development): building, testing and the code layout.
+- [SECURITY.md](SECURITY.md) and [AGENTS.md](AGENTS.md): how to report a vulnerability privately, and the contributor guide (work is tracked in kata and gated by `scripts/check.py`).
 - [PRODUCT.md](PRODUCT.md) and [CHANGELOG.md](CHANGELOG.md): where Plotroom is going, and what changed.
 
 ## Development
