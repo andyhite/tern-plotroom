@@ -398,6 +398,7 @@ export type Kv = {
 	store: { [string]: string }, -- key -> JSON text, exactly what the SDK would keep on disk
 	failGet: { [string]: string }, -- key (or "*") -> the error tern.kv.get raises
 	failSet: { [string]: string },
+	reads: { [string]: number }, -- key -> how many times the plugin called tern.kv.get on it
 	get: (string) -> any, -- decoded value, bypassing failures
 	put: (string, any) -> (), -- seeds a value, bypassing failures
 }
@@ -1087,10 +1088,12 @@ local function newWorld(instantiate: Loader, context: string): World
 	local kvStore: { [string]: string } = {}
 	local kvFailGet: { [string]: string } = {}
 	local kvFailSet: { [string]: string } = {}
+	local kvReads: { [string]: number } = {}
 	local kv: Kv = {
 		store = kvStore,
 		failGet = kvFailGet,
 		failSet = kvFailSet,
+		reads = kvReads,
 		get = function(key: string): any
 			local text = kvStore[key]
 			return if text == nil then nil else jsonDecode(text)
@@ -1186,6 +1189,7 @@ local function newWorld(instantiate: Loader, context: string): World
 				if why then
 					error(why, 0)
 				end
+				kvReads[key] = (kvReads[key] or 0) + 1
 				return kv.get(key)
 			end,
 			set = function(key: string, value: any)

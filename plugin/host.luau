@@ -745,15 +745,25 @@ local function blockDef(): BlockDef<State>
 			engine.autoSeen(state)
 			scanWorktrees(state)
 			inspectSelected(state)
-			local queue = requests.paletteActions(state)
-			local palette = requests.paletteNode(state, queue)
-			return if state.settings then settingsView(state, palette) else queueView(state, palette, requests.keyBar(state, queue))
+			return keys.scope(function(): BlockView
+				local queue = requests.paletteActions(state)
+				local palette = requests.paletteNode(state, queue)
+				return if state.settings then settingsView(state, palette) else queueView(state, palette, requests.keyBar(state, queue))
+			end)
 		end,
 
 		key = function(state: State, key: Key, cx: BlockCx): boolean?
 			local plain = not (key.ctrl or key.alt or key.meta)
 			local name = key.name
 			local k = key.text or name
+			-- The keys as saved, read at most once per key press.
+			local bound: keys.Map? = nil
+			local function keyOf(): string?
+				if not bound then
+					bound = keys.load()
+				end
+				return keys.action(bound :: keys.Map, k)
+			end
 			local s = state.settings
 			if state.removing and not state.notes[state.removing] then
 				state.removing = nil -- its note was evicted: nothing left to ask about
@@ -808,7 +818,7 @@ local function blockDef(): BlockDef<State>
 				return true
 			end
 			if state.help then
-				if name == "escape" or name == "enter" or (plain and keys.action((keys.load()), k) == "help") then
+				if name == "escape" or name == "enter" or (plain and keyOf() == "help") then
 					state.help = false
 					return true
 				end
@@ -881,7 +891,7 @@ local function blockDef(): BlockDef<State>
 						end
 					end
 					showPage(state, s, pages[((at - 1 + (if key.shift then -1 else 1)) % #pages) + 1].id)
-				elseif plain and keys.action((keys.load()), k) == "help" then
+				elseif plain and keyOf() == "help" then
 					state.help = true
 				elseif name == "up" or name == "down" then
 					local rows = focusRows(state)
@@ -903,7 +913,7 @@ local function blockDef(): BlockDef<State>
 			-- and Enter runs `enter`. `extra` answers the keys only that list has.
 			local function listKeys(move: (number) -> (), enter: () -> (), extra: (string?) -> boolean): boolean
 				local onScopes = state.focus == "scopes"
-				local lact = if plain then keys.action((keys.load()), k) else nil
+				local lact = if plain then keyOf() else nil
 				if name == "tab" and plain then
 					state.focus = if onScopes then "list" else "scopes"
 				elseif name == "escape" then
@@ -985,7 +995,7 @@ local function blockDef(): BlockDef<State>
 				-- and Right across the columns.
 				local laid = engine.lanesShown(state)
 				if laid and state.focus ~= "scopes" then
-					local lact = if plain then keys.action((keys.load()), k) else nil
+					local lact = if plain then keyOf() else nil
 					if name == "left" or lact == "left" or name == "right" or lact == "right" then
 						engine.laneMove(state, if name == "left" or lact == "left" then -1 else 1, 0)
 						return true
@@ -1022,7 +1032,7 @@ local function blockDef(): BlockDef<State>
 				end
 			end
 			-- The queue action the key is (Settings › General). While searching it is text, and with ctrl, alt or meta it is no shortcut.
-			local act = if plain and not searching and name ~= "paste" then keys.action((keys.load()), k) else nil
+			local act = if plain and not searching and name ~= "paste" then keyOf() else nil
 			-- A saved action's own key beats the newer built-in shortcuts: it was its key before they existed.
 			if act and keys.YIELDS[act] then
 				local owned: { { prompt: Prompt, here: boolean } } = {}

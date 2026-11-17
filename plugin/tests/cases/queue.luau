@@ -411,6 +411,22 @@ case("host: Settings › General binds an action to a key: the key works, ? and 
 	eq(b.press("w", nil, "w"), false, "the reset key is the pane's again")
 end)
 
+case("host: a render reads the saved keys once, and a key press once more", function(w: World)
+	hostScene(w, 3)
+	local b = openQueue(w)
+	b.render()
+	w.kv.reads.keys = 0
+	b.render()
+	eq(w.kv.reads.keys, 1, "one read for the whole render")
+	w.kv.reads.keys = 0
+	b.press("j")
+	eq(w.kv.reads.keys, 2, "one read for the key press and one for the render after it")
+	w.kv.put("keys", { down = "n" })
+	w.kv.reads.keys = 0
+	b.render()
+	eq(w.kv.reads.keys, 1, "and the next render reads again, so another block's change shows")
+end)
+
 case("host: Use one-key shortcuts binds the classic set to actions with no key, keeps a saved key, skips a clash and says so, and refuses unreadable keys", function(w: World)
 	hostScene(w, 3)
 	w.kv.store.keys = nil :: any

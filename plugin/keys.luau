@@ -106,9 +106,8 @@ local function write(mine: { [string]: string? }): string?
 end
 
 -- The key of every action as it works now, and why the saved ones are not in use: with a problem, every action has
--- its default. ponytail: read from kv on every use (a few small reads per key or render), so another block's change
--- needs no notice; cache it in the block's State if that ever shows up in a profile.
-function M.load(): (Map, string?)
+-- its default, read from kv.
+local function current(): (Map, string?)
 	local mine, why = read()
 	-- Every key the user saved is theirs first: an action nobody customized keeps its default only when no saved key
 	-- already holds it, so a newer built-in shortcut never takes over an older custom binding.
@@ -125,6 +124,30 @@ function M.load(): (Map, string?)
 		map[a.id] = custom or (if taken[a.default] then "" else a.default)
 	end
 	return map, why
+end
+
+-- What the render in progress read (see M.scope), if one is.
+local scoped: { map: Map, why: string? }? = nil
+
+-- current(), or what the render in progress read: kv is read on every use, so another block's change needs no
+-- notice, except inside one render, where every caller sees the same bindings.
+function M.load(): (Map, string?)
+	if scoped then
+		return scoped.map, scoped.why
+	end
+	return current()
+end
+
+-- Runs `fn` (a render) with load() answering from one read of kv. Only for code that saves no key: the scope ends with `fn`.
+function M.scope<T>(fn: () -> T): T
+	local map, why = current()
+	scoped = { map = map, why = why }
+	local ok, out = pcall(fn)
+	scoped = nil
+	if not ok then
+		error(out, 0)
+	end
+	return out
 end
 
 -- Saves action `id`'s key ("" removes the shortcut, nil restores the default); an error message or nil. Rereads what is
