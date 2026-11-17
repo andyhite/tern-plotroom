@@ -80,8 +80,24 @@ local function isTable(v: any): boolean
 	return type(v) == "table"
 end
 
+-- Control characters other than tab and newline: never part of a review's text (plotroom.ts › CONTROL).
+local CONTROL = "[\0-\8\11-\31\127]"
+
 local function text(v: any, cap: number): string?
-	return if type(v) == "string" and #v <= cap and utf8.len(v) ~= nil then v else nil
+	return if type(v) == "string" and #v <= cap and utf8.len(v) ~= nil and not string.find(v, CONTROL) then v else nil
+end
+
+-- A path as plotroom.ts › relPath takes it: relative, "/" separators, no empty, "." or ".." segment, no tab or newline.
+local function relPath(v: string): boolean
+	if v == "" or string.find(v, "[\\\n\t]") then
+		return false
+	end
+	for seg in string.gmatch(v .. "/", "([^/]*)/") do
+		if seg == "" or seg == "." or seg == ".." then
+			return false
+		end
+	end
+	return true
 end
 
 local function whole(v: any): number?
@@ -106,10 +122,11 @@ function M.parse(raw: string): (Proposal?, string?)
 	end
 	local repo, head, at = text(o.repo, 200), text(o.head, 64), text(o.at, 64)
 	local number, summary = whole(o.number), text(o.summary, SUMMARY_BYTES)
-	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or string.match("/" .. repo .. "/", "/%.%.?/") or not head or #head < 7 or not string.match(head, "^%x+$") or not at or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
+	if not repo or not string.match(repo, "^[%w%-_%.]+/[%w%-_%.]+$") or string.match("/" .. repo .. "/", "/%.%.?/") or string.find(repo, "^%-") or string.find(repo, "/%-") or not head or #head < 7 or not string.match(head, "^%x+$") or not at or not string.match(at, "^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d[%.%d]*Z$") or not number or not summary or not VERDICT_LABEL[o.verdict] or not isTable(o.comments) then
 		return nil, "The Draft review file is malformed."
 	end
 	local comments: { Comment } = {}
+	local seen: { [string]: boolean } = {}
 	for i, c in o.comments do
 		local id, path, body = if isTable(c) then text(c.id, 64) else nil, if isTable(c) then text(c.path, PATH_BYTES) else nil, if isTable(c) then text(c.body, BODY_BYTES) else nil
 		local line = if isTable(c) then whole(c.line) else nil
@@ -118,7 +135,9 @@ function M.parse(raw: string): (Proposal?, string?)
 		if
 			not id
 			or not string.match(id, "^[%w_%-]+$")
+			or seen[id]
 			or not path
+			or not relPath(path)
 			or not line
 			or not body
 			or (c.startLine ~= nil and (not start or start > line))
@@ -129,6 +148,7 @@ function M.parse(raw: string): (Proposal?, string?)
 		then
 			return nil, "Comment " .. i .. " of the Draft review file is malformed."
 		end
+		seen[id] = true
 		table.insert(comments, { id = id, path = path, line = line, startLine = start, side = c.side :: string, kind = c.kind, body = body, suggestion = suggestion })
 	end
 	return { at = at, repo = repo, number = number, head = string.lower(head), summary = summary, verdict = o.verdict, comments = comments }, nil

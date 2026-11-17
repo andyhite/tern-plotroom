@@ -152,6 +152,11 @@ return [==[
 			"refused": "repo must be \"owner/name\""
 		},
 		{
+			"name": "a repo part that starts with \"-\"",
+			"input": { "repo": "o/-r", "number": 5, "head": "abc1234", "summary": "", "verdict": "comment", "comments": [] },
+			"refused": "repo must be \"owner/name\""
+		},
+		{
 			"name": "a head of 6 hex digits",
 			"input": { "repo": "o/r", "number": 5, "head": "abc123", "summary": "", "verdict": "comment", "comments": [] },
 			"refused": "head must be the reviewed head commit's SHA"

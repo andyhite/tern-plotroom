@@ -761,6 +761,67 @@ case("review: the block refuses a repository with a \".\" or \"..\" part, as plo
 	w.finish()
 end)
 
+case("review: the block refuses a repository part that starts with \"-\", as plotroom_propose_review does", function(w: World)
+	local review = w.load("host/review") :: any
+	for _, repo in { "-o/r", "o/-r" } do
+		local p = proposal()
+		p.repo = repo
+		local got, why = review.parse(jsonEncode(p))
+		eq(got, nil, "refuses repo " .. repo)
+		eq(why, "The Draft review file is malformed.", "as malformed: " .. repo)
+	end
+	local p = proposal()
+	p.repo = "o-x/r-y"
+	yes(review.parse(jsonEncode(p)), "a dash inside a part is fine")
+	w.finish()
+end)
+
+case("review: the block refuses a repeated comment id, a control character and a path the tool refuses", function(w: World)
+	local review = w.load("host/review") :: any
+	local function refused(change: (any) -> (), what: string, comment: number?)
+		local p = proposal()
+		change(p)
+		local got, why = review.parse(jsonEncode(p))
+		eq(got, nil, what)
+		eq(why, if comment then "Comment " .. comment .. " of the Draft review file is malformed." else "The Draft review file is malformed.", what)
+	end
+	refused(function(p)
+		p.comments[2].id = "c1"
+	end, "a repeated id", 2)
+	for _, path in { "/etc/passwd", "a/../b", "..", "./a", "a//b", "a/", "", "a\\b", "a\tb", "a\nb", "a\1b", "a\127b" } do
+		refused(function(p)
+			p.comments[1].path = path
+		end, "path " .. string.format("%q", path), 1)
+	end
+	refused(function(p)
+		p.comments[1].body = "bell\7"
+	end, "a control character in a body", 1)
+	refused(function(p)
+		p.comments[4].suggestion = "x\0y"
+	end, "a control character in a suggestion", 4)
+	refused(function(p)
+		p.summary = "x\27[31m"
+	end, "a control character in the summary")
+	local ok = proposal()
+	ok.summary = "Tab\tand\nnewline stay."
+	ok.comments[1].body = "a\tb\nc"
+	yes(review.parse(jsonEncode(ok)), "tab and newline are allowed in texts")
+	w.finish()
+end)
+
+case("review: the block refuses an at that is not a timestamp, so a later proposal is never taken as older", function(w: World)
+	local review = w.load("host/review") :: any
+	for _, at in { "9999", "zzzz", "2026-11-04 10:00:00Z", "2026-11-04T10:00:00", "2026-11-04T10:00:00+02:00", "" } do
+		local got, why = review.parse(jsonEncode(proposal(at)))
+		eq(got, nil, "refuses at " .. at)
+		eq(why, "The Draft review file is malformed.", "as malformed: " .. at)
+	end
+	for _, at in { "2026-11-04T10:00:00Z", AT1 } do
+		yes(review.parse(jsonEncode(proposal(at))), "reads at " .. at)
+	end
+	w.finish()
+end)
+
 case("review: a reload keeps your edits for the same proposal and starts over for a revised one; a gone agent gets Copy", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)
