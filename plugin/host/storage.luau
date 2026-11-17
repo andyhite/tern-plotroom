@@ -53,12 +53,32 @@ function M.missingViews(integration: string, views: { View }): { { kind: Kind, s
 	return out
 end
 
+-- The nextId a store needs: past every id of `ids` that is `prefix` and a number ("v3", "p12"), so the next Add never
+-- mints an id a saved item has.
+local function nextIdPast(prefix: string, nextId: number, ids: { string }): number
+	for _, id in ids do
+		local n = tonumber(string.match(id, "^" .. prefix .. "(%d+)$"))
+		if n and n >= nextId then
+			nextId = n + 1
+		end
+	end
+	return nextId
+end
+
 local function validViews(kind: Kind, v: any): Views?
 	if not isTable(v) or v.version ~= 1 or type(v.nextId) ~= "number" or not isTable(v.items) then
 		return nil
 	end
 	local items: { View } = {}
+	local ids: { string } = {}
 	for _, f in v.items do
+		-- Two items of one id are a damaged store: malformed, so never overwritten.
+		if isTable(f) and type(f.id) == "string" then
+			if table.find(ids, f.id) then
+				return nil
+			end
+			table.insert(ids, f.id)
+		end
 		if
 			not isTable(f)
 			or type(f.id) ~= "string"
@@ -101,7 +121,7 @@ local function validViews(kind: Kind, v: any): Views?
 		local layout: string? = if f.layout == "board" then "board" else nil
 		table.insert(items, { id = kind.id .. ":" .. f.id, kind = kind.id, name = f.name, integration = f.integration, query = f.query, logins = logins, group = f.group, prompts = prompts, sort = sort, layout = layout })
 	end
-	return { version = 1, nextId = v.nextId, items = items }
+	return { version = 1, nextId = nextIdPast("v", v.nextId, ids), items = items }
 end
 
 -- What the render in progress read from kv, by key (see M.scope), if one is.
@@ -558,15 +578,21 @@ function M.loadPrompts(kind: Kind): (Prompts?, string?)
 	end
 	-- A checker that is the action itself, or no action of the store, reads as none: an action never checks itself.
 	local ids: { [string]: boolean } = {}
+	local idList: { string } = {}
 	for _, p in items do
+		-- Two actions of one id are a damaged store: malformed, so never overwritten.
+		if ids[p.id] then
+			return nil, PROMPTS_BAD
+		end
 		ids[p.id] = true
+		table.insert(idList, p.id)
 	end
 	for _, p in items do
 		if p.checker and (p.checker == p.id or not ids[p.checker]) then
 			p.checker = nil
 		end
 	end
-	return { version = 1, nextId = v.nextId, items = items }, nil
+	return { version = 1, nextId = nextIdPast("p", v.nextId, idList), items = items }, nil
 end
 
 -- Rereads the prompts, lets `fn` change them (an error string aborts) and saves them; an error message or nil.

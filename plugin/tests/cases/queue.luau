@@ -1020,6 +1020,33 @@ case("host: unreadable or malformed saved views are shown as defaults and never 
 	same(w.kv.get("views-prs"), { version = 2 }, "and are not overwritten either")
 end)
 
+case("storage: views and actions saved with a repeated id are malformed and kept, and nextId moves past the largest saved id", function(w: World)
+	local storage: any = w.load("host/storage")
+	local core: any = w.load("host/core")
+	local kind = core.KINDS.prs
+	local function view(id: string): any
+		return { id = id, name = "Mine " .. id, integration = "github", query = "is:open", group = "none", prompts = array({}) }
+	end
+	local twins = { version = 1, nextId = 9, items = array({ view("v1"), view("v1") }) }
+	w.kv.put("views-prs", twins)
+	local _, writable, why = storage.loadViews(kind)
+	eq(writable, false, "two views of one id lock the store")
+	has(why or "", "malformed", "and it is said malformed")
+	same(w.kv.get("views-prs"), twins, "the store is not written over")
+	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({ view("v2"), view("v7") }) })
+	eq(storage.loadViews(kind).nextId, 8, "a nextId at or below a saved id moves past the largest")
+	w.kv.put("views-prs", { version = 1, nextId = 20, items = array({ view("v7") }) })
+	eq(storage.loadViews(kind).nextId, 20, "a nextId past every id stays")
+	local twinPrompts = { version = 1, nextId = 9, items = array({ promptOf("p1", "A", "a"), promptOf("p1", "B", "b") }) }
+	w.kv.put("prompts-prs", twinPrompts)
+	local store, pwhy = storage.loadPrompts(kind)
+	eq(store, nil, "two actions of one id give no store")
+	has(pwhy or "", "malformed", "and say malformed")
+	same(w.kv.get("prompts-prs"), twinPrompts, "the store is not written over")
+	w.kv.put("prompts-prs", { version = 1, nextId = 2, items = array({ promptOf("p1", "A", "a"), promptOf("p4", "B", "b") }) })
+	eq(storage.loadPrompts(kind).nextId, 5, "actions: nextId moves past the largest saved id")
+end)
+
 case("host: a first run saves the default views of both kinds, Add creates one, and Delete asks first in the block", function(w: World)
 	local s = hostScene(w, 3)
 	newAcli(w)
