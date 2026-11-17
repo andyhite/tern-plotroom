@@ -594,16 +594,19 @@ local function detailOf(fields: any, base: string): tracker.IssueDetail
 		add(s, "subtask")
 	end
 	local total = field(fields, "comment", "total")
+	local listed = list(field(fields, "comment", "comments"))
 	-- The newest comments (Jira lists them oldest first), as github.recent shapes GitHub's: for a Summary.
 	local all: { tracker.Comment } = {}
-	for _, c in list(field(fields, "comment", "comments")) do
+	for _, c in listed do
 		local text = field(c, "body")
 		local body = if type(text) == "table" then M.adf(text) elseif type(text) == "string" then text else ""
 		if string.find(body, "%S") then
 			table.insert(all, { author = nonEmpty(field(c, "author", "displayName")) or "someone", body = tracker.clip(body, 1000, "…") })
 		end
 	end
-	local recent = table.move(all, math.max(1, #all - 4), #all, 1, {})
+	-- ponytail: a cut list (fewer than `total`) may lack the newest comments, so none are given as recent; fetch the tail if acli ever pages comments.
+	local cut = type(total) == "number" and total > #listed
+	local recent = if cut then {} else table.move(all, math.max(1, #all - 4), #all, 1, {})
 	return {
 		body = bodyOf(field(fields, "description")),
 		fields = rows,
@@ -805,7 +808,12 @@ function M.yours(key: string, since: number?, done: (boolean?) -> ())
 				return done(nil)
 			end
 			local mine = false
-			for _, c in list(field(fields, "comment", "comments")) do
+			local comments = list(field(fields, "comment", "comments"))
+			local total = field(fields, "comment", "total")
+			if type(total) == "number" and total > #comments then
+				return done(nil) -- acli returned only part of the comments: the newest may be missing
+			end
+			for _, c in comments do
 				local by = field(c, "author", "emailAddress")
 				local at = stamp(field(c, "updated")) or stamp(field(c, "created"))
 				if at then

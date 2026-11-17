@@ -592,6 +592,22 @@ case("now: a Jira issue whose newest change is your own is not listed, until som
 	has(table.concat(listed(b), ","), "nabc_23ABC-1", "Bob's comment lists it again")
 end)
 
+case("now: an assigned Jira issue whose comment list acli cut is kept, not dropped as yours", function(w: World)
+	local comments: { any } = {}
+	for i = 1, 50 do
+		comments[i] = { author = { emailAddress = "ann@example.com" }, created = h.iso(EPOCH - 60), updated = h.iso(EPOCH - 60) }
+	end
+	local function changes(total: number): any
+		return { key = "x", fields = { updated = h.iso(EPOCH - 60), comment = { total = total, comments = h.array(comments) } } }
+	end
+	local _, b = nowScene(w, {}, function(_, acli: h.Acli)
+		acli.searches[h.JIRA_NOW] = { jiraItem("ABC-1", "Cut list"), jiraItem("ABC-2", "Whole list") }
+		acli.changes["ABC-1"], acli.owned["ABC-1"] = changes(60), true
+		acli.changes["ABC-2"], acli.owned["ABC-2"] = changes(50), true
+	end)
+	same(whys(b), { "nabc_23ABC-1 Assigned: new" }, "the cut list cannot tell, so it is listed; the whole one is yours and is not")
+end)
+
 case("now: asks acli about at most four assigned Jira issues at a time, and still answers every one", function(w: World)
 	local at: { number } = {} -- when each issue was asked; every answer takes a second
 	local most = 0

@@ -1992,6 +1992,36 @@ case("jira.issue: body as markdown, fields, links and dates", function(w: World)
 	eq(during.problem.kind, "superseded", "cancelled while the call was in flight")
 end)
 
+case("jira: a comment list shorter than its total is not taken as complete: yours cannot tell, and no comment is recent", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	local function comments(n: number): any
+		local out: { any } = {}
+		for i = 1, n do
+			out[i] = { author = { emailAddress = "ann@example.com", displayName = "Ann" }, body = "Comment " .. i, created = h.iso(EPOCH - 60), updated = h.iso(EPOCH - 60) }
+		end
+		return array(out)
+	end
+	local function yoursOf(key: string): any
+		local answered, answer = false, nil
+		jira.yours(key, nil, function(yours)
+			answered, answer = true, yours
+		end)
+		w.flush()
+		yes(answered, key .. " was answered")
+		return answer
+	end
+	-- acli returned 50 of 60 comments; all of them are Ann's (the signed-in user), the last at the update time
+	acli.changes["ABC-1"] = { key = "ABC-1", fields = { updated = h.iso(EPOCH - 60), comment = { total = 60, comments = comments(50) } } }
+	acli.changes["ABC-2"] = { key = "ABC-2", fields = { updated = h.iso(EPOCH - 60), comment = { total = 50, comments = comments(50) } } }
+	eq(yoursOf("ABC-1"), nil, "a cut list: cannot tell")
+	eq(yoursOf("ABC-2"), true, "a complete one answers as before")
+	acli.views["ABC-1"] = { key = "ABC-1", fields = { comment = { total = 60, comments = comments(50) } } }
+	acli.views["ABC-2"] = { key = "ABC-2", fields = { comment = { total = 50, comments = comments(50) } } }
+	same(runJiraIssue(w, jira, "ABC-1", nil).detail.recent, {}, "a cut list gives a Summary no comments, not old ones as the newest")
+	eq(#runJiraIssue(w, jira, "ABC-2", nil).detail.recent, 5, "a complete list gives its newest five")
+end)
+
 case("jira.adf: blocks, marks and inline nodes become markdown", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local function t(s: string, marks: { any }?): any
