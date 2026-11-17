@@ -6146,6 +6146,35 @@ windowCase("window flows: a merge-sweep ask still in flight is not sent twice, a
 	eq(loggedRun(w, "o/r#12", now - 900).merged, true, "the second ask's answer marks its work merged")
 end)
 
+windowCase("window flows: the merge sweep keeps at most 4 outcome asks in flight and asks every undecided run, oldest first, as answers arrive", function(w: World)
+	w.load("window")
+	local st = flowHost(w)
+	local now = EPOCH
+	local runs: { any } = {}
+	for i = 1, 12 do
+		table.insert(runs, { key = "o/r#" .. i, action = "Fix", result = "done", started = now - 900 + i, ended = now - 600, check = "pass", checkedAt = now - 300, login = "cat", ghRepo = "o/r", number = i })
+	end
+	w.kv.put("runs", array(runs))
+	w.advance(4100)
+	local answered = 0
+	local order: { number } = {}
+	local function pending(): number
+		return #outcomeAsks(w) - answered
+	end
+	eq(pending(), 4, "the first sweep sends only 4")
+	while answered < 12 do
+		local q = st.reply("outcome", { verdict = "verified" })
+		table.insert(order, q.number)
+		answered += 1
+		yes(pending() <= 4, "never more than 4 pending")
+	end
+	eq(#outcomeAsks(w), 12, "every undecided run was asked, each once")
+	same(order, { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, "oldest first")
+	for i = 1, 12 do
+		eq(loggedRun(w, "o/r#" .. i, now - 900 + i).merged, true, "run " .. i .. " holds its merge answer")
+	end
+end)
+
 case("usage: a checked run is agreed once merged or a week after its verdict, disagreed once you said so; agreement is over the last 20 decided runs, beside the Autopilot gate", function(w: World)
 	local usage: any = w.load("usage")
 	local now = EPOCH

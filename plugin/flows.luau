@@ -1134,10 +1134,51 @@ end
 
 -- How often the checked runs still undecided (usage.agreement) are asked whether their work merged, and which are in
 -- flight ("<key>|<started>" -> when it was asked; like checking, an entry older than twice the ask's timeout went
--- unanswered, and the next sweep asks again).
+-- unanswered, and no longer holds a slot or blocks the next sweep's ask). The host keeps only REPLY_CAP (8) answers on
+-- screen, so at most MERGE_INFLIGHT asks are out at once; the rest wait in mergeTodo, oldest first, and go out as
+-- answers arrive (or, for one that never does, on the next recheck tick after its slot ages out).
 local MERGE_SWEEP_S = 10 * 60
+local MERGE_INFLIGHT = 4
 local sweptAt = 0
 local merging: { [string]: number } = {}
+type MergeAsk = { id: string, key: string, started: number?, args: { [string]: any } }
+local mergeTodo: { MergeAsk } = {}
+
+local function mergeOpen(asked: number?, now: number): boolean
+	return asked ~= nil and now - asked < OUTCOME_MS // 1000 * 2
+end
+
+-- Sends queued merge asks while fewer than MERGE_INFLIGHT are in flight.
+local function pumpMerges(cx: WindowCx, now: number)
+	local block = plotroomPanes(cx)[1]
+	if not block then
+		return
+	end
+	local open = 0
+	for _, asked in merging do
+		if mergeOpen(asked, now) then
+			open += 1
+		end
+	end
+	while open < MERGE_INFLIGHT and #mergeTodo > 0 do
+		local m = table.remove(mergeTodo, 1) :: MergeAsk
+		if not mergeOpen(merging[m.id], now) then
+			merging[m.id] = now
+			local sent = e().ask(cx, block, "outcome", m.args, OUTCOME_MS, function(a: any, cx2: WindowCx)
+				merging[m.id] = nil
+				if a.verdict == "verified" then
+					usage.setMerged(m.key, m.started)
+				end
+				pumpMerges(cx2, os.time())
+			end, true)
+			if sent then
+				open += 1
+			else
+				merging[m.id] = nil
+			end
+		end
+	end
+end
 
 -- Asks the lowest Plotroom block, as each run's login, whether the work of every undecided checked run merged (the
 -- `outcome` op with Merged), and marks those that did. Quiet, like checkOutcome. A run that names no login, repository,
@@ -1146,24 +1187,18 @@ local merging: { [string]: number } = {}
 local function checkMerges(cx: WindowCx, now: number)
 	local block = plotroomPanes(cx)[1]
 	local runs = if block then usage.readRuns() else nil
+	mergeTodo = {}
 	for _, r in runs or {} :: { usage.Run } do
 		local id = r.key .. "|" .. (r.started or 0)
-		local asked = merging[id]
-		if r.checkedAt and not usage.agreement(r, now) and r.login and r.ghRepo and (r.number or r.branch) and not (asked and now - asked < OUTCOME_MS // 1000 * 2) then
-			merging[id] = now
-			local key, started = r.key, r.started
+		if r.checkedAt and not usage.agreement(r, now) and r.login and r.ghRepo and (r.number or r.branch) and not mergeOpen(merging[id], now) then
 			local args = { outcome = "merged", repo = r.ghRepo, number = r.number, branch = r.branch, since = 0, login = r.login }
-			local sent = e().ask(cx, block :: number, "outcome", args, OUTCOME_MS, function(a: any, _cx2: WindowCx)
-				merging[id] = nil
-				if a.verdict == "verified" then
-					usage.setMerged(key, started)
-				end
-			end, true)
-			if not sent then
-				merging[id] = nil
-			end
+			table.insert(mergeTodo, { id = id, key = r.key, started = r.started, args = args })
 		end
 	end
+	table.sort(mergeTodo, function(a: MergeAsk, b: MergeAsk)
+		return (a.started or 0) < (b.started or 0)
+	end)
+	pumpMerges(cx, now)
 end
 
 -- Checks again what is due: each item's newest link (per host) whose run has ended and whose outcome was never checked
@@ -1176,6 +1211,8 @@ function M.recheck(cx: WindowCx)
 	if now - sweptAt >= MERGE_SWEEP_S then
 		sweptAt = now
 		checkMerges(cx, now)
+	else
+		pumpMerges(cx, now) -- a slot freed by an ask that was never answered
 	end
 	local links, healthy = readLinks()
 	if not healthy or #links == 0 then
