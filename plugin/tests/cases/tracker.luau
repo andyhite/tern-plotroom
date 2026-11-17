@@ -2031,6 +2031,18 @@ case("jira.adf: blocks, marks and inline nodes become markdown", function(w: Wor
 		"hi @Ann :smile: https://x.test/c DONE",
 		"mentions, emoji, smart links and statuses are text; a date draws nothing"
 	)
+	local function linked(href: string): string
+		return jira.adf(doc(p(t("go", { { type = "link", attrs = { href = href } } }))))
+	end
+	eq(linked("https://x.test/a_(b)"), "[go](https://x.test/a_%28b%29)", "parentheses in a link target are percent-encoded so it cannot close the link")
+	eq(linked("http://x.test/"), "[go](http://x.test/)", "http links stay")
+	eq(linked("https://x.test/a b)"), "go", "whitespace in the target: plain text")
+	eq(linked("https://x.test/a\nb"), "go", "a control byte: plain text")
+	eq(linked("javascript:alert(1)"), "go", "javascript: is not linked")
+	eq(linked("file:///etc/passwd"), "go", "file: is not linked")
+	eq(linked("data:text/html,x"), "go", "data: is not linked")
+	eq(linked("https://x.test/" .. string.rep("a", 2000)), "go", "over 2000 bytes: plain text")
+	eq(jira.adf(doc(p({ type = "inlineCard", attrs = { url = "javascript:alert(1)" } }, t("x")))), "x", "a smart link to a non-http target draws nothing")
 	eq(jira.adf(doc(p(t("a")), { type = "mediaSingle", content = { { type = "media", attrs = { id = "1" } } } })), "a", "media draws nothing")
 	eq(jira.adf(doc({ type = "taskList", content = { { type = "taskItem", content = { t("do it") } } } })), "do it", "an unknown block shows what it holds")
 	eq(jira.adf(nil), "", "nothing is empty")

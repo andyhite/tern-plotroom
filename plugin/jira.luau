@@ -347,6 +347,18 @@ local function wrap(s: string, left: string, right: string): string
 	return lead .. left .. core .. right .. trail
 end
 
+-- An ADF link target is the issue author's text: kept only as an http(s) URL with no whitespace or control bytes, at most
+-- 2000 bytes, and with its parentheses percent-encoded so it cannot close the markdown link. Anything else is dropped.
+local function safeUrl(href: any): string?
+	if type(href) ~= "string" or #href > 2000 or string.find(href, "[%c%s]") then
+		return nil
+	end
+	if string.sub(href, 1, 8) ~= "https://" and string.sub(href, 1, 7) ~= "http://" then
+		return nil
+	end
+	return (string.gsub(string.gsub(href, "%(", "%%28"), "%)", "%%29"))
+end
+
 local function isInline(t: any): boolean
 	return type(t) == "string" and (string.sub(t, 1, 5) == "media" or t == "text" or t == "hardBreak" or t == "mention" or t == "emoji" or t == "inlineCard" or t == "blockCard" or t == "status" or t == "date")
 end
@@ -379,8 +391,11 @@ inline = function(node: any): string
 				s = wrap(s, "*", "*")
 			elseif m == "strike" then
 				s = wrap(s, "~~", "~~")
-			elseif m == "link" and type(field(mark, "attrs", "href")) == "string" then
-				s = wrap(s, "[", "](" .. field(mark, "attrs", "href") .. ")")
+			elseif m == "link" then
+				local url = safeUrl(field(mark, "attrs", "href"))
+				if url then
+					s = wrap(s, "[", "](" .. url .. ")")
+				end
 			end
 		end
 		return s
@@ -391,7 +406,7 @@ inline = function(node: any): string
 	elseif t == "emoji" then
 		return nonEmpty(field(node, "attrs", "text")) or nonEmpty(field(node, "attrs", "shortName")) or ""
 	elseif t == "inlineCard" or t == "blockCard" then
-		return nonEmpty(field(node, "attrs", "url")) or ""
+		return safeUrl(field(node, "attrs", "url")) or ""
 	elseif isInline(t) then
 		return "" -- date, media
 	end
