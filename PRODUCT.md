@@ -75,35 +75,34 @@ User-facing text never shows internal names: protocol numbers, pane or run ids, 
 
 ## How features get added
 
-- **Feature freeze:** until Phase 0 is done, bug fixes only.
-- After Phase 0, a feature starts as a LEDGER.md row naming its loop step and phase, before any code.
+- **Feature freeze:** satisfied; Phase 0 is done. A feature starts as a LEDGER.md row naming its loop step and phase, before any code.
 - A new command or setting either replaces or merges an existing one, or names the metric it moves.
 - kata issues cite the PRODUCT.md or LEDGER.md section they implement.
 
 ## Roadmap
 
-| Phase | Goal | Contents | Exit criterion |
-| --- | --- | --- | --- |
-| **0: Groundwork** | Make product decisions on evidence, and ship changes safely | Run log and usage report; CHANGELOG, a version separate from the protocol, and a supported protocol range | A usage report can be copied; one window works with a host one protocol older |
-| **1: Coherence** | One product, not an accumulation | Apply LEDGER.md verdicts; the glossary everywhere; four Settings pages; first-run checklist; README as a product page with screenshots, the spec moved to a reference doc | Metrics rows 2–4 hit their targets |
-| **2: The loop** | Answer "what needs me" in one place | Stage on every item; the suggested next move; Now; agent questions answered in Now | One surface answers "what needs me" |
-| **3: Checked outcomes** | Know whether agent work actually worked | Fixed end-of-run report; outcomes per action; checker actions with acceptance criteria saved at dispatch; three-strike limits; chains advance only on Verified; recording disagreement with a checker | Default-action runs reach a Verified outcome at least 80% of the time |
-| **4: Beyond the author** | A second, third and fourth user | 3–5 design partners from the Tern and omp community, a listing in the awesome-tern catalog, repository description and topics, a demo recording (`tern shot` `record`). These are the author's tasks, not loop tasks. | 3 partners using it weekly |
-| **5: Autopilot** | Hand off a whole view, not one item | Opt-in view as the work source; Implement → Check → Fix (at most 3 rounds) → PR ready for review; slots, graceful stop, recovery from the run log; everything surfaces in Now. It never pushes to a base branch and never merges. | Gate to start: the checker agrees with you on at least 80% of 20 or more checked runs |
-| **6: Review and layout** | Approve agent work where it happens, and see the queue at a glance | Plotroom's omp extension (tools agents use to hand work back); the review block and Draft reviews; a Board layout per view (after a spike); Summaries | A Review run ends in a Draft review you edit and send without leaving Tern |
+| Phase | Status | Goal | Contents | Exit criterion |
+| --- | --- | --- | --- | --- |
+| **0: Groundwork** | Done | Make product decisions on evidence, and ship changes safely | Run log and usage report; CHANGELOG, a version separate from the protocol, and a supported protocol range | A usage report can be copied; one window works with a host one protocol older |
+| **1: Coherence** | Done | One product, not an accumulation | Apply LEDGER.md verdicts; the glossary everywhere; four Settings pages; first-run checklist; README as a product page with screenshots, the spec moved to a reference doc | Metrics rows 2–4 hit their targets |
+| **2: The loop** | Done | Answer "what needs me" in one place | Stage on every item; the suggested next move; Now; agent questions answered in Now | One surface answers "what needs me" |
+| **3: Checked outcomes** | Done | Know whether agent work actually worked | Fixed end-of-run report; outcomes per action; checker actions with acceptance criteria saved at dispatch; three-strike limits; chains advance only on Verified; recording disagreement with a checker | Default-action runs reach a Verified outcome at least 80% of the time |
+| **4: Beyond the author** | Waiting (the author's tasks) | A second, third and fourth user | 3–5 design partners from the Tern and omp community, a listing in the awesome-tern catalog, repository description and topics, a demo recording (`tern shot` `record`). These are the author's tasks, not loop tasks. | 3 partners using it weekly |
+| **5: Autopilot** | Waiting (behind its gate) | Hand off a whole view, not one item | Opt-in view as the work source; Implement → Check → Fix (at most 3 rounds) → PR ready for review; slots, graceful stop, recovery from the run log; everything surfaces in Now. It never pushes to a base branch and never merges. | Gate to start: the checker agrees with you on at least 80% of 20 or more checked runs |
+| **6: Review and layout** | Done | Approve agent work where it happens, and see the queue at a glance | Plotroom's omp extension (tools agents use to hand work back); the review block and Draft reviews; a Board layout per view (after a spike); Summaries | A Review run ends in a Draft review you edit and send without leaving Tern |
 
-Phases 0–3 and 6 are queued as kata issues. Each is blocked by its prerequisites until they close, because roundhouse otherwise starts ready issues oldest first, as many at once as it has slots. Phase 5 waits as a someday issue behind its gate.
+Phases 0–3 and 6 shipped (LEDGER.md rows are Done). Phase 4 is the author's tasks. Phase 5 waits as a someday issue behind its gate.
 
 ## Metrics
 
 All local; nothing is sent anywhere.
 
-| # | Metric | Measured by | Today | Target |
+| # | Metric | Measured by | Today (2026-11-17) | Target |
 | --- | --- | --- | --- | --- |
-| 1 | Places to look to answer "what needs me" | Counting surfaces | 6 (badges, the attention filter, Inbox, the Agents list, two status segments) | 1 (Now) |
-| 2 | Tern palette `Plotroom:` commands | Counting `tern.command` registrations | 37 | ≤ 10 |
-| 3 | Settings pages, with both CLIs installed | Counting | 7 | 4 |
-| 4 | New user: from install to a running agent | Timed on a clean profile; the usage report's First use (first start to first agent, Settings opened before it) | Requires Settings › Repositories | Under 5 minutes, Settings never opened |
+| 1 | Places to look to answer "what needs me" | Counting surfaces | 1 (Now) | 1 (Now) |
+| 2 | Tern palette `Plotroom:` commands | Counting `tern.command` registrations | 33 registered, 5 in Tern's palette | ≤ 10 |
+| 3 | Settings pages, with both CLIs installed | Counting | 4 | 4 |
+| 4 | New user: from install to a running agent | Timed on a clean profile; the usage report's First use (first start to first agent, Settings opened before it) | Not timed; Get started replaces Settings › Repositories | Under 5 minutes, Settings never opened |
 | 5 | Default-action runs with a Verified outcome | Run log: the usage report's `Default actions Verified` (unedited shipped actions only) | No outcomes yet | ≥ 80% |
 | 6 | Checker agreement | Run log plus disagreements you record | None yet | ≥ 80% over 20 checked runs (the Autopilot gate) |
 | 7 | Weekly users besides the author | Design partners' pasted usage reports (Days used per week) | 0 | 3–5 |
@@ -113,7 +112,7 @@ All local; nothing is sent anywhere.
 - **2026-11-02.** Plotroom is built for Tern and omp developers beyond its author, and the author is its first design partner.
 - **2026-11-02.** GitHub comes first. Jira stays at its current depth until Phase 3 is done.
 - **2026-11-02.** No rewrite. Fetching, worktrees, the trust model and the check gate stay as they are; the surface is reorganized around the loop.
-- **2026-11-02.** Feature freeze until Phase 0 is done.
+- **2026-11-02.** Feature freeze until Phase 0 is done. Satisfied: Phase 0 shipped.
 - **2026-11-02.** Cut: Tell Carly and the `plotroom_agents` export, Send a page element to an agent, Re-run all jobs, Cancel running workflow, Add and Remove label, the token-based Jira transition picker, and Export and import. Merged: the floating preview into Open. Hidden from Tern's palette: every command but the entry points and cross-pane commands. See LEDGER.md.
 - **2026-11-02.** Kata is not a dependency. Plotroom adopts its agent conventions (attention `ok` / `stuck` / `needs-human` with a one-line reason; the handoff fields commit, evidence and blocker) for its own end-of-run report.
 - **2026-11-02.** From CuLoRA's build loop, Plotroom ports: a checker that never built the work, a fixed end-of-run report, three-strike limits, an inbox of open questions, and a run log. It skips: merging to `main` itself, the app lock, local-model triage and a separate dashboard. Autopilot comes last, behind the agreement gate. In CuLoRA, the checker passed 18 of 34 rounds, and a rubric that excluded styling let through a UI that missed its designs.
