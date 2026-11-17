@@ -56,6 +56,26 @@ tern plugin install github.com/andyhite/tern-plotroom/plugin
 
 Update later with the same install command plus `--force`.
 
+### Remote hosts
+
+For a pane on a remote host, install Plotroom on both machines (same command, run on each). The queue, worktrees and agents run on that host with its own `gh`, `git`, `omp` and settings. See [Reference › Setup](docs/reference.md#setup).
+
+### Troubleshooting
+
+- **No views, or Get started will not finish:** run `gh auth status` (GitHub) and `acli jira auth status` (Jira); sign in where one fails. Both CLIs must be on Tern's PATH, not only your shell's.
+- **Installed a CLI while Plotroom was open:** run **Refresh** so it probes again.
+- **`omp` missing:** agents cannot start; install [`omp`](https://github.com/can1357/oh-my-pi) and refresh.
+- **Worktree fails:** check `git --version`; Plotroom needs ≥ 2.36.
+- **What is stored or sent:** see [Trust](docs/reference.md#trust).
+
+### Uninstall
+
+```sh
+tern plugin remove plotroom
+```
+
+Saved settings stay in Tern's kv. To clear them first, use Settings › General › Reset › **Reset all settings**.
+
 ## More
 
 - [Reference](docs/reference.md): everything Plotroom does, step by step through the loop.
