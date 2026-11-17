@@ -57,7 +57,8 @@ end
 -- mints an id a saved item has.
 local function nextIdPast(prefix: string, nextId: number, ids: { string }): number
 	for _, id in ids do
-		local n = tonumber(string.match(id, "^" .. prefix .. "(%d+)$"))
+		local digits = string.match(id, "^" .. prefix .. "(%d+)$")
+		local n = if digits then tonumber(digits) else nil
 		if n and n >= nextId then
 			nextId = n + 1
 		end
