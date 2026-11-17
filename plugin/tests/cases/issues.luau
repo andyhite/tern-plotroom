@@ -3036,6 +3036,7 @@ windowCase("window: an agent joins the tab working in its worktree, not a pane i
 	-- a pane in /wt/plotroom-o_r-pr-5-old, beside the worktree /wt/plotroom-o_r-pr-5
 	w.window.panes[21] = { block = nil, cwd = s.target .. "-old/src", tab = 21 }
 	table.insert(w.window.tabs, { id = 21, session = 5 })
+	w.window.sessions = { 1, 5, 6 }
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	h.hx.compose(w, b, "go")

@@ -11,6 +11,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - Tools download and smoke support macOS and Linux x86_64 only; README and check.py say what to set elsewhere (h5x5).
 
 ### Fixed
+- An agent started after a new worktree's setup opens in the setup shell's tab and session, on the worktree's host, even when you moved to another tab or session during the wait; a setup that finished cleanly closes its shell, and one that failed or did not finish stays open to be read (v49b).
 - A Draft review that failed to open at a turn end is no longer marked seen: the next turn end tries again (mhwp).
 - The Draft review's Keep/Drop event ignores a stale card index instead of jumping to Instructions (tern-plotroom#1snf).
 - An agent's run is logged once when the link store cannot be saved at its first turn end; the next turn end no longer appends a duplicate row (tern-plotroom#mbtr).

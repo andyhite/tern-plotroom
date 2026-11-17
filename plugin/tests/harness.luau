@@ -356,6 +356,9 @@ export type Win = {
 	surfaces: { [number]: any }, -- pane -> { main, dock, layer } regions of TSP nodes
 	events: { { pane: number, ev: { [string]: any } } },
 	switches: { number },
+	current: number, -- the session shown: sessions:switch sets it, and a new tab (a new_tab, a "tab" agent) opens in it
+	sessionHosts: { [number]: number }, -- session -> its host (default 1); cx.layout:move and move_to_tab refuse a pane into another host's tab
+	closes: { number }, -- every cx.layout:close, which ends the pane (its tab closes with its last pane)
 	launches: { { [string]: any } },
 	tabNames: { [number]: string },
 	browser: { any },
@@ -632,6 +635,9 @@ local function newWorld(instantiate: Loader, context: string): World
 		surfaces = {},
 		events = {},
 		switches = {},
+		current = 1,
+		sessionHosts = {},
+		closes = {},
 		launches = {},
 		tabNames = {},
 		browser = {},
@@ -670,10 +676,20 @@ local function newWorld(instantiate: Loader, context: string): World
 		local tabId = tab or nextId
 		win.panes[nextId] = { block = if launch then launch.block else nil, cwd = if launch and launch.cwd then launch.cwd else "", tab = tabId }
 		if not tab then
-			table.insert(win.tabs, { id = tabId, session = 1 })
+			table.insert(win.tabs, { id = tabId, session = win.current })
 		end
 		table.insert(win.launches, launch or {})
 		return nextId
+	end
+
+	-- The host of tab `tab`'s session (a tab no row names, as a pane's while it moves, is on host 1).
+	local function hostOfTab(tab: number): number
+		for _, t in win.tabs do
+			if t.id == tab then
+				return win.sessionHosts[t.session] or 1
+			end
+		end
+		return 1
 	end
 
 	-- Tab `tab`'s split tree: as cx.layout:move left it, less the panes no longer tiled in the tab, with the panes new to
@@ -849,6 +865,7 @@ local function newWorld(instantiate: Loader, context: string): World
 		sessions = {
 			switch = function(_self: any, id: number)
 				table.insert(win.switches, id)
+				win.current = id
 			end,
 		},
 		layout = {
@@ -885,15 +902,21 @@ local function newWorld(instantiate: Loader, context: string): World
 			end,
 			move_to_tab = function(_self: any, pane: number, tab: number): (boolean, string?)
 				local p = win.panes[pane]
-				if p then
+				if p and hostOfTab(p.tab) ~= hostOfTab(tab) then
+					return false, "another host"
+				elseif p then
 					p.tab = tab
 				end
 				return p ~= nil, nil
 			end,
+			close = function(_self: any, pane: number)
+				table.insert(win.closes, pane)
+				win.panes[pane] = nil
+			end,
 			-- Beside target: target's leaf is halved, `pane` taking the half on side `dir`.
 			move = function(_self: any, pane: number, target: number, dir: string): boolean
 				local p, to = win.panes[pane], win.panes[target]
-				if p == nil or to == nil or pane == target then
+				if p == nil or to == nil or pane == target or hostOfTab(p.tab) ~= hostOfTab(to.tab) then
 					return false
 				end
 				local from = p.tab

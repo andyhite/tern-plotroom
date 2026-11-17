@@ -2985,8 +2985,10 @@ SCENARIOS = [
 def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
     """Its own `tern serve` under zsh with an empty HOME (Tern's shell integration only; smoke's /bin/sh reports no command): an agent on a new
     worktree whose setup command takes 4 s starts once the setup shell reports it finished, not at cx.session:settle's 2-minute ceiling, and no
-    toast says setup did not finish. Then an agent on a second new worktree whose setup command fails starts once it failed, and the toast on
-    screen (Tern shows only the newest) says setup did not finish, with the reason."""
+    toast says setup did not finish. While that setup runs the user goes back to the queue's tab, then to a new session: the agent still opens in
+    the setup shell's tab and session, and the clean setup's shell closes, leaving the agent alone there. Then an agent on a second new worktree
+    whose setup command fails starts once it failed, beside its setup shell, which stays open, and the toast on screen (Tern shows only the
+    newest) says setup did not finish, with the reason."""
     zsh = shutil.which("zsh")
     if not zsh:
         WARNINGS.append("no zsh: the setup wait under a shell with integration was not run")
@@ -3034,14 +3036,34 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
             s.wait_text("the typed prompt" + again, "smoke prompt")
             s.ctl_ok("key", "Meta+Enter")
 
+        def tabs() -> List[Dict[str, Any]]:
+            return s.state()["tabs"]  # type: ignore[return-value]  # every session's, in order
+
+        def active() -> int:
+            return [t["active"] for t in tabs()].index(True)
+
+        def current() -> str:
+            return next(str(x["name"]) for x in s.state()["sessions"] if x["current"])  # type: ignore[union-attr,index]
+
+        home = current()
         s.select_row()
         first = s.selection()
+        before = len(tabs())
         agent("")
+        s.wait_until("the setup shell's tab opens", lambda: len(tabs()) == before + 1)
+        setup_tab = before  # the newest tab (state lists them from 0)
+        s.ctl_ok("tab", str(queue_tab))
+        s.ctl_ok("session", "new", "elsewhere")
+        s.wait_until("the user is in another session", lambda: current() == "elsewhere")
         started = s.smoke / "agents.jsonl"
         s.wait_until("the agent starts", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
         late = started.stat().st_mtime - marker.stat().st_mtime if marker.exists() else None
         s.eq("the agent starts after setup finished, well before the silent-shell fallback (took %r s)" % late, True, late is not None and -SETUP_SKEW <= late < SETUP_LAG)
         s.eq("no toast says setup did not finish", [], [t for t in s.texts() if "Setup did not finish" in t or "Setup may still be running" in t])
+        s.wait_until("the agent's session is shown again", lambda: current() == home)
+        s.wait_until("its setup shell closed, leaving the agent alone in the setup tab", lambda: tabs()[setup_tab]["panes"] == 1)
+        s.eq("the setup tab is shown", setup_tab, active())
+        s.contains("its pane is the agent (Plotroom's command line)", "PLOTROOM_RUN=", json.dumps(s.state()["focused"]))  # type: ignore[index]
         s.ctl_ok("tab", str(queue_tab))
         s.select_row()
         if s.selection() == first:
@@ -3057,7 +3079,8 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
         s.wait_text("with the reason", "It exited with status 1. The agent started anyway.")
         lag = started.stat().st_mtime - failed.stat().st_mtime if failed.exists() else None
         s.eq("the second agent starts after setup failed, well before the silent-shell fallback (took %r s)" % lag, True, lag is not None and -SETUP_SKEW <= lag < SETUP_LAG)
-        return "setup wait under zsh (agent %.1f s after setup; %.1f s after a failed setup, its toast shown)" % (late, lag)
+        s.eq("the failed setup's shell stays open beside the agent", 2, tabs()[active()]["panes"])
+        return "setup wait under zsh (agent %.1f s after setup, in its tab and session though the user moved away, its shell closed; %.1f s after a failed setup, its toast and shell shown)" % (late, lag)
     except BaseException:
         s.dump()
         raise

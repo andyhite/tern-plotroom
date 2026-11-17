@@ -505,9 +505,8 @@ local function gotoTarget(cx: WindowCx, pane: number, t: Target)
 	end)
 end
 
--- The session holding `pane`'s tab, when it still exists.
-local function sourceSession(cx: WindowCx, pane: number): number?
-	local tab = cx.session:tab_of(pane)
+-- The session holding tab `tab`, while both still exist.
+local function tabSession(cx: WindowCx, tab: number?): number?
 	local sessionId: number? = nil
 	if tab then
 		for _, t in cx.session:tabs() do
@@ -522,6 +521,11 @@ local function sourceSession(cx: WindowCx, pane: number): number?
 		end
 	end
 	return nil
+end
+
+-- The session holding `pane`'s tab, when it still exists.
+local function sourceSession(cx: WindowCx, pane: number): number?
+	return tabSession(cx, cx.session:tab_of(pane))
 end
 
 -- Worktree path -> the title its tab shows (`#123 title`) and the name nameTab gave the tab, so a tab the user renamed
@@ -781,7 +785,8 @@ end
 -- and `last`, looked at every SETUP_POLL_MS: cx.session:settle alone resolves only at its deadline in Tern 0.9.14),
 -- with settle's SETUP_MS deadline as the ceiling. A setup that fails, is still running at the ceiling or cannot be
 -- waited on still starts it, with a toast saying why; a shell that reports no command within SETUP_SILENT_MS starts
--- it then, with a toast that setup may still be running. `done` gets whether it started.
+-- it then, with a toast that setup may still be running. Only a setup that finished cleanly closes its shell once the
+-- agent started. `done` gets whether it started.
 local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prompt: string, job: Job, join: boolean, info: flows.AgentInfo, done: (boolean, WindowCx) -> ())
 	local model, effort, split = job.model, job.effort, job.split == true
 	local named = if job.id then job.name else nil -- a typed prompt has no name to show
@@ -853,19 +858,28 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local function start(): boolean
 		-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
 		local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
-		-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
-		-- The queue's pane may have closed during the setup wait: then there is nothing to split, and the agent gets a tab.
+		-- The agent is born in its place's tab, in that tab's session, read now: during the setup wait the user may have
+		-- moved to another tab or session (another host's, where no pane can move to). Beside the queue it splits the
+		-- queue, in a worktree's tab the pane `placement` picks there, then moves to its place. The queue's pane or the
+		-- worktree's tab may have closed during the wait: then it gets a tab of its own in the source session.
 		local beside = split and cx.session:pane(pane) ~= nil
-		local target: number?, side: Dir? = placement(cx, if beside then cx.session:tab_of(pane) else tab, pane)
-		if beside then
-			pcall(function()
-				cx.layout:focus(pane)
-			end)
+		local home: number? = if beside then cx.session:tab_of(pane) else tab
+		local homeSession = tabSession(cx, home)
+		if not homeSession then
+			home = nil
 		end
+		local target: number?, side: Dir? = placement(cx, home, pane)
+		local anchor = if beside then pane else target
+		pcall(function()
+			cx.sessions:switch(homeSession or session)
+			if anchor then
+				cx.layout:focus(anchor)
+			end
+		end)
 		local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
 		local command, without = agentCommand(cx, pane, flags, run, fork)
 		local ok, agent = pcall(function()
-			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if beside then "split" else "tab", command = command })
+			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if anchor then "split" else "tab", command = command })
 		end)
 		if not ok or type(agent) ~= "number" then
 			cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -894,12 +908,14 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			cx:toast("success", "Agent started beside the queue for " .. t.label, named)
 			return true
 		end
-		if tab then
-			if target and side and cx.layout:move(agent, target, side) then
-				cx:toast("success", "Agent started in the tab of " .. t.label, named)
-				return true
+		if home then
+			if target and side then
+				cx.layout:move(agent, target, side) -- refused, it stays where it split `target`
 			end
-			local moved, why = cx.layout:move_to_tab(agent, tab)
+			local moved: boolean, why: string? = true, nil
+			if cx.session:tab_of(agent) ~= home then
+				moved, why = cx.layout:move_to_tab(agent, home)
+			end
 			if moved then
 				cx:toast("success", "Agent started in the tab of " .. t.label, named)
 				return true
@@ -943,6 +959,11 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 	local function finish(c: WindowCx, why: string?, title: string?)
 		over, cx = true, c -- the window context of this call is spent
 		local started = start()
+		-- A setup that finished cleanly leaves nothing to read: its shell closes, so the worktree's tab holds the agent.
+		-- One that failed, is still running, could not be waited on or may still be running stays open to be read.
+		if started and not why and cx.session:pane(sh) then
+			cx.layout:close(sh)
+		end
 		-- After start's own toast: Tern shows only the newest toast, and this one says the agent started too.
 		if why and started then
 			cx:toast(if title then "info" else "error", (title or "Setup did not finish for ") .. t.label, why .. " The agent started anyway.")

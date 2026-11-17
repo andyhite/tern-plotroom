@@ -468,12 +468,14 @@ windowCase("window: a prompt set to open in this tab starts its agent beside the
 	end
 	w.click(runLink("o/r", 5, "p1"))
 	w.flush()
+	local shell = w.window.runs[1].pane
+	local queueTab = w.window.panes[1].tab
+	yes(w.window.panes[shell].tab ~= queueTab, "the setup commands run in a tab of their own")
 	w.advance(500) -- the setup shell reports its command finished at the first look
 	eq(w.window.agents[1].cwd, s.target, "the agent runs in the worktree")
-	local queueTab = w.window.panes[1].tab
 	eq(w.window.panes[agent :: number].tab, queueTab, "as a block in the queue's tab")
 	eq(#w.window.runs, 1, "the setup commands ran")
-	yes(w.window.panes[w.window.runs[1].pane].tab ~= queueTab, "in a tab of their own")
+	same(w.window.closes, { shell }, "and their shell closes once the agent started, setup having finished cleanly")
 	eq(w.toasts[#w.toasts].text, "Agent started beside the queue for o/r#5", "the toast says where")
 	eq(w.toasts[#w.toasts].sub, "Review", "the second line is the action's name, not its prompt")
 end)
@@ -1081,25 +1083,39 @@ windowCase("window: a fork PR's new worktree runs no setup commands and says so"
 	has(w.toasts[#w.toasts].sub, "setup skipped: fork PR", "the toast says why")
 end)
 
-windowCase("window: an agent on a new worktree joins the tab where its setup runs", function(w: World)
+windowCase("window: an agent on a new worktree starts in its setup shell's tab and session, wherever the user went during setup, and the shell closes", function(w: World)
 	local s, b = agentScene(w)
 	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	w.window.setup.ms = 5000
 	w.window.choose = "Type a prompt…"
+	local agent: number? = nil
+	local start = w.cx.agents.start
+	w.cx.agents.start = function(self: any, opts: any): number
+		agent = start(self, opts)
+		return agent :: number
+	end
 	w.click(prLink("agent", "o/r", 5))
 	w.flush()
 	h.hx.compose(w, b, "go")
-	w.advance(500) -- the setup shell reports its command finished at the first look
 	eq(#w.window.runs, 1, "setup runs")
-	local shell = w.window.panes[w.window.runs[1].pane]
-	eq(shell.cwd, s.target, "in a shell in the worktree")
-	eq(w.window.agents[1].prompt, "go", "the agent starts")
-	local inTab = 0
-	for _, p in w.window.panes do
-		if p.tab == shell.tab then
-			inTab += 1
-		end
-	end
-	eq(inTab, 2, "and joins the setup shell's tab")
+	local shell = w.window.runs[1].pane
+	local shellTab = w.window.panes[shell].tab
+	eq(w.window.panes[shell].cwd, s.target, "in a shell in the worktree")
+	-- While setup runs, the user opens another tab, then moves to a session on another host and works there.
+	w.window.panes[50] = { cwd = "/work/r", tab = 50 }
+	table.insert(w.window.tabs, { id = 50, session = 1 })
+	w.window.focused = 50
+	w.window.sessionHosts[2] = 2
+	w.window.panes[60] = { cwd = "/elsewhere", tab = 60 }
+	table.insert(w.window.tabs, { id = 60, session = 2 })
+	w.window.sessions = { 1, 2 }
+	w.window.current, w.window.focused = 2, 60
+	w.advance(5500)
+	eq(w.window.agents[1].prompt, "go", "the agent starts once setup finished")
+	eq(w.window.panes[agent :: number].tab, shellTab, "in the setup shell's tab, not the tab or session the user is in")
+	eq(w.window.current, 1, "in that tab's session, on the worktree's host")
+	same(w.window.closes, { shell }, "the setup shell closes, so the tab holds the agent only")
+	eq(w.toasts[#w.toasts].text, "Agent started in the tab of o/r#5", "the toast says where")
 end)
 
 windowCase("window: an agent on a new worktree starts only once its setup commands finish", function(w: World)
@@ -1147,6 +1163,15 @@ for _, c in {
 			w.advance(1)
 		end
 		eq(#w.window.agents, 1, "the agent starts anyway")
+		local shell = w.window.runs[1].pane
+		eq(#w.window.closes, 0, "its setup shell stays open to be read")
+		local inTab = 0
+		for _, p in w.window.panes do
+			if p.tab == w.window.panes[shell].tab then
+				inTab += 1
+			end
+		end
+		eq(inTab, 2, "beside the agent, in the worktree's tab")
 		-- Tern shows only the newest toast: the setup toast comes after the agent's own.
 		local said: any = w.toasts[#w.toasts]
 		eq(said.text, c.title, "the newest toast says so")
