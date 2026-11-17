@@ -12,6 +12,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 - A `gh` timeout says "1 minute" or "30 seconds", not "1 minutes" or "0 minutes"; one gh login seen as `Andy` and `andy` shares one rate-limit budget; a Jira site the acli names in capitals still matches a link to it (tv91).
 - ⌘← and ⌘→ in a text field go to the line's start and end, and ⌘⌫ deletes back to it (tv91).
 - A pull request with more than 10 latest reviews shows the same verdicts in the list as in its preview: the list search asks for as many as the detail load does, 20 (g12w).
+- The Worktrees board's remove confirms: one finished worktree's button reads "Remove", and neither confirm offers a remove button when it has nothing to remove (psfa).
 
 ### Changed
 - A Summary no longer fails, blaming the model, when an item's description or a comment holds a control character such as NUL: they are dropped before the prompt is built (n8r5).

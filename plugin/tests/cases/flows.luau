@@ -4243,6 +4243,7 @@ case("host worktrees board: a worktree a tab or a live agent works in is kept ou
 	has(text, "/wt/pr5", "the worktree nothing works in is listed")
 	lacks(text, "/wt/iss", "the one whose agent is live is not")
 	has(text, "Remove 1 finished worktree", "the count leaves it out")
+	lacks(text, "Remove all 1", "and its button says Remove, not Remove all 1")
 	has(w.toasts[#w.toasts].text, "1 kept", "and a toast says one was kept")
 	b.press("escape")
 	table.insert(w.panes, { pane = 9, cwd = "/wt/pr5/sub" })

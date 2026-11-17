@@ -2585,7 +2585,7 @@ local function boardConfirm(state: State): Node
 		label = "Remove",
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
-		act = if state.removeIgnored then "wt-confirm-remove" else nil,
+		act = if row and state.removeIgnored then "wt-confirm-remove" else nil,
 	})
 end
 
@@ -2609,10 +2609,10 @@ local function finishedConfirm(state: State): Node
 		meta = if unchecked > 0 then unchecked .. " not checked yet" else nil,
 		body = "Each folder is deleted, then its branch unless that holds commits saved nowhere else; git keeps a worktree with uncommitted changes, and nothing is forced.",
 		facts = facts,
-		label = "Remove all " .. n,
+		label = if n == 1 then "Remove" else "Remove all " .. n,
 		actKeys = { "d" },
 		cancel = "wt-cancel-remove",
-		act = if state.removeIgnored then "wt-confirm-remove" else nil,
+		act = if n > 0 and state.removeIgnored then "wt-confirm-remove" else nil,
 	})
 end
 
