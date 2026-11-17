@@ -165,9 +165,21 @@ local function escape(s: string): string
 	return (string.gsub(s, "</(%s*[Ff][Aa][Ii][Ll][Uu][Rr][Ee][Ss])", "</ %1"))
 end
 
--- The `{failures}` block of the checks failing at `head`, at most `cap` bytes: each check gets an equal share of what
--- the headings leave, and an excerpt longer than its share keeps its first lines and marks the rest as a gap. Nothing
--- in a log can close the block or its fence.
+-- At most `n` characters of `s`, cut with an ellipsis: check names, urls and problems are not bounded by anyone else.
+local function clip(s: string, n: number): string
+	local at = utf8.offset(s, n + 1)
+	if at and at <= #s then
+		return string.sub(s, 1, at - 1) .. "…"
+	end
+	return s
+end
+
+local NAME_MAX, URL_MAX, NOTE_MAX = 120, 200, 200 -- characters of a heading's name, url, and problem or refs line
+
+-- The `{failures}` block of the checks failing at `head`, at most `cap` bytes while the clipped headings and a gap line
+-- per check fit it: each check gets an equal share of what the headings leave, and an excerpt longer than its share
+-- keeps its first lines and marks the rest as a gap. A check with no room for a line shows its gap alone. Nothing in a
+-- log can close the block or its fence.
 function M.block(head: string, failures: { Failure }, cap: number): string
 	if #failures == 0 then
 		return OPEN .. "None: no check is failing at head " .. head .. "." .. CLOSE
@@ -176,14 +188,14 @@ function M.block(head: string, failures: { Failure }, cap: number): string
 	local parts: { string } = {}
 	local fixed = #OPEN + #intro + #CLOSE
 	for i, f in failures do
-		local headLines = { "", "## " .. prompts.inert(f.name) }
+		local headLines = { "", "## " .. clip(escape(prompts.inert(f.name)), NAME_MAX) }
 		if f.url then
-			table.insert(headLines, f.url)
+			table.insert(headLines, clip(f.url, URL_MAX))
 		end
 		if f.problem then
-			table.insert(headLines, f.problem)
+			table.insert(headLines, clip(f.problem, NOTE_MAX))
 		elseif f.refs and #f.refs > 0 then
-			table.insert(headLines, "Changed-file lines it names: " .. table.concat(f.refs, ", "))
+			table.insert(headLines, clip("Changed-file lines it names: " .. table.concat(f.refs, ", "), NOTE_MAX))
 		end
 		parts[i] = escape(table.concat(headLines, "\n"))
 		fixed += #parts[i]
@@ -216,6 +228,12 @@ function M.block(head: string, failures: { Failure }, cap: number): string
 				table.insert(kept, line)
 			end
 			table.insert(out, "\n```text\n" .. table.concat(kept, "\n") .. "\n```")
+		elseif #lines > 0 then -- the headings left it no room: say how much log was left out
+			local left = 0
+			for _, line in lines do
+				left += weight(line)
+			end
+			table.insert(out, "\n" .. M.gap(left))
 		end
 	end
 	table.insert(out, CLOSE)

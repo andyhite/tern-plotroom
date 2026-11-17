@@ -145,6 +145,31 @@ case("logs: the {failures} block fits its cap, names each check and cannot be cl
 	eq(logs.block("abc", {}, 8000), "<failures>\nNone: no check is failing at head abc.\n</failures>", "nothing failing says so")
 end)
 
+case("logs: the {failures} block keeps its cap and marks a check whose excerpt it leaves out", function(w: World)
+	local logs = w.load("logs") :: any
+	local list: { any } = {}
+	for i = 1, 10 do
+		table.insert(list, { name = string.rep("n", 300), url = BASE .. "/actions/runs/1/job/" .. i .. "/" .. string.rep("u", 300), lines = { string.rep("x", 100), "second" } })
+	end
+	local bare: { any } = {}
+	for i, f in list do
+		bare[i] = { name = f.name, url = f.url }
+	end
+	local base = #logs.block("h", bare, 99999) -- headings only, clipped
+	yes(base < 10 * 360, "names and urls are clipped: " .. base .. " bytes")
+	local pad = 10 * #logs.gap(999999999) + 10 * 1 -- one gap line per check
+	for _, spare in { pad, pad + 100, pad + 400, pad + 2000 } do
+		local text: string = logs.block("h", list, base + spare)
+		yes(#text <= base + spare, "at most the cap with " .. spare .. " spare bytes: " .. #text)
+		for i = 1, 10 do
+			local at = string.find(text, "/job/" .. i .. "/", 1, true) :: number
+			local nextAt = string.find(text, "## ", at, true) or #text
+			local tail = string.sub(text, at, nextAt)
+			yes(string.find(tail, "… ", 1, true) ~= nil or string.find(tail, "second", 1, true) ~= nil, "check " .. i .. " is not left bare")
+		end
+	end
+end)
+
 case("logs: a cut {failures} excerpt ends with the log lines it leaves out, in one gap", function(w: World)
 	local logs = w.load("logs") :: any
 	-- an excerpt as cut makes it: gaps standing for 50 and 200 log lines around L01..L30 (4 bytes a line with its newline)
