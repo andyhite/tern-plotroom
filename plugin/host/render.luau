@@ -663,41 +663,40 @@ local function checksNodes(state: State, pr: github.Pr): { Node }
 end
 
 -- The selected item's actions, each with the link it opens: Open (its page, the preview head's icon), Worktree, Go to
--- tab while a tab works in it, Agent (the picker of the saved prompts offered under this view, or typed text), Go to
--- agent and Seen. A missing repository or checkout is asked for in the window's palette when one is needed. An
--- action's `keys` are its keycap: its configured key (Settings › General), which the worktree card's rows show.
+-- tab while a tab works in it, Agent (the picker of the saved prompts offered under this view, or typed text) and Go
+-- to agent. A missing repository or checkout is asked for in the window's palette when one is needed. Only the
+-- worktree card reads `keys` (the keycap of Worktree and Go to tab, Settings › General). Triage (Seen) is the
+-- block's own, with no link.
 local AGENT_COMMANDS = { "agentint", "agentstop", "agentmsg" } -- Interrupt, Stop and Message the selected item's live agent
-type Action = { id: string, label: string, keys: { string }?, href: string }
+type Action = { id: string, keys: { string }?, href: string }
 local function itemActions(state: State, item: any, open: { [string]: boolean }): { Action }
 	local map = keys.load()
 	local out: { Action } = {
-		{ id = "open", label = "Open", href = hrefOf(state, item, "open") },
-		{ id = "worktree", label = "Worktree", keys = keys.caps(map, "worktree"), href = hrefOf(state, item, "worktree") },
+		{ id = "open", href = hrefOf(state, item, "open") },
+		{ id = "worktree", keys = keys.caps(map, "worktree"), href = hrefOf(state, item, "worktree") },
 	}
 	if open[item.key] then
-		table.insert(out, { id = "goto", label = "Go to tab", keys = keys.caps(map, "goto"), href = hrefOf(state, item, "goto") })
+		table.insert(out, { id = "goto", keys = keys.caps(map, "goto"), href = hrefOf(state, item, "goto") })
 	end
-	table.insert(out, { id = "agent", label = "Agent", keys = keys.caps(map, "agent"), href = hrefOf(state, item, "agent") })
+	table.insert(out, { id = "agent", href = hrefOf(state, item, "agent") })
 	-- The window's link to the agent it recorded for this item, offered only while it has reported that agent's state.
 	if state.agents[item.key] then
-		table.insert(out, { id = "agentgo", label = "Go to agent", keys = keys.caps(map, "agentgo"), href = hrefOf(state, item, "agentgo") })
+		table.insert(out, { id = "agentgo", href = hrefOf(state, item, "agentgo") })
 	end
 	-- The agent commands (palette only, no key): linked only while the agent is not exited.
 	if state.agents[item.key] and state.agents[item.key] ~= "exited" then
 		for _, act in AGENT_COMMANDS do
-			table.insert(out, { id = act, label = act, href = hrefOf(state, item, act) })
+			table.insert(out, { id = act, href = hrefOf(state, item, act) })
 		end
 	end
 	-- Disagree with check… (palette only): while the item's newest agent is a checker with a verdict, exited or not.
 	if (state.agentInfo[item.key] or {} :: core.AgentInfo).check then
-		table.insert(out, { id = "agentdisagree", label = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
+		table.insert(out, { id = "agentdisagree", href = hrefOf(state, item, "agentdisagree") })
 	end
 	-- Show Draft review (palette only): while the item's newest run has a Draft review that opened, its agent exited or not.
 	if (state.agentInfo[item.key] or {} :: core.AgentInfo).review then
-		table.insert(out, { id = "agentreview", label = "agentreview", href = hrefOf(state, item, "agentreview") })
+		table.insert(out, { id = "agentreview", href = hrefOf(state, item, "agentreview") })
 	end
-	-- Triage is the block's own (no link).
-	table.insert(out, { id = "seen", label = "Seen", keys = keys.caps(map, "seen"), href = "" })
 	return out
 end
 
@@ -763,12 +762,14 @@ local function worktreeNodes(state: State, key: string, acts: { Action }): { Nod
 	-- heading is the body's first row instead, so every row starts at the same edge.
 	local checked = ui.node("text", { key = "checked", basis = "content", spans = { ui.span("checked " .. os.date("%H:%M", note.at), "muted") } })
 	local function heading(extra: Node?): Node
-		return ui.node("row", { key = "head", gap = "sm", align = "center" }, {
-			ui.node("text", { key = "title", basis = "content", spans = { ui.span("Worktree", "strong") } }),
-			extra or ui.node("row", { key = "none" }),
-			ui.node("row", { key = "fill", grow = 1 }),
-			checked,
-		})
+		local row: { Node } = { ui.node("text", { key = "title", basis = "content", spans = { ui.span("Worktree", "strong") } }) }
+		if extra then
+			table.insert(row, extra)
+		end
+		-- the grow row pushes the checked time to the right edge
+		table.insert(row, ui.node("row", { key = "fill", grow = 1 }))
+		table.insert(row, checked)
+		return ui.node("row", { key = "head", gap = "sm", align = "center" }, row)
 	end
 	if not note.ok then
 		local why = ui.node("text", { key = "message", spans = { ui.span(note.message or "The worktree could not be prepared.", "error") } })
