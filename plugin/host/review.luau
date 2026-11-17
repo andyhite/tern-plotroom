@@ -311,14 +311,22 @@ local function alive(state: State, gen: number): boolean
 end
 
 -- Places the comments on `diff` (nil: unread, every comment listed and keepable), on-diff ones grouped by file in the
--- order the proposal first names each file, those not on a changed line last.
-local function place(state: State, p: Proposal, diff: Diff?)
+-- order the proposal first names each file, those not on a changed line last. `prior` (the cards being replaced, by
+-- comment id) keeps each comment's edited text and a drop; a kept one that is not on the diff is dropped.
+local function place(state: State, p: Proposal, diff: Diff?, prior: { [string]: Card }?)
 	local order: { string } = {}
 	local byFile: { [string]: { Card } } = {}
 	local off: { Card } = {}
 	for _, c in p.comments do
 		local excerpt = if diff then M.excerpt(diff, c) else nil
-		local card: Card = { c = c, model = input.new(c.body, true), keep = diff == nil or excerpt ~= nil, excerpt = excerpt, suggested = if diff then M.suggestionDiff(diff, c) else nil }
+		local old = if prior then prior[c.id] else nil
+		local card: Card = {
+			c = c,
+			model = if old then old.model else input.new(c.body, true),
+			keep = (old == nil or old.keep) and (diff == nil or excerpt ~= nil),
+			excerpt = excerpt,
+			suggested = if diff then M.suggestionDiff(diff, c) else nil,
+		}
 		if diff and not excerpt then
 			table.insert(off, card)
 		else
@@ -341,34 +349,12 @@ local function place(state: State, p: Proposal, diff: Diff?)
 	state.cards = cards
 end
 
--- Reads the run's Draft review file again: a new proposal (another `at`) starts over; the same one keeps your edits;
--- one that cannot be read drops the proposal it replaced (and anything it had in flight), so Send never posts it.
--- Then the pull request's head and base (gh) and the diff the review is about (git, where the agent worked).
-local function load(state: State)
-	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), M.FILE_BYTES)
-	local p, why: string? = nil, "There is no Draft review for this run on this host."
-	if ok then
-		p, why = M.parse(raw)
-	end
-	if p and state.repo and (string.lower(p.repo) ~= string.lower(state.repo) or p.number ~= state.number) then
-		p, why = nil, "This Draft review is for " .. p.repo .. "#" .. p.number .. ", not " .. state.repo .. "#" .. tostring(state.number) .. ", the pull request this run was started on."
-	end
-	if not p then
-		state.gen += 1
-		state.p, state.problem, state.loading, state.sending, state.message = nil, why, false, false, nil
-		return
-	end
-	local cur = state.p
-	if cur and cur.at == p.at then
-		return
-	end
+-- The pull request's head and base (gh) and the diff the review is about (git, where the agent worked) for `p`, placed
+-- on the cards. A failure sets `diffProblem`; the Retry button runs this again with your edits and choices kept.
+local function loadDiff(state: State, p: Proposal)
 	state.gen += 1
 	local gen = state.gen
-	state.p, state.problem, state.diffProblem, state.head, state.own = p, nil, nil, nil, false
-	state.summary, state.note, state.verdict = input.new(p.summary, true), input.new("", false), p.verdict
-	state.at, state.editing, state.sending, state.sent, state.gone, state.message = 0, false, false, false, nil, nil
 	state.loading = true
-	place(state, p, nil)
 	local function diffFailed(problem: string)
 		state.loading, state.diffProblem = false, problem
 		state.cx:render()
@@ -394,12 +380,62 @@ local function load(state: State)
 				elseif not out then
 					return diffFailed(if problem2 == worktree.DIFF_TOO_LARGE then worktree.DIFF_TOO_LARGE else "The diff could not be read: " .. (problem2 or "git gave no answer."))
 				end
-				state.loading = false
-				place(state, p, M.parseDiff(out))
+				local prior: { [string]: Card } = {}
+				for _, card in state.cards do
+					prior[card.c.id] = card
+				end
+				local selected = state.cards[state.at]
+				state.loading, state.diffProblem = false, nil
+				place(state, p, M.parseDiff(out), prior)
+				if selected then
+					for i, card in state.cards do
+						if card.c.id == selected.c.id then
+							state.at = i
+						end
+					end
+				end
 				state.cx:render()
 			end)
 		end)
 	end)
+end
+
+-- Reads the run's Draft review file again: a new proposal (another `at`) starts over; the same one keeps your edits;
+-- one that cannot be read drops the proposal it replaced (and anything it had in flight), so Send never posts it.
+local function load(state: State)
+	local ok, raw = pcall(tern.fs.read, M.fileOf(state.run), M.FILE_BYTES)
+	local p, why: string? = nil, "There is no Draft review for this run on this host."
+	if ok then
+		p, why = M.parse(raw)
+	end
+	if p and state.repo and (string.lower(p.repo) ~= string.lower(state.repo) or p.number ~= state.number) then
+		p, why = nil, "This Draft review is for " .. p.repo .. "#" .. p.number .. ", not " .. state.repo .. "#" .. tostring(state.number) .. ", the pull request this run was started on."
+	end
+	if not p then
+		state.gen += 1
+		state.p, state.problem, state.loading, state.sending, state.message = nil, why, false, false, nil
+		return
+	end
+	local cur = state.p
+	if cur and cur.at == p.at then
+		return
+	end
+	state.p, state.problem, state.diffProblem, state.head, state.own = p, nil, nil, nil, false
+	state.summary, state.note, state.verdict = input.new(p.summary, true), input.new("", false), p.verdict
+	state.at, state.editing, state.sending, state.sent, state.gone, state.message = 0, false, false, false, nil, nil
+	place(state, p, nil)
+	loadDiff(state, p)
+end
+
+-- Retry after a failed diff read, for the same proposal: busy (loading, the problem still shown) until it answers, and
+-- a press while it runs starts nothing.
+local function retry(state: State)
+	local p = state.p
+	if not p or not state.diffProblem or state.loading or state.sending or state.sent then
+		return
+	end
+	state.editing = false
+	loadDiff(state, p)
 end
 
 -- Picks verdict `v` when it may be picked now: not once sending or sent, and only Comment on your own pull request.
@@ -670,7 +706,10 @@ local function view(state: State): BlockView
 		} }))
 	end
 	if state.diffProblem then
-		table.insert(main, textNode("diff-problem", state.diffProblem .. " Every comment is listed without its lines.", "error"))
+		table.insert(main, ui.node("row", { key = "diff-problem", gap = "sm", wrap = true, align = "center" }, {
+			textNode("text", state.diffProblem .. " Every comment is listed without its lines.", "error"),
+			button("Retry", { key = "retry", size = "md", icon = "redo", busy = state.loading, keys = { "r" }, aria = "Read the pull request and its diff again", actions = { click = "retry" } }),
+		}))
 	end
 	-- The navigator and the selected item in a split you resize. It grows into the pane's height, so a long item
 	-- scrolls in its own pane.
@@ -786,6 +825,8 @@ function M.define()
 				pick(state, M.VERDICTS[tonumber(ch) :: number])
 			elseif ch == "c" and state.gone then
 				copy(state)
+			elseif ch == "r" and state.diffProblem then
+				retry(state)
 			else
 				return false
 			end
@@ -818,6 +859,8 @@ function M.define()
 				state.gone = (if type(value) == "string" then string.sub(value, 1, 300) else "The agent could not take the message.") .. " Copy the message and give it to the agent yourself."
 			elseif act == "send" then
 				send(state)
+			elseif act == "retry" then
+				retry(state)
 			elseif act == "copy" then
 				copy(state)
 			elseif act == "done" then

@@ -373,6 +373,54 @@ case("review: a diff Tern cut at its 16 MiB cap is refused as too large, not par
 	w.finish()
 end)
 
+case("review: Retry reads the pull request and the diff again for the same proposal and keeps edits and choices", function(w: World)
+	reviewScene(w)
+	local failing = true
+	local reads = 0
+	w.respond(function(call: h.Call): h.Reply?
+		if isDiff(call.argv) then
+			reads += 1
+			return if failing then { timedOut = true } else { stdout = DIFF }
+		end
+		return nil
+	end)
+	local b = openReview(w)
+	local problem = findKey(b.view().main, "diff-problem", "row")
+	yes(problem, "a diff problem is shown with a row")
+	has(textOf(problem), "git diff timed out", "the problem")
+	has(textOf(problem), "Every comment is listed without its lines.", "and what it means")
+	local retryButton = findKey(problem, "retry", "button")
+	yes(retryButton, "with a Retry button")
+	eq(retryButton.p.busy, false, "not busy while idle")
+	same({ navState(b, 1), navState(b, 2), navState(b, 3), navState(b, 4) }, { "Kept", "Kept", "Kept", "Kept" }, "every comment starts kept")
+	-- Edit c1's body and drop c4: before the diff is placed the rows are in proposal order (c1, c3, c4, c2).
+	b.typeText("j")
+	b.typeText("e")
+	b.typeText(" edited")
+	b.press("escape")
+	b.typeText("jj")
+	b.typeText(" ")
+	eq(navState(b, 3), "Dropped", "c4 is dropped before Retry")
+	-- Retry succeeds now.
+	failing = false
+	local before = reads
+	b.event({ ev = "action", act = "retry" })
+	eq(findKey(findKey(b.view().main, "diff-problem", "row"), "retry", "button").p.busy, true, "Retry is busy while the read runs")
+	b.event({ ev = "action", act = "retry" })
+	w.flush()
+	eq(reads, before + 1, "one read: the second press started nothing")
+	eq(findKey(b.view().main, "diff-problem", "row"), nil, "the problem line is gone")
+	same(navKeys(b), { "n0", "n1", "n2", "n3", "n4", "n5" }, "every comment is listed")
+	b.event({ ev = "select", id = "main.body.nav", item = "main.body.nav.n1" })
+	has(detailText(b), "z is unused edited", "the edited text survived")
+	yes(findKey(findKey(b.view().main, "detail"), "diff", "col"), "and the comment shows its lines")
+	eq(navState(b, 1), "Kept", "a kept comment stays kept")
+	eq(navState(b, 2), "Dropped", "c4, dropped before, stays dropped (second now, in file order)")
+	eq(navState(b, 3), "Kept", "c2 stays kept")
+	eq(navState(b, 4), "Dropped", "c3, off the diff, is dropped as on a first read")
+	w.finish()
+end)
+
 case("review: keys and clicks pick, edit, keep and drop; Send carries the kept comments as edited, the dropped ids, verdict, summary and instructions", function(w: World)
 	reviewScene(w)
 	local b = openReview(w)

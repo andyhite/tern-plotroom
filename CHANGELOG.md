@@ -4,6 +4,10 @@ All notable changes to Plotroom are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- The Draft review shows a **Retry** button (also `r`) beside a diff problem: it reads the pull request and the diff again for the same proposal, busy while it runs, keeping every comment's edited text and keep or drop choice, instead of leaving the comments without their lines until the agent proposes again or the block is reopened (tern-plotroom#70mt).
+
 ### Fixed
 
 - An answer to the window, the command palette's published rows and the Draft review's message can no longer outgrow the window's 64000-character read: the repository lists and the palette's queue actions and commands are cut like the other pickers' rows, an answer still too large says so instead of failing to be read, and a Draft review message too large to send goes straight to Copy instead of waiting out Send (tern-plotroom#qk6y).
