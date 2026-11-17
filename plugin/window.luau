@@ -841,14 +841,18 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 		-- A check run also gets the fixed check contract, naming the run it checks; the end-of-run contract stays last.
 		local contract = (if job.check then prompts.checkBlock(job.check.action, job.check.commit) .. "\n\n" else "") .. prompts.REPORT
 		-- Beside the queue, the agent splits the focused queue (no tab of its own, even briefly), then moves to its place.
-		local target: number?, side: Dir? = placement(cx, if split then cx.session:tab_of(pane) else tab, pane)
-		if split then
-			cx.layout:focus(pane)
+		-- The queue's pane may have closed during the setup wait: then there is nothing to split, and the agent gets a tab.
+		local beside = split and cx.session:pane(pane) ~= nil
+		local target: number?, side: Dir? = placement(cx, if beside then cx.session:tab_of(pane) else tab, pane)
+		if beside then
+			pcall(function()
+				cx.layout:focus(pane)
+			end)
 		end
 		local run = string.format("%d-%06x", os.time(), math.random(0, 0xFFFFFF))
 		local command, without = agentCommand(cx, pane, flags, run, fork)
 		local ok, agent = pcall(function()
-			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if split then "split" else "tab", command = command })
+			return cx.agents:start({ prompt = prompt .. "\n\n" .. contract, cwd = path, how = if beside then "split" else "tab", command = command })
 		end)
 		if not ok or type(agent) ~= "number" then
 			cx:toast("error", "Could not start an agent for " .. t.label, tostring(agent))
@@ -870,7 +874,7 @@ local function finishAgent(cx: WindowCx, pane: number, t: Target, r: Ready, prom
 			info.checkAgent, info.checkStarted = job.check.agent, job.check.started
 		end
 		flows.recordAgent(cx, pane, string.lower(t.repo) .. "#" .. t.ref, agent, chain, info)
-		if split then
+		if beside then
 			if target and side then
 				cx.layout:move(agent, target, side) -- refused, it stays where it split the queue
 			end

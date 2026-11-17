@@ -478,6 +478,23 @@ windowCase("window: a prompt set to open in this tab starts its agent beside the
 	eq(w.toasts[#w.toasts].sub, "Review", "the second line is the action's name, not its prompt")
 end)
 
+windowCase("window: a split agent whose queue pane closed during the setup wait starts in a tab, not beside whatever is focused", function(w: World)
+	local s, b = agentScene(w)
+	local review = promptOf("p1", "Review", "Review {url}")
+	review.split = true
+	savePrompts(w, { review })
+	w.kv.put("setup-commands", { ["o/r"] = array({ "pnpm install" }) })
+	b.render()
+	cardSurface(w, b)
+	w.click(runLink("o/r", 5, "p1"))
+	w.flush()
+	w.window.panes[1] = nil -- the queue's pane closes while the setup runs
+	w.advance(500)
+	eq(w.window.agents[1].cwd, s.target, "the agent still starts in the worktree")
+	eq(w.window.agents[1].how, "tab", "in a tab of its own, not a split")
+	eq(w.toasts[#w.toasts].text, "Agent started for o/r#5", "the toast does not claim a place beside the queue")
+end)
+
 windowCase("window: the default Quick review starts beside the queue as omp --model @slow", function(w: World)
 	local s, b = agentScene(w)
 	w.kv.put("prompts-prs", nil)
