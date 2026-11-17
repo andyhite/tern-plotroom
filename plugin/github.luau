@@ -1661,9 +1661,10 @@ export type Account = { login: string, active: boolean }
 -- (`gh auth status --json`). `maxAge`: a kept list older than that many seconds is read again before answering
 -- (callers during the read share it), so a caller that must see an account switch is not answered with the old list.
 function M.accounts(done: ({ Account }?, Problem?) -> (), maxAge: number?)
-	local hit = kept.accounts
-	if maxAge and hit and not reading.accounts and os.time() - hit.at >= maxAge then
-		kept.accounts = nil
+	local key = "accounts"
+	local hit = kept[key]
+	if maxAge and hit and not reading[key] and os.time() - hit.at >= maxAge then
+		kept[key] = nil
 	end
 	cached("accounts", function(finish)
 		M.gh({ "auth", "status", "--hostname", "github.com", "--json", "hosts" }, function(out, problem, _, failed)
