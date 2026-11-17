@@ -479,7 +479,7 @@ end
 
 -- Settings › General › Reset all settings: every kv key that holds a setting, so Plotroom starts as freshly installed.
 -- Work state stays: triage (seen, snooze), usage, runs, agent links and recent agents.
-M.SETTINGS_KEYS = {
+M.RESET_KEYS = {
 	"views-prs", "views-issues", "prompts-prs", "prompts-issues", "keys", "checkouts", "branch-formats", "setup-commands",
 	"jira-repos", formats.KEYS.branch, formats.KEYS.prdir, formats.KEYS.issuedir, "status-order", "get-started", "now", "summary", "review",
 	IGNORED_KEY,
@@ -490,7 +490,7 @@ M.SETTINGS_KEYS = {
 -- confirmed reset is the user discarding it (the way out of a corrupted store).
 function M.resetAll(): { string }
 	local failed: { string } = {}
-	for _, key in M.SETTINGS_KEYS do
+	for _, key in M.RESET_KEYS do
 		if kvSet(key, nil) then
 			table.insert(failed, key)
 		end
