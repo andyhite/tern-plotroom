@@ -336,21 +336,134 @@ def luau_banner(luau: Path) -> str:
     return "luau %s (sha256 %s; %s)" % (luau, sha256_file(luau)[:16], verdict)
 
 
-def check_css() -> None:
-    """plotroom.css: scoped selectors, and none of the syntax Tern's engine rejects (docs.stencil.so/tern/styles/css.md)."""
-    scopes = ("[data-surface='plugin.plotroom.prs']", "[data-surface='plugin.plotroom.review']")
-    text = re.sub(r"/\*.*?\*/", "", (PLUGIN / "plotroom.css").read_text(encoding="utf-8"), flags=re.S)
-    problems = []
-    for match in re.finditer(r"([^{};]+)\{", text):
-        prelude = match.group(1).strip()
-        if prelude.startswith("@") or re.fullmatch(r"(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*", prelude):
-            continue
-        for selector in prelude.split(","):
-            if not selector.strip().startswith(scopes):
-                problems.append("selector outside the block's scope: %s" % selector.strip())
-    for bad in (r"\d(rem|ch)\b", r":has\(", r"\b(margin|padding|border|inset)-(inline|block)\b", r"\binset-(inline|block)\b"):
-        for found in re.finditer(bad, text):
-            problems.append("unsupported CSS %r" % found.group(0))
+CSS_SCOPES = ("[data-surface='plugin.plotroom.prs']", "[data-surface='plugin.plotroom.review']")
+# AGENTS.md › Code Conventions: lengths are px/em/vw/vh/% only (Tern also accepts ch, but the sheet stays off it); times,
+# angles and grid tracks take the units Tern's CSS reference lists.
+CSS_UNITS = {"px", "em", "vw", "vh", "%", "s", "ms", "deg", "rad", "grad", "turn", "fr"}
+# Tern drops every logical property ("Coming from the web" in its CSS reference): any name with an inline/block segment
+# (margin-inline, inline-size, min-block-size, inset-inline-start, ...) and the corner radii.
+CSS_LOGICAL = re.compile(r"(^|-)(inline|block)(-|$)|^border-(start|end)-(start|end)-radius$")
+
+
+def css_strip_comments(text: str) -> str:
+    out: List[str] = []
+    quote = ""
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\":
+                out.append(text[i + 1 : i + 2])
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = len(text) if end < 0 else end + 1
+        else:
+            if c in "\"'":
+                quote = c
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def css_split(text: str, sep: str) -> List[str]:
+    """Split at sep outside strings, parentheses and brackets (a `;` in url() or a `,` in :is(a, b) stays put)."""
+    parts: List[str] = []
+    quote = ""
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == sep and depth <= 0:
+            parts.append(text[start:i])
+            start = i + 1
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def css_rules(text: str) -> List[Tuple[str, List[str]]]:
+    """(prelude, own declarations) of every block of a comment-free sheet, inner blocks first."""
+    rules: List[Tuple[str, List[str]]] = []
+    frames: List[Tuple[str, List[str]]] = []
+    quote = ""
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif depth <= 0 and c == "{":
+            frames.append((text[start:i].strip(), []))
+            start = i + 1
+        elif depth <= 0 and c == ";":
+            if frames:
+                frames[-1][1].append(text[start:i])
+            start = i + 1
+        elif depth <= 0 and c == "}":
+            if frames:
+                prelude, decls = frames.pop()
+                decls.append(text[start:i])
+                rules.append((prelude, [d.strip() for d in decls if d.strip()]))
+            start = i + 1
+        i += 1
+    return rules
+
+
+def css_unit_problems(value: str) -> List[str]:
+    value = re.sub(r"\"[^\"]*\"|'[^']*'|url\([^)]*\)|#[0-9a-fA-F]+\b|var\(\s*--[\w-]+", "", value)
+    return [
+        "unsupported unit %r" % found.group(0)
+        for found in re.finditer(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)([a-zA-Z%]+)", value)
+        if found.group(1).lower() not in CSS_UNITS
+    ]
+
+
+def css_problems(source: str) -> List[str]:
+    """What plotroom.css (or a fixture) breaks: scoped selectors, and none of the syntax Tern's engine rejects (docs.stencil.so/tern/styles/css.md)."""
+    text = css_strip_comments(source)
+    problems: List[str] = []
+    rules = css_rules(text)
+    for prelude, decls in rules:
+        if prelude.startswith("@"):
+            problems.extend(css_unit_problems(prelude))
+        elif not re.fullmatch(r"(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*", prelude):
+            for selector in css_split(prelude, ","):
+                if not selector.strip().startswith(CSS_SCOPES):
+                    problems.append("selector outside the block's scope: %s" % selector.strip())
+            if ":has(" in prelude:
+                problems.append("unsupported CSS ':has('")
+        for decl in decls:
+            name, _, value = decl.partition(":")
+            name = name.strip().lower()
+            if CSS_LOGICAL.search(name):
+                problems.append("unsupported CSS property %r" % name)
+            problems.extend(css_unit_problems(value))
     # DESIGN.md: colours are Tern variables (no hex or literal rgb/hsl), and a meaning colour comes from a node's tone,
     # never from this file.
     for bad in (r"#[0-9a-fA-F]{3,8}\b", r"\b(rgba?|hsla?)\(\s*[\d.]", r"var\(--(bad|ok|warn|live|sf-bad|sf-ok|sf-warn|sf-info)\)"):
@@ -358,24 +471,86 @@ def check_css() -> None:
             problems.append("colour outside DESIGN.md %r" % found.group(0))
     # Tern's Styling views: a plugin animation stops under .sf-still and pauses under .sf-paused (a hidden pane), so
     # every rule that runs a named animation has both, on its selector with the state class on the block's scope.
-    rules = [(m.group(1).strip(), m.group(2)) for m in re.finditer(r"([^{};]+)\{([^{}]*)\}", text)]
-    for prelude, body in rules:
-        if not re.search(r"(^|;)\s*animation\s*:\s*(?!none\b)[a-z]", body):
+    for prelude, decls in rules:
+        if not any(re.match(r"animation\s*:\s*(?!none\b)[a-z]", d) for d in decls):
             continue
-        for selector in prelude.split(","):
+        for selector in css_split(prelude, ","):
             selector = selector.strip()
-            scope = next((s for s in scopes if selector.startswith(s)), None)
+            scope = next((s for s in CSS_SCOPES if selector.startswith(s)), None)
             if scope is None:
                 continue
             for state, declaration in (("sf-still", r"animation\s*:\s*none\b"), ("sf-paused", r"animation-play-state\s*:\s*paused\b")):
                 want = scope + "." + state + selector[len(scope):]
-                if not any(want in [s.strip() for s in p.split(",")] and re.search(declaration, b) for p, b in rules):
+                if not any(want in [s.strip() for s in css_split(p, ",")] and any(re.match(declaration, d) for d in ds) for p, ds in rules):
                     problems.append("animation without a .%s rule: %s" % (state, selector))
+    return problems
+
+
+_P = CSS_SCOPES[0]
+CSS_GOOD = """
+/* a comment with a stray { and 5rem */
+%(p)s .a:is(.b, .c)[data-x='a{b;c,d'] { margin: -2px 1.5em .5em 0; width: calc(100%% - 4px); text-align: start; flex: 1fr; transition: opacity 150ms, color .2s; transform: rotate(45deg); }
+%(p)s .u { background-image: url("data:image/svg+xml;utf8,<svg width='2'/>"); content: "}; 3pt"; border-radius: 4px; height: 100vh; max-width: 50vw; color: var(--a1); }
+@media (max-width: 600px) { %(p)s .m { padding: 2px; } }
+@keyframes spin { from { opacity: 0; } 50%% { opacity: .5; } to { opacity: 1; } }
+%(p)s .spin { animation: spin 1s linear infinite; }
+%(p)s.sf-still .spin { animation: none; }
+%(p)s.sf-paused .spin { animation-play-state: paused; }
+""" % {"p": _P}
+# (snippet, the one problem it must report); every snippet is otherwise scoped and valid.
+CSS_BAD = [(snippet.replace("S", _P), expect) for snippet, expect in [
+    (".x { color: red; }", "outside the block's scope: .x"),
+    ("S :is(.a, .b), .x { color: red; }", "outside the block's scope: .x"),
+    ("S .a:has(.b) { color: red; }", "':has('"),
+    ("S .a { width: 2rem; }", "'2rem'"),
+    ("S .a { width: 3ch; }", "'3ch'"),
+    ("S .a { margin: -1pt; }", "'1pt'"),
+    ("S .a { width: 1cm; }", "'1cm'"),
+    ("S .a { width: 50vmin; }", "'50vmin'"),
+    ("S .a { width: 50vmax; }", "'50vmax'"),
+    ("S .a { height: 1lh; }", "'1lh'"),
+    ("S .a { height: 100dvh; }", "'100dvh'"),
+    ("S .a { width: 10cqw; }", "'10cqw'"),
+    ("S .a { width: calc(1em + 2pt); }", "'2pt'"),
+    ("@media (max-width: 40rem) { S .a { color: red; } }", "'40rem'"),
+    ("S .a { inline-size: 1px; }", "'inline-size'"),
+    ("S .a { block-size: 1px; }", "'block-size'"),
+    ("S .a { min-inline-size: 1px; }", "'min-inline-size'"),
+    ("S .a { max-block-size: 1px; }", "'max-block-size'"),
+    ("S .a { margin-inline: 1px; }", "'margin-inline'"),
+    ("S .a { padding-block-start: 1px; }", "'padding-block-start'"),
+    ("S .a { inset-inline-start: 1px; }", "'inset-inline-start'"),
+    ("S .a { border-start-start-radius: 1px; }", "'border-start-start-radius'"),
+    ("S .a { color: #fff; }", "'#fff'"),
+    ("S .a { color: rgb(1 2 3); }", "'rgb(1'"),
+    ("S .a { color: var(--bad); }", "'var(--bad)'"),
+    ("S .a { animation: spin 1s; }", "animation without a .sf-still rule"),
+    ("S .a { animation: spin 1s; }\nS.sf-still .a { animation: none; }", "animation without a .sf-paused rule"),
+    # a `;` or `}` inside url() or a string must not hide the declaration after it
+    ("S .a { background-image: url(\"data:image/svg+xml;utf8,<svg/>\"); margin-inline: 1px; }", "'margin-inline'"),
+    ("S .a { content: \"};\"; width: 2pt; }", "'2pt'"),
+]]
+
+
+def check_css_lint() -> None:
+    """Prove css_problems still rejects every known-bad sheet and accepts the good one (a regex edit must not turn the lint into a no-op)."""
+    wrong = ["a good sheet was rejected: " + "; ".join(css_problems(CSS_GOOD))] if css_problems(CSS_GOOD) else []
+    for snippet, expect in CSS_BAD:
+        found = css_problems(snippet)
+        if not any(expect in p for p in found):
+            wrong.append("%r reported %r, not %r" % (snippet, found, expect))
+    if wrong:
+        raise GateError("scripts/check.py css lint self-test: " + "; ".join(wrong[:5]))
+
+
+def check_css() -> None:
+    problems = css_problems((PLUGIN / "plotroom.css").read_text(encoding="utf-8"))
     if problems:
         raise GateError("plugin/plotroom.css: " + "; ".join(problems[:5]))
 
 
 def check_test() -> str:
+    check_css_lint()
     check_css()
     unlisted = [p.stem for p in sorted((PLUGIN / "tests" / "cases").glob("*.luau")) if 'require("./cases/%s")' % p.stem not in (PLUGIN / "tests" / "regression.luau").read_text(encoding="utf-8")]
     if unlisted:
