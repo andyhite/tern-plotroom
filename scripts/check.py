@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Verification gate for the Plotroom plugin. Standard library only, Python 3.9+.
 
+Platforms: `tools` downloads pinned builds for macOS and Linux x86_64 only. Elsewhere (Windows, Linux arm64) set LUAU and LUAU_LSP to your own binaries; smoke needs a POSIX host (it uses /tmp, /bin/sh and /dev/null).
+
     python3 scripts/check.py            test + types + bench + smoke (the full local gate)
     python3 scripts/check.py --ci       test + types + bench; smoke is reported NOT RUN (Tern is not on CI)
     python3 scripts/check.py test       standalone Luau regression suite (fake Tern SDK) only; also checks plugin.toml's version has a CHANGELOG.md entry, and the docs stage: the markdown's relative links and #anchors resolve, README's screenshots are each used and under 400 KB

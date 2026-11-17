@@ -97,6 +97,8 @@ python3 scripts/check.py tools     # pinned luau + luau-lsp
 python3 scripts/check.py           # test · types · bench · smoke
 ```
 
+Platforms: `tools` downloads pinned builds for macOS and Linux x86_64 only. On Windows or Linux arm64, set `LUAU` and `LUAU_LSP` to your own binaries; smoke needs a POSIX host (it uses `/tmp`, `/bin/sh` and `/dev/null`).
+
 | | |
 | --- | --- |
 | `plugin/host.luau` | the one `prs` block (shown as Plotroom): the entry point (requires, queue action dispatcher, block handlers with the worktree card helpers, `tern.block.define`) |

@@ -4,6 +4,9 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ## [Unreleased]
 
+### Documented
+- Tools download and smoke support macOS and Linux x86_64 only; README and check.py say what to set elsewhere (h5x5).
+
 ### Fixed
 - A Draft review that failed to open at a turn end is no longer marked seen: the next turn end tries again (mhwp).
 - The Draft review's Keep/Drop event ignores a stale card index instead of jumping to Instructions (tern-plotroom#1snf).
