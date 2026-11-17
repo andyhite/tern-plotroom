@@ -16,11 +16,31 @@ export type Model = {
 
 local UNDO_LIMIT = 50
 
+-- Longest text a model holds; bounds paste cost and the 50 undo copies.
+local MAX_BYTES = 200000
+
+-- `s` cut to at most `n` bytes at a codepoint boundary.
+local function cut(s: string, n: number): string
+	if #s <= n then
+		return s
+	end
+	n = math.max(n, 0)
+	while n > 0 do
+		local b = string.byte(s, n + 1)
+		if b == nil or b < 0x80 or b >= 0xC0 then
+			break
+		end
+		n -= 1
+	end
+	return string.sub(s, 1, n)
+end
+
 -- Valid UTF-8 only, other control characters dropped: C0, DEL, C1 (U+0080-009F) and Unicode's bidi controls (U+061C,
 -- U+200E-200F, U+202A-202E, U+2066-2069), which could reorder the text drawn around them. Line breaks (CR, LF, U+2028,
 -- U+2029) become spaces, or with `multi` are kept as "\n" (and tabs kept).
 -- A malformed byte is dropped alone; the valid characters around it stay.
 function M.clean(s: string, multi: boolean?): string
+	s = cut(s, MAX_BYTES)
 	local br = if multi then "\n" else " "
 	s = string.gsub(s, "\r\n", br)
 	s = string.gsub(s, "[\r\n]", br)
@@ -158,8 +178,9 @@ local function range(m: Model): (number, number)
 end
 
 function M.insert(m: Model, s: string)
-	s = M.clean(s, m.multi)
 	local lo, hi = range(m)
+	s = M.clean(cut(s, MAX_BYTES), m.multi)
+	s = cut(s, MAX_BYTES - (#m.text - (hi - lo)))
 	if s == "" and lo == hi then
 		return
 	end

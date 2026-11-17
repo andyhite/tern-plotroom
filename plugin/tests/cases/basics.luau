@@ -267,6 +267,20 @@ case("input: clean drops only malformed bytes and control characters", function(
 	eq(input.clean("ok"), "ok", "plain ASCII is returned as is")
 end)
 
+case("input: a paste is capped at 200000 bytes on a codepoint boundary", function(w: World)
+	local input = w.load("input") :: Input
+	local m = input.new("")
+	input.insert(m, string.rep("😀", 100000))
+	eq(#m.text, 200000, "four-byte characters fit exactly")
+	eq(utf8.len(m.text), 50000, "no character split")
+	input.insert(m, "x")
+	eq(#m.text, 200000, "full model takes nothing more")
+	local n = input.new("")
+	input.insert(n, "a" .. string.rep("é", 150000))
+	eq(#n.text, 200000, "cut back to a boundary")
+	eq(utf8.len(n.text) ~= nil, true, "valid UTF-8")
+end)
+
 case("input: ctrl/alt word movement lands on word boundaries and never mid-codepoint", function(w: World)
 	local input = w.load("input") :: Input
 	local noop = function(_text: string) end
