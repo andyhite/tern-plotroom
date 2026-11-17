@@ -67,6 +67,8 @@ SMOKE_TOAST = "Plotroom self-test passed"
 GIT_MIN = (2, 36)  # `git worktree list --porcelain -z` arrived in 2.36
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 SMOKE_TIMEOUT = 60  # seconds a single smoke request may take
+SETUP_LAG = 8.0  # seconds an agent may start after its setup ended: under the 10 s a silent shell waits, over a slow box's jitter
+SETUP_SKEW = 0.5  # seconds a file timestamp may disagree with the order the files were written in
 
 # Fake gh: `--version` (the block asks whether gh starts before it lists GitHub views), the canned pull request file (the
 # answer the real call's --jq prints, see Smoke.canned), or the 404 gh prints for a pull request it cannot see; a search
@@ -872,6 +874,19 @@ class Smoke:
                 self.fail(what, "true within %d s" % SMOKE_TIMEOUT, "never (ui texts: %r)" % self.texts()[:40])
             time.sleep(0.2)
 
+    def try_until(self, ok: "Callable[[], bool]", seconds: float) -> bool:
+        """Like `wait_until` but a timeout is an answer, not a failure: whether `ok` held within `seconds` (a Down on the last row never moves the selection)."""
+        deadline = time.monotonic() + seconds
+        while not ok():
+            if not self.alive() or time.monotonic() > deadline:
+                return False
+            time.sleep(0.1)
+        return True
+
+    def settle(self, seconds: float, why: str) -> None:
+        """A negative check has no state to wait for ("nothing changed"): wait a named, deliberate time so the reader sees which sleeps are on purpose."""
+        time.sleep(seconds)
+
     def stop(self) -> None:
         if self.proc is not None and self.proc.poll() is None:
             try:
@@ -1659,7 +1674,7 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the first row is selected when the queue opens", lambda: len(s.selection()) == 1)
     s.wait_until("its native preview is rendered (title drawn outside the rows)", lambda: s.previewing())
     chosen = s.selection()
-    time.sleep(2.0)
+    s.settle(2.0, "idle time must mark no other row seen")
     left = s.count("New")
     s.eq("the arrival marked only the selected row seen: the other stays New", 1, left)
     s.shot("initial-auto-selected")
@@ -1709,7 +1724,7 @@ def sc_workflow(s: Smoke) -> None:
     s.eq("the compact preview keeps the selection", chosen, s.selection())
     s.shot("compact-preview")
     s.ctl_ok("key", "Escape")
-    time.sleep(1.0)
+    s.settle(1.0, "Escape must not close the preview or move the selection")
     s.eq("Escape keeps the selection", chosen, s.selection())
     s.eq("and the preview", True, s.previewing())
     s.ctl_ok("resize", "2200", "1000")
@@ -1748,7 +1763,7 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_text("and Open item by URL", "Open item by URL")
     s.eq("the old board wording is gone", False, any("Worktrees board" in t or "Worktrees list" in t for t in s.texts()))
     s.ctl_ok("type", json.dumps("Worktrees"))
-    time.sleep(0.5)
+    s.wait_until("the typed filter narrows the palette", lambda: not any(t == "Refresh" for t in s.texts()))
     s.ctl_ok("key", "Enter")
     s.wait_text("the Worktrees table lists the worktree git has, unnoted", "Unnoted")
     s.wait_text("and the linked worktrees, named by their folders", "flow-linked")
@@ -1762,12 +1777,17 @@ def sc_workflow(s: Smoke) -> None:
     s.wait_until("the card's head ends in its Remove button", lambda: any(t.startswith("Remove") for t in s.matches("[data-surface='plugin.plotroom.prs'] .sf-card[data-role='plotroom.worktree'] .sf-button")))
     s.shot("board-initial")
     seen_linked = seen_plain = seen_both = False
+    chosen_before: List[str] = []
+    card: List[str] = []
     for n in range(9):  # walk the rows from the auto-selected first one: each selection shows its card
         if n:
+            before = card
             s.ctl_ok("key", "Down")
-        time.sleep(0.7)
-        card = s.wt_card()
-        if len(s.wt_chosen()) != 1 or not card:
+            # a new row drawn selected with a card that is not the previous one's; the last row never moves, which ends the walk
+            if not s.try_until(lambda: len(s.wt_chosen()) == 1 and s.wt_chosen() != chosen_before and bool(s.wt_card()) and s.wt_card() != before, 5.0):
+                break
+        chosen_before, card = s.wt_chosen(), s.wt_card()
+        if len(chosen_before) != 1 or not card:
             continue
         if "flow-both" in card[0]:
             # a worktree made for an issue AND its pull request: both as the tracker answered, not placeholders
@@ -1791,14 +1811,14 @@ def sc_workflow(s: Smoke) -> None:
     s.eq("the linked worktree's card names its pull request by the fetched title", True, seen_linked)
     s.eq("the unlinked worktree's card is headed by its folder's name, its branch beside it, its path among its facts", True, seen_plain)
     s.ctl_ok("key", "Escape")
-    time.sleep(1.0)
+    s.settle(1.0, "Escape must not clear the table's selection or card")
     s.eq("Escape keeps the table's selection", 1, len(s.wt_chosen()))
     s.eq("and its card", True, bool(s.wt_card()))
     # Views jump back to a normal view by its sidebar name.
     s.ctl_ok("key", ".")
     s.wait_text("the palette", "Refresh")
     s.ctl_ok("type", json.dumps("My PRs"))
-    time.sleep(0.5)
+    s.wait_until("the typed filter narrows the palette", lambda: not any(t == "Refresh" for t in s.texts()))
     s.ctl_ok("key", "Enter")
     s.wait_until("the normal view's queue is back, not the worktrees", lambda: any("Flow PR 2" in t for t in s.texts()) and not any(t == "Unnoted" for t in s.texts()))
     s.wait_until("it opens with a row selected and previewed", lambda: len(s.selection()) == 1 and s.previewing())
@@ -2997,13 +3017,13 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
         started = s.smoke / "agents.jsonl"
         s.wait_until("the agent starts", lambda: started.is_file() and started.read_text(encoding="utf-8").strip() != "")
         late = started.stat().st_mtime - marker.stat().st_mtime if marker.exists() else None
-        s.eq("the agent starts after setup finished, within 3 s of it (took %r s)" % late, True, late is not None and 0 <= late < 3)
+        s.eq("the agent starts after setup finished, well before the silent-shell fallback (took %r s)" % late, True, late is not None and -SETUP_SKEW <= late < SETUP_LAG)
         s.eq("no toast says setup did not finish", [], [t for t in s.texts() if "Setup did not finish" in t or "Setup may still be running" in t])
         s.ctl_ok("tab", str(queue_tab))
         s.select_row()
         if s.selection() == first:
             s.ctl_ok("key", "Down")
-            time.sleep(0.7)
+            s.try_until(lambda: s.selection() != first, 5.0)
         if s.selection() == first:  # it was the last row
             s.ctl_ok("key", "Up")
         s.wait_until("the other pull request is selected", lambda: len(s.selection()) == 1 and s.selection() != first)
@@ -3013,7 +3033,7 @@ def setup_wait(tern: str, git: str, omp: str, tmp: Path) -> str:
         s.wait_text("the toast on screen says setup did not finish", "Setup did not finish for " + other)
         s.wait_text("with the reason", "It exited with status 1. The agent started anyway.")
         lag = started.stat().st_mtime - failed.stat().st_mtime if failed.exists() else None
-        s.eq("the second agent starts after setup failed, within 3 s of it (took %r s)" % lag, True, lag is not None and 0 <= lag < 3)
+        s.eq("the second agent starts after setup failed, well before the silent-shell fallback (took %r s)" % lag, True, lag is not None and -SETUP_SKEW <= lag < SETUP_LAG)
         return "setup wait under zsh (agent %.1f s after setup; %.1f s after a failed setup, its toast shown)" % (late, lag)
     except BaseException:
         s.dump()
