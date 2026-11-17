@@ -47,8 +47,8 @@ export type Api = {
 }
 
 -- What a linked pull request or issue looks like once read. `tracker` names where it lives ("github o/r", "jira PROJ"),
--- `related` is a counterpart the tracker itself links (an issue key on a PR, a PR number on an issue) and the adapter
--- has checked against the repository or project; it is never guessed from branch text.
+-- `related` is a counterpart the tracker itself links and the adapter has checked against the repository; it is never
+-- guessed from branch text. It only carries a PR number, set for an issue's linked PR; a PR's linked issue is not read.
 export type Info = {
 	ref: string,
 	title: string,
@@ -611,7 +611,7 @@ end
 -- Reads the uncommitted changes of the listed worktrees on its own: one at a time, at most CAP_SCANS (unread first, then
 -- by list order), each folder once. Returns whether a scan started: not while the board loads or scans, and not before
 -- SCAN_SECONDS since the last unless `force`. Cheap to call from a timer or a render; it does nothing when not due.
--- A read that fails leaves `dirty` nil with `dirtyProblem`; it is never shown as clean. `live` false (the board is not on
+-- A read that fails leaves `dirty` nil with `scannedAt` set; it is never shown as clean. `live` false (the board is not on
 -- screen) stops the scan and nothing schedules another. `now` is seconds on any steady clock.
 function M.scan(board: Board, api: Api, now: number, live: () -> boolean, done: () -> (), force: boolean?): boolean
 	if board.loading or board.scanning or not live() then
