@@ -4,6 +4,9 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ## [Unreleased]
 
+### Changed
+- Docs state that Plotroom works with github.com only; the host is one `HOST` constant in `plugin/github.luau` (no behavior change).
+
 ### Added
 
 - SECURITY.md says how to report a vulnerability privately and what is in scope; the README's More list links it and AGENTS.md as the contributor guide (tern-plotroom#tcrg).

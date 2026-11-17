@@ -8,6 +8,12 @@ local tracker = require("./tracker")
 
 local M = {}
 
+-- The one GitHub host Plotroom talks to: github.com only (no GitHub Enterprise). ponytail: a per-login host would
+-- replace this constant with a field of the login, read from `gh auth status --json hosts`.
+local HOST = "github.com"
+local HOST_PATTERN = string.gsub(HOST, "%.", "%%.")
+local HOST_URL = "https://" .. HOST .. "/"
+
 -- Problem kinds: auth | missing | rate-limit | invalid | not-found | network (GitHub unreachable) | failed (gh, the API or a
 -- timeout) and superseded (the caller cancelled the request).
 export type Problem = { kind: string, message: string }
@@ -650,7 +656,7 @@ function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
 			cb(token, problem, cx)
 		end
 	end
-	process.run({ "gh", "auth", "token", "--hostname", "github.com", "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
+	process.run({ "gh", "auth", "token", "--hostname", HOST, "--user", account }, { timeout_ms = GH_TIMEOUT_MS, env = ENV }, function(r, perr, cx)
 		if not r then
 			return finish(nil, { kind = "missing", message = perr or "gh could not be started" }, cx)
 		end
@@ -732,7 +738,7 @@ end
 -- "owner/name" as gh's `--repo HOST/OWNER/REPO` takes it; nil unless well formed.
 local function repoArg(repo: any): string?
 	local o, r = ownerName(repo)
-	return if o and r then "github.com/" .. o .. "/" .. r else nil
+	return if o and r then HOST .. "/" .. o .. "/" .. r else nil
 end
 
 -- A GitHub issue or pull request number.
@@ -1069,7 +1075,7 @@ local function searchAll(
 			return done(nil, 0, false, superseded, spent)
 		end
 		spent += 1
-		local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. gql, "-f", "q=" .. query }
+		local args = { "api", "graphql", "--hostname", HOST, "--include", "-f", "query=" .. gql, "-f", "q=" .. query }
 		if paged then
 			table.insert(args, "-F")
 			table.insert(args, "first=" .. size)
@@ -1237,7 +1243,7 @@ function M.about(raw: any): About
 	local threads: { Thread } = {}
 	for _, n in (if type(t.threads) == "table" then t.threads else {}) :: { any } do
 		local url, path, line, body = field(n, "url"), field(n, "path"), field(n, "line"), field(n, "body")
-		if type(url) == "string" and string.sub(url, 1, 19) == "https://github.com/" and #url <= 400 and not string.find(url, "[%c%s]") then
+		if type(url) == "string" and string.sub(url, 1, #HOST_URL) == HOST_URL and #url <= 400 and not string.find(url, "[%c%s]") then
 			local first = if type(body) == "string" then string.match(body, "^%s*([^\n]*)") or "" else ""
 			table.insert(threads, {
 				by = login(field(n, "by")) or "ghost",
@@ -1293,7 +1299,7 @@ function M.checks(repo: string, number: number, account: string?, done: ({ Run }
 	if wait > 0 then
 		return fail({ kind = "rate-limit", message = "GitHub's rate limit is reached; checks resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
 	end
-	local first = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. CHECKS_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number }
+	local first = { "api", "graphql", "--hostname", HOST, "--include", "-f", "query=" .. CHECKS_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number }
 	local nodes: { any } = {}
 	local about: About? = nil
 	local function fetch(after: string?, page: number)
@@ -1364,7 +1370,7 @@ function M.issue(repo: string, number: number, account: string?, done: (tracker.
 	if wait > 0 then
 		return fail({ kind = "rate-limit", message = "GitHub's rate limit is reached; details resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
 	end
-	local args = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. ISSUE_DETAIL_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", ISSUE_DETAIL_JQ }
+	local args = { "api", "graphql", "--hostname", HOST, "--include", "-f", "query=" .. ISSUE_DETAIL_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", ISSUE_DETAIL_JQ }
 	M.gh(args, function(out, problem, _, raw)
 		local body = observe(out, raw, problem, account)
 		if not out then
@@ -1421,7 +1427,7 @@ function M.pr(repo: string, number: number, account: string?, done: (PrMeta?, Pr
 			done(nil, bad("Unexpected pull request."), nil)
 		end)
 	end
-	M.gh({ "api", "--hostname", "github.com", "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
+	M.gh({ "api", "--hostname", HOST, "repos/" .. repo .. "/pulls/" .. number, "--jq", PR_JQ }, function(out, problem, cx)
 		if not out then
 			return done(nil, problem, cx)
 		end
@@ -1496,8 +1502,8 @@ function M.linkedPrs(repo: string, ref: string, account: string?, done: ({ Linke
 		end)
 	end
 	local args = if mention
-		then { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. owner .. "/" .. name .. " is:pr " .. ref, "--jq", MENTION_JQ }
-		else { "api", "graphql", "--hostname", "github.com", "-f", "query=" .. CLOSING_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. ref, "--jq", CLOSING_JQ }
+		then { "api", "graphql", "--hostname", HOST, "-f", "query=" .. MENTION_GQL, "-f", "q=repo:" .. owner .. "/" .. name .. " is:pr " .. ref, "--jq", MENTION_JQ }
+		else { "api", "graphql", "--hostname", HOST, "-f", "query=" .. CLOSING_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. ref, "--jq", CLOSING_JQ }
 	-- The key as a whole word: ABC-12 is not ABC-123.
 	local word = "%f[%w]" .. string.gsub(string.lower(ref), "%p", "%%%0") .. "%f[^%w]"
 	M.gh(args, function(out, problem)
@@ -1625,7 +1631,7 @@ function M.outcome(c: OutcomeCheck, done: (string, string?) -> ())
 	if wait > 0 then
 		return answer("unchecked", "GitHub's rate limit is reached until " .. os.date("%H:%M", os.time() + wait) .. ".")
 	end
-	local args: { string } = { "api", "graphql", "--hostname", "github.com", "--include", "-f", "o=" .. owner, "-f", "r=" .. name }
+	local args: { string } = { "api", "graphql", "--hostname", HOST, "--include", "-f", "o=" .. owner, "-f", "r=" .. name }
 	local query: string
 	if needsPr then
 		query = "query($o: String!, $r: String!, $n: Int!, $a: String!) { repository(owner: $o, name: $r) { " .. OUTCOME_PR .. " } }"
@@ -1732,10 +1738,10 @@ function M.accounts(done: ({ Account }?, Problem?) -> (), maxAge: number?)
 		kept[key] = nil
 	end
 	cached("accounts", function(finish)
-		M.gh({ "auth", "status", "--hostname", "github.com", "--json", "hosts" }, function(out, problem, _, failed)
+		M.gh({ "auth", "status", "--hostname", HOST, "--json", "hosts" }, function(out, problem, _, failed)
 			-- An account whose token fails makes the exit status nonzero; the others are still listed.
 			local ok, data = pcall(tern.json.decode, out or failed or "")
-			local hosts = if ok and type(data) == "table" and type(data.hosts) == "table" then data.hosts["github.com"] else nil
+			local hosts = if ok and type(data) == "table" and type(data.hosts) == "table" then data.hosts[HOST] else nil
 			if type(hosts) ~= "table" then
 				return finish(nil, problem or { kind = "failed", message = "gh auth status listed no accounts (it needs gh 2.66 or newer)." })
 			end
@@ -1787,7 +1793,7 @@ function M.repos(account: string, budget: number, done: ({ string }?, Problem?) 
 		local names: { string } = {}
 		local size = 0
 		local function page(n: number)
-			M.gh({ "api", "--hostname", "github.com", "user/repos?per_page=100&sort=pushed&page=" .. n, "--jq", ".[].full_name" }, function(out, problem)
+			M.gh({ "api", "--hostname", HOST, "user/repos?per_page=100&sort=pushed&page=" .. n, "--jq", ".[].full_name" }, function(out, problem)
 				if not out then
 					return finish(if #names > 0 then names else nil, problem)
 				end
@@ -1961,8 +1967,9 @@ local function guarded(kind: string, fields: string, segs: { string }, repo: str
 		end
 		local ok, data = pcall(tern.json.decode, out)
 		local url = field(data, "url")
-		local path = string.lower(string.sub(repoFlag, #"github.com" + 1)) -- "/owner/repo"
-		local rest = if type(url) == "string" and string.sub(string.lower(url), 1, #"https://github.com" + #path + 1) == "https://github.com" .. path .. "/" then string.sub(url, #"https://github.com" + #path + 2) else nil
+		local path = string.lower(string.sub(repoFlag, #HOST + 1)) -- "/owner/repo"
+		local base = string.lower(HOST_URL:sub(1, -2))
+		local rest = if type(url) == "string" and string.sub(string.lower(url), 1, #base + #path + 1) == base .. path .. "/" then string.sub(url, #base + #path + 2) else nil
 		local seg = if rest then string.match(rest, "^(.-)/" .. id .. "$") else nil
 		local live = field(data, if kind == "run" then "databaseId" else "number")
 		if not ok or not seg or not table.find(segs, seg) or (if type(live) == "number" then string.format("%d", live) else tostring(live)) ~= id then
@@ -2180,18 +2187,18 @@ function M.emptyCommit(repo: string, number: number, branch: string, sha: string
 		elseif meta.ref ~= branch or meta.sha ~= planned then
 			return done(bad(MOVED))
 		end
-		M.gh({ "api", "--hostname", "github.com", base .. "commits/" .. planned, "--jq", ".tree.sha" }, function(tree, p1)
+		M.gh({ "api", "--hostname", HOST, base .. "commits/" .. planned, "--jq", ".tree.sha" }, function(tree, p1)
 			tree = if tree then string.match(tree, "^%s*(%x+)%s*$") else nil
 			if not tree or #tree ~= 40 then
 				return done(p1 or { kind = "failed", message = "gh printed an unexpected commit." })
 			end
-			local make = { "api", "--hostname", "github.com", "--method", "POST", base .. "commits", "-f", "message=Empty commit to re-run checks", "-f", "tree=" .. tree, "-f", "parents[]=" .. planned, "--jq", ".sha" }
+			local make = { "api", "--hostname", HOST, "--method", "POST", base .. "commits", "-f", "message=Empty commit to re-run checks", "-f", "tree=" .. tree, "-f", "parents[]=" .. planned, "--jq", ".sha" }
 			M.gh(make, function(made, p2)
 				made = if made then string.match(made, "^%s*(%x+)%s*$") else nil
 				if not made or #made ~= 40 then
 					return done(p2 or { kind = "failed", message = "gh printed an unexpected commit." })
 				end
-				local move = { "api", "--hostname", "github.com", "--method", "PATCH", base .. "refs/heads/" .. branch, "-f", "sha=" .. made, "-F", "force=false" }
+				local move = { "api", "--hostname", HOST, "--method", "PATCH", base .. "refs/heads/" .. branch, "-f", "sha=" .. made, "-F", "force=false" }
 				M.gh(move, function(_, p3)
 					if p3 and string.find(string.lower(p3.message), "fast forward", 1, true) then
 						return done(bad(MOVED))
@@ -2302,7 +2309,7 @@ function M.evidence(repo: string, number: number, account: string?, done: (Evide
 			done(nil, { kind = "rate-limit", message = "GitHub's rate limit is reached; reads resume at " .. os.date("%H:%M:%S", os.time() + wait) .. "." })
 		end)
 	end
-	M.gh({ "api", "graphql", "--hostname", "github.com", "--include", "-f", "query=" .. EVIDENCE_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", EVIDENCE_JQ }, function(out, problem, _, raw)
+	M.gh({ "api", "graphql", "--hostname", HOST, "--include", "-f", "query=" .. EVIDENCE_GQL, "-f", "o=" .. owner, "-f", "r=" .. name, "-F", "n=" .. number, "--jq", EVIDENCE_JQ }, function(out, problem, _, raw)
 		local body = observe(out, raw, problem, account)
 		if not out then
 			return done(nil, problem)
@@ -2432,9 +2439,9 @@ function M.parseItemUrl(url: any): { kind: string, repo: string, number: number 
 		return nil
 	end
 	local clean = string.gsub(string.match(url, "^[^?#]*") or "", "/$", "")
-	clean = string.gsub(clean, "^https?://www%.github%.com/", "https://github.com/")
-	clean = string.gsub(clean, "^http://github%.com/", "https://github.com/")
-	local o, r, k, n, rest = string.match(clean, "^https://github%.com/([%w%-_%.]+)/([%w%-_%.]+)/(%a+)/(%d+)(.*)$")
+	clean = string.gsub(clean, "^https?://www%." .. HOST_PATTERN .. "/", HOST_URL)
+	clean = string.gsub(clean, "^http://" .. HOST_PATTERN .. "/", HOST_URL)
+	local o, r, k, n, rest = string.match(clean, "^https://" .. HOST_PATTERN .. "/([%w%-_%.]+)/([%w%-_%.]+)/(%a+)/(%d+)(.*)$")
 	if rest ~= nil and rest ~= "" and string.sub(rest, 1, 1) ~= "/" then
 		return nil
 	end
@@ -2459,7 +2466,7 @@ function M.issueItem(repo: string, number: number, account: string?, done: (trac
 			done(nil, bad("Unexpected issue address."))
 		end)
 	end
-	searchAll(account, "https://github.com/" .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, M.normalizeIssue, nil, live, function(items, _, _, problem)
+	searchAll(account, HOST_URL .. repo .. "/issues/" .. number, "", ISSUE_ITEM_GQL, ISSUE_ITEM_JQ, M.normalizeIssue, nil, live, function(items, _, _, problem)
 		local issue = if items then (items :: { tracker.Issue })[1] else nil
 		if not issue then
 			return done(nil, problem or { kind = "not-found", message = "This GitHub account sees no issue " .. repo .. "#" .. number .. "." })
@@ -2496,7 +2503,7 @@ function M.parseNotices(raw: any): { Notice }
 			local page = if seg then SUBJECT[seg] else nil
 			local num = tonumber(n)
 			if page and num and whole32(num) then
-				kind, number, url = if page == "pull" then "pr" else "issue", num, "https://github.com/" .. repo .. "/" .. page .. "/" .. num
+				kind, number, url = if page == "pull" then "pr" else "issue", num, HOST_URL .. repo .. "/" .. page .. "/" .. num
 			end
 			table.insert(out, { id = id, repo = repo, title = input.clean(string.sub(title, 1, 200)), reason = string.sub(reason, 1, 40), kind = kind, number = number, url = url, updated = stamp(field(t, "updated_at")) or 0 })
 			if #out == NOTICE_CAP then
@@ -2547,7 +2554,7 @@ function M.notifications(account: string, done: ({ Notice }?, Problem?) -> ())
 			done(known.notices, nil)
 		end)
 	end
-	local args = { "api", "--hostname", "github.com", "--include", "notifications?participating=true&per_page=" .. NOTICE_CAP }
+	local args = { "api", "--hostname", HOST, "--include", "notifications?participating=true&per_page=" .. NOTICE_CAP }
 	M.gh(args, function(out, problem, _, raw)
 		local body = observe(out, raw, problem, account, true)
 		local _, headers = response(out or raw or "")
@@ -2591,7 +2598,7 @@ function M.markRead(ids: { string }, account: string, done: (Problem?, number) -
 			inboxes[account] = nil
 			return done(bad("Unexpected notification thread."), marked)
 		end
-		M.gh({ "api", "--hostname", "github.com", "--method", "PATCH", "notifications/threads/" .. id }, function(_, problem)
+		M.gh({ "api", "--hostname", HOST, "--method", "PATCH", "notifications/threads/" .. id }, function(_, problem)
 			if problem then
 				inboxes[account] = nil
 				return done(problem, marked)

@@ -37,6 +37,7 @@ Every feature serves one step. A feature that serves none is cut (LEDGER.md), ho
 
 - Team features, shared state, a hosted service, accounts.
 - Trackers beyond GitHub and Jira until a design partner needs one. Kata is served by tern-kata (board, agent card, attention page, worker); Linear and GitLab wait for demand.
+- GitHub Enterprise (Server, or Cloud with data residency): Plotroom talks to github.com only. The host is one constant in `plugin/github.luau`, so a per-login host is one change when it is wanted.
 - Owning CI, merge queues, or pushing to a base branch. Work lands through pull requests.
 - A second agent harness, local-model triage, or reading agents' screens.
 - A separate dashboard for agents or loops. Plotroom is the dashboard.

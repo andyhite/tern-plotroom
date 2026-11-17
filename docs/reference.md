@@ -21,7 +21,7 @@ tern plugin install github.com/andyhite/tern-plotroom/plugin
 
 Then, from any pane: Tern's palette → **Plotroom › Open** (or press ⌃⌥⇧Q, **Go to Plotroom**). The first time, **Get started** shows above the preview with what is left before an agent can run, one action per line:
 
-1. `gh` installed and signed in to github.com: **Setup guide ↗** while it is not.
+1. `gh` installed and signed in to github.com: **Setup guide ↗** while it is not. Plotroom works with github.com only: a GitHub Enterprise host (Server, or Cloud with data residency) has no views, accounts or Open item by URL.
 2. `omp` installed (it runs the agents and makes the worktrees): **Setup guide ↗** while it is not.
    A line **Update git to 2.36 or newer (this is 2.35.1)** with a **Setup guide ↗** shows only while `git --version` reads older than 2.36: the worktree inventory reads `git worktree list -z`, which older git does not have, so the Worktrees list and a worktree's card stay empty without it. A newer git shows no line.
 3. A checkout for each repository among the listed items that has none: **Use ~/code/repo as the checkout** when Plotroom found one, else **Choose the checkout of owner/repo…**, which asks for a folder (a new or empty one gets a clone).
