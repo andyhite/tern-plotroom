@@ -1222,6 +1222,7 @@ windowCase("window flows: the agent-go palette command follows the focused block
 	st.link("layer.queue.buttons.agentgo", "plotroom://github/agentgo/o/r/5")
 	w.command("agent-go")
 	eq(w.window.focused, 50, "the node's link focuses the recorded agent's pane")
+	w.flush()
 end)
 
 windowCase("window flows: Interrupt, Stop and Message reach the recorded agent's pane, Stop asks nothing in the palette (the block asked), and an exited agent, a blank message or a refused one only toasts", function(w: World)
