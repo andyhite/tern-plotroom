@@ -137,6 +137,25 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+DOWNLOAD_ATTEMPTS = 3
+
+
+def download(url: str) -> bytes:
+    """GET url, retrying a transient failure; any that persists is a GateError, not a traceback."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        say("check: downloading %s%s" % (url, "" if attempt == 1 else " (attempt %d of %d)" % (attempt, DOWNLOAD_ATTEMPTS)))
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "plotroom-check"})
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return response.read()
+        except OSError as error:  # URLError, HTTPError, socket.timeout and a reset are all OSError
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise GateError("download of %s failed after %d attempts: %s; rerun `python3 scripts/check.py tools`" % (url, attempt, error))
+            say("check: download failed (%s); retrying" % error)
+            time.sleep(attempt)  # ponytail: 1s then 2s, fixed; jitter if many jobs ever share one host
+    raise AssertionError("unreachable")
+
+
 def install_tools() -> str:
     system = platform.system()
 
@@ -156,27 +175,27 @@ def install_tools() -> str:
             lines.append("%s %s: already at %s" % (name, spec["version"], dest))
             continue
         url = spec["base"] + zip_name
-        say("check: downloading %s" % url)
-        request = urllib.request.Request(url, headers={"User-Agent": "plotroom-check"})
-        with urllib.request.urlopen(request, timeout=120) as response:
-            data = response.read()
+        data = download(url)
         got = hashlib.sha256(data).hexdigest()
         if got != want:
             raise GateError("%s: sha256 %s does not match the pinned %s; nothing was installed" % (url, got, want))
-        dest.parent.mkdir(parents=True, exist_ok=True)
         archive = dest.parent / zip_name
-        archive.write_bytes(data)
+        tmp = dest.with_name(dest.name + ".part")
         try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(data)
             with zipfile.ZipFile(archive) as bundle:
                 members = [m for m in bundle.namelist() if not m.endswith("/") and Path(m).name == spec["member"]]
                 if not members:
                     raise GateError("%s holds no %s" % (zip_name, spec["member"]))
-                tmp = dest.with_name(dest.name + ".part")
                 tmp.write_bytes(bundle.read(members[0]))
+            tmp.chmod(0o755)
+            os.replace(tmp, dest)
+        except (OSError, zipfile.BadZipFile) as error:
+            raise GateError("installing %s failed: %s" % (zip_name, error))
         finally:
-            archive.unlink()
-        tmp.chmod(0o755)
-        os.replace(tmp, dest)
+            archive.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
         lines.append("%s %s: installed %s (asset sha256 %s verified)" % (name, spec["version"], dest, want))
     return "\n".join(lines)
 
