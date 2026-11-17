@@ -216,17 +216,22 @@ local function resolve(from, path)
 end
 
 local function instantiate(tern, fakeOs)
-	local loaded, started = {}, {}
+	local loaded, started, loading = {}, {}, {}
 	local function load(name)
+		if loading[name] then
+			error("bundle: cyclic require " .. name)
+		end
 		if not started[name] then
 			local source = sources[name]
 			if not source then
 				error("bundle: no module " .. name)
 			end
 			started[name] = true
+			loading[name] = true
 			loaded[name] = source(tern, function(path)
 				return load(resolve(name, path))
 			end, fakeOs)
+			loading[name] = nil
 		end
 		return loaded[name]
 	end
