@@ -1784,7 +1784,7 @@ local function nowWhy(row: any): ({ text: string, tone: string, title: string },
 		return { text = "Ready to merge", tone = "success", title = "Your pull request is ready to merge" }, "Your pull request is ready to merge"
 	elseif row.rank == 5 then
 		local reason = reasonOf(row.notice.reason)
-		return { text = reason.text, tone = "accent", title = "GitHub notified you: " .. reason.text }, "An unread notification you take part in: " .. reason.text
+		return { text = reason.text, tone = reason.tone, title = "GitHub notified you: " .. reason.text }, "An unread notification you take part in: " .. reason.text
 	end
 	local fresh = if row.why == "New" then "and you haven't seen it yet" else "and changed since you last saw it"
 	return { text = "Assigned: " .. string.lower(row.why or ""), tone = "accent", title = "Assigned to you, " .. fresh }, "Assigned to you, " .. fresh
