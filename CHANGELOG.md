@@ -9,6 +9,7 @@ All notable changes to Plotroom are recorded here. The format is modelled on [Ke
 
 ### Added
 
+- The Worktrees sidebar entry reads **Worktrees · N finished** while N worktrees were made for an item a loaded view already lists as merged or closed (or that Find finished worktrees marked), counted from what is loaded with no read of its own; the number beside it stays the total (tern-plotroom#k9gy).
 - SECURITY.md says how to report a vulnerability privately and what is in scope; the README's More list links it and AGENTS.md as the contributor guide (tern-plotroom#tcrg).
 - The Draft review shows a **Retry** button (also `r`) beside a diff problem: it reads the pull request and the diff again for the same proposal, busy while it runs, keeping every comment's edited text and keep or drop choice, instead of leaving the comments without their lines until the agent proposes again or the block is reopened (tern-plotroom#70mt).
 - `scripts/check.py test` fails a README screenshot over 400 KB or unused, and a relative link or `#anchor` in the markdown whose file or heading no longer exists (tern-plotroom#7b7y).

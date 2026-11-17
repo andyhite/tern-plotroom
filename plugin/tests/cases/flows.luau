@@ -3805,6 +3805,26 @@ case("host worktrees board: the Worktrees scope lists every linked worktree of e
 	w.flush()
 end)
 
+case("host worktrees board: the Worktrees entry names how many worktrees belong to an item a loaded view lists as merged or closed, without reading anything, and keeps its plain name when none does", function(w: World)
+	local s = asks.hx.boardScene(w)
+	local b = openQueue(w)
+	pickScope(b, "worktrees")
+	w.flush()
+	local function entry(): any
+		local scopes = pickerOf(b).scopes
+		return scopes[#scopes - 1]
+	end
+	eq(entry().label, "Worktrees", "no loaded item is finished: the plain name")
+	s.gh.items.octocat = { searchItem(5, "o/r", EPOCH - 60, { state = "MERGED" }), searchItem(7, "x/y", EPOCH - 60, { state = "CLOSED" }), searchItem(9, "o/r", EPOCH - 60) }
+	pickScope(b, "prs:v1")
+	w.flush()
+	pickScope(b, "worktrees")
+	w.flush()
+	eq(entry().label, "Worktrees · 2 finished", "the merged and the closed item's worktrees are named")
+	eq(entry().count, 3, "and the count stays the total")
+	w.flush()
+end)
+
 case("host worktrees table: Worktrees is a native table beside the selected worktree's card, its Path cut in the middle and hidden first, and ↑/↓, j/k, Enter, d and clicks drive its selection", function(w: World)
 	local s = asks.hx.boardScene(w)
 	w.kv.put("keys", { down = "j", up = "k", ["wt-remove"] = "d" })

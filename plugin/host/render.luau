@@ -1411,9 +1411,12 @@ function M.scopeRows(state: State): ({ any }, string?)
 			group = if engine.isPin(v.id) then "Pins" elseif grouped then INTEGRATIONS[v.integration].label .. (if scope.shown ~= "" then " - " .. scope.shown else "") else nil,
 		})
 	end
+	-- Worktrees made for an item already known merged or closed (no read of its own): named in the entry, since a scope's
+	-- count is one number and stays the total. The dropdown, which has no counts, keeps the plain name.
+	local finished = if not dropdown and state.board.loaded then engine.finishedCount(state) else 0
 	table.insert(scopes, {
 		id = "worktrees",
-		label = "Worktrees",
+		label = if finished > 0 then "Worktrees · " .. finished .. " finished" else "Worktrees",
 		icon = "folder",
 		count = if not dropdown and state.board.loaded then #engine.boardRows(state) else nil,
 		group = if grouped then "Worktrees" else nil,

@@ -1997,6 +1997,35 @@ local function readNoted(key: string, rowRepo: string, account: string?, live: (
 	end
 end
 
+-- How many listed worktrees were made for an item already known merged or closed: from the loaded snapshots (each item's
+-- state) or the last Find finished worktrees, never a new read. The Worktrees entry of the sidebar shows it; a worktree
+-- that cannot be removed at all (locked, folder missing) or whose item is only inferred is not counted.
+function M.finishedCount(state: State): number
+	local over: { [string]: boolean } = {}
+	for _, snap in state.snaps do
+		for _, item in snap.items do
+			if item.state == "merged" or item.state == "closed" then
+				over[item.key] = true
+			end
+		end
+	end
+	local n = 0
+	for _, row in state.board.rows do
+		if row.locked or row.missing or row.inferred == true then
+			continue
+		end
+		local done = row.candidate ~= nil or (row.number ~= nil and over[string.lower(row.repo) .. "#" .. row.number] == true)
+		if not done and row.key ~= nil then
+			local num, repo, ref = parseIssueRef(row.key, row.repo)
+			done = over[if num then string.lower(repo) .. "#" .. num else keyOf(ref, "jira")] == true
+		end
+		if done then
+			n += 1
+		end
+	end
+	return n
+end
+
 -- How the preview reads the pull request and the issue a worktree was made for (the model decides which to ask). The
 -- first read after a pick waits for the cursor to rest. A description or a linked item that cannot be read leaves the
 -- rest of the answer as it is; `related` is only what the tracker itself links within the same repository.
