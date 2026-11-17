@@ -170,6 +170,35 @@ case("github.gh: a failed shared token read gives every waiter its problem and i
 	eq(tokenSpawns, 2, "nothing cached: the next call spawns gh auth token again")
 end)
 
+case("github.gh: a timeout is named in seconds or whole minutes, singular for one", function(w: World)
+	local github = w.load("github") :: Github
+	w.respond(function(_call: Call): Reply?
+		return { status = -1, timedOut = true }
+	end)
+	local messages: { string } = {}
+	for _, ms in { 1000, 30000, 60000, 90000, 120000 } do
+		github.gh({ "api", "user" }, function(_out, problem)
+			table.insert(messages, if problem then problem.message else "none")
+		end, nil, ms)
+	end
+	w.flush()
+	same(messages, {
+		"gh did not answer within 1 second.",
+		"gh did not answer within 30 seconds.",
+		"gh did not answer within 1 minute.",
+		"gh did not answer within 90 seconds.",
+		"gh did not answer within 2 minutes.",
+	}, "the limit read from the milliseconds")
+end)
+
+case("github.record: one quota per login whatever its letter case", function(w: World)
+	local github = w.load("github") :: Github
+	github.record({ remaining = 0, reset = w.seconds() + 60, limit = 30 }, w.seconds(), "Andy")
+	yes(github.wait(w.seconds(), "andy") > 0, "a login seen as andy waits on Andy's budget")
+	eq(github.wait(w.seconds(), "ANDY"), github.wait(w.seconds(), "Andy"), "whatever the case asked")
+	eq(github.wait(w.seconds(), "other"), 0, "another login has its own")
+end)
+
 case("github.runs: same-named checks of different suites are independent rows, the failing one stays visible", function(w: World)
 	local github = w.load("github") :: Github
 	local runs = github.runs({

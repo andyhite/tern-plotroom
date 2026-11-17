@@ -684,6 +684,16 @@ function M.token(account: string, done: (string?, Problem?, WindowCx?) -> ())
 	end)
 end
 
+-- A timeout as the problem message names it: "30 seconds", "1 minute", "2 minutes".
+local function span(ms: number): string
+	local s = ms // 1000
+	local n, unit = s, "second"
+	if s >= 60 and s % 60 == 0 then
+		n, unit = s // 60, "minute"
+	end
+	return n .. " " .. unit .. (if n == 1 then "" else "s")
+end
+
 -- Runs `gh <args>` as `account` (nil or "" = active account, else with its M.token as GH_TOKEN); done(stdout,
 -- problem, cx, failedStdout). A failed run still passes its stdout (with `--include`, the response headers) as the 4th
 -- value. The account's cached token is dropped on any `auth` problem.
@@ -692,7 +702,7 @@ function M.gh(args: { string }, done: (string?, Problem?, WindowCx?, string?) ->
 	for _, a in args do
 		table.insert(argv, a)
 	end
-	local limit = if timeoutMs then (timeoutMs // 60000) .. " minutes" else nil
+	local limit = if timeoutMs then span(timeoutMs) else nil
 	local key = if account and account ~= "" then string.lower(account) else nil
 	local function run(env: { [string]: string })
 		process.run(argv, { timeout_ms = timeoutMs or GH_TIMEOUT_MS, env = env }, function(result, perr, cx)
@@ -895,19 +905,25 @@ end
 -- do not share a budget.
 local shared: { [string]: Quota } = {}
 
+-- Accounts are keyed lowercase, as tokens are: GitHub logins ignore case.
+local function quotaKey(account: string?): string
+	return string.lower(account or "")
+end
+
 function M.record(q: Quota?, now: number, account: string?)
 	if q then
-		shared[account or ""] = M.merge(shared[account or ""], q, now)
+		local key = quotaKey(account)
+		shared[key] = M.merge(shared[key], q, now)
 	end
 end
 
 function M.quota(account: string?): Quota?
-	return shared[account or ""]
+	return shared[quotaKey(account)]
 end
 
 -- Seconds every pane must still wait before any search request.
 function M.wait(now: number, account: string?): number
-	return M.cooldown(shared[account or ""], now)
+	return M.cooldown(shared[quotaKey(account)], now)
 end
 
 -- Records the quota a `gh api --include` answer reports and returns its body. A rate

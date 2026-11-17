@@ -330,6 +330,19 @@ case("jira.parseUrl and keyOfUrl: browse and board links, refused on another sit
 	eq(#acli.requests, before, "acli was not asked about it")
 end)
 
+case("jira.keyOfUrl: a site the acli names in capitals still matches its own link", function(w: World)
+	local jira = w.load("jira") :: Jira
+	local acli = newAcli(w)
+	acli.site = "ACME.atlassian.net"
+	local key: string?, problem: any = nil, nil
+	jira.keyOfUrl("https://acme.atlassian.net/browse/ABC-1", function(k, p)
+		key, problem = k, p
+	end)
+	w.flush()
+	eq(problem, nil, "no problem")
+	eq(key, "ABC-1", "the link's key")
+end)
+
 case("jira.item: one work item by key, as the list's items; a bad key or another item is refused", function(w: World)
 	local jira = w.load("jira") :: Jira
 	local acli = newAcli(w)

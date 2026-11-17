@@ -738,7 +738,7 @@ function M.keyOfUrl(url: string, done: (string?, Problem?) -> ())
 		if not base then
 			return finish(nil, problem)
 		end
-		if base ~= "https://" .. string.lower(host or "") then
+		if string.lower(base) ~= "https://" .. string.lower(host or "") then
 			return finish(nil, { kind = "invalid", message = "That link is on " .. tostring(host) .. ", not the signed-in site " .. string.sub(base, 9) .. "." })
 		end
 		finish(key, nil)

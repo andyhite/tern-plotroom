@@ -256,6 +256,20 @@ function M.key(m: Model, key: Key, copy: (string) -> ()): boolean
 	end
 	local word = (key.ctrl or key.alt) and not key.meta
 	local nav = name == "left" or name == "right" or name == "backspace" or name == "delete"
+	if key.meta and not key.ctrl and not key.alt and (name == "left" or name == "right" or name == "backspace") then
+		-- Cmd on macOS: to the line's start or end, or delete back to its start; a selection wins for backspace.
+		local lo, hi = M.selection(m)
+		if name == "left" then
+			move(lineStart(m.text, m.cur))
+		elseif name == "right" then
+			move(lineEnd(m.text, m.cur))
+		elseif lo and hi then
+			splice(m, lo, hi, "")
+		else
+			splice(m, lineStart(m.text, m.cur), m.cur, "")
+		end
+		return true
+	end
 	if (key.ctrl or key.meta) and not (word and nav) then
 		if name == "a" then
 			m.anchor, m.cur = 0, #m.text

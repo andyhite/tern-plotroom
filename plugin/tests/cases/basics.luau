@@ -358,7 +358,7 @@ case("input: ctrl/alt+backspace and delete remove one word; a selection wins", f
 	eq(t.text, "adef", "with a selection ctrl+delete deletes only the selection")
 end)
 
-case("input: selection collapses, extends by word, and meta word keys are not handled", function(w: World)
+case("input: selection collapses, extends by word, and ctrl+meta word keys are not handled", function(w: World)
 	local input = w.load("input") :: Input
 	local noop = function(_text: string) end
 	local m = model("foo bar baz")
@@ -374,13 +374,31 @@ case("input: selection collapses, extends by word, and meta word keys are not ha
 	eq(x.anchor, 4, "ctrl+shift+left anchors at the caret")
 	eq(x.cur, 0, "and extends by a word")
 	local n = model("foo bar")
-	for _, name in { "left", "right", "backspace", "delete" } do
-		eq(input.key(n, keyOf(name, "m"), noop), false, "meta+" .. name .. " is not handled")
-	end
+	eq(input.key(n, keyOf("delete", "m"), noop), false, "meta+delete is not handled")
 	eq(input.key(n, keyOf("left", "cm"), noop), false, "ctrl+meta+left is not handled")
 	eq(n.text, "foo bar", "unhandled keys change nothing")
 	input.key(n, keyOf("a", "c"), noop)
 	eq(input.selected(n), "foo bar", "ctrl+a still selects everything")
+end)
+
+case("input: meta+left and right go to the line's start and end, meta+backspace deletes back to it", function(w: World)
+	local input = w.load("input") :: Input
+	local noop = function(_text: string) end
+	local m = input.new("one\ntwo three", true)
+	m.cur = 7
+	eq(input.key(m, keyOf("left", "m"), noop), true, "meta+left is handled")
+	eq(m.cur, 4, "to the start of its line")
+	input.key(m, keyOf("right", "m"), noop)
+	eq(m.cur, 13, "meta+right to the end of the line")
+	input.key(m, keyOf("left", "ms"), noop)
+	eq(m.anchor, 13, "meta+shift+left anchors at the caret")
+	eq(input.selected(m), "two three", "and selects to the line's start")
+	input.key(m, keyOf("backspace", "m"), noop)
+	eq(m.text, "one\n", "meta+backspace with a selection deletes only it")
+	m.text, m.cur, m.anchor = "one\ntwo three", 7, nil
+	input.key(m, keyOf("backspace", "m"), noop)
+	eq(m.text, "one\n three", "meta+backspace deletes back to the line's start")
+	eq(m.cur, 4, "leaving the caret there")
 end)
 
 -- ---- triage.luau: load/save against the kv store
