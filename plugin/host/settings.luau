@@ -2037,7 +2037,7 @@ function M.resetRow(state: State, row: string)
 			propagate(state)
 		end
 	elseif kind == "key" and id then
-		err = keys.save(id, nil)
+		err = keys.restoreProblem(id) or keys.save(id, nil)
 		if not err then
 			propagate(state)
 		end

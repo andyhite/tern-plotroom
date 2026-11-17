@@ -173,6 +173,13 @@ function M.problem(map: Map, id: string, text: string): string?
 	return if a then "Already the shortcut of " .. a.label .. "." else nil
 end
 
+-- Why action `id`'s default cannot be restored (another action holds that key), or nil.
+function M.restoreProblem(id: string): string?
+	local map, unreadable = M.load()
+	local a = actionOf(id)
+	return unreadable or (if a then M.problem(map, id, a.default) else nil)
+end
+
 -- Binds the one-key set to the actions with no key and no saved choice. A preset key another action or `used` (the
 -- keys of saved prompt actions) already holds is skipped. Returns the labels of the skipped actions, or nil and why.
 function M.preset(used: { [string]: boolean }): ({ string }?, string?)

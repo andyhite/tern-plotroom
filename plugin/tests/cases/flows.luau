@@ -4407,6 +4407,16 @@ case("host keys: a saved custom key equal to an action's default leaves that act
 	same(w.kv.get("keys"), { worktree = "." }, "nothing was written")
 end)
 
+case("host keys: Reset on Commands says which action holds its default . and writes nothing", function(w: World)
+	hostScene(w, 3)
+	w.kv.put("keys", { worktree = "." })
+	local b = openQueue(w)
+	goToSettings(b, "general")
+	b.event({ ev = "change", id = "layer.settings", item = "key:more" })
+	eq(rowIn(b, "key:more").warning, "Already the shortcut of Worktree.", "the row names the action")
+	same(w.kv.get("keys"), { worktree = "." }, "nothing was written")
+end)
+
 case("host views: moving a view to the other kind keeps a sort that kind offers, and resets one it does not with a toast", function(w: World)
 	hostScene(w, 3)
 	w.kv.put("views-prs", { version = 1, nextId = 3, items = array({
