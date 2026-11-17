@@ -277,7 +277,7 @@ case("input: a paste is capped at 200000 bytes on a codepoint boundary", functio
 	eq(#m.text, 200000, "full model takes nothing more")
 	local n = input.new("")
 	input.insert(n, "a" .. string.rep("é", 150000))
-	eq(#n.text, 200000, "cut back to a boundary")
+	eq(#n.text, 199999, "cut back to a boundary")
 	eq(utf8.len(n.text) ~= nil, true, "valid UTF-8")
 end)
 
