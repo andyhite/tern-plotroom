@@ -119,6 +119,8 @@ function M.run()
 	assert(triage.validate({ version = 1, items = { a = { at = 1, seen = string.rep("x", 64), snoozeSig = string.rep("x", 64) } } }) == nil)
 	-- items as a JSON array (integer keys) is malformed
 	assert(triage.validate({ version = 1, items = { { at = 1 } } }) ~= nil)
+	assert(triage.validate({ version = 2, items = {} }) == "Saved triage state is from a newer Plotroom; not overwriting it.")
+	assert(triage.validate({ version = "2", items = {} }) == "Saved triage state is malformed; not overwriting it.")
 
 	-- an item whose key fails sanitizeKey is never recorded or snoozed
 	local nk = triage.empty()

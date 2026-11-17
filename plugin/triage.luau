@@ -96,6 +96,9 @@ function M.signature(kind: string, item: any): string
 end
 
 local function validate(v: any): string?
+	if type(v) == "table" and type(v.version) == "number" and v.version > VERSION then
+		return "Saved triage state is from a newer Plotroom; not overwriting it."
+	end
 	if type(v) ~= "table" or v.version ~= VERSION or type(v.items) ~= "table" then
 		return BAD
 	end
